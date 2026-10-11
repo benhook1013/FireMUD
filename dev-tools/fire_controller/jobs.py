@@ -701,6 +701,23 @@ class JobStore:
         with self._read() as connection:
             return self._get(connection, identifier, latest=selected_latest, full_history=full_history)
 
+    def get_compact(self, identifier: str) -> dict[str, Any]:
+        """Read current coordination fields and the latest checkpoint only."""
+
+        with self._read() as connection:
+            row = self._find_job(connection, identifier)
+            result = {
+                key: row[key]
+                for key in ("id", "name", "worker", "title", "status", "revision", "progress", "blocker")
+            }
+            checkpoint = connection.execute(
+                "SELECT sequence, job_id, created_at, done, next_steps, blocker, pointers_json "
+                "FROM job_checkpoints WHERE job_id = ? ORDER BY sequence DESC LIMIT 1",
+                (row["id"],),
+            ).fetchone()
+            result["latest_checkpoint"] = None if checkpoint is None else _checkpoint_row(checkpoint)
+            return result
+
     def list(
         self,
         worker: str | None = None,

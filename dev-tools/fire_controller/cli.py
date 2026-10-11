@@ -190,6 +190,14 @@ def _parser():
         action="store_true",
         help="return only job ID, name, status, revision and latest checkpoint; omit the brief and other context",
     )
+    read_scope.add_argument(
+        "--compact",
+        action="store_true",
+        help=(
+            "return public coordination fields and the latest checkpoint; omit the brief, pending notes, "
+            "updates and history"
+        ),
+    )
     for name in ("revise", "assign", "park", "resume", "complete", "block"):
         command = commands.add_parser(
             name,
@@ -665,7 +673,12 @@ def _dispatch(args):
         )
         return _job_receipt(created)
     if command == "read":
-        job = store.get(args.job, latest=0 if args.checkpoint_only else args.latest, full_history=args.full_history)
+        if args.compact or args.checkpoint_only:
+            job = store.get_compact(args.job)
+            if args.compact:
+                return job
+        else:
+            job = store.get(args.job, latest=args.latest, full_history=args.full_history)
         if args.checkpoint_only:
             return {key: job[key] for key in ("id", "name", "status", "revision", "latest_checkpoint")}
         if not args.full_history:
