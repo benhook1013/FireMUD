@@ -302,15 +302,7 @@ The target record would be written only by Game Design's authorized owner-local 
 
 Any state or epoch change before tombstoning, or any release-bundle/release-reachability evidence, invalidates or rejects the record. `TombstoneVersionAssets` must atomically consume a still-valid `RECORDED` proof while transitioning the matching `FAILED` artifact to `TOMBSTONED`; `BeginPurgeVersionAssets` must require the resulting `TOMBSTONE_CONSUMED` proof, matching `tombstone_state_epoch`, continued caller-tenant `FAILED` authority, and a fresh no-release-reachability/eligibility check. A failed candidate without this durable proof is not eligible, even when its artifact state is `FAILED` or `TOMBSTONED`.
 
-Before the first byte is exported for a version, the workflow freezes an immutable
-durable per-version export snapshot. Migration V37 implements the
-`version_asset_export_item` projection keyed by `(tenant_id, version_id, usage_key)`
-with selected `asset_id`, source content hash, byte size, and content type; the repository
-computes the hash from the actual source bytes and verifies it on later reads. Same-version
-exports and repair use this snapshot rather than re-selecting tenant assets or mutable
-mappings. The snapshot freezes the currently mapped set, which can be empty because the
-production Draft mapping producer is absent. It does not make `game_assets.data` immutable,
-and a source change fails snapshot verification.
+Before the first byte is exported for a version, the workflow freezes an immutable durable per-version export snapshot. Migration V37 defines the `version_asset_export_snapshot` header and the `version_asset_export_item` projection keyed by `(tenant_id, version_id, usage_key)`, with selected `asset_id`, source content hash, byte size, and content type. Migration V38 adds candidate evidence columns to `version_asset_artifact`: `manifest_schema_version`, `artifact_digests_json`, `published_object_proofs_json`, and `candidate_snapshot_version_id`. The current implementation persists and independently reads this snapshot, freezes the currently mapped set (which may be empty because a production Draft mapping producer is absent), and verifies actual source bytes on later reads. Same-version exports and repair use the snapshot rather than re-selecting tenant assets or mutable mappings. Candidate evidence is persisted and independently read back before object writes. This does not make `game_assets.data` immutable, and a changed source fails snapshot verification.
 
 `(tenant_id, version_id)` is unique in `version_asset_artifact`. This enum list is the canonical schema contract for both persistence and API validation. Artifact transitions use a database predicate on `state_epoch` and require exactly one affected row. Version transitions still lack that database compare-and-set and affected-row check; state-changing `CompareAndSetVersionState` requests currently fail closed before mutation.
 
