@@ -553,7 +553,10 @@ public final class AccountStartSessionOperatorAuthorizationService {
                 request.canonicalTupleBytes(),
                 request.reservationOwnerId(),
                 request.reservationClaimFence());
-            if (sameAttemptReplay && originalResponse.isEmpty()) {
+            Instant currentInstant = clock.instant();
+            if (sameAttemptReplay
+                && (originalResponse.isEmpty()
+                    || !currentInstant.isBefore(observed.referenceExpiresAt()))) {
               bundle.requireCurrentSnapshotForExactReplay(
                   current.source(),
                   current.stored(),
@@ -567,7 +570,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
                   tuple,
                   AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
                       observed.bundleReference()),
-                  clock.instant());
+                  currentInstant);
             }
             RedemptionResult result =
                 repository.redeemExact(
@@ -581,7 +584,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
                         request.ownerAttemptId(),
                         request.ownerFence(),
                         observed.authorityEvidenceBundle(),
-                        Instant.ofEpochMilli(clock.millis())));
+                        currentInstant));
             requireRedemptionProjection(result, observed);
             if (sameAttemptReplay != result.replay()) {
               throw denied("Account returned a changed one-time redemption outcome");

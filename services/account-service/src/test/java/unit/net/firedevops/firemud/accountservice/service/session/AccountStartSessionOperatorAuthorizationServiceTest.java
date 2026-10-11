@@ -20,8 +20,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
@@ -29,14 +31,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import javax.crypto.spec.SecretKeySpec;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.IssuanceRecord;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionRequest;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionResult;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.Status;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService.Current;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.ReadRedeemedOperationProjectionRequest;
@@ -220,7 +226,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
   }
 
   @Test
-  void ownerIssuesAndRecoversCanonicalNfcRequestIdAt128Utf8Bytes() throws Exception {
+  void ownerIssuesRecoversAndReplaysSameAttemptAcrossReferenceExpiry() throws Exception {
     String requestId = "é".repeat(64);
     byte[] requestIdBytes = requestId.getBytes(StandardCharsets.UTF_8);
     assertThat(requestIdBytes).hasSize(128);
@@ -246,8 +252,18 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     var claims = org.mockito.Mockito.mock(StartSessionReservationEvidenceClient.class);
     var repository =
         org.mockito.Mockito.mock(AccountStartSessionOperatorAuthorizationRepository.class);
+    MutableClock operationClock = new MutableClock(NOW);
+    byte[] fingerprintKey = new byte[32];
+    java.util.Arrays.fill(fingerprintKey, (byte) 11);
     var fingerprintKeys =
-        org.mockito.Mockito.mock(AccountOperatorAuthorizationFingerprintKeyring.class);
+        new AccountOperatorAuthorizationFingerprintKeyring(
+            () ->
+                new AccountOperatorAuthorizationFingerprintKeyring.Snapshot(
+                    new AccountOperatorAuthorizationFingerprintKeyring.KeyMaterial(
+                        "test-key", new SecretKeySpec(fingerprintKey, "HmacSHA256")),
+                    List.of()),
+            operationClock,
+            Duration.ofSeconds(20));
     var hostedTerms = org.mockito.Mockito.mock(AccountHostedTermsService.class);
     var transactions = org.mockito.Mockito.mock(PlatformTransactionManager.class);
     var environment =
@@ -262,10 +278,11 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     when(captureRepository.lockReadExactCurrent(any(), any(), anyString(), any(), anyLong()))
         .thenReturn(capture);
     when(claims.readCurrentClaimEvidence(any(), any(), anyLong(), any(), anyLong(), any()))
-        .thenAnswer(invocation -> claimEvidence(tuple, requestOwnerId));
-    when(fingerprintKeys.fingerprintForIssue(any(), any()))
-        .thenReturn("arfp/v1/test-key/" + "a".repeat(64));
-    when(fingerprintKeys.matchesOriginal(any(), any(), anyString(), any(), any())).thenReturn(true);
+        .thenAnswer(
+            invocation ->
+                claimEvidence(
+                    invocation.<StartSessionPreAuthorizationReservationTuple>getArgument(0),
+                    invocation.<UUID>getArgument(1)));
 
     Path responseKeyringDirectory = temporaryDirectory.resolve("operator-response");
     Files.createDirectories(responseKeyringDirectory);
@@ -281,12 +298,15 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     var responseCrypto =
         new AccountResponseEnvelopeCryptography(
             new AccountResponseEnvelopeKeyring(responseKeyringDirectory.toString()),
-            Clock.fixed(NOW, ZoneOffset.UTC),
+            operationClock,
             new java.security.SecureRandom());
 
-    AtomicReference<IssuanceRecord> durableRecord = new AtomicReference<>();
-    when(repository.findByControlPlaneRequestId(tuple.controlPlaneRequestId()))
-        .thenAnswer(ignored -> Optional.ofNullable(durableRecord.get()));
+    Map<String, IssuanceRecord> durableRecords = new ConcurrentHashMap<>();
+    Map<String, RedemptionRequest> originalRedemptions = new ConcurrentHashMap<>();
+    when(repository.findByControlPlaneRequestId(anyString()))
+        .thenAnswer(
+            invocation ->
+                Optional.ofNullable(durableRecords.get(invocation.<String>getArgument(0))));
     when(repository.createOrReadExact(any()))
         .thenAnswer(
             invocation -> {
@@ -295,17 +315,60 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
                       .<AccountStartSessionOperatorAuthorizationRepository.IssuanceCandidate>
                           getArgument(0);
               IssuanceRecord issuance = issuedRecord(candidate);
-              durableRecord.set(issuance);
+              IssuanceRecord existing =
+                  durableRecords.putIfAbsent(candidate.controlPlaneRequestId(), issuance);
               return new AccountStartSessionOperatorAuthorizationRepository.CreateOrReadResult(
-                  true, issuance);
+                  existing == null, existing == null ? issuance : existing);
             });
+    when(repository.redeemExact(any()))
+        .thenAnswer(
+            invocation -> {
+              RedemptionRequest redemption = invocation.getArgument(0);
+              IssuanceRecord issuance = durableRecords.get(redemption.controlPlaneRequestId());
+              assertThat(issuance).isNotNull();
+              assertThat(redemption.controlPlaneRequestId())
+                  .isEqualTo(issuance.controlPlaneRequestId());
+              assertThat(redemption.preAuthorizationTuple())
+                  .containsExactly(issuance.preAuthorizationTuple());
+              assertThat(redemption.authorizationReferenceFingerprint())
+                  .isEqualTo(issuance.authorizationReferenceFingerprint());
+              assertThat(redemption.reservationOwnerId()).isEqualTo(issuance.reservationOwnerId());
+              assertThat(redemption.reservationClaimFence())
+                  .isEqualTo(issuance.reservationClaimFence());
+              assertThat(redemption.redeemerWorkloadUri()).isEqualTo(GAME_SESSION_PEER);
+              assertThat(redemption.authorityEvidenceBundle())
+                  .containsExactly(issuance.authorityEvidenceBundle());
+              assertThat(redemption.now()).isEqualTo(operationClock.instant());
+
+              boolean replay = issuance.status() == Status.REDEEMED;
+              if (replay) {
+                RedemptionRequest original =
+                    originalRedemptions.get(redemption.controlPlaneRequestId());
+                assertThat(original).isNotNull();
+                assertThat(redemption.ownerAttemptId()).isEqualTo(original.ownerAttemptId());
+                assertThat(redemption.ownerFence()).isEqualTo(original.ownerFence());
+              } else {
+                assertThat(issuance.status()).isEqualTo(Status.ISSUED);
+                assertThat(redemption.now()).isBefore(issuance.referenceExpiresAt());
+                originalRedemptions.put(redemption.controlPlaneRequestId(), redemption);
+                durableRecords.put(
+                    redemption.controlPlaneRequestId(), withRedemption(issuance, redemption));
+              }
+              return new RedemptionResult(
+                  issuance.authorizationReferenceFingerprint(),
+                  issuance.authorityEvidenceBundle(),
+                  issuance.issuanceOperationId(),
+                  issuance.issuanceFence(),
+                  replay);
+            });
+    AtomicReference<Current> currentForCalls = new AtomicReference<>(current);
     doAnswer(
             invocation -> {
               TransactionSynchronizationManager.setActualTransactionActive(true);
               try {
                 @SuppressWarnings("unchecked")
                 Function<Current, Object> action = invocation.getArgument(3);
-                return action.apply(current);
+                return action.apply(currentForCalls.get());
               } finally {
                 TransactionSynchronizationManager.clear();
               }
@@ -318,7 +381,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
               try {
                 @SuppressWarnings("unchecked")
                 Function<Current, Object> action = invocation.getArgument(4);
-                return action.apply(current);
+                return action.apply(currentForCalls.get());
               } finally {
                 TransactionSynchronizationManager.clear();
               }
@@ -337,7 +400,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             responseCrypto,
             hostedTerms,
             transactions,
-            Clock.fixed(NOW, ZoneOffset.UTC),
+            operationClock,
             new java.security.SecureRandom(),
             LOGGING_PEER,
             GAME_SESSION_PEER,
@@ -358,10 +421,11 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(LOGGING_PEER).orElseThrow())
         .run(() -> issued.set(service.issue(issueRequest)));
 
-    IssuanceRecord record = durableRecord.get();
+    IssuanceRecord record = durableRecords.get(tuple.controlPlaneRequestId());
     assertThat(record).isNotNull();
     assertThat(record.status()).isEqualTo(Status.ISSUED);
     assertThat(record.encryptedResponseEnvelope()).isNotEmpty();
+    assertThat(record.encryptedResponseEnvelope().length).isLessThanOrEqualTo(160 * 1024);
     AccountStartSessionOperatorAuthorityBundle bundle =
         AccountStartSessionOperatorAuthorityBundle.decode(record.authorityEvidenceBundle());
     assertThat(AccountStartSessionOperatorAuthorizationService.envelopeBindingRequestId(requestId))
@@ -387,6 +451,125 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     assertThat(recovered.get().authorityEvidenceBundle())
         .containsExactly(issued.get().authorityEvidenceBundle());
 
+    UUID ownerAttemptId = UUID.randomUUID();
+    long ownerFence = 18L;
+    var redeemRequest =
+        new AccountStartSessionOperatorAuthorizationService.RedeemRequest(
+            exactTuple,
+            recovered.get().operatorAuthorizationReference(),
+            recovered.get().authorizationReferenceFingerprint(),
+            requestOwnerId,
+            10L,
+            ownerAttemptId,
+            ownerFence);
+    AtomicReference<RedemptionResult> firstRedemption = new AtomicReference<>();
+    operationClock.setInstant(record.referenceExpiresAt().minusMillis(1));
+    gameSessionContext().run(() -> firstRedemption.set(service.redeem(redeemRequest)));
+    assertThat(firstRedemption.get().replay()).isFalse();
+
+    AtomicReference<RedemptionResult> recoveredRetry = new AtomicReference<>();
+    operationClock.setInstant(record.referenceExpiresAt().plusSeconds(1));
+    assertThat(operationClock.instant()).isBefore(record.responseEnvelopeExpiresAt());
+    gameSessionContext().run(() -> recoveredRetry.set(service.redeem(redeemRequest)));
+    assertThat(recoveredRetry.get().replay()).isTrue();
+    assertThat(recoveredRetry.get().authorizationReferenceFingerprint())
+        .isEqualTo(firstRedemption.get().authorizationReferenceFingerprint());
+    assertThat(recoveredRetry.get().authorityEvidenceBundle())
+        .containsExactly(firstRedemption.get().authorityEvidenceBundle());
+    assertThat(recoveredRetry.get().issuanceOperationId())
+        .isEqualTo(firstRedemption.get().issuanceOperationId());
+    assertThat(recoveredRetry.get().issuanceFence())
+        .isEqualTo(firstRedemption.get().issuanceFence());
+
+    AtomicReference<RedemptionResult> postEnvelopeRetry = new AtomicReference<>();
+    operationClock.setInstant(record.responseEnvelopeExpiresAt());
+    gameSessionContext().run(() -> postEnvelopeRetry.set(service.redeem(redeemRequest)));
+    assertThat(postEnvelopeRetry.get().replay()).isTrue();
+    assertThat(postEnvelopeRetry.get().authorizationReferenceFingerprint())
+        .isEqualTo(firstRedemption.get().authorizationReferenceFingerprint());
+    assertThat(postEnvelopeRetry.get().authorityEvidenceBundle())
+        .containsExactly(firstRedemption.get().authorityEvidenceBundle());
+    assertThat(postEnvelopeRetry.get().issuanceOperationId())
+        .isEqualTo(firstRedemption.get().issuanceOperationId());
+    assertThat(postEnvelopeRetry.get().issuanceFence())
+        .isEqualTo(firstRedemption.get().issuanceFence());
+    verify(repository, times(3)).redeemExact(any());
+
+    var changedAttempt =
+        new AccountStartSessionOperatorAuthorizationService.RedeemRequest(
+            exactTuple,
+            recovered.get().operatorAuthorizationReference(),
+            recovered.get().authorizationReferenceFingerprint(),
+            requestOwnerId,
+            10L,
+            UUID.randomUUID(),
+            ownerFence);
+    var changedFence =
+        new AccountStartSessionOperatorAuthorizationService.RedeemRequest(
+            exactTuple,
+            recovered.get().operatorAuthorizationReference(),
+            recovered.get().authorizationReferenceFingerprint(),
+            requestOwnerId,
+            10L,
+            ownerAttemptId,
+            ownerFence + 1);
+    for (var changedRequest : List.of(changedAttempt, changedFence)) {
+      gameSessionContext()
+          .run(
+              () ->
+                  assertThatThrownBy(() -> service.redeem(changedRequest))
+                      .isInstanceOf(IllegalStateException.class)
+                      .hasMessageContaining("cannot authorize another owner attempt"));
+    }
+
+    AccountControlUiAuthority.Snapshot changedSource =
+        source(actorId, tenantId, 8L, new byte[] {2});
+    currentForCalls.set(new Current(stored, changedSource));
+    gameSessionContext()
+        .run(
+            () ->
+                assertThatThrownBy(() -> service.redeem(redeemRequest))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Current Account source differs"));
+    verify(repository, times(3)).redeemExact(any());
+
+    currentForCalls.set(current);
+    StartSessionPreAuthorizationReservationTuple expiredTuple = tuple(actorId, tenantId);
+    byte[] expiredTupleBytes = expiredTuple.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    var expiredIssueRequest =
+        new AccountStartSessionOperatorAuthorizationService.IssueRequest(
+            "test-only-forwarded-control-ui-credential",
+            expiredTupleBytes,
+            requestOwnerId,
+            10L,
+            requestOwnerId,
+            10L);
+    AtomicReference<AccountStartSessionOperatorAuthorizationService.AuthorizationResponse>
+        expiredIssued = new AtomicReference<>();
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(LOGGING_PEER).orElseThrow())
+        .run(() -> expiredIssued.set(service.issue(expiredIssueRequest)));
+    IssuanceRecord expiredRecord = durableRecords.get(expiredTuple.controlPlaneRequestId());
+    var firstRedemptionAfterExpiry =
+        new AccountStartSessionOperatorAuthorizationService.RedeemRequest(
+            expiredTupleBytes,
+            expiredIssued.get().operatorAuthorizationReference(),
+            expiredIssued.get().authorizationReferenceFingerprint(),
+            requestOwnerId,
+            10L,
+            UUID.randomUUID(),
+            19L);
+    operationClock.setInstant(expiredRecord.referenceExpiresAt());
+    gameSessionContext()
+        .run(
+            () ->
+                assertThatThrownBy(() -> service.redeem(firstRedemptionAfterExpiry))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Original Account authority evidence is expired"));
+    verify(repository, times(3)).redeemExact(any());
+
+    operationClock.setInstant(record.responseEnvelopeExpiresAt().minusMillis(1));
     String distinctRequestId = "é".repeat(63) + "è";
     assertThat(distinctRequestId.getBytes(StandardCharsets.UTF_8)).hasSize(128);
     assertThat(
@@ -1005,6 +1188,34 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         record.redemptionAuthorityEvidenceBundle());
   }
 
+  private static IssuanceRecord withRedemption(
+      IssuanceRecord record, RedemptionRequest redemption) {
+    return new IssuanceRecord(
+        record.controlPlaneRequestId(),
+        record.preAuthorizationTuple(),
+        record.mutationDigest(),
+        record.issuanceWorkloadUri(),
+        record.reservationOwnerId(),
+        record.reservationClaimFence(),
+        record.issuanceOperationId(),
+        record.issuanceFence(),
+        record.bundleReference(),
+        record.authorityEvidenceBundle(),
+        record.authorizationReferenceFingerprint(),
+        record.encryptedResponseEnvelope(),
+        record.issuedAt(),
+        record.referenceExpiresAt(),
+        record.responseEnvelopeExpiresAt(),
+        record.responseEnvelopeErasedAt(),
+        Status.REDEEMED,
+        redemption.redeemerWorkloadUri(),
+        redemption.ownerAttemptId(),
+        redemption.ownerFence(),
+        redemption.now(),
+        redemption.authorizationReferenceFingerprint(),
+        redemption.authorityEvidenceBundle());
+  }
+
   private static IssuanceRecord withRedeemer(IssuanceRecord record, String redeemerWorkloadUri) {
     return new IssuanceRecord(
         record.controlPlaneRequestId(),
@@ -1037,6 +1248,46 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         .withValue(
             GrpcPeerIdentity.CONTEXT_KEY,
             GrpcPeerIdentity.parseUri(GAME_DESIGN_PEER).orElseThrow());
+  }
+
+  private static Context gameSessionContext() {
+    return Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY,
+            GrpcPeerIdentity.parseUri(GAME_SESSION_PEER).orElseThrow());
+  }
+
+  private static final class MutableClock extends Clock {
+    private final AtomicReference<Instant> currentInstant;
+    private final ZoneId zone;
+
+    MutableClock(Instant initialInstant) {
+      this(new AtomicReference<>(initialInstant), ZoneOffset.UTC);
+    }
+
+    private MutableClock(AtomicReference<Instant> currentInstant, ZoneId zone) {
+      this.currentInstant = currentInstant;
+      this.zone = zone;
+    }
+
+    void setInstant(Instant instant) {
+      currentInstant.set(instant);
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return zone;
+    }
+
+    @Override
+    public Clock withZone(ZoneId requestedZone) {
+      return new MutableClock(currentInstant, requestedZone);
+    }
+
+    @Override
+    public Instant instant() {
+      return currentInstant.get();
+    }
   }
 
   private record ReadHarness(

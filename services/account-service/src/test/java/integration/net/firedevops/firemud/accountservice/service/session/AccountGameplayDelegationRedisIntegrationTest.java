@@ -810,14 +810,16 @@ class AccountGameplayDelegationRedisIntegrationTest {
                       AccountAuthorityGenerationRepository.AuthorityScope.account(accountId)));
       assertThat(changedAccountAuthority.generation())
           .isGreaterThan(sourceSnapshot.account().generation());
-      assertThatThrownBy(
-              () ->
-                  inTransaction(
-                      database,
-                      () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId)))
-          .isInstanceOf(
-              AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class)
-          .hasNoCause();
+      var refreshedSources =
+          inTransaction(
+              database, () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
+      assertThat(refreshedSources.account().generation())
+          .isEqualTo(changedAccountAuthority.generation());
+      assertThat(refreshedSources.account().generation())
+          .isGreaterThan(sourceSnapshot.account().generation());
+      assertThat(refreshedSources.account().sourceVersion())
+          .isNotEqualTo(sourceSnapshot.account().sourceVersion());
+      assertThat(refreshedSources.issuer()).isEqualTo(sourceSnapshot.issuer());
       assertThat(writerProvider.openedConnections())
           .isEqualTo(connectionsBeforeAuthorityChange + 2);
       assertThat(writerProvider.trace(connectionsBeforeAuthorityChange))
