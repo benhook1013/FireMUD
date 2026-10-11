@@ -120,14 +120,19 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
             entity.getCanonicalVersionId(),
             entity.getPublishedReleaseBundleRef(),
             entity.getManifestSchemaVersion(),
-            entity.getArtifactDigestsJson() == null
-                ? null
-                : objectMapper.readValue(
-                    entity.getArtifactDigestsJson(),
-                    objectMapper
-                        .getTypeFactory()
-                        .constructCollectionType(List.class, PublishedArtifactDigest.class)));
+            deserializeArtifactDigests(entity.getArtifactDigestsJson()));
     return dto;
+  }
+
+  private List<PublishedArtifactDigest> deserializeArtifactDigests(String json) {
+    if (json == null || json.isBlank()) {
+      return null;
+    }
+    return objectMapper.readValue(
+        json,
+        objectMapper
+            .getTypeFactory()
+            .constructCollectionType(List.class, PublishedArtifactDigest.class));
   }
 
   private String serializeKeys(List<String> keys) {
