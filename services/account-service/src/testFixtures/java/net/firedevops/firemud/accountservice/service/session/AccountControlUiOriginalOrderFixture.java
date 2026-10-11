@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.BindableService;
 import io.grpc.Context;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
@@ -435,6 +436,17 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
     } finally {
       context.detach(prior);
     }
+  }
+
+  /** Real unregistered Account selected-publication producer with internally captured terms. */
+  public BindableService selectedPublicationOrderProducer(
+      AuthoredDraftPublishSelectionReadClient selectionClient, String namespace) {
+    var owner =
+        new AccountPublicationAuthorizationService(
+            actors, f.fences, new AccountPublicationAuthorizationRepository(f.dsl));
+    var composition =
+        new AccountSelectedDraftPublicationOrderService(selectionClient, owner, namespace);
+    return new AccountSelectedDraftPublicationOrderGrpcService(composition, f.terms, namespace);
   }
 
   /** Real exact retained-order read owner; no publication registration or settlement is implied. */

@@ -157,6 +157,8 @@ import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecu
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient;
+import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderClient;
+import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderGrpcCodec;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
 import net.firedevops.firemud.common.publication.PlayerCreationDescriptor;
@@ -428,34 +430,36 @@ import tools.jackson.databind.ObjectMapper;
  * Real original GD+World source settlement and Account/GL intake-to-GD-receipt, followed by actual
  * selected inventory/export, the owner-local publication finalizer, descriptor SQL storage, and the
  * owner-local complete launch-binding read. The distinct Account publication order comes from the
- * actual Account owner fixture; its inbound Game Design peer and upstream selection/platform/legal
- * evidence are supplied by test context. The immutable selection read and held-order reads use
- * loopback mTLS. World freeze, immutable inventory and published selector use their actual owner
- * services over loopback mTLS, with the canonical frozen selector captured owner-locally from the
- * committed freeze and retained APPLIED graph. Entity/Automation source disclosure uses the genuine
- * Account issuer and retained preliminary reservations, then loopback mTLS for both the Account
- * permission hop and the Game Design source hop. Automation additionally composes real Account
- * finalization, the actual recipient-specific World closure/inventory reader, the Automation
- * empty-source receipt owner, and Account terminal settlement. Its positive Account authorization
- * command creates a fresh reservation through the native producer. Automation retention and Account
- * settlement each traverse their native command receivers over loopback mTLS. The earlier
- * disclosure/abort setup uses stipulated incoming Game Design peer contexts and is not either
- * positive authorization operation. Entity retention also traverses the native Account, Game
- * Design, Entity, World and settlement boundaries over loopback mTLS, with an isolated Entity
- * PostgreSQL schema and migration path. Entity and Automation publication digests use their native
- * mTLS selected-empty owner readers and exact retained receipts; nonempty owner publication remains
- * outside this proof. StartSession issuance and redemption use the real Account owner and retained
- * rows under the genuine Logging PostgreSQL reservation owner and its native file-backed mTLS
- * current-claim reader; issue uses the existing Logging/Admin mTLS client and redemption uses a
- * Game Session mTLS stub pinned to Account. The read-only projection uses the real Account receiver
- * over Game Design mTLS. MinIO object-store I/O is real. The complete launch-binding case wires the
- * actual Game Design handler and World Management mTLS client on this fixture's loopback server to
- * the actual owner implementation in an explicitly established read-only repeatable-read snapshot;
- * unrelated handler dependencies are isolated. The World preparation composition reuses the genuine
- * persisted source, frozen graph, and complete released pair through actual World owner services.
- * Its original Account tuple is issued and redeemed by the real Account owner after the native
- * Logging current-claim read through exact same-namespace Account transports; Game Session reserves
- * that exact tuple in an isolated V35 store and attaches the exact redeemed projection. Account's
+ * actual Account owner fixture over same-namespace Game Design mTLS; Account captures hosted terms
+ * internally and strictly rereads the immutable selection from Game Design over mTLS. Its upstream
+ * Account actor, identity, platform and legal inputs remain test-created and do not prove live
+ * authority or agreement. Held-order reads also use loopback mTLS. World freeze, immutable
+ * inventory and published selector use their actual owner services over loopback mTLS, with the
+ * canonical frozen selector captured owner-locally from the committed freeze and retained APPLIED
+ * graph. Entity/Automation source disclosure uses the genuine Account issuer and retained
+ * preliminary reservations, then loopback mTLS for both the Account permission hop and the Game
+ * Design source hop. Automation additionally composes real Account finalization, the actual
+ * recipient-specific World closure/inventory reader, the Automation empty-source receipt owner, and
+ * Account terminal settlement. Its positive Account authorization command creates a fresh
+ * reservation through the native producer. Automation retention and Account settlement each
+ * traverse their native command receivers over loopback mTLS. The earlier disclosure/abort setup
+ * uses stipulated incoming Game Design peer contexts and is not either positive authorization
+ * operation. Entity retention also traverses the native Account, Game Design, Entity, World and
+ * settlement boundaries over loopback mTLS, with an isolated Entity PostgreSQL schema and migration
+ * path. Entity and Automation publication digests use their native mTLS selected-empty owner
+ * readers and exact retained receipts; nonempty owner publication remains outside this proof.
+ * StartSession issuance and redemption use the real Account owner and retained rows under the
+ * genuine Logging PostgreSQL reservation owner and its native file-backed mTLS current-claim
+ * reader; issue uses the existing Logging/Admin mTLS client and redemption uses a Game Session mTLS
+ * stub pinned to Account. The read-only projection uses the real Account receiver over Game Design
+ * mTLS. MinIO object-store I/O is real. The complete launch-binding case wires the actual Game
+ * Design handler and World Management mTLS client on this fixture's loopback server to the actual
+ * owner implementation in an explicitly established read-only repeatable-read snapshot; unrelated
+ * handler dependencies are isolated. The World preparation composition reuses the genuine persisted
+ * source, frozen graph, and complete released pair through actual World owner services. Its
+ * original Account tuple is issued and redeemed by the real Account owner after the native Logging
+ * current-claim read through exact same-namespace Account transports; Game Session reserves that
+ * exact tuple in an isolated V35 store and attaches the exact redeemed projection. Account's
  * current-attempt observation and World participation acquisition use their native same-namespace
  * mTLS clients and receivers. Game Session also resolves the actual fresh Game Design tenant
  * receipt over mTLS, stores and independently reads its numeric tenant association, then reads the
@@ -664,6 +668,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     try (var loggingClaimClient = currentClaimGrpcClient(loggingServer.getPort(), pki);
         var startSessionAuthorizationTransport =
             new NativeAccountStartSessionAuthorizationTransport(endpoints, pki, channels);
+        var accountSelectedPublicationOrderClient =
+            new AccountSelectedPublicationOrderClient(
+                endpoints, pki.client("game-design-service"), channels, NAMESPACE);
         var gameDesignStartSessionReadTransport =
             new NativeGameDesignStartSessionReadTransport(endpoints, pki, channels);
         var worldToAccountParticipationHistoryClient =
@@ -766,6 +773,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var gameSessionActivationClient =
             canonicalActivationClient(worldServer, pki.client("game-session-service"), channels)) {
       ReflectionTestUtils.invokeMethod(loggingClaimClient, "init");
+      accountSelectedPublicationOrderClient.init();
       worldToAccountParticipationHistoryClient.init();
       worldToGameSessionOwnerEvidenceClient.init();
       accountToWorldExecutionTerminalClient.init();
@@ -1119,7 +1127,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                     NAMESPACE),
                 NAMESPACE),
             account.selectedOwnerIntakeAuthorizationProducerReceiver(
-                observedAccountToGdSource, NAMESPACE));
+                observedAccountToGdSource, NAMESPACE),
+            account.selectedPublicationOrderProducer(accountSelectionReadClient, NAMESPACE));
 
         var coordinator = new DraftCommitCoordinatorRepository(gd.dsl());
         var gdTerminals = new GameDesignDraftTerminalOutcomeRepository(gd.dsl());
@@ -1749,13 +1758,86 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var selectionBinding =
             AuthoredDraftPublishSelectionBinding.fromStored(
                 selection.canonicalJson(), selection.digest());
+        var accountPublicationRowsBefore =
+            accountAccess
+                .sources()
+                .dsl
+                .fetch(
+                    "SELECT operation_id, binding FROM account_selected_publication_authorizations"
+                        + " WHERE tenant_uuid = ? AND publish_request_id = ?",
+                    selection.intent().canonicalTenantId(),
+                    selection.intent().publishRequestId());
+        assertThat(accountPublicationRowsBefore).isEmpty();
+        var accountPublicationRequest =
+            AccountSelectedPublicationOrderGrpcCodec.Request.create(
+                NAMESPACE, selectionBinding, originalOrder.originalCreatorCredential());
         var accountPublicationOrder =
-            account.authorizePublication(selectionBinding, accountSelectionReadClient, NAMESPACE);
+            accountSelectedPublicationOrderClient.authorize(accountPublicationRequest);
         assertThat(accountPublicationOrder.input().selection().canonicalBytes())
             .containsExactly(selection.canonicalBytes());
         assertThat(accountPublicationOrder.operationId()).isNotEqualTo(original.operationId());
         assertThat(accountPublicationOrder.fenceId()).isNotEqualTo(original.fenceId());
         account.assertPublicationSourcesHeld(accountPublicationOrder);
+        var accountPublicationRowsAfterFirst =
+            accountAccess
+                .sources()
+                .dsl
+                .fetch(
+                    "SELECT operation_id, binding FROM account_selected_publication_authorizations"
+                        + " WHERE tenant_uuid = ? AND publish_request_id = ?",
+                    selection.intent().canonicalTenantId(),
+                    selection.intent().publishRequestId());
+        assertThat(accountPublicationRowsAfterFirst).hasSize(1);
+        var accountPublicationSourceKeysAfterFirst =
+            accountAccess
+                .sources()
+                .dsl
+                .fetch(
+                    "SELECT source_key FROM account_selected_publication_sources"
+                        + " WHERE operation_id = ? ORDER BY source_key",
+                    accountPublicationOrder.operationId())
+                .stream()
+                .map(row -> row.get("source_key", String.class))
+                .toList();
+        var accountPublicationRetryRequest =
+            AccountSelectedPublicationOrderGrpcCodec.Request.create(
+                NAMESPACE, selectionBinding, originalOrder.originalCreatorCredential());
+        assertThat(accountPublicationRetryRequest.requestId())
+            .isNotEqualTo(accountPublicationRequest.requestId());
+        var accountPublicationRetry =
+            accountSelectedPublicationOrderClient.authorize(accountPublicationRetryRequest);
+        assertThat(accountPublicationRetry.canonicalBytes())
+            .containsExactly(accountPublicationOrder.canonicalBytes());
+        assertThat(accountPublicationRetry.operationId())
+            .isEqualTo(accountPublicationOrder.operationId());
+        assertThat(accountPublicationRetry.fenceId()).isEqualTo(accountPublicationOrder.fenceId());
+        var accountPublicationRowsAfterRetry =
+            accountAccess
+                .sources()
+                .dsl
+                .fetch(
+                    "SELECT operation_id, binding FROM account_selected_publication_authorizations"
+                        + " WHERE tenant_uuid = ? AND publish_request_id = ?",
+                    selection.intent().canonicalTenantId(),
+                    selection.intent().publishRequestId());
+        assertThat(accountPublicationRowsAfterRetry).hasSize(1);
+        assertThat(accountPublicationRowsAfterRetry.get(0).get("operation_id", UUID.class))
+            .isEqualTo(accountPublicationOrder.operationId());
+        assertThat(accountPublicationRowsAfterRetry.get(0).get("binding", byte[].class))
+            .containsExactly(accountPublicationOrder.canonicalBytes());
+        var accountPublicationSourceKeysAfterRetry =
+            accountAccess
+                .sources()
+                .dsl
+                .fetch(
+                    "SELECT source_key FROM account_selected_publication_sources"
+                        + " WHERE operation_id = ? ORDER BY source_key",
+                    accountPublicationOrder.operationId())
+                .stream()
+                .map(row -> row.get("source_key", String.class))
+                .toList();
+        assertThat(accountPublicationSourceKeysAfterRetry)
+            .containsExactlyElementsOf(accountPublicationSourceKeysAfterFirst);
         var intakeRequest =
             GameLogicIntakeAuthorizationEvidence.Request.create(
                 NAMESPACE, UUID.randomUUID(), selection.selectedCommit());
@@ -3879,15 +3961,14 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               .containsExactlyElementsOf(completeBindingOwnerRowsBefore);
 
           // World source, publication, released-pair proof, fresh tenant association and
-          // public-realm catalog above use the actual owners. The original StartSession tuple is
-          // issued/redeemed by Account after the actual native Logging claim read, under the
-          // fixture's stipulated Account peer contexts. Game Session reserves the exact tuple and
-          // attaches Account's redeemed projection in its isolated V35 repository; Account's
-          // current
-          // attempt observation and World participation acquisition then traverse native
-          // same-namespace mTLS receivers. The launch below is produced and independently read by
-          // Game Session, then consumed through its exact-peer native reader. Retained Account
-          // participation is point-in-time evidence, not a continuous remote lock.
+          // public-realm catalog above use the actual owners. After the actual native Logging claim
+          // read, the original StartSession tuple is issued through the Logging/Admin mTLS client
+          // and redeemed through the Game Session stub pinned to Account. Game Session reserves the
+          // exact tuple and attaches Account's redeemed projection in its isolated V35 repository;
+          // Account's current-attempt observation and World participation acquisition then traverse
+          // native same-namespace mTLS receivers. The launch below is produced and independently
+          // read by Game Session, then consumed through its exact-peer native reader. Retained
+          // Account participation is point-in-time evidence, not a continuous remote lock.
           CompleteLaunchBindingEvidence completeLaunchEvidence =
               new CompleteLaunchBindingEvidence(
                   completeBinding.descriptor(), completeBinding.releaseAttestation());
@@ -4811,8 +4892,10 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 .isZero();
 
             // The World owner obtains a first full Account protection receipt over authenticated
-            // mTLS, then commits the exact local PREPARING-to-ACTIVE CAS. No source vector or
-            // Account authority is stipulated or supplied by this fixture.
+            // mTLS, then commits the exact local PREPARING-to-ACTIVE CAS. The activation caller
+            // supplies neither Account's source vector nor its protection receipt; the upstream
+            // Account actor, identity, and hosted-terms inputs used by this test fixture remain
+            // test-created.
             {
               var firstTerminal =
                   gameSessionToWorldProtectedActivationClient.activate(activationInput);
