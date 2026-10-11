@@ -21,9 +21,11 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.AssetExportOutcomePendingException;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ControlPlaneDigestService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
 import net.firedevops.firemud.gamedesign.service.PublicationFailureClassifier;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
@@ -99,24 +101,33 @@ public class VersionPublishCommandServiceImpl {
         request.publishWorkflowId());
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId()).orElse(null);
+    if (attempt == null || attempt.getStatus() == PublishAttemptStatus.PENDING) {
+      throw fullVersionPublicationUnavailable();
+    }
+    return replayTerminalAttempt(request, attempt);
+  }
+
+  /**
+   * Private non-ingress seam retained for mechanics proof until a production Draft source exists.
+   */
+  private PublishWorkflowSnapshot reconcileFullVersionPublishMechanics(
+      PublishWorkflowRequest request) {
+    request = request.recoverMissingPublishRequestId();
+    validateRequestIdentity(request);
+    logger.info(
+        "Reconciling full-version publication mechanics tenant={} workflowId={}",
+        request.tenantId(),
+        request.publishWorkflowId());
+    PublishAttempt attempt =
+        publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId()).orElse(null);
     if (attempt == null) {
       attempt = reserveDraftAttempt(request);
     }
     if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
-      validateTerminalFullVersionAttempt(attempt, request);
-      return replaySucceededAttempt(request, attempt);
+      return replayTerminalAttempt(request, attempt);
     }
     if (attempt.getStatus() == PublishAttemptStatus.FAILED) {
-      // Failed legacy attempts may retain only terminal evidence after their draft was deleted.
-      // Validate their stable scope before entering the draft-dependent compatibility backfill.
-      validateTerminalFullVersionAttempt(attempt, request);
-      return new PublishWorkflowSnapshot(
-          attempt.getVersionId() == null ? 0L : attempt.getVersionId(),
-          attempt.getVersionNumber(),
-          request.publishWorkflowId(),
-          "FAILED",
-          emptyIfNull(attempt.getFailureCode()),
-          emptyIfNull(attempt.getFailureMessage()));
+      return replayTerminalAttempt(request, attempt);
     }
     attempt = backfillLegacyFullVersionRequestDigest(request, attempt);
     validateFullVersionAttempt(attempt, request);
@@ -166,9 +177,36 @@ public class VersionPublishCommandServiceImpl {
     } catch (RuntimeException ex) {
       return failDefinitively(request, attempt, version, null, ex);
     }
+    VersionAssetArtifactStateDto stagedArtifact;
+    try {
+      stagedArtifact =
+          versionAssetArtifactService.stageExport(
+              request.tenantId(),
+              version.getId(),
+              dto.versionNumber(),
+              request.publishWorkflowId());
+    } catch (RuntimeException ex) {
+      throw pendingReconciliation(
+          "asset export staging outcome is pending; retry exact publish request", ex);
+    }
+    if (stagedArtifact == null
+        || !Objects.equals(stagedArtifact.tenantId(), request.tenantId())
+        || !Objects.equals(stagedArtifact.versionId(), version.getId())
+        || stagedArtifact.exportedVersionNumber() != dto.versionNumber()
+        || !Objects.equals(stagedArtifact.lastWorkflowId(), request.publishWorkflowId())
+        || stagedArtifact.stateEpoch() <= 0
+        || !("STAGED".equals(stagedArtifact.artifactState())
+            || "EXPORTED_UNATTESTED".equals(stagedArtifact.artifactState()))) {
+      throw pendingReconciliation(
+          "asset export staging did not confirm the exact pending publish scope; "
+              + "retry the exact publish request");
+    }
     ExportedAssetManifest exportedManifest;
     try {
       exportedManifest = assetExportService.exportAssets(request.tenantId(), dto.versionNumber());
+    } catch (AssetExportOutcomePendingException ex) {
+      throw pendingReconciliation(
+          "asset export outcome is pending; retry exact publish request", ex);
     } catch (RuntimeException ex) {
       return failDefinitively(request, attempt, version, null, ex);
     }
@@ -214,6 +252,43 @@ public class VersionPublishCommandServiceImpl {
       throw pendingReconciliation(
           "full-version finalization commit outcome is unknown; readback/reconciliation is required",
           ambiguousCommit);
+    }
+  }
+
+  private PublishWorkflowSnapshot replayTerminalAttempt(
+      PublishWorkflowRequest request, PublishAttempt attempt) {
+    if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
+      validateTerminalFullVersionAttempt(attempt, request);
+      return replaySucceededAttempt(request, attempt);
+    }
+    if (attempt.getStatus() == PublishAttemptStatus.FAILED) {
+      // Failed legacy attempts may retain only terminal evidence after their draft was deleted.
+      // Validate their stable scope before returning the immutable terminal result.
+      validateTerminalFullVersionAttempt(attempt, request);
+      return new PublishWorkflowSnapshot(
+          attempt.getVersionId() == null ? 0L : attempt.getVersionId(),
+          attempt.getVersionNumber(),
+          request.publishWorkflowId(),
+          "FAILED",
+          emptyIfNull(attempt.getFailureCode()),
+          emptyIfNull(attempt.getFailureMessage()));
+    }
+    throw fullVersionPublicationUnavailable();
+  }
+
+  private static FullVersionPublicationUnavailableException fullVersionPublicationUnavailable() {
+    return CreatorMutationOwnerProofGuard.denyUntilAccountCommitBoundProof(
+        FullVersionPublicationUnavailableException::new);
+  }
+
+  static final class FullVersionPublicationUnavailableException
+      extends MutationOwnerProofUnavailableException {
+    static final String ERROR_CODE = "FULL_VERSION_PUBLICATION_UNAVAILABLE";
+    static final String SAFE_MESSAGE =
+        "fresh and pending full-version publication require a production Draft association";
+
+    FullVersionPublicationUnavailableException() {
+      super(ERROR_CODE, SAFE_MESSAGE);
     }
   }
 
@@ -634,6 +709,10 @@ public class VersionPublishCommandServiceImpl {
     VersionAssetArtifactStateDto artifact =
         readVersionAssetArtifactState(request.tenantId(), attempt.getVersionId());
     if (bundle == null
+        && isExactPendingStagedCandidate(request, attempt, version.get(), artifact)) {
+      return PublicationReadback.absent();
+    }
+    if (bundle == null
         && artifact == null
         && version.get().getVersionState() == VersionLifecycleState.DRAFT) {
       return PublicationReadback.absent();
@@ -652,6 +731,54 @@ public class VersionPublishCommandServiceImpl {
       return PublicationReadback.partial();
     }
     return PublicationReadback.complete(version.get(), bundle, artifact);
+  }
+
+  private boolean isExactPendingStagedCandidate(
+      PublishWorkflowRequest request,
+      PublishAttempt attempt,
+      Version version,
+      VersionAssetArtifactStateDto artifact) {
+    if (!(attempt.getPublishType() == PublishType.FULL_VERSION
+        && attempt.getStatus() == PublishAttemptStatus.PENDING
+        && Objects.equals(attempt.getTenantId(), request.tenantId())
+        && Objects.equals(attempt.getPublishWorkflowId(), request.publishWorkflowId())
+        && attempt.getVersionId() != null
+        && Objects.equals(version.getTenantId(), request.tenantId())
+        && Objects.equals(version.getId(), attempt.getVersionId())
+        && version.getVersionNumber() == attempt.getVersionNumber()
+        && version.getVersionState() == VersionLifecycleState.DRAFT
+        && !version.isScriptOnly()
+        && version.getVersionStateEpoch() != null
+        && version.getVersionStateEpoch() > 0
+        && artifact != null
+        && Objects.equals(artifact.tenantId(), request.tenantId())
+        && Objects.equals(artifact.versionId(), attempt.getVersionId())
+        && artifact.exportedVersionNumber() == attempt.getVersionNumber()
+        && "STAGED".equals(artifact.artifactState())
+        && artifact.stateEpoch() > 0
+        && Objects.equals(artifact.lastWorkflowId(), request.publishWorkflowId())
+        && artifact.lastErrorCode() == null
+        && artifact.lastErrorMessage() == null)) {
+      return false;
+    }
+
+    try {
+      ExportedAssetManifest candidate =
+          versionAssetArtifactService.getExportCandidate(
+              request.tenantId(), attempt.getVersionId());
+      if (candidate == null) {
+        return artifact.manifestHash() == null
+            && artifact.exportedManifestAssetKeys() != null
+            && artifact.exportedManifestAssetKeys().isEmpty();
+      }
+      return Objects.equals(artifact.manifestHash(), candidate.manifestHash())
+          && Objects.equals(
+              artifact.exportedManifestAssetKeys(), candidate.requiredManifestAssetKeys());
+    } catch (RuntimeException malformedOrAmbiguousCandidate) {
+      // Candidate evidence is not a committed release. Any unreadable or contradictory candidate
+      // remains reconciliation-required rather than being treated as an empty staged intent.
+      return false;
+    }
   }
 
   private void requireExactBundleEvidence(

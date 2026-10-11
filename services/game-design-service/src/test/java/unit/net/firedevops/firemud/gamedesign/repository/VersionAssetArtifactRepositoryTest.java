@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.DriverManager;
 import java.util.ArrayList;
@@ -47,6 +48,10 @@ class VersionAssetArtifactRepositoryTest {
               + "\"last_error_code\" VARCHAR(255), "
               + "\"last_error_message\" VARCHAR(1000), "
               + "\"exported_manifest_asset_keys_json\" VARCHAR(4000), "
+              + "\"manifest_schema_version\" INT, "
+              + "\"artifact_digests_json\" VARCHAR(4000), "
+              + "\"published_object_proofs_json\" VARCHAR(4000), "
+              + "\"candidate_snapshot_version_id\" BIGINT, "
               + "\"updated_at\" TIMESTAMP NOT NULL, "
               + "UNIQUE (\"tenant_id\", \"version_id\"))");
 
@@ -80,6 +85,31 @@ class VersionAssetArtifactRepositoryTest {
                 assertThat(sql.toLowerCase()).doesNotContain("tenant_id");
                 assertThat(sql.toLowerCase()).doesNotContain("version_id");
               });
+
+      VersionAssetArtifactRepository repository = new VersionAssetArtifactRepository(dsl);
+      VersionAssetArtifact stale =
+          repository.findByTenantIdAndVersionId("tenant-1", 7L).orElseThrow();
+      inserted.setStateEpoch(3L);
+      inserted.setLastWorkflowId("exact-next-workflow");
+      VersionAssetArtifact winner = repository.save(inserted);
+      assertThat(winner.getStateEpoch()).isEqualTo(3L);
+      assertThat(winner.getLastWorkflowId()).isEqualTo("exact-next-workflow");
+      stale.setStateEpoch(3L);
+      stale.setLastWorkflowId("stale-workflow");
+      assertThatThrownBy(() -> repository.save(stale))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("ASSET_ARTIFACT_STATE_CONFLICT");
+      assertThat(repository.findByTenantIdAndVersionId("tenant-1", 7L).orElseThrow())
+          .isEqualTo(winner);
+      winner.setTenantId("other-tenant");
+      winner.setStateEpoch(4L);
+      assertThatThrownBy(() -> repository.save(winner))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("ASSET_ARTIFACT_STATE_CONFLICT");
+      assertThat(repository.findByTenantIdAndVersionId("other-tenant", 7L)).isEmpty();
+      assertThat(
+              repository.findByTenantIdAndVersionId("tenant-1", 7L).orElseThrow().getStateEpoch())
+          .isEqualTo(3L);
     }
   }
 }

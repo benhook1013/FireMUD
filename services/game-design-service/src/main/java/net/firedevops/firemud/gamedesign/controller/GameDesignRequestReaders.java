@@ -5,6 +5,7 @@ import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.ErrorDetail;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
@@ -21,6 +22,9 @@ final class GameDesignRequestReaders {
       Supplier<ResponseEntity<ApiResponse<T>>> action) {
     try {
       return action.get();
+    } catch (MutationOwnerProofUnavailableException ex) {
+      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+          .body(ApiResponse.error(new ErrorDetail(ex.errorCode(), ex.getMessage())));
     } catch (IllegalArgumentException ex) {
       return ResponseEntity.status(HttpStatus.BAD_REQUEST)
           .body(ApiResponse.error(new ErrorDetail("INVALID_ARGUMENT", ex.getMessage())));

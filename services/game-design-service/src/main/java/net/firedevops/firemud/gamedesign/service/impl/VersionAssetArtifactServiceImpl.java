@@ -24,9 +24,11 @@ import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
@@ -80,6 +82,64 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
   }
 
   @Override
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public VersionAssetArtifactStateDto stageExport(
+      String tenantId, long versionId, int versionNumber, String workflowId) {
+    if (tenantId == null
+        || tenantId.isBlank()
+        || versionId <= 0
+        || versionNumber <= 0
+        || workflowId == null
+        || workflowId.isBlank()
+        || workflowId.length() > 1024) {
+      throw new IllegalArgumentException("Exact asset export scope and workflow are required");
+    }
+    Version version =
+        versionRepository
+            .findByTenantIdAndIdForUpdate(tenantId, versionId)
+            .orElseThrow(() -> new IllegalArgumentException("version not found"));
+    if (version.getVersionState() != VersionLifecycleState.DRAFT
+        || !Objects.equals(version.getTenantId(), tenantId)
+        || !Objects.equals(version.getId(), versionId)
+        || version.getVersionNumber() != versionNumber
+        || version.getVersionStateEpoch() == null
+        || version.getVersionStateEpoch() <= 0
+        || version.getCanonicalTenantId() == null
+        || version.getCanonicalTenantId().equals(new UUID(0L, 0L))
+        || version.getCanonicalVersionId() == null
+        || version.getCanonicalVersionId().equals(new UUID(0L, 0L))
+        || version.getIdentitySourceGameRowId() == null
+        || version.getIdentitySourceGameRowId() <= 0
+        || !Objects.equals(version.getIdentitySourceGameTenantKey(), tenantId)
+        || version.getIdentitySourceProvenanceKind() == null
+        || !List.of("NEW_GAME_ROW", "RETAINED_GAME_V29")
+            .contains(version.getIdentitySourceProvenanceKind())) {
+      throw new IllegalStateException("ASSET_EXPORT_VERSION_CONFLICT");
+    }
+    Optional<VersionAssetArtifact> stored =
+        repository.findByTenantIdAndVersionIdForUpdate(tenantId, versionId);
+    if (stored.isPresent()) {
+      VersionAssetArtifact artifact = stored.orElseThrow();
+      if (!Objects.equals(workflowId, artifact.getLastWorkflowId())
+          || artifact.getExportedVersionNumber() != versionNumber
+          || artifact.getStateEpoch() <= 0
+          || (artifact.getArtifactState() != VersionAssetArtifactState.STAGED
+              && artifact.getArtifactState() != VersionAssetArtifactState.EXPORTED_UNATTESTED)) {
+        throw new IllegalStateException("ASSET_EXPORT_OPERATION_CONFLICT");
+      }
+      return toDto(artifact);
+    }
+    VersionAssetArtifact artifact = new VersionAssetArtifact();
+    artifact.setTenantId(tenantId);
+    artifact.setVersionId(versionId);
+    artifact.setExportedVersionNumber(versionNumber);
+    artifact.setArtifactState(VersionAssetArtifactState.STAGED);
+    artifact.setStateEpoch(1L);
+    artifact.setLastWorkflowId(workflowId);
+    return toDto(repository.save(artifact));
+  }
+
+  @Override
   @Transactional
   public VersionAssetArtifactStateDto markExportedUnattested(
       String tenantId,
@@ -87,10 +147,24 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
       int exportedVersionNumber,
       String workflowId,
       ExportedAssetManifest exportedManifest) {
-    VersionAssetArtifact artifact = findOrCreate(tenantId, versionId);
+    VersionAssetArtifact artifact =
+        repository
+            .findByTenantIdAndVersionIdForUpdate(tenantId, versionId)
+            .orElseThrow(() -> new IllegalStateException("ASSET_EXPORT_OPERATION_CONFLICT"));
+    if (!Objects.equals(workflowId, artifact.getLastWorkflowId())
+        || artifact.getExportedVersionNumber() != exportedVersionNumber
+        || !Objects.equals(candidateOf(artifact), exportedManifest)) {
+      throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_CONFLICT");
+    }
+    if (artifact.getArtifactState() == VersionAssetArtifactState.EXPORTED_UNATTESTED) {
+      return toDto(artifact);
+    }
+    if (artifact.getArtifactState() != VersionAssetArtifactState.STAGED) {
+      throw new IllegalStateException("ASSET_ARTIFACT_STATE_CONFLICT");
+    }
     artifact.setArtifactState(VersionAssetArtifactState.EXPORTED_UNATTESTED);
     artifact.setExportedVersionNumber(exportedVersionNumber);
-    artifact.setStateEpoch(artifact.getStateEpoch() + 1);
+    artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
     artifact.setManifestHash(exportedManifest.manifestHash());
     artifact.setLastWorkflowId(workflowId);
     artifact.setLastErrorCode(null);
@@ -99,6 +173,23 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
         serializeKeys(exportedManifest.requiredManifestAssetKeys()));
     artifact.setUpdatedAt(LocalDateTime.now());
     return toDto(repository.save(artifact));
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public ExportedAssetManifest getExportCandidate(String tenantId, long versionId) {
+    if (tenantId == null || tenantId.isBlank() || versionId <= 0) {
+      throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_UNAVAILABLE");
+    }
+    VersionAssetArtifact artifact = requireArtifact(tenantId, versionId);
+    if (!Objects.equals(tenantId, artifact.getTenantId())
+        || !Objects.equals(versionId, artifact.getVersionId())) {
+      throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_UNAVAILABLE");
+    }
+    if (isInitialStagedIntentWithoutCandidate(artifact)) {
+      return null;
+    }
+    return candidateOf(artifact);
   }
 
   @Override
@@ -118,7 +209,7 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
       throw new IllegalStateException("REPAIR_ATTESTATION_MISMATCH");
     }
     artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
-    artifact.setStateEpoch(artifact.getStateEpoch() + 1);
+    artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
     artifact.setLastWorkflowId(workflowId);
     artifact.setLastErrorCode(null);
     artifact.setLastErrorMessage(null);
@@ -139,8 +230,14 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
     VersionAssetArtifact artifact = findOrCreate(tenantId, versionId);
     artifact.setArtifactState(VersionAssetArtifactState.FAILED);
     artifact.setExportedVersionNumber(exportedVersionNumber);
-    artifact.setStateEpoch(artifact.getStateEpoch() + 1);
-    artifact.setManifestHash(exportedManifest == null ? null : exportedManifest.manifestHash());
+    artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
+    if (artifact.getManifestSchemaVersion() != null) {
+      if (exportedManifest != null && !Objects.equals(candidateOf(artifact), exportedManifest)) {
+        throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_CONFLICT");
+      }
+    } else {
+      artifact.setManifestHash(exportedManifest == null ? null : exportedManifest.manifestHash());
+    }
     artifact.setLastWorkflowId(workflowId);
     artifact.setLastErrorCode(errorCode);
     artifact.setLastErrorMessage(errorMessage);
@@ -163,7 +260,7 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
       throw new IllegalStateException("VERSION_ASSET_NOT_DELETABLE");
     }
     artifact.setArtifactState(VersionAssetArtifactState.TOMBSTONED);
-    artifact.setStateEpoch(artifact.getStateEpoch() + 1);
+    artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
     artifact.setLastWorkflowId(tombstoneWorkflowId);
     artifact.setLastErrorCode(null);
     artifact.setLastErrorMessage(null);
@@ -188,7 +285,9 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
           "version assets must be tombstoned before purge can begin");
     }
     var version =
-        versionRepository.findById(versionId).filter(found -> found.getTenantId().equals(tenantId));
+        versionRepository
+            .findById(versionId)
+            .filter(found -> Objects.equals(found.getTenantId(), tenantId));
     boolean hasPublishedReleaseBundle =
         publishedReleaseBundleRepository
             .findByTenantIdAndVersionId(tenantId, versionId)
@@ -236,15 +335,19 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
           "VERSION_STATE_NOT_RETIRED",
           "version assets cannot be purged until the version is retired");
     }
-    if (version.isEmpty() && hasPublishedReleaseBundle) {
+    if (version.isEmpty()) {
       return new VersionAssetDeletionEligibilityDto(
           artifact.getTenantId(),
           artifact.getVersionId(),
           false,
           artifact.getArtifactState().name(),
           artifact.getStateEpoch(),
-          "PUBLISHED_RELEASE_BUNDLE_STILL_PRESENT",
-          "version assets cannot be purged while an attested release bundle still exists without version state");
+          hasPublishedReleaseBundle
+              ? "PUBLISHED_RELEASE_BUNDLE_STILL_PRESENT"
+              : "VERSION_AUTHORITY_NOT_FOUND",
+          hasPublishedReleaseBundle
+              ? "version assets cannot be purged while an attested release bundle still exists without version state"
+              : "an exact caller-tenant Version authority is required before purge eligibility can be granted");
     }
     return new VersionAssetDeletionEligibilityDto(
         artifact.getTenantId(),
@@ -268,7 +371,7 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
     }
     String purgeWorkflowId = UUID.randomUUID().toString();
     artifact.setArtifactState(VersionAssetArtifactState.PURGE_IN_PROGRESS);
-    artifact.setStateEpoch(artifact.getStateEpoch() + 1);
+    artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
     artifact.setLastWorkflowId(purgeWorkflowId);
     artifact.setLastErrorCode(null);
     artifact.setLastErrorMessage(null);
@@ -303,7 +406,7 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
           artifact.getExportedVersionNumber(),
           deserializeKeys(artifact.getExportedManifestAssetKeysJson()));
       artifact.setArtifactState(VersionAssetArtifactState.PURGED);
-      artifact.setStateEpoch(artifact.getStateEpoch() + 1);
+      artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
       artifact.setLastErrorCode(null);
       artifact.setLastErrorMessage(null);
       artifact.setUpdatedAt(LocalDateTime.now());
@@ -318,7 +421,7 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
       return toWorkflowDto(workflow);
     } catch (RuntimeException ex) {
       artifact.setArtifactState(VersionAssetArtifactState.PURGE_FAILED);
-      artifact.setStateEpoch(artifact.getStateEpoch() + 1);
+      artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
       artifact.setLastErrorCode("PURGE_FINALIZATION_CONFLICT");
       artifact.setLastErrorMessage(ex.getMessage());
       artifact.setUpdatedAt(LocalDateTime.now());
@@ -356,24 +459,37 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
             .findById(versionId)
             .filter(found -> found.getTenantId().equals(tenantId))
             .orElseThrow(() -> new IllegalArgumentException("version not found"));
-    var exported = assetExportService.exportAssets(tenantId, version.getVersionNumber());
+    ExportedAssetManifest exported;
     try {
-      PublishedReleaseBundleContract.requireExactRepairMatch(bundle, exported);
+      exported =
+          assetExportService.repairPublishedAssets(tenantId, version.getVersionNumber(), bundle);
     } catch (IllegalStateException ex) {
+      if (!isRepairAttestationFailure(ex)) {
+        throw ex;
+      }
       artifact.setLastWorkflowId(repairWorkflowId);
       artifact.setLastErrorCode(ex.getMessage().split(":", 2)[0]);
       artifact.setLastErrorMessage(ex.getMessage().split(":", 2)[1].trim());
+      artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
       artifact.setUpdatedAt(LocalDateTime.now());
       repository.save(artifact);
       throw new IllegalStateException(artifact.getLastErrorCode());
     }
-    artifact.setStateEpoch(artifact.getStateEpoch() + 1);
+    artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
     artifact.setManifestHash(exported.manifestHash());
     artifact.setLastWorkflowId(repairWorkflowId);
     artifact.setLastErrorCode(null);
     artifact.setLastErrorMessage(null);
     artifact.setUpdatedAt(LocalDateTime.now());
     return toDto(repository.save(artifact));
+  }
+
+  private boolean isRepairAttestationFailure(IllegalStateException exception) {
+    String message = exception.getMessage();
+    return message != null
+        && (message.startsWith(PublishedReleaseBundleContract.REPAIR_ATTESTATION_MISMATCH)
+            || message.startsWith(PublishedReleaseBundleContract.REPAIR_ATTESTED_ASSET_KEY_MISMATCH)
+            || message.startsWith(PublishedReleaseBundleContract.SCHEMA_VERSION_UNSUPPORTED));
   }
 
   private VersionAssetPurgeWorkflow requireWorkflow(
@@ -445,6 +561,53 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
     } catch (Exception ex) {
       throw new IllegalStateException("failed to serialize exported manifest asset keys", ex);
     }
+  }
+
+  private ExportedAssetManifest candidateOf(VersionAssetArtifact artifact) {
+    if (artifact.getManifestSchemaVersion() == null
+        || artifact.getArtifactDigestsJson() == null
+        || artifact.getPublishedObjectProofsJson() == null
+        || !Objects.equals(artifact.getCandidateSnapshotVersionId(), artifact.getVersionId())) {
+      throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_UNAVAILABLE");
+    }
+    try {
+      List<PublishedArtifactDigest> digests =
+          objectMapper.readValue(
+              artifact.getArtifactDigestsJson(),
+              objectMapper
+                  .getTypeFactory()
+                  .constructCollectionType(List.class, PublishedArtifactDigest.class));
+      return new ExportedAssetManifest(
+          artifact.getManifestHash(),
+          artifact.getManifestSchemaVersion(),
+          deserializeKeys(artifact.getExportedManifestAssetKeysJson()),
+          digests);
+    } catch (Exception ex) {
+      throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_UNAVAILABLE", ex);
+    }
+  }
+
+  private boolean isInitialStagedIntentWithoutCandidate(VersionAssetArtifact artifact) {
+    if (artifact.getArtifactState() != VersionAssetArtifactState.STAGED
+        || artifact.getStateEpoch() <= 0
+        || artifact.getLastWorkflowId() == null
+        || artifact.getLastWorkflowId().isBlank()
+        || artifact.getManifestHash() != null
+        || artifact.getManifestSchemaVersion() != null
+        || artifact.getArtifactDigestsJson() != null
+        || artifact.getPublishedObjectProofsJson() != null
+        || artifact.getCandidateSnapshotVersionId() != null) {
+      return false;
+    }
+    String keysJson = artifact.getExportedManifestAssetKeysJson();
+    if (keysJson == null || keysJson.isBlank()) {
+      throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_UNAVAILABLE");
+    }
+    List<String> keys = deserializeKeys(keysJson);
+    if (keys == null) {
+      throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_UNAVAILABLE");
+    }
+    return keys.isEmpty();
   }
 
   private List<String> deserializeKeys(String keysJson) {

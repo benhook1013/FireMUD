@@ -22,6 +22,7 @@ public class PublishedReleaseBundle {
   private String requiredManifestAssetKeysJson;
   private String participantDigestsJson = "[]";
   private String commandDefinitionsJson = "[]";
+  private String worldPublishedStartLocationEvidenceJson;
   private boolean scriptOnly;
   private String scriptPatchVersion;
   private LocalDateTime publishedAt = LocalDateTime.now();

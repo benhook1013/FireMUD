@@ -18,9 +18,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.entity.LaunchDescriptor;
@@ -67,6 +69,118 @@ class LaunchDescriptorServiceImplTest {
   @Mock private GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
 
   private LaunchDescriptorServiceImpl service;
+
+  @Test
+  void completeSelectorV2ResolvesTheUnchangedDescriptorV1Binding() throws Exception {
+    var request = request("cp-selector-v2", 9L);
+    stubSuccessfulLaunch(request, 7L, 11L);
+    var bundle = selectorBundle(false);
+    when(publishedReleaseBundleService.getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L))
+        .thenReturn(bundle);
+
+    var resolved = service.resolveLaunchDescriptor(request);
+
+    assertEquals(7L, resolved.versionId());
+    assertEquals(11L, resolved.releaseBundleId());
+    assertEquals(PUBLISHED_RELEASE_BUNDLE_REF, resolved.publishedReleaseBundleRef());
+    assertEquals(
+        AuthoredWorldLaunchDescriptorEvidence.SCHEMA_VERSION,
+        resolved.authoredWorldBinding().schemaVersion());
+    assertEquals(request.requestDigest(), resolved.authoredWorldBinding().requestDigest());
+    assertEquals(17L, resolved.versionStateEpoch());
+    verify(launchDescriptorRepository).insertImmutable(any(LaunchDescriptor.class));
+  }
+
+  @Test
+  void selectorV2WithoutCompleteParticipantProofCannotResolveOrFreezeSyntheticSuccess()
+      throws Exception {
+    var request = request("cp-incomplete-selector-v2", 9L);
+    stubSuccessfulLaunch(request, 7L, 11L);
+    when(publishedReleaseBundleService.getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L))
+        .thenReturn(selectorBundle(true));
+
+    assertThrows(IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    verify(launchDescriptorRepository, never()).insertImmutable(any(LaunchDescriptor.class));
+  }
+
+  @Test
+  void selectorV2WithRetainedControlPlaneDigestSchemaCannotResolveOrFreezeSuccess()
+      throws Exception {
+    var request = request("cp-retained-control-plane-schema", 9L);
+    stubSuccessfulLaunch(request, 7L, 11L);
+    when(publishedReleaseBundleService.getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L))
+        .thenReturn(selectorBundle(false, true));
+
+    assertThrows(IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    verify(launchDescriptorRepository, never()).insertImmutable(any(LaunchDescriptor.class));
+  }
+
+  private PublishedReleaseBundleDto selectorBundle(boolean omitParticipant) throws Exception {
+    return selectorBundle(omitParticipant, false);
+  }
+
+  private PublishedReleaseBundleDto selectorBundle(
+      boolean omitParticipant, boolean retainControlPlaneDigestSchema) throws Exception {
+    // Stipulated original component bytes; this fixture does not authenticate a producer or admit
+    // gameplay.
+    WorldPublishedStartLocationEvidence evidence =
+        PublishedWorldSelectorFixtures.evidence(
+            new TargetProof(
+                CANONICAL_TENANT_ID,
+                CANONICAL_VERSION_ID,
+                7L,
+                PRIVATE_SOURCE_TENANT_KEY,
+                1L,
+                PRIVATE_SOURCE_TENANT_KEY,
+                "NEW_GAME_ROW"));
+    var participants =
+        PublishedWorldSelectorFixtures.participants(
+            7L,
+            evidence,
+            net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
+                .SELECTOR_SCHEMA_VERSION);
+    if (retainControlPlaneDigestSchema) {
+      participants =
+          participants.stream()
+              .map(
+                  participant ->
+                      "GAME_DESIGN_CONTROL_PLANE".equals(participant.participantKey())
+                          ? new net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto(
+                              participant.participantKey(),
+                              participant.scopeValue(),
+                              participant.baseVersionId(),
+                              participant.appliedCommitId(),
+                              participant.contentDigest(),
+                              net.firedevops.firemud.common.gamedesign
+                                  .AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION,
+                              participant.abilitySchemaDigest(),
+                              participant.errorCode(),
+                              participant.errorMessage())
+                          : participant)
+              .toList();
+    }
+    return new PublishedReleaseBundleDto(
+        11L,
+        PRIVATE_SOURCE_TENANT_KEY,
+        7L,
+        8,
+        "v2",
+        evidence.request().publishWorkflowId(),
+        MANIFEST_HASH,
+        List.of(),
+        omitParticipant ? participants.subList(0, 4) : participants,
+        List.of(),
+        "genrev-1",
+        false,
+        null,
+        LocalDateTime.now(),
+        CANONICAL_TENANT_ID,
+        CANONICAL_VERSION_ID,
+        PUBLISHED_RELEASE_BUNDLE_REF,
+        1,
+        List.of(),
+        evidence);
+  }
 
   @BeforeEach
   void setUp() {

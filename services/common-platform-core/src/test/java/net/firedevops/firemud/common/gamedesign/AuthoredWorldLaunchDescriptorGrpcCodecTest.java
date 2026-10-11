@@ -230,7 +230,46 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
   }
 
   @Test
-  void resolveAndCompleteReadsRejectErrorsMissingBindingsAndChangedSelectors() throws Exception {
+  void completeReadPreservesWorldEvidenceAndRejectsMissingMalformedAndSubstitutedBytes()
+      throws Exception {
+    var selector = AuthoredWorldReleaseAttestationSelectorTest.selectorEvidence();
+    var descriptor = AuthoredWorldReleaseAttestationSelectorTest.descriptor(selector);
+    var release = AuthoredWorldReleaseAttestationSelectorTest.release(descriptor, selector);
+    var binding = new CompleteLaunchBindingEvidence(descriptor, release);
+    var request = AuthoredWorldLaunchDescriptorGrpcCodec.toGetRequest(getRequest(descriptor));
+    var response = completeResponse(request, binding);
+
+    assertThat(AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(request, response))
+        .isEqualTo(binding);
+    for (var invalid :
+        List.of(
+            response.getReleaseAttestation().toBuilder().clearWorldStartLocationEvidence().build(),
+            response.getReleaseAttestation().toBuilder().setSchemaVersion(1).build(),
+            response.getReleaseAttestation().toBuilder()
+                .setWorldStartLocationEvidence(ByteString.EMPTY)
+                .build(),
+            response.getReleaseAttestation().toBuilder()
+                .setWorldStartLocationEvidence(ByteString.copyFromUtf8("{} "))
+                .build())) {
+      assertThatThrownBy(
+              () ->
+                  AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                      request, response.toBuilder().setReleaseAttestation(invalid).build()))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request,
+                    response.toBuilder()
+                        .setReleaseAttestation(
+                            response.getReleaseAttestation().toBuilder()
+                                .setUnknownFields(UNKNOWN_FIELD))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test  void resolveAndCompleteReadsRejectErrorsMissingBindingsAndChangedSelectors() throws Exception {
     var world = authoredWorldFixture();
     var descriptor = world.launchBinding().descriptor();
     var wireDescriptor =
@@ -616,6 +655,32 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
                     resolveResponse.toBuilder().setLaunchDescriptor(unsupportedSchema).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Authored-world launch evidence is invalid");
+
+    var wireRequest = AuthoredWorldLaunchDescriptorGrpcCodec.toGetRequest(getRequest(descriptor));
+    var completeResponse = completeResponse(wireRequest, world.launchBinding());
+    var releaseWithUnknownParticipant =
+        completeResponse.getReleaseAttestation().toBuilder()
+            .setParticipantDigests(
+                0,
+                completeResponse.getReleaseAttestation().getParticipantDigests(0).toBuilder()
+                    .setUnknownFields(UNKNOWN_FIELD))
+            .build();
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    wireRequest,
+                    completeResponse.toBuilder()
+                        .setReleaseAttestation(releaseWithUnknownParticipant)
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unsupported fields");
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    wireRequest.toBuilder().setUnknownFields(UNKNOWN_FIELD).build(),
+                    completeResponse))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unsupported fields");
   }
 
   private static WorldCanonicalInstanceLifecycleEvidence authoredWorldFixture() throws Exception {
@@ -855,4 +920,5 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
         original.remapSetIdPresent(),
         original.remapSetId());
   }
+
 }
