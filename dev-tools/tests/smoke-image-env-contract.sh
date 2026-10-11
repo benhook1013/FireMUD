@@ -30,14 +30,20 @@ docker() {
       if [[ "${SMOKE_TEST_DIAGNOSTICS_MODE:-}" == true ]]; then
         local arguments=" $* "
         if [[ "$arguments" == *" logs "* ]]; then
-          if [[ "$arguments" != *" --no-color "* || "$arguments" != *" --timestamps "* \
-            || "$arguments" != *" --tail 200 "* \
-            || "$arguments" != *" game-design-service game-session-service "* ]]; then
+          if [[ "$arguments" != *" logs --no-color --timestamps --tail 200 "* ]]; then
             echo "Unexpected smoke diagnostic log command: $*" >&2
             return 90
           fi
-          printf 'MOCK_LOG service=game-design-service safeDiagnostic=true\n'
-          printf 'MOCK_LOG service=game-session-service safeDiagnostic=true\n'
+          local service="${arguments##* --tail 200 }"
+          service="${service% }"
+          case "$service" in
+            game-design-service|game-session-service|world-management-service) ;;
+            *)
+              echo "Unexpected smoke diagnostic service selection: $*" >&2
+              return 90
+              ;;
+          esac
+          printf 'MOCK_LOG service=%s safeDiagnostic=true\n' "$service"
           [[ "${SMOKE_TEST_LOG_CAPTURE_FAIL:-false}" != true ]] || return 91
         fi
         return 0
@@ -163,7 +169,7 @@ run_diagnostic_smoke_case() {
 
 run_failure_diagnostic_regressions() {
   run_diagnostic_smoke_case probe-failure false 37 false 37
-  for service in game-design-service game-session-service; do
+  for service in game-design-service game-session-service world-management-service; do
     if ! grep -Fq "MOCK_LOG service=$service safeDiagnostic=true" "$OUT_FILE"; then
       echo "failed smoke did not print bounded diagnostics for $service" >&2
       cat "$OUT_FILE" >&2
@@ -195,6 +201,14 @@ run_failure_diagnostic_regressions() {
     cat "$ERR_FILE" >&2
     return 1
   fi
+  for service in game-design-service game-session-service world-management-service; do
+    if ! grep -Fq "MOCK_LOG service=$service safeDiagnostic=true" "$OUT_FILE"; then
+      echo "diagnostic capture failure prevented attempting logs for $service" >&2
+      cat "$OUT_FILE" >&2
+      cat "$ERR_FILE" >&2
+      return 1
+    fi
+  done
 }
 
 cleanup() {
