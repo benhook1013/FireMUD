@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.IssuanceCandidate;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionRequest;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.Status;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
@@ -98,6 +99,73 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
         .containsExactly(first.preAuthorizationTuple());
     assertThat(duplicate.issuance().toString())
         .doesNotContain("tuple-v1", "bundle-v1", "ciphertext-envelope");
+  }
+
+  @Test
+  void expiredEnvelopeErasureIsBoundedIdempotentAndRetainsCompactEvidence() {
+    MockStore store = new MockStore();
+    AccountStartSessionOperatorAuthorizationRepository repository = repository(store);
+    IssuanceCandidate expired = expiredCandidate(tuple());
+    inTransaction(() -> repository.createOrReadExact(expired));
+
+    var first =
+        inTransaction(
+            () -> repository.eraseExpiredResponseEnvelope(expired.controlPlaneRequestId()));
+    var retry =
+        inTransaction(
+            () -> repository.eraseExpiredResponseEnvelope(expired.controlPlaneRequestId()));
+
+    assertThat(first.erasedNow()).isTrue();
+    assertThat(retry.erasedNow()).isFalse();
+    assertThat(first.issuance().encryptedResponseEnvelope()).isNull();
+    assertThat(first.issuance().responseEnvelopeErasedAt()).isEqualTo(NOW);
+    assertThat(first.issuance().controlPlaneRequestId()).isEqualTo(expired.controlPlaneRequestId());
+    assertThat(first.issuance().preAuthorizationTuple())
+        .containsExactly(expired.preAuthorizationTuple());
+    assertThat(first.issuance().authorizationReferenceFingerprint())
+        .isEqualTo(expired.authorizationReferenceFingerprint());
+    assertThat(first.issuance().authorityEvidenceBundle())
+        .containsExactly(expired.authorityEvidenceBundle());
+    assertThat(first.issuance().status()).isEqualTo(Status.ISSUED);
+    assertThat(store.erasureUpdateCount.get()).isEqualTo(1);
+    assertThat(store.lastErasureSql)
+        .contains("response_envelope_expires_at <= clock_timestamp()")
+        .doesNotContain("set response_envelope_erased_at")
+        .doesNotContain("delete from", "truncate");
+  }
+
+  @Test
+  void preExpiryAndUnprovedMissingEnvelopeFailClosed() {
+    MockStore earlyStore = new MockStore();
+    AccountStartSessionOperatorAuthorizationRepository earlyRepository = repository(earlyStore);
+    IssuanceCandidate future = candidate(tuple());
+    inTransaction(() -> earlyRepository.createOrReadExact(future));
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    () ->
+                        earlyRepository.eraseExpiredResponseEnvelope(
+                            future.controlPlaneRequestId())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("evidence unavailable");
+    assertThat(earlyStore.row.envelope).containsExactly(future.encryptedResponseEnvelope());
+    assertThat(earlyStore.erasureUpdateCount.get()).isZero();
+
+    MockStore unprovedStore = new MockStore();
+    AccountStartSessionOperatorAuthorizationRepository unprovedRepository =
+        repository(unprovedStore);
+    IssuanceCandidate expired = expiredCandidate(tuple());
+    inTransaction(() -> unprovedRepository.createOrReadExact(expired));
+    unprovedStore.row.envelope = null;
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    () ->
+                        unprovedRepository.findByControlPlaneRequestId(
+                            expired.controlPlaneRequestId())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("evidence unavailable");
   }
 
   @Test
@@ -422,6 +490,26 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
         NOW.plusSeconds(210));
   }
 
+  private static IssuanceCandidate expiredCandidate(
+      StartSessionPreAuthorizationReservationTuple tuple) {
+    return new IssuanceCandidate(
+        tuple.controlPlaneRequestId(),
+        canonicalBytes(tuple),
+        tuple.mutationDigest(),
+        ISSUER_URI,
+        RESERVATION_OWNER_ID,
+        2L,
+        ISSUANCE_OPERATION_ID,
+        4L,
+        bundleReference(4L),
+        bytes("bundle-v1"),
+        fingerprint("a"),
+        bytes("expired-ciphertext-envelope"),
+        NOW.minusSeconds(240),
+        NOW.minusSeconds(60),
+        NOW.minusSeconds(30));
+  }
+
   private static IssuanceCandidate withFingerprint(IssuanceCandidate original, String fingerprint) {
     return new IssuanceCandidate(
         original.controlPlaneRequestId(),
@@ -541,6 +629,8 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
         DSL.field("authorization_reference_fingerprint", String.class);
     private static final Field<byte[]> ENVELOPE =
         DSL.field("encrypted_response_envelope", byte[].class);
+    private static final Field<OffsetDateTime> ENVELOPE_ERASED_AT =
+        DSL.field("response_envelope_erased_at", OffsetDateTime.class);
     private static final Field<OffsetDateTime> ISSUED_AT =
         DSL.field("issued_at", OffsetDateTime.class);
     private static final Field<OffsetDateTime> REFERENCE_EXPIRY =
@@ -563,8 +653,10 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     private final AtomicInteger databaseCallCount = new AtomicInteger();
     private final AtomicInteger insertCount = new AtomicInteger();
     private final AtomicInteger redemptionUpdateCount = new AtomicInteger();
+    private final AtomicInteger erasureUpdateCount = new AtomicInteger();
     private String lastInsertSql = "";
     private String lastRedemptionSql = "";
+    private String lastErasureSql = "";
     private String lastLockSql = "";
     private StoredRow row;
 
@@ -583,6 +675,19 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
         return new MockResult[] {new MockResult(0)};
       }
       if (sql.startsWith("update account_start_session_operator_authorizations")) {
+        if (sql.contains("set encrypted_response_envelope = null")) {
+          lastErasureSql = sql;
+          if (row == null
+              || row.envelope == null
+              || row.responseEnvelopeErasedAt != null
+              || row.envelopeExpiresAt.toInstant().isAfter(NOW)) {
+            return new MockResult[] {new MockResult(0)};
+          }
+          row.envelope = null;
+          row.responseEnvelopeErasedAt = OffsetDateTime.ofInstant(NOW, java.time.ZoneOffset.UTC);
+          erasureUpdateCount.incrementAndGet();
+          return new MockResult[] {new MockResult(1)};
+        }
         lastRedemptionSql = sql;
         if (row == null || !"ISSUED".equals(row.status)) {
           return new MockResult[] {new MockResult(0)};
@@ -637,6 +742,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
                   BUNDLE,
                   FINGERPRINT,
                   ENVELOPE,
+                  ENVELOPE_ERASED_AT,
                   ISSUED_AT,
                   REFERENCE_EXPIRY,
                   ENVELOPE_EXPIRY,
@@ -665,7 +771,8 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
       record.setValue(BUNDLE_LINEARIZATION, value.bundleReference.linearization());
       record.setValue(BUNDLE, value.bundle.clone());
       record.setValue(FINGERPRINT, value.fingerprint);
-      record.setValue(ENVELOPE, value.envelope.clone());
+      record.setValue(ENVELOPE, value.envelope == null ? null : value.envelope.clone());
+      record.setValue(ENVELOPE_ERASED_AT, value.responseEnvelopeErasedAt);
       record.setValue(ISSUED_AT, value.issuedAt);
       record.setValue(REFERENCE_EXPIRY, value.referenceExpiresAt);
       record.setValue(ENVELOPE_EXPIRY, value.envelopeExpiresAt);
@@ -695,10 +802,11 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     private final BundleReference bundleReference;
     private final byte[] bundle;
     private final String fingerprint;
-    private final byte[] envelope;
+    private byte[] envelope;
     private final OffsetDateTime issuedAt;
     private final OffsetDateTime referenceExpiresAt;
     private final OffsetDateTime envelopeExpiresAt;
+    private OffsetDateTime responseEnvelopeErasedAt;
     private String status = "ISSUED";
     private String redeemer;
     private UUID ownerAttempt;

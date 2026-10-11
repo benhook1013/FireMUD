@@ -15,6 +15,7 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
@@ -30,6 +31,9 @@ import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationRequest;
 import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationResponse;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionResult;
 import net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcService;
+import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring;
+import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography;
+import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeKeyring;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorityBundle;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.AuthorizationResponse;
@@ -333,6 +337,61 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
   }
 
   @Test
+  void mapsAccountKeyAndCryptographyUnavailabilityToSanitizedUnavailable() {
+    List<Class<? extends RuntimeException>> unavailableTypes =
+        List.of(
+            AccountOperatorAuthorizationFingerprintKeyring.KeyUnavailableException.class,
+            AccountResponseEnvelopeKeyring.KeyUnavailableException.class,
+            AccountResponseEnvelopeCryptography.CryptographyUnavailableException.class);
+
+    for (Class<? extends RuntimeException> unavailableType : unavailableTypes) {
+      AccountStartSessionOperatorAuthorizationService unavailableOwner =
+          mock(AccountStartSessionOperatorAuthorizationService.class);
+      RuntimeException unavailable = unavailableFailure(unavailableType);
+      when(unavailableOwner.issue(any())).thenThrow(unavailable);
+      var unavailableService =
+          new StartSessionOperatorAuthorizationGrpcService(unavailableOwner, NAMESPACE);
+
+      TestObserver<IssueHumanOperatorAuthorizationReferenceResponse> observer =
+          callIssue(unavailableService, issueRequest(canonicalTupleBytes()), LOGGING_URI);
+
+      assertThat(status(observer)).isEqualTo(Status.Code.UNAVAILABLE);
+      assertThat(observer.failure.getDescription())
+          .isEqualTo("Account operator authorization is temporarily unavailable")
+          .doesNotContain(unavailableType.getSimpleName(), "private failure detail");
+      assertThat(observer.failureThrowable).hasNoCause();
+    }
+  }
+
+  @Test
+  void mapsCurrentAuthorityStateSeparatelyFromMalformedOwnerInput() {
+    AccountStartSessionOperatorAuthorizationService staleAuthorityOwner =
+        mock(AccountStartSessionOperatorAuthorizationService.class);
+    when(staleAuthorityOwner.issue(any()))
+        .thenThrow(new IllegalStateException("current Account authority changed"));
+    var staleAuthorityService =
+        new StartSessionOperatorAuthorizationGrpcService(staleAuthorityOwner, NAMESPACE);
+    TestObserver<IssueHumanOperatorAuthorizationReferenceResponse> staleAuthority =
+        callIssue(staleAuthorityService, issueRequest(canonicalTupleBytes()), LOGGING_URI);
+
+    AccountStartSessionOperatorAuthorizationService malformedOwner =
+        mock(AccountStartSessionOperatorAuthorizationService.class);
+    when(malformedOwner.issue(any()))
+        .thenThrow(new IllegalArgumentException("malformed decoded authority bundle"));
+    var malformedService =
+        new StartSessionOperatorAuthorizationGrpcService(malformedOwner, NAMESPACE);
+    TestObserver<IssueHumanOperatorAuthorizationReferenceResponse> malformed =
+        callIssue(malformedService, issueRequest(canonicalTupleBytes()), LOGGING_URI);
+
+    assertThat(status(staleAuthority)).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(staleAuthority.failure.getDescription())
+        .isEqualTo("Current Account authorization evidence is unavailable");
+    assertThat(status(malformed)).isEqualTo(Status.Code.INVALID_ARGUMENT);
+    assertThat(malformed.failure.getDescription())
+        .isEqualTo("StartSession authorization input is invalid");
+  }
+
+  @Test
   void rejectsMalformedUnknownAndOverBoundRequestsBeforeInvokingOwnerService() {
     byte[] tupleBytes = canonicalTupleBytes();
     List<IssueHumanOperatorAuthorizationReferenceRequest> invalidIssues =
@@ -533,9 +592,23 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
     return observer.failure.getCode();
   }
 
+  private static RuntimeException unavailableFailure(
+      Class<? extends RuntimeException> failureType) {
+    try {
+      Constructor<? extends RuntimeException> constructor = failureType.getDeclaredConstructor();
+      constructor.setAccessible(true);
+      RuntimeException failure = constructor.newInstance();
+      failure.initCause(new IllegalStateException("private failure detail"));
+      return failure;
+    } catch (ReflectiveOperationException failure) {
+      throw new AssertionError("Unable to construct focused unavailable failure", failure);
+    }
+  }
+
   private static final class TestObserver<T> implements StreamObserver<T> {
     private T value;
     private Status failure;
+    private Throwable failureThrowable;
     private boolean completed;
 
     @Override
@@ -545,6 +618,7 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
 
     @Override
     public void onError(Throwable throwable) {
+      failureThrowable = throwable;
       failure = Status.fromThrowable(throwable);
     }
 
