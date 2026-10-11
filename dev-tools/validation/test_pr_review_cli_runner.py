@@ -26,6 +26,7 @@ from pr_review.cli_runner import (
     HOSTED_CLI_OVERLAP_HOLD_REASON,
     EffectiveParent,
     PullRequestSnapshot,
+    ReviewResult,
     ReviewRunnerError,
     ReviewTarget,
     StaleReviewTargetError,
@@ -53,6 +54,56 @@ CANDIDATE = "d" * 40
 CONTEXT = "f" * 40
 ADVANCED = "9" * 40
 OLDER_BASE = "e" * 40
+
+
+class ReviewResultOutputTests(unittest.TestCase):
+    def test_successful_cli_result_guides_adjudication_and_formats_checkpoint_template(self):
+        result = ReviewResult(
+            run_id="run.Abc123",
+            pull_request=123,
+            candidate_sha=CANDIDATE,
+            parent_sha=PARENT,
+            merge_base=BASE,
+            published_files=5,
+            candidate_files=4,
+            published_status="current",
+            provisional=False,
+            duration_seconds=67,
+            exit_status=0,
+            capture_dir=Path("/tmp/pr-review/run.Abc123"),
+        ).as_dict()
+
+        self.assertIn("records cli-decision", result["next_step"])
+        self.assertIn("records source finalize", result["next_step"])
+        self.assertIn("Post one public checkpoint", result["next_step"])
+        self.assertIn("authoritative counts", result["next_step"])
+        self.assertIn("normal evidence reader", result["next_step"])
+        self.assertEqual(
+            result["public_checkpoint_template"],
+            "CLI: <found> Found / <accepted> Accepted / <routed> Routed · "
+            f"{CANDIDATE} · 4 files · 1m 07s\n"
+            "<!-- firemud-cli-run: run.Abc123 -->\n"
+            "<!-- firemud-review-duration-seconds: 67 -->",
+        )
+
+    def test_unsuccessful_cli_result_has_no_checkpoint_guidance(self):
+        result = ReviewResult(
+            run_id="run.Abc123",
+            pull_request=123,
+            candidate_sha=CANDIDATE,
+            parent_sha=PARENT,
+            merge_base=BASE,
+            published_files=5,
+            candidate_files=4,
+            published_status="current",
+            provisional=False,
+            duration_seconds=67,
+            exit_status=1,
+            capture_dir=Path("/tmp/pr-review/run.Abc123"),
+        ).as_dict()
+
+        self.assertNotIn("next_step", result)
+        self.assertNotIn("public_checkpoint_template", result)
 
 
 class BoundedAllocationCliParserTests(unittest.TestCase):

@@ -251,6 +251,19 @@ class ReviewResult:
             "checkpoint_marker": f"<!-- firemud-cli-run: {self.run_id} -->",
             "duration_marker": f"<!-- firemud-review-duration-seconds: {self.duration_seconds} -->",
         }
+        if self.exit_status == 0:
+            result["next_step"] = (
+                "Adjudicate every finding with records cli-decision, then finalize with records source finalize "
+                "to establish authoritative counts. Post one public checkpoint using the template below; the "
+                "normal evidence reader binds it to this capture through the run marker. See PR Lifecycle for "
+                "the complete CLI workflow."
+            )
+            result["public_checkpoint_template"] = (
+                f"CLI: <found> Found / <accepted> Accepted / <routed> Routed · {self.candidate_sha} · "
+                f"{self.candidate_files} files · {evidence.format_duration_seconds(self.duration_seconds)}\n"
+                f"{result['checkpoint_marker']}\n"
+                f"{result['duration_marker']}"
+            )
         if self.warning:
             result["warning"] = self.warning
         return result
