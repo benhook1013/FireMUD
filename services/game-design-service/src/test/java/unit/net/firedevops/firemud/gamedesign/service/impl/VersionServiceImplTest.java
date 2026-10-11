@@ -494,7 +494,7 @@ class VersionServiceImplTest {
   }
 
   @Test
-  void failedScriptPatchRecordsStableAttemptAndRemovesDraftForRetry() {
+  void failedScriptPatchRecordsStableAttemptAndRetainsDraft() {
     Game game = new Game();
     game.setId(1L);
     game.setTenantId("tenant-1");
@@ -547,7 +547,10 @@ class VersionServiceImplTest {
             org.mockito.ArgumentMatchers.eq(
                 PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH.name()),
             org.mockito.ArgumentMatchers.eq("scope mismatch"));
-    verify(versionRepository).delete(savedDraft);
+    assertEquals(VersionLifecycleState.DRAFT, savedDraft.getVersionState());
+    assertEquals(3L, savedDraft.getBaseVersionId());
+    assertEquals("patch-2", savedDraft.getScriptPatchVersion());
+    verify(versionRepository, org.mockito.Mockito.never()).delete(savedDraft);
     verify(publishAttemptService, org.mockito.Mockito.never())
         .markScriptPatchSucceeded(any(String.class));
   }
@@ -726,7 +729,10 @@ class VersionServiceImplTest {
 
     assertEquals("recorded digest write failed", firstFailure.getMessage());
     String workflowId = binding.derivedWorkflowIdentity();
-    verify(versionRepository).delete(draftAfterRollback);
+    assertEquals(VersionLifecycleState.DRAFT, draftAfterRollback.getVersionState());
+    assertEquals(3L, draftAfterRollback.getBaseVersionId());
+    assertEquals("patch-2", draftAfterRollback.getScriptPatchVersion());
+    verify(versionRepository, org.mockito.Mockito.never()).delete(draftAfterRollback);
     verify(scriptingClient, org.mockito.Mockito.never())
         .notifyScriptVersionUpdate(
             any(String.class), any(Long.class), any(String.class), any(List.class));
