@@ -280,6 +280,29 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .extracting(Version::getId)
         .containsExactly(retainedCandidate.getId());
 
+    Throwable changedNotesReplayFailure =
+        catchThrowable(
+            () ->
+                versionService.publishScriptPatchVersion(
+                    tenantId,
+                    baseVersionId,
+                    scriptPatchVersion,
+                    "changed replay notes",
+                    publishRequestId));
+    assertThat(changedNotesReplayFailure).isInstanceOf(PublishGateFailureException.class);
+    PublishGateFailureException changedNotesReplayGateFailure =
+        (PublishGateFailureException) changedNotesReplayFailure;
+    assertThat(changedNotesReplayGateFailure.failureCode())
+        .isEqualTo(PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH);
+    assertThat(changedNotesReplayGateFailure).hasMessage("script scope mismatch");
+    assertThat(participantCollectionCount).hasValue(1);
+    PublishAttempt attemptAfterReplay =
+        publishAttemptRepository
+            .findByPublishWorkflowId(binding.derivedWorkflowIdentity())
+            .orElseThrow();
+    assertThat(attemptAfterReplay.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(attemptAfterReplay.getVersionId()).isEqualTo(retainedCandidate.getId());
+
     Throwable tupleConflict =
         catchThrowable(
             () ->
