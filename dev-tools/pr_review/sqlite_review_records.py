@@ -3724,16 +3724,34 @@ class SqliteReviewRecords:
                     connection.execute("BEGIN")
                 self._require_compatible(connection, deadline=deadline)
                 controller_state = self._controller_state(connection) if include_legacy_routes else None
-                runs = [
-                    self._run_record(row)
-                    for row in connection.execute(
-                        "SELECT run_id, source_pr, channel, source_head, reviewer, scope, coverage_limits_json, "
-                        "outcome, attributable, started_at, finished_at, found_count, accepted_count, "
-                        "routed_count, finalized, finalized_at "
-                        "FROM review_runs WHERE source_pr = ? ORDER BY started_at, run_id",
-                        (pr,),
-                    )
-                ]
+                attempt_rows = connection.execute(
+                    "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
+                    "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
+                    "diagnostic, metadata_json FROM review_attempts WHERE source_pr = ? "
+                    "ORDER BY started_at, attempt_id",
+                    (pr,),
+                ).fetchall()
+                associated_run_ids = {identifier for row in attempt_rows for identifier in (row[0], row[11])}
+                run_rows = connection.execute(
+                    "SELECT run_id, source_pr, channel, source_head, reviewer, scope, coverage_limits_json, "
+                    "outcome, attributable, started_at, finished_at, found_count, accepted_count, "
+                    "routed_count, finalized, finalized_at, import_payload_json "
+                    "FROM review_runs WHERE source_pr = ? ORDER BY started_at, run_id",
+                    (pr,),
+                ).fetchall()
+                if any(row[2] in {"manual", "subagent"} and row[0] not in associated_run_ids for row in run_rows):
+                    # Preserve cross-PR identity collisions and malformed links.
+                    # run_id is unindexed: this filtered lookup may scan attempts
+                    # once, never once per run, and only for curated candidates.
+                    for attempt_id, run_id in connection.execute(
+                        "SELECT attempt_id, run_id FROM review_attempts WHERE run_id IN "
+                        "(SELECT run_id FROM review_runs WHERE source_pr = ? AND channel IN ('manual', 'subagent')) "
+                        "OR attempt_id IN "
+                        "(SELECT run_id FROM review_runs WHERE source_pr = ? AND channel IN ('manual', 'subagent'))",
+                        (pr, pr),
+                    ):
+                        associated_run_ids.update((attempt_id, run_id))
+                runs = [self._run_record((*row, row[0] in associated_run_ids)) for row in run_rows]
                 observations = [
                     self._observation_record(row)
                     for row in connection.execute(
@@ -3849,13 +3867,7 @@ class SqliteReviewRecords:
                 attempts = []
                 corrected_subagent_runs = set()
                 review_count_corrections_by_run = {}
-                for row in connection.execute(
-                    "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
-                    "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
-                    "diagnostic, metadata_json FROM review_attempts WHERE source_pr = ? "
-                    "ORDER BY started_at, attempt_id",
-                    (pr,),
-                ):
+                for row in attempt_rows:
                     try:
                         metadata = json.loads(row[13])
                     except json.JSONDecodeError as exc:
@@ -4739,7 +4751,7 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("stored coverage metadata is malformed") from exc
         if not isinstance(coverage_limits, list) or any(not isinstance(item, str) for item in coverage_limits):
             raise ReviewRecordsError("stored coverage metadata must be a list of strings")
-        return {
+        record = {
             "run_id": row[0],
             "source_pr": row[1],
             "channel": row[2],
@@ -4755,6 +4767,33 @@ class SqliteReviewRecords:
             "finalized": bool(row[14]),
             "finalized_at": row[15],
         }
+        # Curated imports retain supplied clocks separately from storage defaults.
+        # Keep SQL ordering and immutable rows intact, but never present an import
+        # fallback as a known review time. Native attempts own their chronology.
+        if record["channel"] not in {"manual", "subagent"} or row[17]:
+            return record
+        try:
+            payload = json.loads(row[16])
+            if not isinstance(payload, dict) or not {"started_at", "finished_at"} <= payload.keys():
+                return record
+            clocks = {}
+            for field in ("started_at", "finished_at"):
+                supplied = payload[field]
+                if supplied is not None:
+                    if not isinstance(supplied, str) or supplied != record[field]:
+                        return record
+                    _timestamp(supplied, field)
+                clocks[field] = {
+                    "value": record[field],
+                    "source": "generated" if supplied is None else "supplied",
+                }
+        except (TypeError, json.JSONDecodeError, ReviewRecordsError):
+            # Older or unusable provenance cannot establish unknown chronology.
+            return record
+        record["storage_timestamps"] = clocks
+        record["started_at"] = payload["started_at"]
+        record["finished_at"] = payload["finished_at"]
+        return record
 
     @staticmethod
     def _observation_record(row: Sequence[Any]) -> dict[str, Any]:

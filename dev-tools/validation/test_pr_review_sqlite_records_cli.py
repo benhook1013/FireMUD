@@ -2173,6 +2173,40 @@ class ReviewRecordsCliTest(unittest.TestCase):
         open_file.assert_called_once_with("rb")
         self.assertEqual(stream.requested_bytes, 512_001)
 
+    def test_retrospective_zero_finding_import_has_unknown_review_clocks(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        for explicit_null in (False, True):
+            run = {
+                "run_id": f"pr3163-sol-medium-retro-{explicit_null}", "source_pr": 3163,
+                "channel": "subagent", "reviewer": "gpt-5.6-sol (reasoning medium)",
+                "scope": "broad", "coverage_limits": ["Retrospective import; exact review clocks unknown."],
+                "outcome": "completed", "source_head": "2d52d8be43b8563e796151b5959a9050c5152ad9",
+            }
+            if explicit_null:
+                run.update(started_at=None, finished_at=None)
+            document = {"api_version": 1, "run": run, "findings": []}
+            self.import_file.write_text(json.dumps(document), encoding="utf-8")
+            with patch.object(sqlite_review_records, "_now", return_value="2026-10-11T15:49:59Z"):
+                code, imported = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
+            self.assertEqual(code, 0)
+            self.assertTrue(imported["result"]["finalized"])
+            _, history = self.invoke("history", "--pr", "3163", "--database", str(self.database))
+            retained = next(item for item in history["result"]["runs"] if item["run_id"] == run["run_id"])
+            self.assertIsNone(retained["started_at"])
+            self.assertIsNone(retained["finished_at"])
+            self.assertEqual(retained["storage_timestamps"]["started_at"], {"value": "2026-10-11T15:49:59Z", "source": "generated"})
+            self.assertEqual(retained["finalized_at"], "2026-10-11T15:49:59Z")
+            self.assertEqual(history["result"]["attempts"], [])
+            code, replay = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
+            self.assertEqual(code, 0)
+            self.assertTrue(replay["result"]["idempotent_replay"])
+            document["run"]["started_at"] = "2026-10-11T15:00:00Z"
+            self.import_file.write_text(json.dumps(document), encoding="utf-8")
+            code, _ = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
+            self.assertEqual(code, 2)
+            _, after = self.invoke("history", "--pr", "3163", "--database", str(self.database))
+            self.assertEqual(history, after)
+
     def test_complete_batch_import_decides_and_finalizes_atomically(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         self.import_file.write_text(
