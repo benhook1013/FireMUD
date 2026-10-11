@@ -450,6 +450,7 @@ class AccountControlUiRegistryRedisIntegrationTest {
                 Map.entry(
                     "requestDigest",
                     AccountControlUiIssuanceRepository.hash(bytes(testOnlyBinding))),
+                Map.entry("registryCleanupDeadlineEpochMillis", expiryEpochSecond * 1000L),
                 Map.entry("state", state),
                 Map.entry(
                     "authoritySourceVersions",

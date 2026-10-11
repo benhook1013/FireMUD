@@ -14,6 +14,7 @@ import net.firedevops.firemud.accountservice.service.exception.AuthenticationExc
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -35,6 +36,7 @@ public final class AccountControlUiIssuanceService {
   private final AccountControlUiActorService actors;
   private final TransactionTemplate transaction;
   private final Clock clock;
+  private final long sessionSafetyMarginMillis;
   private final String protectedCallerUri;
 
   @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
@@ -52,6 +54,7 @@ public final class AccountControlUiIssuanceService {
       AccountControlUiActorService actors,
       PlatformTransactionManager transactions,
       Clock clock,
+      @Value("${firemud.auth.session-safety-margin-ms:300000}") long sessionSafetyMarginMillis,
       String independentlyProtectedCallerUri) {
     this.primaryAuthentication = Objects.requireNonNull(primaryAuthentication);
     this.operations = Objects.requireNonNull(operations);
@@ -62,6 +65,10 @@ public final class AccountControlUiIssuanceService {
     this.registry = Objects.requireNonNull(registry);
     this.actors = Objects.requireNonNull(actors);
     this.clock = Objects.requireNonNull(clock);
+    if (sessionSafetyMarginMillis < 0L) {
+      throw new IllegalArgumentException("Nonnegative Account session cleanup margin required");
+    }
+    this.sessionSafetyMarginMillis = sessionSafetyMarginMillis;
     protectedCallerUri =
         GrpcPeerIdentity.parseUri(independentlyProtectedCallerUri)
             .orElseThrow(
@@ -139,7 +146,8 @@ public final class AccountControlUiIssuanceService {
                         authenticated,
                         source,
                         signer,
-                        Instant.ofEpochSecond(clock.instant().getEpochSecond()));
+                        Instant.ofEpochSecond(clock.instant().getEpochSecond()),
+                        sessionSafetyMarginMillis);
                 return new InitialPreparation(new Prepared(stored, source, signer), null);
               });
       if (initial == null) {
@@ -285,6 +293,9 @@ public final class AccountControlUiIssuanceService {
 
   private Prepared current(
       AccountControlUiIssuanceRepository.Stored original, CapturedEnvironmentBoundary environment) {
+    // Missing cleanup evidence identifies a retained pre-margin row; never reinterpret or reissue
+    // it.
+    original.expiryMillis();
     if (!clock.instant().isBefore(original.recoveryExpiry)
         || java.util.List.of("FAILED", "REVOKING", "REVOKED").contains(original.status)) {
       throw new RecoveryLost(original);
