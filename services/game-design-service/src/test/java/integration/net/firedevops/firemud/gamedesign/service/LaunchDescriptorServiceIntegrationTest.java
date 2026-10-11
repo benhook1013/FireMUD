@@ -4,11 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.LocalDateTime;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
+import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameTemplate;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.TemplateReferencePhase;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -53,12 +55,19 @@ class LaunchDescriptorServiceIntegrationTest {
   }
 
   @Autowired private LaunchDescriptorService launchDescriptorService;
+  @Autowired private GameRepository gameRepository;
   @Autowired private GameTemplateRepository gameTemplateRepository;
   @Autowired private VersionRepository versionRepository;
   @Autowired private PublishedReleaseBundleRepository publishedReleaseBundleRepository;
 
   @Test
   void resolvesLaunchDescriptorForJsonConfiguredTemplate() {
+    Game game = new Game();
+    game.setTenantId("1");
+    game.setName("Integration Game");
+    game.setDescription("launch descriptor integration game");
+    gameRepository.save(game);
+
     Version version = new Version();
     version.setTenantId("1");
     version.setVersionNumber(1);
