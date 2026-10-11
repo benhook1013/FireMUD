@@ -1393,6 +1393,14 @@ class StatusTest(unittest.TestCase):
                             self.assertEqual(report["ci"]["required"]["status"], "failed")
                             self.assertEqual(report["ci"]["required"]["contexts"][0]["status"], "failed")
                             self.assertEqual(report["ci"]["required"]["contexts"][0]["result"]["outcome"], "FAILURE")
+                            if missing_identity:
+                                unproven = next(
+                                    item
+                                    for item in report["check_inventory"]["inventory"]
+                                    if item["url"] == "https://checks.test/1"
+                                )
+                                self.assertIsNone(unproven["workflowIdentity"])
+                                self.assertIsNone(unproven["workflowRunId"])
 
     def test_required_proven_workflow_retries_use_only_unambiguous_latest_start(self) -> None:
         for old_start in (None, "2026-09-23T00:00:00Z", "2026-09-23T00:01:00Z"):
@@ -1411,6 +1419,22 @@ class StatusTest(unittest.TestCase):
                         self.assertEqual(report["ci"]["required"]["status"], "passed" if expected_ready else "failed")
                         result = report["ci"]["required"]["contexts"][0]["result"]
                         self.assertEqual(result["workflowIdentity"]["workflow_id"], 10)
+                        inventory = report["check_inventory"]["inventory"]
+                        expected_checks = list(reversed(checks)) if reverse else checks
+                        self.assertEqual(
+                            [item["started_at"] for item in inventory],
+                            [check.get("started_at") for check in expected_checks],
+                        )
+                        self.assertEqual(
+                            [item["workflowRunId"] for item in inventory],
+                            [check["check_suite"]["id"] + 2000 for check in expected_checks],
+                        )
+                        selected_run_id = 2002 if old_start == "2026-09-23T00:00:00Z" or latest_failure else 2001
+                        self.assertEqual(result["workflowRunId"], selected_run_id)
+                        self.assertEqual(
+                            result["started_at"],
+                            "2026-09-23T00:01:00Z" if selected_run_id == 2002 else old_start,
+                        )
         with self.assertRaises(status.StatusError):
             self.native_required_report(
                 [self.native_check(1, "failure", "malformed"), self.native_check(2, "success", "2026-09-23T00:01:00Z")],

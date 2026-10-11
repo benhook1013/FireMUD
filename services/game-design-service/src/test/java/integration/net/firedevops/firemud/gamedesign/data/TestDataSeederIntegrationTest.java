@@ -997,7 +997,7 @@ class TestDataSeederIntegrationTest {
         fixture
             .dsl()
             .fetchSingle(
-                "INSERT INTO version (tenant_id, version_number, version_state, version_state_epoch, script_only, notes) VALUES ('1', 1, 'PUBLISHED', 1, false, 'Seed published version') RETURNING id")
+                "INSERT INTO version (tenant_id, version_number, version_state, version_state_epoch, is_script_only, notes) VALUES ('1', 1, 'PUBLISHED', 1, false, 'Seed published version') RETURNING id")
             .get("id", Long.class);
     Long bundleId =
         fixture
@@ -1033,7 +1033,7 @@ class TestDataSeederIntegrationTest {
         fixture
             .dsl()
             .fetchSingle(
-                "INSERT INTO version (tenant_id, version_number, version_state, version_state_epoch, script_only, notes) VALUES ('1', 1, 'FAILED', 2, false, 'retained-unbundled') RETURNING id")
+                "INSERT INTO version (tenant_id, version_number, version_state, version_state_epoch, is_script_only, notes) VALUES ('1', 1, 'FAILED', 2, false, 'retained-unbundled') RETURNING id")
             .get("id", Long.class);
     fixture.migrate(null);
     var originalGame = fixture.games().findByTenantId("1");
