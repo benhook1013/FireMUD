@@ -22,10 +22,12 @@ public record RealmEntryPolicy(
     StateScope stateScope,
     EntryPolicy entryPolicy,
     PlayerCreationDescriptor creationDescriptor,
+    AuthoredInitialActorCore initialActorCore,
     String canonicalJson) {
   public static final String REVISION_KIND = "REALM_ENTRY_POLICY";
   public static final int SCHEMA_VERSION = 1;
   public static final int PLAYER_CREATED_SCHEMA_VERSION = 2;
+  public static final int AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION = 3;
   public static final int MAX_JSON_BYTES = 4096;
   public static final int MAX_SLUG_LENGTH = 64;
   public static final int MAX_DISPLAY_NAME_CODE_POINTS = 128;
@@ -53,6 +55,19 @@ public record RealmEntryPolicy(
           "stateScope",
           "entryPolicy",
           "creationDescriptor");
+  private static final Set<String> V3_FIELDS =
+      Set.of(
+          "schemaVersion",
+          "worldSlug",
+          "worldDisplayName",
+          "realmSlug",
+          "realmDisplayName",
+          "visible",
+          "publicProduction",
+          "stateScope",
+          "entryPolicy",
+          "creationDescriptor",
+          "initialActorCore");
   private static final Pattern SLUG_PATTERN = Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
 
   public RealmEntryPolicy {
@@ -60,12 +75,23 @@ public record RealmEntryPolicy(
     Objects.requireNonNull(entryPolicy, "entryPolicy");
     Objects.requireNonNull(canonicalJson, "canonicalJson");
     if (schemaVersion == SCHEMA_VERSION) {
-      if (entryPolicy != EntryPolicy.PRESEEDED_ONLY || creationDescriptor != null) {
+      if (entryPolicy != EntryPolicy.PRESEEDED_ONLY
+          || creationDescriptor != null
+          || initialActorCore != null) {
         throw invalid("schemaVersion 1 requires PRESEEDED_ONLY without a descriptor");
       }
     } else if (schemaVersion == PLAYER_CREATED_SCHEMA_VERSION) {
-      if (entryPolicy != EntryPolicy.PLAYER_CREATED || creationDescriptor == null) {
+      if (entryPolicy != EntryPolicy.PLAYER_CREATED
+          || creationDescriptor == null
+          || initialActorCore != null) {
         throw invalid("schemaVersion 2 requires PLAYER_CREATED with a descriptor");
+      }
+    } else if (schemaVersion == AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION) {
+      if (entryPolicy != EntryPolicy.PLAYER_CREATED
+          || creationDescriptor == null
+          || initialActorCore == null) {
+        throw invalid(
+            "schemaVersion 3 requires PLAYER_CREATED with a descriptor and initialActorCore");
       }
     } else {
       throw invalid("schemaVersion is unsupported");
@@ -118,6 +144,7 @@ public record RealmEntryPolicy(
         switch (version) {
           case SCHEMA_VERSION -> V1_FIELDS;
           case PLAYER_CREATED_SCHEMA_VERSION -> V2_FIELDS;
+          case AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION -> V3_FIELDS;
           default -> throw invalid("schemaVersion is unsupported");
         };
     for (String field : fields) {
@@ -139,12 +166,16 @@ public record RealmEntryPolicy(
     if (version == SCHEMA_VERSION && entryPolicy != EntryPolicy.PRESEEDED_ONLY) {
       throw invalid("schemaVersion 1 supports only PRESEEDED_ONLY");
     }
-    if (version == PLAYER_CREATED_SCHEMA_VERSION && entryPolicy != EntryPolicy.PLAYER_CREATED) {
-      throw invalid("schemaVersion 2 supports only PLAYER_CREATED");
+    if (version >= PLAYER_CREATED_SCHEMA_VERSION && entryPolicy != EntryPolicy.PLAYER_CREATED) {
+      throw invalid("schemaVersion " + version + " supports only PLAYER_CREATED");
     }
     PlayerCreationDescriptor creationDescriptor =
-        version == PLAYER_CREATED_SCHEMA_VERSION
+        version >= PLAYER_CREATED_SCHEMA_VERSION
             ? PlayerCreationDescriptor.parse(root.get("creationDescriptor").toString())
+            : null;
+    AuthoredInitialActorCore initialActorCore =
+        version == AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION
+            ? AuthoredInitialActorCore.parse(root.get("initialActorCore"))
             : null;
 
     return new RealmEntryPolicy(
@@ -158,6 +189,7 @@ public record RealmEntryPolicy(
         stateScope,
         entryPolicy,
         creationDescriptor,
+        initialActorCore,
         canonicalJson);
   }
 

@@ -18,11 +18,12 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /**
- * Source-only positive typed preimage vectors for CHARACTER_CREATE/1.
+ * Positive typed preimage vectors for CHARACTER_CREATE/1.
  *
- * <p>This test frames the approved seven outer fields with the existing generic value grammar. It
- * does not parse raw actions, verify source ownership, or claim creation support. Negative raw
- * shape, family-bound, source-parser, and authority checks remain pending those implementations.
+ * <p>This test frames the approved seven outer fields with the existing generic value grammar and
+ * locks the four published positive literals. Shared negative raw-action cases are exercised by
+ * {@link CharacterCreateOperatorActionCodecTest}; neither test verifies source ownership or claims
+ * creation support.
  */
 class CharacterCreateActionSchemaVectorsTest {
   private static final String VECTOR_RESOURCE = "/operator/character-create-v1-vectors.json";
@@ -40,6 +41,7 @@ class CharacterCreateActionSchemaVectorsTest {
   @Test
   void matchesLiteralSourceOnlyPreimageAndDigestVectors() throws IOException {
     JsonNode root = fixture();
+    assertThat(root.path("vectors").size()).isEqualTo(4);
     Map<String, String> digestsByName = new HashMap<>();
 
     for (JsonNode vector : root.path("vectors")) {
@@ -58,7 +60,7 @@ class CharacterCreateActionSchemaVectorsTest {
     }
 
     assertThat(digestsByName)
-        .containsKeys(
+        .containsOnlyKeys(
             "base-public-player-created",
             "unicode-decomposed-exact-utf8",
             "large-counters-and-revision-order",
