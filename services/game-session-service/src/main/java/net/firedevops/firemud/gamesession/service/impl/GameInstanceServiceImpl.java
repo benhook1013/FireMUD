@@ -820,10 +820,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         || descriptor.generationConfigRevision() == null
         || descriptor.generationConfigRevision().isBlank()
         || descriptor.publishedReleaseBundleRef() == null
-        || descriptor.publishedReleaseBundleRef().isBlank()
-        || !releaseBundleRef(
-                request.tenantId(), descriptor.versionId(), descriptor.releaseBundleId())
-            .equals(descriptor.publishedReleaseBundleRef())) {
+        || descriptor.publishedReleaseBundleRef().isBlank()) {
       throw new IllegalArgumentException(
           "LAUNCH_DESCRIPTOR_INCOMPLETE: resolved descriptor is missing exact published inputs");
     }
@@ -1323,13 +1320,16 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             request.gameTemplateId(),
             request.controlPlaneRequestId(),
             sourceEvidence);
-    requireExactAuthoredWorldDescriptorRequest(request, sourceEvidence, descriptorResponse);
+    AuthoredWorldLaunchDescriptorEvidence actualDescriptorEvidence =
+        requireExactAuthoredWorldDescriptorRequest(request, sourceEvidence, descriptorResponse);
     if (descriptorResponse.hasError()) {
       throw new IllegalArgumentException(
           descriptorResponse.getError().getCode()
               + ": "
               + descriptorResponse.getError().getMessage());
     }
+    requireRunOwnedLaunchDescriptorMatchesReceipt(
+        actualDescriptorEvidence, launchEvidence.launchDescriptor());
     if (!descriptorResponse.hasLaunchDescriptor()) {
       throw new IllegalArgumentException(
           "AUTHORED_WORLD_LAUNCH_DESCRIPTOR_MISMATCH: Game Design returned no descriptor");
@@ -1410,7 +1410,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     if (bundle.getId() != descriptor.getReleaseBundleId()
         || bundle.getVersionId() != descriptor.getVersionId()
         || !bundle.getGenerationConfigRevision().equals(descriptor.getGenerationConfigRevision())
-        || !releaseBundleRef(request.tenantId(), descriptor.getVersionId(), bundle.getId())
+        || bundle.getPublishedReleaseBundleRef().isBlank()
+        || !bundle
+            .getPublishedReleaseBundleRef()
             .equals(descriptor.getPublishedReleaseBundleRef())) {
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: resolved launch descriptor does not match the published"
@@ -1475,7 +1477,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     }
   }
 
-  private void requireExactAuthoredWorldDescriptorRequest(
+  private AuthoredWorldLaunchDescriptorEvidence requireExactAuthoredWorldDescriptorRequest(
       StartSessionRequest request,
       AuthoredWorldSourceEvidence sourceEvidence,
       ResolveLaunchDescriptorResponse response) {
@@ -1483,7 +1485,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       throw new IllegalStateException("launch descriptor authority returned no response");
     }
     if (response.hasError()) {
-      return;
+      return null;
     }
     if (!response.hasLaunchDescriptor()) {
       throw new IllegalArgumentException(
@@ -1507,13 +1509,35 @@ public class GameInstanceServiceImpl implements GameInstanceService {
             false,
             null);
     try {
-      AuthoredWorldLaunchDescriptorGrpcCodec.fromLaunchDescriptorMessage(
+      return AuthoredWorldLaunchDescriptorGrpcCodec.fromLaunchDescriptorMessage(
           expectedRequest, response.getLaunchDescriptor());
     } catch (IllegalArgumentException exception) {
       throw new IllegalArgumentException(
           "AUTHORED_WORLD_LAUNCH_DESCRIPTOR_MISMATCH: Game Design response is not bound to the"
               + " exact source request",
           exception);
+    }
+  }
+
+  private void requireRunOwnedLaunchDescriptorMatchesReceipt(
+      AuthoredWorldLaunchDescriptorEvidence actualDescriptorEvidence,
+      net.firedevops.firemud.gamedesign.v1.LaunchDescriptor receiptDescriptor) {
+    AuthoredWorldLaunchDescriptorEvidence receiptDescriptorEvidence;
+    try {
+      receiptDescriptorEvidence =
+          AuthoredWorldLaunchDescriptorGrpcCodec.fromLaunchDescriptorMessage(
+              actualDescriptorEvidence.request(), receiptDescriptor);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException(
+          "RUN_OWNED_LAUNCH_DESCRIPTOR_MISMATCH: owner receipt descriptor is invalid", exception);
+    }
+    if (!AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(actualDescriptorEvidence)
+        .equals(
+            AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(
+                receiptDescriptorEvidence))) {
+      throw new IllegalArgumentException(
+          "RUN_OWNED_LAUNCH_DESCRIPTOR_MISMATCH: resolved descriptor differs from the immutable"
+              + " owner receipt descriptor");
     }
   }
 
@@ -1816,10 +1840,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   @FunctionalInterface
   private interface TransactionSupplier<T> {
     T get();
-  }
-
-  private String releaseBundleRef(long tenantId, long versionId, long releaseBundleId) {
-    return "prb:" + tenantId + ":" + versionId + ":" + releaseBundleId;
   }
 
   private record StartSessionStage(

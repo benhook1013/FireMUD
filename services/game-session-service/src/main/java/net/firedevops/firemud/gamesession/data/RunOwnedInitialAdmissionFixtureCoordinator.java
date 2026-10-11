@@ -271,10 +271,13 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
         || !capability.gameSessionUriSan().equals(receipt.gameSessionUriSan())
         || !capability.gameSessionLeafSha256().equals(receipt.gameSessionLeafSha256())
         || !capability.caCertificateSha256().equals(receipt.caCertificateSha256())
+        || !capability.worldManagementUriSan().equals(receipt.worldManagementUriSan())
+        || !capability.worldManagementLeafSha256().equals(receipt.worldManagementLeafSha256())
         || receipt.sourceEvidence() == null
         || !RunOwnedInitialAdmissionFixtureCapability.SOURCE_TARGET_NAMESPACE.equals(
             receipt.sourceEvidence().targetNamespace())
         || receipt.launchReadEvidence() == null
+        || receipt.launchReadEvidence().launchDescriptor() == null
         || !RunOwnedInitialAdmissionFixtureCapability.LAUNCH_READ_EVIDENCE_SCHEMA.equals(
             receipt.launchReadEvidence().schema())
         || receipt.launchReadEvidence().gameTemplateId() != capability.gameTemplateId()

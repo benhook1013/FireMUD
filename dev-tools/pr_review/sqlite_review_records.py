@@ -266,6 +266,184 @@ def _coverage_limits(values: Sequence[str], *, retained: Sequence[str] = ()) -> 
     )
 
 
+def _validate_run_input(
+    *,
+    run_id: str,
+    source_pr: int,
+    channel: ReviewChannel,
+    findings: Sequence[FindingObservation],
+    outcome: Literal["completed", "incomplete", "failed"],
+    attributable: bool,
+    source_head: str | None,
+    reviewer: str,
+    scope: Literal["broad", "narrow"],
+    coverage_limits: Sequence[str],
+    started_at: str | None,
+    finished_at: str | None,
+    retained_coverage: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Run the shared pre-write validation for one immutable source run."""
+
+    run_id = _safe_identifier(run_id, "run_id", maximum=100)
+    source_pr = _positive_pr(source_pr, "source PR")
+    if not isinstance(channel, str) or channel not in {"hosted", "cli", "manual", "subagent"}:
+        raise ReviewRecordsError("run channel must be hosted, cli, manual, or subagent")
+    if not isinstance(outcome, str) or outcome not in {"completed", "incomplete", "failed"}:
+        raise ReviewRecordsError("run outcome is invalid")
+    if not isinstance(attributable, bool):
+        raise ReviewRecordsError("attributable must be boolean")
+    if source_head is not None:
+        source_head = _text(source_head, "source_head", maximum=64)
+        if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", source_head):
+            raise ReviewRecordsError("source_head must be a full git commit identifier")
+    reviewer = _bounded_text(reviewer, "reviewer", maximum=100)
+    if not isinstance(scope, str) or scope not in {"broad", "narrow"}:
+        raise ReviewRecordsError("scope must be broad or narrow")
+    coverage = _coverage_limits(coverage_limits, retained=retained_coverage)
+    supplied_started_at = started_at
+    supplied_finished_at = finished_at
+    started_at = _timestamp(started_at, "started_at")
+    finished_at = _timestamp(finished_at, "finished_at", optional=outcome != "completed")
+    if isinstance(findings, (str, bytes)) or not isinstance(findings, Sequence):
+        raise ReviewRecordsError("findings must be a sequence of FindingObservation values")
+    observations = tuple(findings)
+    if len(observations) > 200:
+        raise ReviewRecordsError("a run may contain at most 200 findings")
+    if any(not isinstance(item, FindingObservation) for item in observations):
+        raise ReviewRecordsError("findings must contain only FindingObservation values")
+    finding_keys = [item.source_finding_key for item in observations]
+    if len(finding_keys) != len(set(finding_keys)):
+        raise ReviewRecordsError("a run cannot contain the same stable finding more than once")
+    immutable_payload = {
+        "source_pr": source_pr,
+        "channel": channel,
+        "source_head": source_head,
+        "reviewer": reviewer,
+        "scope": scope,
+        "coverage_limits": coverage,
+        "outcome": outcome,
+        "attributable": attributable,
+        "started_at": supplied_started_at,
+        "finished_at": supplied_finished_at,
+        "findings": [
+            {
+                "source_finding_key": item.source_finding_key,
+                "title": item.title,
+                "detail": item.detail,
+                "disposition": item.disposition,
+                "target_pr": item.target_pr,
+                **({"display_severity": item.display_severity} if item.display_severity is not None else {}),
+            }
+            for item in observations
+        ],
+    }
+    payload_json = _json(immutable_payload)
+    if len(payload_json.encode("utf-8")) > 512_000:
+        raise ReviewRecordsError("review run metadata and findings exceed the 512 KB limit")
+    counts = {
+        "found_count": len(observations),
+        "accepted_count": sum(item.disposition == "accepted" for item in observations),
+        "routed_count": sum(item.disposition == "routed" for item in observations),
+    }
+    return {
+        "run_id": run_id,
+        "source_pr": source_pr,
+        "channel": channel,
+        "source_head": source_head,
+        "reviewer": reviewer,
+        "scope": scope,
+        "coverage": coverage,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "observations": observations,
+        "finding_keys": finding_keys,
+        "payload_json": payload_json,
+        "counts": counts,
+    }
+
+
+def _validate_import_source_decisions(
+    observations: Sequence[FindingObservation], source_decisions: Sequence[Mapping[str, Any]]
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Validate and normalize the exact source decisions for a completed import."""
+
+    if isinstance(source_decisions, (str, bytes)) or not isinstance(source_decisions, Sequence):
+        raise ReviewRecordsError("source_decisions must be a sequence of decision objects")
+    if len(source_decisions) != len(observations):
+        raise ReviewRecordsError("a completed run requires exactly one source decision per finding")
+    observation_keys = {item.source_finding_key for item in observations}
+    normalized_decisions: list[dict[str, Any]] = []
+    decision_keys: set[str] = set()
+    decision_ids: set[str] = set()
+    for item in source_decisions:
+        if not isinstance(item, Mapping):
+            raise ReviewRecordsError("source decisions must be objects")
+        allowed = {
+            "source_finding_key",
+            "decision_id",
+            "decision",
+            "actor",
+            "reason",
+            "target_pr",
+            "decided_at",
+            "route_id",
+            "route_status",
+        }
+        if set(item) - allowed or not {"source_finding_key", "decision_id", "decision", "actor", "reason"} <= set(
+            item
+        ):
+            raise ReviewRecordsError("source decision has missing or unsupported fields")
+        source_finding_key = _safe_identifier(item["source_finding_key"], "source_finding_key", maximum=200)
+        if source_finding_key not in observation_keys:
+            raise ReviewRecordsError("source decision references an unobserved finding")
+        if source_finding_key in decision_keys:
+            raise ReviewRecordsError("a completed run cannot decide one finding more than once")
+        decision_id = _safe_identifier(item["decision_id"], "decision_id", maximum=200)
+        if decision_id in decision_ids:
+            raise ReviewRecordsError("source decision IDs must be unique")
+        decision = item["decision"]
+        if not isinstance(decision, str) or decision not in {"accepted", "routed", "rejected"}:
+            raise ReviewRecordsError("source decision must be accepted, routed, or rejected")
+        target_pr = item.get("target_pr")
+        if target_pr is not None:
+            target_pr = _positive_pr(target_pr, "target PR")
+        if decision != "routed" and target_pr is not None:
+            raise ReviewRecordsError("only routed source decisions may set a target PR")
+        route_id = item.get("route_id")
+        route_status = item.get("route_status")
+        if decision != "routed" and (route_id is not None or route_status is not None):
+            raise ReviewRecordsError("only routed source decisions may reference an external route")
+        if route_id is not None:
+            route_id = _safe_identifier(route_id, "route_id", maximum=64)
+        if route_status is not None and route_status not in {"open", "accepted_fixed", "rejected"}:
+            raise ReviewRecordsError("source route status is invalid")
+        if route_status is not None and route_id is None:
+            raise ReviewRecordsError("source route status requires a route reference")
+        actor = _bounded_text(item["actor"], "actor", maximum=100)
+        reason = _bounded_text(item["reason"], "reason", maximum=300)
+        supplied_decided_at = item.get("decided_at")
+        decided_at = _timestamp(supplied_decided_at, "decided_at")
+        decision_keys.add(source_finding_key)
+        decision_ids.add(decision_id)
+        normalized_decisions.append(
+            {
+                "source_finding_key": source_finding_key,
+                "decision_id": decision_id,
+                "decision": decision,
+                "actor": actor,
+                "reason": reason,
+                "target_pr": target_pr,
+                "route_id": route_id,
+                "route_status": route_status,
+                "decided_at": decided_at,
+                "supplied_decided_at": supplied_decided_at is not None,
+            }
+        )
+    if decision_keys != observation_keys:
+        raise ReviewRecordsError("a completed run requires a decision for every finding")
+    return normalized_decisions, decision_keys
+
+
 def _is_secret_field(key: str) -> bool:
     """Return whether a JSON field name semantically identifies secret material."""
 
@@ -1453,6 +1631,60 @@ class SqliteReviewRecords:
         return {"run_id": run_id, "kinds": sorted(archived), "idempotent_replay": replay}
 
     @staticmethod
+    def validate_import_run(
+        *,
+        run_id: str,
+        source_pr: int,
+        channel: ReviewChannel,
+        findings: Sequence[FindingObservation],
+        outcome: Literal["completed", "incomplete", "failed"],
+        source_decisions: Sequence[Mapping[str, Any]],
+        source_head: str | None = None,
+        reviewer: str = "manual",
+        scope: Literal["broad", "narrow"] = "narrow",
+        coverage_limits: Sequence[str] = (),
+        started_at: str | None = None,
+        finished_at: str | None = None,
+    ) -> None:
+        """Validate a curated import's persisted fields without reading a database."""
+
+        if len(source_decisions) == len(findings) and (source_decisions or outcome == "completed"):
+            if outcome != "completed":
+                raise ReviewRecordsError("atomic batch finalization requires a completed run outcome")
+            validated = _validate_run_input(
+                run_id=run_id,
+                source_pr=source_pr,
+                channel=channel,
+                findings=findings,
+                outcome="completed",
+                attributable=True,
+                source_head=source_head,
+                reviewer=reviewer,
+                scope=scope,
+                coverage_limits=coverage_limits,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+            _validate_import_source_decisions(validated["observations"], source_decisions)
+        elif source_decisions:
+            raise ReviewRecordsError("batch import has partial source decisions; use source decide for incomplete runs")
+        else:
+            _validate_run_input(
+                run_id=run_id,
+                source_pr=source_pr,
+                channel=channel,
+                findings=findings,
+                outcome=outcome,
+                attributable=False,
+                source_head=source_head,
+                reviewer=reviewer,
+                scope=scope,
+                coverage_limits=coverage_limits,
+                started_at=started_at,
+                finished_at=finished_at,
+            )
+
+    @staticmethod
     def _same_checkpoint_projection(stored_content: str, incoming_content: str) -> bool:
         """Recognize only the hash-verified projection added to older metadata."""
 
@@ -2248,72 +2480,32 @@ class SqliteReviewRecords:
     ) -> dict[str, Any]:
         """Persist one immutable source run and its findings atomically."""
 
-        run_id = _safe_identifier(run_id, "run_id", maximum=100)
-        source_pr = _positive_pr(source_pr, "source PR")
-        if not isinstance(channel, str) or channel not in {"hosted", "cli", "manual", "subagent"}:
-            raise ReviewRecordsError("run channel must be hosted, cli, manual, or subagent")
-        if not isinstance(outcome, str) or outcome not in {"completed", "incomplete", "failed"}:
-            raise ReviewRecordsError("run outcome is invalid")
-        if not isinstance(attributable, bool):
-            raise ReviewRecordsError("attributable must be boolean")
-        if source_head is not None:
-            source_head = _text(source_head, "source_head", maximum=64)
-            if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", source_head):
-                raise ReviewRecordsError("source_head must be a full git commit identifier")
-        reviewer = _bounded_text(reviewer, "reviewer", maximum=100)
-        if not isinstance(scope, str) or scope not in {"broad", "narrow"}:
-            raise ReviewRecordsError("scope must be broad or narrow")
-        coverage = _coverage_limits(coverage_limits)
-        supplied_started_at = started_at
-        supplied_finished_at = finished_at
-        started_at = _timestamp(started_at, "started_at")
-        if outcome == "completed":
-            finished_at = _timestamp(finished_at, "finished_at")
-        else:
-            finished_at = _timestamp(finished_at, "finished_at", optional=True)
-        if isinstance(findings, (str, bytes)) or not isinstance(findings, Sequence):
-            raise ReviewRecordsError("findings must be a sequence of FindingObservation values")
-        observations = tuple(findings)
-        if len(observations) > 200:
-            raise ReviewRecordsError("a run may contain at most 200 findings")
-        if any(not isinstance(item, FindingObservation) for item in observations):
-            raise ReviewRecordsError("findings must contain only FindingObservation values")
-        finding_keys = [item.source_finding_key for item in observations]
-        if len(finding_keys) != len(set(finding_keys)):
-            raise ReviewRecordsError("a run cannot contain the same stable finding more than once")
-
-        immutable_payload = {
-            "source_pr": source_pr,
-            "channel": channel,
-            "source_head": source_head,
-            "reviewer": reviewer,
-            "scope": scope,
-            "coverage_limits": coverage,
-            "outcome": outcome,
-            "attributable": attributable,
-            "started_at": supplied_started_at,
-            "finished_at": supplied_finished_at,
-            "findings": [
-                {
-                    "source_finding_key": item.source_finding_key,
-                    "title": item.title,
-                    "detail": item.detail,
-                    "disposition": item.disposition,
-                    "target_pr": item.target_pr,
-                    **({"display_severity": item.display_severity} if item.display_severity is not None else {}),
-                }
-                for item in observations
-            ],
-        }
-        payload_json = _json(immutable_payload)
-        if len(payload_json.encode("utf-8")) > 512_000:
-            raise ReviewRecordsError("review run metadata and findings exceed the 512 KB limit")
-
-        counts = {
-            "found_count": len(observations),
-            "accepted_count": sum(item.disposition == "accepted" for item in observations),
-            "routed_count": sum(item.disposition == "routed" for item in observations),
-        }
+        validated = _validate_run_input(
+            run_id=run_id,
+            source_pr=source_pr,
+            channel=channel,
+            findings=findings,
+            outcome=outcome,
+            attributable=attributable,
+            source_head=source_head,
+            reviewer=reviewer,
+            scope=scope,
+            coverage_limits=coverage_limits,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+        run_id = validated["run_id"]
+        source_pr = validated["source_pr"]
+        channel = validated["channel"]
+        source_head = validated["source_head"]
+        reviewer = validated["reviewer"]
+        scope = validated["scope"]
+        coverage = validated["coverage"]
+        started_at = validated["started_at"]
+        finished_at = validated["finished_at"]
+        observations = validated["observations"]
+        payload_json = validated["payload_json"]
+        counts = validated["counts"]
         try:
             with self._write_connection() if _connection is None else contextlib.nullcontext(_connection) as connection:
                 existing = connection.execute(
@@ -3147,130 +3339,36 @@ class SqliteReviewRecords:
                     and isinstance(metadata.get("coverage_limits"), list)
                 ):
                     retained_coverage = metadata["coverage_limits"]
-        coverage = _coverage_limits(coverage_limits, retained=retained_coverage)
-        supplied_started_at = started_at
-        supplied_finished_at = finished_at
-        started_at = _timestamp(started_at, "started_at")
+        validated = _validate_run_input(
+            run_id=run_id,
+            source_pr=source_pr,
+            channel=channel,
+            findings=findings,
+            outcome=outcome,
+            attributable=attributable,
+            source_head=source_head,
+            reviewer=reviewer,
+            scope=scope,
+            coverage_limits=coverage_limits,
+            started_at=started_at,
+            finished_at=finished_at,
+            retained_coverage=retained_coverage,
+        )
+        run_id = validated["run_id"]
+        source_pr = validated["source_pr"]
+        channel = validated["channel"]
+        source_head = validated["source_head"]
+        reviewer = validated["reviewer"]
+        scope = validated["scope"]
+        coverage = validated["coverage"]
+        started_at = validated["started_at"]
+        finished_at = validated["finished_at"]
+        observations = validated["observations"]
+        payload_json = validated["payload_json"]
+        counts = validated["counts"]
         finished_at = _timestamp(finished_at, "finished_at")
         finalized_at = _timestamp(finalized_at, "finalized_at")
-        if isinstance(findings, (str, bytes)) or not isinstance(findings, Sequence):
-            raise ReviewRecordsError("findings must be a sequence of FindingObservation values")
-        observations = tuple(findings)
-        if len(observations) > 200:
-            raise ReviewRecordsError("a run may contain at most 200 findings")
-        if any(not isinstance(item, FindingObservation) for item in observations):
-            raise ReviewRecordsError("findings must contain only FindingObservation values")
-        finding_keys = [item.source_finding_key for item in observations]
-        if len(finding_keys) != len(set(finding_keys)):
-            raise ReviewRecordsError("a run cannot contain the same stable finding more than once")
-
-        if isinstance(source_decisions, (str, bytes)) or not isinstance(source_decisions, Sequence):
-            raise ReviewRecordsError("source_decisions must be a sequence of decision objects")
-        if len(source_decisions) != len(observations):
-            raise ReviewRecordsError("a completed run requires exactly one source decision per finding")
-        observation_keys = set(finding_keys)
-        normalized_decisions: list[dict[str, Any]] = []
-        decision_keys: set[str] = set()
-        decision_ids: set[str] = set()
-        for item in source_decisions:
-            if not isinstance(item, Mapping):
-                raise ReviewRecordsError("source decisions must be objects")
-            allowed = {
-                "source_finding_key",
-                "decision_id",
-                "decision",
-                "actor",
-                "reason",
-                "target_pr",
-                "decided_at",
-                "route_id",
-                "route_status",
-            }
-            if set(item) - allowed or not {"source_finding_key", "decision_id", "decision", "actor", "reason"} <= set(
-                item
-            ):
-                raise ReviewRecordsError("source decision has missing or unsupported fields")
-            source_finding_key = _safe_identifier(item["source_finding_key"], "source_finding_key", maximum=200)
-            if source_finding_key not in observation_keys:
-                raise ReviewRecordsError("source decision references an unobserved finding")
-            if source_finding_key in decision_keys:
-                raise ReviewRecordsError("a completed run cannot decide one finding more than once")
-            decision_id = _safe_identifier(item["decision_id"], "decision_id", maximum=200)
-            if decision_id in decision_ids:
-                raise ReviewRecordsError("source decision IDs must be unique")
-            decision = item["decision"]
-            if not isinstance(decision, str) or decision not in {"accepted", "routed", "rejected"}:
-                raise ReviewRecordsError("source decision must be accepted, routed, or rejected")
-            target_pr = item.get("target_pr")
-            if target_pr is not None:
-                target_pr = _positive_pr(target_pr, "target PR")
-            if decision != "routed" and target_pr is not None:
-                raise ReviewRecordsError("only routed source decisions may set a target PR")
-            route_id = item.get("route_id")
-            route_status = item.get("route_status")
-            if decision != "routed" and (route_id is not None or route_status is not None):
-                raise ReviewRecordsError("only routed source decisions may reference an external route")
-            if route_id is not None:
-                route_id = _safe_identifier(route_id, "route_id", maximum=64)
-            if route_status is not None and route_status not in {"open", "accepted_fixed", "rejected"}:
-                raise ReviewRecordsError("source route status is invalid")
-            if route_status is not None and route_id is None:
-                raise ReviewRecordsError("source route status requires a route reference")
-            actor = _bounded_text(item["actor"], "actor", maximum=100)
-            reason = _bounded_text(item["reason"], "reason", maximum=300)
-            supplied_decided_at = item.get("decided_at")
-            decided_at = _timestamp(supplied_decided_at, "decided_at")
-            decision_keys.add(source_finding_key)
-            decision_ids.add(decision_id)
-            normalized_decisions.append(
-                {
-                    "source_finding_key": source_finding_key,
-                    "decision_id": decision_id,
-                    "decision": decision,
-                    "actor": actor,
-                    "reason": reason,
-                    "target_pr": target_pr,
-                    "route_id": route_id,
-                    "route_status": route_status,
-                    "decided_at": decided_at,
-                    "supplied_decided_at": supplied_decided_at is not None,
-                }
-            )
-        if decision_keys != observation_keys:
-            raise ReviewRecordsError("a completed run requires a decision for every finding")
-
-        immutable_payload = {
-            "source_pr": source_pr,
-            "channel": channel,
-            "source_head": source_head,
-            "reviewer": reviewer,
-            "scope": scope,
-            "coverage_limits": coverage,
-            "outcome": "completed",
-            "attributable": attributable,
-            "started_at": supplied_started_at,
-            "finished_at": supplied_finished_at,
-            "findings": [
-                {
-                    "source_finding_key": item.source_finding_key,
-                    "title": item.title,
-                    "detail": item.detail,
-                    "disposition": item.disposition,
-                    "target_pr": item.target_pr,
-                    **({"display_severity": item.display_severity} if item.display_severity is not None else {}),
-                }
-                for item in observations
-            ],
-        }
-        payload_json = _json(immutable_payload)
-        if len(payload_json.encode("utf-8")) > 512_000:
-            raise ReviewRecordsError("review run metadata and findings exceed the 512 KB limit")
-
-        counts = {
-            "found_count": len(observations),
-            "accepted_count": sum(item.disposition == "accepted" for item in observations),
-            "routed_count": sum(item.disposition == "routed" for item in observations),
-        }
+        normalized_decisions, decision_keys = _validate_import_source_decisions(observations, source_decisions)
         try:
             with self._write_connection() as connection:
                 existing = connection.execute(
@@ -3724,16 +3822,34 @@ class SqliteReviewRecords:
                     connection.execute("BEGIN")
                 self._require_compatible(connection, deadline=deadline)
                 controller_state = self._controller_state(connection) if include_legacy_routes else None
-                runs = [
-                    self._run_record(row)
-                    for row in connection.execute(
-                        "SELECT run_id, source_pr, channel, source_head, reviewer, scope, coverage_limits_json, "
-                        "outcome, attributable, started_at, finished_at, found_count, accepted_count, "
-                        "routed_count, finalized, finalized_at "
-                        "FROM review_runs WHERE source_pr = ? ORDER BY started_at, run_id",
-                        (pr,),
-                    )
-                ]
+                attempt_rows = connection.execute(
+                    "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
+                    "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
+                    "diagnostic, metadata_json FROM review_attempts WHERE source_pr = ? "
+                    "ORDER BY started_at, attempt_id",
+                    (pr,),
+                ).fetchall()
+                associated_run_ids = {identifier for row in attempt_rows for identifier in (row[0], row[11])}
+                run_rows = connection.execute(
+                    "SELECT run_id, source_pr, channel, source_head, reviewer, scope, coverage_limits_json, "
+                    "outcome, attributable, started_at, finished_at, found_count, accepted_count, "
+                    "routed_count, finalized, finalized_at, import_payload_json "
+                    "FROM review_runs WHERE source_pr = ? ORDER BY started_at, run_id",
+                    (pr,),
+                ).fetchall()
+                if any(row[2] in {"manual", "subagent"} and row[0] not in associated_run_ids for row in run_rows):
+                    # Preserve cross-PR identity collisions and malformed links.
+                    # run_id is unindexed: this filtered lookup may scan attempts
+                    # once, never once per run, and only for curated candidates.
+                    for attempt_id, run_id in connection.execute(
+                        "SELECT attempt_id, run_id FROM review_attempts WHERE run_id IN "
+                        "(SELECT run_id FROM review_runs WHERE source_pr = ? AND channel IN ('manual', 'subagent')) "
+                        "OR attempt_id IN "
+                        "(SELECT run_id FROM review_runs WHERE source_pr = ? AND channel IN ('manual', 'subagent'))",
+                        (pr, pr),
+                    ):
+                        associated_run_ids.update((attempt_id, run_id))
+                runs = [self._run_record((*row, row[0] in associated_run_ids)) for row in run_rows]
                 observations = [
                     self._observation_record(row)
                     for row in connection.execute(
@@ -3849,13 +3965,7 @@ class SqliteReviewRecords:
                 attempts = []
                 corrected_subagent_runs = set()
                 review_count_corrections_by_run = {}
-                for row in connection.execute(
-                    "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
-                    "duration_seconds, exit_status, trigger_id, provider_review_id, checkpoint_id, run_id, "
-                    "diagnostic, metadata_json FROM review_attempts WHERE source_pr = ? "
-                    "ORDER BY started_at, attempt_id",
-                    (pr,),
-                ):
+                for row in attempt_rows:
                     try:
                         metadata = json.loads(row[13])
                     except json.JSONDecodeError as exc:
@@ -4739,7 +4849,7 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("stored coverage metadata is malformed") from exc
         if not isinstance(coverage_limits, list) or any(not isinstance(item, str) for item in coverage_limits):
             raise ReviewRecordsError("stored coverage metadata must be a list of strings")
-        return {
+        record = {
             "run_id": row[0],
             "source_pr": row[1],
             "channel": row[2],
@@ -4755,6 +4865,33 @@ class SqliteReviewRecords:
             "finalized": bool(row[14]),
             "finalized_at": row[15],
         }
+        # Curated imports retain supplied clocks separately from storage defaults.
+        # Keep SQL ordering and immutable rows intact, but never present an import
+        # fallback as a known review time. Native attempts own their chronology.
+        if record["channel"] not in {"manual", "subagent"} or row[17]:
+            return record
+        try:
+            payload = json.loads(row[16])
+            if not isinstance(payload, dict) or not {"started_at", "finished_at"} <= payload.keys():
+                return record
+            clocks = {}
+            for field in ("started_at", "finished_at"):
+                supplied = payload[field]
+                if supplied is not None:
+                    if not isinstance(supplied, str) or supplied != record[field]:
+                        return record
+                    _timestamp(supplied, field)
+                clocks[field] = {
+                    "value": record[field],
+                    "source": "generated" if supplied is None else "supplied",
+                }
+        except (TypeError, json.JSONDecodeError, ReviewRecordsError):
+            # Older or unusable provenance cannot establish unknown chronology.
+            return record
+        record["storage_timestamps"] = clocks
+        record["started_at"] = payload["started_at"]
+        record["finished_at"] = payload["finished_at"]
+        return record
 
     @staticmethod
     def _observation_record(row: Sequence[Any]) -> dict[str, Any]:
