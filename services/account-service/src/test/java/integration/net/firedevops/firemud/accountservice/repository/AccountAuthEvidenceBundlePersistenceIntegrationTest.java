@@ -101,6 +101,8 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
 
     assertThat(migrateCheckpointRepair(context)).isEqualTo(1);
     assertThat(retainedOwnerRows(dsl)).usingRecursiveComparison().isEqualTo(before);
+    assertThat(migrateCurrentApplicationSchema(context)).isPositive();
+    assertThat(retainedOwnerRows(dsl)).usingRecursiveComparison().isEqualTo(before);
     AccountAuthEvidenceBundle zeroBundle =
         inTransaction(context, () -> bundles.captureAndPersist(zero.requestId()));
     assertThat(zeroBundle.fields().get("outboxCheckpoints"))
@@ -495,6 +497,18 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
         .placeholders(Map.of("serviceSchema", context.schema()))
         .locations("classpath:db/migration")
         .target(MigrationVersion.fromVersion("154"))
+        .load()
+        .migrate()
+        .migrationsExecuted;
+  }
+
+  private static int migrateCurrentApplicationSchema(TestContext context) {
+    return Flyway.configure()
+        .dataSource(context.dataSource())
+        .schemas(context.schema())
+        .defaultSchema(context.schema())
+        .placeholders(Map.of("serviceSchema", context.schema()))
+        .locations("classpath:db/migration")
         .load()
         .migrate()
         .migrationsExecuted;

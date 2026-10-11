@@ -77,6 +77,7 @@ import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePur
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidenceServiceGrpc;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -497,6 +498,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
           operatorAuthorizationContext(
               actors,
               operations,
+              f.dsl,
               loggingTransport.accountClient(),
               operatorRepository,
               () ->
@@ -730,6 +732,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
   private AnnotationConfigApplicationContext operatorAuthorizationContext(
       AccountControlUiActorService actors,
       AccountControlUiIssuanceRepository issuanceOperations,
+      DSLContext accountDsl,
       StartSessionReservationEvidenceClient reservationEvidence,
       AccountStartSessionOperatorAuthorizationRepository repository,
       OwnerKeySource ownerKeySource,
@@ -759,6 +762,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
                     "PT1M")));
     context.registerBean(AccountControlUiActorService.class, () -> actors);
     context.registerBean(AccountControlUiIssuanceRepository.class, () -> issuanceOperations);
+    context.registerBean(DSLContext.class, () -> accountDsl);
     context.registerBean(StartSessionReservationEvidenceClient.class, () -> reservationEvidence);
     context.registerBean(
         AccountStartSessionOperatorAuthorizationRepository.class, () -> repository);
