@@ -22,6 +22,7 @@ import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
+import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidenceProvider;
@@ -93,6 +94,7 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
   @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
+  @MockitoBean private GrpcGameSessionInitialAdmissionBindProofClient bindProofClient;
 
   @Test
   void prepareActivationReplayRestartChangedReceiptAndDuplicateOperationUseDurableBinding() {
