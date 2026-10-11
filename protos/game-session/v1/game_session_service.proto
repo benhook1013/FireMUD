@@ -13,6 +13,8 @@ option java_multiple_files = true;
 service GameSessionService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
+  rpc AuthorizeStartSession(AuthorizeStartSessionRequest)
+      returns (AuthorizeStartSessionResponse);
   rpc StopSession(StopSessionRequest) returns (StopSessionResponse);
   rpc RestartSession(RestartSessionRequest) returns (RestartSessionResponse);
   rpc EnqueueCommand(EnqueueCommandRequest) returns (EnqueueCommandResponse);
@@ -107,6 +109,32 @@ message StartSessionRequest {
 message StartSessionResponse {
   string session_id = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+// Typed non-activating operator handoff. This transport only records Account redemption progress;
+// it does not create or start a game instance and does not return a session identifier.
+message AuthorizeStartSessionRequest {
+  bytes canonical_post_authorization_execution_tuple_bytes = 1;
+  string operator_authorization_reference = 2;
+}
+
+enum StartSessionOwnerAuthorizationProgress {
+  START_SESSION_OWNER_AUTHORIZATION_PROGRESS_UNSPECIFIED = 0;
+  START_SESSION_OWNER_AUTHORIZATION_PROGRESS_EXACT_REPLAY = 1;
+  START_SESSION_OWNER_AUTHORIZATION_PROGRESS_ACCOUNT_OUTCOME_AMBIGUOUS = 2;
+  START_SESSION_OWNER_AUTHORIZATION_PROGRESS_ACCOUNT_PROJECTION_ATTACHED = 3;
+}
+
+message AuthorizeStartSessionResponse {
+  string target_namespace = 1;
+  string control_plane_request_id = 2;
+  string mutation_digest = 3;
+  string owner_attempt_id = 4;
+  string owner_mutation_id = 5;
+  int64 owner_fence = 6;
+  string owner_phase_state = 7;
+  StartSessionOwnerAuthorizationProgress progress = 8;
+  shared.v1.ErrorDetail error = 9;
 }
 
 message StopSessionRequest {
