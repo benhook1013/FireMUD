@@ -21,6 +21,7 @@ public class AccountControlUiCommittedIssuanceRepository {
   private static final int MAX_SOURCE = 131072;
   private static final int MAX_BUNDLE = 131072;
   private static final int MAX_SIGNER_RECEIPT = 65536;
+  private static final long MAX_REDIS_SAFE_INTEGER = 9_007_199_254_740_991L;
 
   private final DSLContext dsl;
 
@@ -48,7 +49,7 @@ public class AccountControlUiCommittedIssuanceRepository {
                 + "caller_workload, caller_context_id, request_digest, claims_payload, "
                 + "source_payload, bundle_payload, signer_receipt, issued_at_epoch_second, "
                 + "expires_at_epoch_second, recovery_expires_at, status, token_hash, "
-                + "pending_registry, active_registry, pending_receipt, committed_at, "
+                + "registry_cleanup_deadline_epoch_millis, pending_registry, active_registry, pending_receipt, committed_at, "
                 + "recovery_failed_at FROM "
                 + TABLE
                 + " WHERE token_hash = ? FOR SHARE",
@@ -136,6 +137,7 @@ public class AccountControlUiCommittedIssuanceRepository {
     private final byte[] signerReceipt;
     private final long issuedAtEpochSecond;
     private final long expiresAtEpochSecond;
+    private final long registryCleanupDeadlineEpochMillis;
     private final String status;
     private final String tokenHash;
     private final byte[] pendingRegistry;
@@ -163,6 +165,19 @@ public class AccountControlUiCommittedIssuanceRepository {
           || expiresAtEpochSecond - issuedAtEpochSecond > 300L) {
         throw denied();
       }
+      long expiryMillis;
+      try {
+        expiryMillis = Math.multiplyExact(expiresAtEpochSecond, 1000L);
+      } catch (ArithmeticException malformed) {
+        throw denied();
+      }
+      Long cleanupDeadline = row.get("registry_cleanup_deadline_epoch_millis", Long.class);
+      if (cleanupDeadline == null
+          || cleanupDeadline < expiryMillis
+          || cleanupDeadline > MAX_REDIS_SAFE_INTEGER) {
+        throw denied();
+      }
+      registryCleanupDeadlineEpochMillis = cleanupDeadline;
       status = text(row, "status");
       tokenHash = AccountControlUiCommittedIssuanceRepository.tokenHash(row);
       pendingRegistry = bytes(row, "pending_registry", 32768);
@@ -265,11 +280,11 @@ public class AccountControlUiCommittedIssuanceRepository {
     }
 
     public long expiryMillis() {
-      try {
-        return Math.multiplyExact(expiresAtEpochSecond, 1000L);
-      } catch (ArithmeticException malformed) {
-        throw denied();
-      }
+      return registryCleanupDeadlineEpochMillis;
+    }
+
+    public long registryCleanupDeadlineEpochMillis() {
+      return registryCleanupDeadlineEpochMillis;
     }
 
     @Override

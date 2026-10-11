@@ -15,6 +15,8 @@ import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -64,6 +66,7 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     var prepared = f.prepare();
     assertThat(prepared.status).isEqualTo("PREPARED");
     assertThat(prepared.expiresAt).isEqualTo(prepared.issuedAt.plusSeconds(300));
+    assertThat(prepared.expiryMillis()).isEqualTo(prepared.expiresAt.toEpochMilli() + 300_000L);
     assertThat(prepared.recoveryExpiry).isEqualTo(prepared.issuedAt.plusSeconds(60));
     var candidate = f.candidate(prepared);
     assertThat(candidate.status).isEqualTo("CANDIDATE");
@@ -82,6 +85,7 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     assertThat(recovered.tokenHash()).isEqualTo(candidate.tokenHash);
     assertThat(recovered.pendingRegistry()).isEqualTo(candidate.pendingRegistry);
     assertThat(recovered.activeRegistry()).isEqualTo(candidate.activeRegistry);
+    assertThat(reread.expiryMillis()).isEqualTo(prepared.expiryMillis());
     var envelope =
         Objects.requireNonNull(
             c.tx(() -> c.operations.envelope(reread)),
@@ -90,6 +94,112 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     assertThat(envelope.binding()).isEqualTo(f.ownerBinding);
     assertThat(c.dsl.fetchCount(DSL.table("account_control_ui_issuance_operations"))).isEqualTo(1);
     assertThat(c.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"))).isEqualTo(1);
+  }
+
+  @Test
+  void explicitlyConfiguredZeroMarginIsPresentOnNewOwnerRows() {
+    Context c = context();
+    var prepared = new Fixture(c).prepare(0L);
+
+    assertThat(prepared.registryCleanupDeadlineEpochMillis)
+        .isEqualTo(prepared.expiresAt.toEpochMilli());
+  }
+
+  @Test
+  void v126_2PreservesRetainedPreparedRowAndDeniesCurrentUseAndAdvance() {
+    Context c = contextAt("126.1");
+    Fixture f = new Fixture(c);
+    UUID operationId = UUID.randomUUID();
+    UUID tokenJti = UUID.randomUUID();
+    Instant issuedAt =
+        Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS).minusSeconds(10);
+    Instant expiresAt = issuedAt.plusSeconds(300);
+    OffsetDateTime recoveryExpiresAt =
+        OffsetDateTime.ofInstant(issuedAt.plusSeconds(60), ZoneOffset.UTC);
+    byte[] claims =
+        bytes(
+            "{\"accountId\":\""
+                + f.actor
+                + "\",\"jti\":\""
+                + tokenJti
+                + "\",\"iat\":"
+                + issuedAt.getEpochSecond()
+                + ",\"nbf\":"
+                + issuedAt.getEpochSecond()
+                + ",\"exp\":"
+                + expiresAt.getEpochSecond()
+                + ",\"tokenGeneration\":1,\"authorityTuple\":{},"
+                + "\"membershipVersion\":{},\"issuanceFence\":1}");
+    byte[] source = bytes("{\"historicalFixture\":true}");
+    byte[] bundle = bytes("{\"authoritySourceVersions\":[],\"bundleRef\":{}}");
+    byte[] signerReceipt = bytes("test-only-historical-signer-receipt");
+    // Historical V126.1 fixture seeding uses real owner IDs but is not a production issuance path.
+    c.tx(
+        () ->
+            c.dsl.execute(
+                "INSERT INTO account_control_ui_issuance_operations"
+                    + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload, caller_context_id,"
+                    + " request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt,"
+                    + " issued_at_epoch_second, expires_at_epoch_second, recovery_expires_at, status)"
+                    + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PREPARED')",
+                f.request,
+                operationId,
+                tokenJti,
+                f.actor,
+                f.tenant,
+                "spiffe://test-only/control-ui",
+                UUID.randomUUID(),
+                "historical-test",
+                "c".repeat(64),
+                claims,
+                source,
+                bundle,
+                signerReceipt,
+                issuedAt.getEpochSecond(),
+                expiresAt.getEpochSecond(),
+                recoveryExpiresAt));
+    var before =
+        Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT * FROM account_control_ui_issuance_operations WHERE request_id = ?",
+                f.request),
+            "Historically seeded pre-deadline row required");
+
+    migrateToLatest(c);
+
+    var after =
+        Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT * FROM account_control_ui_issuance_operations WHERE request_id = ?",
+                f.request),
+            "Retained row must remain after additive migration");
+    assertLegacyFieldsUnchanged(before, after);
+    assertThat(after.get("registry_cleanup_deadline_epoch_millis", Long.class)).isNull();
+
+    var retained = c.tx(() -> c.operations.findRequest(f.request));
+    assertThat(retained.status).isEqualTo("PREPARED");
+    assertThatThrownBy(retained::expiryMillis).isInstanceOf(IllegalStateException.class);
+    assertThatThrownBy(
+            () ->
+                c.tx(
+                    () ->
+                        c.operations.bindCandidate(
+                            retained,
+                            "d".repeat(64),
+                            bytes("test-only-envelope"),
+                            bytes("test-only-binding"),
+                            f.signer)))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(c.dsl.fetchCount(DSL.table("account_control_ui_response_envelopes"))).isZero();
+    var afterDeniedAdvance =
+        Objects.requireNonNull(
+            c.dsl.fetchOne(
+                "SELECT * FROM account_control_ui_issuance_operations WHERE request_id = ?",
+                f.request),
+            "Denied advancement must preserve retained row");
+    assertLegacyFieldsUnchanged(before, afterDeniedAdvance);
+    assertThat(afterDeniedAdvance.get("registry_cleanup_deadline_epoch_millis", Long.class))
+        .isNull();
   }
 
   @Test
@@ -156,10 +266,10 @@ class AccountControlUiIssuancePostgresIntegrationTest {
                             "INSERT INTO account_control_ui_issuance_operations"
                                 + " (request_id, operation_id, token_jti, account_uuid, tenant_uuid, caller_workload, caller_context_id,"
                                 + " request_mac_key_id, request_digest, claims_payload, source_payload, bundle_payload, signer_receipt,"
-                                + " issued_at_epoch_second, expires_at_epoch_second, recovery_expires_at, status)"
+                                + " issued_at_epoch_second, expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, recovery_expires_at, status)"
                                 + " SELECT ?, ?, ?, account_uuid, tenant_uuid, caller_workload, caller_context_id, request_mac_key_id,"
                                 + " request_digest, claims_payload, source_payload, bundle_payload, signer_receipt, issued_at_epoch_second,"
-                                + " expires_at_epoch_second, to_timestamp(issued_at_epoch_second + 61), 'PREPARED'"
+                                + " expires_at_epoch_second, registry_cleanup_deadline_epoch_millis, to_timestamp(issued_at_epoch_second + 61), 'PREPARED'"
                                 + " FROM account_control_ui_issuance_operations WHERE request_id = ?",
                             UUID.randomUUID(),
                             UUID.randomUUID(),
@@ -229,6 +339,45 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     assertThat(observed.issuedAt).isEqualTo(original.issuedAt);
     assertThat(observed.expiresAt).isEqualTo(original.expiresAt);
     assertThat(observed.recoveryExpiry).isEqualTo(original.recoveryExpiry);
+  }
+
+  private static void assertLegacyFieldsUnchanged(
+      org.jooq.Record original, org.jooq.Record observed) {
+    for (String field :
+        List.of(
+            "request_id",
+            "operation_id",
+            "token_jti",
+            "account_uuid",
+            "tenant_uuid",
+            "caller_workload",
+            "caller_context_id",
+            "request_mac_key_id",
+            "request_digest",
+            "claims_payload",
+            "source_payload",
+            "bundle_payload",
+            "signer_receipt",
+            "issued_at_epoch_second",
+            "expires_at_epoch_second",
+            "recovery_expires_at",
+            "status",
+            "token_hash",
+            "pending_registry",
+            "active_registry",
+            "pending_receipt",
+            "committed_at",
+            "recovery_failed_at",
+            "revocation_receipt",
+            "created_at")) {
+      Object originalValue = original.get(field);
+      Object observedValue = observed.get(field);
+      if (originalValue instanceof byte[] originalBytes) {
+        assertThat((byte[]) observedValue).containsExactly(originalBytes);
+      } else {
+        assertThat(observedValue).isEqualTo(originalValue);
+      }
+    }
   }
 
   private static final class Fixture {
@@ -306,6 +455,10 @@ class AccountControlUiIssuancePostgresIntegrationTest {
     }
 
     AccountControlUiIssuanceRepository.Stored prepare() {
+      return prepare(300_000L);
+    }
+
+    AccountControlUiIssuanceRepository.Stored prepare(long sessionSafetyMarginMillis) {
       return c.tx(
           () ->
               c.operations.prepare(
@@ -317,7 +470,8 @@ class AccountControlUiIssuancePostgresIntegrationTest {
                   primary,
                   authority,
                   signer,
-                  Instant.ofEpochSecond(Instant.now().getEpochSecond())));
+                  Instant.ofEpochSecond(Instant.now().getEpochSecond()),
+                  sessionSafetyMarginMillis));
     }
 
     AccountControlUiIssuanceRepository.Stored candidate(
@@ -366,29 +520,50 @@ class AccountControlUiIssuancePostgresIntegrationTest {
   }
 
   private static Context context() {
+    return contextAt(null);
+  }
+
+  private static Context contextAt(String targetVersion) {
     String schema = "control_ui_storage_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     source.setSchema(schema);
-    Flyway.configure()
-        .dataSource(source)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    var migration =
+        Flyway.configure()
+            .dataSource(source)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (targetVersion != null) {
+      migration.target(org.flywaydb.core.api.MigrationVersion.fromVersion(targetVersion));
+    }
+    migration.load().migrate();
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
     var transaction = new TransactionTemplate(new DataSourceTransactionManager(source));
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    return new Context(dsl, new AccountControlUiIssuanceRepository(dsl), transaction);
+    return new Context(
+        dsl, new AccountControlUiIssuanceRepository(dsl), transaction, source, schema);
+  }
+
+  private static void migrateToLatest(Context c) {
+    Flyway.configure()
+        .dataSource(c.dataSource)
+        .schemas(c.schema)
+        .defaultSchema(c.schema)
+        .placeholders(Map.of("serviceSchema", c.schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
   }
 
   private record Context(
       DSLContext dsl,
       AccountControlUiIssuanceRepository operations,
-      TransactionTemplate transaction) {
+      TransactionTemplate transaction,
+      DriverManagerDataSource dataSource,
+      String schema) {
     <T> T tx(Supplier<T> action) {
       return transaction.execute(ignored -> action.get());
     }

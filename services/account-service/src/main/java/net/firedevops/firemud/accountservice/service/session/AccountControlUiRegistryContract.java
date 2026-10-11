@@ -15,7 +15,7 @@ public final class AccountControlUiRegistryContract {
     return new RedisScriptDescriptor(
         SCRIPT_ID,
         RESOURCE,
-        "ab52db88e282ac8a70d1409a563357ed623363dab5c3c44a11c8274f378dd33b",
+        "48c909de4aa5868772662972bf1ce449a2c83fd72cb06e5e2f43fea66e253a1b",
         "account-service",
         "account_coord_app",
         RedisRole.COORDINATION,
@@ -23,7 +23,7 @@ public final class AccountControlUiRegistryContract {
         List.of(
             new ArgumentSpec("expectedOriginalRecord"),
             new ArgumentSpec("exactReplacementRecord"),
-            new ArgumentSpec("absoluteExpiryEpochMillis")),
+            new ArgumentSpec("absoluteCleanupDeadlineEpochMillis")),
         ScriptCategory.SESSION_CAS,
         List.of(
             new OutcomeSpec("APPLIED", OutcomeCategory.SUCCESS, MutationEffect.MUTATING),

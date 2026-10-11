@@ -210,7 +210,21 @@ final class AccountControlUiSignerFixture {
         AccountJwtJwksConfigMapClient.Outcome.APPLIED);
   }
 
-  void commit() throws Exception {
+  /**
+   * Establishes the real receipt-backed first public key without committing a current signer. Only
+   * this fixture's isolated upstream materializer identity and ConfigMap transport are stipulated;
+   * Account's enrollment, generation, publication, and readback owners remain real.
+   */
+  void prepareInitialPrepublication() throws Exception {
+    prepareInitialGeneration();
+    assertThat(
+            f.tx(
+                () ->
+                    desired.readCurrentCommittedSigner(BINDING, trust(), API_DIGEST, API_REVISION)))
+        .isEmpty();
+  }
+
+  private PreparedGeneration prepareInitialGeneration() throws Exception {
     // Only the protected upstream identity is stipulated; every owner method/transaction is real.
     try (var authenticated = mockStatic(AccountJwtSignerMaterializerTlsInterceptor.class)) {
       authenticated
@@ -269,6 +283,19 @@ final class AccountControlUiSignerFixture {
                   .reconcileCurrentGenerationOnce(result.operationId())
                   .publicKeyPrepublished())
           .isTrue();
+      return new PreparedGeneration(request, result, pair);
+    }
+  }
+
+  void commit() throws Exception {
+    var initialGeneration = prepareInitialGeneration();
+    var request = initialGeneration.request();
+    var result = initialGeneration.result();
+    var pair = initialGeneration.pair();
+    try (var authenticated = mockStatic(AccountJwtSignerMaterializerTlsInterceptor.class)) {
+      authenticated
+          .when(AccountJwtSignerMaterializerTlsInterceptor::authenticatedBinding)
+          .thenReturn(materializerBinding());
       var context = f.tx(() -> readiness.readCurrentInventoryObservationContext(BINDING, trust()));
       var plannedAt = now().minusSeconds(300);
       var planned = completeInventorySnapshot(plannedAt, context);
@@ -413,6 +440,9 @@ final class AccountControlUiSignerFixture {
           .isEqualTo(durableCommit.privateReceipt().receiptDigest());
     }
   }
+
+  private record PreparedGeneration(
+      GenerationRequest request, GenerationResult result, KeyPair pair) {}
 
   private static <T> T rpc(Consumer<StreamObserver<T>> invocation) {
     AtomicReference<T> result = new AtomicReference<>();

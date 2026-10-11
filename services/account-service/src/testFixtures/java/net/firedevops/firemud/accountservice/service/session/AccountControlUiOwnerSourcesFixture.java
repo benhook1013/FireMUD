@@ -24,8 +24,6 @@ import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftSourceCompositionService;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
-import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding;
-import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding;
 import net.firedevops.firemud.accountservice.creatorparty.CreatorPartyEncoding;
 import net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartyRepository;
 import net.firedevops.firemud.accountservice.creatorparty.IndividualCreatorPartySource;
@@ -45,8 +43,6 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
-import net.firedevops.firemud.accountservice.repository.AccountJwtJwksPublicationRepository;
-import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantCreationBootstrapOperationRepository;
@@ -107,7 +103,8 @@ final class AccountControlUiOwnerSourcesFixture {
    * Reuses actual Account/source/auth owners while a composed test supplies signer/Redis owners.
    */
   AccountControlUiOwnerSourcesFixture(
-      String jdbcUrl, String username, String password, Path root, boolean installNegativeIssuer) {
+      String jdbcUrl, String username, String password, Path root, boolean installNegativeIssuer)
+      throws Exception {
     this(jdbcUrl, username, password, root, installNegativeIssuer, UUID.randomUUID());
   }
 
@@ -117,7 +114,8 @@ final class AccountControlUiOwnerSourcesFixture {
       String password,
       Path root,
       boolean installNegativeIssuer,
-      UUID tenant) {
+      UUID tenant)
+      throws Exception {
     this.tenant = Objects.requireNonNull(tenant);
     String schema = "control_ui_owner_" + UUID.randomUUID().toString().replace("-", "");
     var dataSource = new DriverManagerDataSource(jdbcUrl, username, password);
@@ -348,12 +346,9 @@ final class AccountControlUiOwnerSourcesFixture {
       service = null;
       return;
     }
-    var signerRepository = new AccountJwtSignerDesiredStateRepository(dsl);
-    var trust = new AccountJwtSignerMaterializerTrustBinding(false, "");
-    var api = new AccountJwtJwksApiBinding();
-    var signer =
-        new AccountControlUiSignerOwner(
-            signerRepository, trust, api, root.resolve("private"), root.resolve("public"));
+    var signerFixture = new AccountControlUiSignerFixture(this, root);
+    signerFixture.prepareInitialPrepublication();
+    var signer = signerFixture.signer;
     var operations = new AccountControlUiIssuanceRepository(dsl);
     var crypto =
         new AccountControlUiResponseCryptography(
@@ -368,10 +363,10 @@ final class AccountControlUiOwnerSourcesFixture {
             RedisScriptCatalog.fromContributions(List.of()));
     var publicSource =
         new AccountJwtJwksTrustedSource(
-            new AccountJwtJwksConfigMapClient(api),
-            trust,
-            signerRepository,
-            new AccountJwtJwksPublicationRepository(dsl, signerRepository),
+            signerFixture.client,
+            signerFixture.trust,
+            signerFixture.desired,
+            signerFixture.publication,
             manager);
     var actors =
         new AccountControlUiActorService(
@@ -395,6 +390,7 @@ final class AccountControlUiOwnerSourcesFixture {
             actors,
             manager,
             Clock.systemUTC(),
+            300_000L,
             CALLER);
   }
 
