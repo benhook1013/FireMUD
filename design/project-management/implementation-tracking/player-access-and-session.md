@@ -6,6 +6,10 @@ This is a non-normative implementation tracker for player access and session. Ca
 
 ## Current Status
 
+### Entity character-creation denial
+
+The existing scalar-only Entity `CreateCharacter` RPC now returns `FAILED_PRECONDITION` before allocation for valid requests in shared and isolated scopes; the focused service test also confirms the malformed zero-account case remains `INVALID_ARGUMENT`. This is denial-only implementation and unit proof. The canonical Account producer, authenticated owner proof, exact catalog/admission-pointer evidence, Game Session and World protections, and Entity durable terminal composition remain missing, so character creation is unavailable under [ADR 0140](../../architecture/decisions/adr-0140-realm-authored-controllable-actor-entry.md) and the [Entity owner-protection contract](../../architecture/microservices/entity-management-service/api-contracts.md#character-creation-owner-protection).
+
 Restricted original-claim evidence continuation remains inactive and preparation-only; its bounded preparation and proof limits are recorded under [restricted original-claim continuation preparation](#restricted-original-claim-evidence-continuation-preparation).
 
 ### Account signer/currentness storage evidence preparation

@@ -2157,6 +2157,57 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void createCharacterDeniesValidSharedAndIsolatedRequestsBeforeAllocation() {
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EntityManagementGrpcService service =
+        newService(
+            Mockito.mock(PingService.class),
+            characterService,
+            Mockito.mock(EquipmentService.class),
+            Mockito.mock(InventoryService.class),
+            Mockito.mock(RoomEntityService.class),
+            new SimpleMeterRegistry());
+
+    for (var scope :
+        List.of(
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_SHARED,
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_ISOLATED)) {
+      AtomicReference<net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse> ref =
+          new AtomicReference<>();
+      service.createCharacter(
+          net.firedevops.firemud.entitymanagement.v1.CreateCharacterRequest.newBuilder()
+              .setTenantId("1")
+              .setAccountId("44")
+              .setGameInstanceId("44")
+              .setPlayableStateScope(scope)
+              .setName("Ember")
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(
+                net.firedevops.firemud.entitymanagement.v1.CreateCharacterResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {}
+
+            @Override
+            public void onCompleted() {}
+          });
+
+      assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+      assertEquals(
+          "Character creation is unavailable until owner protections are implemented.",
+          ref.get().getError().getMessage());
+    }
+
+    verifyNoInteractions(characterService);
+  }
+
+  @Test
   void listCharactersRejectsMalformedCurrentAccountClaimWithoutTenantAccess() {
     CharacterService characterService = Mockito.mock(CharacterService.class);
     EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
