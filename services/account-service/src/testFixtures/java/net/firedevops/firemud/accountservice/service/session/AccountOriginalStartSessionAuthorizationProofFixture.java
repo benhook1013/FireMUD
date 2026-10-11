@@ -58,8 +58,8 @@ import tools.jackson.databind.json.JsonMapper;
  * Account owners and retained PostgreSQL rows. A test may supply a Game Session owner-attempt
  * lifecycle so it can reserve the exact issued tuple before redemption and attach the redeemed
  * projection after redemption, without introducing Game Session classes into this fixture artifact.
- * The peer scopes around issue and redemption are in-process test stipulations, not authenticated
- * producer or mTLS proof.
+ * Existing overloads retain their in-process stipulated peer scopes; composed proofs may supply an
+ * authenticated issue/redemption transport while preserving the same Account owner flow.
  */
 public final class AccountOriginalStartSessionAuthorizationProofFixture {
   private static final Duration REFERENCE_LIFETIME = Duration.ofMinutes(5);
@@ -179,6 +179,26 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
       UUID reservationOwnerId,
       long reservationClaimFence,
       OwnerAttemptLifecycle ownerAttemptLifecycle) {
+    return issueAndRedeemOriginal(
+        controlPlaneRequestId,
+        action,
+        reservationOwnerId,
+        reservationClaimFence,
+        ownerAttemptLifecycle,
+        null);
+  }
+
+  /**
+   * Performs the same Account-owned issue/redemption flow through a caller-supplied authenticated
+   * transport. The owner-attempt reservation remains between issue and redemption.
+   */
+  public synchronized OriginalStartSession issueAndRedeemOriginal(
+      String controlPlaneRequestId,
+      StartSessionOperatorAction action,
+      UUID reservationOwnerId,
+      long reservationClaimFence,
+      OwnerAttemptLifecycle ownerAttemptLifecycle,
+      OriginalStartSessionAuthorizationTransport transport) {
     Objects.requireNonNull(action, "canonical StartSession action is required");
     Objects.requireNonNull(ownerAttemptLifecycle, "Game Session owner attempt lifecycle required");
     requireActionBinding(action);
@@ -193,25 +213,39 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
           "This proof fixture already attempted the original StartSession request");
     }
     byte[] preTupleBytes = preTuple.canonicalJson().getBytes(StandardCharsets.UTF_8);
-    var authorization =
-        withPeer(
-            loggingPeerUri,
-            () ->
-                authorizationService.issue(
-                    new AccountStartSessionOperatorAuthorizationService.IssueRequest(
-                        creator.compact(),
-                        preTupleBytes,
-                        reservationOwnerId,
-                        reservationClaimFence,
-                        reservationOwnerId,
-                        reservationClaimFence)));
+    IssuedAuthorization authorization;
+    if (transport == null) {
+      var directAuthorization =
+          withPeer(
+              loggingPeerUri,
+              () ->
+                  authorizationService.issue(
+                      new AccountStartSessionOperatorAuthorizationService.IssueRequest(
+                          creator.compact(),
+                          preTupleBytes,
+                          reservationOwnerId,
+                          reservationClaimFence,
+                          reservationOwnerId,
+                          reservationClaimFence)));
+      authorization =
+          new IssuedAuthorization(
+              directAuthorization.operatorAuthorizationReference(),
+              directAuthorization.authorizationReferenceFingerprint(),
+              directAuthorization.authorityEvidenceBundle(),
+              new StartSessionAuthorityEvidenceBundle.BundleReference(
+                  directAuthorization.bundleReference().bundleVersion(),
+                  directAuthorization.bundleReference().sourceVersion(),
+                  directAuthorization.bundleReference().sourceFence(),
+                  directAuthorization.bundleReference().linearization()));
+    } else {
+      authorization =
+          Objects.requireNonNull(
+              transport.issue(
+                  preTuple, creator.compact(), reservationOwnerId, reservationClaimFence),
+              "Authenticated Account issue transport returned no authorization");
+    }
 
-    var sharedReference =
-        new StartSessionAuthorityEvidenceBundle.BundleReference(
-            authorization.bundleReference().bundleVersion(),
-            authorization.bundleReference().sourceVersion(),
-            authorization.bundleReference().sourceFence(),
-            authorization.bundleReference().linearization());
+    var sharedReference = authorization.bundleReference();
     var originalTuple =
         StartSessionPostAuthorizationExecutionTuple.createHuman(
             preTuple,
@@ -227,20 +261,28 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
             ownerAttemptLifecycle.reserve(originalTuple),
             "Game Session owner attempt reservation returned no claim");
 
-    var redemption =
-        withPeer(
-            gameSessionPeerUri,
-            () ->
-                authorizationService.redeem(
-                    new AccountStartSessionOperatorAuthorizationService.RedeemRequest(
-                        preTupleBytes,
-                        authorization.operatorAuthorizationReference(),
-                        authorization.authorizationReferenceFingerprint(),
-                        reservationOwnerId,
-                        reservationClaimFence,
-                        ownerClaim.ownerAttemptId(),
-                        ownerClaim.ownerFence())));
-    assertThat(redemption.replay()).isFalse();
+    boolean replay;
+    if (transport == null) {
+      var redemption =
+          withPeer(
+              gameSessionPeerUri,
+              () ->
+                  authorizationService.redeem(
+                      new AccountStartSessionOperatorAuthorizationService.RedeemRequest(
+                          preTupleBytes,
+                          authorization.operatorAuthorizationReference(),
+                          authorization.authorizationReferenceFingerprint(),
+                          reservationOwnerId,
+                          reservationClaimFence,
+                          ownerClaim.ownerAttemptId(),
+                          ownerClaim.ownerFence())));
+      replay = redemption.replay();
+    } else {
+      replay =
+          transport.redeem(
+              preTupleBytes, authorization, reservationOwnerId, reservationClaimFence, ownerClaim);
+    }
+    assertThat(replay).isFalse();
     ownerAttemptLifecycle.attachAccountRedemptionProjection(ownerClaim, originalTuple);
 
     var retained =
@@ -258,7 +300,14 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
         .isEqualTo(authorization.authorizationReferenceFingerprint());
     assertThat(retained.issuanceOperationId()).isNotNull();
     assertThat(retained.issuanceFence()).isPositive();
-    assertThat(retained.bundleReference()).isEqualTo(authorization.bundleReference());
+    assertThat(retained.bundleReference().bundleVersion())
+        .isEqualTo(authorization.bundleReference().bundleVersion());
+    assertThat(retained.bundleReference().sourceVersion())
+        .isEqualTo(authorization.bundleReference().sourceVersion());
+    assertThat(retained.bundleReference().sourceFence())
+        .isEqualTo(authorization.bundleReference().sourceFence());
+    assertThat(retained.bundleReference().linearization())
+        .isEqualTo(authorization.bundleReference().linearization());
     assertThat(retained.authorityEvidenceBundle())
         .containsExactly(authorization.authorityEvidenceBundle());
     assertThat(retained.authorityEvidenceBundle())
@@ -386,6 +435,44 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
         OwnerClaim ownerClaim, StartSessionPostAuthorizationExecutionTuple originalTuple);
   }
 
+  /** Authenticated issue and redemption calls used by a composed transport proof. */
+  public interface OriginalStartSessionAuthorizationTransport {
+    IssuedAuthorization issue(
+        StartSessionPreAuthorizationReservationTuple tuple,
+        String controlUiJwt,
+        UUID reservationOwnerId,
+        long reservationClaimFence);
+
+    boolean redeem(
+        byte[] canonicalPreAuthorizationTupleBytes,
+        IssuedAuthorization authorization,
+        UUID reservationOwnerId,
+        long reservationClaimFence,
+        OwnerClaim ownerClaim);
+  }
+
+  /** Exact Account issue response fields needed to form the original execution tuple. */
+  public record IssuedAuthorization(
+      String operatorAuthorizationReference,
+      String authorizationReferenceFingerprint,
+      byte[] authorityEvidenceBundle,
+      StartSessionAuthorityEvidenceBundle.BundleReference bundleReference) {
+    public IssuedAuthorization {
+      Objects.requireNonNull(operatorAuthorizationReference, "Account reference is required");
+      Objects.requireNonNull(
+          authorizationReferenceFingerprint, "Account reference fingerprint is required");
+      authorityEvidenceBundle =
+          Objects.requireNonNull(authorityEvidenceBundle, "Account authority bundle is required")
+              .clone();
+      Objects.requireNonNull(bundleReference, "Account bundle reference is required");
+    }
+
+    @Override
+    public byte[] authorityEvidenceBundle() {
+      return authorityEvidenceBundle.clone();
+    }
+  }
+
   /** Non-secret owner identities needed by Account redemption and acquisition. */
   public record OwnerClaim(UUID ownerAttemptId, UUID ownerMutationId, long ownerFence) {
     public OwnerClaim {
@@ -399,7 +486,7 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
       StartSessionPreAuthorizationReservationTuple preTuple,
       UUID reservationOwnerId,
       long reservationClaimFence,
-      AccountStartSessionOperatorAuthorizationService.AuthorizationResponse authorization,
+      IssuedAuthorization authorization,
       StartSessionPostAuthorizationExecutionTuple originalTuple,
       AccountStartSessionOperatorAuthorizationRepository.IssuanceRecord retained) {
     AccountStartSessionAuthorityCapture capture =

@@ -46,9 +46,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationRequest;
+import net.firedevops.firemud.account.v1.StartSessionOperatorAuthorizationServiceGrpc;
 import net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadGrpcService;
 import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
+import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture.IssuedAuthorization;
+import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture.OriginalStartSessionAuthorizationTransport;
 import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture.OwnerAttemptLifecycle;
 import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture.OwnerClaim;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeRepository;
@@ -303,6 +307,7 @@ import net.firedevops.firemud.gamesession.service.impl.GameSessionAuthoredActorC
 import net.firedevops.firemud.gamesession.service.impl.OriginalStartSessionCurrentAttemptReadGrpcService;
 import net.firedevops.firemud.gamesession.service.impl.OriginalStartSessionLaunchReadGrpcService;
 import net.firedevops.firemud.loggingadmin.StartSessionReservationMutationTestFixtures;
+import net.firedevops.firemud.loggingadmin.client.StartSessionOperatorAuthorizationClient;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimEvidence;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimPurpose;
@@ -422,21 +427,21 @@ import tools.jackson.databind.ObjectMapper;
  * mTLS selected-empty owner readers and exact retained receipts; nonempty owner publication remains
  * outside this proof. StartSession issuance and redemption use the real Account owner and retained
  * rows under the genuine Logging PostgreSQL reservation owner and its native file-backed mTLS
- * current-claim reader; Account issuer/redeemer peer contexts remain stipulated. The read-only
- * projection uses the real Account receiver over Game Design mTLS. MinIO object-store I/O is real.
- * The complete launch-binding case wires the actual Game Design handler and World Management mTLS
- * client on this fixture's loopback server to the actual owner implementation in an explicitly
- * established read-only repeatable-read snapshot; unrelated handler dependencies are isolated. The
- * World preparation composition reuses the genuine persisted source, frozen graph, and complete
- * released pair through actual World owner services. Its original Account tuple is issued and
- * redeemed by the real Account owner after the native Logging current-claim read and under
- * stipulated Account issuer/redeemer peer contexts; Game Session reserves that exact tuple in an
- * isolated V35 store and attaches the exact redeemed projection. Account's current-attempt
- * observation and World participation acquisition use their native same-namespace mTLS clients and
- * receivers. Game Session also resolves the actual fresh Game Design tenant receipt over mTLS,
- * stores and independently reads its numeric tenant association, then reads the actual
- * Account-confirmed source and published policy set over mTLS and stores and independently reads
- * its canonical public-realm catalog. Game Session creates and independently reads the exact
+ * current-claim reader; issue uses the existing Logging/Admin mTLS client and redemption uses a
+ * Game Session mTLS stub pinned to Account. The read-only projection uses the real Account receiver
+ * over Game Design mTLS. MinIO object-store I/O is real. The complete launch-binding case wires the
+ * actual Game Design handler and World Management mTLS client on this fixture's loopback server to
+ * the actual owner implementation in an explicitly established read-only repeatable-read snapshot;
+ * unrelated handler dependencies are isolated. The World preparation composition reuses the genuine
+ * persisted source, frozen graph, and complete released pair through actual World owner services.
+ * Its original Account tuple is issued and redeemed by the real Account owner after the native
+ * Logging current-claim read through exact same-namespace Account transports; Game Session reserves
+ * that exact tuple in an isolated V35 store and attaches the exact redeemed projection. Account's
+ * current-attempt observation and World participation acquisition use their native same-namespace
+ * mTLS clients and receivers. Game Session also resolves the actual fresh Game Design tenant
+ * receipt over mTLS, stores and independently reads its numeric tenant association, then reads the
+ * actual Account-confirmed source and published policy set over mTLS and stores and independently
+ * reads its canonical public-realm catalog. Game Session creates and independently reads the exact
  * STARTING runtime/launch association with its captured catalog revision, and World consumes that
  * evidence through the native exact-peer Game Session reader. Account participation is
  * point-in-time evidence, not a continuous cross-service lock. The distinct activation-purpose
@@ -638,6 +643,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     endpoints.setEntityManagementService(loopback(entityServer));
     var channels = new GrpcChannelFactory();
     try (var loggingClaimClient = currentClaimGrpcClient(loggingServer.getPort(), pki);
+        var startSessionAuthorizationTransport =
+            new NativeAccountStartSessionAuthorizationTransport(endpoints, pki, channels);
         var account =
             new AccountControlUiOriginalOrderFixture(
                 ACCOUNT_POSTGRES.getJdbcUrl(),
@@ -3145,7 +3152,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                     assertThat(attached.accountRedemptionProjection())
                         .containsExactly(projection.canonicalBytes());
                   }
-                });
+                },
+                startSessionAuthorizationTransport);
         assertThat(originalStartSession.originalTuple().preAuthorizationTuple().canonicalJson())
             .isEqualTo(loggingTuple.canonicalJson());
         assertThat(loggingReadRequests).hasSize(1);
@@ -6581,6 +6589,123 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         pki.client("account-service"),
         new GrpcChannelFactory(),
         BlockingGrpcStubCustomizer.noop());
+  }
+
+  /** Native file-backed mTLS transport for the real Account original StartSession owner. */
+  private static final class NativeAccountStartSessionAuthorizationTransport
+      implements OriginalStartSessionAuthorizationTransport, AutoCloseable {
+    private final StartSessionOperatorAuthorizationClient issuer;
+    private final ManagedChannel redeemerChannel;
+    private final StartSessionOperatorAuthorizationServiceGrpc
+            .StartSessionOperatorAuthorizationServiceBlockingStub
+        redeemer;
+
+    NativeAccountStartSessionAuthorizationTransport(
+        ServiceEndpointsProperties endpoints, TestPki pki, GrpcChannelFactory channels)
+        throws IOException {
+      var issueClient =
+          new StartSessionOperatorAuthorizationClient(
+              endpoints,
+              pki.client("logging-admin-service"),
+              channels,
+              BlockingGrpcStubCustomizer.noop());
+      ManagedChannel channel = null;
+      try {
+        issueClient.initialize();
+        channel =
+            channels.buildChannel(
+                endpoints.getAccountService(), 6565, pki.client("game-session-service"), false);
+      } catch (Exception failure) {
+        try {
+          issueClient.close();
+        } catch (Exception closeFailure) {
+          failure.addSuppressed(closeFailure);
+        }
+        if (channel != null) channel.shutdownNow();
+        throw failure;
+      }
+
+      issuer = issueClient;
+      redeemerChannel = channel;
+      String expectedAccountPeer = "spiffe://firemud/ns/" + NAMESPACE + "/sa/account-service";
+      redeemer =
+          StartSessionOperatorAuthorizationServiceGrpc.newBlockingStub(redeemerChannel)
+              .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedAccountPeer))
+              .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedAccountPeer));
+    }
+
+    @Override
+    public IssuedAuthorization issue(
+        StartSessionPreAuthorizationReservationTuple tuple,
+        String controlUiJwt,
+        UUID reservationOwnerId,
+        long reservationClaimFence) {
+      var issued =
+          issuer.issueHuman(
+              tuple,
+              controlUiJwt,
+              reservationOwnerId,
+              reservationClaimFence,
+              reservationOwnerId,
+              reservationClaimFence);
+      return new IssuedAuthorization(
+          issued.operatorAuthorizationReference(),
+          issued.authorizationReferenceFingerprint(),
+          issued.authorityEvidenceBundle(),
+          issued.bundleReference());
+    }
+
+    @Override
+    public boolean redeem(
+        byte[] canonicalPreAuthorizationTupleBytes,
+        IssuedAuthorization authorization,
+        UUID reservationOwnerId,
+        long reservationClaimFence,
+        OwnerClaim ownerClaim) {
+      var response =
+          redeemer
+              .withDeadlineAfter(5L, TimeUnit.SECONDS)
+              .redeemOperatorAuthorization(
+                  RedeemOperatorAuthorizationRequest.newBuilder()
+                      .setCanonicalPreAuthorizationTupleBytes(
+                          ByteString.copyFrom(canonicalPreAuthorizationTupleBytes))
+                      .setOperatorAuthorizationReference(
+                          authorization.operatorAuthorizationReference())
+                      .setAuthorizationReferenceFingerprint(
+                          authorization.authorizationReferenceFingerprint())
+                      .setReservationOwnerId(reservationOwnerId.toString())
+                      .setReservationClaimFence(reservationClaimFence)
+                      .setOwnerAttemptId(ownerClaim.ownerAttemptId().toString())
+                      .setOwnerFence(ownerClaim.ownerFence())
+                      .build());
+      var authority =
+          StartSessionAuthorityEvidenceBundle.decode(authorization.authorityEvidenceBundle());
+      if (!response.getUnknownFields().asMap().isEmpty()
+          || !authorization
+              .authorizationReferenceFingerprint()
+              .equals(response.getAuthorizationReferenceFingerprint())
+          || !Arrays.equals(
+              authorization.authorityEvidenceBundle(),
+              response.getAuthorityEvidenceBundle().toByteArray())
+          || !authority.issuanceOperationId().toString().equals(response.getIssuanceOperationId())
+          || !authority.issuanceFence().equals(Long.toString(response.getIssuanceFence()))) {
+        throw new IllegalStateException(
+            "Account redemption response differs from the exact issued authority bundle");
+      }
+      return response.getReplay();
+    }
+
+    @Override
+    public void close() throws IOException, InterruptedException {
+      try {
+        issuer.close();
+      } finally {
+        redeemerChannel.shutdownNow();
+        if (!redeemerChannel.awaitTermination(5, TimeUnit.SECONDS)) {
+          throw new AssertionError("Account StartSession redemption channel did not terminate");
+        }
+      }
+    }
   }
 
   private static String certificateSha256(Path certificate) throws Exception {
