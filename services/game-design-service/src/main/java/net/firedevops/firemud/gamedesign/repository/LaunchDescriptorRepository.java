@@ -131,6 +131,9 @@ public class LaunchDescriptorRepository {
   }
 
   public LaunchDescriptor save(LaunchDescriptor descriptor) {
+    if (descriptor.getId() != null) {
+      throw new IllegalStateException("Launch descriptors are immutable");
+    }
     if (descriptor.getDescriptorSchemaVersion() != null
         || descriptor.getTargetNamespace() != null
         || descriptor.getCanonicalTenantId() != null
@@ -153,30 +156,27 @@ public class LaunchDescriptorRepository {
     }
     LocalDateTime createdAt =
         descriptor.getCreatedAt() == null ? LocalDateTime.now() : descriptor.getCreatedAt();
-    if (descriptor.getId() == null) {
-      dsl.insertInto(TABLE_REF)
-          .set(LAUNCH_DESCRIPTOR_ID, descriptor.getLaunchDescriptorId())
-          .set(TENANT_ID, descriptor.getTenantId())
-          .set(GAME_TEMPLATE_ID, descriptor.getGameTemplateId())
-          .set(CONTROL_PLANE_REQUEST_ID, descriptor.getControlPlaneRequestId())
-          .set(REQUEST_HASH, descriptor.getRequestHash())
-          .set(VERSION_ID, descriptor.getVersionId())
-          .set(SCRIPT_PATCH_VERSION, descriptor.getScriptPatchVersion())
-          .set(RUNTIME_FLAGS_JSON, descriptor.getRuntimeFlagsJson())
-          .set(GENERATION_CONFIG_REVISION, descriptor.getGenerationConfigRevision())
-          .set(VERSION_STATE_EPOCH, descriptor.getVersionStateEpoch())
-          .set(RELEASE_BUNDLE_ID, descriptor.getReleaseBundleId())
-          .set(PUBLISHED_RELEASE_BUNDLE_REF, descriptor.getPublishedReleaseBundleRef())
-          .set(REMAP_SET_ID, descriptor.getRemapSetId())
-          .set(CREATED_AT, Timestamp.valueOf(createdAt))
-          .execute();
-      return findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
-              descriptor.getTenantId(),
-              descriptor.getGameTemplateId(),
-              descriptor.getControlPlaneRequestId())
-          .orElseThrow();
-    }
-    throw new IllegalStateException("Launch descriptors are immutable");
+    dsl.insertInto(TABLE_REF)
+        .set(LAUNCH_DESCRIPTOR_ID, descriptor.getLaunchDescriptorId())
+        .set(TENANT_ID, descriptor.getTenantId())
+        .set(GAME_TEMPLATE_ID, descriptor.getGameTemplateId())
+        .set(CONTROL_PLANE_REQUEST_ID, descriptor.getControlPlaneRequestId())
+        .set(REQUEST_HASH, descriptor.getRequestHash())
+        .set(VERSION_ID, descriptor.getVersionId())
+        .set(SCRIPT_PATCH_VERSION, descriptor.getScriptPatchVersion())
+        .set(RUNTIME_FLAGS_JSON, descriptor.getRuntimeFlagsJson())
+        .set(GENERATION_CONFIG_REVISION, descriptor.getGenerationConfigRevision())
+        .set(VERSION_STATE_EPOCH, descriptor.getVersionStateEpoch())
+        .set(RELEASE_BUNDLE_ID, descriptor.getReleaseBundleId())
+        .set(PUBLISHED_RELEASE_BUNDLE_REF, descriptor.getPublishedReleaseBundleRef())
+        .set(REMAP_SET_ID, descriptor.getRemapSetId())
+        .set(CREATED_AT, Timestamp.valueOf(createdAt))
+        .execute();
+    return findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
+            descriptor.getTenantId(),
+            descriptor.getGameTemplateId(),
+            descriptor.getControlPlaneRequestId())
+        .orElseThrow();
   }
 
   public boolean existsByTenantIdAndVersionId(String tenantId, Long versionId) {
