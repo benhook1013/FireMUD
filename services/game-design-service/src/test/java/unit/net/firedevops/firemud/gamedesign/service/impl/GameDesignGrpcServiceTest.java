@@ -1,12 +1,15 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.gamedesign.dto.AppliedWorldDesignMutationDto;
@@ -26,9 +29,11 @@ import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
+import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
 import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
@@ -37,6 +42,8 @@ import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.v1.ApproveTemplateRemapSetRequest;
 import net.firedevops.firemud.gamedesign.v1.ApproveTemplateRemapSetResponse;
+import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateRequest;
+import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetRequest;
 import net.firedevops.firemud.gamedesign.v1.CreateTemplateRemapSetResponse;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
@@ -84,6 +91,8 @@ import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 
 class GameDesignGrpcServiceTest {
+  private static final UUID CANONICAL_TENANT_ID =
+      UUID.fromString("12345678-1234-4234-8234-123456789abc");
   private final PingService pingService = Mockito.mock(PingService.class);
   private final RevisionService revisionService = Mockito.mock(RevisionService.class);
   private final VersionService versionService = Mockito.mock(VersionService.class);
@@ -1474,6 +1483,152 @@ class GameDesignGrpcServiceTest {
     assertEquals(
         "ARTIFACT_STATE_TOMBSTONED", ref.get().getArtifactState().getArtifactState().name());
     assertEquals("wf-1", ref.get().getArtifactState().getLastWorkflowId());
+  }
+
+  @Test
+  void compareAndSetVersionStateMapsOwnerProofRefusal() {
+    Mockito.when(
+            versionService.compareAndSetVersionState(
+                "tenant-1", 7L, 17L, VersionLifecycleState.RETIRED, "retire"))
+        .thenThrow(
+            new MutationOwnerProofUnavailableException(
+                "VERSION_STATE_MUTATION_UNAVAILABLE",
+                "Canonical lifecycle transition and owner proof are unavailable"));
+
+    AtomicReference<CompareAndSetVersionStateResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.compareAndSetVersionState(
+          CompareAndSetVersionStateRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .setExpectedVersionStateEpoch(17L)
+              .setNewState(
+                  net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                      .VERSION_LIFECYCLE_STATE_RETIRED)
+              .setReason("retire")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("VERSION_STATE_MUTATION_UNAVAILABLE", ref.get().getError().getCode());
+    assertEquals(
+        "VERSION_STATE_MUTATION_UNAVAILABLE: Canonical lifecycle transition and owner proof are unavailable",
+        ref.get().getError().getMessage());
+  }
+
+  @Test
+  void launchReadProjectionMapperReturnsCanonicalAttestationWithoutWorkflowMetadata() {
+    PublishedReleaseBundleDto source =
+        new PublishedReleaseBundleDto(
+            11L,
+            "tenant-1",
+            7L,
+            8,
+            "v1",
+            "workflow-1",
+            "abc123",
+            List.of("logo.png", "manifest.json"),
+            List.of(
+                new PublishParticipantDigestDto(
+                    "GAME_DESIGN_CONTROL_PLANE",
+                    "7",
+                    null,
+                    "version:7",
+                    "digest-1",
+                    1,
+                    null,
+                    null,
+                    null),
+                new PublishParticipantDigestDto(
+                    "GAME_LOGIC",
+                    "7",
+                    null,
+                    "version:7",
+                    "digest-2",
+                    1,
+                    "sha256:" + "c".repeat(64),
+                    null,
+                    null)),
+            List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
+            "genrev-1",
+            false,
+            null,
+            LocalDateTime.parse("2026-04-14T12:00:00"),
+            CANONICAL_TENANT_ID,
+            UUID.fromString("82345678-1234-4234-8234-123456789abc"),
+            "opaque-release-reference-from-owner",
+            1,
+            List.of(
+                new PublishedArtifactDigest(
+                    "logo.png",
+                    "branding-image",
+                    "artifacts/sha256/" + "b".repeat(64),
+                    "sha256:" + "b".repeat(64),
+                    "image/png",
+                    1)));
+    var mapped = GameDesignLaunchReadProjectionMapper.toProto(source);
+
+    assertEquals(11L, mapped.getId());
+    assertEquals("abc123", mapped.getManifestHash());
+    assertEquals("genrev-1", mapped.getGenerationConfigRevision());
+    assertEquals(2, mapped.getRequiredManifestAssetKeysCount());
+    assertEquals("opaque-release-reference-from-owner", mapped.getPublishedReleaseBundleRef());
+    assertEquals(CANONICAL_TENANT_ID.toString(), mapped.getCanonicalTenantId());
+    assertEquals("82345678-1234-4234-8234-123456789abc", mapped.getCanonicalVersionId());
+    assertEquals(1, mapped.getManifestSchemaVersion());
+    assertEquals(1, mapped.getArtifactDigestsCount());
+    assertEquals("logo.png", mapped.getArtifactDigests(0).getUsageKey());
+    assertEquals(
+        List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
+        mapped.getCommandDefinitionsList());
+    assertEquals(2, mapped.getParticipantDigestsCount());
+    assertFalse(mapped.getParticipantDigests(0).hasAbilitySchemaDigest());
+    assertTrue(mapped.getParticipantDigests(1).hasAbilitySchemaDigest());
+    assertEquals(
+        "sha256:" + "c".repeat(64), mapped.getParticipantDigests(1).getAbilitySchemaDigest());
+    assertEquals("", mapped.getWorkflowFamily());
+    assertEquals("", mapped.getWorkflowStatus());
+    assertEquals("", mapped.getWorkflowRunId());
+  }
+
+  @Test
+  void launchReadProjectionMapperReturnsCanonicalStateSnapshot() {
+    var mapped =
+        GameDesignLaunchReadProjectionMapper.toProto(
+            new VersionStateDto(
+                "tenant-1",
+                7L,
+                VersionLifecycleState.PUBLISHED,
+                17L,
+                LocalDateTime.parse("2026-04-15T12:00:00")));
+
+    assertEquals(17L, mapped.getVersionStateEpoch());
+    assertEquals(
+        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+            .VERSION_LIFECYCLE_STATE_PUBLISHED,
+        mapped.getVersionState());
+  }
+
+  @Test
+  void launchReadProjectionMapperReturnsArtifactProof() {
+    var mapped =
+        GameDesignLaunchReadProjectionMapper.toProto(
+            new net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto(
+                "tenant-1",
+                7L,
+                8,
+                "PUBLISHED",
+                2L,
+                "hash-1",
+                "workflow-1",
+                null,
+                null,
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                List.of("logo.png", "manifest.json")));
+    assertEquals("ARTIFACT_STATE_PUBLISHED", mapped.getArtifactState().name());
+    assertEquals(8, mapped.getExportedVersionNumber());
+    assertEquals("hash-1", mapped.getManifestHash());
+    assertEquals(2, mapped.getExportedManifestAssetKeysCount());
   }
 
   private static <T> StreamObserver<T> observerFor(AtomicReference<T> ref) {

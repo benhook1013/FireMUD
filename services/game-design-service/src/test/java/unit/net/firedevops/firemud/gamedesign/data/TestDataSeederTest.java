@@ -1,8 +1,11 @@
 package net.firedevops.firemud.gamedesign.data;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import net.firedevops.firemud.gamedesign.entity.Game;
@@ -45,6 +48,44 @@ class TestDataSeederTest {
             versionRepository,
             publishedReleaseBundleRepository,
             versionAssetArtifactRepository);
+  }
+
+  @Test
+  void retainedVersionWithoutBundlePropagatesCanonicalRefusalBeforeArtifactWrites() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("1");
+    game.setCanonicalTenantId(java.util.UUID.randomUUID());
+    when(gameRepository.findByTenantId("1")).thenReturn(game);
+    when(gameRepository.save(any(Game.class))).thenReturn(game);
+    Version retainedVersion = new Version();
+    retainedVersion.setId(7L);
+    retainedVersion.setTenantId("1");
+    retainedVersion.setVersionNumber(1);
+    when(versionRepository.findByTenantIdAndVersionNumber("1", 1))
+        .thenReturn(java.util.Optional.of(retainedVersion));
+    when(versionRepository.save(any(Version.class))).thenReturn(retainedVersion);
+    when(templateRepository.findByTenantIdAndName("1", "Default Template"))
+        .thenReturn(java.util.Optional.empty());
+    when(templateRepository.save(any(GameTemplate.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKind("1", 7L, "GENERIC"))
+        .thenReturn(java.util.Optional.empty());
+    when(revisionRepository.save(any(Revision.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("1", 7L))
+        .thenReturn(java.util.Optional.empty());
+    when(publishedReleaseBundleRepository.save(any(PublishedReleaseBundle.class)))
+        .thenThrow(
+            new IllegalStateException(
+                "No exact canonical Game Design source association exists for the requested Version"));
+
+    assertThatThrownBy(() -> seeder.run(new DefaultApplicationArguments(new String[] {})))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("No exact canonical Game Design source association");
+    assertThat(retainedVersion.getCanonicalTenantId()).isNull();
+    assertThat(retainedVersion.getCanonicalVersionId()).isNull();
+    verifyNoInteractions(versionAssetArtifactRepository);
   }
 
   @Test
@@ -94,9 +135,18 @@ class TestDataSeederTest {
     assertThat(bundleCaptor.getValue().getManifestHash()).isEqualTo("demo-manifest-hash");
     assertThat(bundleCaptor.getValue().getPublishWorkflowId()).isEqualTo("demo-seed-publish");
 
+    PublishedReleaseBundle stored = bundleCaptor.getValue();
+    stored.setId(11L);
+    stored.setPublishedReleaseBundleRef("persisted-opaque-reference");
+    when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("1", 7L))
+        .thenReturn(java.util.Optional.of(stored));
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
+    verify(publishedReleaseBundleRepository, times(1)).save(any(PublishedReleaseBundle.class));
+    assertThat(stored.getPublishedReleaseBundleRef()).isEqualTo("persisted-opaque-reference");
+
     ArgumentCaptor<VersionAssetArtifact> artifactCaptor =
         ArgumentCaptor.forClass(VersionAssetArtifact.class);
-    verify(versionAssetArtifactRepository).save(artifactCaptor.capture());
+    verify(versionAssetArtifactRepository, times(2)).save(artifactCaptor.capture());
     assertThat(artifactCaptor.getValue().getTenantId()).isEqualTo("1");
     assertThat(artifactCaptor.getValue().getVersionId()).isEqualTo(7L);
     assertThat(artifactCaptor.getValue().getLastWorkflowId()).isEqualTo("demo-seed-publish");

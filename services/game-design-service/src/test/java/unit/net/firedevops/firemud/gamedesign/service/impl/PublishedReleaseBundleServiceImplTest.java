@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFixtures.commandDefinition;
 import static net.firedevops.firemud.gamedesign.service.impl.CommandDefinitionFixtures.validCommandDefinition;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
@@ -85,6 +86,23 @@ class PublishedReleaseBundleServiceImplTest {
     assertEquals(1, dto.participantDigests().size());
     assertEquals(List.of(validCommandDefinition()), dto.commandDefinitions());
     assertEquals("v1", dto.attestationSchemaVersion());
+  }
+
+  @Test
+  void retainedBundleWithoutCanonicalIdentityKeepsIdentityAndArtifactProofAbsent() {
+    PublishedReleaseBundle retained = new PublishedReleaseBundle();
+    retained.setId(11L);
+    retained.setTenantId("tenant-1");
+    retained.setVersionId(7L);
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
+
+    var dto = service.findPublishedReleaseBundle("tenant-1", 7L).orElseThrow();
+
+    assertNull(dto.canonicalTenantId());
+    assertNull(dto.canonicalVersionId());
+    assertNull(dto.publishedReleaseBundleRef());
+    assertNull(dto.manifestSchemaVersion());
+    assertNull(dto.artifactDigests());
   }
 
   @Test
