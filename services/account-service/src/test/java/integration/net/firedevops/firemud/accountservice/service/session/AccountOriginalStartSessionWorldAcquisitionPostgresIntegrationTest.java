@@ -703,6 +703,7 @@ class AccountOriginalStartSessionWorldAcquisitionPostgresIntegrationTest {
     assertThat(
             dsl.fetch(
                     "SELECT version FROM flyway_schema_history WHERE success "
+                        + "AND version IS NOT NULL "
                         + "ORDER BY installed_rank")
                 .getValues("version", String.class))
         .containsExactly("1", "2", "3", "4");

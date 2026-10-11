@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.tenant;
 
 import java.util.Objects;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadClient;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Standalone, default-denied receiver for one authenticated Game Design terminal publication. */
@@ -21,6 +22,16 @@ public final class WorldPublicationTerminalService {
       WorldPublicationTerminalRepository repository, TerminalAuthorityVerifier verifier) {
     this.repository = Objects.requireNonNull(repository, "repository");
     this.verifier = Objects.requireNonNull(verifier, "verifier");
+  }
+
+  /** Constructs the existing exact Game Design verifier for an explicitly assembled fixture. */
+  public static WorldPublicationTerminalService authenticated(
+      WorldPublicationTerminalRepository repository,
+      GameDesignPublicationTerminalReadClient terminalReadClient,
+      String workloadNamespace) {
+    return new WorldPublicationTerminalService(
+        repository,
+        new WorldGameDesignPublicationTerminalVerifier(workloadNamespace, terminalReadClient));
   }
 
   /**

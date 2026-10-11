@@ -203,7 +203,7 @@ class WorldOriginalStartSessionProtectedActivationGrpcMtlsTest {
   }
 }
 
-/** Shared only by the two assigned World activation transport tests. */
+/** Shared by World activation and publication-completion transport tests. */
 final class WorldOriginalStartSessionActivationTransportTestSupport {
   static final String NAMESPACE = "test";
   private static final java.util.concurrent.atomic.AtomicLong CERTIFICATE_SERIAL =
@@ -513,6 +513,18 @@ final class WorldOriginalStartSessionActivationTransportTestSupport {
       boolean injectEndUserContext,
       java.util.function.Consumer<Object> responseCapture)
       throws Exception {
+    return startServer(
+        pki, pki.worldServer(), service, handlerCalls, injectEndUserContext, responseCapture);
+  }
+
+  static TransportServer startServer(
+      TestPki pki,
+      TestIdentity serverIdentity,
+      io.grpc.BindableService service,
+      AtomicInteger handlerCalls,
+      boolean injectEndUserContext,
+      java.util.function.Consumer<Object> responseCapture)
+      throws Exception {
     java.util.List<io.grpc.ServerInterceptor> interceptors = new java.util.ArrayList<>();
     interceptors.add(
         new io.grpc.ServerInterceptor() {
@@ -576,7 +588,7 @@ final class WorldOriginalStartSessionActivationTransportTestSupport {
             .sslContext(
                 GrpcSslContexts.configure(
                         SslContextBuilder.forServer(
-                            pki.worldServer().privateKey(), pki.worldServer().certificate()))
+                            serverIdentity.privateKey(), serverIdentity.certificate()))
                     .trustManager(pki.caCertificate())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build())
@@ -655,10 +667,13 @@ final class WorldOriginalStartSessionActivationTransportTestSupport {
       java.security.cert.X509Certificate caCertificate,
       Path caCertificatePem,
       TestIdentity worldServer,
+      TestIdentity otherNamespaceWorldServer,
       TestIdentity gameSessionClient,
       TestIdentity accountClient,
+      TestIdentity gameDesignClient,
       TestIdentity otherNamespaceGameSessionClient,
-      TestIdentity otherNamespaceAccountClient) {
+      TestIdentity otherNamespaceAccountClient,
+      TestIdentity otherNamespaceGameDesignClient) {
     static TestPki create(Path directory) throws Exception {
       if (java.security.Security.getProvider(
               org.bouncycastle.jce.provider.BouncyCastleProvider.PROVIDER_NAME)
@@ -689,6 +704,12 @@ final class WorldOriginalStartSessionActivationTransportTestSupport {
           issueIdentity(
               caName,
               caKeys.getPrivate(),
+              "other-world-server",
+              "spiffe://firemud/ns/other/sa/world-management-service",
+              true),
+          issueIdentity(
+              caName,
+              caKeys.getPrivate(),
               "game-session",
               "spiffe://firemud/ns/test/sa/game-session-service",
               false),
@@ -701,6 +722,12 @@ final class WorldOriginalStartSessionActivationTransportTestSupport {
           issueIdentity(
               caName,
               caKeys.getPrivate(),
+              "game-design",
+              "spiffe://firemud/ns/test/sa/game-design-service",
+              false),
+          issueIdentity(
+              caName,
+              caKeys.getPrivate(),
               "other-game-session",
               "spiffe://firemud/ns/other/sa/game-session-service",
               false),
@@ -709,6 +736,12 @@ final class WorldOriginalStartSessionActivationTransportTestSupport {
               caKeys.getPrivate(),
               "other-account",
               "spiffe://firemud/ns/other/sa/account-service",
+              false),
+          issueIdentity(
+              caName,
+              caKeys.getPrivate(),
+              "other-game-design",
+              "spiffe://firemud/ns/other/sa/game-design-service",
               false));
     }
 

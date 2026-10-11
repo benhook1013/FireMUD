@@ -113,6 +113,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorCli
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamedesign.GrpcAuthoredInitialActorCoreReadClient;
 import net.firedevops.firemud.common.gamedesign.GrpcSelectedOwnerIntakeSourceClient;
@@ -157,13 +158,22 @@ import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecu
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding;
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadEvidence;
 import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderClient;
 import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderGrpcCodec;
+import net.firedevops.firemud.common.publication.AccountSelectedPublicationSettlementClient;
+import net.firedevops.firemud.common.publication.AccountSelectedPublicationSettlementGrpcCodec;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
+import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadClient;
+import net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.publication.PlayerCreationDescriptor;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalCompletionClient;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalCompletionGrpcCodec;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
@@ -226,6 +236,9 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.AuthoredInitialActorCoreReadService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignGameplayRuleSourceReadGrpcService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignGameplayRuleSourceReadService;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTerminalReadGrpcService;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTerminalReadService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSelectedOwnerIntakeSourceGrpcService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSelectedOwnerIntakeSourceReadService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
@@ -370,6 +383,11 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphAppl
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionActivationTerminalReadGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionProtectedActivationGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionProtectedActivationService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalCompletionGrpcService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalReadGrpcService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalReadService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldSelectedOwnerInventoryReadProofFixture;
 import net.firedevops.firemud.worldmanagement.tenant.WorldStartSessionAccountParticipationVerifier;
 import net.firedevops.firemud.worldmanagement.tenant.WorldStartSessionExecutionTerminalReadGrpcService;
@@ -671,6 +689,21 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var accountSelectedPublicationOrderClient =
             new AccountSelectedPublicationOrderClient(
                 endpoints, pki.client("game-design-service"), channels, NAMESPACE);
+        var accountToGameDesignPublicationTerminalReadClient =
+            new GameDesignPublicationTerminalReadClient(
+                endpoints, pki.client("account-service"), channels, NAMESPACE);
+        var accountToWorldPublicationTerminalReadClient =
+            new WorldPublicationTerminalReadClient(
+                endpoints, pki.client("account-service"), channels, NAMESPACE);
+        var worldToGameDesignPublicationTerminalReadClient =
+            new GameDesignPublicationTerminalReadClient(
+                endpoints, pki.client("world-management-service"), channels, NAMESPACE);
+        var gameDesignToWorldPublicationTerminalCompletionClient =
+            new WorldPublicationTerminalCompletionClient(
+                endpoints, pki.client("game-design-service"), channels, NAMESPACE);
+        var gameDesignToAccountPublicationSettlementClient =
+            new AccountSelectedPublicationSettlementClient(
+                endpoints, pki.client("game-design-service"), channels, NAMESPACE);
         var gameDesignStartSessionReadTransport =
             new NativeGameDesignStartSessionReadTransport(endpoints, pki, channels);
         var worldToAccountParticipationHistoryClient =
@@ -774,6 +807,11 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             canonicalActivationClient(worldServer, pki.client("game-session-service"), channels)) {
       ReflectionTestUtils.invokeMethod(loggingClaimClient, "init");
       accountSelectedPublicationOrderClient.init();
+      accountToGameDesignPublicationTerminalReadClient.init();
+      accountToWorldPublicationTerminalReadClient.init();
+      worldToGameDesignPublicationTerminalReadClient.init();
+      gameDesignToWorldPublicationTerminalCompletionClient.init();
+      gameDesignToAccountPublicationSettlementClient.init();
       worldToAccountParticipationHistoryClient.init();
       worldToGameSessionOwnerEvidenceClient.init();
       accountToWorldExecutionTerminalClient.init();
@@ -1128,7 +1166,11 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 NAMESPACE),
             account.selectedOwnerIntakeAuthorizationProducerReceiver(
                 observedAccountToGdSource, NAMESPACE),
-            account.selectedPublicationOrderProducer(accountSelectionReadClient, NAMESPACE));
+            account.selectedPublicationOrderProducer(accountSelectionReadClient, NAMESPACE),
+            account.selectedPublicationSettlementReceiver(
+                accountToGameDesignPublicationTerminalReadClient,
+                accountToWorldPublicationTerminalReadClient,
+                NAMESPACE));
 
         var coordinator = new DraftCommitCoordinatorRepository(gd.dsl());
         var gdTerminals = new GameDesignDraftTerminalOutcomeRepository(gd.dsl());
@@ -1138,6 +1180,14 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         register(
             gdHandlers,
             new GameDesignSelectedDraftPublicationReadGrpcService(selectionRepository, NAMESPACE));
+        register(
+            gdHandlers,
+            new GameDesignPublicationTerminalReadGrpcService(
+                new GameDesignPublicationTerminalReadService(
+                    new GameDesignPublicationOperationRepository(gd.dsl()),
+                    gd.transactions(),
+                    NAMESPACE),
+                NAMESPACE));
         var worldFence = new WorldDesignPublicationFenceRepository(world.dsl(), worldIntakes);
         register(
             worldHandlers,
@@ -1160,7 +1210,18 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         register(
             worldHandlers,
             worldPublicationProof.freezeAndInventoryService(),
-            worldPublicationProof.publishedStartLocationReadService());
+            worldPublicationProof.publishedStartLocationReadService(),
+            new WorldPublicationTerminalReadGrpcService(
+                new WorldPublicationTerminalReadService(
+                    new WorldPublicationTerminalRepository(world.dsl(), world.transactions()),
+                    NAMESPACE),
+                NAMESPACE),
+            new WorldPublicationTerminalCompletionGrpcService(
+                WorldPublicationTerminalService.authenticated(
+                    new WorldPublicationTerminalRepository(world.dsl(), world.transactions()),
+                    worldToGameDesignPublicationTerminalReadClient,
+                    NAMESPACE),
+                NAMESPACE));
         var worldApplicationService =
             new WorldDraftGraphApplicationService(
                 worldApplications,
@@ -3187,6 +3248,106 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 gd.dsl()
                     .fetchCount(DSL.table("game_design_start_session_launch_descriptor_binding")))
             .isZero();
+
+        byte[] originalPublicationOperation = publicationReservation.operation().canonicalBytes();
+        var originalPublicationBinding =
+            GameDesignPublicationOperationBinding.fromStored(originalPublicationOperation);
+        var gameDesignTerminalRequest =
+            GameDesignPublicationTerminalReadEvidence.Request.create(
+                NAMESPACE, originalPublicationBinding);
+        var gameDesignTerminalRead =
+            accountToGameDesignPublicationTerminalReadClient.read(gameDesignTerminalRequest);
+        var gameDesignPublicationTerminal = gameDesignTerminalRead.terminalEvidence();
+        assertThat(gameDesignTerminalRead.request()).isEqualTo(gameDesignTerminalRequest);
+        assertThat(gameDesignPublicationTerminal.operationBytes())
+            .containsExactly(originalPublicationOperation);
+        assertThat(gameDesignPublicationTerminal.outcome())
+            .isEqualTo(GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED);
+
+        var worldCompletionRequest =
+            WorldPublicationTerminalCompletionGrpcCodec.Request.create(
+                NAMESPACE,
+                originalPublicationOperation,
+                gameDesignPublicationTerminal.canonicalBytes());
+        var worldPublicationTerminal =
+            gameDesignToWorldPublicationTerminalCompletionClient.complete(worldCompletionRequest);
+        var worldCompletionRetryRequest =
+            WorldPublicationTerminalCompletionGrpcCodec.Request.create(
+                NAMESPACE,
+                originalPublicationOperation,
+                gameDesignPublicationTerminal.canonicalBytes());
+        assertThat(worldCompletionRetryRequest.requestId())
+            .isNotEqualTo(worldCompletionRequest.requestId());
+        var worldPublicationTerminalRetry =
+            gameDesignToWorldPublicationTerminalCompletionClient.complete(
+                worldCompletionRetryRequest);
+        assertThat(worldPublicationTerminal.canonicalBytes())
+            .containsExactly(gameDesignPublicationTerminal.canonicalBytes());
+        assertThat(worldPublicationTerminalRetry.canonicalBytes())
+            .containsExactly(worldPublicationTerminal.canonicalBytes());
+
+        var publicationSettlementRequest =
+            AccountSelectedPublicationSettlementGrpcCodec.Request.create(
+                NAMESPACE, originalPublicationOperation);
+        var settledPublicationReceipt =
+            gameDesignToAccountPublicationSettlementClient.settle(publicationSettlementRequest);
+        var initialSelectedPublicationSettlement =
+            accountAccess
+                .sources()
+                .dsl
+                .fetchOne(
+                    "SELECT receipt, settled_at FROM account_selected_publication_settlements "
+                        + "WHERE operation_id = ?",
+                    accountPublicationOrder.operationId());
+        assertThat(initialSelectedPublicationSettlement).isNotNull();
+        assertThat(initialSelectedPublicationSettlement.get("receipt", byte[].class))
+            .containsExactly(settledPublicationReceipt);
+        var accountSettlementRetryRequest =
+            AccountSelectedPublicationSettlementGrpcCodec.Request.create(
+                NAMESPACE, originalPublicationOperation);
+        assertThat(accountSettlementRetryRequest.requestId())
+            .isNotEqualTo(publicationSettlementRequest.requestId());
+        var settledPublicationReceiptRetry =
+            gameDesignToAccountPublicationSettlementClient.settle(accountSettlementRetryRequest);
+        assertThat(settledPublicationReceiptRetry).containsExactly(settledPublicationReceipt);
+        var selectedPublicationSettlementRows =
+            accountAccess
+                .sources()
+                .dsl
+                .fetch(
+                    "SELECT operation_id, fence_id, account_binding, publication_operation, "
+                        + "game_design_outcome, game_design_terminal, world_outcome, "
+                        + "world_terminal, receipt, settled_at "
+                        + "FROM account_selected_publication_settlements WHERE operation_id = ?",
+                    accountPublicationOrder.operationId());
+        assertThat(selectedPublicationSettlementRows).hasSize(1);
+        var selectedPublicationSettlement = selectedPublicationSettlementRows.getFirst();
+        assertThat(selectedPublicationSettlement.get("operation_id", UUID.class))
+            .isEqualTo(accountPublicationOrder.operationId());
+        assertThat(selectedPublicationSettlement.get("fence_id", UUID.class))
+            .isEqualTo(accountPublicationOrder.fenceId());
+        assertThat(selectedPublicationSettlement.get("account_binding", byte[].class))
+            .containsExactly(accountPublicationOrder.canonicalBytes());
+        assertThat(selectedPublicationSettlement.get("publication_operation", byte[].class))
+            .containsExactly(originalPublicationOperation);
+        assertThat(selectedPublicationSettlement.get("game_design_outcome", String.class))
+            .isEqualTo("PUBLISHED");
+        assertThat(selectedPublicationSettlement.get("game_design_terminal", byte[].class))
+            .containsExactly(gameDesignPublicationTerminal.canonicalBytes());
+        assertThat(selectedPublicationSettlement.get("world_outcome", String.class))
+            .isEqualTo("PUBLISHED");
+        assertThat(selectedPublicationSettlement.get("world_terminal", byte[].class))
+            .containsExactly(worldPublicationTerminal.canonicalBytes());
+        assertThat(selectedPublicationSettlement.get("receipt", byte[].class))
+            .containsExactly(settledPublicationReceipt);
+        assertThat(selectedPublicationSettlement.get("settled_at"))
+            .isEqualTo(initialSelectedPublicationSettlement.get("settled_at"));
+        assertFailedPrecondition(
+            () ->
+                gdAccountPublicationReadClient.read(
+                    AccountPublicationAuthorizationReadEvidence.Request.create(
+                        NAMESPACE, accountPublicationOrder)));
+        account.assertOriginalDraftOrderSettled(original);
 
         var association = retainedTemplateAssociations.getFirst();
         var pinnedSelection =
@@ -6399,6 +6560,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     assertThat(
             dsl.fetch(
                     "SELECT version FROM flyway_schema_history WHERE success "
+                        + "AND version IS NOT NULL "
                         + "ORDER BY installed_rank")
                 .getValues("version", String.class))
         .containsExactly("1", "2", "3", "4");
@@ -6884,7 +7046,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     var identity = pki.server(service);
     return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
         .fallbackHandlerRegistry(handlers)
-        .maxInboundMessageSize(20 * 1024 * 1024)
+        .maxInboundMessageSize(WorldPublicationTerminalCompletionGrpcCodec.MAX_MESSAGE_BYTES)
         .maxInboundMetadataSize(AccountOriginalDraftOrderGrpcCodec.MAX_METADATA_BYTES)
         .sslContext(
             GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())

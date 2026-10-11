@@ -344,6 +344,13 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
     assertThat(f.tx(() -> f.fences.readSettlement(original)).name()).isEqualTo("PENDING");
   }
 
+  /** Reads the independent original Draft settlement without re-running its reconciliation. */
+  public void assertOriginalDraftOrderSettled(DraftAuthorizationFenceBinding original) {
+    var retained = f.tx(() -> f.fences.read(original));
+    assertThat(retained.binding()).isEqualTo(original.canonicalBytes());
+    assertThat(f.tx(() -> f.fences.readSettlement(original)).name()).isEqualTo("COMMITTED");
+  }
+
   /** Uses only actual authenticated terminal clients; it never installs constructed readbacks. */
   public void reconcileOriginalDraft(
       DraftAuthorizationFenceBinding original,
@@ -453,6 +460,21 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
   public AccountPublicationAuthorizationReadService heldPublicationOwner(String namespace) {
     return new AccountPublicationAuthorizationReadService(
         new AccountPublicationAuthorizationRepository(f.dsl), f.manager, namespace);
+  }
+
+  /** Real unregistered selected-publication settlement receiver over both authenticated owners. */
+  public BindableService selectedPublicationSettlementReceiver(
+      net.firedevops.firemud.common.publication.GameDesignPublicationTerminalReadClient gameDesign,
+      net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient world,
+      String namespace) {
+    var owner =
+        new AccountSelectedDraftPublicationSettlementService(
+            new AccountPublicationAuthorizationRepository(f.dsl),
+            gameDesign,
+            world,
+            f.manager,
+            namespace);
+    return new AccountSelectedPublicationSettlementGrpcService(owner, namespace);
   }
 
   /**

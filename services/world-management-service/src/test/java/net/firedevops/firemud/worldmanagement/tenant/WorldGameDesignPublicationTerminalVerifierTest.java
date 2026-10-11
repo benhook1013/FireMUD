@@ -62,7 +62,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-class WorldGameDesignPublicationTerminalVerifierTest {
+public class WorldGameDesignPublicationTerminalVerifierTest {
   private static final String NAMESPACE = "test";
 
   @AfterEach
@@ -209,7 +209,7 @@ class WorldGameDesignPublicationTerminalVerifierTest {
     return Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, identity).call(task);
   }
 
-  private static GameDesignPublicationOperationBinding operation() throws Exception {
+  public static GameDesignPublicationOperationBinding operation() throws Exception {
     // Canonical structural inputs only; this fixture does not stipulate real owner commits or
     // source holds.
     var upstream = freshGraphRequest();
@@ -309,7 +309,7 @@ class WorldGameDesignPublicationTerminalVerifierTest {
         account, world, IsolatedWorldPublicationInventoryFixtures.stipulated(account, world));
   }
 
-  private static GameDesignPublicationTerminalEvidence terminal(
+  public static GameDesignPublicationTerminalEvidence terminal(
       GameDesignPublicationOperationBinding operation, Outcome outcome) {
     if (outcome == Outcome.NO_PUBLICATION) {
       return new GameDesignPublicationTerminalEvidence(
