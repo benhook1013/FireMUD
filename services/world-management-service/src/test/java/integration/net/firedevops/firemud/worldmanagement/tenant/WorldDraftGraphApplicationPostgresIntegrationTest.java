@@ -4187,6 +4187,87 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
 
     historical.migrateHistoricalSchema(schema.schema(), "43");
     historical.migrateHistoricalSchema(schema.schema(), "45");
+    // This synthetic V44 terminal retains the exact historical World source and selector. Its
+    // stipulated inventory carrier permits the legacy schema to store the complete operation
+    // bytes without adding a V53 Account qualification row or claiming current authority.
+    var historicalLaunchEvidence = input.completeLaunchBinding().evidence();
+    var historicalRelease = historicalLaunchEvidence.releaseAttestation();
+    var historicalWorldEvidence =
+        Objects.requireNonNull(historicalRelease.worldStartLocationEvidence());
+    var historicalSelection =
+        historical.publicationSelection(
+            input.topologyPlan().sourceBinding().plan(),
+            historicalWorldEvidence.request().publicationRequestId(),
+            historicalWorldEvidence.request().versionStateEpoch());
+    assertThat(historicalSelection.digest())
+        .isEqualTo("sha256:" + historicalWorldEvidence.request().requestDigest());
+    var historicalAccountBinding =
+        historical.isolatedPublicationAccountBinding(
+            historicalWorldEvidence.originalAccountBindingBytes(),
+            historicalSelection,
+            historicalWorldEvidence.request().publicationRequestId());
+    var historicalInventory =
+        net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures.stipulated(
+            historicalAccountBinding, historicalWorldEvidence);
+    var historicalOperation =
+        new GameDesignPublicationOperationBinding(
+            historicalAccountBinding, historicalWorldEvidence, historicalInventory);
+    var historicalTerminal =
+        new GameDesignPublicationTerminalEvidence(
+            historicalOperation.canonicalBytes(),
+            Outcome.PUBLISHED,
+            historical.isolatedReleaseContent(input),
+            historicalRelease.versionStateEpoch());
+    var historicalTerminalRequest =
+        WorldPublicationTerminal.Request.fromStored(historicalTerminal.canonicalBytes());
+    UUID historicalPublicationFence = historicalWorldEvidence.request().publicationFence();
+    historical
+        .ownerTransaction()
+        .execute(
+            status -> {
+              historical.insertPublicationTerminal(historicalTerminalRequest);
+              Record attempt =
+                  Objects.requireNonNull(
+                      historical.dsl.fetchOne(
+                          "SELECT local_tenant_key,version_id "
+                              + "FROM world_design_publication_fence_attempt "
+                              + "WHERE publication_fence=? AND target_namespace=? "
+                              + "AND canonical_tenant_id=? AND canonical_version_id=?",
+                          historicalPublicationFence,
+                          historicalWorldEvidence.request().targetNamespace(),
+                          historicalWorldEvidence.request().canonicalTenantId(),
+                          historicalWorldEvidence.request().canonicalVersionId()),
+                      "V44 historical terminal has no exact retained publication attempt");
+              int updated =
+                  historical.dsl.execute(
+                      "UPDATE world_design_publication_fence_owner "
+                          + "SET owner_freeze_phase='PUBLISHED' "
+                          + "WHERE target_namespace=? AND canonical_tenant_id=? "
+                          + "AND local_tenant_key=? AND version_id=? "
+                          + "AND owner_freeze_phase='FROZEN' AND current_publication_fence=?",
+                      historicalWorldEvidence.request().targetNamespace(),
+                      historicalWorldEvidence.request().canonicalTenantId(),
+                      attempt.get("local_tenant_key", Long.class),
+                      attempt.get("version_id", Long.class),
+                      historicalPublicationFence);
+              if (updated != 1) {
+                throw new IllegalStateException(
+                    "V44 historical terminal lost its exact FROZEN publication owner");
+              }
+              return null;
+            });
+    assertThat(historical.publicationOwnerPhase(historicalPublicationFence)).isEqualTo("PUBLISHED");
+    assertThat(historical.publicationTerminalCount(historicalPublicationFence)).isEqualTo(1L);
+    assertThat(historical.publicationTerminalBytes(historicalPublicationFence))
+        .containsExactly(historicalTerminalRequest.terminalBytes());
+    Record retainedHistoricalTerminal =
+        Objects.requireNonNull(
+            historical.dsl.fetchOne(
+                "SELECT operation_bytes FROM world_design_publication_terminal "
+                    + "WHERE publication_fence=?",
+                historicalPublicationFence));
+    assertThat(retainedHistoricalTerminal.get("operation_bytes", byte[].class))
+        .containsExactly(historicalTerminalRequest.operationBytes());
     var preparation = historical.prepareV2ThroughOwnerFunction(input);
     byte[] preparationRowsBeforeRetry = historical.preparationRows(input.canonicalGameInstanceId());
     assertThat(historical.prepareV2ThroughOwnerFunction(input)).isEqualTo(preparation);
@@ -4690,7 +4771,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     Record persisted =
         Objects.requireNonNull(
             dsl.fetchOne(
-                "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?,?,?,?,?,?,?,?,?,?,CAST(? AS TIMESTAMPTZ),?,?) "
                     + "AS world_execution_fence",
                 identity.preparationInputJson(),
                 identity.preparationInputDigest(),

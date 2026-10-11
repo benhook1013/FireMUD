@@ -301,14 +301,19 @@ class WorldOperationalRegionAssignmentPostgresIntegrationTest {
         assertThat(retainedRegion.get("original_row", Boolean.class)).isTrue();
         assertThat(retainedRegion.get("unassigned", Boolean.class)).isTrue();
         assertThat(retainedRegion.get("canonical_id", UUID.class)).isEqualTo(canonicalRegionId);
-        assertThat(
-                Objects.requireNonNull(
-                        retained.fetchOne(
-                            "SELECT to_jsonb(w) = ?::jsonb FROM world_instance w WHERE id = ?",
-                            worldBefore,
-                            worldId))
-                    .get(0, Boolean.class))
-            .isTrue();
+        var retainedWorld =
+            Objects.requireNonNull(
+                retained.fetchOne(
+                    "SELECT (to_jsonb(w) - 'canonical_realm_id' - 'catalog_revision') = "
+                        + "(?::jsonb - 'canonical_realm_id' - 'catalog_revision') AS original_row, "
+                        + "canonical_realm_id IS NULL AS realm_uninferred, "
+                        + "catalog_revision IS NULL AS catalog_uninferred "
+                        + "FROM world_instance w WHERE id = ?",
+                    worldBefore,
+                    worldId));
+        assertThat(retainedWorld.get("original_row", Boolean.class)).isTrue();
+        assertThat(retainedWorld.get("realm_uninferred", Boolean.class)).isTrue();
+        assertThat(retainedWorld.get("catalog_uninferred", Boolean.class)).isTrue();
         assertThat(
                 Objects.requireNonNull(
                         retained.fetchOne(

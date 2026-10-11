@@ -670,7 +670,7 @@ class AccountOriginalStartSessionWorldAcquisitionPostgresIntegrationTest {
                             + "ORDER BY installed_rank DESC LIMIT 1"),
                     "Game Session migration history has no successful version")
                 .get("version", String.class));
-    assertThat(latestMigration).isEqualTo("35");
+    assertThat(latestMigration).isEqualTo("46");
     var transactionManager = new DataSourceTransactionManager(dataSource);
     var transactions = new TransactionTemplate(transactionManager);
     return new GameSessionAttemptStore(

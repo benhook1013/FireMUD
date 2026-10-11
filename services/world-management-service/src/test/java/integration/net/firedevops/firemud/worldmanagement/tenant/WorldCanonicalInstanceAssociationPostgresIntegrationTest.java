@@ -1303,7 +1303,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                     "SELECT * FROM world_prepare_canonical_instance(?, ?)", inputJson, inputDigest))
         .isInstanceOf(DataIntegrityViolationException.class)
         .rootCause()
-        .hasMessageContaining("exact current World execution identity and fence");
+        .hasMessageContaining(
+            "V35 requires the exact current World and Account owner-observation identity");
     assertThatThrownBy(
             () -> dsl.execute("INSERT INTO world_canonical_instance_association DEFAULT VALUES"))
         .isInstanceOf(DataIntegrityViolationException.class)
@@ -1338,7 +1339,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                     "SELECT * FROM world_prepare_canonical_instance(?, ?)", inputJson, inputDigest))
         .isInstanceOf(DataIntegrityViolationException.class)
         .rootCause()
-        .hasMessageContaining("exact current World execution identity and fence");
+        .hasMessageContaining(
+            "V35 requires the exact current World and Account owner-observation identity");
 
     assertThatThrownBy(
             () ->
@@ -1347,7 +1349,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                         status -> {
                           Record intentRow =
                               dsl.fetchOne(
-                                  "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                  "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
                                   inputJson,
                                   inputDigest,
                                   identity.originalPostAuthorizationTuple(),
@@ -1411,7 +1413,8 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                         }))
         .isInstanceOf(DataIntegrityViolationException.class)
         .rootCause()
-        .hasMessageContaining("exact current World execution identity and fence");
+        .hasMessageContaining(
+            "V35 requires the exact current World and Account owner-observation identity");
     assertThat(preparationCount(identity.canonicalGameInstanceId())).isZero();
     assertThat(associationCount(identity.canonicalGameInstanceId())).isZero();
   }
@@ -2124,7 +2127,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                 status -> {
                   Record intentRow =
                       dsl.fetchOne(
-                          "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                          "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
                           inputJson,
                           inputDigest,
                           identity.originalPostAuthorizationTuple(),

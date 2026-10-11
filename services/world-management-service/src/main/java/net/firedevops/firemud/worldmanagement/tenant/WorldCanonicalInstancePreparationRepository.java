@@ -266,7 +266,7 @@ public final class WorldCanonicalInstancePreparationRepository {
               authority.requireHeld();
               Record intentRow =
                   dsl.fetchOne(
-                      "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      "SELECT world_persist_canonical_instance_execution_intent_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
                       inputJson,
                       inputDigest,
                       identity.originalPostAuthorizationTuple(),
@@ -497,7 +497,7 @@ public final class WorldCanonicalInstancePreparationRepository {
                   if (identity.hasOriginalAttemptEvidence()) {
                     return dsl.fetchOne(
                         "SELECT operation_state, world_execution_fence, world_instance_id "
-                            + "FROM world_abort_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            + "FROM world_abort_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
                         identity.targetNamespace(),
                         identity.canonicalTenantId(),
                         identity.controlPlaneRequestId(),
