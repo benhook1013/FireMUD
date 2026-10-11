@@ -726,6 +726,10 @@ MICROSERVICE_SERVICE_PRIMARY = {
 MICROSERVICE_APPENDIX_ALLOCATIONS = {
     "design/architecture/microservices/account-service/stripe-integration.md": ("AA-1", "Commerce design"),
     "design/architecture/microservices/account-service/subscription-management.md": ("AA-1", "Entitlement design"),
+    "design/architecture/microservices/entity-management-service/character-create-action-schema.md": (
+        "GR-3",
+        "Character-creation action schema",
+    ),
     "design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md": (
         "AS-1",
         "Sandbox/runtime design",
