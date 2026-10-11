@@ -637,8 +637,8 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
 
   private static ApplyWorldDesignMutationRequest canonicalLookingDraftMutation() {
     return ApplyWorldDesignMutationRequest.newBuilder()
-        .setTenantId("11111111-1111-4111-8111-111111111111")
-        .setVersionId("22222222-2222-4222-8222-222222222222")
+        .setTenantId("42")
+        .setVersionId("2045")
         .setCommitId("commit-1")
         .setRevisionId("revision-1")
         .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
