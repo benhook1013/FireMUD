@@ -26,8 +26,11 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameTemplate;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
@@ -75,6 +78,8 @@ public class TestDataSeeder implements ApplicationRunner {
   private static final String FIXTURE_WORLD_DISPLAY_NAME = "Demo World";
   private static final String FIXTURE_GAME_SESSION_URI_SAN =
       "spiffe://firemud/ns/dev/sa/game-session-service";
+  private static final String FIXTURE_WORLD_MANAGEMENT_URI_SAN =
+      "spiffe://firemud/ns/dev/sa/world-management-service";
   private static final int MAX_FIXTURE_FILE_BYTES = 16 * 1024;
 
   private final GameRepository gameRepository;
@@ -106,6 +111,10 @@ public class TestDataSeeder implements ApplicationRunner {
 
   @Value("${FIREMUD_SMOKE_GAME_SESSION_LEAF_CERT_PATH:/app/game-session-fixture-client.crt}")
   private String gameSessionLeafCertPath;
+
+  @Value(
+      "${FIREMUD_SMOKE_WORLD_MANAGEMENT_LEAF_CERT_PATH:/app/world-management-fixture-client.crt}")
+  private String worldManagementLeafCertPath;
 
   @Value("${firemud.grpc.workload-namespace:}")
   private String workloadNamespace;
@@ -398,6 +407,7 @@ public class TestDataSeeder implements ApplicationRunner {
         || !validCapabilityPath(fixtureCapabilityPath)
         || !validReceiptPath(fixtureReceiptPath)
         || !absolutePath(gameSessionLeafCertPath)
+        || !absolutePath(worldManagementLeafCertPath)
         || !absolutePath(caCertPath)) {
       throw new IllegalStateException(
           "Run-owned authored-world fixture configuration is incomplete");
@@ -424,6 +434,8 @@ public class TestDataSeeder implements ApplicationRunner {
             "characterCreationPolicy",
             "gameSessionLeafSha256",
             "gameSessionUriSan",
+            "worldManagementLeafSha256",
+            "worldManagementUriSan",
             "caCertificateSha256");
     requireExactObjectFields(capability, expectedFields, "initial-admission capability");
     requireText(capability, "schema", "firemud.run-owned-initial-admission-fixture.v1");
@@ -442,21 +454,61 @@ public class TestDataSeeder implements ApplicationRunner {
     requireText(capability, "stateScope", "SHARED");
     requireText(capability, "characterCreationPolicy", "ALLOW_NEW");
     requireText(capability, "gameSessionUriSan", FIXTURE_GAME_SESSION_URI_SAN);
+    requireText(capability, "worldManagementUriSan", FIXTURE_WORLD_MANAGEMENT_URI_SAN);
 
     UUID operationId = canonicalUuid(text(capability, "operationId"), "operationId");
-    String leafDigest = digestHex(text(capability, "gameSessionLeafSha256"));
+    String gameSessionLeafDigest = digestHex(text(capability, "gameSessionLeafSha256"));
+    String worldManagementLeafDigest = digestHex(text(capability, "worldManagementLeafSha256"));
     String caDigest = digestHex(text(capability, "caCertificateSha256"));
     X509Certificate gameSessionCertificate = readCertificate(Path.of(gameSessionLeafCertPath));
+    X509Certificate worldManagementCertificate =
+        readCertificate(Path.of(worldManagementLeafCertPath));
     X509Certificate caCertificate = readCertificate(Path.of(caCertPath));
-    requireCertificatePins(gameSessionCertificate, caCertificate, leafDigest, caDigest);
-    return new FixtureCapability(operationId, gameTemplateId, leafDigest, caDigest);
+    requireCertificatePins(
+        gameSessionCertificate,
+        worldManagementCertificate,
+        caCertificate,
+        gameSessionLeafDigest,
+        worldManagementLeafDigest,
+        caDigest);
+    return new FixtureCapability(
+        operationId,
+        gameTemplateId,
+        gameSessionLeafDigest,
+        FIXTURE_WORLD_MANAGEMENT_URI_SAN,
+        worldManagementLeafDigest,
+        caDigest);
   }
 
   private void publishCommittedSourceReceipt(
       FixtureCapability capability, RunOwnedFixtureLaunchReadback.Snapshot captured) {
-    RunOwnedFixtureLaunchReadback.Snapshot committed =
+    RunOwnedFixtureLaunchReadback.Snapshot verifiedBeforeResolve =
         launchReadback.readCommittedOutcome(captured);
-    byte[] receipt = serializeFixtureReceipt(capability, committed);
+    AuthoredWorldSourceEvidence capturedSource = verifiedBeforeResolve.sourceEvidence();
+    AuthoredWorldLaunchDescriptorEvidence.Request launchRequest =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            FIXTURE_NAMESPACE,
+            capability.operationId().toString(),
+            capturedSource.canonicalTenantId(),
+            capturedSource.worldSlug(),
+            capturedSource.operationId(),
+            capturedSource.evidenceDigest(),
+            capability.gameTemplateId(),
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null);
+    ResolvedLaunchDescriptorDto resolvedDescriptor =
+        launchReadback.resolveAndReadLaunchDescriptor(launchRequest);
+    RunOwnedFixtureLaunchReadback.Snapshot committedAfterResolve =
+        launchReadback.readCommittedOutcome(captured);
+    launchReadback.requireDescriptorMatchesSnapshot(
+        resolvedDescriptor, launchRequest, committedAfterResolve);
+    byte[] receipt = serializeFixtureReceipt(capability, committedAfterResolve, resolvedDescriptor);
     if (receipt.length == 0 || receipt.length > MAX_FIXTURE_FILE_BYTES) {
       throw new IllegalStateException("Run-owned authored-world receipt exceeds its 16 KiB bound");
     }
@@ -501,7 +553,9 @@ public class TestDataSeeder implements ApplicationRunner {
   }
 
   private byte[] serializeFixtureReceipt(
-      FixtureCapability capability, RunOwnedFixtureLaunchReadback.Snapshot snapshot) {
+      FixtureCapability capability,
+      RunOwnedFixtureLaunchReadback.Snapshot snapshot,
+      ResolvedLaunchDescriptorDto launchDescriptor) {
     AuthoredWorldSourceEvidence source = snapshot.sourceEvidence();
     Map<String, Object> sourceEvidence = new LinkedHashMap<>();
     sourceEvidence.put("schemaVersion", source.schemaVersion());
@@ -526,6 +580,8 @@ public class TestDataSeeder implements ApplicationRunner {
     envelope.put("ownerService", FIXTURE_OWNER_SERVICE);
     envelope.put("gameSessionUriSan", FIXTURE_GAME_SESSION_URI_SAN);
     envelope.put("gameSessionLeafSha256", capability.gameSessionLeafSha256());
+    envelope.put("worldManagementUriSan", capability.worldManagementUriSan());
+    envelope.put("worldManagementLeafSha256", capability.worldManagementLeafSha256());
     envelope.put("caCertificateSha256", capability.caCertificateSha256());
     envelope.put("sourceEvidence", sourceEvidence);
     Map<String, Object> launchReadEvidence = new LinkedHashMap<>();
@@ -540,6 +596,13 @@ public class TestDataSeeder implements ApplicationRunner {
     launchReadEvidence.put(
         "versionStateBase64",
         Base64.getEncoder().encodeToString(snapshot.versionProto().toByteArray()));
+    launchReadEvidence.put(
+        "launchDescriptorBase64",
+        Base64.getEncoder()
+            .encodeToString(
+                AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(
+                        launchDescriptor.authoredWorldBinding())
+                    .toByteArray()));
     envelope.put("launchReadEvidence", launchReadEvidence);
     try {
       return objectMapper.writeValueAsBytes(envelope);
@@ -645,35 +708,60 @@ public class TestDataSeeder implements ApplicationRunner {
 
   private void requireCertificatePins(
       X509Certificate gameSessionCertificate,
+      X509Certificate worldManagementCertificate,
+      X509Certificate caCertificate,
+      String expectedGameSessionLeafDigest,
+      String expectedWorldManagementLeafDigest,
+      String expectedCaDigest) {
+    requireRecipientCertificatePins(
+        gameSessionCertificate,
+        caCertificate,
+        expectedGameSessionLeafDigest,
+        expectedCaDigest,
+        FIXTURE_GAME_SESSION_URI_SAN,
+        "Game Session");
+    requireRecipientCertificatePins(
+        worldManagementCertificate,
+        caCertificate,
+        expectedWorldManagementLeafDigest,
+        expectedCaDigest,
+        FIXTURE_WORLD_MANAGEMENT_URI_SAN,
+        "World Management");
+  }
+
+  private void requireRecipientCertificatePins(
+      X509Certificate recipientCertificate,
       X509Certificate caCertificate,
       String expectedLeafDigest,
-      String expectedCaDigest) {
+      String expectedCaDigest,
+      String expectedUriSan,
+      String recipientName) {
     try {
-      gameSessionCertificate.checkValidity();
+      recipientCertificate.checkValidity();
       caCertificate.checkValidity();
-      gameSessionCertificate.verify(caCertificate.getPublicKey());
+      recipientCertificate.verify(caCertificate.getPublicKey());
       if (caCertificate.getBasicConstraints() < 0
-          || !gameSessionCertificate
+          || !recipientCertificate
               .getIssuerX500Principal()
               .equals(caCertificate.getSubjectX500Principal())
-          || !expectedLeafDigest.equals(sha256(gameSessionCertificate.getEncoded()))
+          || !expectedLeafDigest.equals(sha256(recipientCertificate.getEncoded()))
           || !expectedCaDigest.equals(sha256(caCertificate.getEncoded()))) {
         throw new IllegalStateException(
             "Run-owned fixture TLS certificates do not match capability pins");
       }
-      if (GrpcPeerIdentity.fromCertificate(gameSessionCertificate)
+      if (GrpcPeerIdentity.fromCertificate(recipientCertificate)
           .map(GrpcPeerIdentity::uri)
-          .filter(FIXTURE_GAME_SESSION_URI_SAN::equals)
+          .filter(expectedUriSan::equals)
           .isEmpty()) {
         throw new IllegalStateException(
-            "Run-owned Game Session certificate has the wrong workload URI SAN");
+            "Run-owned " + recipientName + " certificate has the wrong workload URI SAN");
       }
     } catch (Exception exception) {
       if (exception instanceof IllegalStateException illegalStateException) {
         throw illegalStateException;
       }
       throw new IllegalStateException(
-          "Run-owned fixture Game Session certificate is not trusted", exception);
+          "Run-owned fixture " + recipientName + " certificate is not trusted", exception);
     }
   }
 
@@ -791,5 +879,7 @@ public class TestDataSeeder implements ApplicationRunner {
       UUID operationId,
       long gameTemplateId,
       String gameSessionLeafSha256,
+      String worldManagementUriSan,
+      String worldManagementLeafSha256,
       String caCertificateSha256) {}
 }
