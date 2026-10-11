@@ -25,8 +25,10 @@ public final class AccountResponseEnvelopeCryptography {
   static final int NONCE_BYTES = 12;
   static final int TAG_BITS = 128;
   static final int TAG_BYTES = TAG_BITS / Byte.SIZE;
-  static final int MAX_RESPONSE_BYTES = 64 * 1024;
-  static final int MAX_BINDING_BYTES = 16 * 1024;
+  static final int MAX_AUTHORITY_EVIDENCE_BUNDLE_BYTES = 128 * 1024;
+  // Covers the authority bundle plus the bounded tuple, projections, identifiers, and framing.
+  static final int MAX_RESPONSE_BYTES = 144 * 1024;
+  static final int MAX_BINDING_BYTES = 144 * 1024;
   private static final byte[] MAGIC = {'F', 'R', 'E', 'A'};
   private static final byte FORMAT_VERSION = 1;
   private static final int FIXED_HEADER_BYTES = MAGIC.length + 1 + 1 + Long.BYTES + NONCE_BYTES;
@@ -313,7 +315,7 @@ public final class AccountResponseEnvelopeCryptography {
       }
       if (authorityEvidenceBundleCanonicalBytes == null
           || authorityEvidenceBundleCanonicalBytes.length == 0
-          || authorityEvidenceBundleCanonicalBytes.length > 8 * 1024) {
+          || authorityEvidenceBundleCanonicalBytes.length > MAX_AUTHORITY_EVIDENCE_BUNDLE_BYTES) {
         throw new IllegalArgumentException(
             "authority evidence bundle bytes are empty or exceed their bound");
       }
