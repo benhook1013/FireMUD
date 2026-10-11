@@ -91,6 +91,34 @@ class AccountJwtJwksTrustedSourceTest {
   }
 
   @Test
+  void allowsAbsentKeyOperationsOnlyForTrustedPublishedKeysAndRejectsOtherShapes() {
+    String jwkWithoutKeyOps = JWK_1.replace("\"key_ops\":[\"verify\"],", "");
+    Fixture absentKeyOps = new Fixture("{\"keys\":[" + jwkWithoutKeyOps + "]}");
+
+    SourceIdentity identity = absentKeyOps.source.sourceIdentity();
+    assertThat(absentKeyOps.source.load().jwksBytes())
+        .containsExactly(
+            absentKeyOps
+                .snapshot
+                .data()
+                .get(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY)
+                .getBytes(StandardCharsets.UTF_8));
+    assertThat(identity.configMapUid()).isEqualTo(CONFIG_MAP_UID);
+
+    for (String malformedJwk :
+        List.of(
+            JWK_1.replace("\"use\":\"sig\"", "\"use\":\"sig\",\"unexpected\":true"),
+            JWK_1.replace("\"use\":\"sig\"", "\"use\":\"sig\",\"d\":\"AQID\""),
+            JWK_1.replace("\"n\":\"AQID\",", ""),
+            JWK_1.replace("[\"verify\"]", "[\"verify\",\"sign\"]"))) {
+      Fixture malformed = new Fixture("{\"keys\":[" + malformedJwk + "]}");
+      assertThatThrownBy(malformed.source::sourceIdentity)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account trusted public JWKS source was rejected");
+    }
+  }
+
+  @Test
   void allowsNewAccountPublicationAtSamePinnedResourceWithoutChangingSourceIdentity() {
     Fixture fixture = new Fixture();
     fixture.useCommittedState();
@@ -370,6 +398,10 @@ class AccountJwtJwksTrustedSourceTest {
     private final AccountJwtJwksTrustedSource source;
 
     private Fixture() {
+      this(JWKS_1);
+    }
+
+    private Fixture(String jwks) {
       enrollmentIdentity =
           new EnrollmentIdentity(
               CLUSTER_UID,
@@ -422,14 +454,14 @@ class AccountJwtJwksTrustedSourceTest {
               Optional.of(INITIAL_OPERATION_ID),
               Optional.empty(),
               Optional.of(enrollmentIdentity));
-      publication = publication(JWKS_1, initialMarker, "41", "42", "1", "key_1", Optional.empty());
+      publication = publication(jwks, initialMarker, "41", "42", "1", "key_1", Optional.empty());
       snapshot =
           new ConfigMapSnapshot(
               CONFIG_MAP_UID,
               "42",
               Map.of(
                   AccountJwtJwksPublicationRepository.JWKS_DATA_KEY,
-                  JWKS_1,
+                  jwks,
                   AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY,
                   initialMarker,
                   "operator.note",

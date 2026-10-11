@@ -55,6 +55,8 @@ public final class AccountStartSessionOperatorAuthorizationService {
   private static final int REFERENCE_RANDOM_BYTES = 32;
   private static final int MAX_REFERENCE_TEXT_BYTES = 128;
   private static final Pattern REFERENCE = Pattern.compile("[A-Za-z0-9_-]{43}");
+  private static final Pattern SAFE_ENVELOPE_REQUEST_ID =
+      Pattern.compile("[A-Za-z0-9._:/@+-]{1,256}");
   private static final Set<String> RESPONSE_FIELDS =
       Set.of(
           "operatorAuthorizationReference",
@@ -872,6 +874,9 @@ public final class AccountStartSessionOperatorAuthorizationService {
 
   private AuthorizationResponse openOriginalResponse(
       StartSessionPreAuthorizationReservationTuple tuple, IssuanceRecord record) {
+    if (record.responseEnvelopeErasedAt() != null) {
+      throw new ResponseEnvelopeErasedException();
+    }
     AccountStartSessionOperatorAuthorityBundle bundle =
         AccountStartSessionOperatorAuthorityBundle.decode(record.authorityEvidenceBundle());
     bundle.requireTupleBinding(tuple);
@@ -900,7 +905,8 @@ public final class AccountStartSessionOperatorAuthorizationService {
       IssuanceRecord record,
       AccountStartSessionOperatorAuthorityBundle bundle,
       StartSessionPreAuthorizationReservationTuple tuple) {
-    if (!clock.instant().isBefore(record.responseEnvelopeExpiresAt())) {
+    if (record.responseEnvelopeErasedAt() != null
+        || !clock.instant().isBefore(record.responseEnvelopeExpiresAt())) {
       return Optional.empty();
     }
     byte[] plaintext = null;
@@ -935,7 +941,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
       AccountStartSessionOperatorAuthorityBundle bundle) {
     return new Binding(
         ENVELOPE_OPERATION,
-        tuple.controlPlaneRequestId(),
+        envelopeBindingRequestId(tuple.controlPlaneRequestId()),
         sha256(exactTuple),
         callerWorkload,
         operationId.toString(),
@@ -946,6 +952,13 @@ public final class AccountStartSessionOperatorAuthorizationService {
         AccountControlUiAuthority.canonical(bundle.authorityTuple()),
         AccountControlUiAuthority.canonical(bundle.membershipVersion()),
         bundle.canonicalBytes());
+  }
+
+  static String envelopeBindingRequestId(String requestId) {
+    if (SAFE_ENVELOPE_REQUEST_ID.matcher(requestId).matches()) {
+      return requestId;
+    }
+    return java.util.HexFormat.of().formatHex(sha256(requestId.getBytes(StandardCharsets.UTF_8)));
   }
 
   private static byte[] encodeResponse(AuthorizationResponse response) {
@@ -1091,7 +1104,8 @@ public final class AccountStartSessionOperatorAuthorizationService {
         || !Arrays.equals(candidate.encryptedResponseEnvelope(), record.encryptedResponseEnvelope())
         || !candidate.issuedAt().equals(record.issuedAt())
         || !candidate.referenceExpiresAt().equals(record.referenceExpiresAt())
-        || !candidate.responseEnvelopeExpiresAt().equals(record.responseEnvelopeExpiresAt())) {
+        || !candidate.responseEnvelopeExpiresAt().equals(record.responseEnvelopeExpiresAt())
+        || record.responseEnvelopeErasedAt() != null) {
       throw denied("New Account issuance differs from its exact durable candidate");
     }
   }
@@ -1244,7 +1258,9 @@ public final class AccountStartSessionOperatorAuthorizationService {
             original.encryptedResponseEnvelope(), observed.encryptedResponseEnvelope())
         || !original.issuedAt().equals(observed.issuedAt())
         || !original.referenceExpiresAt().equals(observed.referenceExpiresAt())
-        || !original.responseEnvelopeExpiresAt().equals(observed.responseEnvelopeExpiresAt())) {
+        || !original.responseEnvelopeExpiresAt().equals(observed.responseEnvelopeExpiresAt())
+        || !Objects.equals(
+            original.responseEnvelopeErasedAt(), observed.responseEnvelopeErasedAt())) {
       throw denied("Immutable Account StartSession issuance changed during owner revalidation");
     }
   }
@@ -1577,6 +1593,13 @@ public final class AccountStartSessionOperatorAuthorizationService {
   public static final class NotFoundException extends RuntimeException {
     public NotFoundException() {
       super("No original StartSession operator authorization exists");
+    }
+  }
+
+  /** Terminal, fail-closed outcome for ISSUE/RECOVER after exact response material is erased. */
+  public static final class ResponseEnvelopeErasedException extends IllegalStateException {
+    private ResponseEnvelopeErasedException() {
+      super("Original Account StartSession response envelope is no longer recoverable");
     }
   }
 

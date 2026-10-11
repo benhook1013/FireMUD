@@ -163,6 +163,47 @@ class AccountStartSessionOperatorAuthorityBundleTest {
                     fixture.tuple,
                     bundle.referenceForCapture(capture),
                     ISSUED_AT.plusSeconds(1)))
+        .isInstanceOf(IllegalStateException.class);
+  }
+
+  @Test
+  void expiredOrChangedCurrentAuthorityIsPreconditionFailureButMalformedBundleIsInvalid() {
+    Fixture fixture = new Fixture(Map.of());
+    var capture = fixture.capture();
+    var bundle =
+        AccountStartSessionOperatorAuthorityBundle.create(
+            fixture.tuple,
+            capture,
+            fixture.issuance,
+            UUID.randomUUID(),
+            ISSUED_AT,
+            ISSUED_AT.plusSeconds(60));
+    var reference = bundle.referenceForCapture(capture);
+
+    assertThatThrownBy(
+            () ->
+                bundle.requireCurrent(
+                    fixture.source,
+                    fixture.issuance,
+                    fixture.tuple,
+                    reference,
+                    ISSUED_AT.plusSeconds(60)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("expired");
+
+    var changedTenantAuthority =
+        fixture.source(fixture.actorId, fixture.tenantId, 8L, new byte[] {8}, 2L);
+    assertThatThrownBy(
+            () ->
+                bundle.requireCurrent(
+                    changedTenantAuthority,
+                    fixture.issuance,
+                    fixture.tuple,
+                    reference,
+                    ISSUED_AT.plusSeconds(1)))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThatThrownBy(() -> AccountStartSessionOperatorAuthorityBundle.decode(new byte[] {0x01}))
         .isInstanceOf(IllegalArgumentException.class);
   }
 
@@ -193,8 +234,15 @@ class AccountStartSessionOperatorAuthorityBundleTest {
             () ->
                 bundle.requireCurrentSnapshotForExactReplay(
                     fixture.source, fixture.issuance, fixture.tuple, substitutedTransaction))
-        .isInstanceOf(IllegalArgumentException.class)
+        .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("source differs");
+
+    var changedSource = fixture.source(fixture.actorId, fixture.tenantId, 8L, new byte[] {8}, 2L);
+    assertThatThrownBy(
+            () ->
+                bundle.requireCurrentSnapshotForExactReplay(
+                    changedSource, fixture.issuance, fixture.tuple, originalReference))
+        .isInstanceOf(IllegalStateException.class);
   }
 
   private static StartSessionPreAuthorizationReservationTuple tuple(

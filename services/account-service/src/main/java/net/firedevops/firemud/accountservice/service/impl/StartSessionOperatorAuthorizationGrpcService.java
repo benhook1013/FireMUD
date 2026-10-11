@@ -26,6 +26,9 @@ import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationRequest;
 import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationResponse;
 import net.firedevops.firemud.account.v1.StartSessionOperatorAuthorizationServiceGrpc;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionResult;
+import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.KeyUnavailableException;
+import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography.CryptographyUnavailableException;
+import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeKeyring;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorityBundle.BundleReference;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.AuthorizationResponse;
@@ -534,6 +537,13 @@ public final class StartSessionOperatorAuthorizationGrpcService
     } catch (AccountStartSessionOperatorAuthorizationService.NotFoundException missing) {
       fail(observer, Status.NOT_FOUND, "No original StartSession authorization exists");
     } catch (CannotCreateTransactionException unavailable) {
+      fail(
+          observer,
+          Status.UNAVAILABLE,
+          "Account operator authorization is temporarily unavailable");
+    } catch (KeyUnavailableException
+        | AccountResponseEnvelopeKeyring.KeyUnavailableException
+        | CryptographyUnavailableException unavailable) {
       fail(
           observer,
           Status.UNAVAILABLE,

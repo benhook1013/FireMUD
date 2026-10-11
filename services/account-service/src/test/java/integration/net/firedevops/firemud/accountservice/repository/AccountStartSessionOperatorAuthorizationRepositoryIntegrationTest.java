@@ -90,6 +90,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         .isEqualTo(candidate.issuanceOperationId());
     assertThat(duplicate.issuance().encryptedResponseEnvelope())
         .containsExactly(candidate.encryptedResponseEnvelope());
+    assertThat(duplicate.issuance().responseEnvelopeErasedAt()).isNull();
     assertThat(duplicate.issuance().bundleReference()).isEqualTo(candidate.bundleReference());
     var persistedBeforeRedemption =
         context.inTransaction(
@@ -480,19 +481,196 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         .containsExactly(candidate.authorityEvidenceBundle());
   }
 
-  private Context context() {
-    String schema = "account_start_session_" + UUID.randomUUID().toString().replace("-", "");
-    schemas.add(schema);
-    DriverManagerDataSource dataSource = POSTGRES.dataSource(schema);
+  @Test
+  void responseEnvelopeErasureUsesDatabaseWallClockAndPreservesRedeemedCompactEvidence() {
+    Context context = context();
+    Instant databaseNow = databaseNow(context);
+    IssuanceCandidate candidate =
+        candidate(
+            tuple(),
+            databaseNow.minusSeconds(2),
+            databaseNow.plusSeconds(10),
+            databaseNow.plusSeconds(12));
+    context.inTransaction(() -> context.repository.createOrReadExact(candidate));
+
+    assertThatThrownBy(
+            () ->
+                context.inTransactionWithoutResult(
+                    () ->
+                        context.transactionDsl.execute(
+                            "UPDATE account_start_session_operator_authorizations "
+                                + "SET encrypted_response_envelope = NULL "
+                                + "WHERE control_plane_request_id = ?",
+                            candidate.controlPlaneRequestId())))
+        .isInstanceOf(IntegrityConstraintViolationException.class);
+
+    var erased =
+        context.inTransaction(
+            () -> {
+              assertThat(
+                      ((OffsetDateTime)
+                              context.transactionDsl.fetchValue("SELECT transaction_timestamp()"))
+                          .toInstant())
+                  .isBefore(candidate.responseEnvelopeExpiresAt());
+              var redeemed =
+                  context.repository.redeemExact(
+                      redemption(
+                          candidate, OWNER_ATTEMPT_ID, 11L, candidate.issuedAt().plusSeconds(1)));
+              assertThat(redeemed.replay()).isFalse();
+              assertThatThrownBy(
+                      () ->
+                          context.repository.eraseExpiredResponseEnvelope(
+                              candidate.controlPlaneRequestId()))
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("evidence unavailable");
+
+              waitUntilDatabaseTime(context, candidate.responseEnvelopeExpiresAt());
+              return context.repository.eraseExpiredResponseEnvelope(
+                  candidate.controlPlaneRequestId());
+            });
+
+    assertThat(erased.erasedNow()).isTrue();
+    assertThat(erased.issuance().encryptedResponseEnvelope()).isNull();
+    assertThat(erased.issuance().responseEnvelopeErasedAt())
+        .isNotNull()
+        .isAfterOrEqualTo(candidate.responseEnvelopeExpiresAt());
+    assertThat(erased.issuance().status())
+        .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.REDEEMED);
+    assertThat(erased.issuance().controlPlaneRequestId())
+        .isEqualTo(candidate.controlPlaneRequestId());
+    assertThat(erased.issuance().preAuthorizationTuple())
+        .containsExactly(candidate.preAuthorizationTuple());
+    assertThat(erased.issuance().mutationDigest()).isEqualTo(candidate.mutationDigest());
+    assertThat(erased.issuance().authorizationReferenceFingerprint())
+        .isEqualTo(candidate.authorizationReferenceFingerprint());
+    assertThat(erased.issuance().authorityEvidenceBundle())
+        .containsExactly(candidate.authorityEvidenceBundle());
+    assertThat(erased.issuance().redemptionOwnerAttemptId()).isEqualTo(OWNER_ATTEMPT_ID);
+    assertThat(erased.issuance().redemptionOwnerFence()).isEqualTo(11L);
+    assertThat(erased.issuance().redemptionReferenceFingerprint())
+        .isEqualTo(candidate.authorizationReferenceFingerprint());
+    assertThat(erased.issuance().redemptionAuthorityEvidenceBundle())
+        .containsExactly(candidate.authorityEvidenceBundle());
+
+    var retry =
+        context.inTransaction(
+            () ->
+                context.repository.eraseExpiredResponseEnvelope(candidate.controlPlaneRequestId()));
+    assertThat(retry.erasedNow()).isFalse();
+    assertThat(retry.issuance().responseEnvelopeErasedAt())
+        .isEqualTo(erased.issuance().responseEnvelopeErasedAt());
+
+    assertThatThrownBy(
+            () ->
+                context.inTransactionWithoutResult(
+                    () ->
+                        context.transactionDsl.execute(
+                            "UPDATE account_start_session_operator_authorizations "
+                                + "SET encrypted_response_envelope = ? "
+                                + "WHERE control_plane_request_id = ?",
+                            candidate.encryptedResponseEnvelope(),
+                            candidate.controlPlaneRequestId())))
+        .isInstanceOf(IntegrityConstraintViolationException.class);
+    assertThatThrownBy(
+            () ->
+                context.inTransactionWithoutResult(
+                    () ->
+                        context.transactionDsl.execute(
+                            "UPDATE account_start_session_operator_authorizations "
+                                + "SET redemption_owner_fence = redemption_owner_fence + 1 "
+                                + "WHERE control_plane_request_id = ?",
+                            candidate.controlPlaneRequestId())))
+        .isInstanceOf(IntegrityConstraintViolationException.class);
+
+    Instant expiredAt = databaseNow(context);
+    StartSessionPreAuthorizationReservationTuple expiredTuple =
+        tuple("start-session/operator/" + UUID.randomUUID(), "expired erase-state guard test");
+    IssuanceCandidate expiredUnredeemed = expiredCandidate(expiredTuple, expiredAt);
+    context.inTransaction(() -> context.repository.createOrReadExact(expiredUnredeemed));
+    Instant redeemedAt = expiredUnredeemed.issuedAt().plusSeconds(1);
+    assertThatThrownBy(
+            () ->
+                context.inTransactionWithoutResult(
+                    () ->
+                        context.transactionDsl.execute(
+                            "UPDATE account_start_session_operator_authorizations "
+                                + "SET encrypted_response_envelope = NULL, status = 'REDEEMED', "
+                                + "redemption_redeemer_workload_uri = ?, "
+                                + "redemption_owner_attempt_id = ?, redemption_owner_fence = ?, "
+                                + "redeemed_at = CAST(? AS TIMESTAMPTZ), "
+                                + "redemption_reference_fingerprint = ?, "
+                                + "redemption_authority_evidence_bundle = ? "
+                                + "WHERE control_plane_request_id = ?",
+                            OWNER_URI,
+                            OWNER_ATTEMPT_ID,
+                            11L,
+                            OffsetDateTime.ofInstant(redeemedAt, ZoneOffset.UTC),
+                            expiredUnredeemed.authorizationReferenceFingerprint(),
+                            expiredUnredeemed.authorityEvidenceBundle(),
+                            expiredUnredeemed.controlPlaneRequestId())))
+        .isInstanceOf(IntegrityConstraintViolationException.class);
+
+    var retained =
+        context.inTransaction(
+            () ->
+                context
+                    .repository
+                    .findByControlPlaneRequestId(candidate.controlPlaneRequestId())
+                    .orElseThrow());
+    assertThat(retained.encryptedResponseEnvelope()).isNull();
+    assertThat(retained.responseEnvelopeErasedAt())
+        .isEqualTo(erased.issuance().responseEnvelopeErasedAt());
+    assertThat(retained.status())
+        .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.REDEEMED);
+    assertThat(retained.redemptionOwnerAttemptId()).isEqualTo(OWNER_ATTEMPT_ID);
+  }
+
+  @Test
+  void v126RetainedEnvelopeSurvivesAdditiveErasureMigration() {
+    Context context = contextAt("126");
+    IssuanceCandidate candidate = candidate(tuple());
+    insertV126Row(context, candidate);
+
     Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
+        .dataSource(context.dataSource)
+        .schemas(context.schema)
+        .defaultSchema(context.schema)
+        .placeholders(Map.of("serviceSchema", context.schema))
         .locations("classpath:db/migration")
         .target("126")
         .load()
         .migrate();
+
+    var retained =
+        context.inTransaction(
+            () -> context.repository.findByControlPlaneRequestId(REQUEST_ID).orElseThrow());
+    assertThat(retained.encryptedResponseEnvelope())
+        .containsExactly(candidate.encryptedResponseEnvelope());
+    assertThat(retained.responseEnvelopeErasedAt()).isNull();
+    assertThat(retained.preAuthorizationTuple()).containsExactly(candidate.preAuthorizationTuple());
+    assertThat(retained.authorizationReferenceFingerprint())
+        .isEqualTo(candidate.authorizationReferenceFingerprint());
+  }
+
+  private Context context() {
+    return contextAt(null);
+  }
+
+  private Context contextAt(String targetVersion) {
+    String schema = "account_start_session_" + UUID.randomUUID().toString().replace("-", "");
+    schemas.add(schema);
+    DriverManagerDataSource dataSource = POSTGRES.dataSource(schema);
+    var migration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (targetVersion != null) {
+      migration.target(org.flywaydb.core.api.MigrationVersion.fromVersion(targetVersion));
+    }
+    migration.load().migrate();
     DSLContext transactionDsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     DSLContext adminDsl = DSL.using(dataSource, SQLDialect.POSTGRES);
@@ -503,7 +681,63 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         transactionDsl,
         adminDsl,
         transaction,
-        new AccountStartSessionOperatorAuthorizationRepository(transactionDsl));
+        new AccountStartSessionOperatorAuthorizationRepository(transactionDsl),
+        dataSource,
+        schema);
+  }
+
+  private static void insertV126Row(Context context, IssuanceCandidate candidate) {
+    context.adminDsl.execute(
+        "INSERT INTO account_start_session_operator_authorizations "
+            + "(control_plane_request_id, pre_authorization_tuple, mutation_digest, "
+            + "issuance_workload_uri, reservation_owner_id, reservation_claim_fence, "
+            + "issuance_operation_id, issuance_fence, bundle_version, bundle_source_version, "
+            + "bundle_source_fence, bundle_linearization, authority_evidence_bundle, "
+            + "authorization_reference_fingerprint, encrypted_response_envelope, issued_at, "
+            + "reference_expires_at, response_envelope_expires_at, status) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            + "CAST(? AS TIMESTAMPTZ), CAST(? AS TIMESTAMPTZ), "
+            + "CAST(? AS TIMESTAMPTZ), 'ISSUED')",
+        candidate.controlPlaneRequestId(),
+        candidate.preAuthorizationTuple(),
+        candidate.mutationDigest(),
+        candidate.issuanceWorkloadUri(),
+        candidate.reservationOwnerId(),
+        candidate.reservationClaimFence(),
+        candidate.issuanceOperationId(),
+        candidate.issuanceFence(),
+        candidate.bundleReference().bundleVersion(),
+        candidate.bundleReference().sourceVersion(),
+        candidate.bundleReference().sourceFence(),
+        candidate.bundleReference().linearization(),
+        candidate.authorityEvidenceBundle(),
+        candidate.authorizationReferenceFingerprint(),
+        candidate.encryptedResponseEnvelope(),
+        OffsetDateTime.ofInstant(candidate.issuedAt(), ZoneOffset.UTC),
+        OffsetDateTime.ofInstant(candidate.referenceExpiresAt(), ZoneOffset.UTC),
+        OffsetDateTime.ofInstant(candidate.responseEnvelopeExpiresAt(), ZoneOffset.UTC));
+  }
+
+  private static Instant databaseNow(Context context) {
+    return Objects.requireNonNull(
+            (OffsetDateTime) context.adminDsl.fetchValue("SELECT clock_timestamp()"))
+        .toInstant();
+  }
+
+  private static void waitUntilDatabaseTime(Context context, Instant boundary) {
+    long timeoutNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+    while (databaseNow(context).isBefore(boundary)) {
+      if (System.nanoTime() >= timeoutNanos) {
+        throw new IllegalStateException("Timed out waiting for PostgreSQL wall clock boundary");
+      }
+      try {
+        Thread.sleep(10L);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(
+            "Interrupted waiting for PostgreSQL wall clock boundary", interrupted);
+      }
+    }
   }
 
   private static Object raceRedemption(
@@ -620,14 +854,14 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         RESERVATION_OWNER_ID,
         3L,
         ISSUANCE_OPERATION_ID,
-        7L,
-        bundleReference(31L),
+        31L,
+        bundleReference(7L),
         authorityBundle(
             tupleFromBytes(tupleBytes),
             ISSUANCE_OPERATION_ID,
-            7L,
+            31L,
             Instant.parse("2026-10-09T00:03:00Z"),
-            bundleReference(31L)),
+            bundleReference(7L)),
         "arfp/v1/key-1/" + "a".repeat(64),
         bytes("encrypted-original-response-envelope"),
         Instant.parse("2026-10-09T00:00:00Z"),
@@ -635,8 +869,61 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         Instant.parse("2026-10-09T00:03:30Z"));
   }
 
+  private static IssuanceCandidate candidate(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      Instant issuedAt,
+      Instant referenceExpiresAt,
+      Instant responseEnvelopeExpiresAt) {
+    return new IssuanceCandidate(
+        tuple.controlPlaneRequestId(),
+        canonicalBytes(tuple),
+        tuple.mutationDigest(),
+        ISSUER_URI,
+        RESERVATION_OWNER_ID,
+        3L,
+        ISSUANCE_OPERATION_ID,
+        31L,
+        bundleReference(7L),
+        authorityBundle(tuple, ISSUANCE_OPERATION_ID, 31L, referenceExpiresAt, bundleReference(7L)),
+        "arfp/v1/key-1/" + "a".repeat(64),
+        bytes("encrypted-original-response-envelope"),
+        issuedAt,
+        referenceExpiresAt,
+        responseEnvelopeExpiresAt);
+  }
+
+  private static IssuanceCandidate expiredCandidate(
+      StartSessionPreAuthorizationReservationTuple tuple, Instant databaseNow) {
+    String uniqueFingerprint =
+        "arfp/v1/key-1/"
+            + UUID.randomUUID().toString().replace("-", "")
+            + UUID.randomUUID().toString().replace("-", "");
+    return new IssuanceCandidate(
+        tuple.controlPlaneRequestId(),
+        canonicalBytes(tuple),
+        tuple.mutationDigest(),
+        ISSUER_URI,
+        RESERVATION_OWNER_ID,
+        3L,
+        ISSUANCE_OPERATION_ID,
+        31L,
+        bundleReference(7L),
+        authorityBundle(
+            tuple, ISSUANCE_OPERATION_ID, 31L, databaseNow.minusSeconds(60), bundleReference(7L)),
+        uniqueFingerprint,
+        bytes("expired-original-response-envelope"),
+        databaseNow.minusSeconds(240),
+        databaseNow.minusSeconds(60),
+        databaseNow.minusSeconds(30));
+  }
+
   private static RedemptionRequest redemption(
       IssuanceCandidate candidate, UUID ownerAttemptId, long ownerFence) {
+    return redemption(candidate, ownerAttemptId, ownerFence, Instant.parse("2026-10-09T00:00:01Z"));
+  }
+
+  private static RedemptionRequest redemption(
+      IssuanceCandidate candidate, UUID ownerAttemptId, long ownerFence, Instant now) {
     return new RedemptionRequest(
         candidate.controlPlaneRequestId(),
         candidate.preAuthorizationTuple(),
@@ -647,7 +934,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         ownerAttemptId,
         ownerFence,
         candidate.authorityEvidenceBundle(),
-        Instant.parse("2026-10-09T00:00:01Z"));
+        now);
   }
 
   private static StartSessionPreAuthorizationReservationTuple tuple() {
@@ -814,16 +1101,22 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     private final DSLContext adminDsl;
     private final TransactionTemplate transaction;
     private final AccountStartSessionOperatorAuthorizationRepository repository;
+    private final DriverManagerDataSource dataSource;
+    private final String schema;
 
     Context(
         DSLContext transactionDsl,
         DSLContext adminDsl,
         TransactionTemplate transaction,
-        AccountStartSessionOperatorAuthorizationRepository repository) {
+        AccountStartSessionOperatorAuthorizationRepository repository,
+        DriverManagerDataSource dataSource,
+        String schema) {
       this.transactionDsl = transactionDsl;
       this.adminDsl = adminDsl;
       this.transaction = transaction;
       this.repository = repository;
+      this.dataSource = dataSource;
+      this.schema = schema;
     }
 
     <T> T inTransaction(Supplier<T> action) {

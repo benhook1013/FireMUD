@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 import java.util.List;
+import java.util.Map;
 import javax.crypto.spec.SecretKeySpec;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
 import net.firedevops.firemud.accountservice.config.AccountStartSessionOperatorAuthorizationConfiguration;
@@ -25,7 +26,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.convert.ApplicationConversionService;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.AnnotatedBeanDefinitionReader;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 
@@ -35,6 +39,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 class AccountStartSessionOperatorAuthorizationConfigurationTest {
   private static final String OPT_IN =
       "firemud.account.start-session-operator-authorization.enabled";
+  private static final String RESERVATION_EVIDENCE_CLIENT_BEAN =
+      "startSessionReservationEvidenceClient";
   private static final String OPERATOR_KEYRING_PATH =
       "firemud.account.start-session-operator-authorization.response-envelope.keyring-path";
   private static final String GENERAL_KEYRING_PATH =
@@ -76,18 +82,47 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
   }
 
   @Test
+  void reservationEvidenceClientBeanDefinitionRequiresExplicitOptIn() {
+    assertThat(reservationEvidenceClientBeanDefinition(null)).isFalse();
+    assertThat(reservationEvidenceClientBeanDefinition("false")).isFalse();
+    assertThat(reservationEvidenceClientBeanDefinition("true")).isTrue();
+  }
+
+  private static boolean reservationEvidenceClientBeanDefinition(String enabled) {
+    try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+      if (enabled != null) {
+        context
+            .getEnvironment()
+            .getPropertySources()
+            .addFirst(new MapPropertySource("test", Map.of(OPT_IN, enabled)));
+      }
+      new AnnotatedBeanDefinitionReader(context)
+          .register(StartSessionReservationEvidenceClient.class);
+      return context.getBeanFactory().containsBeanDefinition(RESERVATION_EVIDENCE_CLIENT_BEAN);
+    }
+  }
+
+  @Test
   void explicitOptInFailsClosedWhenOwnerAndKeySourcesAreUnavailable() {
     contextRunner()
-        .withUserConfiguration(AccountStartSessionOperatorAuthorizationConfiguration.class)
+        .withUserConfiguration(
+            AccountStartSessionOperatorAuthorizationConfiguration.class,
+            OwnerDependenciesWithoutActors.class,
+            GeneralResponseCryptography.class)
         .withPropertyValues(
             OPT_IN + "=true",
             "firemud.grpc.workload-namespace=gameplay",
-            "firemud.account.start-session-operator-authorization.reference-lifetime=PT2M",
-            "firemud.account.start-session-operator-authorization.response-recovery-window=PT30S",
+            REFERENCE_LIFETIME + "=PT2M",
+            RESPONSE_RECOVERY_WINDOW + "=PT30S",
             "firemud.account.start-session-operator-authorization.fingerprint-post-expiry-retention=PT24H",
-            "firemud.account.start-session-operator-authorization.response-envelope.keyring-path="
-                + "/run/secrets/account-operator-response")
-        .run(context -> assertThat(context).hasFailed());
+            OPERATOR_KEYRING_PATH + "=/run/test/operator-response",
+            GENERAL_KEYRING_PATH + "=/run/test/general-response")
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(rootCause(context.getStartupFailure()))
+                  .hasMessageContaining(AccountControlUiActorService.class.getName());
+            });
   }
 
   @Test
@@ -134,21 +169,29 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
   }
 
   @Test
-  void invalidNamespaceOrUnboundedTimingPreventsOwnerComposition() {
-    enabledContext("", "PT2M", "PT30S", "/run/test/operator-response", "/run/test/general-response")
-        .run(context -> assertThat(context).hasFailed());
+  void invalidNamespaceAndUnboundedTimingFailForTheirOwnReasons() {
+    assertStartupFailure(
+        enabledContext(
+            "", "PT2M", "PT30S", "/run/test/operator-response", "/run/test/general-response"),
+        "A valid configured workload namespace is required");
 
-    enabledContext(
+    assertStartupFailure(
+        enabledContext(
             "gameplay",
             "PT6M",
             "PT30S",
             "/run/test/operator-response",
-            "/run/test/general-response")
-        .run(context -> assertThat(context).hasFailed());
+            "/run/test/general-response"),
+        "reference lifetime must be an explicit bounded millisecond duration");
 
-    enabledContext(
-            "gameplay", "PT2M", "PT2M", "/run/test/operator-response", "/run/test/general-response")
-        .run(context -> assertThat(context).hasFailed());
+    assertStartupFailure(
+        enabledContext(
+            "gameplay",
+            "PT2M",
+            "PT61S",
+            "/run/test/operator-response",
+            "/run/test/general-response"),
+        "response recovery window must be an explicit bounded millisecond duration");
   }
 
   @Test
@@ -163,12 +206,38 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
             "firemud.grpc.workload-namespace=gameplay",
             REFERENCE_LIFETIME + "=PT2M",
             RESPONSE_RECOVERY_WINDOW + "=PT30S",
-            "firemud.account.start-session-operator-authorization.fingerprint-post-expiry-retention=PT24H")
-        .run(context -> assertThat(context).hasFailed());
+            "firemud.account.start-session-operator-authorization.fingerprint-post-expiry-retention=PT24H",
+            GENERAL_KEYRING_PATH + "=/run/test/general-response")
+        .run(
+            context -> {
+              assertThat(context).hasFailed();
+              assertThat(rootCause(context.getStartupFailure()))
+                  .hasMessageContaining("Absolute operator response keyring mount is required");
+            });
 
-    enabledContext(
-            "gameplay", "PT2M", "PT30S", "/run/test/shared-response", "/run/test/shared-response")
-        .run(context -> assertThat(context).hasFailed());
+    assertStartupFailure(
+        enabledContext(
+            "gameplay", "PT2M", "PT30S", "/run/test/shared-response", "/run/test/shared-response"),
+        "Operator response keyring must use its separately supplied mount");
+  }
+
+  private static void assertStartupFailure(
+      ApplicationContextRunner runner, String expectedRootCause) {
+    runner.run(
+        context -> {
+          assertThat(context).hasFailed();
+          assertThat(rootCause(context.getStartupFailure()))
+              .hasMessageContaining(expectedRootCause);
+        });
+  }
+
+  private static Throwable rootCause(Throwable failure) {
+    assertThat(failure).isNotNull();
+    Throwable root = failure;
+    while (root.getCause() != null) {
+      root = root.getCause();
+    }
+    return root;
   }
 
   private static ApplicationContextRunner enabledContext() {
@@ -234,6 +303,47 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
     @Bean
     OwnerKeySource fingerprintOwnerKeySource() {
       // Fixed synthetic test bytes; no production or runtime key material is read or provisioned.
+      return () ->
+          new Snapshot(
+              new KeyMaterial("test-active", new SecretKeySpec(new byte[32], "HmacSHA256")),
+              List.of());
+    }
+
+    @Bean
+    AccountHostedTermsService hostedTerms() {
+      return mock(AccountHostedTermsService.class);
+    }
+
+    @Bean
+    PlatformTransactionManager transactions() {
+      return mock(PlatformTransactionManager.class);
+    }
+  }
+
+  @TestConfiguration(proxyBeanMethods = false)
+  static class OwnerDependenciesWithoutActors {
+    @Bean
+    AccountControlUiIssuanceRepository issuanceOperations() {
+      return mock(AccountControlUiIssuanceRepository.class);
+    }
+
+    @Bean
+    DSLContext accountDsl() {
+      return mock(DSLContext.class);
+    }
+
+    @Bean
+    StartSessionReservationEvidenceClient reservationEvidence() {
+      return mock(StartSessionReservationEvidenceClient.class);
+    }
+
+    @Bean
+    AccountStartSessionOperatorAuthorizationRepository repository() {
+      return mock(AccountStartSessionOperatorAuthorizationRepository.class);
+    }
+
+    @Bean
+    OwnerKeySource fingerprintOwnerKeySource() {
       return () ->
           new Snapshot(
               new KeyMaterial("test-active", new SecretKeySpec(new byte[32], "HmacSHA256")),

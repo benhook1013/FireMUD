@@ -16,6 +16,9 @@ import static org.mockito.Mockito.when;
 import com.google.protobuf.ByteString;
 import io.grpc.Context;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -47,6 +50,7 @@ import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import org.jooq.Record;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.SimpleTransactionStatus;
@@ -55,12 +59,16 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /** Focused flow proof; JWT validation/source locking remain owned by the real actor service. */
 class AccountStartSessionOperatorAuthorizationServiceTest {
   private static final Instant NOW = Instant.parse("2026-10-08T11:00:00Z");
+  private static final String RESPONSE_KEYRING_HEADER =
+      "firemud-account-response-envelope-keyring-v1";
   private static final String LOGGING_PEER = "spiffe://firemud/ns/test/sa/logging-admin-service";
   private static final String GAME_SESSION_PEER =
       "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String GAME_DESIGN_PEER = "spiffe://firemud/ns/test/sa/game-design-service";
   private static final DateTimeFormatter CAPTURED_AT_FORMAT =
       DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
+
+  @TempDir Path temporaryDirectory;
 
   @AfterEach
   void clearTransactionState() {
@@ -209,6 +217,205 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
                     .hasMessageContaining("source changed"));
 
     verify(repository, never()).createOrReadExact(any());
+  }
+
+  @Test
+  void ownerIssuesAndRecoversCanonicalNfcRequestIdAt128Utf8Bytes() throws Exception {
+    String requestId = "é".repeat(64);
+    byte[] requestIdBytes = requestId.getBytes(StandardCharsets.UTF_8);
+    assertThat(requestIdBytes).hasSize(128);
+
+    UUID actorId = UUID.randomUUID();
+    UUID tenantId = UUID.randomUUID();
+    UUID requestOwnerId = UUID.randomUUID();
+    UUID issuerOperationId = UUID.randomUUID();
+    UUID tokenJti = UUID.randomUUID();
+    StartSessionPreAuthorizationReservationTuple tuple = tuple(requestId, actorId, tenantId);
+    byte[] exactTuple = tuple.canonicalJson().getBytes(StandardCharsets.UTF_8);
+    AccountControlUiAuthority.Snapshot source = source(actorId, tenantId, 7L, new byte[] {1});
+    AccountControlUiIssuanceRepository.Stored stored =
+        stored(actorId, tenantId, tokenJti, issuerOperationId, source);
+    AccountStartSessionAuthorityCapture capture =
+        capture(tuple, source, stored, requestOwnerId, 10L);
+    Current current = new Current(stored, source);
+
+    var actors = org.mockito.Mockito.mock(AccountControlUiActorService.class);
+    var issuanceOperations = org.mockito.Mockito.mock(AccountControlUiIssuanceRepository.class);
+    var captureRepository =
+        org.mockito.Mockito.mock(AccountStartSessionAuthorityCaptureRepository.class);
+    var claims = org.mockito.Mockito.mock(StartSessionReservationEvidenceClient.class);
+    var repository =
+        org.mockito.Mockito.mock(AccountStartSessionOperatorAuthorizationRepository.class);
+    var fingerprintKeys =
+        org.mockito.Mockito.mock(AccountOperatorAuthorizationFingerprintKeyring.class);
+    var hostedTerms = org.mockito.Mockito.mock(AccountHostedTermsService.class);
+    var transactions = org.mockito.Mockito.mock(PlatformTransactionManager.class);
+    var environment =
+        org.mockito.Mockito.mock(AccountHostedTermsService.CapturedEnvironmentBoundary.class);
+    when(transactions.getTransaction(any(TransactionDefinition.class)))
+        .thenAnswer(ignored -> new SimpleTransactionStatus());
+    when(hostedTerms.captureCurrentEnvironmentBoundary()).thenReturn(environment);
+    when(captureRepository.prepareOrReadExact(any(), any(), anyString(), any(), anyLong()))
+        .thenReturn(capture);
+    when(captureRepository.lockExactCurrent(any(), any(), any(), anyString(), any(), anyLong()))
+        .thenReturn(capture);
+    when(captureRepository.lockReadExactCurrent(any(), any(), anyString(), any(), anyLong()))
+        .thenReturn(capture);
+    when(claims.readCurrentClaimEvidence(any(), any(), anyLong(), any(), anyLong(), any()))
+        .thenAnswer(invocation -> claimEvidence(tuple, requestOwnerId));
+    when(fingerprintKeys.fingerprintForIssue(any(), any()))
+        .thenReturn("arfp/v1/test-key/" + "a".repeat(64));
+    when(fingerprintKeys.matchesOriginal(any(), any(), anyString(), any(), any())).thenReturn(true);
+
+    Path responseKeyringDirectory = temporaryDirectory.resolve("operator-response");
+    Files.createDirectories(responseKeyringDirectory);
+    byte[] responseKey = new byte[AccountResponseEnvelopeKeyring.KEY_BYTES];
+    java.util.Arrays.fill(responseKey, (byte) 7);
+    Files.writeString(
+        responseKeyringDirectory.resolve("keyring"),
+        RESPONSE_KEYRING_HEADER
+            + "\nactive test-key "
+            + java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(responseKey)
+            + "\n",
+        StandardCharsets.US_ASCII);
+    var responseCrypto =
+        new AccountResponseEnvelopeCryptography(
+            new AccountResponseEnvelopeKeyring(responseKeyringDirectory.toString()),
+            Clock.fixed(NOW, ZoneOffset.UTC),
+            new java.security.SecureRandom());
+
+    AtomicReference<IssuanceRecord> durableRecord = new AtomicReference<>();
+    when(repository.findByControlPlaneRequestId(tuple.controlPlaneRequestId()))
+        .thenAnswer(ignored -> Optional.ofNullable(durableRecord.get()));
+    when(repository.createOrReadExact(any()))
+        .thenAnswer(
+            invocation -> {
+              var candidate =
+                  invocation
+                      .<AccountStartSessionOperatorAuthorizationRepository.IssuanceCandidate>
+                          getArgument(0);
+              IssuanceRecord issuance = issuedRecord(candidate);
+              durableRecord.set(issuance);
+              return new AccountStartSessionOperatorAuthorizationRepository.CreateOrReadResult(
+                  true, issuance);
+            });
+    doAnswer(
+            invocation -> {
+              TransactionSynchronizationManager.setActualTransactionActive(true);
+              try {
+                @SuppressWarnings("unchecked")
+                Function<Current, Object> action = invocation.getArgument(3);
+                return action.apply(current);
+              } finally {
+                TransactionSynchronizationManager.clear();
+              }
+            })
+        .when(actors)
+        .withCurrent(anyString(), any(), any(), any());
+    doAnswer(
+            invocation -> {
+              TransactionSynchronizationManager.setActualTransactionActive(true);
+              try {
+                @SuppressWarnings("unchecked")
+                Function<Current, Object> action = invocation.getArgument(4);
+                return action.apply(current);
+              } finally {
+                TransactionSynchronizationManager.clear();
+              }
+            })
+        .when(actors)
+        .withCurrentCommitted(any(), any(), any(), any(), any());
+
+    var service =
+        new AccountStartSessionOperatorAuthorizationService(
+            actors,
+            issuanceOperations,
+            captureRepository,
+            claims,
+            repository,
+            fingerprintKeys,
+            responseCrypto,
+            hostedTerms,
+            transactions,
+            Clock.fixed(NOW, ZoneOffset.UTC),
+            new java.security.SecureRandom(),
+            LOGGING_PEER,
+            GAME_SESSION_PEER,
+            java.time.Duration.ofSeconds(60),
+            java.time.Duration.ofSeconds(20));
+    var issueRequest =
+        new AccountStartSessionOperatorAuthorizationService.IssueRequest(
+            "test-only-forwarded-control-ui-credential",
+            exactTuple,
+            requestOwnerId,
+            10L,
+            requestOwnerId,
+            10L);
+    AtomicReference<AccountStartSessionOperatorAuthorizationService.AuthorizationResponse> issued =
+        new AtomicReference<>();
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(LOGGING_PEER).orElseThrow())
+        .run(() -> issued.set(service.issue(issueRequest)));
+
+    IssuanceRecord record = durableRecord.get();
+    assertThat(record).isNotNull();
+    assertThat(record.status()).isEqualTo(Status.ISSUED);
+    assertThat(record.encryptedResponseEnvelope()).isNotEmpty();
+    AccountStartSessionOperatorAuthorityBundle bundle =
+        AccountStartSessionOperatorAuthorityBundle.decode(record.authorityEvidenceBundle());
+    assertThat(AccountStartSessionOperatorAuthorizationService.envelopeBindingRequestId(requestId))
+        .isEqualTo(
+            java.util.HexFormat.of()
+                .formatHex(MessageDigest.getInstance("SHA-256").digest(requestIdBytes)));
+    assertThat(
+            AccountStartSessionOperatorAuthorizationService.envelopeBindingRequestId(
+                "retained-ascii-request-01"))
+        .isEqualTo("retained-ascii-request-01");
+
+    var recoverRequest =
+        new AccountStartSessionOperatorAuthorizationService.RecoverRequest(
+            exactTuple, requestOwnerId, 10L, requestOwnerId, 10L);
+    AtomicReference<AccountStartSessionOperatorAuthorizationService.AuthorizationResponse>
+        recovered = new AtomicReference<>();
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(LOGGING_PEER).orElseThrow())
+        .run(() -> recovered.set(service.recover(recoverRequest)));
+    assertThat(recovered.get().operatorAuthorizationReference())
+        .isEqualTo(issued.get().operatorAuthorizationReference());
+    assertThat(recovered.get().authorityEvidenceBundle())
+        .containsExactly(issued.get().authorityEvidenceBundle());
+
+    String distinctRequestId = "é".repeat(63) + "è";
+    assertThat(distinctRequestId.getBytes(StandardCharsets.UTF_8)).hasSize(128);
+    assertThat(
+            StartSessionPreAuthorizationReservationTuple.requireCanonicalControlPlaneRequestId(
+                distinctRequestId))
+        .isEqualTo(distinctRequestId);
+    var distinctBinding =
+        new AccountResponseEnvelopeCryptography.Binding(
+            "human-start-session-authorization/v1",
+            AccountStartSessionOperatorAuthorizationService.envelopeBindingRequestId(
+                distinctRequestId),
+            MessageDigest.getInstance("SHA-256").digest(exactTuple),
+            LOGGING_PEER,
+            record.issuanceOperationId().toString(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            record.issuanceFence(),
+            AccountControlUiAuthority.canonical(bundle.authorityTuple()),
+            AccountControlUiAuthority.canonical(bundle.membershipVersion()),
+            bundle.canonicalBytes());
+    assertThatThrownBy(
+            () ->
+                responseCrypto.decrypt(
+                    new AccountResponseEnvelopeCryptography.EncryptedResponseEnvelope(
+                        record.encryptedResponseEnvelope()),
+                    distinctBinding,
+                    record.responseEnvelopeExpiresAt()))
+        .isInstanceOf(AccountResponseEnvelopeCryptography.IntegrityException.class);
   }
 
   @Test
@@ -495,7 +702,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             () ->
                 assertThatThrownBy(
                         () -> harness.service().readRedeemedOperationProjection(harness.request()))
-                    .isInstanceOf(IllegalArgumentException.class)
+                    .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("Current Account source"));
 
     verify(harness.actors())
@@ -506,6 +713,40 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             eq(harness.environment()),
             any());
     verifyNoInteractions(harness.claims(), harness.fingerprintKeys(), harness.responseCrypto());
+  }
+
+  @Test
+  void recoveryDoesNotDecryptOrRecreateAnErasedOriginalResponse() {
+    ReadHarness harness = readHarness(NOW.plusSeconds(30));
+    IssuanceRecord erased = asIssued(withErasedEnvelope(harness.record()));
+    when(harness.repository().findByControlPlaneRequestId(harness.tuple().controlPlaneRequestId()))
+        .thenReturn(Optional.of(erased));
+    when(harness
+            .claims()
+            .readCurrentClaimEvidence(any(), any(), anyLong(), any(), anyLong(), any()))
+        .thenReturn(claimEvidence(harness.tuple(), erased.reservationOwnerId()));
+    allowCurrent(harness, harness.source());
+
+    var request =
+        new AccountStartSessionOperatorAuthorizationService.RecoverRequest(
+            harness.tuple().canonicalJson().getBytes(StandardCharsets.UTF_8),
+            erased.reservationOwnerId(),
+            erased.reservationClaimFence(),
+            erased.reservationOwnerId(),
+            erased.reservationClaimFence());
+
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(LOGGING_PEER).orElseThrow())
+        .run(
+            () ->
+                assertThatThrownBy(() -> harness.service().recover(request))
+                    .isInstanceOf(
+                        AccountStartSessionOperatorAuthorizationService
+                            .ResponseEnvelopeErasedException.class));
+
+    verify(harness.responseCrypto(), never()).decrypt(any(), any(), any());
+    verify(harness.repository(), never()).createOrReadExact(any());
   }
 
   private static ReadHarness readHarness(Instant referenceExpiresAt) {
@@ -548,6 +789,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             issuedAt,
             referenceExpiresAt,
             referenceExpiresAt.plusSeconds(20),
+            null,
             Status.REDEEMED,
             GAME_SESSION_PEER,
             ownerAttemptId,
@@ -726,6 +968,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         record.issuedAt(),
         record.referenceExpiresAt(),
         record.responseEnvelopeExpiresAt(),
+        record.responseEnvelopeErasedAt(),
         Status.ISSUED,
         null,
         null,
@@ -733,6 +976,33 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         null,
         null,
         null);
+  }
+
+  private static IssuanceRecord withErasedEnvelope(IssuanceRecord record) {
+    return new IssuanceRecord(
+        record.controlPlaneRequestId(),
+        record.preAuthorizationTuple(),
+        record.mutationDigest(),
+        record.issuanceWorkloadUri(),
+        record.reservationOwnerId(),
+        record.reservationClaimFence(),
+        record.issuanceOperationId(),
+        record.issuanceFence(),
+        record.bundleReference(),
+        record.authorityEvidenceBundle(),
+        record.authorizationReferenceFingerprint(),
+        null,
+        record.issuedAt(),
+        record.referenceExpiresAt(),
+        record.responseEnvelopeExpiresAt(),
+        record.responseEnvelopeExpiresAt(),
+        record.status(),
+        record.redemptionRedeemerWorkloadUri(),
+        record.redemptionOwnerAttemptId(),
+        record.redemptionOwnerFence(),
+        record.redeemedAt(),
+        record.redemptionReferenceFingerprint(),
+        record.redemptionAuthorityEvidenceBundle());
   }
 
   private static IssuanceRecord withRedeemer(IssuanceRecord record, String redeemerWorkloadUri) {
@@ -752,6 +1022,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         record.issuedAt(),
         record.referenceExpiresAt(),
         record.responseEnvelopeExpiresAt(),
+        record.responseEnvelopeErasedAt(),
         Status.REDEEMED,
         redeemerWorkloadUri,
         record.redemptionOwnerAttemptId(),
@@ -789,6 +1060,11 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
       UUID tokenJti) {}
 
   private static StartSessionPreAuthorizationReservationTuple tuple(UUID actorId, UUID tenantId) {
+    return tuple("request-" + UUID.randomUUID(), actorId, tenantId);
+  }
+
+  private static StartSessionPreAuthorizationReservationTuple tuple(
+      String requestId, UUID actorId, UUID tenantId) {
     var action =
         new StartSessionOperatorAction(
             StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
@@ -798,8 +1074,35 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             StartSessionOperatorAction.ExpectedVersion.ABSENT,
             new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
             "authorization test");
-    return StartSessionPreAuthorizationReservationTuple.createHuman(
-        "request-" + UUID.randomUUID(), actorId, action);
+    return StartSessionPreAuthorizationReservationTuple.createHuman(requestId, actorId, action);
+  }
+
+  private static IssuanceRecord issuedRecord(
+      AccountStartSessionOperatorAuthorizationRepository.IssuanceCandidate candidate) {
+    return new IssuanceRecord(
+        candidate.controlPlaneRequestId(),
+        candidate.preAuthorizationTuple(),
+        candidate.mutationDigest(),
+        candidate.issuanceWorkloadUri(),
+        candidate.reservationOwnerId(),
+        candidate.reservationClaimFence(),
+        candidate.issuanceOperationId(),
+        candidate.issuanceFence(),
+        candidate.bundleReference(),
+        candidate.authorityEvidenceBundle(),
+        candidate.authorizationReferenceFingerprint(),
+        candidate.encryptedResponseEnvelope(),
+        candidate.issuedAt(),
+        candidate.referenceExpiresAt(),
+        candidate.responseEnvelopeExpiresAt(),
+        null,
+        Status.ISSUED,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null);
   }
 
   private static AccountControlUiAuthority.Snapshot source(
