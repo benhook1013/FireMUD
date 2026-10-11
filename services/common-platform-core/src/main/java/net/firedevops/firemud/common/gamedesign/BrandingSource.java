@@ -245,6 +245,14 @@ public final class BrandingSource {
       effective.put(reference.usageKey(), reference);
     for (Mutation mutation : mutations(binding)) {
       if (mutation.operation() == OperationKind.DELETE) {
+        Reference existing = effective.get(mutation.usageKey());
+        if (existing == null) {
+          throw new IllegalArgumentException(
+              "Branding DELETE must reference an existing usage key");
+        }
+        if (existing.role() != mutation.role()) {
+          throw new IllegalArgumentException("Branding DELETE role differs from existing usage");
+        }
         effective.remove(mutation.usageKey());
       } else {
         Reference reference =
