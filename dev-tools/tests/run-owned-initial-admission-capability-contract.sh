@@ -106,6 +106,10 @@ reject_missing_restart_capability() {
   ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
 }
 
+reject_missing_restart_receipt_directory() {
+  ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
+}
+
 reject_wrong_github_job() {
   GITHUB_JOB=other-job ensure_run_owned_initial_admission_capability \
     "$base_certificate_root" create-or-verify
@@ -134,6 +138,7 @@ base_project="$COMPOSE_PROJECT_NAME"
 base_token="$FIREMUD_SMOKE_OWNERSHIP_TOKEN"
 base_certificate_root="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
 base_capability="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.initial-admission-capability.json"
+base_receipt_directory="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.authored-world-source"
 
 expect_failure missing_tls ensure_run_owned_initial_admission_capability \
   "$base_certificate_root" create-or-verify
@@ -146,11 +151,23 @@ ensure_run_owned_initial_admission_capability "$base_certificate_root" create-or
 [[ "$FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH" == /app/run-owned-initial-admission-capability.json ]]
 [[ "$FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH" == "$base_capability" ]]
 [[ "$FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH" != "$FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH" ]]
+[[ "$FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH" == "$base_receipt_directory" ]]
+[[ "$FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH" == /app/run-owned-authored-world-source/source-receipt.json ]]
 [[ "$(stat -c '%a' "$(dirname "$base_capability")")" == 700 ]]
 [[ "$(stat -c '%u %a %F' "$base_capability")" == "$(id -u) 444 regular file" ]]
+[[ "$(stat -c '%u %a %F' "$base_receipt_directory")" == "$(id -u) 777 directory" ]]
+[[ ! -e "$base_receipt_directory/source-receipt.json" ]]
 base_operation_id="$(load_operation_id "$base_capability")"
 ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
 ensure_run_owned_initial_admission_capability "$base_certificate_root" create-or-verify
+[[ "$(load_operation_id "$base_capability")" == "$base_operation_id" ]]
+
+receipt_directory_backup="$TEST_ROOT/receipt-dir-before-missing-restart"
+mv -- "$base_receipt_directory" "$receipt_directory_backup"
+expect_failure missing_restart_receipt_directory reject_missing_restart_receipt_directory
+[[ ! -e "$base_receipt_directory" ]]
+mv -- "$receipt_directory_backup" "$base_receipt_directory"
+ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
 [[ "$(load_operation_id "$base_capability")" == "$base_operation_id" ]]
 
 expect_failure wrong_claim reject_wrong_claim

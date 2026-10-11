@@ -68,6 +68,8 @@ class ControllerHelpTest(unittest.TestCase):
         read = self.help("jobs", "read")
         self.assertIn("--checkpoint-only", read)
         self.assertIn("omit the brief and other context", read)
+        self.assertIn("--compact", read)
+        self.assertIn("pending notes", read)
         self.assertIn("latest checkpoint", read)
         self.assertIn("required when status is dismissed", self.help("jobs", "note-status"))
         for command in ("checkpoint", "lane-pause", "lane-resume"):
@@ -555,6 +557,10 @@ class ControllerCliTest(unittest.TestCase):
             "General",
             "--title",
             "Simple checklist",
+            "--progress",
+            "Current focus: focused proof",
+            "--blocker",
+            "Waiting for source evidence",
             "--checklist-item",
             "Audit common tasks",
             "--checklist-item",
@@ -669,6 +675,46 @@ class ControllerCliTest(unittest.TestCase):
         self.assertNotIn("updates", checkpoint_only)
         self.assertIn("brief", full_read)
         self.assertIn("history", full_read)
+
+        from fire_controller.jobs import JobStore
+
+        output, errors = io.StringIO(), io.StringIO()
+        with (
+            patch.object(JobStore, "_get", side_effect=AssertionError("compact read loaded full context")),
+            patch.object(JobStore, "_current_brief", side_effect=AssertionError("compact read loaded brief")),
+            patch.object(JobStore, "_history_rows", side_effect=AssertionError("compact read loaded history")),
+            patch.object(JobStore, "_last_activity", side_effect=AssertionError("compact read loaded activity")),
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(errors),
+        ):
+            result = main(
+                [
+                    "--context",
+                    str(self.contexts["alpha"]),
+                    "jobs",
+                    "--json",
+                    "read",
+                    created["id"],
+                    "--compact",
+                ]
+            )
+        self.assertEqual(result, 0, errors.getvalue())
+        compact_read = json.loads(output.getvalue())
+        self.assertEqual(
+            set(compact_read),
+            {"id", "name", "worker", "title", "status", "revision", "progress", "blocker", "latest_checkpoint"},
+        )
+        self.assertEqual(compact_read["progress"], "Current focus: focused proof")
+        self.assertEqual(compact_read["blocker"], "Waiting for source evidence")
+        self.assertEqual(compact_read["latest_checkpoint"]["next_steps"], "Send findings")
+        self.assertNotIn("brief", compact_read)
+        self.assertNotIn("notes", compact_read)
+        self.assertNotIn("updates", compact_read)
+        self.assertNotIn("history", compact_read)
+
+        for flags in (("--compact", "--checkpoint-only"), ("--compact", "--full-history")):
+            with self.subTest(flags=flags):
+                self.run_cli("alpha", "read", created["id"], *flags, success=False)
 
     def test_note_job_selectors_and_failed_correction_preserve_state(self):
         job = self.run_cli("alpha", "create", "note-target", "--worker", "General", "--title", "Target")
