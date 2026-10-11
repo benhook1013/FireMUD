@@ -99,6 +99,7 @@ import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSour
 import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeCommandEvidence;
 import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreProjection;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
@@ -149,6 +150,7 @@ import net.firedevops.firemud.common.publication.AccountPublicationAuthorization
 import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
+import net.firedevops.firemud.common.publication.PlayerCreationDescriptor;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
@@ -457,6 +459,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
   private static final String MINIO_ACCESS_KEY = "firemud-test";
   private static final String MINIO_SECRET_KEY = "firemud-test-secret";
   private static final String MINIO_BUCKET = "genuine-selected-export-test";
+  private static final String PLAYER_CREATED_DISPLAY_NAME = "Genuine Traveler";
+  private static final String PLAYER_CREATED_DISPOSITION_KEY = "genuine-selected-newcomer";
+  private static final String PLAYER_CREATED_FEEDBACK_KEY = "genuine-selected-welcome";
   private static final Region MINIO_REGION = Region.US_EAST_1;
   private static final Network NETWORK = Network.newNetwork();
   private static final Map<String, String> ENTITY_EMPTY_ONLY_PROVIDER_TABLES =
@@ -567,6 +572,19 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
 
   @Test
   void realSelectedSourceReceiptInventoryAndExportAreExactAndRetryable() throws Exception {
+    runRealSelectedSourceReceiptInventoryAndExportAreExactAndRetryable(
+        GenuineActorCoreScenario.PRESEEDED_ONLY_EMPTY_CORE);
+  }
+
+  @Test
+  void realPlayerCreatedAuthoredCoreSourceReceiptInventoryAndExportAreExactAndRetryable()
+      throws Exception {
+    runRealSelectedSourceReceiptInventoryAndExportAreExactAndRetryable(
+        GenuineActorCoreScenario.PLAYER_CREATED);
+  }
+
+  private void runRealSelectedSourceReceiptInventoryAndExportAreExactAndRetryable(
+      GenuineActorCoreScenario actorCoreScenario) throws Exception {
     var gd = gameDesignStore();
     var world = serviceStore(WORLD_POSTGRES, "world-management");
     var gameSessionAttempts = gameSessionAttemptStore();
@@ -979,7 +997,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 sourceAsset.getId(),
                 sourceAsset.getFileName(),
                 worldSource.worldSlug(),
-                worldSource.worldDisplayName());
+                worldSource.worldDisplayName(),
+                actorCoreScenario);
         var originalWorldDeclarations =
             selectedCommit.revisions().stream()
                 .filter(revision -> revision.owner() == Owner.WORLD_MANAGEMENT)
@@ -1420,6 +1439,43 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(selectedSources.policy().binding()).isEqualTo(selectedCommit);
         assertThat(RealmPolicySource.ordered(selectedSources.policy().policies()))
             .containsExactly(expectedPolicy);
+        assertThat(expectedPolicy.policy().entryPolicy())
+            .isEqualTo(actorCoreScenario.entryPolicy());
+        if (actorCoreScenario.hasAuthoredInitialActorCore()) {
+          assertThat(expectedPolicy.policy().schemaVersion())
+              .isEqualTo(RealmEntryPolicy.AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION);
+          assertThat(expectedPolicy.policy().initialActorCore().displayName())
+              .isEqualTo(PLAYER_CREATED_DISPLAY_NAME);
+          assertThat(expectedPolicy.policy().initialActorCore().dispositionKey())
+              .isEqualTo(PLAYER_CREATED_DISPOSITION_KEY);
+          var creationDescriptor = expectedPolicy.policy().creationDescriptor();
+          assertThat(creationDescriptor.schemaVersion())
+              .isEqualTo(PlayerCreationDescriptor.SCHEMA_VERSION);
+          assertThat(creationDescriptor.descriptorId()).isNotEqualTo(new UUID(0L, 0L).toString());
+          assertThat(creationDescriptor.descriptorRevisionId())
+              .isNotEqualTo(new UUID(0L, 0L).toString());
+          assertThat(creationDescriptor.descriptorId())
+              .isNotEqualTo(creationDescriptor.descriptorRevisionId());
+          assertThat(creationDescriptor.inputKind()).isEqualTo(PlayerCreationDescriptor.INPUT_KIND);
+          assertThat(creationDescriptor.dependencies()).isEmpty();
+        } else {
+          assertThat(expectedPolicy.policy().canonicalJson()).doesNotContain("initialActorCore");
+        }
+        var selectedGameplayEntries = selectedSources.gameplay().entries();
+        assertThat(selectedGameplayEntries)
+            .hasSize(actorCoreScenario.hasAuthoredInitialActorCore() ? 3 : 1);
+        assertThat(selectedGameplayEntries)
+            .extracting(entry -> entry.family().name() + ":" + entry.definition().key())
+            .containsExactlyElementsOf(
+                actorCoreScenario.hasAuthoredInitialActorCore()
+                    ? List.of(
+                        "ADMISSION_TAGS:genuine-selected-export",
+                        "DISPOSITIONS:" + PLAYER_CREATED_DISPOSITION_KEY,
+                        "FEEDBACK:" + PLAYER_CREATED_FEEDBACK_KEY)
+                    : List.of("ADMISSION_TAGS:genuine-selected-export"));
+        assertThat(selectedGameplayEntries)
+            .extracting(GameplayRuleSource.Entry::sourceBinding)
+            .containsOnly(selectedCommit);
 
         var ownerIntakeSourceRepository = new GameDesignSourceRepository(gd.dsl());
         var sourceRowsBeforeExport = selectedOwnerSourceRowCounts(gd.dsl());
@@ -1583,6 +1639,14 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         assertThat(templateSource.canonicalJson())
             .contains("\"schema\":\"game-design-template-config-source-snapshot/v2\"");
         assertThat(templateSource.entries()).hasSize(1);
+        assertThat(templateSource.entries().getFirst().config().gameplayInputs())
+            .containsExactlyElementsOf(
+                selectedGameplayEntries.stream()
+                    .map(
+                        entry ->
+                            new TemplateConfigSource.GameplayInput(
+                                entry.family(), entry.definition().key(), entry.revisionId()))
+                    .toList());
         var selectedTemplateMutations = TemplateConfigSource.mutations(selectedCommit);
         var authoredAutomationInventory = automationSourceInventory();
         var authoredEntityInventory = entitySourceInventory();
@@ -3225,10 +3289,27 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               new StartSessionAuthoredActorCoreProjectionRepository(gd.dsl());
           var retainedActorCoreProofsBeforeRead =
               actorCoreProjectionRepository.findByOwner(retainedDescriptorOwner);
-          assertThat(retainedActorCoreProofsBeforeRead).isEmpty();
-          assertThat(expectedPolicy.policy().entryPolicy())
-              .isEqualTo(RealmEntryPolicy.EntryPolicy.PRESEEDED_ONLY);
-          assertThat(expectedPolicy.policy().canonicalJson()).doesNotContain("initialActorCore");
+          if (actorCoreScenario.hasAuthoredInitialActorCore()) {
+            assertSameAuthoredCoreProjectionBytes(
+                retainedActorCoreProofsBeforeRead.stream()
+                    .map(
+                        row ->
+                            AuthoredInitialActorCoreProjection.fromStored(
+                                row.projectionBytes(), row.projectionDigest()))
+                    .toList(),
+                firstDescriptorBinding.actorCoreProjections());
+          } else {
+            assertThat(retainedActorCoreProofsBeforeRead).isEmpty();
+            assertThat(expectedPolicy.policy().entryPolicy())
+                .isEqualTo(RealmEntryPolicy.EntryPolicy.PRESEEDED_ONLY);
+            assertThat(expectedPolicy.policy().canonicalJson()).doesNotContain("initialActorCore");
+          }
+          assertActorCoreScenarioProjection(
+              actorCoreScenario,
+              firstDescriptorBinding.actorCoreProjections(),
+              selectedCommit,
+              expectedPolicy,
+              selectedGameplayEntries);
 
           var authoredCoreReadRequest =
               new AuthoredInitialActorCoreReadEvidence.ReadRequest(
@@ -3256,8 +3337,19 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   firstDescriptorBinding.descriptor().authoredWorldBinding().requestDigest());
           assertThat(gameSessionAuthoredCoreRead.descriptor().resultDigest())
               .isEqualTo(firstDescriptorBinding.descriptor().authoredWorldBinding().resultDigest());
-          assertThat(gameSessionAuthoredCoreRead.projections()).isEmpty();
-          assertThat(firstDescriptorBinding.actorCoreProjections()).isEmpty();
+          if (!actorCoreScenario.hasAuthoredInitialActorCore()) {
+            assertThat(gameSessionAuthoredCoreRead.projections()).isEmpty();
+            assertThat(firstDescriptorBinding.actorCoreProjections()).isEmpty();
+          }
+          assertSameAuthoredCoreProjectionBytes(
+              gameSessionAuthoredCoreRead.projections(),
+              firstDescriptorBinding.actorCoreProjections());
+          assertActorCoreScenarioProjection(
+              actorCoreScenario,
+              gameSessionAuthoredCoreRead.projections(),
+              selectedCommit,
+              expectedPolicy,
+              selectedGameplayEntries);
           var exactGameSessionAuthoredCoreRetry =
               gameSessionToGameDesignAuthoredCoreClient.read(authoredCoreReadRequest);
           assertThat(exactGameSessionAuthoredCoreRetry.canonicalBytes())
@@ -3266,6 +3358,14 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               entityToGameDesignAuthoredCoreClient.read(authoredCoreReadRequest);
           assertThat(entityAuthoredCoreRead.canonicalBytes())
               .containsExactly(gameSessionAuthoredCoreRead.canonicalBytes());
+          assertSameAuthoredCoreProjectionBytes(
+              entityAuthoredCoreRead.projections(), gameSessionAuthoredCoreRead.projections());
+          assertActorCoreScenarioProjection(
+              actorCoreScenario,
+              entityAuthoredCoreRead.projections(),
+              selectedCommit,
+              expectedPolicy,
+              selectedGameplayEntries);
           var entityRetainedAuthoredCoreSourceService =
               new EntityRetainedAuthoredActorCoreSourceService(
                   NAMESPACE, entityToGameDesignAuthoredCoreClient, entityIntakeRepository);
@@ -3273,7 +3373,15 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               entityRetainedAuthoredCoreSourceService.read(authoredCoreReadRequest);
           assertThat(entityCorroboratedAuthoredCoreRead.canonicalBytes())
               .containsExactly(entityAuthoredCoreRead.canonicalBytes());
-          assertThat(entityCorroboratedAuthoredCoreRead.projections()).isEmpty();
+          assertSameAuthoredCoreProjectionBytes(
+              entityCorroboratedAuthoredCoreRead.projections(),
+              entityAuthoredCoreRead.projections());
+          assertActorCoreScenarioProjection(
+              actorCoreScenario,
+              entityCorroboratedAuthoredCoreRead.projections(),
+              selectedCommit,
+              expectedPolicy,
+              selectedGameplayEntries);
           var exactEntityCorroboratedAuthoredCoreRetry =
               entityRetainedAuthoredCoreSourceService.read(authoredCoreReadRequest);
           assertThat(exactEntityCorroboratedAuthoredCoreRetry.canonicalBytes())
@@ -3286,7 +3394,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               .doesNotContain("sourceCaptureBytes")
               .doesNotContain("publicationOperationBytes");
           assertThat(actorCoreProjectionRepository.findByOwner(retainedDescriptorOwner))
-              .containsExactlyElementsOf(retainedActorCoreProofsBeforeRead);
+              .usingRecursiveComparison()
+              .isEqualTo(retainedActorCoreProofsBeforeRead);
 
           var substitutedTuple =
               startSessionTuple(
@@ -3344,7 +3453,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                       assertThat(io.grpc.Status.fromThrowable(failure).getCode())
                           .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
           assertThat(actorCoreProjectionRepository.findByOwner(retainedDescriptorOwner))
-              .containsExactlyElementsOf(retainedActorCoreProofsBeforeRead);
+              .usingRecursiveComparison()
+              .isEqualTo(retainedActorCoreProofsBeforeRead);
 
           var expectedAuthoredWorldBinding =
               firstDescriptorBinding.descriptor().authoredWorldBinding();
@@ -3471,6 +3581,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           assertThat(publishedPolicyRead.publishedSet().target()).isEqualTo(gd.target());
           var actualPublishedPolicy =
               publishedPolicyRead.publishedSet().policies().getFirst().source().policy();
+          assertThat(actualPublishedPolicy).isEqualTo(expectedPolicy.policy());
           assertThat(actualPublishedPolicy.worldSlug()).isEqualTo(worldSource.worldSlug());
           assertThat(actualPublishedPolicy.worldDisplayName())
               .isEqualTo(worldSource.worldDisplayName());
@@ -3479,7 +3590,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           assertThat(actualPublishedPolicy.stateScope())
               .isEqualTo(RealmEntryPolicy.StateScope.SHARED);
           assertThat(actualPublishedPolicy.entryPolicy())
-              .isEqualTo(RealmEntryPolicy.EntryPolicy.PRESEEDED_ONLY);
+              .isEqualTo(actorCoreScenario.entryPolicy());
 
           var canonicalRealmCatalogRepository =
               new GameSessionCanonicalRealmCatalogRepository(
@@ -3500,7 +3611,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           assertThat(canonicalRealmCatalog.worldSlug()).isEqualTo(worldSource.worldSlug());
           assertThat(canonicalRealmCatalog.sourceWorldDisplayName())
               .isEqualTo(worldSource.worldDisplayName());
-          assertThat(canonicalRealmCatalog.entryPolicy()).isEqualTo("PRESEEDED_ONLY");
+          assertThat(canonicalRealmCatalog.entryPolicy())
+              .isEqualTo(actorCoreScenario.entryPolicy().name());
           assertThat(canonicalRealmCatalog.catalogRevision()).isPositive();
           assertThat(canonicalRealmCatalog.completePolicySetEvidence())
               .containsExactly(
@@ -3831,7 +3943,12 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           assertThat(firstRetainedAuthoredCore.candidate().ownerFence()).isEqualTo(ownerFence);
           assertThat(firstRetainedAuthoredCore.candidate().ownerLeaseExpiresAt())
               .isEqualTo(currentOwnerAttemptBeforeRetention.leaseExpiresAt());
-          assertThat(gameSessionAuthoredCoreRead.projections()).isEmpty();
+          assertActorCoreScenarioProjection(
+              actorCoreScenario,
+              gameSessionAuthoredCoreRead.projections(),
+              selectedCommit,
+              expectedPolicy,
+              selectedGameplayEntries);
           assertThat(retainedGameDesignReadCalls).hasValue(1);
           var independentRetainedAuthoredCore =
               authoredCoreRetentionRepository
@@ -4943,6 +5060,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                               pinnedSelection,
                               UUID.randomUUID())));
           assertThat(replay.descriptor()).isEqualTo(firstDescriptorBinding.descriptor());
+          assertSameAuthoredCoreProjectionBytes(
+              replay.actorCoreProjections(), firstDescriptorBinding.actorCoreProjections());
           assertThat(replay.associationRead().request().readRequestId())
               .isNotEqualTo(firstDescriptorBinding.associationRead().request().readRequestId());
 
@@ -5032,6 +5151,114 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           gdServer,
           loggingServer);
     }
+  }
+
+  private static void assertSameAuthoredCoreProjectionBytes(
+      List<AuthoredInitialActorCoreProjection> actual,
+      List<AuthoredInitialActorCoreProjection> expected) {
+    assertThat(actual.size()).isEqualTo(expected.size());
+    for (int index = 0; index < actual.size(); index++) {
+      assertThat(actual.get(index).canonicalBytes())
+          .containsExactly(expected.get(index).canonicalBytes());
+    }
+  }
+
+  private static void assertActorCoreScenarioProjection(
+      GenuineActorCoreScenario scenario,
+      List<AuthoredInitialActorCoreProjection> projections,
+      DraftCommitBinding selectedCommit,
+      RealmPolicySource.Policy selectedPolicy,
+      List<GameplayRuleSource.Entry> selectedGameplayEntries) {
+    if (!scenario.hasAuthoredInitialActorCore()) {
+      assertThat(projections).isEmpty();
+      return;
+    }
+
+    assertThat(selectedPolicy.commitId()).isEqualTo(selectedCommit.commitId());
+    assertThat(selectedPolicy.policy().schemaVersion())
+        .isEqualTo(RealmEntryPolicy.AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION);
+    assertThat(selectedPolicy.policy().entryPolicy())
+        .isEqualTo(RealmEntryPolicy.EntryPolicy.PLAYER_CREATED);
+    assertThat(selectedPolicy.policy().initialActorCore().displayName())
+        .isEqualTo(PLAYER_CREATED_DISPLAY_NAME);
+    assertThat(selectedPolicy.policy().initialActorCore().dispositionKey())
+        .isEqualTo(PLAYER_CREATED_DISPOSITION_KEY);
+
+    var dispositionSource =
+        selectedGameplayEntries.stream()
+            .filter(entry -> entry.family() == GameplayRuleManifest.Family.DISPOSITIONS)
+            .filter(entry -> entry.definition().key().equals(PLAYER_CREATED_DISPOSITION_KEY))
+            .findFirst()
+            .orElseThrow();
+    var feedbackSource =
+        selectedGameplayEntries.stream()
+            .filter(entry -> entry.family() == GameplayRuleManifest.Family.FEEDBACK)
+            .filter(entry -> entry.definition().key().equals(PLAYER_CREATED_FEEDBACK_KEY))
+            .findFirst()
+            .orElseThrow();
+    assertThat(dispositionSource.definition())
+        .isEqualTo(
+            new GameplayRuleManifest.Disposition(
+                PLAYER_CREATED_DISPOSITION_KEY, List.of(), PLAYER_CREATED_FEEDBACK_KEY));
+    assertThat(feedbackSource.definition())
+        .isEqualTo(
+            new GameplayRuleManifest.Feedback(
+                PLAYER_CREATED_FEEDBACK_KEY,
+                "actor.created",
+                GameplayRuleManifest.Audience.SOURCE_ACTOR,
+                "actor.created",
+                "Welcome, traveler.",
+                List.of(),
+                GameplayRuleManifest.Visibility.PUBLIC,
+                GameplayRuleManifest.ReplayPolicy.EFFECT_IDEMPOTENT));
+
+    var expectedDescriptor = selectedPolicy.policy().creationDescriptor();
+    assertThat(expectedDescriptor.schemaVersion())
+        .isEqualTo(PlayerCreationDescriptor.SCHEMA_VERSION);
+    assertThat(expectedDescriptor.inputKind()).isEqualTo(PlayerCreationDescriptor.INPUT_KIND);
+    assertThat(expectedDescriptor.dependencies()).isEmpty();
+    assertThat(expectedDescriptor.descriptorId())
+        .isNotEqualTo(expectedDescriptor.descriptorRevisionId());
+    assertThat(projections)
+        .singleElement()
+        .satisfies(
+            projection -> {
+              assertThat(projection.canonicalTenantId())
+                  .isEqualTo(selectedCommit.target().canonicalTenantId());
+              assertThat(projection.canonicalVersionId())
+                  .isEqualTo(selectedCommit.target().canonicalVersionId());
+              assertThat(projection.selectedCommitId()).isEqualTo(selectedCommit.commitId());
+              assertThat(projection.selectedCommitDigest()).isEqualTo(selectedCommit.digest());
+              assertThat(projection.policy().commitId()).isEqualTo(selectedPolicy.commitId());
+              assertThat(projection.policy().revisionId()).isEqualTo(selectedPolicy.revisionId());
+              assertThat(projection.policy().logicalRevisionId())
+                  .isEqualTo(selectedPolicy.logicalRevisionId());
+              assertThat(projection.policy().canonicalJson())
+                  .isEqualTo(selectedPolicy.policy().canonicalJson());
+              assertThat(projection.core().displayName()).isEqualTo(PLAYER_CREATED_DISPLAY_NAME);
+              assertThat(projection.core().dispositionKey())
+                  .isEqualTo(PLAYER_CREATED_DISPOSITION_KEY);
+              assertThat(projection.descriptor().canonicalJson())
+                  .isEqualTo(expectedDescriptor.canonicalJson());
+              assertThat(projection.descriptor().digest()).isEqualTo(expectedDescriptor.digest());
+              assertRuleRevisionProvenance(
+                  projection.disposition(), dispositionSource, selectedCommit);
+              assertRuleRevisionProvenance(
+                  projection.safeFeedback(), feedbackSource, selectedCommit);
+            });
+  }
+
+  private static void assertRuleRevisionProvenance(
+      AuthoredInitialActorCoreProjection.RuleDefinition projection,
+      GameplayRuleSource.Entry source,
+      DraftCommitBinding selectedCommit) {
+    assertThat(projection.key()).isEqualTo(source.definition().key());
+    assertThat(projection.definitionJson())
+        .isEqualTo(GameplayRuleManifest.canonical(source.definition()));
+    assertThat(projection.sourceCommitId()).isEqualTo(selectedCommit.commitId());
+    assertThat(projection.sourceCommitDigest()).isEqualTo(selectedCommit.digest());
+    assertThat(projection.revisionId()).isEqualTo(source.revisionId());
+    assertThat(projection.revisionOrder()).isEqualTo(source.revisionOrder());
   }
 
   /** Uses the real owner persistence service inside the fixture's explicit READ_COMMITTED tx. */
@@ -5828,7 +6055,12 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
   }
 
   private static DraftCommitBinding binding(
-      TargetProof target, long assetId, String fileName, String worldSlug, String worldDisplayName)
+      TargetProof target,
+      long assetId,
+      String fileName,
+      String worldSlug,
+      String worldDisplayName,
+      GenuineActorCoreScenario actorCoreScenario)
       throws Exception {
     UUID commit = UUID.randomUUID();
     UUID region = UUID.randomUUID();
@@ -5899,6 +6131,19 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     var revisions = new ArrayList<RevisionPayload>();
     var units = new ArrayList<AffectedUnit>();
     UUID gameplayRuleRevisionId = UUID.randomUUID();
+    UUID dispositionRevisionId =
+        actorCoreScenario.hasAuthoredInitialActorCore() ? UUID.randomUUID() : null;
+    UUID feedbackRevisionId =
+        actorCoreScenario.hasAuthoredInitialActorCore() ? UUID.randomUUID() : null;
+    var gameplayInputs = new ArrayList<Object>();
+    gameplayInputs.add(
+        Map.of(
+            "family",
+            GameplayRuleManifest.Family.ADMISSION_TAGS.name(),
+            "key",
+            "genuine-selected-export",
+            "revisionId",
+            gameplayRuleRevisionId.toString()));
     revisions.add(
         new RevisionPayload(
             "0",
@@ -5906,6 +6151,49 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             Owner.GAME_DESIGN_CONTROL_PLANE,
             GameplayRuleSource.upsertPayload(
                 new GameplayRuleManifest.AdmissionTag("genuine-selected-export"))));
+    if (actorCoreScenario.hasAuthoredInitialActorCore()) {
+      var disposition =
+          new GameplayRuleManifest.Disposition(
+              PLAYER_CREATED_DISPOSITION_KEY, List.of(), PLAYER_CREATED_FEEDBACK_KEY);
+      var feedback =
+          new GameplayRuleManifest.Feedback(
+              PLAYER_CREATED_FEEDBACK_KEY,
+              "actor.created",
+              GameplayRuleManifest.Audience.SOURCE_ACTOR,
+              "actor.created",
+              "Welcome, traveler.",
+              List.of(),
+              GameplayRuleManifest.Visibility.PUBLIC,
+              GameplayRuleManifest.ReplayPolicy.EFFECT_IDEMPOTENT);
+      gameplayInputs.add(
+          Map.of(
+              "family",
+              GameplayRuleManifest.Family.DISPOSITIONS.name(),
+              "key",
+              PLAYER_CREATED_DISPOSITION_KEY,
+              "revisionId",
+              dispositionRevisionId.toString()));
+      gameplayInputs.add(
+          Map.of(
+              "family",
+              GameplayRuleManifest.Family.FEEDBACK.name(),
+              "key",
+              PLAYER_CREATED_FEEDBACK_KEY,
+              "revisionId",
+              feedbackRevisionId.toString()));
+      revisions.add(
+          new RevisionPayload(
+              Integer.toString(revisions.size()),
+              dispositionRevisionId,
+              Owner.GAME_DESIGN_CONTROL_PLANE,
+              GameplayRuleSource.upsertPayload(disposition)));
+      revisions.add(
+          new RevisionPayload(
+              Integer.toString(revisions.size()),
+              feedbackRevisionId,
+              Owner.GAME_DESIGN_CONTROL_PLANE,
+              GameplayRuleSource.upsertPayload(feedback)));
+    }
     units.add(
         new AffectedUnit(
             Owner.GAME_DESIGN_CONTROL_PLANE,
@@ -5916,7 +6204,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             "0"));
     revisions.add(
         new RevisionPayload(
-            "1",
+            Integer.toString(revisions.size()),
             UUID.randomUUID(),
             Owner.GAME_DESIGN_CONTROL_PLANE,
             AssetSource.upsertPayload(
@@ -5935,7 +6223,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             Integer.toString(revisions.size()),
             realmPolicyRevisionId,
             Owner.GAME_DESIGN_CONTROL_PLANE,
-            realmPolicyRevisionPayload(worldSlug, worldDisplayName, realmPolicyRevisionId)));
+            realmPolicyRevisionPayload(
+                worldSlug, worldDisplayName, realmPolicyRevisionId, actorCoreScenario)));
     units.add(
         new AffectedUnit(
             Owner.GAME_DESIGN_CONTROL_PLANE,
@@ -5946,15 +6235,23 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             "0"));
     var templateConfig =
         new TemplateConfigSource.Config(
-            "{\"schemaVersion\":1,\"baseVersionId\":\""
-                + target.canonicalVersionId()
-                + "\",\"world\":{\"regions\":[],\"rooms\":[]},"
-                + "\"entity\":{\"items\":[],\"npcs\":[]},\"gameLogic\":{\"inputs\":[{"
-                + "\"family\":\"ADMISSION_TAGS\",\"key\":\"genuine-selected-export\","
-                + "\"revisionId\":\""
-                + gameplayRuleRevisionId
-                + "\"}]},\"automation\":{\"scripts\":[],"
-                + "\"scriptPatch\":{\"presence\":\"ABSENT\"}},\"supportedSettings\":[]}");
+            new ObjectMapper()
+                .writeValueAsString(
+                    Map.of(
+                        "schemaVersion",
+                        1,
+                        "baseVersionId",
+                        target.canonicalVersionId().toString(),
+                        "world",
+                        Map.of("regions", List.of(), "rooms", List.of()),
+                        "entity",
+                        Map.of("items", List.of(), "npcs", List.of()),
+                        "gameLogic",
+                        Map.of("inputs", gameplayInputs),
+                        "automation",
+                        Map.of("scripts", List.of(), "scriptPatch", Map.of("presence", "ABSENT")),
+                        "supportedSettings",
+                        List.of())));
     revisions.add(
         new RevisionPayload(
             Integer.toString(revisions.size()),
@@ -6017,28 +6314,48 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
   }
 
   private static String realmPolicyRevisionPayload(
-      String worldSlug, String worldDisplayName, UUID revisionId) throws Exception {
+      String worldSlug,
+      String worldDisplayName,
+      UUID revisionId,
+      GenuineActorCoreScenario actorCoreScenario)
+      throws Exception {
     var mapper = new ObjectMapper();
-    var policyInput =
-        Map.of(
-            "schemaVersion",
-            1,
-            "worldSlug",
-            worldSlug,
-            "worldDisplayName",
-            worldDisplayName,
-            "realmSlug",
-            "genuine-selected-export",
-            "realmDisplayName",
-            "Genuine Selected Export",
-            "visible",
-            true,
-            "publicProduction",
-            true,
-            "stateScope",
-            RealmEntryPolicy.StateScope.SHARED.name(),
-            "entryPolicy",
-            RealmEntryPolicy.EntryPolicy.PRESEEDED_ONLY.name());
+    var policyInput = new java.util.LinkedHashMap<String, Object>();
+    policyInput.put(
+        "schemaVersion",
+        actorCoreScenario.hasAuthoredInitialActorCore()
+            ? RealmEntryPolicy.AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION
+            : RealmEntryPolicy.SCHEMA_VERSION);
+    policyInput.put("worldSlug", worldSlug);
+    policyInput.put("worldDisplayName", worldDisplayName);
+    policyInput.put("realmSlug", "genuine-selected-export");
+    policyInput.put("realmDisplayName", "Genuine Selected Export");
+    policyInput.put("visible", true);
+    policyInput.put("publicProduction", true);
+    policyInput.put("stateScope", RealmEntryPolicy.StateScope.SHARED.name());
+    policyInput.put("entryPolicy", actorCoreScenario.entryPolicy().name());
+    if (actorCoreScenario.hasAuthoredInitialActorCore()) {
+      UUID descriptorId = UUID.randomUUID();
+      UUID descriptorRevisionId = UUID.randomUUID();
+      while (descriptorId.equals(descriptorRevisionId)) {
+        descriptorRevisionId = UUID.randomUUID();
+      }
+      policyInput.put(
+          "creationDescriptor",
+          Map.of(
+              "schemaVersion", PlayerCreationDescriptor.SCHEMA_VERSION,
+              "descriptorId", descriptorId.toString(),
+              "descriptorRevisionId", descriptorRevisionId.toString(),
+              "inputKind", PlayerCreationDescriptor.INPUT_KIND,
+              "dependencies", List.of()));
+      policyInput.put(
+          "initialActorCore",
+          Map.of(
+              "displayName",
+              PLAYER_CREATED_DISPLAY_NAME,
+              "dispositionKey",
+              PLAYER_CREATED_DISPOSITION_KEY));
+    }
     var policy = RealmEntryPolicy.parse(mapper.writeValueAsString(policyInput), mapper);
     var revision =
         Map.of(
@@ -6048,6 +6365,28 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     return new String(
         Rfc8785CanonicalJson.canonicalizeUtf8(mapper.writeValueAsString(revision)),
         StandardCharsets.UTF_8);
+  }
+
+  private enum GenuineActorCoreScenario {
+    PRESEEDED_ONLY_EMPTY_CORE(RealmEntryPolicy.EntryPolicy.PRESEEDED_ONLY, false),
+    PLAYER_CREATED(RealmEntryPolicy.EntryPolicy.PLAYER_CREATED, true);
+
+    private final RealmEntryPolicy.EntryPolicy entryPolicy;
+    private final boolean authoredInitialActorCore;
+
+    GenuineActorCoreScenario(
+        RealmEntryPolicy.EntryPolicy entryPolicy, boolean authoredInitialActorCore) {
+      this.entryPolicy = entryPolicy;
+      this.authoredInitialActorCore = authoredInitialActorCore;
+    }
+
+    RealmEntryPolicy.EntryPolicy entryPolicy() {
+      return entryPolicy;
+    }
+
+    boolean hasAuthoredInitialActorCore() {
+      return authoredInitialActorCore;
+    }
   }
 
   private static AutomationAuthoredSourceInventoryDeclaration automationSourceInventory() {

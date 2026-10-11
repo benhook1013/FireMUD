@@ -240,3 +240,9 @@ Entry format:
   - Observation: A revision guard proves concurrency safety, not payload completeness. Missing-field fallback must not be used for a required standing brief.
   - Expected pattern: Assert that `brief` is a nonempty string before constructing any replacement, and verify preserved content after publication. Use the exact stored revision for recovery rather than reconstructing instructions from memory.
   - Current status: Restored the complete revision-405 brief, including Overseer's new standing activation direction, through guarded revision 407. Readback matches the preserved text apart from one final newline; no implementation or authorization was lost. Overseer was notified.
+
+- `2026-10-11`: Reused local compilation can miss duplicate test-helper definitions
+  - Context: Exact-head PR #3105 CI run 38106738131 failed Common Platform compilation because two same-package test files both declared `CurrentAttemptTestData`, despite the preceding local combined gate passing with reused task outputs.
+  - Observation: The fixture bodies were semantically identical, but fresh javac rejects the duplicate class. The precise local incremental/cache mechanism is not established; a successful reused result did not establish fresh compilation of the combined source set.
+  - Expected pattern: Consolidate same-package helpers at one owner, and force the affected compilation after this kind of integration discrepancy without deleting caches or weakening tests. Distinguish reused local results from fresh CI execution.
+  - Current status: The redundant helper was removed while both tests retain the same canonical tuple. Forced Common Platform checks passed with 715 executed tests and no skips or failures; replacement exact-head CI remains a separate evidence requirement.

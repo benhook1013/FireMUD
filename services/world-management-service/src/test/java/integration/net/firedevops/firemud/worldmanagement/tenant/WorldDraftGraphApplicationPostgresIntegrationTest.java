@@ -44,6 +44,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionAcquisitionInput;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionRequest;
 import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
@@ -4152,6 +4153,257 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
   }
 
   @Test
+  void v65UpgradeRetainsV52EvolvedLegacyActivationBytesWithoutProtectedAdoption() {
+    HistoricalSchemaFixture schema = historicalSchemaAt("world_v42_legacy_activation", "42");
+    WorldDraftGraphApplicationPostgresIntegrationTest historical = schema.database();
+    Fixture f = historical.fixture();
+    var application =
+        historical.application(
+            historical.withoutInboundSourceClosure(historical.generationFreePlan(f)));
+    historical.retainHistoricalApplication(application);
+    var frozen = historical.captureHistoricalUnqualified(application.plan());
+    var selector =
+        historical.publishedEvidence(
+            historical.publishedSelectors().readCommitted(frozen.request().freeze()).orElseThrow());
+    var input = historical.preparationInput(f, frozen, selector);
+
+    // This is a synthetic, storage-only historical fixture. Its V42 source/freeze/selector owner
+    // rows feed the original V2 preparation path after V45 has installed the real operational
+    // REGION identity writer; it then runs the V43 activation table through its later V52-evolved
+    // guard and lifecycle manifest/CAS. It does not authenticate Account or Game Session,
+    // establish current source authority, or prove the genuine StartSession producer. V52 adds the
+    // map to the closed lifecycle carrier; the retained result below is intentionally that evolved
+    // V43 table format, not a claim that a pre-V52 11-field result is readable by today's 12-field
+    // Java decoder.
+    String historicalInputJson = historical.historicalV2PreparationInputJson(input);
+    var historicalInput = historical.mapper.readTree(historicalInputJson);
+    assertThat(historicalInput.path("schemaVersion").asInt()).isEqualTo(2);
+    assertThat(historicalInput.path("identity").has("canonicalRealmId")).isFalse();
+    assertThat(historicalInput.path("identity").has("catalogRevision")).isFalse();
+    assertThat(historicalInput.path("gameSessionReadEvidence").has("canonicalRealmId")).isFalse();
+    assertThat(historicalInput.path("gameSessionReadEvidence").has("catalogRevision")).isFalse();
+    assertThat(historicalInput.path("worldStartLocationEvidenceBase64").asText())
+        .isEqualTo(java.util.Base64.getEncoder().encodeToString(selector.canonicalBytes()));
+
+    historical.migrateHistoricalSchema(schema.schema(), "43");
+    historical.migrateHistoricalSchema(schema.schema(), "45");
+    var preparation = historical.prepareV2ThroughOwnerFunction(input);
+    byte[] preparationRowsBeforeRetry = historical.preparationRows(input.canonicalGameInstanceId());
+    assertThat(historical.prepareV2ThroughOwnerFunction(input)).isEqualTo(preparation);
+    assertThat(historical.preparationRows(input.canonicalGameInstanceId()))
+        .containsExactly(preparationRowsBeforeRetry);
+    assertThat(preparation.startLocation())
+        .isEqualTo(
+            WorldDraftStartLocationEvidence.fromStored(selector.selectorReceiptBytes())
+                .startLocation());
+    assertThat(preparation.runtimeRoomInstanceId()).isPositive();
+    var associationAtV45 =
+        Objects.requireNonNull(
+            historical.dsl.fetchOne(
+                "SELECT schema_version FROM world_canonical_instance_association "
+                    + "WHERE canonical_game_instance_id=?",
+                input.canonicalGameInstanceId()));
+    assertThat(associationAtV45.get("schema_version", Short.class)).isEqualTo((short) 1);
+    assertThat(
+            Objects.requireNonNull(
+                    historical.dsl.fetchOne(
+                        "SELECT input_json::JSONB->>'schemaVersion' FROM "
+                            + "world_canonical_instance_preparation WHERE canonical_game_instance_id=?",
+                        input.canonicalGameInstanceId()))
+                .get(0, String.class))
+        .isEqualTo("2");
+
+    historical.migrateHistoricalSchema(schema.schema(), "52");
+    var preparing = historical.historicalLifecycleEvidence(input, preparation, "PREPARING");
+    assertThat(preparing.lifecycleEpoch()).isPositive();
+    assertThat(preparing.rowVersion()).isGreaterThanOrEqualTo(0L);
+    assertThat(preparing.operationalRegionAssignments()).isNotEmpty();
+    var request = new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), preparing);
+    var active =
+        new WorldCanonicalInstanceLifecycleEvidence(
+            preparing.request(),
+            preparing.launchBinding(),
+            preparing.startLocation(),
+            preparing.runtimeRoomInstanceId(),
+            "ACTIVE",
+            preparing.lifecycleEpoch() + 1L,
+            preparing.rowVersion() + 1L,
+            preparing.captureId(),
+            preparing.graphSha256(),
+            preparing.preparationInputDigest(),
+            preparing.operationalRegionAssignments());
+    var result =
+        new WorldCanonicalInstanceActivation.Result(
+            request, WorldCanonicalInstanceActivation.Outcome.COMMITTED, null, active);
+    var proof = new ActivationProof(request, result);
+
+    historical
+        .ownerTransaction()
+        .execute(
+            status -> {
+              historical.insertRawActivationOperation(proof, preparation.worldInstanceId());
+              int changed =
+                  historical.dsl.execute(
+                      "UPDATE world_instance SET status='ACTIVE', lifecycle_epoch=lifecycle_epoch+1, "
+                          + "row_version=row_version+1, updated_at=CURRENT_TIMESTAMP "
+                          + "WHERE id=(SELECT world_instance_id FROM "
+                          + "world_canonical_instance_association WHERE canonical_game_instance_id=?) "
+                          + "AND canonical_game_instance_id=? AND status='PREPARING' "
+                          + "AND lifecycle_epoch=? AND row_version=?",
+                      request.canonicalGameInstanceId(),
+                      request.canonicalGameInstanceId(),
+                      request.expectedLifecycleEpoch(),
+                      request.expectedRowVersion());
+              if (changed != 1) {
+                throw new IllegalStateException(
+                    "Historical V43 activation did not win its exact lifecycle compare-and-set");
+              }
+              return null;
+            });
+    assertThat(historical.activationOperationCountForRequest(request.activationRequestId()))
+        .isEqualTo(1L);
+    assertThat(historical.activationManifestCountForRequest(request.activationRequestId()))
+        .isZero();
+    assertThat(
+            Objects.requireNonNull(
+                    historical.dsl.fetchOne(
+                        "SELECT status,lifecycle_epoch,row_version FROM world_instance WHERE id=?",
+                        preparation.worldInstanceId()))
+                .get("status", String.class))
+        .isEqualTo("ACTIVE");
+
+    byte[] firstRequestBytes = request.canonicalRequestBytes();
+    byte[] firstPreparingBytes = request.preparingEvidenceBytes();
+    byte[] firstResultBytes = result.canonicalBytes();
+    Record firstOperation =
+        Objects.requireNonNull(
+            historical.dsl.fetchOne(
+                "SELECT request_digest,request_bytes,preparing_evidence_bytes,outcome,terminal_code,"
+                    + "result_lifecycle_epoch,result_row_version,result_bytes,result_digest "
+                    + "FROM world_canonical_instance_activation_operation WHERE activation_request_id=?",
+                request.activationRequestId()));
+    assertThat(firstOperation.get("request_bytes", byte[].class))
+        .containsExactly(firstRequestBytes);
+    assertThat(firstOperation.get("preparing_evidence_bytes", byte[].class))
+        .containsExactly(firstPreparingBytes);
+    assertThat(firstOperation.get("result_bytes", byte[].class)).containsExactly(firstResultBytes);
+    assertThat(firstOperation.get("request_digest", String.class))
+        .isEqualTo(sha256Digest(firstRequestBytes));
+    assertThat(firstOperation.get("result_digest", String.class))
+        .isEqualTo(sha256Digest(firstResultBytes));
+    assertThat(firstOperation.get("outcome", String.class)).isEqualTo("COMMITTED");
+    assertThat(firstOperation.get("terminal_code", String.class)).isNull();
+    assertThat(firstOperation.get("result_lifecycle_epoch", Long.class))
+        .isEqualTo(active.lifecycleEpoch());
+    assertThat(firstOperation.get("result_row_version", Long.class)).isEqualTo(active.rowVersion());
+    String operationJsonBeforeUpgrade =
+        historical
+            .rowJson(
+                "SELECT to_jsonb(o)::text FROM world_canonical_instance_activation_operation o "
+                    + "WHERE activation_request_id=?",
+                request.activationRequestId())
+            .getFirst();
+    String associationJsonBeforeUpgrade =
+        historical
+            .rowJson(
+                "SELECT (to_jsonb(a)-'canonical_realm_id'-'catalog_revision')::text "
+                    + "FROM world_canonical_instance_association a "
+                    + "WHERE canonical_game_instance_id=?",
+                input.canonicalGameInstanceId())
+            .getFirst();
+    String activeWorldJsonBeforeUpgrade =
+        historical
+            .rowJson(
+                "SELECT (to_jsonb(w)-'canonical_realm_id'-'catalog_revision')::text "
+                    + "FROM world_instance w WHERE id=?",
+                preparation.worldInstanceId())
+            .getFirst();
+
+    historical.migrateHistoricalSchema(schema.schema(), "64");
+    var associationAtV64 =
+        Objects.requireNonNull(
+            historical.dsl.fetchOne(
+                "SELECT schema_version,canonical_realm_id,catalog_revision "
+                    + "FROM world_canonical_instance_association "
+                    + "WHERE canonical_game_instance_id=?",
+                input.canonicalGameInstanceId()));
+    assertThat(associationAtV64.get("schema_version", Short.class)).isEqualTo((short) 1);
+    assertThat(associationAtV64.get("canonical_realm_id", UUID.class)).isNull();
+    assertThat(associationAtV64.get("catalog_revision", Long.class)).isNull();
+    var worldAtV64 =
+        Objects.requireNonNull(
+            historical.dsl.fetchOne(
+                "SELECT canonical_realm_id,catalog_revision FROM world_instance WHERE id=?",
+                preparation.worldInstanceId()));
+    assertThat(worldAtV64.get("canonical_realm_id", UUID.class)).isNull();
+    assertThat(worldAtV64.get("catalog_revision", Long.class)).isNull();
+    historical.migrateHistoricalSchema(schema.schema(), "65");
+
+    var associationAtV65 =
+        Objects.requireNonNull(
+            historical.dsl.fetchOne(
+                "SELECT schema_version,canonical_realm_id,catalog_revision "
+                    + "FROM world_canonical_instance_association "
+                    + "WHERE canonical_game_instance_id=?",
+                input.canonicalGameInstanceId()));
+    assertThat(associationAtV65.get("schema_version", Short.class)).isEqualTo((short) 1);
+    assertThat(associationAtV65.get("canonical_realm_id", UUID.class)).isNull();
+    assertThat(associationAtV65.get("catalog_revision", Long.class)).isNull();
+    var worldAtV65 =
+        Objects.requireNonNull(
+            historical.dsl.fetchOne(
+                "SELECT canonical_realm_id,catalog_revision FROM world_instance WHERE id=?",
+                preparation.worldInstanceId()));
+    assertThat(worldAtV65.get("canonical_realm_id", UUID.class)).isNull();
+    assertThat(worldAtV65.get("catalog_revision", Long.class)).isNull();
+
+    assertThat(
+            historical.rowJson(
+                "SELECT to_jsonb(o)::text FROM world_canonical_instance_activation_operation o "
+                    + "WHERE activation_request_id=?",
+                request.activationRequestId()))
+        .containsExactly(operationJsonBeforeUpgrade);
+    assertThat(
+            historical.rowJson(
+                "SELECT (to_jsonb(a)-'canonical_realm_id'-'catalog_revision')::text "
+                    + "FROM world_canonical_instance_association a "
+                    + "WHERE canonical_game_instance_id=?",
+                input.canonicalGameInstanceId()))
+        .containsExactly(associationJsonBeforeUpgrade);
+    assertThat(
+            historical.rowJson(
+                "SELECT (to_jsonb(w)-'canonical_realm_id'-'catalog_revision')::text "
+                    + "FROM world_instance w WHERE id=?",
+                preparation.worldInstanceId()))
+        .containsExactly(activeWorldJsonBeforeUpgrade);
+
+    var repository =
+        new WorldCanonicalInstanceActivationRepository(
+            historical.dsl,
+            historical.manager,
+            new WorldCanonicalInstanceLifecycleReadRepository(
+                historical.dsl, historical.manager, historical.associationRepository()));
+    var service = new WorldCanonicalInstanceActivationService(repository);
+    assertThat(service.activate(request).canonicalBytes()).containsExactly(firstResultBytes);
+    var freshRequest = new WorldCanonicalInstanceActivation.Request(UUID.randomUUID(), preparing);
+    assertThatThrownBy(() -> service.activate(freshRequest))
+        .isInstanceOf(WorldCanonicalInstanceActivationService.ActivationDeniedException.class);
+
+    var originalIdentity = WorldCanonicalInstanceExecutionTestFixtures.identity(input);
+    var acquisitionInput =
+        new AccountStartSessionActivationProtectionAcquisitionInput(
+            originalIdentity.originalPostAuthorizationTuple(),
+            originalIdentity.gameSessionOwnerMutationId(),
+            originalIdentity.gameSessionOwnerAttemptId(),
+            originalIdentity.gameSessionOwnerFence(),
+            request);
+    assertThatThrownBy(() -> repository.readProtectedActivationByAcquisitionInput(acquisitionInput))
+        .isInstanceOf(WorldCanonicalInstanceActivationRepository.ActivationConflictException.class)
+        .hasMessageContaining("retained legacy World activation result cannot be upgraded");
+    historical.assertOrigin();
+  }
+
+  @Test
   void selectorPreparationLateFenceLossRollsBackSelectorRuntimeAndAssociationTogether() {
     Fixture f = fixture();
     var application = application(generationFreePlan(f));
@@ -4625,6 +4877,205 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
       throw new IllegalStateException(
           "Could not construct original schema-1 fixture bytes", malformed);
     }
+  }
+
+  /** Executes the V42-compatible schema-2 selector path after V45 adds fresh REGION identities. */
+  private HistoricalPreparationResult prepareV2ThroughOwnerFunction(
+      WorldCanonicalInstancePreparation.Input input) {
+    String inputJson = historicalV2PreparationInputJson(input);
+    byte[] inputBytes = inputJson.getBytes(StandardCharsets.UTF_8);
+    Record ownerResult =
+        Objects.requireNonNull(
+            ownerTransaction()
+                .execute(
+                    status -> {
+                      Record row =
+                          Objects.requireNonNull(
+                              dsl.fetchOne(
+                                  "SELECT * FROM world_prepare_canonical_instance(?, ?)",
+                                  inputJson,
+                                  sha256Digest(inputBytes)),
+                              "V42/V45 owner preparation function returned no row");
+                      long worldInstanceId =
+                          Objects.requireNonNull(
+                                  row.get("world_instance_id", Long.class),
+                                  "V42 owner preparation omitted world_instance_id")
+                              .longValue();
+                      retainHistoricalSchemaOneAssociation(input, worldInstanceId);
+                      return row;
+                    }),
+            "V42/V45 historical selector preparation transaction returned no result");
+    long worldInstanceId =
+        Objects.requireNonNull(
+                ownerResult.get("world_instance_id", Long.class),
+                "V42/V45 owner preparation omitted world_instance_id")
+            .longValue();
+    long privateGameInstanceKey =
+        Objects.requireNonNull(
+                ownerResult.get("private_game_instance_key", Long.class),
+                "V42/V45 owner preparation omitted private_game_instance_key")
+            .longValue();
+    WorldPublishedStartLocationEvidence selector =
+        Objects.requireNonNull(
+            input
+                .completeLaunchBinding()
+                .evidence()
+                .releaseAttestation()
+                .worldStartLocationEvidence(),
+            "V2 historical preparation requires its original selected ROOM evidence");
+    RoomTemplateRef startLocation =
+        WorldDraftStartLocationEvidence.fromStored(selector.selectorReceiptBytes()).startLocation();
+    Record retainedStartLocation =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT runtime_room_instance_id FROM world_canonical_preparation_start_location "
+                    + "WHERE canonical_game_instance_id=? AND world_instance_id=?",
+                input.canonicalGameInstanceId(),
+                worldInstanceId),
+            "V42/V45 selector trigger did not retain the original ROOM mapping");
+    return new HistoricalPreparationResult(
+        worldInstanceId,
+        privateGameInstanceKey,
+        startLocation,
+        Objects.requireNonNull(
+            retainedStartLocation.get("runtime_room_instance_id", Long.class),
+            "V42 selector row omitted runtime_room_instance_id"));
+  }
+
+  private String historicalV2PreparationInputJson(WorldCanonicalInstancePreparation.Input input) {
+    try {
+      var root =
+          (tools.jackson.databind.node.ObjectNode)
+              mapper.readTree(WorldCanonicalInstancePreparationRepository.inputJson(input));
+      root.put("schemaVersion", 2);
+      var identity = (tools.jackson.databind.node.ObjectNode) root.get("identity");
+      identity.remove("canonicalRealmId");
+      identity.remove("catalogRevision");
+      var evidence = (tools.jackson.databind.node.ObjectNode) root.get("gameSessionReadEvidence");
+      evidence.remove("canonicalRealmId");
+      evidence.remove("catalogRevision");
+      return mapper.writeValueAsString(root);
+    } catch (tools.jackson.core.JacksonException malformed) {
+      throw new IllegalStateException(
+          "Could not construct original schema-2 selector fixture bytes", malformed);
+    }
+  }
+
+  /** Retains the complete schema-1 association accepted by V43 for this historical V42 row. */
+  private void retainHistoricalSchemaOneAssociation(
+      WorldCanonicalInstancePreparation.Input input, long worldInstanceId) {
+    String associationSelect =
+        "SELECT 1::SMALLINT AS schema_version,wi.canonical_game_instance_id,"
+            + "wi.canonical_target_namespace,wi.canonical_tenant_id,wi.canonical_world_slug,"
+            + "wi.playable_state_namespace_id,wi.playable_state_scope,wi.public_production,"
+            + "wi.playtest_lifecycle_id,wi.playtest_state_generation,"
+            + "wi.control_plane_request_id,wi.id AS world_instance_id,"
+            + "b.binding_operation_id AS canonical_launch_binding_operation_id,"
+            + "v.operation_id AS version_identity_operation_id,b.canonical_version_id,"
+            + "wi.tenant_id AS local_tenant_key,wi.game_instance_id AS private_game_instance_key,"
+            + "wi.game_template_id,wi.launch_descriptor_id,wi.version_id AS local_version_key,"
+            + "wi.script_patch_version,wi.runtime_flags_json,wi.generation_config_revision,"
+            + "wi.release_bundle_id,wi.published_release_bundle_ref,wi.version_state_epoch,"
+            + "wi.remap_set_id,b.intake_operation_id,b.intake_request_id,b.source_operation_id,"
+            + "b.source_evidence_digest,s.request_digest AS intake_request_digest,"
+            + "b.intake_receipt_digest,b.descriptor_request_digest,b.descriptor_result_digest,"
+            + "b.release_attestation_digest FROM world_instance wi "
+            + "JOIN world_complete_launch_binding b "
+            + "ON b.binding_operation_id=wi.canonical_launch_binding_operation_id "
+            + "JOIN world_authored_version_identity v ON v.operation_id=? "
+            + "JOIN world_authored_source_intake s ON s.operation_id=b.intake_operation_id "
+            + "WHERE wi.id=?";
+    Record expectedAssociation =
+        Objects.requireNonNull(
+            dsl.fetchOne(associationSelect, input.versionIdentity().operationId(), worldInstanceId),
+            "V34 historical fixture could not resolve exact schema-1 association fields");
+    Record retainedAssociation =
+        dsl.fetchOne(
+            "SELECT * FROM world_canonical_instance_association "
+                + "WHERE canonical_game_instance_id=?",
+            input.canonicalGameInstanceId());
+    if (retainedAssociation == null) {
+      int inserted =
+          dsl.execute(
+              "INSERT INTO world_canonical_instance_association ("
+                  + "schema_version,canonical_game_instance_id,canonical_target_namespace,"
+                  + "canonical_tenant_id,canonical_world_slug,playable_state_namespace_id,"
+                  + "playable_state_scope,public_production,playtest_lifecycle_id,"
+                  + "playtest_state_generation,control_plane_request_id,world_instance_id,"
+                  + "canonical_launch_binding_operation_id,version_identity_operation_id,"
+                  + "canonical_version_id,local_tenant_key,private_game_instance_key,"
+                  + "game_template_id,launch_descriptor_id,local_version_key,script_patch_version,"
+                  + "runtime_flags_json,generation_config_revision,release_bundle_id,"
+                  + "published_release_bundle_ref,version_state_epoch,remap_set_id,"
+                  + "intake_operation_id,intake_request_id,source_operation_id,source_evidence_digest,"
+                  + "intake_request_digest,intake_receipt_digest,descriptor_request_digest,"
+                  + "descriptor_result_digest,release_attestation_digest) "
+                  + associationSelect,
+              input.versionIdentity().operationId(),
+              worldInstanceId);
+      if (inserted != 1) {
+        throw new IllegalStateException(
+            "V34 historical fixture failed to retain its schema-1 association");
+      }
+      retainedAssociation =
+          Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT * FROM world_canonical_instance_association "
+                      + "WHERE canonical_game_instance_id=?",
+                  input.canonicalGameInstanceId()),
+              "V34 historical fixture association was not retained");
+    }
+    if (!Arrays.equals(expectedAssociation.intoArray(), retainedAssociation.intoArray())) {
+      throw new IllegalStateException(
+          "V34 historical fixture association differs from its exact schema-1 owner row");
+    }
+  }
+
+  private WorldCanonicalInstanceLifecycleEvidence historicalLifecycleEvidence(
+      WorldCanonicalInstancePreparation.Input input,
+      HistoricalPreparationResult preparation,
+      String lifecycleStatus) {
+    Record prepared =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT capture_id,graph_sha256,input_digest FROM "
+                    + "world_canonical_instance_preparation WHERE canonical_game_instance_id=?",
+                input.canonicalGameInstanceId()),
+            "Historical V2 preparation row was not retained");
+    Record world =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT status,lifecycle_epoch,row_version FROM world_instance WHERE id=?",
+                preparation.worldInstanceId()),
+            "Historical V2 World instance row was not retained");
+    Map<UUID, UUID> regionAssignments = new LinkedHashMap<>();
+    for (Record region :
+        dsl.fetch(
+            "SELECT m.runtime_identity AS canonical_region_id,r.operational_region_id "
+                + "FROM world_canonical_instance_topology_identity m "
+                + "JOIN region_instance r ON r.id=m.runtime_row_id "
+                + "WHERE m.world_instance_id=? AND m.canonical_game_instance_id=? "
+                + "AND m.family='REGION' ORDER BY m.runtime_identity",
+            preparation.worldInstanceId(),
+            input.canonicalGameInstanceId())) {
+      UUID canonicalRegionId = required(region, "canonical_region_id", UUID.class);
+      UUID operationalRegionId = required(region, "operational_region_id", UUID.class);
+      if (regionAssignments.putIfAbsent(canonicalRegionId, operationalRegionId) != null) {
+        throw new IllegalStateException("Historical V2 REGION identity is duplicated");
+      }
+    }
+    return new WorldCanonicalInstanceLifecycleEvidence(
+        lifecycleReadRequest(input),
+        input.completeLaunchBinding().evidence(),
+        preparation.startLocation(),
+        Objects.requireNonNull(preparation.runtimeRoomInstanceId()),
+        lifecycleStatus,
+        required(world, "lifecycle_epoch", Long.class),
+        required(world, "row_version", Long.class),
+        required(prepared, "capture_id", UUID.class),
+        required(prepared, "graph_sha256", String.class),
+        required(prepared, "input_digest", String.class),
+        regionAssignments);
   }
 
   private Map<String, String> preparationHistoryRows() {
