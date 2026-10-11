@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
@@ -48,7 +49,9 @@ class PublishedReleaseBundleServiceImplTest {
   void selectorV2PersistsActualOriginalBytesAndRetryReturnsStoredEvidenceWithoutResolvingDefaults()
       throws Exception {
     var evidence = selectorEvidence();
-    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    var participants =
+        PublishedWorldSelectorFixtures.participants(
+            7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
     // ISOLATED source-repository response; this test covers service assembly only.
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
         .thenReturn(List.of(validCommandDefinition()));
@@ -116,7 +119,9 @@ class PublishedReleaseBundleServiceImplTest {
   void selectorV2RejectsMissingEvidenceWrongWorkflowIncompleteOwnersAndChangedWorldDigest()
       throws Exception {
     var evidence = selectorEvidence();
-    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    var participants =
+        PublishedWorldSelectorFixtures.participants(
+            7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
     assertThatThrownBy(
             () ->
                 service.createFullVersionBundle(
@@ -187,7 +192,10 @@ class PublishedReleaseBundleServiceImplTest {
                     "publish-workflow",
                     emptyManifest(),
                     "genrev-1",
-                    PublishedWorldSelectorFixtures.participants(7L, evidence),
+                    PublishedWorldSelectorFixtures.participants(
+                        7L,
+                        evidence,
+                        AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                     evidence))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("SELECTED_SOURCE_CAPTURE_UNAVAILABLE");
@@ -213,7 +221,10 @@ class PublishedReleaseBundleServiceImplTest {
                     "publish-workflow",
                     emptyManifest(),
                     "genrev-1",
-                    PublishedWorldSelectorFixtures.participants(7L, evidence),
+                    PublishedWorldSelectorFixtures.participants(
+                        7L,
+                        evidence,
+                        AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                     evidence))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("selector-ineligible");
@@ -394,7 +405,9 @@ class PublishedReleaseBundleServiceImplTest {
   @Test
   void selectedBundleEntryPointRequiresCapturedCommandAndPolicySources() throws Exception {
     var evidence = selectorEvidence();
-    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    var participants =
+        PublishedWorldSelectorFixtures.participants(
+            7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
     when(versionRepository.findByTenantIdAndId("tenant-1", 7L))
         .thenReturn(Optional.of(sourceIdentity()));
@@ -469,7 +482,9 @@ class PublishedReleaseBundleServiceImplTest {
   @Test
   void selectedFullVersionBundlePersistsImmutableAttestation() throws Exception {
     var evidence = selectorEvidence();
-    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    var participants =
+        PublishedWorldSelectorFixtures.participants(
+            7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
         .thenReturn(List.of(validCommandDefinition()));
     when(repository.save(any(PublishedReleaseBundle.class)))
@@ -553,7 +568,8 @@ class PublishedReleaseBundleServiceImplTest {
                 "publish-workflow",
                 emptyManifest(),
                 "genrev-1",
-                PublishedWorldSelectorFixtures.participants(7L, evidence),
+                PublishedWorldSelectorFixtures.participants(
+                    7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                 evidence));
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
     org.mockito.Mockito.verifyNoInteractions(revisionRepository);
