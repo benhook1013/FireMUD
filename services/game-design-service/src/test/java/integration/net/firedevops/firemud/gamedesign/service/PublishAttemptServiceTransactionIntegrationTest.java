@@ -60,7 +60,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** PostgreSQL proof for asset publication boundaries, transaction behavior, and failure retention. */
+/**
+ * PostgreSQL proof for asset publication boundaries, transaction behavior, and failure retention.
+ */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
     classes = GameDesignServiceApplication.class,

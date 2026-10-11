@@ -269,7 +269,8 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
-  @Test  void resolveAndCompleteReadsRejectErrorsMissingBindingsAndChangedSelectors() throws Exception {
+  @Test
+  void resolveAndCompleteReadsRejectErrorsMissingBindingsAndChangedSelectors() throws Exception {
     var world = authoredWorldFixture();
     var descriptor = world.launchBinding().descriptor();
     var wireDescriptor =
@@ -920,5 +921,4 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
         original.remapSetIdPresent(),
         original.remapSetId());
   }
-
 }

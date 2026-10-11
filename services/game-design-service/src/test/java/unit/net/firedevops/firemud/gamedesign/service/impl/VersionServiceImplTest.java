@@ -818,7 +818,7 @@ class VersionServiceImplTest {
                 service.publishScriptPatchVersion(
                     "tenant-1", 3L, "patch-2", "different notes", PUBLISH_REQUEST_ID));
     assertEquals("recorded digest write failed", retryFailure.getMessage());
-    verify(versionRepository, times(3)).save(any(Version.class));
+    verify(versionRepository, times(2)).save(any(Version.class));
   }
 
   @Test

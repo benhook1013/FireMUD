@@ -55,6 +55,7 @@ class GameDesignGrpcServiceAuthTest {
             Mockito.mock(RevisionService.class),
             versionService,
             Mockito.mock(LaunchDescriptorService.class),
+            Mockito.mock(CompleteLaunchBindingService.class),
             Mockito.mock(TemplateRemapSetService.class),
             Mockito.mock(VersionAssetArtifactService.class),
             Mockito.mock(SettingsAuthorityService.class),
