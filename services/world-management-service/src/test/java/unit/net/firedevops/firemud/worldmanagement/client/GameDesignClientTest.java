@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doReturn;
@@ -10,6 +11,8 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.CallCredentials;
 import io.grpc.ClientInterceptor;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.lang.reflect.Field;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -24,12 +27,18 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorResponse;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+@ExtendWith(OutputCaptureExtension.class)
 class GameDesignClientTest {
   private static final String GAME_DESIGN_DEV_URI =
       "spiffe://firemud/ns/dev/sa/game-design-service";
+  private static final String SENSITIVE_DESCRIPTION = "credential-marker-do-not-log";
 
   @Test
   void exactDescriptorReadUsesDigestsAndAuthenticatedDevGameDesignPeer() throws Exception {
@@ -111,6 +120,97 @@ class GameDesignClientTest {
     assertThat(interceptorCaptor.getValue()[0])
         .isInstanceOf(GrpcServerPeerIdentityClientInterceptor.class);
     assertThat(readPeerUri(interceptorCaptor.getValue()[0])).isEqualTo(GAME_DESIGN_DEV_URI);
+  }
+
+  @Test
+  void unauthenticatedRpcLogsFixedStageAndCodeWithoutDescriptionAndRethrowsSameException(
+      CapturedOutput output) throws Exception {
+    GameDesignServiceGrpc.GameDesignServiceBlockingStub stub = chainableStub();
+    StatusRuntimeException failure =
+        Status.UNAUTHENTICATED.withDescription(SENSITIVE_DESCRIPTION).asRuntimeException();
+    when(stub.getLaunchDescriptor(any())).thenThrow(failure);
+    GameDesignClient client = newClient(stub);
+
+    assertThatThrownBy(() -> client.getLaunchDescriptor(validReadRequest())).isSameAs(failure);
+
+    assertThat(output)
+        .contains(
+            "Run-owned World Game Design descriptor read failed; stage=RPC_CALL statusCode=UNAUTHENTICATED")
+        .doesNotContain(SENSITIVE_DESCRIPTION, "Caused by:");
+  }
+
+  @Test
+  void unavailableRpcLogsFixedStageAndCodeWithoutDescriptionAndRethrowsSameException(
+      CapturedOutput output) throws Exception {
+    GameDesignServiceGrpc.GameDesignServiceBlockingStub stub = chainableStub();
+    StatusRuntimeException failure =
+        Status.UNAVAILABLE.withDescription(SENSITIVE_DESCRIPTION).asRuntimeException();
+    when(stub.getLaunchDescriptor(any())).thenThrow(failure);
+    GameDesignClient client = newClient(stub);
+
+    assertThatThrownBy(() -> client.getLaunchDescriptor(validReadRequest())).isSameAs(failure);
+
+    assertThat(output)
+        .contains(
+            "Run-owned World Game Design descriptor read failed; stage=RPC_CALL statusCode=UNAVAILABLE")
+        .doesNotContain(SENSITIVE_DESCRIPTION, "Caused by:");
+  }
+
+  @Test
+  void invalidOwnerResponseLogsDecodeStageAndPreservesValidationFailure(CapturedOutput output)
+      throws Exception {
+    GameDesignServiceGrpc.GameDesignServiceBlockingStub stub = chainableStub();
+    when(stub.getLaunchDescriptor(any()))
+        .thenReturn(
+            GetLaunchDescriptorResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("PERMISSION_DENIED")
+                        .setMessage(SENSITIVE_DESCRIPTION))
+                .build());
+    GameDesignClient client = newClient(stub);
+
+    assertThatThrownBy(() -> client.getLaunchDescriptor(validReadRequest()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Game Design rejected the exact launch descriptor read");
+
+    assertThat(output)
+        .contains(
+            "Run-owned World Game Design descriptor read failed; stage=RESPONSE_DECODE statusCode=UNKNOWN")
+        .doesNotContain(SENSITIVE_DESCRIPTION, "Caused by:");
+  }
+
+  private static GameDesignServiceGrpc.GameDesignServiceBlockingStub chainableStub() {
+    GameDesignServiceGrpc.GameDesignServiceBlockingStub stub =
+        mock(GameDesignServiceGrpc.GameDesignServiceBlockingStub.class);
+    doReturn(stub).when(stub).withCallCredentials(any(CallCredentials.class));
+    doReturn(stub).when(stub).withInterceptors(any(ClientInterceptor[].class));
+    doReturn(stub).when(stub).withDeadlineAfter(anyLong(), any(TimeUnit.class));
+    return stub;
+  }
+
+  private static AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest validReadRequest() {
+    var expectedRequest =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            "dev",
+            "7f1e5306-e9a7-46d9-b5cf-75348e20ffbd",
+            UUID.fromString("ed5d1541-a33e-4f8b-9b54-38c27d76ba6d"),
+            "demo",
+            UUID.fromString("3f773701-e812-44f5-8ae0-7268d543beed"),
+            "sha256:" + "a".repeat(64),
+            17L,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null);
+    return new AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest(
+        UUID.fromString("a897fd58-8034-4e5d-a943-c522b6c61699"),
+        expectedRequest,
+        "sha256:" + "b".repeat(64));
   }
 
   private static GameDesignClient newClient(
