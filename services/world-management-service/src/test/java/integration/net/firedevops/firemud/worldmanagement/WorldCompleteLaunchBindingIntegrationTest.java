@@ -85,7 +85,8 @@ class WorldCompleteLaunchBindingIntegrationTest {
       UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestContainerImages.postgres());
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static GenericContainer<?> redis =

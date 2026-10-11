@@ -94,7 +94,8 @@ class WorldAuthoredVersionIdentityIntegrationTest {
           "zone_instance");
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestContainerImages.postgres());
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static GenericContainer<?> redis =

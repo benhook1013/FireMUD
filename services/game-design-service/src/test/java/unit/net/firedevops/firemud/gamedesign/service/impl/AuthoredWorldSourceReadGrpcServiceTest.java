@@ -20,6 +20,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
+import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceReadGrpcService;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ class AuthoredWorldSourceReadGrpcServiceTest {
   private static final String WORLD_SLUG = "silver-march";
   private static final String WORLD_TENANT_SLUG = "new-kingdom";
   private static final String WORLD_DISPLAY_NAME = "Silver March";
+  private static final String SOURCE_KEY = "fresh-owner-key-91";
 
   private final GameAuthoredWorldSourceRepository authoredWorldSourceRepository =
       mock(GameAuthoredWorldSourceRepository.class);

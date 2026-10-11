@@ -121,7 +121,8 @@ class WorldAuthoredSourceIntakeIntegrationTest {
           + ") AS occupied_tenant_keys";
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestContainerImages.postgres());
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static GenericContainer<?> redis =

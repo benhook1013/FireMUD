@@ -149,7 +149,8 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
   private static TestPki pki;
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestContainerImages.postgres());
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static GenericContainer<?> redis =

@@ -64,7 +64,8 @@ class WorldDesignPublicationFenceIntegrationTest {
       new Checkpoint("synthetic-commit-42", "c".repeat(64), 3);
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestContainerImages.postgres());
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static GenericContainer<?> redis =
