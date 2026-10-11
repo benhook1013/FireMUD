@@ -432,7 +432,23 @@ class AccountResponseEnvelopeCryptographyTest {
                   new byte[] {1},
                   new byte[0],
                   new byte[] {2}));
-      AccountResponseEnvelopeCryptography.Binding bindingOverAggregateLimit =
+      assertThrows(
+          IllegalArgumentException.class,
+          () ->
+              new AccountResponseEnvelopeCryptography.Binding(
+                  "issue",
+                  "request-1",
+                  new byte[32],
+                  "spiffe://firemud/ns/test/sa/game-session-service",
+                  "binding-1",
+                  Optional.empty(),
+                  Optional.empty(),
+                  Optional.empty(),
+                  1,
+                  new byte[] {1},
+                  new byte[] {'{', '}'},
+                  new byte[128 * 1024 + 1]));
+      AccountResponseEnvelopeCryptography.Binding maximumComponentBinding =
           new AccountResponseEnvelopeCryptography.Binding(
               "issue",
               "request-1",
@@ -445,10 +461,12 @@ class AccountResponseEnvelopeCryptographyTest {
               1,
               new byte[8 * 1024],
               new byte[4 * 1024],
-              new byte[8 * 1024]);
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> crypto.encrypt(bindingOverAggregateLimit, RESPONSE_BYTES, NOW.plusSeconds(60)));
+              new byte[128 * 1024]);
+      AccountResponseEnvelopeCryptography.EncryptedResponseEnvelope maximumBindingEnvelope =
+          crypto.encrypt(maximumComponentBinding, RESPONSE_BYTES, NOW.plusSeconds(60));
+      assertArrayEquals(
+          RESPONSE_BYTES,
+          crypto.decrypt(maximumBindingEnvelope, maximumComponentBinding, NOW.plusSeconds(60)));
       assertThrows(
           AccountResponseEnvelopeCryptography.IntegrityException.class,
           () ->
