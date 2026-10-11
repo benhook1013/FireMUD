@@ -3729,7 +3729,9 @@ class SqliteReviewRecords:
                     for row in connection.execute(
                         "SELECT run_id, source_pr, channel, source_head, reviewer, scope, coverage_limits_json, "
                         "outcome, attributable, started_at, finished_at, found_count, accepted_count, "
-                        "routed_count, finalized, finalized_at "
+                        "routed_count, finalized, finalized_at, import_payload_json, "
+                        "EXISTS (SELECT 1 FROM review_attempts a WHERE a.run_id = review_runs.run_id "
+                        "OR a.attempt_id = review_runs.run_id) "
                         "FROM review_runs WHERE source_pr = ? ORDER BY started_at, run_id",
                         (pr,),
                     )
@@ -4739,7 +4741,7 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("stored coverage metadata is malformed") from exc
         if not isinstance(coverage_limits, list) or any(not isinstance(item, str) for item in coverage_limits):
             raise ReviewRecordsError("stored coverage metadata must be a list of strings")
-        return {
+        record = {
             "run_id": row[0],
             "source_pr": row[1],
             "channel": row[2],
@@ -4755,6 +4757,33 @@ class SqliteReviewRecords:
             "finalized": bool(row[14]),
             "finalized_at": row[15],
         }
+        # Curated imports retain supplied clocks separately from storage defaults.
+        # Keep SQL ordering and immutable rows intact, but never present an import
+        # fallback as a known review time. Native attempts own their chronology.
+        if record["channel"] not in {"manual", "subagent"} or row[17]:
+            return record
+        try:
+            payload = json.loads(row[16])
+            if not isinstance(payload, dict) or not {"started_at", "finished_at"} <= payload.keys():
+                return record
+            clocks = {}
+            for field in ("started_at", "finished_at"):
+                supplied = payload[field]
+                if supplied is not None:
+                    if not isinstance(supplied, str) or supplied != record[field]:
+                        return record
+                    _timestamp(supplied, field)
+                clocks[field] = {
+                    "value": record[field],
+                    "source": "generated" if supplied is None else "supplied",
+                }
+        except (TypeError, json.JSONDecodeError, ReviewRecordsError):
+            # Older or unusable provenance cannot establish unknown chronology.
+            return record
+        record["storage_timestamps"] = clocks
+        record["started_at"] = payload["started_at"]
+        record["finished_at"] = payload["finished_at"]
+        return record
 
     @staticmethod
     def _observation_record(row: Sequence[Any]) -> dict[str, Any]:

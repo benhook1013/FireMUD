@@ -101,3 +101,8 @@ Entry format:
   - Observation: a substantive primary review and an idempotent terminal record do not prove the provider publication is complete; freezing the first batch's timestamp also excludes later finding evidence.
   - Expected pattern: require complete immutable publication membership before completion, and recover verified older partial unfinalized runs additively without replacing dispositions or inventing another round. Retain original and supplemental evidence together.
   - Current status: the bounded controller repair passes focused local regression proof; trusted promotion and canonical live recovery remain separate steps, so the live missing finding is not yet confirmed recovered.
+
+- `2026-10-12`: Retrospective evidence needs source-clock provenance
+  - Context: a curated import of an independently completed review retained unknown review clocks but displayed generated recording timestamps as its start and finish.
+  - Observation: a storage default can create false chronology even when the immutable evidence accurately discloses missing clocks.
+  - Expected pattern: retain supplied-versus-generated provenance and project unknown source clocks explicitly; show recording events separately without rewriting raw evidence or inferring review times from later outcomes.
