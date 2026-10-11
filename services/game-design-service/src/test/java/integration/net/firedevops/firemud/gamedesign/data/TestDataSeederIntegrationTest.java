@@ -183,7 +183,9 @@ class TestDataSeederIntegrationTest {
                 .orElseThrow())
         .usingRecursiveComparison()
         .isEqualTo(saved);
-    assertThatThrownBy(() -> repository.save(saved)).hasMessageContaining("immutable");
+    assertThatThrownBy(() -> repository.save(saved))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Launch descriptors are immutable");
   }
 
   private Fixture fixture(String target) {
