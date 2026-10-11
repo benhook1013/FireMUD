@@ -36,6 +36,8 @@ import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ParsedBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding.Binding;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
@@ -77,6 +79,8 @@ import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -162,6 +166,74 @@ class AccountControlUiCurrentActorVerifierTest {
             eq("api-r1"),
             eq(PROMOTION_OPERATION_ID),
             eq(GENERATION_OPERATION_ID));
+  }
+
+  @Test
+  void verifiesTheExactBillingCutoffFromTheCurrentTenantAuthorityEvent() throws Exception {
+    TenantAuthorityEventV1Codec.Event tenantEvent = currentTenantEvent();
+    Fixture fixture =
+        new Fixture(
+            ACCOUNT_ID,
+            null,
+            1,
+            1,
+            List.of("tenantAdmin"),
+            1,
+            false,
+            tenantEvent,
+            billingCutoff(tenantEvent));
+
+    AccountControlUiCurrentActorVerifier.CurrentActor actor =
+        fixture.verifier.verify(fixture.compactJwt, TENANT_ID);
+
+    assertThat(actor.tenantId()).isEqualTo(TENANT_ID);
+  }
+
+  @Test
+  void rejectsMissingBillingCutoffWhenTheCurrentTenantEventHasBillingEvidence() throws Exception {
+    Fixture fixture =
+        new Fixture(
+            ACCOUNT_ID, null, 1, 1, List.of("tenantAdmin"), 1, false, currentTenantEvent(), null);
+
+    assertDenied(() -> fixture.verifier.verify(fixture.compactJwt, TENANT_ID));
+  }
+
+  @Test
+  void rejectsChangedBillingCutoffWhenTheCurrentTenantEventHasBillingEvidence() throws Exception {
+    TenantAuthorityEventV1Codec.Event tenantEvent = currentTenantEvent();
+    Map<String, Object> changedCutoff = billingCutoff(tenantEvent);
+    changedCutoff.put(
+        TENANT_ID.toString(),
+        Map.of(
+            "tenantAuthorityGeneration", tenantEvent.tenantAuthorityGeneration(),
+            "tenantBillingSequence", tenantEvent.tenantBillingSequence() + 1L,
+            "outboxStreamKey", tenantEvent.outboxStreamKey(),
+            "outboxSequence", tenantEvent.outboxSequence()));
+    Fixture fixture =
+        new Fixture(
+            ACCOUNT_ID, null, 1, 1, List.of("tenantAdmin"), 1, false, tenantEvent, changedCutoff);
+
+    assertDenied(() -> fixture.verifier.verify(fixture.compactJwt, TENANT_ID));
+  }
+
+  @Test
+  void rejectsExtraBillingCutoffScopeWhenTheCurrentTenantEventHasBillingEvidence()
+      throws Exception {
+    TenantAuthorityEventV1Codec.Event tenantEvent = currentTenantEvent();
+    Map<String, Object> extraCutoff = billingCutoff(tenantEvent);
+    extraCutoff.put(
+        OTHER_TENANT_ID.toString(),
+        Map.of(
+            "tenantAuthorityGeneration", tenantEvent.tenantAuthorityGeneration(),
+            "tenantBillingSequence", tenantEvent.tenantBillingSequence(),
+            "outboxStreamKey", tenantEvent.outboxStreamKey(),
+            "outboxSequence", tenantEvent.outboxSequence()));
+    Fixture fixture =
+        new Fixture(
+            ACCOUNT_ID, null, 1, 1, List.of("tenantAdmin"), 1, false, tenantEvent, extraCutoff);
+
+    assertThatThrownBy(() -> fixture.verifier.verify(fixture.compactJwt, TENANT_ID))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class);
   }
 
   @Test
@@ -300,6 +372,27 @@ class AccountControlUiCurrentActorVerifierTest {
         mock(AccountJwtSignerDesiredStateRepository.class);
     private final AccountJwtJwksTrustedSource publicJwks = mock(AccountJwtJwksTrustedSource.class);
 
+    private Fixture(
+        UUID tokenAccountId,
+        List<String> globalRoles,
+        long currentTenantGeneration,
+        long currentMembershipGeneration,
+        List<String> roleSnapshot,
+        int localAofCount,
+        boolean mismatchPublicReceipt)
+        throws Exception {
+      this(
+          tokenAccountId,
+          globalRoles,
+          currentTenantGeneration,
+          currentMembershipGeneration,
+          roleSnapshot,
+          localAofCount,
+          mismatchPublicReceipt,
+          null,
+          null);
+    }
+
     @SuppressFBWarnings(
         value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
         justification =
@@ -311,9 +404,11 @@ class AccountControlUiCurrentActorVerifierTest {
         long currentMembershipGeneration,
         List<String> roleSnapshot,
         int localAofCount,
-        boolean mismatchPublicReceipt)
+        boolean mismatchPublicReceipt,
+        TenantAuthorityEventV1Codec.Event currentTenantEvent,
+        Map<String, Object> tenantBillingCutoff)
         throws Exception {
-      Map<String, Object> claims = claims(tokenAccountId, globalRoles);
+      Map<String, Object> claims = claims(tokenAccountId, globalRoles, tenantBillingCutoff);
       compactJwt = sign(claims, signingKey);
       tokenHash = sha256(compactJwt.getBytes(StandardCharsets.US_ASCII));
 
@@ -554,7 +649,8 @@ class AccountControlUiCurrentActorVerifierTest {
 
       configureSignerReadback(mismatchPublicReceipt ? "0".repeat(64) : publicDataDigest);
       configureRegistry(activeRegistry);
-      configureCurrentSources(currentTenantGeneration, currentMembershipGeneration, roleSnapshot);
+      configureCurrentSources(
+          currentTenantGeneration, currentMembershipGeneration, roleSnapshot, currentTenantEvent);
 
       PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
       when(transactionManager.getTransaction(any(TransactionDefinition.class)))
@@ -637,7 +733,8 @@ class AccountControlUiCurrentActorVerifierTest {
     private void configureCurrentSources(
         long currentTenantGeneration,
         long currentMembershipGeneration,
-        List<String> currentRoleSnapshot) {
+        List<String> currentRoleSnapshot,
+        TenantAuthorityEventV1Codec.Event currentTenantEvent) {
       IssuanceFence fence = new IssuanceFence(ACCOUNT_ID, 1L, 1L);
       String issuerStream = "account:auth-authority:v1:issuer/" + ISSUER;
       String accountStream = "account:auth-authority:v1:account/" + ACCOUNT_ID;
@@ -695,10 +792,13 @@ class AccountControlUiCurrentActorVerifierTest {
               eq(ISSUER), eq(ACCOUNT_ID), eq(List.of(TENANT_ID)), eq(List.of(TENANT_ID))))
           .thenReturn(composite);
 
-      TenantAuthorityEventV1Codec.Event tenantEvent = mock(TenantAuthorityEventV1Codec.Event.class);
-      when(tenantEvent.tenantId()).thenReturn(TENANT_ID);
-      when(tenantEvent.tenantAuthorityGeneration()).thenReturn(currentTenantGeneration);
-      when(tenantEvent.tenantAuthoritySourceVersion()).thenReturn(currentTenantGeneration);
+      TenantAuthorityEventV1Codec.Event tenantEvent = currentTenantEvent;
+      if (tenantEvent == null) {
+        tenantEvent = mock(TenantAuthorityEventV1Codec.Event.class);
+        when(tenantEvent.tenantId()).thenReturn(TENANT_ID);
+        when(tenantEvent.tenantAuthorityGeneration()).thenReturn(currentTenantGeneration);
+        when(tenantEvent.tenantAuthoritySourceVersion()).thenReturn(currentTenantGeneration);
+      }
       when(tenantEvents.readCurrentByTenant(TENANT_ID)).thenReturn(tenantEvent);
 
       VerifiedTenantProvenance provenance =
@@ -761,7 +861,74 @@ class AccountControlUiCurrentActorVerifierTest {
     }
   }
 
+  private static TenantAuthorityEventV1Codec.Event currentTenantEvent() {
+    UUID creationRequestId = UUID.fromString("a1000000-0000-4000-8000-000000000001");
+    UUID operationId = UUID.fromString("a2000000-0000-4000-8000-000000000002");
+    UUID requestId = UUID.fromString("a3000000-0000-4000-8000-000000000003");
+    String requestDigest = "sha256:" + "1".repeat(64);
+    String sourceNamespace = "account-service";
+    String sourceTenantKey = "tenant-101";
+    String evidenceDigest =
+        GameTenantCreationDigest.evidenceDigest(
+            sourceNamespace,
+            creationRequestId,
+            operationId,
+            requestDigest,
+            TENANT_ID,
+            101L,
+            sourceTenantKey,
+            "NEW_GAME_ROW");
+    FreshTenantCreationEvidence source =
+        new FreshTenantCreationEvidence(
+            1,
+            sourceNamespace,
+            creationRequestId,
+            operationId,
+            requestDigest,
+            TENANT_ID,
+            101L,
+            sourceTenantKey,
+            "NEW_GAME_ROW",
+            evidenceDigest);
+    DemoTenantEntitlementRequest request =
+        new DemoTenantEntitlementRequest(
+            requestId,
+            TENANT_ID,
+            creationRequestId,
+            requestDigest,
+            null,
+            null,
+            null,
+            true,
+            true,
+            false,
+            false,
+            new DemoTenantEntitlementRequest.Quotas(3L, 2L, 4096L));
+    DemoTenantEntitlementEventV1Codec.Event billingEvent =
+        DemoTenantEntitlementEventV1Codec.seal(request, source, 1L, 1L, 1L, 7L);
+    TenantAuthorityEventV1Codec.Event authorityEvent =
+        TenantAuthorityEventV1Codec.seal(request, source, 1L, 1L, 11L, billingEvent);
+    return TenantAuthorityEventV1Codec.verify(authorityEvent.payload());
+  }
+
+  private static Map<String, Object> billingCutoff(TenantAuthorityEventV1Codec.Event event) {
+    Map<String, Object> cutoff = new LinkedHashMap<>();
+    cutoff.put(
+        TENANT_ID.toString(),
+        Map.of(
+            "tenantAuthorityGeneration", event.tenantAuthorityGeneration(),
+            "tenantBillingSequence", event.tenantBillingSequence(),
+            "outboxStreamKey", event.outboxStreamKey(),
+            "outboxSequence", event.outboxSequence()));
+    return cutoff;
+  }
+
   private static Map<String, Object> claims(UUID accountId, List<String> globalRoles) {
+    return claims(accountId, globalRoles, null);
+  }
+
+  private static Map<String, Object> claims(
+      UUID accountId, List<String> globalRoles, Map<String, Object> tenantBillingCutoff) {
     Map<String, Object> authorityTuple =
         new LinkedHashMap<>(
             Map.of(
@@ -786,6 +953,9 @@ class AccountControlUiCurrentActorVerifierTest {
                 Map.entry("membershipVersion", Map.of(TENANT_ID.toString(), 1)),
                 Map.entry("issuanceFence", 1),
                 Map.entry("scopedRoles", Map.of(TENANT_ID.toString(), List.of("tenantAdmin")))));
+    if (tenantBillingCutoff != null) {
+      authorityTuple.put("tenantBillingCutoff", tenantBillingCutoff);
+    }
     if (globalRoles != null) {
       claims.put("globalRoles", globalRoles);
     }

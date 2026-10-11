@@ -621,7 +621,7 @@ public final class AccountControlUiCurrentActorVerifier {
                         cutoff.outboxStreamKey(),
                         "outboxSequence",
                         Long.parseLong(cutoff.outboxSequence()))));
-    if (tuple.containsKey("tenantBillingCutoff")) {
+    if (tenantEvent.tenantBillingSequence() > 0L) {
       expectedTuple.put(
           "tenantBillingCutoff",
           Map.of(
@@ -632,7 +632,7 @@ public final class AccountControlUiCurrentActorVerifier {
                   "tenantBillingSequence",
                   tenantEvent.tenantBillingSequence(),
                   "outboxStreamKey",
-                  tenantEvent.tenantBillingStreamKey(),
+                  tenantEvent.outboxStreamKey(),
                   "outboxSequence",
                   tenantEvent.outboxSequence())));
     }

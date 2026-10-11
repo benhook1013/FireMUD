@@ -2,14 +2,24 @@ package net.firedevops.firemud.common.redis.contracts;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.ServiceLoader;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedStatic;
 
 class RedisScriptCatalogTest {
+  private static final AtomicInteger INSTALLED_PROVIDER_GET_CALLS = new AtomicInteger();
+
   @Test
   void aggregatesContributionsAndRequiresExactScriptIdentity() {
     RedisScriptDescriptor account = descriptor("account.control-ui.v1", "account-service");
@@ -100,6 +110,41 @@ class RedisScriptCatalogTest {
                     List.of(contribution("account-service", tooManyDescriptors))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("descriptor count exceeds its bound");
+  }
+
+  @Test
+  void limitsInstalledProviderRealizationBeforeRejectingContributionOverflow() {
+    INSTALLED_PROVIDER_GET_CALLS.set(0);
+    ServiceLoader<RedisScriptContribution> installed = mock(ServiceLoader.class);
+    ClassLoader classLoader = getClass().getClassLoader();
+    Stream<ServiceLoader.Provider<RedisScriptContribution>> providers =
+        IntStream.range(0, RedisScriptCatalog.MAX_CONTRIBUTIONS + 20)
+            .mapToObj(
+                ignored ->
+                    new ServiceLoader.Provider<>() {
+                      @Override
+                      public Class<? extends RedisScriptContribution> type() {
+                        return RedisScriptContribution.class;
+                      }
+
+                      @Override
+                      public RedisScriptContribution get() {
+                        INSTALLED_PROVIDER_GET_CALLS.incrementAndGet();
+                        return null;
+                      }
+                    });
+    when(installed.stream()).thenReturn(providers);
+
+    try (MockedStatic<ServiceLoader> serviceLoader = mockStatic(ServiceLoader.class)) {
+      serviceLoader
+          .when(() -> ServiceLoader.load(RedisScriptContribution.class, classLoader))
+          .thenReturn(installed);
+
+      assertThatThrownBy(() -> RedisScriptCatalog.loadInstalled(classLoader))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("contribution count exceeds its bound");
+    }
+    assertThat(INSTALLED_PROVIDER_GET_CALLS).hasValue(RedisScriptCatalog.MAX_CONTRIBUTIONS + 1);
   }
 
   private static RedisScriptContribution contribution(
