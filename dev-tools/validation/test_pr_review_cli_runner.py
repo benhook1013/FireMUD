@@ -71,6 +71,7 @@ class ReviewResultOutputTests(unittest.TestCase):
             duration_seconds=67,
             exit_status=0,
             capture_dir=Path("/tmp/pr-review/run.Abc123"),
+            source_recorded=True,
         ).as_dict()
 
         self.assertIn("records cli-decision", result["next_step"])
@@ -104,6 +105,31 @@ class ReviewResultOutputTests(unittest.TestCase):
 
         self.assertNotIn("next_step", result)
         self.assertNotIn("public_checkpoint_template", result)
+
+    def test_successful_cli_result_with_unsaved_source_run_directs_to_recovery(self):
+        warning = "SQLite review record was not saved; the durable CLI capture remains available for recovery"
+        result = ReviewResult(
+            run_id="run.Abc123",
+            pull_request=123,
+            candidate_sha=CANDIDATE,
+            parent_sha=PARENT,
+            merge_base=BASE,
+            published_files=5,
+            candidate_files=4,
+            published_status="current",
+            provisional=False,
+            duration_seconds=67,
+            exit_status=0,
+            capture_dir=Path("/tmp/pr-review/run.Abc123"),
+            warning=warning,
+            source_recorded=False,
+        ).as_dict()
+
+        self.assertEqual(result["warning"], warning)
+        self.assertIn("capture recovery and adjudication workflow", result["next_step"])
+        self.assertNotIn("records cli-decision", result["next_step"])
+        self.assertNotIn("records source finalize", result["next_step"])
+        self.assertIn("public_checkpoint_template", result)
 
 
 class BoundedAllocationCliParserTests(unittest.TestCase):

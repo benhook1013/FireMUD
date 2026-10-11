@@ -229,6 +229,7 @@ class ReviewResult:
     force_acknowledged: bool = False
     candidate_warnings: tuple[str, ...] = ()
     force_reason: str | None = None
+    source_recorded: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         result = {
@@ -252,12 +253,19 @@ class ReviewResult:
             "duration_marker": f"<!-- firemud-review-duration-seconds: {self.duration_seconds} -->",
         }
         if self.exit_status == 0:
-            result["next_step"] = (
-                "Adjudicate every finding with records cli-decision, then finalize with records source finalize "
-                "to establish authoritative counts. Post one public checkpoint using the template below; the "
-                "normal evidence reader binds it to this capture through the run marker. See PR Lifecycle for "
-                "the complete CLI workflow."
-            )
+            if self.source_recorded and self.warning is None:
+                result["next_step"] = (
+                    "Adjudicate every finding with records cli-decision, then finalize with records source finalize "
+                    "to establish authoritative counts. Post one public checkpoint using the template below; the "
+                    "normal evidence reader binds it to this capture through the run marker. See PR Lifecycle for "
+                    "the complete CLI workflow."
+                )
+            else:
+                result["next_step"] = (
+                    "The capture is not available as a saved native source run or persistence reported a warning. "
+                    "Follow PR Lifecycle's CLI capture recovery and adjudication workflow before finalizing counts "
+                    "or posting a checkpoint."
+                )
             result["public_checkpoint_template"] = (
                 f"CLI: <found> Found / <accepted> Accepted / <routed> Routed · {self.candidate_sha} · "
                 f"{self.candidate_files} files · {evidence.format_duration_seconds(self.duration_seconds)}\n"
@@ -1607,6 +1615,7 @@ def run_cli_review(
                     force_acknowledged=force,
                     candidate_warnings=target.candidate_warnings,
                     force_reason=reason,
+                    source_recorded=attempt_finished,
                 )
             finally:
                 primary_error = sys.exc_info()[1]
