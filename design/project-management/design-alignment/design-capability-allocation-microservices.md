@@ -18,8 +18,8 @@ This ledger maps every Markdown source under [`design/architecture/microservices
 
 | Measure | Count |
 | --- | ---: |
-| Markdown sources discovered | 77 |
-| Capability-allocated sources | 75 |
+| Markdown sources discovered | 78 |
+| Capability-allocated sources | 76 |
 | Explicitly exempt artifacts | 2 |
 | Unallocated sources | 0 |
 | Taxonomy gaps | 0 |
@@ -33,8 +33,8 @@ This ledger maps every Markdown source under [`design/architecture/microservices
 | Configuration contracts | 11 |
 | Operations contracts | 11 |
 | Runtime/data contracts | 9 |
-| Service-specific design, UX, protocol, and workflow appendices | 21 |
-| **Total** | **77** |
+| Service-specific design, UX, protocol, and workflow appendices | 22 |
+| **Total** | **78** |
 
 ## Microservice-Root Artifacts
 
@@ -76,6 +76,7 @@ This ledger maps every Markdown source under [`design/architecture/microservices
 | `design/architecture/microservices/entity-management-service/configuration.md` | `PO-3` | `GR-3`, `SF-1`, `SF-2` | Whole file. Cache variables -> `SF-2`; TLS/proto details -> `SF-1`. | Configuration contract | No unresolved ambiguity. |
 | `design/architecture/microservices/entity-management-service/operations.md` | `PO-4` | `GR-1`, `GR-3`, `SF-2` | Overrides: **Tick Locking** and **Tick Idempotency** -> `GR-1`/`SF-2`. | Operations contract | No unresolved ambiguity. |
 | `design/architecture/microservices/entity-management-service/runtime-and-data.md` | `GR-3` | `AR-1`, `AR-3`, `GR-1`, `GR-2`, `GR-4`, `SF-1`, `SF-2`, `PO-1` | Overrides: design/version portions of **Data Model and Versioning** -> `AR-1`; **Replacement-Instance State Classification** -> `AR-3`; **Inventory Transfer Audit** -> `PO-1`; **Instance Termination Cleanup Contract**, **Workflow Participation**, **Redis Role and Prefixes**, and **Version Sources for Entity Caches** -> `SF-2`; location/spatial boundaries -> `GR-2`. | Runtime/data contract | Character location remains explicitly World-owned. |
+| `design/architecture/microservices/entity-management-service/character-create-action-schema.md` | `GR-3` | `AA-1`, `AA-2`, `AA-3`, `AR-1`, `GR-1`, `GR-2`, `SF-1`, `SF-2` | Whole file. Account authority -> `AA-1`; gameplay admission -> `AA-2`; realm admission and playable-state policy -> `AA-3`; authored inputs -> `AR-1`; runtime coordination -> `GR-1`; location boundaries -> `GR-2`; action schema -> `SF-1`; durable mutation workflow -> `SF-2`. | Operator action schema | Entity owns character mutation; account, admission, authoring, runtime, location, schema, and workflow concerns remain handoffs. |
 
 ## Game Design Service
 
@@ -180,7 +181,7 @@ This ledger maps every Markdown source under [`design/architecture/microservices
 | Microservices root | 3 | 1 | 2 | 0 |
 | Account Service | 7 | 7 | 0 | 0 |
 | Automation and Scripting Service | 6 | 6 | 0 | 0 |
-| Entity Management Service | 5 | 5 | 0 | 0 |
+| Entity Management Service | 6 | 6 | 0 | 0 |
 | Game Design Service | 13 | 13 | 0 | 0 |
 | Game Logic Service | 5 | 5 | 0 | 0 |
 | Game Session Service | 7 | 7 | 0 | 0 |
@@ -189,6 +190,6 @@ This ledger maps every Markdown source under [`design/architecture/microservices
 | Spring Cloud Gateway | 5 | 5 | 0 | 0 |
 | TCP Proxy Service | 6 | 6 | 0 | 0 |
 | World Management Service | 7 | 7 | 0 | 0 |
-| **Total** | **77** | **75** | **2** | **0** |
+| **Total** | **78** | **76** | **2** | **0** |
 
-The inventory covers every path returned by `rg --files design/architecture/microservices -g '*.md'`. Two microservice-root artifacts are explicit governance/template exemptions, all 75 capability-bearing files have one primary allocation, and no source remains unallocated or requires a taxonomy-gap classification.
+The inventory covers every path returned by `rg --files design/architecture/microservices -g '*.md'`. Two microservice-root artifacts are explicit governance/template exemptions, all 76 capability-bearing files have one primary allocation, and no source remains unallocated or requires a taxonomy-gap classification.
