@@ -23,6 +23,8 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
@@ -54,7 +56,10 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
   private static final String RUN_ID = "compose-smoke-2939";
   private static final String PROJECT_NAME = "firemud-smoke-compose-smoke-2939";
   private static final String CAPABILITY_PATH = "fixture/capability.json";
+  private static final String SOURCE_RECEIPT_PATH = "fixture/source-receipt.json";
   private static final String OPERATION_ID = "d2db8478-9c56-42ab-99c2-9fbead6841ba";
+  private static final UUID SOURCE_OPERATION_ID =
+      UUID.fromString("3f773701-e812-44f5-8ae0-7268d543beed");
   private static final UUID REALM_ID = UUID.fromString("23d39978-9d44-4e1a-8659-998ff9239b01");
   private static final UUID NAMESPACE_ID = UUID.fromString("ed1b4d88-81f8-4404-af7c-9a5dc91d3043");
   private static final UUID HOLD_ID = UUID.fromString("5fdd38a3-09e3-46bb-b11a-e2ff2a096211");
@@ -67,12 +72,24 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING);
 
     RunOwnedInitialAdmissionFixtureCoordinator.BootstrapResult result =
-        fixture.coordinator.coordinate(fixture.capability);
+        fixture.coordinator.coordinate(fixture.capability, fixture.sourceReceipt);
 
+    assertThat(fixture.sourceReceipt.sourceEvidence().registrationRequestId())
+        .isEqualTo(UUID.fromString(OPERATION_ID));
+    assertThat(fixture.sourceReceipt.sourceEvidence().operationId())
+        .isNotEqualTo(fixture.sourceReceipt.sourceEvidence().registrationRequestId());
     assertThat(result)
         .isEqualTo(RunOwnedInitialAdmissionFixtureCoordinator.BootstrapResult.COMMITTED);
     InOrder order = inOrder(fixture.gameInstanceService, fixture.ownerService, fixture.worldClient);
-    order.verify(fixture.gameInstanceService).startRunOwnedInitialLaunch(any());
+    ArgumentCaptor<RunOwnedInitialAdmissionLaunchEvidence> launchEvidence =
+        ArgumentCaptor.forClass(RunOwnedInitialAdmissionLaunchEvidence.class);
+    order
+        .verify(fixture.gameInstanceService)
+        .startRunOwnedInitialLaunch(any(), launchEvidence.capture());
+    assertThat(launchEvidence.getValue().sourceEvidence())
+        .isEqualTo(fixture.sourceReceipt.sourceEvidence());
+    assertThat(launchEvidence.getValue().publishedReleaseBundle())
+        .isEqualTo(fixture.sourceReceipt.launchReadEvidence().publishedReleaseBundle());
     order.verify(fixture.ownerService).registerPublicSharedFixtureCatalog(any());
     order.verify(fixture.ownerService).beginIntent(any());
     order
@@ -106,7 +123,8 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         .when(fixture.ownerService)
         .commit(any());
 
-    assertThatThrownBy(() -> fixture.coordinator.coordinate(fixture.capability))
+    assertThatThrownBy(
+            () -> fixture.coordinator.coordinate(fixture.capability, fixture.sourceReceipt))
         .isInstanceOf(IllegalStateException.class);
 
     verify(fixture.ownerService, never()).abort(any());
@@ -141,7 +159,8 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             any(PlayableStateScope.class),
             anyLong());
 
-    assertThatThrownBy(() -> fixture.coordinator.coordinate(fixture.capability))
+    assertThatThrownBy(
+            () -> fixture.coordinator.coordinate(fixture.capability, fixture.sourceReceipt))
         .isInstanceOf(IllegalStateException.class);
 
     verify(fixture.ownerService, never()).attachHold(any());
@@ -182,7 +201,8 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             any(PlayableStateScope.class),
             anyLong());
 
-    assertThatThrownBy(() -> fixture.coordinator.coordinate(fixture.capability))
+    assertThatThrownBy(
+            () -> fixture.coordinator.coordinate(fixture.capability, fixture.sourceReceipt))
         .isInstanceOf(IllegalStateException.class);
 
     verify(fixture.ownerService, never()).attachHold(any());
@@ -210,7 +230,8 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
           .when(fixture.ownerService)
           .commit(any());
 
-      assertThatThrownBy(() -> fixture.coordinator.coordinate(fixture.capability))
+      assertThatThrownBy(
+              () -> fixture.coordinator.coordinate(fixture.capability, fixture.sourceReceipt))
           .isInstanceOf(IllegalStateException.class);
     }
   }
@@ -226,7 +247,7 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
               return proof(binding, Outcome.ABORTED, ATTEMPT_ID, null, 0L, null, true);
             });
 
-    assertThat(fixture.coordinator.coordinate(fixture.capability))
+    assertThat(fixture.coordinator.coordinate(fixture.capability, fixture.sourceReceipt))
         .isEqualTo(RunOwnedInitialAdmissionFixtureCoordinator.BootstrapResult.ABORTED);
 
     verify(fixture.ownerService).read(any());
@@ -247,6 +268,7 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             "",
             "",
             "",
+            "",
             new CommonGrpcClientProperties(),
             gameInstanceService,
             ownerService,
@@ -258,6 +280,114 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
   }
 
   @Test
+  void missingSourceReceiptRejectsBeforeLaunchOrOwnerMutation() {
+    Fixture fixture =
+        fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING);
+    try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
+        mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.load(
+                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .thenReturn(fixture.capability);
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                      any(Path.class),
+                      eq(RUN_ID),
+                      eq(PROJECT_NAME),
+                      same(fixture.capability),
+                      same(fixture.grpcProperties)))
+          .thenThrow(RunOwnedInitialAdmissionFixtureCapability.InvalidSourceReceiptException.class);
+
+      fixture.coordinator.retryRunOwnedFixtureBootstrap();
+    }
+
+    verifyNoInteractions(fixture.gameInstanceService, fixture.ownerService, fixture.worldClient);
+  }
+
+  @Test
+  void changedSourceReceiptAcrossRetriesIsRejectedBeforeSecondLaunch() {
+    Fixture fixture =
+        fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING);
+    doThrow(new IllegalStateException("stop after initial launch"))
+        .when(fixture.ownerService)
+        .registerPublicSharedFixtureCatalog(any());
+    var changedReceipt =
+        sourceReceipt(
+            fixture.capability, 29L, UUID.fromString("8f38bd13-8198-40f9-9daa-2373de047b1c"));
+    try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
+        mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.load(
+                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .thenReturn(fixture.capability);
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                      any(Path.class),
+                      eq(RUN_ID),
+                      eq(PROJECT_NAME),
+                      same(fixture.capability),
+                      same(fixture.grpcProperties)))
+          .thenReturn(fixture.sourceReceipt, changedReceipt);
+
+      fixture.coordinator.retryRunOwnedFixtureBootstrap();
+      fixture.coordinator.retryRunOwnedFixtureBootstrap();
+    }
+
+    verify(fixture.gameInstanceService, times(1))
+        .startRunOwnedInitialLaunch(any(), any(RunOwnedInitialAdmissionLaunchEvidence.class));
+    verify(fixture.ownerService, times(1)).registerPublicSharedFixtureCatalog(any());
+    verify(fixture.ownerService, never()).beginIntent(any());
+    verifyNoInteractions(fixture.worldClient);
+  }
+
+  @Test
+  void changedOwnerReadEvidenceAcrossRetriesIsRejectedBeforeSecondLaunch() {
+    Fixture fixture =
+        fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING);
+    doThrow(new IllegalStateException("stop after initial launch"))
+        .when(fixture.ownerService)
+        .registerPublicSharedFixtureCatalog(any());
+    var changedReceipt =
+        withPublishedReleaseBundleRef(fixture.sourceReceipt, "owner-release-ref-changed");
+    try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
+        mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.load(
+                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .thenReturn(fixture.capability);
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                      any(Path.class),
+                      eq(RUN_ID),
+                      eq(PROJECT_NAME),
+                      same(fixture.capability),
+                      same(fixture.grpcProperties)))
+          .thenReturn(fixture.sourceReceipt, changedReceipt);
+
+      fixture.coordinator.retryRunOwnedFixtureBootstrap();
+      fixture.coordinator.retryRunOwnedFixtureBootstrap();
+    }
+
+    verify(fixture.gameInstanceService, times(1))
+        .startRunOwnedInitialLaunch(any(), any(RunOwnedInitialAdmissionLaunchEvidence.class));
+    verify(fixture.ownerService, times(1)).registerPublicSharedFixtureCatalog(any());
+    verify(fixture.ownerService, never()).beginIntent(any());
+    verifyNoInteractions(fixture.worldClient);
+  }
+
+  @Test
   void retryLogUsesAllowlistedDiagnosticsAndDoesNotExposeHostileDependencyMessage(
       CapturedOutput output) {
     Fixture fixture =
@@ -266,7 +396,7 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         "capability-bytes=secret grpc-status-detail=tenant-token raw-pointer=private";
     doThrow(new IllegalStateException(hostileMessage))
         .when(fixture.gameInstanceService)
-        .startRunOwnedInitialLaunch(any());
+        .startRunOwnedInitialLaunch(any(), any());
 
     try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
         mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
@@ -276,6 +406,16 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
                   RunOwnedInitialAdmissionFixtureCapability.load(
                       any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
           .thenReturn(fixture.capability);
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                      any(Path.class),
+                      eq(RUN_ID),
+                      eq(PROJECT_NAME),
+                      same(fixture.capability),
+                      same(fixture.grpcProperties)))
+          .thenReturn(fixture.sourceReceipt);
 
       fixture.coordinator.retryRunOwnedFixtureBootstrap();
     }
@@ -295,7 +435,7 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     String hostileMessage = "grpc sensitive details capability bytes that must not appear";
     doThrow(new IllegalStateException(hostileMessage))
         .when(fixture.gameInstanceService)
-        .startRunOwnedInitialLaunch(any());
+        .startRunOwnedInitialLaunch(any(), any());
 
     try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
         mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
@@ -305,6 +445,16 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
                   RunOwnedInitialAdmissionFixtureCapability.load(
                       any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
           .thenReturn(fixture.capability);
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                      any(Path.class),
+                      eq(RUN_ID),
+                      eq(PROJECT_NAME),
+                      same(fixture.capability),
+                      same(fixture.grpcProperties)))
+          .thenReturn(fixture.sourceReceipt);
 
       for (int attempt = 0; attempt < 12; attempt++) {
         fixture.coordinator.retryRunOwnedFixtureBootstrap();
@@ -360,6 +510,16 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
                   RunOwnedInitialAdmissionFixtureCapability.load(
                       any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
           .thenReturn(fixture.capability);
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                      any(Path.class),
+                      eq(RUN_ID),
+                      eq(PROJECT_NAME),
+                      same(fixture.capability),
+                      same(fixture.grpcProperties)))
+          .thenReturn(fixture.sourceReceipt);
 
       // Orchestration unit proof only; capability TLS and durable cross-service behavior have
       // separate proof boundaries.
@@ -418,7 +578,8 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
       ArgumentCaptor<StartSessionRequest> launchRequests =
           ArgumentCaptor.forClass(StartSessionRequest.class);
       verify(fixture.gameInstanceService, times(13))
-          .startRunOwnedInitialLaunch(launchRequests.capture());
+          .startRunOwnedInitialLaunch(
+              launchRequests.capture(), any(RunOwnedInitialAdmissionLaunchEvidence.class));
       assertThat(launchRequests.getAllValues())
           .allSatisfy(
               request -> {
@@ -494,6 +655,8 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             "a".repeat(64),
             RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
             "b".repeat(64));
+    RunOwnedInitialAdmissionFixtureCapability.SourceReceipt sourceReceipt =
+        sourceReceipt(capability, 29L);
     GameInstanceDto target =
         new GameInstanceDto(
             42L,
@@ -512,7 +675,7 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             null,
             27L,
             "RUNNING");
-    when(gameInstanceService.startRunOwnedInitialLaunch(any()))
+    when(gameInstanceService.startRunOwnedInitialLaunch(any(), any()))
         .thenReturn(new RunOwnedInitialLaunchResult(target, 4L));
 
     InitialAdmissionBindCatalog catalog =
@@ -586,6 +749,7 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         new RunOwnedInitialAdmissionFixtureCoordinator(
             true,
             CAPABILITY_PATH,
+            SOURCE_RECEIPT_PATH,
             RUN_ID,
             PROJECT_NAME,
             grpc,
@@ -593,13 +757,21 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             ownerService,
             worldClient);
     return new Fixture(
-        coordinator, capability, grpc, gameInstanceService, ownerService, worldClient, request);
+        coordinator,
+        capability,
+        sourceReceipt,
+        grpc,
+        gameInstanceService,
+        ownerService,
+        worldClient,
+        request);
   }
 
   private static RunOwnedInitialAdmissionFixtureCoordinator newCoordinator(Fixture fixture) {
     return new RunOwnedInitialAdmissionFixtureCoordinator(
         true,
         CAPABILITY_PATH,
+        SOURCE_RECEIPT_PATH,
         RUN_ID,
         PROJECT_NAME,
         fixture.grpcProperties,
@@ -636,6 +808,159 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         now,
         now,
         status == Status.PENDING ? null : now);
+  }
+
+  private static RunOwnedInitialAdmissionFixtureCapability.SourceReceipt sourceReceipt(
+      RunOwnedInitialAdmissionFixtureCapability capability, long sourceGameRowId) {
+    return sourceReceipt(capability, sourceGameRowId, SOURCE_OPERATION_ID);
+  }
+
+  private static RunOwnedInitialAdmissionFixtureCapability.SourceReceipt sourceReceipt(
+      RunOwnedInitialAdmissionFixtureCapability capability,
+      long sourceGameRowId,
+      UUID operationId) {
+    UUID registrationRequestId = UUID.fromString(capability.operationId());
+    UUID canonicalTenantId = UUID.fromString("9db3ab6f-cc09-49d2-8f93-84484397a120");
+    String targetNamespace = RunOwnedInitialAdmissionFixtureCapability.SOURCE_TARGET_NAMESPACE;
+    String tenantSlug = "fixture-tenant";
+    String worldSlug = capability.worldSlug();
+    String worldDisplayName = capability.worldDisplayName();
+    String sourceGameTenantKey = Long.toString(capability.tenantId());
+    String provenanceKind = "NEW_GAME_ROW";
+    String requestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            targetNamespace,
+            registrationRequestId,
+            canonicalTenantId,
+            tenantSlug,
+            worldSlug,
+            worldDisplayName);
+    AuthoredWorldSourceEvidence evidence =
+        new AuthoredWorldSourceEvidence(
+            1,
+            targetNamespace,
+            registrationRequestId,
+            operationId,
+            requestDigest,
+            canonicalTenantId,
+            tenantSlug,
+            worldSlug,
+            worldDisplayName,
+            sourceGameRowId,
+            sourceGameTenantKey,
+            provenanceKind,
+            AuthoredWorldSourceDigest.evidenceDigest(
+                targetNamespace,
+                registrationRequestId,
+                operationId,
+                requestDigest,
+                canonicalTenantId,
+                tenantSlug,
+                worldSlug,
+                worldDisplayName,
+                sourceGameRowId,
+                sourceGameTenantKey,
+                provenanceKind));
+    return new RunOwnedInitialAdmissionFixtureCapability.SourceReceipt(
+        RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_SCHEMA,
+        capability.runId(),
+        capability.composeProjectName(),
+        capability.operationId(),
+        RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_OWNER_SERVICE,
+        capability.gameSessionUriSan(),
+        capability.gameSessionLeafSha256(),
+        capability.caCertificateSha256(),
+        evidence,
+        launchReadEvidence(capability, evidence));
+  }
+
+  private static RunOwnedInitialAdmissionFixtureCapability.SourceReceipt
+      withPublishedReleaseBundleRef(
+          RunOwnedInitialAdmissionFixtureCapability.SourceReceipt receipt, String bundleRef) {
+    var original = receipt.launchReadEvidence();
+    var changedBundle =
+        original.publishedReleaseBundle().toBuilder()
+            .setPublishedReleaseBundleRef(bundleRef)
+            .build();
+    var changedReadEvidence =
+        new RunOwnedInitialAdmissionFixtureCapability.LaunchReadEvidence(
+            original.schema(),
+            original.gameTemplateId(),
+            changedBundle,
+            original.versionAssetArtifactState(),
+            original.versionState());
+    return new RunOwnedInitialAdmissionFixtureCapability.SourceReceipt(
+        receipt.schema(),
+        receipt.runId(),
+        receipt.composeProjectName(),
+        receipt.fixtureOperationId(),
+        receipt.ownerService(),
+        receipt.gameSessionUriSan(),
+        receipt.gameSessionLeafSha256(),
+        receipt.caCertificateSha256(),
+        receipt.sourceEvidence(),
+        changedReadEvidence);
+  }
+
+  private static RunOwnedInitialAdmissionFixtureCapability.LaunchReadEvidence launchReadEvidence(
+      RunOwnedInitialAdmissionFixtureCapability capability,
+      AuthoredWorldSourceEvidence sourceEvidence) {
+    String manifestHash = "sha256:" + "a".repeat(64);
+    String artifactDigest = "sha256:" + "b".repeat(64);
+    var bundle =
+        net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
+            .setId(77L)
+            .setVersionId(11L)
+            .setVersionNumber(1)
+            .setAttestationSchemaVersion("v1")
+            .setPublishWorkflowId("publish-11")
+            .setManifestHash(manifestHash)
+            .addRequiredManifestAssetKeys("manifest.json")
+            .setGenerationConfigRevision("genrev-11")
+            .setPublishedAt("2026-04-15T10:00:00")
+            .setPublishedReleaseBundleRef("owner-release-ref-11")
+            .setCanonicalTenantId(sourceEvidence.canonicalTenantId().toString())
+            .setCanonicalVersionId("10000000-0000-4000-8000-000000000011")
+            .setManifestSchemaVersion(1)
+            .addArtifactDigests(
+                net.firedevops.firemud.gamedesign.v1.PublishedArtifactDigest.newBuilder()
+                    .setUsageKey("manifest.json")
+                    .setArtifactKind("manifest")
+                    .setImmutableObjectKey(
+                        "artifacts/sha256/" + artifactDigest.substring("sha256:".length()))
+                    .setContentDigest(artifactDigest)
+                    .setContentType("application/json")
+                    .setArtifactSchemaVersion(1)
+                    .build())
+            .build();
+    var artifactState =
+        net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
+            .setTenantId(Long.toString(capability.tenantId()))
+            .setVersionId(11L)
+            .setArtifactState(
+                net.firedevops.firemud.gamedesign.v1.ArtifactState.ARTIFACT_STATE_PUBLISHED)
+            .setStateEpoch(2L)
+            .setManifestHash(manifestHash)
+            .setUpdatedAt("2026-04-15T10:00:00")
+            .addExportedManifestAssetKeys("manifest.json")
+            .setExportedVersionNumber(1)
+            .build();
+    var versionState =
+        net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot.newBuilder()
+            .setTenantId(Long.toString(capability.tenantId()))
+            .setVersionId(11L)
+            .setVersionState(
+                net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                    .VERSION_LIFECYCLE_STATE_PUBLISHED)
+            .setVersionStateEpoch(77L)
+            .setUpdatedAt("2026-04-15T10:00:00")
+            .build();
+    return new RunOwnedInitialAdmissionFixtureCapability.LaunchReadEvidence(
+        RunOwnedInitialAdmissionLaunchEvidence.SCHEMA,
+        capability.gameTemplateId(),
+        bundle,
+        artifactState,
+        versionState);
   }
 
   private static InitialAdmissionBindHold hold(
@@ -691,6 +1016,7 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
   private record Fixture(
       RunOwnedInitialAdmissionFixtureCoordinator coordinator,
       RunOwnedInitialAdmissionFixtureCapability capability,
+      RunOwnedInitialAdmissionFixtureCapability.SourceReceipt sourceReceipt,
       CommonGrpcClientProperties grpcProperties,
       GameInstanceService gameInstanceService,
       InitialAdmissionBindOwnerService ownerService,
