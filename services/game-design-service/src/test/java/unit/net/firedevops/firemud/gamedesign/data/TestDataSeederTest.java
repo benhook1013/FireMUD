@@ -3,12 +3,20 @@ package net.firedevops.firemud.gamedesign.data;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.PublicKey;
+import java.security.cert.X509Certificate;
+import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import javax.security.auth.x500.X500Principal;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameTemplate;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
@@ -33,6 +41,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 import tools.jackson.databind.ObjectMapper;
 
 class TestDataSeederTest {
+  private static final String GAME_SESSION_URI_SAN =
+      "spiffe://firemud/ns/dev/sa/game-session-service";
+
   @Mock GameRepository gameRepository;
   @Mock GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
   @Mock GameTemplateRepository templateRepository;
@@ -197,6 +208,62 @@ class TestDataSeederTest {
   }
 
   @Test
+  void acceptsExpectedWorkloadUriAlongsideGeneratedDnsSans() throws Exception {
+    CertificateFixture fixture =
+        certificateFixture(
+            List.of(
+                List.of(6, GAME_SESSION_URI_SAN),
+                List.of(2, "game-session-service"),
+                List.of(2, "game-session-service.dev"),
+                List.of(2, "game-session-service.dev.svc"),
+                List.of(2, "game-session-service.dev.svc.cluster.local")));
+
+    requireCertificatePins(fixture);
+  }
+
+  @Test
+  void rejectsCertificateWithoutWorkloadUriDespiteMatchingDigestPins() throws Exception {
+    CertificateFixture fixture =
+        certificateFixture(
+            List.of(
+                List.of(2, "game-session-service"),
+                List.of(2, "game-session-service.dev"),
+                List.of(2, "game-session-service.dev.svc"),
+                List.of(2, "game-session-service.dev.svc.cluster.local")));
+
+    assertThatThrownBy(() -> requireCertificatePins(fixture))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("wrong workload URI SAN");
+  }
+
+  @Test
+  void rejectsWrongNamespaceOrServiceUrisDespiteMatchingDigestPins() throws Exception {
+    for (String uri :
+        List.of(
+            "spiffe://firemud/ns/qa/sa/game-session-service",
+            "spiffe://firemud/ns/dev/sa/world-management-service")) {
+      CertificateFixture fixture = certificateFixture(List.of(List.of(6, uri)));
+
+      assertThatThrownBy(() -> requireCertificatePins(fixture))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("wrong workload URI SAN");
+    }
+  }
+
+  @Test
+  void rejectsMultipleWorkloadUrisDespiteMatchingDigestPins() throws Exception {
+    CertificateFixture fixture =
+        certificateFixture(
+            List.of(
+                List.of(6, GAME_SESSION_URI_SAN),
+                List.of(6, "spiffe://firemud/ns/dev/sa/world-management-service")));
+
+    assertThatThrownBy(() -> requireCertificatePins(fixture))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("wrong workload URI SAN");
+  }
+
+  @Test
   void refusesFixtureSourceRegistrationWithoutExactRunAndProjectBinding() throws Exception {
     Game game = new Game();
     game.setId(1L);
@@ -321,4 +388,39 @@ class TestDataSeederTest {
 
     return bundle;
   }
+
+  private CertificateFixture certificateFixture(List<List<?>> subjectAlternativeNames)
+      throws Exception {
+    byte[] leafEncoding = "fixture-game-session-leaf".getBytes(StandardCharsets.UTF_8);
+    byte[] caEncoding = "fixture-ca".getBytes(StandardCharsets.UTF_8);
+    X509Certificate leaf = mock(X509Certificate.class);
+    X509Certificate ca = mock(X509Certificate.class);
+    X500Principal issuer = new X500Principal("CN=fixture-ca");
+    when(leaf.getEncoded()).thenReturn(leafEncoding);
+    when(ca.getEncoded()).thenReturn(caEncoding);
+    when(leaf.getIssuerX500Principal()).thenReturn(issuer);
+    when(ca.getSubjectX500Principal()).thenReturn(issuer);
+    when(ca.getBasicConstraints()).thenReturn(0);
+    when(ca.getPublicKey()).thenReturn(mock(PublicKey.class));
+    when(leaf.getSubjectAlternativeNames()).thenReturn(subjectAlternativeNames);
+    return new CertificateFixture(
+        leaf, ca, certificateDigest(leafEncoding), certificateDigest(caEncoding));
+  }
+
+  private void requireCertificatePins(CertificateFixture fixture) {
+    ReflectionTestUtils.invokeMethod(
+        seeder,
+        "requireCertificatePins",
+        fixture.leaf(),
+        fixture.ca(),
+        fixture.leafDigest(),
+        fixture.caDigest());
+  }
+
+  private String certificateDigest(byte[] encoding) throws Exception {
+    return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(encoding));
+  }
+
+  private record CertificateFixture(
+      X509Certificate leaf, X509Certificate ca, String leafDigest, String caDigest) {}
 }
