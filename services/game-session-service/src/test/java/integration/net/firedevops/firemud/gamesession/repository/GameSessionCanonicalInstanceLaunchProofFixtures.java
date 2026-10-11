@@ -51,7 +51,8 @@ final class GameSessionCanonicalInstanceLaunchProofFixtures {
         target.launchDescriptorId(),
         target.generationConfigRevision(),
         1L,
-        target.publishedReleaseBundleRef());
+        target.publishedReleaseBundleRef(),
+        target.canonicalVersionId());
   }
 
   static SyntheticLaunchProof create(
@@ -67,6 +68,36 @@ final class GameSessionCanonicalInstanceLaunchProofFixtures {
       String generationConfigRevision,
       long versionStateEpoch,
       String publishedReleaseBundleRef) {
+    return create(
+        targetNamespace,
+        controlPlaneRequestId,
+        canonicalTenantId,
+        worldSlug,
+        source,
+        gameTemplateId,
+        versionId,
+        releaseBundleId,
+        launchDescriptorId,
+        generationConfigRevision,
+        versionStateEpoch,
+        publishedReleaseBundleRef,
+        UUID.randomUUID());
+  }
+
+  private static SyntheticLaunchProof create(
+      String targetNamespace,
+      String controlPlaneRequestId,
+      UUID canonicalTenantId,
+      String worldSlug,
+      AuthoredWorldSourceEvidence source,
+      long gameTemplateId,
+      long versionId,
+      long releaseBundleId,
+      String launchDescriptorId,
+      String generationConfigRevision,
+      long versionStateEpoch,
+      String publishedReleaseBundleRef,
+      UUID canonicalVersionId) {
     var tuple = tuple(targetNamespace, controlPlaneRequestId, canonicalTenantId, gameTemplateId);
     var descriptorRequest =
         new AuthoredWorldLaunchDescriptorEvidence.Request(
@@ -121,7 +152,7 @@ final class GameSessionCanonicalInstanceLaunchProofFixtures {
             targetNamespace,
             descriptor.resultDigest(),
             canonicalTenantId,
-            UUID.randomUUID(),
+            canonicalVersionId,
             worldSlug,
             source.operationId(),
             source.evidenceDigest(),
