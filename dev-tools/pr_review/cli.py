@@ -1525,7 +1525,11 @@ def _selected_pr_status_summary(report: Mapping[str, Any], pr: int) -> dict[str,
     )
     ci_summary = {
         "aggregate": ci.get("aggregate"),
-        "required_checks": {key: required.get(key) for key in ("available", "status", "reason") if key in required},
+        "required_checks": {
+            key: required.get(key)
+            for key in ("available", "status", "reason", "reason_code")
+            if key in required
+        },
         "pending": [item.get("name") for item in ci.get("pending", []) if isinstance(item, Mapping)],
         "failed": [item.get("name") for item in ci.get("failed", []) if isinstance(item, Mapping)],
         "observed": ci.get("observed"),
@@ -1559,6 +1563,7 @@ def _selected_pr_status_summary(report: Mapping[str, Any], pr: int) -> dict[str,
         "threads": thread_counts,
         "ci": ci_summary,
         "mergeability": report.get("mergeability"),
+        "readiness_scope": report.get("readiness_scope"),
         "ready": report.get("ready"),
         "verdict": report.get("verdict"),
         "reasons": report.get("reasons", []),
