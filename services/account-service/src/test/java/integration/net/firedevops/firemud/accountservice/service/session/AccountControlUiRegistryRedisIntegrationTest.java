@@ -19,6 +19,7 @@ import io.lettuce.core.protocol.ProtocolKeyword;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -153,6 +154,61 @@ class AccountControlUiRegistryRedisIntegrationTest {
       assertThatThrownBy(() -> owner.readActive(tokenHash))
           .isInstanceOf(IllegalStateException.class);
       assertThat(pinned.openedConnections()).isGreaterThan(0);
+    }
+  }
+
+  @Test
+  void luaRejectsMalformedExpiryTypesWithoutRedisErrorsOrKeyMutation() throws Exception {
+    var descriptor = AccountControlUiRegistryContract.descriptor();
+    byte[] source;
+    try (var stream = getClass().getClassLoader().getResourceAsStream(descriptor.resourcePath())) {
+      assertThat(stream).isNotNull();
+      source = stream.readAllBytes();
+    }
+    assertThat(AccountControlUiCoordination.digest("SHA-256", source))
+        .isEqualTo(descriptor.sha256());
+
+    try (var connection = adminClient.connect(ByteArrayCodec.INSTANCE)) {
+      RedisCommands<byte[], byte[]> commands = connection.sync();
+      String sha = commands.scriptLoad(source);
+      assertThat(sha).isEqualTo(AccountControlUiCoordination.digest("SHA-1", source));
+
+      long expiryMillis = (Instant.now().getEpochSecond() + 300) * 1000L;
+      long expiryEpochSecond = expiryMillis / 1000L;
+      for (String malformedExpiry : List.of("missing", "string", "object", "null")) {
+        String tokenHash = tokenHash();
+        byte[] redisKey = key(tokenHash);
+        byte[] replacement = candidateWithExpiry(tokenHash, expiryEpochSecond, malformedExpiry);
+        Long result =
+            commands.evalsha(
+                sha,
+                io.lettuce.core.ScriptOutputType.INTEGER,
+                new byte[][] {redisKey},
+                bytes(""),
+                replacement,
+                bytes(Long.toString(expiryMillis)));
+
+        assertThat(result).as("Lua result for %s exp", malformedExpiry).isEqualTo(-1L);
+        assertThat(commands.get(redisKey)).as("key for %s exp", malformedExpiry).isNull();
+        assertThat(commands.pexpiretime(redisKey))
+            .as("physical expiry for %s exp", malformedExpiry)
+            .isEqualTo(-2L);
+      }
+
+      String validTokenHash = tokenHash();
+      byte[] validKey = key(validTokenHash);
+      byte[] validReplacement = candidateWithExpiry(validTokenHash, expiryEpochSecond, "number");
+      Long validResult =
+          commands.evalsha(
+              sha,
+              io.lettuce.core.ScriptOutputType.INTEGER,
+              new byte[][] {validKey},
+              bytes(""),
+              validReplacement,
+              bytes(Long.toString(expiryMillis)));
+      assertThat(validResult).isEqualTo(1L);
+      assertThat(commands.get(validKey)).isEqualTo(validReplacement);
+      assertThat(commands.pexpiretime(validKey)).isEqualTo(expiryMillis);
     }
   }
 
@@ -347,27 +403,60 @@ class AccountControlUiRegistryRedisIntegrationTest {
   private static byte[] syntheticRecord(
       String tokenHash, String state, long expiryEpochSecond, String testOnlyBinding) {
     return AccountControlUiAuthority.canonical(
-        Map.of(
-            "schemaVersion",
-            1,
-            "registryVersion",
-            "active".equals(state) ? 2 : 1,
-            "profile",
-            "control-ui",
-            "type",
-            "control-ui",
-            "audience",
-            "control-ui",
-            "issuer",
-            "firemud-account-service",
-            "tokenHash",
-            tokenHash,
-            "state",
-            state,
-            "exp",
-            expiryEpochSecond,
-            "testOnlyBinding",
-            testOnlyBinding));
+        registryFields(tokenHash, state, expiryEpochSecond, testOnlyBinding));
+  }
+
+  private static byte[] candidateWithExpiry(
+      String tokenHash, long expiryEpochSecond, String expiryShape) {
+    Map<String, Object> fields = registryFields(tokenHash, "pending", expiryEpochSecond, "lua");
+    switch (expiryShape) {
+      case "missing" -> fields.remove("exp");
+      case "string" -> fields.put("exp", Long.toString(expiryEpochSecond));
+      case "object" -> fields.put("exp", Map.of("seconds", expiryEpochSecond));
+      case "null" -> fields.put("exp", null);
+      case "number" -> {
+        // Keep the canonical numeric expiry created by registryFields.
+      }
+      default -> throw new IllegalArgumentException("Unknown test expiry shape");
+    }
+    return AccountControlUiAuthority.canonical(fields);
+  }
+
+  private static Map<String, Object> registryFields(
+      String tokenHash, String state, long expiryEpochSecond, String testOnlyBinding) {
+    Map<String, Object> fields =
+        new HashMap<>(
+            Map.ofEntries(
+                Map.entry("schemaVersion", 1),
+                Map.entry("registryVersion", "active".equals(state) ? 2 : 1),
+                Map.entry("tokenHash", tokenHash),
+                Map.entry("kid", "key-1"),
+                Map.entry("signerGeneration", "1"),
+                Map.entry("issuer", "firemud-account-service"),
+                Map.entry("profile", "control-ui"),
+                Map.entry("type", "control-ui"),
+                Map.entry("audience", "control-ui"),
+                Map.entry("accountId", "10000000-0000-4000-8000-000000000001"),
+                Map.entry("jti", "30000000-0000-4000-8000-000000000003"),
+                Map.entry("iat", expiryEpochSecond - 300),
+                Map.entry("nbf", expiryEpochSecond - 300),
+                Map.entry("exp", expiryEpochSecond),
+                Map.entry("tokenGeneration", 1),
+                Map.entry("authorityTuple", Map.of("accountAuthorityGeneration", 1)),
+                Map.entry("membershipVersion", Map.of("20000000-0000-4000-8000-000000000002", 1)),
+                Map.entry("issuanceFence", 1),
+                Map.entry("operationId", "40000000-0000-4000-8000-000000000004"),
+                Map.entry("requestId", UUID.nameUUIDFromBytes(bytes(testOnlyBinding)).toString()),
+                Map.entry(
+                    "requestDigest",
+                    AccountControlUiIssuanceRepository.hash(bytes(testOnlyBinding))),
+                Map.entry("state", state),
+                Map.entry(
+                    "authoritySourceVersions",
+                    Map.of("ACCOUNT:10000000-0000-4000-8000-000000000001", 1)),
+                Map.entry("authEvidenceBundle", Map.of("bundleVersion", "1")),
+                Map.entry("originalSignerReceiptDigest", "c".repeat(64))));
+    return fields;
   }
 
   private static String tokenHash() {

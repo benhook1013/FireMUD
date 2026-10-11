@@ -245,6 +245,22 @@ class AccountJwtJwksTrustedSourceTest {
   }
 
   @Test
+  void doesNotTrustUnexpectedOwnerFailureByMatchingItsMessageText() {
+    Fixture fixture = new Fixture();
+    IllegalStateException unrelated =
+        new IllegalStateException(
+            "unrelated adapter failure mentioning Account trusted public JWKS source was rejected");
+    when(fixture.desiredStateRepository.readEnrollmentState(fixture.binding.accountBinding()))
+        .thenThrow(unrelated);
+
+    assertThatThrownBy(fixture.source::sourceIdentity)
+        .isInstanceOf(IllegalStateException.class)
+        .isNotSameAs(unrelated)
+        .hasMessage("Account trusted public JWKS source was rejected")
+        .hasNoCause();
+  }
+
+  @Test
   void rejectsTrustChangeAcrossTheAuthenticatedRead() {
     Fixture fixture = new Fixture();
     Binding changedBinding = binding(CLUSTER_UID, NAMESPACE_UID, "materializer-r2");
