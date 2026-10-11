@@ -2,6 +2,7 @@ package net.firedevops.firemud.common.smoke;
 
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.Message;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -632,6 +633,9 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
       LaunchReadEvidence launchReadEvidence) {}
 
   /** Parsed launch projections and the actual immutable owner-issued descriptor message. */
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Generated protobuf messages are immutable value objects.")
   public record LaunchReadEvidence(
       String schema,
       long gameTemplateId,
