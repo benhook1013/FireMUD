@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -163,6 +164,20 @@ class AccountControlUiCurrentActorVerifierTest {
   }
 
   @Test
+  void reusesPinnedFiniteKeyCacheButReloadsCurrentJwksOwnerEvidenceForEachVerification()
+      throws Exception {
+    Fixture fixture = new Fixture(ACCOUNT_ID, null, 1, 1, List.of("tenantAdmin"), 1, false);
+
+    fixture.verifier.verify(fixture.compactJwt, TENANT_ID);
+    fixture.verifier.verify(fixture.compactJwt, TENANT_ID);
+
+    verify(fixture.publicJwks, times(1)).sourceIdentity();
+    // One load populates the shared 30-second key cache; each verification still freshly loads
+    // its separate owner-receipt/current-publication snapshot.
+    verify(fixture.publicJwks, times(3)).load();
+  }
+
+  @Test
   void rejectsAChangedActorEvenWhenThePresentedCompactTokenIsValidlySigned() throws Exception {
     Fixture fixture = new Fixture(OTHER_ACCOUNT_ID, null, 1, 1, List.of("tenantAdmin"), 1, false);
 
@@ -267,6 +282,7 @@ class AccountControlUiCurrentActorVerifierTest {
         mock(AccountAuthorityOutboxRepository.class);
     private final AccountJwtSignerDesiredStateRepository signerStates =
         mock(AccountJwtSignerDesiredStateRepository.class);
+    private final AccountJwtJwksTrustedSource publicJwks = mock(AccountJwtJwksTrustedSource.class);
 
     @SuppressFBWarnings(
         value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
@@ -289,7 +305,6 @@ class AccountControlUiCurrentActorVerifierTest {
       byte[] jwksBytes = jwksJson.getBytes(StandardCharsets.UTF_8);
       SourceIdentity sourceIdentity = sourceIdentity();
       PublicJwksSnapshot jwksSnapshot = new PublicJwksSnapshot(sourceIdentity, jwksBytes);
-      AccountJwtJwksTrustedSource publicJwks = mock(AccountJwtJwksTrustedSource.class);
       when(publicJwks.sourceIdentity()).thenReturn(sourceIdentity);
       when(publicJwks.load()).thenReturn(jwksSnapshot);
 

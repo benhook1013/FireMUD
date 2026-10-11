@@ -6,6 +6,7 @@ import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.codec.ByteArrayCodec;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Dedicated standalone Lettuce client for Account Coordination operations.
@@ -18,7 +19,7 @@ import java.util.Objects;
 public final class LettuceAccountCoordinationPinnedConnectionProvider
     implements AccountCoordinationPinnedConnectionProvider, AutoCloseable {
   private final RedisClient client;
-  private boolean closed;
+  private final AtomicBoolean closed = new AtomicBoolean();
 
   public LettuceAccountCoordinationPinnedConnectionProvider(RedisURI coordinationRedisUri) {
     this.client =
@@ -40,18 +41,29 @@ public final class LettuceAccountCoordinationPinnedConnectionProvider
   }
 
   @Override
-  public synchronized StatefulRedisConnection<byte[], byte[]> openPinnedConnection() {
-    if (closed) {
+  public StatefulRedisConnection<byte[], byte[]> openPinnedConnection() {
+    if (closed.get()) {
       throw new IllegalStateException("Account Coordination Redis client is closed");
     }
-    return client.connect(ByteArrayCodec.INSTANCE);
+    StatefulRedisConnection<byte[], byte[]> connection = client.connect(ByteArrayCodec.INSTANCE);
+    if (closed.get()) {
+      try {
+        connection.close();
+      } catch (RuntimeException closeFailure) {
+        IllegalStateException failure =
+            new IllegalStateException("Account Coordination Redis client is closed");
+        failure.addSuppressed(closeFailure);
+        throw failure;
+      }
+      throw new IllegalStateException("Account Coordination Redis client is closed");
+    }
+    return connection;
   }
 
   /** Shuts down this provider's dedicated client; callers close each returned connection. */
   @Override
-  public synchronized void close() {
-    if (!closed) {
-      closed = true;
+  public void close() {
+    if (closed.compareAndSet(false, true)) {
       client.shutdown();
     }
   }
