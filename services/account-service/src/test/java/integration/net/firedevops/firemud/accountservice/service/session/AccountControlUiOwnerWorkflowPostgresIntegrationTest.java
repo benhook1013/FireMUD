@@ -9,6 +9,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEnvironmentBinding;
+import net.firedevops.firemud.accountservice.repository.AccountJwtSignerDesiredStateRepository;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.Test;
@@ -39,7 +40,7 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
   @TempDir Path temporary;
 
   @Test
-  void realSourceAndPrimaryCompositionRollsBackOtpWhenGenuineSignerIsUnavailable()
+  void realSourceAndPrimaryCompositionQuarantinesMismatchedCommittedSignerFences()
       throws Exception {
     var f =
         new AccountControlUiOwnerSourcesFixture(
@@ -52,13 +53,13 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
     var originalOtp = f.challenges.findByAccountId(f.account.getId()).orElseThrow();
     try (var ignored = withPeer(CALLER)) {
       assertThatThrownBy(() -> f.service.issue(f.request(OTP), environment))
-          .isInstanceOf(IllegalStateException.class)
-          .hasMessage("Existing committed control-ui signer unavailable");
+          .isInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
+          .hasMessage("Account durable and published active signer fences disagree");
       assertThat(f.challenges.findByAccountId(f.account.getId())).contains(originalOtp);
       // The same exact request can retry its original OTP after owner rollback, but cannot mint.
       assertThatThrownBy(() -> f.service.issue(f.request(OTP), environment))
-          .isInstanceOf(IllegalStateException.class)
-          .hasMessage("Existing committed control-ui signer unavailable");
+          .isInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
+          .hasMessage("Account durable and published active signer fences disagree");
       assertThatThrownBy(() -> f.service.issue(f.request("changed-secret"), environment))
           .isInstanceOf(AuthenticationException.class);
     }
