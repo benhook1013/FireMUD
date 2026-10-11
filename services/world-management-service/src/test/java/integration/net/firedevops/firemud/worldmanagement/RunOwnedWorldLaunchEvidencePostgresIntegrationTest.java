@@ -206,11 +206,15 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
       WorldInstance winningCopy =
           repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
       winningCopy.setFailureReason("CAS winner");
-      repository.save(winningCopy);
+      WorldInstance savedWinningCopy = repository.save(winningCopy);
       staleCopy.setFailureReason("stale loser");
       assertThatThrownBy(() -> repository.save(staleCopy))
           .isInstanceOf(IllegalStateException.class)
-          .hasMessageContaining("stale write for world_instance");
+          .hasMessage("Failed to update world_instance id=" + staleCopy.getId());
+      WorldInstance durableWinner =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(durableWinner.getFailureReason()).isEqualTo("CAS winner");
+      assertThat(durableWinner.getRowVersion()).isEqualTo(savedWinningCopy.getRowVersion());
 
       WorldInstance duplicate = new WorldInstance();
       duplicate.setTenantId(tenantId);
