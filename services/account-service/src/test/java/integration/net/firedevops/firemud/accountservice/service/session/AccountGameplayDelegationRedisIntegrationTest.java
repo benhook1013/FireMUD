@@ -669,6 +669,28 @@ class AccountGameplayDelegationRedisIntegrationTest {
       long originalDeadline = pendingReceipt.absoluteExpiryMillis();
       assertThat(admin.pexpiretime(ascii(tokenKey))).isEqualTo(originalDeadline);
 
+      assertThatThrownBy(() -> commitService.commitPendingCandidate(pending.requestId()))
+          .isInstanceOf(
+              AccountGameplayDelegationIssuanceCommitService.IssuanceCommitUnavailableException
+                  .class)
+          .hasNoCause();
+      var stillPending =
+          inTransaction(
+              database,
+              () -> issuance.readCurrentGameplayLoginReplay(pending.requestId()).orElseThrow());
+      assertThat(stillPending.state())
+          .isEqualTo(AccountGameplayDelegationIssuanceRepository.GameplayLoginReplayState.PENDING);
+      assertThat(stillPending.identity().operationId()).isEqualTo(pending.operationId());
+      assertThat(stillPending.operation().operationId()).isEqualTo(pending.operationId());
+      assertThat(stillPending.operation().requestId()).isEqualTo(pending.requestId());
+      assertThat(stillPending.operation().candidateBound()).isTrue();
+      assertThat(admin.get(ascii(tokenKey))).containsExactly(pendingBytes);
+      assertThat(admin.pexpiretime(ascii(tokenKey))).isEqualTo(originalDeadline);
+      assertThat(admin.get(ascii(issuerKey))).isNull();
+      assertThat(admin.get(ascii(accountKey))).isNull();
+
+      publishAndAssertCurrentOwnerProjection(projection, admin, accountId, sourceSnapshot);
+
       var committedResult = commitService.commitPendingCandidate(pending.requestId());
       assertThat(committedResult.outcome())
           .isEqualTo(AccountGameplayDelegationIssuanceCommitService.Outcome.COMMITTED);
@@ -926,6 +948,35 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .isNull();
       ownedKeys.add(tokenKey);
 
+      assertThatThrownBy(() -> commitService.commitPendingCandidate(requestId))
+          .isInstanceOf(
+              AccountGameplayDelegationIssuanceCommitService.IssuanceCommitUnavailableException
+                  .class)
+          .hasNoCause();
+      var stillPending =
+          inTransaction(
+              database, () -> issuance.readCurrentGameplayLoginReplay(requestId).orElseThrow());
+      assertThat(stillPending.state())
+          .isEqualTo(AccountGameplayDelegationIssuanceRepository.GameplayLoginReplayState.PENDING);
+      assertThat(stillPending.identity().operationId()).isEqualTo(pending.operationId());
+      assertThat(stillPending.operation().operationId()).isEqualTo(pending.operationId());
+      assertThat(stillPending.operation().requestId()).isEqualTo(requestId);
+      assertThat(stillPending.operation().candidateBound()).isTrue();
+      byte[] pendingRegistryBytes = admin.get(ascii(tokenKey));
+      assertThat(pendingRegistryBytes).containsExactly(pendingCandidate.canonicalRecordBytes());
+      assertThat(
+              GameSessionAccountDelegationRegistryRecord.decode(
+                      pendingRegistryBytes, REGISTRY_BYTES)
+                  .state())
+          .isEqualTo("pending");
+      long originalRegistryDeadline =
+          Math.addExact(Math.multiplyExact(pending.expiresAtEpochSecond(), 1_000L), 30_000L);
+      assertThat(admin.pexpiretime(ascii(tokenKey))).isEqualTo(originalRegistryDeadline);
+      assertThat(admin.get(ascii(issuerKey))).isNull();
+      assertThat(admin.get(ascii(accountKey))).isNull();
+
+      publishAndAssertCurrentOwnerProjection(projection, admin, accountId, sourceSnapshot);
+
       var commit = commitService.commitPendingCandidate(requestId);
       assertThat(commit.outcome())
           .isEqualTo(AccountGameplayDelegationIssuanceCommitService.Outcome.COMMITTED);
@@ -938,14 +989,11 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThat(committed.identity().callerContextId()).isEqualTo(callerContextId);
       assertThat(committed.envelopeSha256()).isNotBlank();
       assertThat(committed.tokenSha256()).isEqualTo(pendingCandidate.tokenHash());
-      long originalRegistryDeadline = committed.registryAbsoluteExpiryMillis();
+      assertThat(committed.registryAbsoluteExpiryMillis()).isEqualTo(originalRegistryDeadline);
       long originalRecoveryExpiry = committed.responseRecoveryExpiryEpochMillis();
-      assertThat(originalRegistryDeadline)
-          .isEqualTo(
-              Math.addExact(Math.multiplyExact(pending.expiresAtEpochSecond(), 1_000L), 30_000L));
       assertThat(originalRecoveryExpiry)
           .isEqualTo(Math.multiplyExact(pending.expiresAtEpochSecond(), 1_000L));
-      byte[] pendingRegistryBytes = admin.get(ascii(tokenKey));
+      pendingRegistryBytes = admin.get(ascii(tokenKey));
       assertThat(pendingRegistryBytes).isNotNull();
       assertThat(admin.pexpiretime(ascii(tokenKey))).isEqualTo(originalRegistryDeadline);
       assertThat(
@@ -1472,6 +1520,45 @@ class AccountGameplayDelegationRedisIntegrationTest {
   private static <T> T inTransaction(
       TestContext context, java.util.function.Supplier<T> operation) {
     return context.transaction().execute(status -> operation.get());
+  }
+
+  private static void publishAndAssertCurrentOwnerProjection(
+      AccountGameplayDelegationAuthorityProjection projection,
+      RedisCommands<byte[], byte[]> admin,
+      UUID accountId,
+      IssuerAccountSourceSnapshot ownerSnapshot) {
+    byte[][] expected =
+        AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(ownerSnapshot);
+    var expectedIssuer =
+        AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
+            expected[0], "issuer", ACCOUNT_ISSUER);
+    var expectedAccount =
+        AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
+            expected[1], "account", accountId.toString());
+
+    var publication = projection.publishCurrent(accountId);
+    assertThat(publication.redisOutcome())
+        .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+    assertThat(publication.issuerGeneration()).isEqualTo(ownerSnapshot.issuer().generation());
+    assertThat(publication.accountGeneration()).isEqualTo(ownerSnapshot.account().generation());
+    assertThat(publication.issuerDigest()).isEqualTo(expectedIssuer.digest());
+    assertThat(publication.accountDigest()).isEqualTo(expectedAccount.digest());
+
+    var readback = projection.observeCurrent(accountId);
+    assertThat(readback.issuerGeneration()).isEqualTo(publication.issuerGeneration());
+    assertThat(readback.accountGeneration()).isEqualTo(publication.accountGeneration());
+    assertThat(readback.issuerDigest()).isEqualTo(publication.issuerDigest());
+    assertThat(readback.accountDigest()).isEqualTo(publication.accountDigest());
+    assertThat(
+            admin.get(
+                ascii(
+                    AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
+                        + ACCOUNT_ISSUER)))
+        .containsExactly(expected[0]);
+    assertThat(
+            admin.get(
+                ascii(AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId)))
+        .containsExactly(expected[1]);
   }
 
   private static AccountGameplayDelegationRedisClient redisClient(
