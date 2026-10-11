@@ -53,4 +53,4 @@ CREATE TRIGGER trg_published_release_bundle_reference
     BEFORE INSERT OR UPDATE ON published_release_bundle
     FOR EACH ROW
     EXECUTE FUNCTION enforce_published_release_bundle_reference();
--- [jooq ignore end]
+-- [jooq ignore stop]
