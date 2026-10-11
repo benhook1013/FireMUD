@@ -802,11 +802,22 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .isInstanceOf(
               AccountGameplayDelegationCommittedIssuanceOwner.OwnerUnavailableException.class)
           .hasNoCause();
-      var changedSourceSnapshot =
+      var changedAccountAuthority =
           inTransaction(
-              database, () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId));
-      assertThat(changedSourceSnapshot.account().generation())
+              database,
+              () ->
+                  authorities.read(
+                      AccountAuthorityGenerationRepository.AuthorityScope.account(accountId)));
+      assertThat(changedAccountAuthority.generation())
           .isGreaterThan(sourceSnapshot.account().generation());
+      assertThatThrownBy(
+              () ->
+                  inTransaction(
+                      database,
+                      () -> sources.readCurrentIssuerAccountSources(ACCOUNT_ISSUER, accountId)))
+          .isInstanceOf(
+              AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class)
+          .hasNoCause();
       assertThat(writerProvider.openedConnections())
           .isEqualTo(connectionsBeforeAuthorityChange + 2);
       assertThat(writerProvider.trace(connectionsBeforeAuthorityChange))
