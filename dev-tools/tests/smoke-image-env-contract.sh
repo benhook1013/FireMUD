@@ -73,10 +73,15 @@ bash() {
     ensure-dev-certs.sh)
       local certificate_root="${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?}"
       mkdir -p "$certificate_root/workloads/game-session-service"
-      printf '%s\n' '-----BEGIN CERTIFICATE-----' '-----END CERTIFICATE-----' \
+      mkdir -p "$certificate_root/workloads/world-management-service"
+      printf '%s\n' '-----BEGIN CERTIFICATE-----' 'bW9jay1jZXJ0aWZpY2F0ZQ==' '-----END CERTIFICATE-----' \
         >"$certificate_root/workloads/game-session-service/client.crt"
       cp "$certificate_root/workloads/game-session-service/client.crt" \
         "$certificate_root/workloads/game-session-service/ca.crt"
+      cp "$certificate_root/workloads/game-session-service/client.crt" \
+        "$certificate_root/workloads/world-management-service/client.crt"
+      cp "$certificate_root/workloads/game-session-service/ca.crt" \
+        "$certificate_root/workloads/world-management-service/ca.crt"
       ;;
     verify-compose-health.sh)
       return 0
@@ -102,7 +107,11 @@ openssl() {
   fi
   case " $* " in
     *" -ext subjectAltName "*)
-      printf '%s\n' 'X509v3 Subject Alternative Name:' '    URI:spiffe://firemud/ns/dev/sa/game-session-service'
+      if [[ "$*" == *"/workloads/world-management-service/client.crt"* ]]; then
+        printf '%s\n' 'X509v3 Subject Alternative Name:' '    URI:spiffe://firemud/ns/dev/sa/world-management-service'
+      else
+        printf '%s\n' 'X509v3 Subject Alternative Name:' '    URI:spiffe://firemud/ns/dev/sa/game-session-service'
+      fi
       ;;
     *" -outform DER "*)
       printf 'mock-der-certificate'
