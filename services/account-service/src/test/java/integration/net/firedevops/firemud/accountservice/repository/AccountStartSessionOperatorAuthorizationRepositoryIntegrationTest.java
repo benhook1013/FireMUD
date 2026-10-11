@@ -639,12 +639,32 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
                             + "WHERE control_plane_request_id = ?",
                         REQUEST_ID)),
         "StartSession operator authorization evidence cannot be deleted");
+    assertThatThrownBy(
+            () ->
+                context.inTransactionWithoutResult(
+                    () ->
+                        context.transactionDsl.execute(
+                            "TRUNCATE account_start_session_operator_authorizations")))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .satisfies(
+            failure -> {
+              SQLException sqlFailure = findSqlException(failure);
+              assertThat(sqlFailure.getSQLState()).isEqualTo("0A000");
+              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+                throw new AssertionError(
+                    "Foreign-key truncate rejection must be a PostgreSQL exception", sqlFailure);
+              }
+              var serverError = postgresFailure.getServerErrorMessage();
+              assertThat(serverError).isNotNull();
+              assertThat(serverError.getMessage())
+                  .isEqualTo("cannot truncate a table referenced in a foreign key constraint");
+            });
     assertImmutableGuardRejected(
         () ->
             context.inTransactionWithoutResult(
                 () ->
                     context.transactionDsl.execute(
-                        "TRUNCATE account_start_session_operator_authorizations")),
+                        "TRUNCATE account_start_session_operator_authorizations CASCADE")),
         "StartSession operator authorization evidence cannot be truncated");
 
     var retained =
@@ -812,7 +832,6 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         .defaultSchema(context.schema)
         .placeholders(Map.of("serviceSchema", context.schema))
         .locations("classpath:db/migration")
-        .target("126")
         .load()
         .migrate();
 
