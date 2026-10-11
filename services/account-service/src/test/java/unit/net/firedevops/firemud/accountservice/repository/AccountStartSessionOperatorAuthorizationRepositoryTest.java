@@ -818,8 +818,6 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
     private final AtomicInteger redemptionUpdateCount = new AtomicInteger();
     private final List<String> queries = new java.util.ArrayList<>();
     private final AtomicInteger erasureUpdateCount = new AtomicInteger();
-    private String lastInsertSql = "";
-    private String lastRedemptionSql = "";
     private String lastErasureSql = "";
     private String lastLockSql = "";
     private StoredRow row;
@@ -831,7 +829,6 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
       queries.add(sql);
       Object[] bind = context.bindings();
       if (sql.startsWith("insert into account_start_session_operator_authorizations")) {
-        lastInsertSql = sql;
         if (row == null) {
           row = StoredRow.fromInsert(bind);
           insertCount.incrementAndGet();
@@ -853,7 +850,6 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
           erasureUpdateCount.incrementAndGet();
           return new MockResult[] {new MockResult(1)};
         }
-        lastRedemptionSql = sql;
         if (row == null || !"ISSUED".equals(row.status)) {
           return new MockResult[] {new MockResult(0)};
         }
