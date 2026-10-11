@@ -243,6 +243,8 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         stored(actorId, tenantId, tokenJti, issuerOperationId, source);
     AccountStartSessionAuthorityCapture capture =
         capture(tuple, source, stored, requestOwnerId, 10L);
+    Map<String, AccountStartSessionAuthorityCapture> captures = new ConcurrentHashMap<>();
+    captures.put(tuple.controlPlaneRequestId(), capture);
     Current current = new Current(stored, source);
 
     var actors = org.mockito.Mockito.mock(AccountControlUiActorService.class);
@@ -272,17 +274,50 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         .thenAnswer(ignored -> new SimpleTransactionStatus());
     when(hostedTerms.captureCurrentEnvironmentBoundary()).thenReturn(environment);
     when(captureRepository.prepareOrReadExact(any(), any(), anyString(), any(), anyLong()))
-        .thenReturn(capture);
+        .thenAnswer(
+            invocation -> {
+              Current requestedCurrent = invocation.getArgument(0);
+              StartSessionPreAuthorizationReservationTuple requestedTuple =
+                  invocation.getArgument(1);
+              UUID requestedOwner = invocation.getArgument(3);
+              long requestedFence = invocation.getArgument(4);
+              return captures.computeIfAbsent(
+                  requestedTuple.controlPlaneRequestId(),
+                  ignored ->
+                      capture(
+                          requestedTuple,
+                          requestedCurrent.source(),
+                          requestedCurrent.stored(),
+                          requestedOwner,
+                          requestedFence));
+            });
     when(captureRepository.lockExactCurrent(any(), any(), any(), anyString(), any(), anyLong()))
-        .thenReturn(capture);
+        .thenAnswer(
+            invocation -> {
+              StartSessionPreAuthorizationReservationTuple requestedTuple =
+                  invocation.getArgument(2);
+              AccountStartSessionAuthorityCapture requestedCapture =
+                  captures.get(requestedTuple.controlPlaneRequestId());
+              assertThat(requestedCapture).isNotNull();
+              return requestedCapture;
+            });
     when(captureRepository.lockReadExactCurrent(any(), any(), anyString(), any(), anyLong()))
-        .thenReturn(capture);
+        .thenAnswer(
+            invocation -> {
+              StartSessionPreAuthorizationReservationTuple requestedTuple =
+                  invocation.getArgument(1);
+              AccountStartSessionAuthorityCapture requestedCapture =
+                  captures.get(requestedTuple.controlPlaneRequestId());
+              assertThat(requestedCapture).isNotNull();
+              return requestedCapture;
+            });
     when(claims.readCurrentClaimEvidence(any(), any(), anyLong(), any(), anyLong(), any()))
         .thenAnswer(
             invocation ->
                 claimEvidence(
                     invocation.<StartSessionPreAuthorizationReservationTuple>getArgument(0),
-                    invocation.<UUID>getArgument(1)));
+                    invocation.<UUID>getArgument(1),
+                    operationClock.instant()));
 
     Path responseKeyringDirectory = temporaryDirectory.resolve("operator-response");
     Files.createDirectories(responseKeyringDirectory);
@@ -1454,6 +1489,11 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
 
   private static ReadCurrentClaimEvidenceResponse claimEvidence(
       StartSessionPreAuthorizationReservationTuple tuple, UUID ownerId) {
+    return claimEvidence(tuple, ownerId, NOW);
+  }
+
+  private static ReadCurrentClaimEvidenceResponse claimEvidence(
+      StartSessionPreAuthorizationReservationTuple tuple, UUID ownerId, Instant observedAt) {
     return ReadCurrentClaimEvidenceResponse.newBuilder()
         .setControlPlaneRequestId(tuple.controlPlaneRequestId())
         .setPreAuthorizationTupleJson(
@@ -1463,8 +1503,8 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         .setReservationClaimFence(10L)
         .setClaimOwnerId(ownerId.toString())
         .setClaimFence(10L)
-        .setObservedAtEpochMillis(NOW.minusSeconds(1).toEpochMilli())
-        .setClaimExpiresAtEpochMillis(NOW.plusSeconds(30).toEpochMilli())
+        .setObservedAtEpochMillis(observedAt.minusSeconds(1).toEpochMilli())
+        .setClaimExpiresAtEpochMillis(observedAt.plusSeconds(30).toEpochMilli())
         .build();
   }
 }
