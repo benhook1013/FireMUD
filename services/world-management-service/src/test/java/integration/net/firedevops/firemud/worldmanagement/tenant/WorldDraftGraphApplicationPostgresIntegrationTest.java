@@ -2910,8 +2910,10 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
                               activationRequest.expectedRowVersion() + 1L,
                               forgedResultBytes,
                               sha256Digest(forgedResultBytes)))
+                  // The forged namespace is rejected by V43's earlier immutable-binding guard.
                   .hasMessageContaining(
-                      "lacks its exact pending Account-protected operation fence");
+                      "Canonical activation proof differs from immutable World association, "
+                          + "launch, preparation, or ROOM bindings");
               dsl.execute("ROLLBACK TO SAVEPOINT forged_world_activation");
               // V35's reserved-tenant guard denies a raw write without an activation manifest.
               dsl.execute("SAVEPOINT forged_active_cas");

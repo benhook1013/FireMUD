@@ -396,7 +396,7 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
                 + " initial_selection_response_digest, descriptor_pin_request_bytes,"
                 + " descriptor_pin_request_digest, descriptor_pin_response_bytes,"
                 + " descriptor_pin_response_digest)"
-                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             NAMESPACE,
             tuple.controlPlaneRequestId(),
             canonicalTenantId,

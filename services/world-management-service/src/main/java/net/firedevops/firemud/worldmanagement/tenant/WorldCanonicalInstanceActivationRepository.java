@@ -354,10 +354,11 @@ public final class WorldCanonicalInstanceActivationRepository {
                     request, WorldCanonicalInstanceActivation.Outcome.COMMITTED, null, predicted);
             insertResult(request, committed);
             held.requireHeld();
+            // V43's exact execution manifest predicts this row with the transaction timestamp.
             int updated =
                 dsl.execute(
                     "UPDATE world_instance SET status='ACTIVE', lifecycle_epoch=lifecycle_epoch+1, "
-                        + "row_version=row_version+1, updated_at=clock_timestamp() "
+                        + "row_version=row_version+1, updated_at=CURRENT_TIMESTAMP "
                         + "WHERE id=(SELECT world_instance_id FROM world_canonical_instance_association "
                         + "WHERE canonical_game_instance_id=? AND schema_version=2 "
                         + "AND canonical_realm_id=? AND catalog_revision=?) "

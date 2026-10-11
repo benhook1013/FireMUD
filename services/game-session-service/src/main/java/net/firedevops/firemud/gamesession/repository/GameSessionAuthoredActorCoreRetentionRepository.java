@@ -90,7 +90,7 @@ public final class GameSessionAuthoredActorCoreRetentionRepository {
             + "launch_descriptor_id, descriptor_request_digest, descriptor_result_digest, "
             + "release_attestation_evidence_digest, source_read_request_bytes, "
             + "canonical_source_result_bytes, source_result_digest) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             + "ON CONFLICT (target_namespace, control_plane_request_id) DO NOTHING",
         candidate.targetNamespace(),
         candidate.controlPlaneRequestId(),

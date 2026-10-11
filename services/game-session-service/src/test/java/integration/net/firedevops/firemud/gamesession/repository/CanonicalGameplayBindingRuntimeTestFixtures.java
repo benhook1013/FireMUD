@@ -291,6 +291,7 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         descriptor.versionId(),
         descriptor.releaseBundleId(),
         target.generationConfigRevision(),
+        descriptor.versionStateEpoch(),
         target.controlPlaneRequestId(),
         launchProof.originalTuple().mutationDigest(),
         target.publishedReleaseBundleRef());

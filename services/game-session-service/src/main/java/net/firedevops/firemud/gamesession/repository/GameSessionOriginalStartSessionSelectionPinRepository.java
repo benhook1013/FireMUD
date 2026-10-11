@@ -87,7 +87,7 @@ public final class GameSessionOriginalStartSessionSelectionPinRepository {
             + "initial_selection_response_digest, descriptor_pin_request_bytes, "
             + "descriptor_pin_request_digest, descriptor_pin_response_bytes, "
             + "descriptor_pin_response_digest) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             + "ON CONFLICT (target_namespace, control_plane_request_id) DO NOTHING",
         candidate.targetNamespace(),
         candidate.controlPlaneRequestId(),

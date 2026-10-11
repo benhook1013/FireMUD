@@ -94,9 +94,8 @@ class StartSessionAuthoredActorCoreProjectionPostgresIntegrationTest {
                   "SELECT count(*) FROM pg_constraint "
                       + "WHERE conrelid = to_regclass("
                       + "'game_design_start_session_authored_actor_core_projection') "
-                      + "AND contype = 'f'",
-                  Integer.class))
-          .isEqualTo(2);
+                      + "AND contype = 'f'"))
+          .isEqualTo(2L);
       var retained = new StartSessionAuthoredActorCoreProjectionRepository(dsl).findByOwner(owner);
       assertThat(retained).hasSize(1);
       assertThat(retained.getFirst().targetNamespace()).isEqualTo(owner.targetNamespace());
