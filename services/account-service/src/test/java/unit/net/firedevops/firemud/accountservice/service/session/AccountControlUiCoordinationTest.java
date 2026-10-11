@@ -70,7 +70,7 @@ class AccountControlUiCoordinationTest {
   }
 
   @Test
-  void registryLuaRejectsNonNumericExpiryBeforeExpiryArithmetic() throws Exception {
+  void registryLuaRejectsNonNumericExpAndDeadlineBeforeExpiryArithmetic() throws Exception {
     var descriptor = AccountControlUiRegistryContract.descriptor();
     var resource =
         AccountControlUiCoordination.class
@@ -80,10 +80,18 @@ class AccountControlUiCoordinationTest {
 
     try (resource) {
       String source = new String(resource.readAllBytes(), StandardCharsets.UTF_8);
-      int numericGuard = source.indexOf("or type(nextRecord.exp) ~= 'number'");
-      int expiryMath = source.indexOf("or nextRecord.exp * 1000 ~= deadline then return -1 end");
-      assertThat(numericGuard).isGreaterThanOrEqualTo(0);
-      assertThat(expiryMath).isGreaterThan(numericGuard);
+      int expNumericGuard = source.indexOf("or type(nextRecord.exp) ~= 'number'");
+      int cleanupNumericGuard =
+          source.indexOf("or type(nextRecord.registryCleanupDeadlineEpochMillis) ~= 'number'");
+      int cleanupDeadlineArgumentMatch =
+          source.indexOf("or nextRecord.registryCleanupDeadlineEpochMillis ~= deadline");
+      int expiryMath =
+          source.indexOf(
+              "or nextRecord.registryCleanupDeadlineEpochMillis < nextRecord.exp * 1000");
+      assertThat(expNumericGuard).isGreaterThanOrEqualTo(0);
+      assertThat(cleanupNumericGuard).isGreaterThan(expNumericGuard);
+      assertThat(cleanupDeadlineArgumentMatch).isGreaterThan(cleanupNumericGuard);
+      assertThat(expiryMath).isGreaterThan(cleanupDeadlineArgumentMatch);
     }
   }
 
@@ -188,6 +196,7 @@ class AccountControlUiCoordinationTest {
     when(row.get("active_registry", byte[].class)).thenReturn(record("active"));
     when(row.get("issued_at_epoch_second", Long.class)).thenReturn(EXPIRY / 1000 - 300);
     when(row.get("expires_at_epoch_second", Long.class)).thenReturn(EXPIRY / 1000);
+    when(row.get("registry_cleanup_deadline_epoch_millis", Long.class)).thenReturn(EXPIRY);
     when(row.get("recovery_expires_at", OffsetDateTime.class))
         .thenReturn(
             OffsetDateTime.ofInstant(Instant.ofEpochMilli(EXPIRY - 240000), ZoneOffset.UTC));
@@ -241,6 +250,7 @@ class AccountControlUiCoordinationTest {
             Map.entry("operationId", "40000000-0000-4000-8000-000000000004"),
             Map.entry("requestId", "50000000-0000-4000-8000-000000000005"),
             Map.entry("requestDigest", "b".repeat(64)),
+            Map.entry("registryCleanupDeadlineEpochMillis", EXPIRY),
             Map.entry("state", state),
             Map.entry(
                 "authoritySourceVersions",
