@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
@@ -363,7 +364,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
             invocation -> {
               VersionDto version = invocation.getArgument(0);
               return PublishedWorldSelectorFixtures.participants(
-                  version.id(), fixture.operation().world());
+                  version.id(),
+                  fixture.operation().world(),
+                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
             });
     Mockito.when(assetExportService.exportAssets(tenantId, fixture.version().getVersionNumber()))
         .thenAnswer(invocation -> recordFixtureCandidate(fixture));
@@ -425,7 +428,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
               candidateVersionId.set(candidate.id());
               candidateVersionNumber.set(candidate.versionNumber());
               return PublishedWorldSelectorFixtures.participants(
-                  candidate.id(), fixture.operation().world());
+                  candidate.id(),
+                  fixture.operation().world(),
+                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
             });
     Mockito.doAnswer(
             invocation -> {

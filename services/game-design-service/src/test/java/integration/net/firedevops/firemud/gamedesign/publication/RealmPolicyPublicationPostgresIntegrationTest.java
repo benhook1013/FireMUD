@@ -13,6 +13,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.PostgresProperties;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
@@ -699,7 +700,9 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         new ObjectMapper()
             .writeValueAsString(
                 PublishedWorldSelectorFixtures.participants(
-                    operation.versionId(), operation.world())));
+                    operation.versionId(),
+                    operation.world(),
+                    AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION)));
     bundle.setWorldPublishedStartLocationEvidenceJson(
         new String(operation.world().canonicalBytes(), StandardCharsets.UTF_8));
     return bundle;
