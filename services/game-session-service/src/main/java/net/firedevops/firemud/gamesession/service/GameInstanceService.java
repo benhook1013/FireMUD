@@ -1,6 +1,6 @@
 package net.firedevops.firemud.gamesession.service;
 
-import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidence;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 
@@ -14,7 +14,7 @@ public interface GameInstanceService {
 
   /** Starts or resumes a non-replacing, run-owned local fixture launch. */
   RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(
-      StartSessionRequest request, AuthoredWorldSourceEvidence sourceEvidence);
+      StartSessionRequest request, RunOwnedInitialAdmissionLaunchEvidence launchEvidence);
 
   GameInstanceDto stopSession(long sessionId);
 
