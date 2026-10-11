@@ -76,8 +76,13 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
           seedSourceAndCatalog(tx, target);
           seedFreshTenantAssociation(tx, target);
           seedStartingRuntimeAndLaunch(tx, target);
+          // The fixture reaches RUNNING with the exact stipulated World ACTIVE epoch.
           tx.execute(
-              "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
+              "UPDATE game_instances SET status = 'RUNNING',"
+                  + " run_owned_start_preparing_epoch = ?, run_owned_start_active_epoch = ?"
+                  + " WHERE tenant_id = ? AND id = ?",
+              target.activeWorldEpoch() - 1,
+              target.activeWorldEpoch(),
               target.gameSessionTenantId(),
               target.gameInstanceId());
         });

@@ -1892,7 +1892,8 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
               () -> service.activateProtected(substituted, stipulatedActivationAuthority()))
           .isInstanceOf(
               WorldCanonicalInstanceActivationRepository.ActivationConflictException.class)
-          .hasMessageContaining("retry changed its original protection or activation identity");
+          .hasMessageContaining(
+              "World activation identity is already bound to different Account protection evidence");
     }
 
     // The single-use activation capability was consumed; its retained ledger cannot authorize a
@@ -2660,7 +2661,28 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             request.expectedPriorPointerVersion());
     assertThatThrownBy(() -> repository.acquire(changedBinding, active.request()))
         .isInstanceOf(WorldCanonicalInitialAdmissionHoldRepository.HoldConflictException.class)
-        .hasMessageContaining("request identity was reused with changed bindings");
+        .hasMessageContaining(
+            "Canonical World initial-admission request differs from its persisted association");
+    Request changedRequestDigest =
+        new Request(
+            request.targetNamespace(),
+            request.canonicalTenantId(),
+            request.worldSlug(),
+            request.realmId(),
+            request.playableStateNamespaceId(),
+            request.playableStateScope(),
+            request.canonicalGameInstanceId(),
+            request.canonicalVersionId(),
+            request.activeLifecycleEpoch(),
+            request.initialAdmissionRequestId(),
+            "b".repeat(64),
+            request.initialAdmissionOrigin(),
+            request.expectedCatalogRevision(),
+            request.expectedPriorPointerVersion());
+    assertThatThrownBy(() -> repository.acquire(changedRequestDigest, active.request()))
+        .isInstanceOf(WorldCanonicalInitialAdmissionHoldRepository.HoldConflictException.class)
+        .hasMessageContaining(
+            "Canonical World initial-admission request identity was reused with changed bindings");
     assertThat(repository.readIdentity(request).orElseThrow().canonicalBytes())
         .containsExactly(acquired.canonicalBytes());
     assertThat(
@@ -2691,6 +2713,30 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             .lifecycleRepository()
             .read(lifecycleRequestWithFreshReadId(activation.lifecycleEvidence().request()))
             .orElseThrow();
+    PreparedLifecycleFixture secondFixture = materializedLifecycleFixture();
+    var secondActivation =
+        activateProtected(
+            secondFixture,
+            new WorldCanonicalInstanceActivation.Request(
+                UUID.randomUUID(), secondFixture.preparing()),
+            ignored -> stipulatedActivationAuthority());
+    assertThat(secondActivation.outcome())
+        .isEqualTo(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
+    var secondActive =
+        secondFixture
+            .lifecycleRepository()
+            .read(lifecycleRequestWithFreshReadId(secondActivation.lifecycleEvidence().request()))
+            .orElseThrow();
+    var firstAssociation = fixture.materialized().association();
+    var secondAssociation = secondFixture.materialized().association();
+    assertThat(secondActive.request().targetNamespace())
+        .isEqualTo(active.request().targetNamespace());
+    assertThat(secondAssociation.identity().canonicalRealmId())
+        .isNotEqualTo(firstAssociation.identity().canonicalRealmId());
+    assertThat(secondAssociation.identity().canonicalGameInstanceId())
+        .isNotEqualTo(firstAssociation.identity().canonicalGameInstanceId());
+    assertThat(secondAssociation.worldPrepareFields().privateTenantKey())
+        .isNotEqualTo(firstAssociation.worldPrepareFields().privateTenantKey());
 
     Request firstRequest =
         canonicalReconciliationHoldRequest(
@@ -2700,15 +2746,15 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
             "c".repeat(64));
     Request secondRequest =
         canonicalReconciliationHoldRequest(
-            active,
-            fixture.materialized().association().identity(),
+            secondActive,
+            secondAssociation.identity(),
             "canonical-reconcile-second-" + UUID.randomUUID(),
             "d".repeat(64));
     var repository =
         new WorldCanonicalInitialAdmissionHoldRepository(
             dsl, manager, associationRepository(), fixture.lifecycleRepository());
     HoldIdentity first = repository.acquire(firstRequest, active.request());
-    HoldIdentity second = repository.acquire(secondRequest, active.request());
+    HoldIdentity second = repository.acquire(secondRequest, secondActive.request());
 
     // A different valid namespace sees no rows from this real canonical namespace.
     assertThat(repository.findReconciliationCandidates("otherworld", null, 8)).isEmpty();
