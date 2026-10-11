@@ -209,29 +209,35 @@ class TestDataSeederTest {
 
   @Test
   void acceptsExpectedWorkloadUriAlongsideGeneratedDnsSans() throws Exception {
-    CertificateFixture fixture =
+    CertificateFixture gameSession =
         certificateFixture(
+            "game-session",
             List.of(
                 List.of(6, GAME_SESSION_URI_SAN),
                 List.of(2, "game-session-service"),
                 List.of(2, "game-session-service.dev"),
                 List.of(2, "game-session-service.dev.svc"),
                 List.of(2, "game-session-service.dev.svc.cluster.local")));
+    CertificateFixture worldManagement =
+        certificateFixture("world-management", List.of(List.of(6, WORLD_MANAGEMENT_URI_SAN)));
 
-    requireCertificatePins(fixture);
+    requireCertificatePins(gameSession, worldManagement);
   }
 
   @Test
   void rejectsCertificateWithoutWorkloadUriDespiteMatchingDigestPins() throws Exception {
-    CertificateFixture fixture =
+    CertificateFixture gameSession =
         certificateFixture(
+            "game-session",
             List.of(
                 List.of(2, "game-session-service"),
                 List.of(2, "game-session-service.dev"),
                 List.of(2, "game-session-service.dev.svc"),
                 List.of(2, "game-session-service.dev.svc.cluster.local")));
+    CertificateFixture worldManagement =
+        certificateFixture("world-management", List.of(List.of(6, WORLD_MANAGEMENT_URI_SAN)));
 
-    assertThatThrownBy(() -> requireCertificatePins(fixture))
+    assertThatThrownBy(() -> requireCertificatePins(gameSession, worldManagement))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("wrong workload URI SAN");
   }
@@ -242,9 +248,11 @@ class TestDataSeederTest {
         List.of(
             "spiffe://firemud/ns/qa/sa/game-session-service",
             "spiffe://firemud/ns/dev/sa/world-management-service")) {
-      CertificateFixture fixture = certificateFixture(List.of(List.of(6, uri)));
+      CertificateFixture gameSession = certificateFixture("game-session", List.of(List.of(6, uri)));
+      CertificateFixture worldManagement =
+          certificateFixture("world-management", List.of(List.of(6, WORLD_MANAGEMENT_URI_SAN)));
 
-      assertThatThrownBy(() -> requireCertificatePins(fixture))
+      assertThatThrownBy(() -> requireCertificatePins(gameSession, worldManagement))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("wrong workload URI SAN");
     }
@@ -252,15 +260,38 @@ class TestDataSeederTest {
 
   @Test
   void rejectsMultipleWorkloadUrisDespiteMatchingDigestPins() throws Exception {
-    CertificateFixture fixture =
+    CertificateFixture gameSession =
         certificateFixture(
-            List.of(
-                List.of(6, GAME_SESSION_URI_SAN),
-                List.of(6, "spiffe://firemud/ns/dev/sa/world-management-service")));
+            "game-session",
+            List.of(List.of(6, GAME_SESSION_URI_SAN), List.of(6, WORLD_MANAGEMENT_URI_SAN)));
+    CertificateFixture worldManagement =
+        certificateFixture("world-management", List.of(List.of(6, WORLD_MANAGEMENT_URI_SAN)));
 
-    assertThatThrownBy(() -> requireCertificatePins(fixture))
+    assertThatThrownBy(() -> requireCertificatePins(gameSession, worldManagement))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("wrong workload URI SAN");
+  }
+
+  @Test
+  void rejectsWrongWorldManagementLeafPinDespiteMatchingSessionPin() throws Exception {
+    CertificateFixture gameSession =
+        certificateFixture("game-session", List.of(List.of(6, GAME_SESSION_URI_SAN)));
+    CertificateFixture worldManagement =
+        certificateFixture("world-management", List.of(List.of(6, WORLD_MANAGEMENT_URI_SAN)));
+
+    assertThatThrownBy(
+            () ->
+                ReflectionTestUtils.invokeMethod(
+                    seeder,
+                    "requireCertificatePins",
+                    gameSession.leaf(),
+                    worldManagement.leaf(),
+                    gameSession.ca(),
+                    gameSession.leafDigest(),
+                    "0".repeat(64),
+                    gameSession.caDigest()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("certificates do not match capability pins");
   }
 
   @Test
@@ -389,9 +420,9 @@ class TestDataSeederTest {
     return bundle;
   }
 
-  private CertificateFixture certificateFixture(List<List<?>> subjectAlternativeNames)
-      throws Exception {
-    byte[] leafEncoding = "fixture-game-session-leaf".getBytes(StandardCharsets.UTF_8);
+  private CertificateFixture certificateFixture(
+      String leafName, List<List<?>> subjectAlternativeNames) throws Exception {
+    byte[] leafEncoding = ("fixture-" + leafName + "-leaf").getBytes(StandardCharsets.UTF_8);
     byte[] caEncoding = "fixture-ca".getBytes(StandardCharsets.UTF_8);
     X509Certificate leaf = mock(X509Certificate.class);
     X509Certificate ca = mock(X509Certificate.class);
@@ -407,14 +438,17 @@ class TestDataSeederTest {
         leaf, ca, certificateDigest(leafEncoding), certificateDigest(caEncoding));
   }
 
-  private void requireCertificatePins(CertificateFixture fixture) {
+  private void requireCertificatePins(
+      CertificateFixture gameSession, CertificateFixture worldManagement) {
     ReflectionTestUtils.invokeMethod(
         seeder,
         "requireCertificatePins",
-        fixture.leaf(),
-        fixture.ca(),
-        fixture.leafDigest(),
-        fixture.caDigest());
+        gameSession.leaf(),
+        worldManagement.leaf(),
+        gameSession.ca(),
+        gameSession.leafDigest(),
+        worldManagement.leafDigest(),
+        gameSession.caDigest());
   }
 
   private String certificateDigest(byte[] encoding) throws Exception {
@@ -423,4 +457,7 @@ class TestDataSeederTest {
 
   private record CertificateFixture(
       X509Certificate leaf, X509Certificate ca, String leafDigest, String caDigest) {}
+
+  private static final String WORLD_MANAGEMENT_URI_SAN =
+      "spiffe://firemud/ns/dev/sa/world-management-service";
 }

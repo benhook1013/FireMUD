@@ -2,8 +2,12 @@ package net.firedevops.firemud.gamesession.data;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.ArtifactState;
+import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
@@ -15,6 +19,7 @@ public final class RunOwnedInitialAdmissionLaunchEvidenceTestFixture {
   private static final String RUN_ID = "fixture-evidence-test";
   private static final String PROJECT_NAME = "firemud-smoke-fixture-evidence-test";
   private static final String LEAF_SHA = "a".repeat(64);
+  private static final String WORLD_LEAF_SHA = "c".repeat(64);
   private static final String CA_SHA = "b".repeat(64);
   private static final String CANONICAL_VERSION_ID = "10000000-0000-4000-8000-000000000011";
 
@@ -75,7 +80,8 @@ public final class RunOwnedInitialAdmissionLaunchEvidenceTestFixture {
         request.gameTemplateId(),
         bundle,
         artifactState,
-        versionState);
+        versionState,
+        launchDescriptor(request, sourceEvidence, bundle, versionState));
   }
 
   private static RunOwnedInitialAdmissionFixtureCapability.CertificatePins pins() {
@@ -139,7 +145,7 @@ public final class RunOwnedInitialAdmissionLaunchEvidenceTestFixture {
 
   private static String capabilityJson(StartSessionRequest request) {
     return """
-        {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":%d,"gameTemplateId":%d,"ownerAccountId":%d,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"ALLOW_NEW","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s"}%n\
+        {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":%d,"gameTemplateId":%d,"ownerAccountId":%d,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"ALLOW_NEW","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s"}%n\
         """
         .formatted(
             RunOwnedInitialAdmissionFixtureCapability.CAPABILITY_SCHEMA,
@@ -151,7 +157,9 @@ public final class RunOwnedInitialAdmissionLaunchEvidenceTestFixture {
             request.ownerAccountId(),
             LEAF_SHA,
             RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
-            CA_SHA);
+            CA_SHA,
+            RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN,
+            WORLD_LEAF_SHA);
   }
 
   private static String sourceReceiptJson(
@@ -161,7 +169,7 @@ public final class RunOwnedInitialAdmissionLaunchEvidenceTestFixture {
       VersionAssetArtifactState artifactState,
       VersionStateSnapshot versionState) {
     return """
-        {"schema":"%s","runId":"%s","composeProjectName":"%s","fixtureOperationId":"%s","ownerService":"%s","gameSessionUriSan":"%s","gameSessionLeafSha256":"%s","caCertificateSha256":"%s","sourceEvidence":{"schemaVersion":%d,"targetNamespace":"%s","registrationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","tenantSlug":"%s","worldSlug":"%s","worldDisplayName":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"launchReadEvidence":{"schema":"%s","gameTemplateId":%d,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s"}}%n\
+        {"schema":"%s","runId":"%s","composeProjectName":"%s","fixtureOperationId":"%s","ownerService":"%s","gameSessionUriSan":"%s","gameSessionLeafSha256":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","sourceEvidence":{"schemaVersion":%d,"targetNamespace":"%s","registrationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","tenantSlug":"%s","worldSlug":"%s","worldDisplayName":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"launchReadEvidence":{"schema":"%s","gameTemplateId":%d,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s","launchDescriptorBase64":"%s"}}%n\
         """
         .formatted(
             RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_SCHEMA,
@@ -172,6 +180,8 @@ public final class RunOwnedInitialAdmissionLaunchEvidenceTestFixture {
             RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
             LEAF_SHA,
             CA_SHA,
+            RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN,
+            WORLD_LEAF_SHA,
             source.schemaVersion(),
             source.targetNamespace(),
             source.registrationRequestId(),
@@ -189,7 +199,47 @@ public final class RunOwnedInitialAdmissionLaunchEvidenceTestFixture {
             request.gameTemplateId(),
             encode(bundle.toByteArray()),
             encode(artifactState.toByteArray()),
-            encode(versionState.toByteArray()));
+            encode(versionState.toByteArray()),
+            encode(launchDescriptor(request, source, bundle, versionState).toByteArray()));
+  }
+
+  private static LaunchDescriptor launchDescriptor(
+      StartSessionRequest request,
+      AuthoredWorldSourceEvidence source,
+      PublishedReleaseBundle bundle,
+      VersionStateSnapshot versionState) {
+    var descriptorRequest =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_TARGET_NAMESPACE,
+            request.controlPlaneRequestId(),
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest(),
+            request.gameTemplateId(),
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null);
+    var descriptorEvidence =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            descriptorRequest,
+            "launch-descriptor-fixture-11",
+            bundle.getVersionId(),
+            false,
+            null,
+            "{}",
+            bundle.getGenerationConfigRevision(),
+            versionState.getVersionStateEpoch(),
+            bundle.getId(),
+            bundle.getPublishedReleaseBundleRef(),
+            false,
+            null);
+    return AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(descriptorEvidence);
   }
 
   private static String encode(byte[] bytes) {

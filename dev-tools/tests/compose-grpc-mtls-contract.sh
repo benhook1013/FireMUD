@@ -271,6 +271,7 @@ capability_path = "/app/run-owned-initial-admission-capability.json"
 source_receipt_path = "/app/run-owned-authored-world-source/source-receipt.json"
 source_receipt_dir = "/app/run-owned-authored-world-source"
 game_session_leaf_path = "/app/game-session-fixture-client.crt"
+world_management_leaf_path = "/app/world-management-fixture-client.crt"
 fixture_keys = (
     "FIREMUD_SMOKE_RUN_ID",
     "FIREMUD_SMOKE_COMPOSE_PROJECT_NAME",
@@ -278,8 +279,9 @@ fixture_keys = (
     "FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH",
     "FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH",
 )
+fixture_services = ("game-design-service", "game-session-service", "world-management-service")
 for service, block in service_blocks.items():
-    if service in ("game-design-service", "game-session-service"):
+    if service in fixture_services:
         for key in fixture_keys:
             assert any(line.startswith(f"      {key}:") for line in block), key
         assert any(
@@ -308,12 +310,21 @@ for service, block in service_blocks.items():
                 line == "        source: ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/game-session-service/client.crt"
                 for line in block
             )
+            assert any(line == f"        target: {world_management_leaf_path}" for line in block)
+            assert any(
+                line == "        source: ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/world-management-service/client.crt"
+                for line in block
+            )
             assert any(line == "        read_only: false" for line in block)
+        else:
+            assert any(line == f"        target: {source_receipt_dir}" for line in block)
+            assert any(line == "        read_only: true" for line in block)
     else:
         assert not any(any(key in line for key in fixture_keys) for line in block), service
         assert not any(capability_path in line for line in block), service
         assert not any(source_receipt_dir in line for line in block), service
         assert not any(game_session_leaf_path in line for line in block), service
+        assert not any(world_management_leaf_path in line for line in block), service
 PY
 rg -Fq 'client-auth: REQUIRE' "$ROOT_DIR/services/world-management-service/src/main/resources/application.yml"
 world_guard="$ROOT_DIR/services/world-management-service/src/main/java/net/firedevops/firemud/worldmanagement/service/impl/InitialAdmissionBindWorkloadGuard.java"
@@ -387,6 +398,7 @@ app_names = {
     "game-session-service", "logging-admin-service", "social-groups-service",
     "tcp-proxy-service", "world-management-service",
 }
+fixture_services = ("game-design-service", "game-session-service", "world-management-service")
 for name in app_names:
     service = services[name]
     environment = service.get("environment", {})
@@ -415,6 +427,7 @@ capability_path = "/app/run-owned-initial-admission-capability.json"
 source_receipt_path = "/app/run-owned-authored-world-source/source-receipt.json"
 source_receipt_dir = "/app/run-owned-authored-world-source"
 game_session_leaf_path = "/app/game-session-fixture-client.crt"
+world_management_leaf_path = "/app/world-management-fixture-client.crt"
 assert game_session_environment.get("FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH") == capability_path
 capability_mounts = [mount for mount in game_session.get("volumes", []) if mount.get("target") == capability_path]
 assert len(capability_mounts) == 1, capability_mounts
@@ -431,6 +444,7 @@ assert game_design_environment.get("FIREMUD_SMOKE_RUN_ID") == ""
 assert game_design_environment.get("FIREMUD_SMOKE_COMPOSE_PROJECT_NAME") == ""
 assert game_design_environment.get("FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED") == "false"
 assert game_design_environment.get("FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH") == source_receipt_path
+assert game_design_environment.get("FIREMUD_SMOKE_WORLD_MANAGEMENT_LEAF_CERT_PATH") == world_management_leaf_path
 game_design_capability_mounts = [mount for mount in game_design.get("volumes", []) if mount.get("target") == capability_path]
 assert len(game_design_capability_mounts) == 1, game_design_capability_mounts
 assert game_design_capability_mounts[0]["source"] == capability_source, game_design_capability_mounts[0]
@@ -439,15 +453,35 @@ game_session_leaf_mounts = [mount for mount in game_design.get("volumes", []) if
 assert len(game_session_leaf_mounts) == 1, game_session_leaf_mounts
 assert game_session_leaf_mounts[0]["source"] == f"{cert_root}/workloads/game-session-service/client.crt"
 assert game_session_leaf_mounts[0].get("read_only") is True
+world_management_leaf_mounts = [mount for mount in game_design.get("volumes", []) if mount.get("target") == world_management_leaf_path]
+assert len(world_management_leaf_mounts) == 1, world_management_leaf_mounts
+assert world_management_leaf_mounts[0]["source"] == f"{cert_root}/workloads/world-management-service/client.crt"
+assert world_management_leaf_mounts[0].get("read_only") is True
 game_design_receipt_mounts = [mount for mount in game_design.get("volumes", []) if mount.get("target") == source_receipt_dir]
 assert len(game_design_receipt_mounts) == 1, game_design_receipt_mounts
 assert game_design_receipt_mounts[0]["source"] == source_receipt_source, game_design_receipt_mounts[0]
 assert game_design_receipt_mounts[0].get("read_only") is False
+world_management = services["world-management-service"]
+world_management_environment = world_management["environment"]
+assert world_management_environment.get("FIREMUD_SMOKE_RUN_ID") == ""
+assert world_management_environment.get("FIREMUD_SMOKE_COMPOSE_PROJECT_NAME") == ""
+assert world_management_environment.get("FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED") == "false"
+assert world_management_environment.get("FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH") == capability_path
+assert world_management_environment.get("FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH") == source_receipt_path
+world_management_capability_mounts = [mount for mount in world_management.get("volumes", []) if mount.get("target") == capability_path]
+assert len(world_management_capability_mounts) == 1, world_management_capability_mounts
+assert world_management_capability_mounts[0]["source"] == capability_source, world_management_capability_mounts[0]
+assert world_management_capability_mounts[0].get("read_only") is True
+world_management_receipt_mounts = [mount for mount in world_management.get("volumes", []) if mount.get("target") == source_receipt_dir]
+assert len(world_management_receipt_mounts) == 1, world_management_receipt_mounts
+assert world_management_receipt_mounts[0]["source"] == source_receipt_source, world_management_receipt_mounts[0]
+assert world_management_receipt_mounts[0].get("read_only") is True
 for name, service in services.items():
-    if name not in ("game-design-service", "game-session-service"):
+    if name not in fixture_services:
         assert not any(mount.get("target") == capability_path for mount in service.get("volumes", [])), name
         assert not any(mount.get("target") == source_receipt_dir for mount in service.get("volumes", [])), name
         assert not any(mount.get("target") == game_session_leaf_path for mount in service.get("volumes", [])), name
+        assert not any(mount.get("target") == world_management_leaf_path for mount in service.get("volumes", [])), name
 assert services["account-service"]["image"].endswith(":contract")
 print("Verified Compose mTLS wiring and image-only service configuration.")
 PY
