@@ -4,8 +4,10 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
+import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
@@ -20,6 +22,7 @@ import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.service.impl.GameDesignLaunchReadProjectionMapper;
@@ -47,6 +50,7 @@ public class RunOwnedFixtureLaunchReadback {
   private final GameAuthoredWorldSourceRepository sourceRepository;
   private final VersionService versionService;
   private final VersionAssetArtifactService artifactService;
+  private final LaunchDescriptorService launchDescriptorService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -59,7 +63,8 @@ public class RunOwnedFixtureLaunchReadback {
       VersionAssetArtifactRepository artifactRepository,
       GameAuthoredWorldSourceRepository sourceRepository,
       VersionService versionService,
-      VersionAssetArtifactService artifactService) {
+      VersionAssetArtifactService artifactService,
+      LaunchDescriptorService launchDescriptorService) {
     this.gameRepository = gameRepository;
     this.templateRepository = templateRepository;
     this.versionRepository = versionRepository;
@@ -67,6 +72,7 @@ public class RunOwnedFixtureLaunchReadback {
     this.sourceRepository = sourceRepository;
     this.versionService = versionService;
     this.artifactService = artifactService;
+    this.launchDescriptorService = launchDescriptorService;
   }
 
   @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
@@ -107,6 +113,104 @@ public class RunOwnedFixtureLaunchReadback {
           "Committed launch owner readback differs from the captured fixture snapshot");
     }
     return readback;
+  }
+
+  /** Resolves and independently reads the committed descriptor outside the seeder transaction. */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  public ResolvedLaunchDescriptorDto resolveAndReadLaunchDescriptor(
+      AuthoredWorldLaunchDescriptorEvidence.Request request) {
+    Objects.requireNonNull(request, "request");
+    ResolvedLaunchDescriptorDto resolved = launchDescriptorService.resolveLaunchDescriptor(request);
+    AuthoredWorldLaunchDescriptorEvidence binding = requireDescriptorBinding(resolved);
+    if (!request.equals(binding.request())) {
+      throw new IllegalStateException(
+          "Committed launch descriptor does not match the exact fixture request");
+    }
+    UUID readRequestId;
+    do {
+      readRequestId = UUID.randomUUID();
+    } while (readRequestId.equals(request.authoredWorldSourceOperationId())
+        || readRequestId.toString().equals(request.controlPlaneRequestId()));
+    ResolvedLaunchDescriptorDto readback =
+        launchDescriptorService.getLaunchDescriptor(
+            readRequestId,
+            request.canonicalTenantId(),
+            request.worldSlug(),
+            request.controlPlaneRequestId(),
+            binding.requestDigest(),
+            binding.resultDigest());
+    if (!resolved.equals(readback)) {
+      throw new IllegalStateException(
+          "Committed launch descriptor readback differs from its resolved result");
+    }
+    return readback;
+  }
+
+  /** Refuses a receipt unless its actual descriptor still matches all current owner snapshots. */
+  public void requireDescriptorMatchesSnapshot(
+      ResolvedLaunchDescriptorDto descriptor,
+      AuthoredWorldLaunchDescriptorEvidence.Request request,
+      Snapshot snapshot) {
+    AuthoredWorldLaunchDescriptorEvidence binding = requireDescriptorBinding(descriptor);
+    if (snapshot == null
+        || !request.equals(binding.request())
+        || !Objects.equals(descriptor.launchDescriptorId(), binding.launchDescriptorId())
+        || !Objects.equals(descriptor.canonicalTenantId(), binding.canonicalTenantId().toString())
+        || descriptor.gameTemplateId() != binding.gameTemplateId()
+        || !Objects.equals(descriptor.controlPlaneRequestId(), binding.controlPlaneRequestId())
+        || descriptor.versionId() != binding.versionId()
+        || !Objects.equals(
+            descriptor.scriptPatchVersion(),
+            binding.scriptPatchVersionPresent() ? binding.scriptPatchVersion() : null)
+        || !Objects.equals(descriptor.runtimeFlagsJson(), binding.runtimeFlagsJson())
+        || !Objects.equals(
+            descriptor.generationConfigRevision(), binding.generationConfigRevision())
+        || descriptor.versionStateEpoch() != binding.versionStateEpoch()
+        || descriptor.releaseBundleId() != binding.releaseBundleId()
+        || !Objects.equals(
+            descriptor.publishedReleaseBundleRef(), binding.publishedReleaseBundleRef())
+        || !Objects.equals(
+            descriptor.remapSetId(), binding.remapSetIdPresent() ? binding.remapSetId() : null)
+        || !Objects.equals(
+            binding.canonicalTenantId(), snapshot.sourceEvidence().canonicalTenantId())
+        || !Objects.equals(binding.worldSlug(), snapshot.sourceEvidence().worldSlug())
+        || !Objects.equals(
+            binding.authoredWorldSourceOperationId(), snapshot.sourceEvidence().operationId())
+        || !Objects.equals(
+            binding.authoredWorldSourceEvidenceDigest(), snapshot.sourceEvidence().evidenceDigest())
+        || binding.gameTemplateId() != snapshot.gameTemplateId()
+        || snapshot.version().id() == null
+        || binding.versionId() != snapshot.version().id()
+        || binding.scriptPatchVersionPresent()
+        || !Objects.equals(
+            binding.runtimeFlagsJson(), snapshot.template().defaultRuntimeFlagsJson())
+        || !Objects.equals(
+            binding.generationConfigRevision(), snapshot.bundle().generationConfigRevision())
+        || snapshot.versionState().versionId() != snapshot.version().id()
+        || binding.versionStateEpoch() != snapshot.versionState().versionStateEpoch()
+        || !Objects.equals(
+            snapshot.version().versionStateEpoch(), snapshot.versionState().versionStateEpoch())
+        || binding.releaseBundleId() != snapshot.bundle().id()
+        || !Objects.equals(
+            binding.publishedReleaseBundleRef(), snapshot.bundle().publishedReleaseBundleRef())
+        || binding.remapSetIdPresent()) {
+      throw new IllegalStateException(
+          "Committed launch descriptor does not match current fixture owner snapshots");
+    }
+  }
+
+  private AuthoredWorldLaunchDescriptorEvidence requireDescriptorBinding(
+      ResolvedLaunchDescriptorDto descriptor) {
+    if (descriptor == null || descriptor.authoredWorldBinding() == null) {
+      throw new IllegalStateException("Committed launch descriptor has no authored-world binding");
+    }
+    AuthoredWorldLaunchDescriptorEvidence binding = descriptor.authoredWorldBinding();
+    try {
+      binding.requireValid();
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException("Committed launch descriptor binding is invalid", exception);
+    }
+    return binding;
   }
 
   private Snapshot snapshot(

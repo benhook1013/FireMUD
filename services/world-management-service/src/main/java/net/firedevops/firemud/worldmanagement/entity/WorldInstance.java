@@ -19,6 +19,8 @@ public class WorldInstance {
   private String publishedReleaseBundleRef;
   private Long versionStateEpoch;
   private String remapSetId;
+  private String runOwnedFixtureBindingSha256;
+  private Long runOwnedFixturePreparingLifecycleEpoch;
   private Long lifecycleEpoch = 1L;
   private String status;
   private String failureReason;
