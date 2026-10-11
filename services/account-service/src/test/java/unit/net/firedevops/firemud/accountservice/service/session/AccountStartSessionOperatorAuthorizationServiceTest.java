@@ -447,7 +447,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             () ->
                 assertThatThrownBy(
                         () -> harness.service().readRedeemedOperationProjection(harness.request()))
-                    .isInstanceOf(IllegalArgumentException.class)
+                    .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("Current Account source"));
 
     verify(harness.actors())
@@ -458,6 +458,40 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             eq(harness.environment()),
             any());
     verifyNoInteractions(harness.claims(), harness.fingerprintKeys(), harness.responseCrypto());
+  }
+
+  @Test
+  void recoveryDoesNotDecryptOrRecreateAnErasedOriginalResponse() {
+    ReadHarness harness = readHarness(NOW.plusSeconds(30));
+    IssuanceRecord erased = asIssued(withErasedEnvelope(harness.record()));
+    when(harness.repository().findByControlPlaneRequestId(harness.tuple().controlPlaneRequestId()))
+        .thenReturn(Optional.of(erased));
+    when(harness
+            .claims()
+            .readCurrentClaimEvidence(any(), any(), anyLong(), any(), anyLong(), any()))
+        .thenReturn(claimEvidence(harness.tuple(), erased.reservationOwnerId()));
+    allowCurrent(harness, harness.source());
+
+    var request =
+        new AccountStartSessionOperatorAuthorizationService.RecoverRequest(
+            harness.tuple().canonicalJson().getBytes(StandardCharsets.UTF_8),
+            erased.reservationOwnerId(),
+            erased.reservationClaimFence(),
+            erased.reservationOwnerId(),
+            erased.reservationClaimFence());
+
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(LOGGING_PEER).orElseThrow())
+        .run(
+            () ->
+                assertThatThrownBy(() -> harness.service().recover(request))
+                    .isInstanceOf(
+                        AccountStartSessionOperatorAuthorizationService
+                            .ResponseEnvelopeErasedException.class));
+
+    verify(harness.responseCrypto(), never()).decrypt(any(), any(), any());
+    verify(harness.repository(), never()).createOrReadExact(any());
   }
 
   private static ReadHarness readHarness(Instant referenceExpiresAt) {
@@ -503,6 +537,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             issuedAt,
             referenceExpiresAt,
             referenceExpiresAt.plusSeconds(20),
+            null,
             Status.REDEEMED,
             GAME_SESSION_PEER,
             ownerAttemptId,
@@ -605,6 +640,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         record.issuedAt(),
         record.referenceExpiresAt(),
         record.responseEnvelopeExpiresAt(),
+        record.responseEnvelopeErasedAt(),
         Status.ISSUED,
         null,
         null,
@@ -612,6 +648,33 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         null,
         null,
         null);
+  }
+
+  private static IssuanceRecord withErasedEnvelope(IssuanceRecord record) {
+    return new IssuanceRecord(
+        record.controlPlaneRequestId(),
+        record.preAuthorizationTuple(),
+        record.mutationDigest(),
+        record.issuanceWorkloadUri(),
+        record.reservationOwnerId(),
+        record.reservationClaimFence(),
+        record.issuanceOperationId(),
+        record.issuanceFence(),
+        record.bundleReference(),
+        record.authorityEvidenceBundle(),
+        record.authorizationReferenceFingerprint(),
+        null,
+        record.issuedAt(),
+        record.referenceExpiresAt(),
+        record.responseEnvelopeExpiresAt(),
+        record.responseEnvelopeExpiresAt(),
+        record.status(),
+        record.redemptionRedeemerWorkloadUri(),
+        record.redemptionOwnerAttemptId(),
+        record.redemptionOwnerFence(),
+        record.redeemedAt(),
+        record.redemptionReferenceFingerprint(),
+        record.redemptionAuthorityEvidenceBundle());
   }
 
   private static IssuanceRecord withRedeemer(IssuanceRecord record, String redeemerWorkloadUri) {
@@ -631,6 +694,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         record.issuedAt(),
         record.referenceExpiresAt(),
         record.responseEnvelopeExpiresAt(),
+        record.responseEnvelopeErasedAt(),
         Status.REDEEMED,
         redeemerWorkloadUri,
         record.redemptionOwnerAttemptId(),
