@@ -21,12 +21,12 @@ import java.security.cert.X509Certificate;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameTemplate;
@@ -661,13 +661,10 @@ public class TestDataSeeder implements ApplicationRunner {
         throw new IllegalStateException(
             "Run-owned fixture TLS certificates do not match capability pins");
       }
-      var subjectAlternativeNames = gameSessionCertificate.getSubjectAlternativeNames();
-      if (subjectAlternativeNames == null
-          || subjectAlternativeNames.size() != 1
-          || !subjectAlternativeNames
-              .iterator()
-              .next()
-              .equals(List.of(6, FIXTURE_GAME_SESSION_URI_SAN))) {
+      if (GrpcPeerIdentity.fromCertificate(gameSessionCertificate)
+          .map(GrpcPeerIdentity::uri)
+          .filter(FIXTURE_GAME_SESSION_URI_SAN::equals)
+          .isEmpty()) {
         throw new IllegalStateException(
             "Run-owned Game Session certificate has the wrong workload URI SAN");
       }

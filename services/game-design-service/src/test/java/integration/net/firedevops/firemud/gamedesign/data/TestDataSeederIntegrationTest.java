@@ -38,11 +38,13 @@ import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -71,6 +73,7 @@ import tools.jackson.databind.ObjectMapper;
       "spring.profiles.active=test",
       "firemud.smoke.seed-demo-runtime.enabled=true",
       "FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false",
+      "spring.flyway.clean-disabled=false",
       "firemud.auth.jwt-secret=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "firemud.grpc.plaintext=true",
       "firemud.grpc.workload-namespace=dev",
@@ -107,6 +110,7 @@ class TestDataSeederIntegrationTest {
   }
 
   @Autowired private TestDataSeeder seeder;
+  @Autowired private Flyway flyway;
   @Autowired private GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
   @Autowired private GameRepository gameRepository;
   @Autowired private GameTemplateRepository templateRepository;
@@ -117,6 +121,14 @@ class TestDataSeederIntegrationTest {
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private DSLContext dsl;
   @Autowired private ObjectMapper objectMapper;
+
+  @BeforeEach
+  void resetDisposableServiceSchema() {
+    ReflectionTestUtils.setField(seeder, "initialAdmissionFixtureEnabled", false);
+    flyway.clean();
+    flyway.migrate();
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
+  }
 
   @Test
   void publishesExactOwnerReceiptOnlyAfterCommitAndLeavesNoReceiptOnRollback(
@@ -500,6 +512,10 @@ class TestDataSeederIntegrationTest {
             + "extendedKeyUsage=clientAuth\n"
             + "subjectAltName=URI:"
             + SESSION_URI_SAN
+            + ",DNS:game-session-service"
+            + ",DNS:game-session-service.dev"
+            + ",DNS:game-session-service.dev.svc"
+            + ",DNS:game-session-service.dev.svc.cluster.local"
             + "\n");
     runOpenSsl(
         "x509",
