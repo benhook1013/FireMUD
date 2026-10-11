@@ -68,8 +68,12 @@ import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAut
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSettlementEvidence;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadEvidence;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeSourceReadScope;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionAcquisitionInput;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionSettlementInput;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionAdmissionProtectionAcquisitionGrpcClient;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationAcquisitionClient;
+import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionAcquisitionClient;
+import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionSettlementClient;
 import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderClient;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec;
@@ -95,16 +99,21 @@ import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSour
 import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeCommandEvidence;
 import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadClient;
+import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
+import net.firedevops.firemud.common.gamedesign.GrpcAuthoredInitialActorCoreReadClient;
 import net.firedevops.firemud.common.gamedesign.GrpcSelectedOwnerIntakeSourceClient;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec;
 import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent;
+import net.firedevops.firemud.common.gamedesign.StartSessionLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.StartSessionPublishedRealmPolicyReadGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
+import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadGrpcCodec;
 import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTerminal;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationEvidence;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadClient;
@@ -120,6 +129,10 @@ import net.firedevops.firemud.common.gamelogic.GrpcGameLogicIntakeSourceReadClie
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationClient;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.gamesession.GrpcOriginalStartSessionCurrentAttemptClient;
+import net.firedevops.firemud.common.gamesession.GrpcOriginalStartSessionLaunchReadClient;
+import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionLaunchReadEvidence;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -158,12 +171,16 @@ import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
 import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationClient;
 import net.firedevops.firemud.common.world.CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput;
+import net.firedevops.firemud.common.world.GrpcWorldOriginalStartSessionActivationTerminalReadClient;
+import net.firedevops.firemud.common.world.GrpcWorldOriginalStartSessionProtectedActivationClient;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
+import net.firedevops.firemud.common.world.WorldOriginalStartSessionProtectedActivationGrpcCodec;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeService;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeTerminalReadService;
+import net.firedevops.firemud.entitymanagement.sourceintake.EntityRetainedAuthoredActorCoreSourceService;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntitySelectedEmptyPublicationDigestGrpcReceiver;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntitySelectedEmptyPublicationDigestService;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntitySelectedSourceIntakeCommandGrpcService;
@@ -189,11 +206,13 @@ import net.firedevops.firemud.gamedesign.entity.GameAsset;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.mapper.VersionMapper;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.publication.AuthoredInitialActorCoreReadService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignGameplayRuleSourceReadGrpcService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignGameplayRuleSourceReadService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSelectedOwnerIntakeSourceGrpcService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSelectedOwnerIntakeSourceReadService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.GrpcAuthoredInitialActorCoreReadService;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftAssetInventory;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftAssetInventoryReadService;
@@ -222,6 +241,8 @@ import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.RecordedParticipantDigestRepository;
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
+import net.firedevops.firemud.gamedesign.repository.StartSessionAuthoredActorCoreProjectionRepository;
+import net.firedevops.firemud.gamedesign.repository.StartSessionLaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPurgeWorkflowRepository;
@@ -268,6 +289,7 @@ import net.firedevops.firemud.gamelogic.sourceintake.GameLogicGameplayRuleIntake
 import net.firedevops.firemud.gamelogic.sourceintake.GameLogicPublicationSourceReadService;
 import net.firedevops.firemud.gamesession.client.GameDesignFreshTenantCreationClient;
 import net.firedevops.firemud.gamesession.client.GameDesignPublishedRealmPolicyClient;
+import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCoreRetentionRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanceLaunchRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
@@ -275,7 +297,9 @@ import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOper
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
 import net.firedevops.firemud.gamesession.service.impl.CanonicalGameInstanceLaunchAssociationReadGrpcService;
+import net.firedevops.firemud.gamesession.service.impl.GameSessionAuthoredActorCoreRetentionService;
 import net.firedevops.firemud.gamesession.service.impl.OriginalStartSessionCurrentAttemptReadGrpcService;
+import net.firedevops.firemud.gamesession.service.impl.OriginalStartSessionLaunchReadGrpcService;
 import net.firedevops.firemud.loggingadmin.StartSessionReservationMutationTestFixtures;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.ClaimEvidence;
@@ -316,6 +340,9 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomeRe
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalReadGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphApplicationService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalDraftGraphApplyGrpcService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionActivationTerminalReadGrpcService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionProtectedActivationGrpcService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionProtectedActivationService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldSelectedOwnerInventoryReadProofFixture;
 import net.firedevops.firemud.worldmanagement.tenant.WorldStartSessionAccountParticipationVerifier;
 import net.firedevops.firemud.worldmanagement.v1.ActivateCanonicalWorldInstanceRequest;
@@ -410,14 +437,16 @@ import tools.jackson.databind.ObjectMapper;
  * its canonical public-realm catalog. Game Session creates and independently reads the exact
  * STARTING runtime/launch association with its captured catalog revision, and World consumes that
  * evidence through the native exact-peer Game Session reader. Account participation is
- * point-in-time evidence, not a continuous cross-service lock. Activation authority remains an
- * explicit fixture stipulation. The added admission path uses the actual World initial hold,
- * Account protection acquisition, Account-only Game Session terminal read and Account settlement.
- * It proves pending denial and a durable original abort without opening the CLOSED pointer; it does
- * not prove the positive RUNNING transition, settle the World hold or supply activation authority.
+ * point-in-time evidence, not a continuous cross-service lock. The distinct activation-purpose
+ * Account source protection is acquired by the actual unregistered World producer over
+ * same-namespace mTLS before World's native PREPARING-to-ACTIVE CAS; Account then settles the exact
+ * authenticated World terminal over mTLS. The added admission path uses the actual World initial
+ * hold, Account protection acquisition, Account-only Game Session terminal read and Account
+ * settlement. It proves pending denial and a durable original abort without opening the CLOSED
+ * pointer; it does not prove the positive RUNNING transition or settle the World admission hold.
  * This does not establish production certificate custody, full application server wiring,
- * production ingress, runtime launch, activation or registration. The Logging evidence is
- * point-in-time and does not lock later Account or Game Session commits.
+ * production ingress, runtime launch, activation registration, or admission. The Logging evidence
+ * is point-in-time and does not lock later Account or Game Session commits.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -607,9 +636,21 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             new net.firedevops.firemud.common.gamesession
                 .GrpcOriginalStartSessionAdmissionTerminalReadClient(
                 endpoints, pki.client("account-service"), channels, NAMESPACE);
+        var accountToGameSessionLaunchReadClient =
+            new GrpcOriginalStartSessionLaunchReadClient(
+                endpoints, pki.client("account-service"), channels, NAMESPACE);
+        var accountToWorldActivationTerminalReadClient =
+            new GrpcWorldOriginalStartSessionActivationTerminalReadClient(
+                endpoints, pki.client("account-service"), channels, NAMESPACE);
         var gameSessionToAccountAdmissionClient =
             new AccountStartSessionAdmissionProtectionAcquisitionGrpcClient(
                 endpoints, pki.client("game-session-service"), channels, NAMESPACE);
+        var worldToAccountActivationProtectionClient =
+            new GrpcAccountStartSessionActivationProtectionAcquisitionClient(
+                endpoints, pki.client("world-management-service"), channels, NAMESPACE);
+        var worldToAccountActivationSettlementClient =
+            new GrpcAccountStartSessionActivationProtectionSettlementClient(
+                endpoints, pki.client("world-management-service"), channels, NAMESPACE);
         var worldToAccountParticipationClient =
             new AccountStartSessionWorldParticipationAcquisitionClient(
                 endpoints, pki.client("world-management-service"), channels, NAMESPACE);
@@ -631,6 +672,15 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var gameSessionPublishedRealmPolicyClient =
             new GameDesignPublishedRealmPolicyClient(
                 endpoints, pki.client("game-session-service"), channels, NAMESPACE);
+        var gameSessionToGameDesignAuthoredCoreClient =
+            new GrpcAuthoredInitialActorCoreReadClient(
+                endpoints, pki.client("game-session-service"), channels, NAMESPACE);
+        var entityToGameDesignAuthoredCoreClient =
+            new GrpcAuthoredInitialActorCoreReadClient(
+                endpoints, pki.client("entity-management-service"), channels, NAMESPACE);
+        var unauthorizedAccountToGameDesignAuthoredCoreClient =
+            new GrpcAuthoredInitialActorCoreReadClient(
+                endpoints, pki.client("account-service"), channels, NAMESPACE);
         var worldToGameSessionLaunchClient =
             new CanonicalGameInstanceLaunchAssociationClient(
                 endpoints, pki.client("world-management-service"), channels, NAMESPACE);
@@ -642,6 +692,12 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                 endpoints, pki.client("world-management-service"), channels, NAMESPACE);
         var wrongWorkloadActivationClient =
             canonicalActivationClient(worldServer, pki.client("account-service"), channels);
+        var gameSessionToWorldProtectedActivationClient =
+            new GrpcWorldOriginalStartSessionProtectedActivationClient(
+                endpoints, pki.client("game-session-service"), channels, NAMESPACE);
+        var wrongWorkloadProtectedActivationClient =
+            new GrpcWorldOriginalStartSessionProtectedActivationClient(
+                endpoints, pki.client("account-service"), channels, NAMESPACE);
         var gameSessionInitialHoldClient =
             new CanonicalInitialAdmissionHoldTransportFixture(
                 loopback(worldServer),
@@ -654,6 +710,10 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
       ReflectionTestUtils.invokeMethod(loggingClaimClient, "init");
       accountToGameSessionCurrentAttemptClient.init();
       accountToGameSessionTerminalClient.init();
+      accountToGameSessionLaunchReadClient.init();
+      accountToWorldActivationTerminalReadClient.init();
+      worldToAccountActivationProtectionClient.init();
+      worldToAccountActivationSettlementClient.init();
       gameSessionToAccountAdmissionClient.init();
       worldToAccountParticipationClient.init();
       projectionClient.init();
@@ -662,9 +722,14 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
       gameSessionPreparationRetryClient.init();
       gameSessionFreshTenantCreationClient.init();
       gameSessionPublishedRealmPolicyClient.init();
+      gameSessionToGameDesignAuthoredCoreClient.init();
+      entityToGameDesignAuthoredCoreClient.init();
+      unauthorizedAccountToGameDesignAuthoredCoreClient.init();
       worldToGameSessionLaunchClient.init();
       wrongWorkloadLaunchClient.init();
       worldToGameDesignPreparationClient.init();
+      gameSessionToWorldProtectedActivationClient.init();
+      wrongWorkloadProtectedActivationClient.init();
       var automationIntakeRepository =
           new AutomationEmptySelectedSourceIntakeRepository(automation.dsl());
       var entityIntakeRepository = new EntityEmptySelectedSourceIntakeRepository(entity.dsl());
@@ -1115,6 +1180,18 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             accountHandlers,
             new AccountStartSessionAdmissionProtectionAcquisitionGrpcService(
                 accountAdmissionProtectionAcquisition, NAMESPACE));
+        var accountActivationProtectionAcquisition =
+            startSessionAuthorizationProof.activationProtectionAcquisitionService(
+                accountToGameSessionCurrentAttemptClient, accountToGameSessionLaunchReadClient);
+        var accountActivationProtectionSettlement =
+            startSessionAuthorizationProof.activationProtectionSettlementService(
+                accountToWorldActivationTerminalReadClient);
+        register(
+            accountHandlers,
+            new AccountStartSessionActivationProtectionAcquisitionGrpcService(
+                accountActivationProtectionAcquisition, NAMESPACE),
+            new AccountStartSessionActivationProtectionSettlementGrpcService(
+                accountActivationProtectionSettlement, NAMESPACE));
         var accountWorldParticipationAcquisitionService =
             startSessionAuthorizationProof.worldParticipationAcquisitionService(
                 accountToGameSessionCurrentAttemptClient);
@@ -2515,6 +2592,12 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         var startSessionAssociationReader =
             new StartSessionTemplateAssociationReadService(
                 gd.dsl(), gd.transactions(), NAMESPACE, projectionClient, releaseService);
+        register(
+            gdHandlers,
+            new GrpcAuthoredInitialActorCoreReadService(
+                new AuthoredInitialActorCoreReadService(
+                    gd.dsl(), NAMESPACE, startSessionAssociationReader, new ObjectMapper()),
+                NAMESPACE));
         var startSessionPublishedPolicyReader =
             new StartSessionPublishedRealmPolicyReadService(
                 sourceRepository,
@@ -3053,6 +3136,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         OriginalOperationInput originalOwnerOperation =
             new OriginalOperationInput(
                 startSessionTuple.canonicalBytes(), ownerMutationId, ownerAttemptId, ownerFence);
+        StartSessionTemplateAssociationReadEvidence.Result firstStartSessionSelection;
         {
           var accountProjection =
               projectionClient.read(startSessionTuple, ownerAttemptId, ownerFence);
@@ -3090,6 +3174,17 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               .containsExactly(startSessionTuple.authorityEvidenceBundleBytes());
           assertThat(projectionClient.read(startSessionTuple, ownerAttemptId, ownerFence))
               .isEqualTo(accountProjection);
+          var firstSelectionRequest =
+              new StartSessionTemplateAssociationReadEvidence.Request(
+                  StartSessionTemplateAssociationReadEvidence.SCHEMA_VERSION,
+                  NAMESPACE,
+                  UUID.randomUUID(),
+                  startSessionTuple.canonicalBytes(),
+                  ownerAttemptId,
+                  ownerFence,
+                  new StartSessionTemplateAssociationReadEvidence.InitialConfigured());
+          firstStartSessionSelection =
+              withGameSessionPeer(() -> startSessionAssociationReader.read(firstSelectionRequest));
           var descriptorProducer =
               new StartSessionLaunchDescriptorProducer(
                   gd.dsl(),
@@ -3113,6 +3208,144 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           assertThat(firstDescriptorBinding.descriptor().launchDescriptorId()).isNotBlank();
           assertThat(firstDescriptorBinding.associationRead().association().associationDigest())
               .isEqualTo(association.digest());
+          assertThat(firstStartSessionSelection.association())
+              .isEqualTo(firstDescriptorBinding.associationRead().association());
+          assertThat(firstStartSessionSelection.releaseBundle())
+              .isEqualTo(firstDescriptorBinding.associationRead().releaseBundle());
+          assertThat(firstStartSessionSelection.worldPublishedStartLocationEvidence())
+              .isEqualTo(
+                  firstDescriptorBinding.associationRead().worldPublishedStartLocationEvidence());
+          assertThat(firstStartSessionSelection.phaseEpoch())
+              .isEqualTo(firstDescriptorBinding.associationRead().phaseEpoch());
+          var retainedDescriptorOwner =
+              new StartSessionLaunchDescriptorRepository(gd.dsl())
+                  .find(NAMESPACE, gd.target().canonicalTenantId(), controlPlaneRequestId)
+                  .orElseThrow();
+          var actorCoreProjectionRepository =
+              new StartSessionAuthoredActorCoreProjectionRepository(gd.dsl());
+          var retainedActorCoreProofsBeforeRead =
+              actorCoreProjectionRepository.findByOwner(retainedDescriptorOwner);
+          assertThat(retainedActorCoreProofsBeforeRead).isEmpty();
+          assertThat(expectedPolicy.policy().entryPolicy())
+              .isEqualTo(RealmEntryPolicy.EntryPolicy.PRESEEDED_ONLY);
+          assertThat(expectedPolicy.policy().canonicalJson()).doesNotContain("initialActorCore");
+
+          var authoredCoreReadRequest =
+              new AuthoredInitialActorCoreReadEvidence.ReadRequest(
+                  firstDescriptorBinding.request());
+          var gameSessionAuthoredCoreRead =
+              gameSessionToGameDesignAuthoredCoreClient.read(authoredCoreReadRequest);
+          assertThat(gameSessionAuthoredCoreRead.request())
+              .isEqualTo(firstDescriptorBinding.request());
+          assertThat(gameSessionAuthoredCoreRead.request().canonicalPostAuthorizationTuple())
+              .containsExactly(startSessionTuple.canonicalBytes());
+          assertThat(gameSessionAuthoredCoreRead.request().ownerAttemptId())
+              .isEqualTo(ownerAttemptId);
+          assertThat(gameSessionAuthoredCoreRead.request().ownerFence()).isEqualTo(ownerFence);
+          assertThat(gameSessionAuthoredCoreRead.associationRead())
+              .isEqualTo(firstDescriptorBinding.associationRead());
+          assertThat(
+                  gameSessionAuthoredCoreRead.associationRead().association().associationDigest())
+              .isEqualTo(association.digest());
+          assertThat(gameSessionAuthoredCoreRead.associationRead().releaseBundle())
+              .isEqualTo(firstDescriptorBinding.associationRead().releaseBundle());
+          assertThat(gameSessionAuthoredCoreRead.descriptor().launchDescriptorId())
+              .isEqualTo(firstDescriptorBinding.descriptor().launchDescriptorId());
+          assertThat(gameSessionAuthoredCoreRead.descriptor().requestDigest())
+              .isEqualTo(
+                  firstDescriptorBinding.descriptor().authoredWorldBinding().requestDigest());
+          assertThat(gameSessionAuthoredCoreRead.descriptor().resultDigest())
+              .isEqualTo(firstDescriptorBinding.descriptor().authoredWorldBinding().resultDigest());
+          assertThat(gameSessionAuthoredCoreRead.projections()).isEmpty();
+          assertThat(firstDescriptorBinding.actorCoreProjections()).isEmpty();
+          var exactGameSessionAuthoredCoreRetry =
+              gameSessionToGameDesignAuthoredCoreClient.read(authoredCoreReadRequest);
+          assertThat(exactGameSessionAuthoredCoreRetry.canonicalBytes())
+              .containsExactly(gameSessionAuthoredCoreRead.canonicalBytes());
+          var entityAuthoredCoreRead =
+              entityToGameDesignAuthoredCoreClient.read(authoredCoreReadRequest);
+          assertThat(entityAuthoredCoreRead.canonicalBytes())
+              .containsExactly(gameSessionAuthoredCoreRead.canonicalBytes());
+          var entityRetainedAuthoredCoreSourceService =
+              new EntityRetainedAuthoredActorCoreSourceService(
+                  NAMESPACE, entityToGameDesignAuthoredCoreClient, entityIntakeRepository);
+          var entityCorroboratedAuthoredCoreRead =
+              entityRetainedAuthoredCoreSourceService.read(authoredCoreReadRequest);
+          assertThat(entityCorroboratedAuthoredCoreRead.canonicalBytes())
+              .containsExactly(entityAuthoredCoreRead.canonicalBytes());
+          assertThat(entityCorroboratedAuthoredCoreRead.projections()).isEmpty();
+          var exactEntityCorroboratedAuthoredCoreRetry =
+              entityRetainedAuthoredCoreSourceService.read(authoredCoreReadRequest);
+          assertThat(exactEntityCorroboratedAuthoredCoreRetry.canonicalBytes())
+              .containsExactly(entityCorroboratedAuthoredCoreRead.canonicalBytes());
+          String publicAuthoredCoreResult =
+              new String(gameSessionAuthoredCoreRead.canonicalBytes(), StandardCharsets.UTF_8);
+          assertThat(publicAuthoredCoreResult)
+              .doesNotContain("privateTargetProof")
+              .doesNotContain("terminalEvidenceBytes")
+              .doesNotContain("sourceCaptureBytes")
+              .doesNotContain("publicationOperationBytes");
+          assertThat(actorCoreProjectionRepository.findByOwner(retainedDescriptorOwner))
+              .containsExactlyElementsOf(retainedActorCoreProofsBeforeRead);
+
+          var substitutedTuple =
+              startSessionTuple(
+                  "genuine-authored-core-substitute-" + UUID.randomUUID(),
+                  gd.target().canonicalTenantId(),
+                  templateId,
+                  "Substituted authored-core original tuple");
+          var substitutedTupleRead =
+              new AuthoredInitialActorCoreReadEvidence.ReadRequest(
+                  startSessionReadRequest(
+                      substitutedTuple,
+                      ownerAttemptId,
+                      ownerFence,
+                      pinnedSelection,
+                      UUID.randomUUID()));
+          assertThatThrownBy(
+                  () -> gameSessionToGameDesignAuthoredCoreClient.read(substitutedTupleRead))
+              .isInstanceOf(io.grpc.StatusRuntimeException.class);
+
+          var substitutedSelection =
+              new StartSessionTemplateAssociationReadEvidence.ExactReplay(
+                  pinnedSelection.canonicalVersionId(),
+                  pinnedSelection.selectedCommitId(),
+                  pinnedSelection.publishWorkflowId(),
+                  changedDigest(pinnedSelection.associationDigest()));
+          var substitutedSelectionRead =
+              new AuthoredInitialActorCoreReadEvidence.ReadRequest(
+                  startSessionReadRequest(
+                      startSessionTuple,
+                      ownerAttemptId,
+                      ownerFence,
+                      substitutedSelection,
+                      UUID.randomUUID()));
+          assertThatThrownBy(
+                  () -> gameSessionToGameDesignAuthoredCoreClient.read(substitutedSelectionRead))
+              .isInstanceOf(io.grpc.StatusRuntimeException.class);
+
+          assertThatThrownBy(
+                  () ->
+                      new AuthoredInitialActorCoreReadEvidence.ReadRequest(
+                          startSessionReadRequest(
+                              startSessionTuple,
+                              ownerAttemptId,
+                              ownerFence,
+                              new StartSessionTemplateAssociationReadEvidence.InitialConfigured(),
+                              UUID.randomUUID())))
+              .isInstanceOf(IllegalArgumentException.class);
+          assertThatThrownBy(
+                  () ->
+                      unauthorizedAccountToGameDesignAuthoredCoreClient.read(
+                          authoredCoreReadRequest))
+              .isInstanceOf(io.grpc.StatusRuntimeException.class)
+              .satisfies(
+                  failure ->
+                      assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                          .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+          assertThat(actorCoreProjectionRepository.findByOwner(retainedDescriptorOwner))
+              .containsExactlyElementsOf(retainedActorCoreProofsBeforeRead);
+
           var expectedAuthoredWorldBinding =
               firstDescriptorBinding.descriptor().authoredWorldBinding();
 
@@ -3474,10 +3707,162 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               .isEqualTo(canonicalRealmCatalog.catalogRevision());
           assertThat(playableStateNamespaceId)
               .isEqualTo(canonicalRealmCatalog.playableStateNamespaceId());
+          var preparationAssociationRequest =
+              new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+                  UUID.randomUUID(),
+                  NAMESPACE,
+                  gd.target().canonicalTenantId(),
+                  canonicalLaunch.canonicalRealmCatalog().worldSlug(),
+                  canonicalLaunch.gameInstanceUuid(),
+                  canonicalLaunch.controlPlaneRequestId(),
+                  canonicalLaunch.launchBindingEvidence().descriptor().launchDescriptorId(),
+                  canonicalLaunch.launchBindingEvidence().descriptor().requestDigest(),
+                  canonicalLaunch.launchBindingEvidence().descriptor().resultDigest(),
+                  canonicalLaunch.launchBindingEvidence().releaseAttestation().evidenceDigest());
+
+          // Reuse the original InitialConfigured owner selection above. This local owner readback
+          // is not an authenticated historical-evidence RPC.
+
+          var originalCurrentAttemptRequest =
+              new OriginalStartSessionCurrentAttemptEvidence.Request(
+                  UUID.randomUUID(),
+                  NAMESPACE,
+                  startSessionTuple.canonicalBytes(),
+                  ownerAttemptId,
+                  ownerMutationId,
+                  ownerFence);
+          var currentOwnerAttemptBeforeRetention =
+              Objects.requireNonNull(
+                  gameSessionAttempts.transactions.execute(
+                      status ->
+                          gameSessionAttempts.repository.readCurrentOriginalAttempt(
+                              originalCurrentAttemptRequest)),
+                  "Actual retained Game Session owner attempt");
+          assertThat(currentOwnerAttemptBeforeRetention.accountRedemptionProjection())
+              .containsExactly(
+                  StartSessionAccountRedemptionProjection.fromOriginalTuple(startSessionTuple));
+
+          var retainedDescriptorPin =
+              new StartSessionLaunchDescriptorGrpcCodec.Resolved(
+                  firstDescriptorBinding.associationRead(),
+                  new StartSessionLaunchDescriptorGrpcCodec.DescriptorOutcome(
+                      firstDescriptorBinding.descriptor().authoredWorldBinding()));
+          var retainedLaunchAssociation =
+              new HistoricalOriginalStartSessionOwnerEvidence.LaunchAssociation(
+                  canonicalLaunch.targetNamespace(),
+                  canonicalLaunch.canonicalTenantId(),
+                  canonicalLaunch.canonicalRealmCatalog().worldSlug(),
+                  canonicalLaunch.gameInstanceUuid(),
+                  canonicalLaunch.controlPlaneRequestId(),
+                  canonicalLaunch.launchBindingEvidence().descriptor().launchDescriptorId(),
+                  canonicalLaunch.playableStateNamespaceId(),
+                  canonicalLaunch.playableStateScope(),
+                  canonicalLaunch.publicProduction(),
+                  canonicalLaunch.capturedStartingRowVersion(),
+                  canonicalLaunch.launchBindingEvidence());
+          var historicalOwnerEvidence =
+              new HistoricalOriginalStartSessionOwnerEvidence.Result(
+                  new HistoricalOriginalStartSessionOwnerEvidence.Request(
+                      preparationAssociationRequest, ownerAttemptId, ownerFence),
+                  startSessionTuple,
+                  ownerAttemptId,
+                  ownerFence,
+                  currentOwnerAttemptBeforeRetention.accountRedemptionProjection(),
+                  firstStartSessionSelection,
+                  retainedDescriptorPin,
+                  retainedLaunchAssociation,
+                  HistoricalOriginalStartSessionOwnerEvidence.sha256(
+                      StartSessionTemplateAssociationReadGrpcCodec.toRequest(
+                              firstStartSessionSelection.request())
+                          .toByteArray()),
+                  HistoricalOriginalStartSessionOwnerEvidence.sha256(
+                      StartSessionTemplateAssociationReadGrpcCodec.toResponse(
+                              firstStartSessionSelection)
+                          .toByteArray()),
+                  HistoricalOriginalStartSessionOwnerEvidence.sha256(
+                      StartSessionLaunchDescriptorGrpcCodec.toRequest(
+                              firstDescriptorBinding.request())
+                          .toByteArray()),
+                  HistoricalOriginalStartSessionOwnerEvidence.sha256(
+                      StartSessionLaunchDescriptorGrpcCodec.toResponse(
+                              firstDescriptorBinding.request(),
+                              firstDescriptorBinding.associationRead(),
+                              new StartSessionLaunchDescriptorGrpcCodec.DescriptorOutcome(
+                                  firstDescriptorBinding.descriptor().authoredWorldBinding()))
+                          .toByteArray()));
+
+          var authoredCoreRetentionRepository =
+              new GameSessionAuthoredActorCoreRetentionRepository(
+                  gameSessionAttempts.dsl(), gameSessionAttempts.transactionManager(), NAMESPACE);
+          var retainedGameDesignReadCalls = new AtomicInteger();
+          AuthoredInitialActorCoreReadClient observedGameDesignCoreClient =
+              new AuthoredInitialActorCoreReadClient() {
+                @Override
+                public AuthoredInitialActorCoreReadEvidence.ReadResult read(
+                    AuthoredInitialActorCoreReadEvidence.ReadRequest request) {
+                  retainedGameDesignReadCalls.incrementAndGet();
+                  return gameSessionToGameDesignAuthoredCoreClient.read(request);
+                }
+
+                @Override
+                public void close() {}
+              };
+          var authoredCoreRetentionService =
+              new GameSessionAuthoredActorCoreRetentionService(
+                  NAMESPACE,
+                  canonicalLaunchRepository,
+                  gameSessionAttempts.repository(),
+                  observedGameDesignCoreClient,
+                  authoredCoreRetentionRepository,
+                  gameSessionAttempts.transactionManager());
+          var firstRetainedAuthoredCore =
+              authoredCoreRetentionService.retain(
+                  historicalOwnerEvidence, originalCurrentAttemptRequest);
+          assertThat(firstRetainedAuthoredCore.candidate().canonicalSourceResultBytes())
+              .containsExactly(gameSessionAuthoredCoreRead.canonicalBytes());
+          assertThat(firstRetainedAuthoredCore.candidate().originalPostAuthorizationTuple())
+              .containsExactly(startSessionTuple.canonicalBytes());
+          assertThat(firstRetainedAuthoredCore.candidate().gameInstanceUuid())
+              .isEqualTo(canonicalLaunch.gameInstanceUuid());
+          assertThat(firstRetainedAuthoredCore.candidate().ownerAttemptId())
+              .isEqualTo(ownerAttemptId);
+          assertThat(firstRetainedAuthoredCore.candidate().ownerMutationId())
+              .isEqualTo(ownerMutationId);
+          assertThat(firstRetainedAuthoredCore.candidate().ownerFence()).isEqualTo(ownerFence);
+          assertThat(firstRetainedAuthoredCore.candidate().ownerLeaseExpiresAt())
+              .isEqualTo(currentOwnerAttemptBeforeRetention.leaseExpiresAt());
+          assertThat(gameSessionAuthoredCoreRead.projections()).isEmpty();
+          assertThat(retainedGameDesignReadCalls).hasValue(1);
+          var independentRetainedAuthoredCore =
+              authoredCoreRetentionRepository
+                  .readByOriginalOperation(NAMESPACE, controlPlaneRequestId)
+                  .orElseThrow();
+          assertThat(independentRetainedAuthoredCore.candidate().canonicalSourceResultBytes())
+              .containsExactly(gameSessionAuthoredCoreRead.canonicalBytes());
+          var exactRetainedAuthoredCoreRetry =
+              authoredCoreRetentionService.retain(
+                  historicalOwnerEvidence, originalCurrentAttemptRequest);
+          assertThat(exactRetainedAuthoredCoreRetry.candidate().canonicalSourceResultBytes())
+              .containsExactly(
+                  independentRetainedAuthoredCore.candidate().canonicalSourceResultBytes());
+          assertThat(retainedGameDesignReadCalls).hasValue(1);
+          var currentOwnerAttemptAfterRetention =
+              Objects.requireNonNull(
+                  gameSessionAttempts.transactions.execute(
+                      status ->
+                          gameSessionAttempts.repository.readCurrentOriginalAttempt(
+                              originalCurrentAttemptRequest)),
+                  "Current Game Session owner attempt after authored-core retention");
+          assertThat(currentOwnerAttemptAfterRetention.leaseExpiresAt())
+              .isEqualTo(currentOwnerAttemptBeforeRetention.leaseExpiresAt());
+
           register(
               gameSessionHandlers,
               new CanonicalGameInstanceLaunchAssociationReadGrpcService(
                   canonicalLaunchRepository, NAMESPACE));
+          register(
+              gameSessionHandlers,
+              new OriginalStartSessionLaunchReadGrpcService(canonicalLaunchRepository, NAMESPACE));
           var canonicalAdmissionRepository =
               new net.firedevops.firemud.gamesession.repository
                   .GameSessionCanonicalInitialAdmissionRepository(
@@ -3491,18 +3876,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               new net.firedevops.firemud.gamesession.service.impl
                   .OriginalStartSessionAdmissionTerminalReadGrpcService(
                   canonicalAdmissionRepository, NAMESPACE));
-          var preparationAssociationRequest =
-              new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
-                  UUID.randomUUID(),
-                  NAMESPACE,
-                  gd.target().canonicalTenantId(),
-                  worldSource.worldSlug(),
-                  canonicalGameInstanceId,
-                  controlPlaneRequestId,
-                  completeLaunchEvidence.descriptor().launchDescriptorId(),
-                  completeLaunchEvidence.descriptor().requestDigest(),
-                  completeLaunchEvidence.descriptor().resultDigest(),
-                  completeLaunchEvidence.releaseAttestation().evidenceDigest());
           var independentCanonicalLaunch =
               canonicalLaunchRepository
                   .readByLaunchIdentity(preparationAssociationRequest)
@@ -3534,6 +3907,32 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               .isEqualTo(
                   CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
                       .STARTING);
+          var originalStartSessionLaunchReadRequest =
+              new OriginalStartSessionLaunchReadEvidence.Request(
+                  preparationAssociationRequest, startSessionTuple.canonicalBytes());
+          var originalStartSessionLaunchRead =
+              accountToGameSessionLaunchReadClient.read(originalStartSessionLaunchReadRequest);
+          assertThat(originalStartSessionLaunchRead.request())
+              .isEqualTo(originalStartSessionLaunchReadRequest);
+          assertThat(originalStartSessionLaunchRead.retainedOriginalPostAuthorizationTupleBytes())
+              .containsExactly(startSessionTuple.canonicalBytes());
+          assertThat(originalStartSessionLaunchRead.launch().request())
+              .isEqualTo(preparationAssociationRequest);
+          assertThat(originalStartSessionLaunchRead.launch().currentGameInstanceStatus())
+              .isEqualTo(
+                  CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
+                      .STARTING);
+          assertThat(originalStartSessionLaunchRead.launch().launchBindingEvidence())
+              .isEqualTo(completeLaunchEvidence);
+          assertThat(originalStartSessionLaunchRead.launch().canonicalRealmId())
+              .isEqualTo(canonicalRealmCatalog.realmId());
+          assertThat(originalStartSessionLaunchRead.launch().catalogRevision())
+              .isEqualTo(canonicalRealmCatalog.catalogRevision());
+          assertThat(
+                  accountToGameSessionLaunchReadClient
+                      .read(originalStartSessionLaunchReadRequest)
+                      .canonicalBytes())
+              .containsExactly(originalStartSessionLaunchRead.canonicalBytes());
 
           var completeBindingRepository = new WorldCompleteLaunchBindingRepository(world.dsl());
           var canonicalAssociationRepository =
@@ -3868,61 +4267,35 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                         activationRequest.preparingEvidenceBytes()))
                 .isFalse();
 
-            var retainedGameSessionStartEvidence =
-                assembledPreparationInput.gameSessionReadEvidence();
-            AtomicInteger activationAuthorityChecks = new AtomicInteger();
-            AtomicInteger heldActivationChecks = new AtomicInteger();
-            AtomicInteger heldActivationCloses = new AtomicInteger();
-            var stipulatedActivationVerifier =
-                (WorldCanonicalInstanceActivationService.ActivationAuthorityVerifier)
-                    candidate -> {
-                      activationAuthorityChecks.incrementAndGet();
-                      if (!Arrays.equals(
-                              candidate.canonicalRequestBytes(),
-                              activationRequest.canonicalRequestBytes())
-                          || !"STARTING"
-                              .equals(retainedGameSessionStartEvidence.currentGameSessionStatus())
-                          || !candidate
-                              .preparing()
-                              .launchBinding()
-                              .equals(
-                                  new CompleteLaunchBindingEvidence(
-                                      retainedGameSessionStartEvidence.descriptor(),
-                                      retainedGameSessionStartEvidence.releaseAttestation()))) {
-                        throw new SecurityException(
-                            "Stipulated activation fixture differs from the exact PREPARING "
-                                + "binding");
-                      }
-                      return new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
-                        private boolean held = true;
-
-                        @Override
-                        public void requireHeld() {
-                          if (!held
-                              || !candidate.activationRequestId().equals(activationRequestId)
-                              || !candidate
-                                  .requestDigest()
-                                  .equals(activationRequest.requestDigest())) {
-                            throw new SecurityException(
-                                "Stipulated activation authority no longer holds for this "
-                                    + "operation");
-                          }
-                          heldActivationChecks.incrementAndGet();
-                        }
-
-                        @Override
-                        public void close() {
-                          held = false;
-                          heldActivationCloses.incrementAndGet();
-                        }
-                      };
-                    };
             var activationService =
-                new WorldCanonicalInstanceActivationService(
-                    activationRepository, stipulatedActivationVerifier);
+                new WorldCanonicalInstanceActivationService(activationRepository);
+            var protectedActivationService =
+                new WorldOriginalStartSessionProtectedActivationService(
+                    activationRepository,
+                    activationService,
+                    worldToAccountActivationProtectionClient,
+                    NAMESPACE);
+            var activationInput =
+                new AccountStartSessionActivationProtectionAcquisitionInput(
+                    startSessionTuple.canonicalBytes(),
+                    ownerMutationId,
+                    ownerAttemptId,
+                    ownerFence,
+                    activationRequest);
+            assertThat(activationInput.worldActivationRequest().canonicalRequestBytes())
+                .containsExactly(activationRequest.canonicalRequestBytes());
+            assertThat(
+                    WorldOriginalStartSessionProtectedActivationGrpcCodec.toRequest(
+                            activationInput, NAMESPACE)
+                        .getSerializedSize())
+                .isLessThanOrEqualTo(20 * 1024 * 1024);
             register(
                 worldHandlers,
-                new WorldCanonicalInstanceActivationGrpcService(activationService, NAMESPACE));
+                new WorldCanonicalInstanceActivationGrpcService(activationService, NAMESPACE),
+                new WorldOriginalStartSessionProtectedActivationGrpcService(
+                    protectedActivationService, NAMESPACE),
+                new WorldOriginalStartSessionActivationTerminalReadGrpcService(
+                    activationService, NAMESPACE));
 
             long activationOperationCountBefore = canonicalActivationOperationCount(world.dsl());
             var preparationRowsBeforeActivation = canonicalPreparationRowCounts(world.dsl());
@@ -3950,7 +4323,19 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                           assertThat(io.grpc.Status.fromThrowable(failure).getCode())
                               .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
             }
-            assertThat(activationAuthorityChecks).hasValue(0);
+            assertThatThrownBy(
+                    () -> wrongWorkloadProtectedActivationClient.activate(activationInput))
+                .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                .satisfies(
+                    failure ->
+                        assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                            .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+            assertThat(
+                    accountAccess
+                        .sources()
+                        .dsl
+                        .fetchCount(DSL.table("account_start_session_activation_protections")))
+                .isZero();
             assertThat(canonicalActivationOperationCount(world.dsl()))
                 .isEqualTo(activationOperationCountBefore);
             assertThat(canonicalPreparationRowCounts(world.dsl()))
@@ -3994,7 +4379,6 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             } finally {
               stopAll(defaultDeniedActivationServer);
             }
-            assertThat(activationAuthorityChecks).hasValue(0);
             assertThat(canonicalActivationOperationCount(world.dsl()))
                 .isEqualTo(activationOperationCountBefore);
             assertThat(canonicalPreparationRowCounts(world.dsl()))
@@ -4012,20 +4396,69 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                         completeWorldSelector.request().publicationFence()))
                 .isEqualTo(retainedEvidenceBeforeActivation);
 
-            // This explicitly stipulates current producer authority and its operation-specific
-            // held handle. STARTING association evidence comes from the actual Game Session
-            // launch owner and native authenticated read above, but that retained observation is
-            // not continuous Account/GS protection through the World activation commit.
+            // The request-only World activation endpoint remains default-denied even for the
+            // authenticated Game Session peer. Only the separate protected producer may acquire
+            // Account's distinct source protection and perform the PREPARING-to-ACTIVE CAS.
+            assertThatThrownBy(
+                    () ->
+                        gameSessionActivationClient.activate(
+                            canonicalActivationTransportRequest(activationRequest)))
+                .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                .satisfies(
+                    failure ->
+                        assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                            .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
+            assertThat(canonicalActivationOperationCount(world.dsl()))
+                .isEqualTo(activationOperationCountBefore);
+            assertThat(
+                    accountAccess
+                        .sources()
+                        .dsl
+                        .fetchCount(DSL.table("account_start_session_activation_protections")))
+                .isZero();
+
+            // The World owner obtains a first full Account protection receipt over authenticated
+            // mTLS, then commits the exact local PREPARING-to-ACTIVE CAS. No source vector or
+            // Account authority is stipulated or supplied by this fixture.
             {
-              var firstActivationResponse =
-                  gameSessionActivationClient.activate(
-                      canonicalActivationTransportRequest(activationRequest));
-              assertThat(firstActivationResponse.getActivationRequestId())
-                  .isEqualTo(activationRequestId.toString());
-              byte[] committedActivationBytes =
-                  firstActivationResponse.getCanonicalResultBytes().toByteArray();
-              var committedActivation =
-                  WorldCanonicalInstanceActivation.Result.fromStored(committedActivationBytes);
+              var firstTerminal =
+                  gameSessionToWorldProtectedActivationClient.activate(activationInput);
+              var firstProtection = firstTerminal.accountProtectionEvidence();
+              byte[] firstTerminalBytes = firstTerminal.canonicalBytes();
+              byte[] firstProtectionBytes = firstProtection.canonicalBytes();
+              var protectedRequest = firstProtection.request();
+              assertThat(protectedRequest.originalPostAuthorizationTupleBytes())
+                  .containsExactly(startSessionTuple.canonicalBytes());
+              assertThat(protectedRequest.gameSessionOwnerMutationId()).isEqualTo(ownerMutationId);
+              assertThat(protectedRequest.gameSessionOwnerAttemptId()).isEqualTo(ownerAttemptId);
+              assertThat(protectedRequest.gameSessionOwnerFence()).isEqualTo(ownerFence);
+              assertThat(protectedRequest.worldActivationRequest().canonicalRequestBytes())
+                  .containsExactly(activationRequest.canonicalRequestBytes());
+              assertThat(protectedRequest.worldActivationRequest().preparingEvidenceBytes())
+                  .containsExactly(activationRequest.preparingEvidenceBytes());
+              assertThat(
+                      protectedRequest
+                          .gameSessionLaunchReadEvidence()
+                          .retainedOriginalPostAuthorizationTupleBytes())
+                  .containsExactly(startSessionTuple.canonicalBytes());
+              assertThat(protectedRequest.gameSessionLaunchReadEvidence().operationIdentityBytes())
+                  .containsExactly(originalStartSessionLaunchRead.operationIdentityBytes());
+              assertThat(
+                      protectedRequest
+                          .gameSessionLaunchReadEvidence()
+                          .launch()
+                          .currentGameInstanceStatus())
+                  .isEqualTo(
+                      CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
+                          .STARTING);
+              assertThat(protectedRequest.originalLeaseExpiresAt())
+                  .isAfter(firstProtection.acquiredAt());
+              assertThat(firstProtection.originalSourceCaptureReferenceBytes()).isNotEmpty();
+              assertThat(firstProtection.sourceEvidenceVector()).isNotEmpty();
+              assertThat(firstProtection.accountProtectionFence()).isPositive();
+              assertThat(firstTerminal.activationRequestId()).isEqualTo(activationRequestId);
+              assertThat(firstTerminal.worldActivationFence()).isPositive();
+              var committedActivation = firstTerminal.activationResult();
               assertThat(committedActivation.outcome())
                   .isEqualTo(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
               assertThat(committedActivation.request().canonicalRequestBytes())
@@ -4053,18 +4486,38 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               assertThat(committedActivation.lifecycleEvidence().operationalRegionAssignments())
                   .containsExactlyInAnyOrderEntriesOf(
                       preparedLifecycle.operationalRegionAssignments());
-              assertThat(activationAuthorityChecks).hasValue(1);
-              assertThat(heldActivationChecks.get()).isGreaterThanOrEqualTo(2);
-              assertThat(heldActivationCloses).hasValue(1);
               assertThat(canonicalActivationOperationCount(world.dsl()))
                   .isEqualTo(activationOperationCountBefore + 1L);
+              assertThat(
+                      accountAccess
+                          .sources()
+                          .dsl
+                          .fetchCount(DSL.table("account_start_session_activation_protections")))
+                  .isOne();
+              assertThat(
+                      accountAccess
+                          .sources()
+                          .dsl
+                          .fetchCount(
+                              DSL.table("account_start_session_activation_protection_settlements")))
+                  .isZero();
+              assertThat(
+                      accountAccess
+                          .sources()
+                          .dsl
+                          .fetchCount(
+                              DSL.table("account_start_session_activation_protection_sources")))
+                  .isEqualTo(firstProtection.sourceEvidenceVector().size());
               var preparationRowsAfterActivation = canonicalPreparationRowCounts(world.dsl());
               assertThat(preparationRowsAfterActivation).isEqualTo(preparationRowsBeforeActivation);
 
-              var storedActivation =
-                  activationRepository.readResult(activationRequest).orElseThrow();
-              assertThat(storedActivation.canonicalBytes())
-                  .containsExactly(committedActivationBytes);
+              var protectedActivationReadback =
+                  activationRepository
+                      .readProtectedActivationByAcquisitionInput(activationInput)
+                      .orElseThrow();
+              assertThat(protectedActivationReadback.pending()).isFalse();
+              assertThat(protectedActivationReadback.terminalEvidence().canonicalBytes())
+                  .containsExactly(firstTerminalBytes);
               var independentActiveRead =
                   lifecycleRepository
                       .read(lifecycleRequestWithFreshReadId(expectedLifecycleRequest))
@@ -4084,24 +4537,121 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               assertThat(independentActiveRead.preparationInputDigest())
                   .isEqualTo(preparedLifecycle.preparationInputDigest());
 
+              var exactProtectedRetry =
+                  gameSessionToWorldProtectedActivationClient.activate(activationInput);
+              assertThat(exactProtectedRetry.canonicalBytes()).containsExactly(firstTerminalBytes);
+              var alternateCorrelationInput =
+                  new AccountStartSessionActivationProtectionAcquisitionInput(
+                      startSessionTuple.canonicalBytes(),
+                      ownerMutationId,
+                      ownerAttemptId,
+                      ownerFence,
+                      alternateCorrelationRetry);
+              var alternateCorrelationProtectedRetry =
+                  gameSessionToWorldProtectedActivationClient.activate(alternateCorrelationInput);
+              assertThat(alternateCorrelationProtectedRetry.canonicalBytes())
+                  .containsExactly(firstTerminalBytes);
               assertThat(
-                      gameSessionActivationClient
-                          .activate(canonicalActivationTransportRequest(activationRequest))
-                          .getCanonicalResultBytes()
-                          .toByteArray())
-                  .containsExactly(committedActivationBytes);
-              assertThat(
-                      gameSessionActivationClient
-                          .activate(canonicalActivationTransportRequest(alternateCorrelationRetry))
-                          .getCanonicalResultBytes()
-                          .toByteArray())
-                  .containsExactly(committedActivationBytes);
-              assertThat(activationAuthorityChecks).hasValue(1);
-              assertThat(heldActivationCloses).hasValue(1);
+                      alternateCorrelationProtectedRetry
+                          .accountProtectionEvidence()
+                          .canonicalBytes())
+                  .containsExactly(firstProtectionBytes);
               assertThat(canonicalActivationOperationCount(world.dsl()))
                   .isEqualTo(activationOperationCountBefore + 1L);
               assertThat(canonicalPreparationRowCounts(world.dsl()))
                   .isEqualTo(preparationRowsAfterActivation);
+              assertThat(
+                      retainedWorldPreparationEvidence(
+                          world,
+                          worldIntakeReceipt.intakeRequestId(),
+                          worldIdentityReceipt.operationId(),
+                          gd.target().canonicalTenantId(),
+                          controlPlaneRequestId,
+                          canonicalGameInstanceId,
+                          completeWorldSelector.request().publicationFence()))
+                  .isEqualTo(retainedEvidenceBeforeActivation);
+
+              var changedTuple =
+                  startSessionTuple(
+                      controlPlaneRequestId,
+                      gd.target().canonicalTenantId(),
+                      startSessionTuple.preAuthorizationTuple().action().target().gameTemplateId(),
+                      "changed activation tuple must not reuse retained protection");
+              var changedTupleInput =
+                  new AccountStartSessionActivationProtectionAcquisitionInput(
+                      changedTuple.canonicalBytes(),
+                      ownerMutationId,
+                      ownerAttemptId,
+                      ownerFence,
+                      activationRequest);
+              assertThatThrownBy(
+                      () -> gameSessionToWorldProtectedActivationClient.activate(changedTupleInput))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                  .satisfies(
+                      failure ->
+                          assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                              .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+              var changedAttemptInput =
+                  new AccountStartSessionActivationProtectionAcquisitionInput(
+                      startSessionTuple.canonicalBytes(),
+                      ownerMutationId,
+                      UUID.randomUUID(),
+                      ownerFence,
+                      activationRequest);
+              assertThatThrownBy(
+                      () ->
+                          gameSessionToWorldProtectedActivationClient.activate(changedAttemptInput))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                  .satisfies(
+                      failure ->
+                          assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                              .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+              var changedFenceInput =
+                  new AccountStartSessionActivationProtectionAcquisitionInput(
+                      startSessionTuple.canonicalBytes(),
+                      ownerMutationId,
+                      ownerAttemptId,
+                      ownerFence + 1L,
+                      activationRequest);
+              assertThatThrownBy(
+                      () -> gameSessionToWorldProtectedActivationClient.activate(changedFenceInput))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                  .satisfies(
+                      failure ->
+                          assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                              .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+              var changedActivationRequest =
+                  new WorldCanonicalInstanceActivation.Request(
+                      UUID.randomUUID(), preparedLifecycle);
+              var changedActivationInput =
+                  new AccountStartSessionActivationProtectionAcquisitionInput(
+                      startSessionTuple.canonicalBytes(),
+                      ownerMutationId,
+                      ownerAttemptId,
+                      ownerFence,
+                      changedActivationRequest);
+              assertThatThrownBy(
+                      () ->
+                          gameSessionToWorldProtectedActivationClient.activate(
+                              changedActivationInput))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class)
+                  .satisfies(
+                      failure ->
+                          assertThat(io.grpc.Status.fromThrowable(failure).getCode())
+                              .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
+              assertThat(
+                      accountAccess
+                          .sources()
+                          .dsl
+                          .fetchCount(DSL.table("account_start_session_activation_protections")))
+                  .isOne();
+              assertThat(
+                      accountAccess
+                          .sources()
+                          .dsl
+                          .fetchCount(
+                              DSL.table("account_start_session_activation_protection_settlements")))
+                  .isZero();
 
               var changedEvidence =
                   new WorldCanonicalInstanceLifecycleEvidence(
@@ -4128,14 +4678,18 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                   .isFalse();
               assertThatThrownBy(
                       () ->
-                          gameSessionActivationClient.activate(
-                              canonicalActivationTransportRequest(changedEvidenceRetry)))
+                          gameSessionToWorldProtectedActivationClient.activate(
+                              new AccountStartSessionActivationProtectionAcquisitionInput(
+                                  startSessionTuple.canonicalBytes(),
+                                  ownerMutationId,
+                                  ownerAttemptId,
+                                  ownerFence,
+                                  changedEvidenceRetry)))
                   .isInstanceOf(io.grpc.StatusRuntimeException.class)
                   .satisfies(
                       failure ->
                           assertThat(io.grpc.Status.fromThrowable(failure).getCode())
-                              .isEqualTo(io.grpc.Status.Code.ALREADY_EXISTS));
-              assertThat(activationAuthorityChecks).hasValue(1);
+                              .isEqualTo(io.grpc.Status.Code.FAILED_PRECONDITION));
               assertThat(canonicalActivationOperationCount(world.dsl()))
                   .isEqualTo(activationOperationCountBefore + 1L);
               assertThat(canonicalPreparationRowCounts(world.dsl()))
@@ -4154,9 +4708,50 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               assertThat(activeReadAfterConflict.startLocation())
                   .isEqualTo(independentActiveRead.startLocation());
 
+              var settledActivation =
+                  worldToAccountActivationSettlementClient.settle(
+                      new AccountStartSessionActivationProtectionSettlementInput(
+                          NAMESPACE,
+                          UUID.randomUUID(),
+                          firstProtection.accountProtectionId(),
+                          firstProtection.accountProtectionFence()));
+              assertThat(settledActivation.accountProtectionId())
+                  .isEqualTo(firstProtection.accountProtectionId());
+              assertThat(settledActivation.accountProtectionFence())
+                  .isEqualTo(firstProtection.accountProtectionFence());
+              assertThat(settledActivation.terminal().canonicalBytes())
+                  .containsExactly(firstTerminalBytes);
+              assertThat(settledActivation.settledAt()).isNotNull();
+              assertThat(
+                      accountAccess
+                          .sources()
+                          .dsl
+                          .fetchCount(
+                              DSL.table("account_start_session_activation_protection_settlements")))
+                  .isOne();
+              var settledActivationRetry =
+                  worldToAccountActivationSettlementClient.settle(
+                      new AccountStartSessionActivationProtectionSettlementInput(
+                          NAMESPACE,
+                          UUID.randomUUID(),
+                          firstProtection.accountProtectionId(),
+                          firstProtection.accountProtectionFence()));
+              assertThat(settledActivationRetry.terminal().canonicalBytes())
+                  .containsExactly(firstTerminalBytes);
+              assertThat(settledActivationRetry.settledAt())
+                  .isEqualTo(settledActivation.settledAt());
+              assertThat(
+                      accountAccess
+                          .sources()
+                          .dsl
+                          .fetchCount(
+                              DSL.table("account_start_session_activation_protection_settlements")))
+                  .isOne();
+
               // Genuine GS/Account terminal recovery below is deliberately an abort, not
-              // successful admission: the real launch still remains STARTING. World activation
-              // authority above remains stipulated and is not promoted by these owner results.
+              // successful admission: the real launch still remains STARTING. The Account
+              // activation-purpose source protection above is separately settled by the exact
+              // authenticated World ACTIVE receipt.
               var closedPointer =
                   Objects.requireNonNull(
                       gameSessionAttempts

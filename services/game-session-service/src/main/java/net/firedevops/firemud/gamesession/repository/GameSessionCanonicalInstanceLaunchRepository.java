@@ -11,6 +11,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionLaunchReadEvidence;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
@@ -112,6 +113,47 @@ public final class GameSessionCanonicalInstanceLaunchRepository {
         readTransaction.execute(status -> readByLaunchIdentityInTransaction(request));
     return Objects.requireNonNull(
         result, "Game Session launch read transaction returned no result");
+  }
+
+  /**
+   * Reads the complete launch and verifies its retained original tuple in the same independent
+   * repeatable-read snapshot.
+   */
+  public Optional<CanonicalInstanceLaunch> readByOriginalTuple(
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector,
+      byte[] exactOriginalPostAuthorizationTupleBytes) {
+    requireNoActiveOwnerTransaction();
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "Original tuple launch read requires an independent owner synchronization");
+    }
+    Objects.requireNonNull(selector, "selector");
+    if (!workloadNamespace.equals(selector.targetNamespace())) {
+      throw new InvalidCanonicalInstanceLaunchException(
+          "Launch-association namespace differs from the configured Game Session owner");
+    }
+    OriginalStartSessionLaunchReadEvidence.Request exactRequest =
+        new OriginalStartSessionLaunchReadEvidence.Request(
+            selector, exactOriginalPostAuthorizationTupleBytes);
+    Optional<CanonicalInstanceLaunch> result =
+        readTransaction.execute(
+            status -> {
+              Optional<CanonicalInstanceLaunch> retained =
+                  readByLaunchIdentityInTransaction(selector);
+              if (retained.isEmpty()) {
+                return Optional.empty();
+              }
+              CanonicalInstanceLaunch launch = retained.orElseThrow();
+              if (!Arrays.equals(
+                  exactRequest.originalPostAuthorizationTupleBytes(),
+                  launch.originalStartSessionTuple())) {
+                throw new InvalidCanonicalInstanceLaunchException(
+                    "Retained original StartSession tuple differs from the exact requested bytes");
+              }
+              return Optional.of(launch);
+            });
+    return Objects.requireNonNull(
+        result, "Game Session original tuple launch read transaction returned no result");
   }
 
   private CanonicalInstanceLaunch createInTransaction(PreparedLaunch input) {

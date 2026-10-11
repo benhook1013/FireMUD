@@ -76,6 +76,38 @@ class StartSessionTemplateAssociationReadGrpcCodecTest {
   }
 
   @Test
+  void authoredCoreReadAcceptsOnlyTheCompletePinnedAssociationRequest() {
+    var replay =
+        request(new ExactReplay(VERSION, COMMIT, "template-publish-workflow-1", digest('a')));
+    var typed = new AuthoredInitialActorCoreReadEvidence.ReadRequest(replay);
+    var wire = AuthoredInitialActorCoreReadGrpcCodec.toRequest(typed);
+
+    assertThat(AuthoredInitialActorCoreReadGrpcCodec.fromRequest(wire).associationRequest())
+        .isEqualTo(replay);
+    assertThatThrownBy(
+            () ->
+                new AuthoredInitialActorCoreReadEvidence.ReadRequest(
+                    request(new InitialConfigured())))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Exact pinned association replay");
+
+    var unknown =
+        wire.toBuilder()
+            .setUnknownFields(
+                com.google.protobuf.UnknownFieldSet.newBuilder()
+                    .addField(
+                        99,
+                        com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                            .addVarint(1L)
+                            .build())
+                    .build())
+            .build();
+    assertThatThrownBy(() -> AuthoredInitialActorCoreReadGrpcCodec.fromRequest(unknown))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unsupported fields");
+  }
+
+  @Test
   void rejectsMissingSelectionUnknownFieldsNoncanonicalIdsAndChangedNamespace() {
     var valid =
         StartSessionTemplateAssociationReadGrpcCodec.toRequest(request(new InitialConfigured()));

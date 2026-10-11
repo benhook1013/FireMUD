@@ -103,6 +103,34 @@ class GameSessionCanonicalInstanceLaunchPostgresIntegrationTest {
       assertThat(independent.launchBindingEvidence())
           .isEqualTo(inputs.proof().completeLaunchBindingEvidence());
 
+      var originalTupleRead =
+          inputs
+              .repository()
+              .readByOriginalTuple(
+                  selector(inputs.proof(), inputs.catalog(), created.gameInstanceUuid()),
+                  inputs.proof().originalTuple().canonicalBytes())
+              .orElseThrow();
+      assertThat(originalTupleRead.originalStartSessionTuple())
+          .containsExactly(inputs.proof().originalTuple().canonicalBytes());
+      assertThat(originalTupleRead.currentGameInstanceStatus())
+          .isEqualTo(
+              CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
+                  .STARTING);
+      assertThat(originalTupleRead.currentRowVersion()).isZero();
+
+      var mismatchedTuple =
+          GameSessionCanonicalInstanceLaunchProofFixtures.withAuditReason(
+              inputs.proof().originalTuple(), "different original tuple bytes");
+      assertThatThrownBy(
+              () ->
+                  inputs
+                      .repository()
+                      .readByOriginalTuple(
+                          selector(inputs.proof(), inputs.catalog(), created.gameInstanceUuid()),
+                          mismatchedTuple.canonicalBytes()))
+          .isInstanceOf(InvalidCanonicalInstanceLaunchException.class)
+          .hasMessageContaining("Retained original StartSession tuple differs");
+
       assertThat(
               fixture
                   .dsl()
@@ -126,6 +154,18 @@ class GameSessionCanonicalInstanceLaunchPostgresIntegrationTest {
       assertThat(retry.currentRowVersion()).isEqualTo(created.capturedStartingRowVersion() + 1L);
       assertThat(retry.capturedStartingRowVersion())
           .isEqualTo(created.capturedStartingRowVersion());
+      var currentOriginalTupleRead =
+          inputs
+              .repository()
+              .readByOriginalTuple(
+                  selector(inputs.proof(), inputs.catalog(), created.gameInstanceUuid()),
+                  inputs.proof().originalTuple().canonicalBytes())
+              .orElseThrow();
+      assertThat(currentOriginalTupleRead.currentGameInstanceStatus())
+          .isEqualTo(
+              CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus.RUNNING);
+      assertThat(currentOriginalTupleRead.currentRowVersion())
+          .isEqualTo(created.capturedStartingRowVersion() + 1L);
 
       var changedTuple =
           GameSessionCanonicalInstanceLaunchProofFixtures.withAuditReason(

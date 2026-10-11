@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.Callable;
 import javax.crypto.spec.SecretKeySpec;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionAdmissionProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidenceRepository;
@@ -34,10 +35,12 @@ import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorld
 import net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcService;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionAdmissionTerminalReadClient;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptClient;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionLaunchReadClient;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalReadClient;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
 import org.jooq.DSLContext;
@@ -323,6 +326,39 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
     return new AccountStartSessionAdmissionProtectionSettlementService(
         new AccountStartSessionAdmissionProtectionRepository(accountSources.dsl),
         gameSessionClient,
+        accountSources.manager,
+        namespace);
+  }
+
+  /**
+   * Creates the actual distinct World-activation protection acquirer over retained Account rows.
+   */
+  public AccountStartSessionActivationProtectionAcquisitionService
+      activationProtectionAcquisitionService(
+          OriginalStartSessionCurrentAttemptClient gameSessionCurrentAttemptClient,
+          OriginalStartSessionLaunchReadClient gameSessionLaunchReadClient) {
+    Objects.requireNonNull(
+        gameSessionCurrentAttemptClient, "Game Session current-attempt client required");
+    Objects.requireNonNull(gameSessionLaunchReadClient, "Game Session launch-read client required");
+    return new AccountStartSessionActivationProtectionAcquisitionService(
+        authorizationService,
+        new AccountStartSessionWorldParticipationRepository(accountSources.dsl),
+        new AccountStartSessionWorldOriginalAttemptEvidenceRepository(accountSources.dsl),
+        new AccountStartSessionActivationProtectionRepository(accountSources.dsl),
+        gameSessionCurrentAttemptClient,
+        gameSessionLaunchReadClient,
+        accountSources.manager,
+        namespace);
+  }
+
+  /** Creates the actual historical activation settler over this fixture's retained Account rows. */
+  public AccountStartSessionActivationProtectionSettlementService
+      activationProtectionSettlementService(
+          WorldOriginalStartSessionActivationTerminalReadClient worldTerminalReadClient) {
+    Objects.requireNonNull(worldTerminalReadClient, "World terminal-read client required");
+    return new AccountStartSessionActivationProtectionSettlementService(
+        new AccountStartSessionActivationProtectionRepository(accountSources.dsl),
+        worldTerminalReadClient,
         accountSources.manager,
         namespace);
   }

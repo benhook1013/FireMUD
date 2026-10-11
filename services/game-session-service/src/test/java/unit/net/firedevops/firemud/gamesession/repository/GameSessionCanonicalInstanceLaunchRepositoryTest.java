@@ -18,6 +18,9 @@ class GameSessionCanonicalInstanceLaunchRepositoryTest {
   @AfterEach
   void clearAmbientState() {
     TransactionSynchronizationManager.setActualTransactionActive(false);
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
   @Test
@@ -81,6 +84,73 @@ class GameSessionCanonicalInstanceLaunchRepositoryTest {
     assertThatThrownBy(() -> repository.readByLaunchIdentity(request))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("independent transaction");
+
+    verifyNoInteractions(dsl, transactionManager);
+  }
+
+  @Test
+  void originalTupleReadRequiresAnIndependentSnapshotBeforeInspectingInputs() {
+    DSLContext dsl = mock(DSLContext.class);
+    PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
+    var catalogs =
+        new GameSessionCanonicalRealmCatalogRepository(dsl, transactionManager, NAMESPACE);
+    var repository =
+        new GameSessionCanonicalInstanceLaunchRepository(
+            dsl, transactionManager, NAMESPACE, catalogs);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+
+    assertThatThrownBy(() -> repository.readByOriginalTuple(null, null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("independent transaction");
+
+    verifyNoInteractions(dsl, transactionManager);
+  }
+
+  @Test
+  void originalTupleReadRejectsAmbientSynchronizationBeforeInspectingInputs() {
+    DSLContext dsl = mock(DSLContext.class);
+    PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
+    var catalogs =
+        new GameSessionCanonicalRealmCatalogRepository(dsl, transactionManager, NAMESPACE);
+    var repository =
+        new GameSessionCanonicalInstanceLaunchRepository(
+            dsl, transactionManager, NAMESPACE, catalogs);
+    TransactionSynchronizationManager.initSynchronization();
+
+    assertThatThrownBy(() -> repository.readByOriginalTuple(null, null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("independent owner synchronization");
+
+    verifyNoInteractions(dsl, transactionManager);
+  }
+
+  @Test
+  void originalTupleReadRejectsForeignNamespaceBeforeOpeningSnapshot() {
+    DSLContext dsl = mock(DSLContext.class);
+    PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
+    var catalogs =
+        new GameSessionCanonicalRealmCatalogRepository(dsl, transactionManager, NAMESPACE);
+    var repository =
+        new GameSessionCanonicalInstanceLaunchRepository(
+            dsl, transactionManager, NAMESPACE, catalogs);
+    var selector =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+            UUID.randomUUID(),
+            "other",
+            UUID.randomUUID(),
+            "world",
+            UUID.randomUUID(),
+            "operation",
+            "descriptor",
+            "sha256:" + "1".repeat(64),
+            "sha256:" + "2".repeat(64),
+            "sha256:" + "3".repeat(64));
+
+    assertThatThrownBy(() -> repository.readByOriginalTuple(selector, null))
+        .isInstanceOf(
+            GameSessionCanonicalInstanceLaunchRepository.InvalidCanonicalInstanceLaunchException
+                .class)
+        .hasMessageContaining("differs from the configured");
 
     verifyNoInteractions(dsl, transactionManager);
   }

@@ -20,6 +20,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreProjection;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreSourceBinding;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
@@ -140,11 +141,17 @@ class StartSessionLaunchDescriptorProducerTest {
             fixture.policySnapshot(),
             fixture.gameplayRules());
 
-    assertThat(resolved).hasSize(1);
+    assertThat(resolved).hasSize(2);
+    assertThat(resolved.get(0).policySource().policy().realmSlug()).isEqualTo("realm-a");
+    assertThat(resolved.get(1).policySource().policy().realmSlug()).isEqualTo("realm-z");
     assertThat(resolved.getFirst().core().displayName()).isEqualTo("Wayfarer");
     assertThat(resolved.getFirst().disposition().dispositionKey()).isEqualTo("newcomer");
     assertThat(resolved.getFirst().safeFeedback().feedbackKey()).isEqualTo("welcome");
     assertThat(resolved.getFirst().selectedCommit()).isEqualTo(fixture.binding());
+    assertThat(resolved.getFirst().policySource().commitId())
+        .isNotEqualTo(fixture.binding().commitId());
+    assertThat(resolved.getFirst().dispositionSource().sourceBinding().commitId())
+        .isNotEqualTo(fixture.binding().commitId());
     assertThat(resolved.getFirst().expectedWorldSlug()).isEqualTo("world");
     assertThatThrownBy(resolved::clear).isInstanceOf(UnsupportedOperationException.class);
 
@@ -190,7 +197,7 @@ class StartSessionLaunchDescriptorProducerTest {
   }
 
   @Test
-  void resolvedBindingDefensivelyRetainsSelectedActorCoreAndRejectsChangedReleaseProvenance() {
+  void resolvedBindingDefensivelyRetainsMinimalActorCoreProjectionAndRejectsChangedProvenance() {
     var fixture = selectedActorCoreSource();
     UUID sourceOperation = uuid("66666666-6666-4666-8666-666666666666");
     List<AuthoredInitialActorCoreSourceBinding> sourceBindings =
@@ -209,10 +216,24 @@ class StartSessionLaunchDescriptorProducerTest {
         resolvedBinding(mutableBindings, sourceOperation, "world", COMMIT, "selected-workflow");
 
     mutableBindings.clear();
-    assertThat(resolved.actorCoreBindings()).hasSize(1);
-    assertThat(resolved.actorCoreBindings().getFirst().canonicalBytes())
-        .isEqualTo(sourceBindings.getFirst().canonicalBytes());
-    assertThatThrownBy(resolved.actorCoreBindings()::clear)
+    assertThat(resolved.actorCoreProjections()).hasSize(2);
+    assertThat(resolved.actorCoreProjections().get(0).policy().canonicalJson())
+        .contains("\"realmSlug\":\"realm-a\"");
+    assertThat(resolved.actorCoreProjections().get(1).policy().canonicalJson())
+        .contains("\"realmSlug\":\"realm-z\"");
+    assertThat(resolved.actorCoreProjections().getFirst().policy().commitId())
+        .isNotEqualTo(resolved.actorCoreProjections().getFirst().selectedCommitId());
+    assertThat(resolved.actorCoreProjections().getFirst().disposition().sourceCommitId())
+        .isNotEqualTo(resolved.actorCoreProjections().getFirst().selectedCommitId().toString());
+    assertThat(resolved.actorCoreProjections().getFirst().bindingDigest())
+        .isEqualTo(sourceBindings.getFirst().digest());
+    assertThat(
+            new String(
+                resolved.actorCoreProjections().getFirst().canonicalBytes(),
+                StandardCharsets.UTF_8))
+        .doesNotContain("selected publication operation")
+        .doesNotContain("selected publication terminal evidence");
+    assertThatThrownBy(resolved.actorCoreProjections()::clear)
         .isInstanceOf(UnsupportedOperationException.class);
 
     assertThatThrownBy(
@@ -283,8 +304,19 @@ class StartSessionLaunchDescriptorProducerTest {
     when(descriptor.canonicalTenantId()).thenReturn(TENANT.toString());
     when(descriptor.gameTemplateId()).thenReturn(91L);
     when(descriptor.authoredWorldBinding()).thenReturn(authoredWorld);
+    // Structural projection fixtures only; Common integrity checks do not authenticate a producer.
+    List<AuthoredInitialActorCoreProjection> projections =
+        java.util.stream.IntStream.range(0, actorCoreBindings.size())
+            .mapToObj(
+                index ->
+                    AuthoredInitialActorCoreProjection.fromValidatedBinding(
+                        UUID.nameUUIDFromBytes(
+                            (index + ":" + actorCoreBindings.get(index).digest())
+                                .getBytes(StandardCharsets.UTF_8)),
+                        actorCoreBindings.get(index)))
+            .toList();
     return new StartSessionLaunchDescriptorProducer.ResolvedBinding(
-        request, associationRead, descriptor, actorCoreBindings);
+        request, associationRead, descriptor, projections);
   }
 
   private static SelectedActorCoreFixture selectedActorCoreSource() {
@@ -293,12 +325,19 @@ class StartSessionLaunchDescriptorProducerTest {
             TENANT, VERSION, 23L, "private-owner-key", 42L, "private-owner-key", "NEW_GAME_ROW");
     String policyJson =
         "{\"schemaVersion\":3,\"worldSlug\":\"world\",\"worldDisplayName\":\"World\","
-            + "\"realmSlug\":\"realm\",\"realmDisplayName\":\"Realm\",\"visible\":true,"
+            + "\"realmSlug\":\"realm-z\",\"realmDisplayName\":\"Realm Z\",\"visible\":true,"
             + "\"publicProduction\":true,\"stateScope\":\"SHARED\",\"entryPolicy\":\"PLAYER_CREATED\","
             + "\"creationDescriptor\":{\"schemaVersion\":1,\"descriptorId\":\"11111111-1111-4111-8111-111111111111\","
             + "\"descriptorRevisionId\":\"22222222-2222-4222-8222-222222222222\","
             + "\"inputKind\":\"EMPTY_OBJECT\",\"dependencies\":[]},"
             + "\"initialActorCore\":{\"displayName\":\"Wayfarer\",\"dispositionKey\":\"newcomer\"}}";
+    String earlierPolicyJson =
+        policyJson
+            .replace("realm-z", "realm-a")
+            .replace("Realm Z", "Realm A")
+            .replace("11111111-1111-4111-8111-111111111111", "12111111-1111-4111-8111-111111111111")
+            .replace(
+                "22222222-2222-4222-8222-222222222222", "23222222-2222-4222-8222-222222222222");
     String policyPayload =
         RealmPolicySource.canonical(
             Map.of(
@@ -328,11 +367,23 @@ class StartSessionLaunchDescriptorProducerTest {
                 policyPayload),
             new RevisionPayload(
                 "1",
+                uuid("56555555-5555-4555-8555-555555555556"),
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                RealmPolicySource.canonical(
+                    Map.of(
+                        "revisionKind",
+                        RealmPolicySource.REVISION_KIND,
+                        "logicalRevisionId",
+                        "selected-policy-r2",
+                        "policy",
+                        RealmPolicySource.tree(earlierPolicyJson)))),
+            new RevisionPayload(
+                "2",
                 uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
                 Owner.GAME_DESIGN_CONTROL_PLANE,
                 GameplayRuleSource.upsertPayload(disposition)),
             new RevisionPayload(
-                "2",
+                "3",
                 uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
                 Owner.GAME_DESIGN_CONTROL_PLANE,
                 GameplayRuleSource.upsertPayload(feedback)));
@@ -352,25 +403,45 @@ class StartSessionLaunchDescriptorProducerTest {
                 GameplayRuleSource.SCOPE,
                 GameplayRuleSource.SCOPE_ID,
                 "0"));
-    DraftCommitBinding binding =
+    DraftCommitBinding originBinding =
         DraftCommitBinding.create(
             target,
             uuid("77777777-7777-4777-8777-777777777777"),
-            COMMIT,
+            uuid("abababab-abab-4bab-8bab-abababababab"),
             "base-commit-0",
             revisions,
             affectedUnits);
-    var policySource = RealmPolicySource.revision(binding, revisions.getFirst());
+    DraftCommitBinding binding =
+        DraftCommitBinding.create(
+            target,
+            uuid("88888888-8888-4888-8888-888888888888"),
+            COMMIT,
+            originBinding.commitId().toString(),
+            List.of(
+                new RevisionPayload(
+                    "0",
+                    uuid("98989898-9898-4989-8989-989898989898"),
+                    Owner.WORLD_MANAGEMENT,
+                    "{}")),
+            List.of(
+                new AffectedUnit(
+                    Owner.WORLD_MANAGEMENT, "WORLD_REVISION", "world", "WORLD", "world", "0")));
+    var policySources =
+        List.of(
+            RealmPolicySource.revision(originBinding, revisions.get(0)),
+            RealmPolicySource.revision(originBinding, revisions.get(1)));
     var policySnapshot =
         new net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot(
-            binding, "1", List.of(policySource));
+            binding, "1", policySources);
+    List<GameplayRuleSource.Entry> inheritedRules =
+        GameplayRuleSource.replay(List.of(), originBinding);
     var rulesSnapshot =
         new GameplayRuleSnapshot(
             binding,
             "1",
-            null,
+            originBinding.commitId(),
             uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
-            GameplayRuleSource.replay(List.of(), binding));
+            GameplayRuleSource.replay(inheritedRules, binding));
     return new SelectedActorCoreFixture(binding, policySnapshot, rulesSnapshot);
   }
 

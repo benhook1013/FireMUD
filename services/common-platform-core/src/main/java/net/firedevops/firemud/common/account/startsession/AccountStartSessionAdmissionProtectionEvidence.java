@@ -250,8 +250,7 @@ public final class AccountStartSessionAdmissionProtectionEvidence {
     }
   }
 
-  private static List<SourceEvidence> canonicalSourceVector(
-      List<SourceEvidence> sourceEvidenceVector) {
+  static List<SourceEvidence> canonicalSourceVector(List<SourceEvidence> sourceEvidenceVector) {
     Objects.requireNonNull(sourceEvidenceVector, "sourceEvidenceVector is required");
     if (sourceEvidenceVector.isEmpty() || sourceEvidenceVector.size() > MAX_SOURCE_EVIDENCE_COUNT) {
       throw invalid("sourceEvidenceVector is empty or exceeds its item limit");
@@ -279,7 +278,7 @@ public final class AccountStartSessionAdmissionProtectionEvidence {
     return List.copyOf(sources);
   }
 
-  private static void requireCaptureReferenceBinding(
+  static void requireCaptureReferenceBinding(
       byte[] exactReferenceBytes, StartSessionPostAuthorizationExecutionTuple tuple) {
     try {
       String json = strictUtf8(exactReferenceBytes);

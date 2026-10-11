@@ -34,6 +34,8 @@ public final class AuthoredInitialActorCoreSourceBinding {
   private final GameplayRuleManifest gameplayManifest;
   private final Disposition disposition;
   private final Feedback safeFeedback;
+  private final GameplayRuleSource.Entry dispositionSource;
+  private final GameplayRuleSource.Entry safeFeedbackSource;
   private final byte[] canonicalBytes;
   private final String digest;
 
@@ -63,6 +65,8 @@ public final class AuthoredInitialActorCoreSourceBinding {
     this.gameplayManifest = Objects.requireNonNull(gameplayManifest);
     this.disposition = Objects.requireNonNull(disposition);
     this.safeFeedback = Objects.requireNonNull(safeFeedback);
+    this.dispositionSource = Objects.requireNonNull(dispositionEntry);
+    this.safeFeedbackSource = Objects.requireNonNull(feedbackEntry);
 
     var target = selectedCommit.target();
     var policy = policySource.policy();
@@ -455,6 +459,16 @@ public final class AuthoredInitialActorCoreSourceBinding {
 
   public Feedback safeFeedback() {
     return safeFeedback;
+  }
+
+  /** Exact authored source entry for the selected disposition, including its original revision. */
+  public GameplayRuleSource.Entry dispositionSource() {
+    return dispositionSource;
+  }
+
+  /** Exact authored source entry for the mandatory feedback, including its original revision. */
+  public GameplayRuleSource.Entry safeFeedbackSource() {
+    return safeFeedbackSource;
   }
 
   public byte[] canonicalBytes() {

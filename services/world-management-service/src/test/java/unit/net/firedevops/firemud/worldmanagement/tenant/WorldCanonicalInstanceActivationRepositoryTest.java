@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionAcquisitionInput;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationRepository;
@@ -55,6 +56,19 @@ class WorldCanonicalInstanceActivationRepositoryTest {
 
                       public void close() {}
                     }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("must not join an ambient transaction");
+
+    verifyNoInteractions(dsl, manager, lifecycle);
+  }
+
+  @Test
+  void protectedActivationRecoveryRejectsAmbientTransactionBeforeAnyRead() {
+    var repository = new WorldCanonicalInstanceActivationRepository(dsl, manager, lifecycle);
+    var input = mock(AccountStartSessionActivationProtectionAcquisitionInput.class);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+
+    assertThatThrownBy(() -> repository.readProtectedActivationByAcquisitionInput(input))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("must not join an ambient transaction");
 

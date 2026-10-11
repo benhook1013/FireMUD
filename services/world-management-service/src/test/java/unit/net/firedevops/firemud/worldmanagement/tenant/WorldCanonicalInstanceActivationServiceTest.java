@@ -12,8 +12,11 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
+import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationService;
 import org.junit.jupiter.api.Test;
@@ -31,7 +34,7 @@ class WorldCanonicalInstanceActivationServiceTest {
 
     assertThatThrownBy(() -> service.activate(request))
         .isInstanceOf(WorldCanonicalInstanceActivationService.ActivationDeniedException.class)
-        .hasMessageContaining("no authenticated current source/release");
+        .hasMessageContaining("complete Account activation-purpose protection evidence");
 
     verify(repository).readResult(request);
     verify(repository, never()).activate(eq(request), any());
@@ -56,32 +59,54 @@ class WorldCanonicalInstanceActivationServiceTest {
   }
 
   @Test
-  void aNewOperationChecksAndHoldsAuthorityOutsideTheOwnerTransaction() {
+  void retainedRequestOnlyVerifierCannotAuthorizeFreshActivation() {
     var repository = mock(WorldCanonicalInstanceActivationRepository.class);
     var request = request();
-    var result = mock(WorldCanonicalInstanceActivation.Result.class);
-    var closed = new java.util.concurrent.atomic.AtomicBoolean();
+    var verifierCalls = new AtomicInteger();
     var service =
         new WorldCanonicalInstanceActivationService(
             repository,
             ignored -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              return new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
-                public void requireHeld() {
-                  assertThat(closed.get()).isFalse();
-                }
-
-                public void close() {
-                  closed.set(true);
-                }
-              };
+              verifierCalls.incrementAndGet();
+              throw new AssertionError("legacy request-only verifier cannot authorize a write");
             });
     when(repository.readResult(request)).thenReturn(Optional.empty());
-    when(repository.activate(eq(request), any())).thenReturn(result);
 
-    assertThat(service.activate(request)).isSameAs(result);
+    assertThatThrownBy(() -> service.activate(request))
+        .isInstanceOf(WorldCanonicalInstanceActivationService.ActivationDeniedException.class)
+        .hasMessageContaining("complete Account activation-purpose protection evidence");
+    assertThat(verifierCalls).hasValue(0);
+    verify(repository).readResult(request);
+    verify(repository, never()).activate(eq(request), any());
+  }
+
+  @Test
+  void protectedOperationHoldsItsDistinctAuthorityAroundTheOwnerCas() {
+    var repository = mock(WorldCanonicalInstanceActivationRepository.class);
+    var protection = mock(AccountStartSessionActivationProtectionEvidence.class);
+    var terminal = mock(WorldOriginalStartSessionActivationTerminalEvidence.class);
+    var heldChecks = new AtomicInteger();
+    var closed = new java.util.concurrent.atomic.AtomicBoolean();
+    var held =
+        new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
+          public void requireHeld() {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            assertThat(closed.get()).isFalse();
+            heldChecks.incrementAndGet();
+          }
+
+          public void close() {
+            closed.set(true);
+          }
+        };
+    when(repository.activateProtected(eq(protection), any())).thenReturn(terminal);
+    var service = new WorldCanonicalInstanceActivationService(repository);
+
+    assertThat(service.activateProtected(protection, held)).isSameAs(terminal);
+
+    assertThat(heldChecks).hasValue(2);
     assertThat(closed.get()).isTrue();
-    verify(repository).activate(eq(request), any());
+    verify(repository).activateProtected(eq(protection), eq(held));
   }
 
   private static WorldCanonicalInstanceActivation.Request request() {

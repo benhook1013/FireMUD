@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreProjection;
 import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreSourceBinding;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
@@ -29,6 +30,7 @@ import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
+import net.firedevops.firemud.gamedesign.repository.StartSessionAuthoredActorCoreProjectionRepository;
 import net.firedevops.firemud.gamedesign.repository.StartSessionLaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.StartSessionLaunchDescriptorRepository.Binding;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -61,6 +63,7 @@ public final class StartSessionLaunchDescriptorProducer {
   private final GameAuthoredWorldSourceRepository authoredWorldSources;
   private final LaunchDescriptorRepository descriptors;
   private final StartSessionLaunchDescriptorRepository bindings;
+  private final StartSessionAuthoredActorCoreProjectionRepository actorCoreProjections;
   private final VersionRepository versions;
   private final TemplateReferenceRepository templateReferences;
   private final GameDesignPublicationOperationRepository publicationOperations;
@@ -92,6 +95,7 @@ public final class StartSessionLaunchDescriptorProducer {
     authoredWorldSources = new GameAuthoredWorldSourceRepository(dsl);
     descriptors = new LaunchDescriptorRepository(dsl);
     bindings = new StartSessionLaunchDescriptorRepository(dsl);
+    actorCoreProjections = new StartSessionAuthoredActorCoreProjectionRepository(dsl);
     versions = new VersionRepository(dsl);
     templateReferences = new TemplateReferenceRepository(dsl);
     publicationOperations = new GameDesignPublicationOperationRepository(dsl);
@@ -205,6 +209,8 @@ public final class StartSessionLaunchDescriptorProducer {
           descriptorRequest,
           source,
           capturedTemplate.gameLogicReceipt());
+      List<AuthoredInitialActorCoreProjection> retainedActorCoreProjections =
+          replayActorCoreProjections(storedBinding.orElseThrow(), capturedTemplate);
       if (LaunchDescriptor.OUTCOME_FAILED.equals(descriptor.getOutcomeStatus())) {
         if (capturedTemplate.failureMessage() == null) {
           throw conflict(
@@ -222,7 +228,7 @@ public final class StartSessionLaunchDescriptorProducer {
       ResolvedLaunchDescriptorDto resolved =
           readStored(descriptor, descriptorRequest, requestJson, source, sourceJson);
       return OwnerOutcome.succeeded(
-          new ResolvedBinding(exactRequest, exact, resolved, capturedTemplate.actorCoreBindings()));
+          new ResolvedBinding(exactRequest, exact, resolved, retainedActorCoreProjections));
     }
 
     if (descriptors
@@ -330,6 +336,8 @@ public final class StartSessionLaunchDescriptorProducer {
         descriptorRequest,
         source,
         capturedTemplate.gameLogicReceipt());
+    List<AuthoredInitialActorCoreProjection> retainedActorCoreProjections =
+        insertActorCoreProjections(persistedBinding, capturedTemplate);
     if (deterministicFailure) {
       return OwnerOutcome.failed(
           new FrozenFailure(INVALID_TEMPLATE_CONFIGURATION, UNSUPPORTED_CAPTURE_MESSAGE));
@@ -337,7 +345,29 @@ public final class StartSessionLaunchDescriptorProducer {
     ResolvedLaunchDescriptorDto resolved =
         readStored(persisted, descriptorRequest, requestJson, source, sourceJson);
     return OwnerOutcome.succeeded(
-        new ResolvedBinding(exactRequest, exact, resolved, capturedTemplate.actorCoreBindings()));
+        new ResolvedBinding(exactRequest, exact, resolved, retainedActorCoreProjections));
+  }
+
+  private List<AuthoredInitialActorCoreProjection> replayActorCoreProjections(
+      Binding binding, CapturedTemplate capturedTemplate) {
+    try {
+      return actorCoreProjections.replayExact(binding, capturedTemplate.actorCoreBindings());
+    } catch (
+        StartSessionAuthoredActorCoreProjectionRepository.RetainedProjectionConflictException
+            invalid) {
+      throw conflict("Retained authored actor-core projection differs from exact source");
+    }
+  }
+
+  private List<AuthoredInitialActorCoreProjection> insertActorCoreProjections(
+      Binding binding, CapturedTemplate capturedTemplate) {
+    try {
+      return actorCoreProjections.insertForNewOwner(binding, capturedTemplate.actorCoreBindings());
+    } catch (
+        StartSessionAuthoredActorCoreProjectionRepository.RetainedProjectionConflictException
+            invalid) {
+      throw conflict("New authored actor-core projection conflicts with retained owner storage");
+    }
   }
 
   private CapturedTemplate requireCapturedTemplate(Result exact, long templateId) {
@@ -365,6 +395,7 @@ public final class StartSessionLaunchDescriptorProducer {
         || terminal.publicationVersionStateEpoch() <= 0L) {
       throw conflict("Exact selected publication terminal evidence is incomplete");
     }
+    requireTerminalMatchesExactRelease(exact, terminal);
     GameDesignSourceRepository.Capture capture =
         sourceRepository
             .readCapture(operation)
@@ -1052,6 +1083,66 @@ public final class StartSessionLaunchDescriptorProducer {
         dto.worldPublishedStartLocationEvidence());
   }
 
+  private GameDesignPublicationTerminalEvidence.ReleaseContent releaseContent(Result exact) {
+    var bundle = exact.releaseBundle();
+    if (!bundle.hasManifestSchemaVersion()) {
+      throw conflict("Exact Account-pinned release bundle lacks its manifest schema");
+    }
+    List<GameDesignPublicationTerminalEvidence.Participant> participants =
+        bundle.getParticipantDigestsList().stream()
+            .map(
+                value ->
+                    new GameDesignPublicationTerminalEvidence.Participant(
+                        value.getParticipantKey(),
+                        value.getScopeValue(),
+                        null,
+                        value.getAppliedCommitId(),
+                        value.getContentDigest(),
+                        value.getDigestSchemaVersion(),
+                        value.hasAbilitySchemaDigest() ? value.getAbilitySchemaDigest() : null,
+                        null,
+                        null))
+            .toList();
+    List<net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence.Artifact>
+        artifacts =
+            bundle.getArtifactDigestsList().stream()
+                .map(
+                    value ->
+                        new net.firedevops.firemud.common.gamedesign
+                            .AuthoredWorldReleaseAttestationEvidence.Artifact(
+                            value.getUsageKey(),
+                            value.getArtifactKind(),
+                            value.getImmutableObjectKey(),
+                            value.getContentDigest(),
+                            value.getContentType(),
+                            value.getArtifactSchemaVersion()))
+                .toList();
+    return new GameDesignPublicationTerminalEvidence.ReleaseContent(
+        UUID.fromString(bundle.getCanonicalTenantId()),
+        UUID.fromString(bundle.getCanonicalVersionId()),
+        bundle.getPublishedReleaseBundleRef(),
+        bundle.getVersionNumber(),
+        bundle.getAttestationSchemaVersion(),
+        bundle.getPublishWorkflowId(),
+        bundle.getManifestHash(),
+        bundle.getManifestSchemaVersion(),
+        artifacts,
+        bundle.getRequiredManifestAssetKeysList(),
+        participants,
+        bundle.getCommandDefinitionsList(),
+        bundle.getGenerationConfigRevision(),
+        exact.worldPublishedStartLocationEvidence());
+  }
+
+  private void requireTerminalMatchesExactRelease(
+      Result exact, GameDesignPublicationTerminalEvidence terminal) {
+    if (terminal.releaseContent() == null
+        || !Arrays.equals(
+            terminal.releaseContent().canonicalBytes(), releaseContent(exact).canonicalBytes())) {
+      throw conflict("Private source binding release differs from exact pinned Account release");
+    }
+  }
+
   private void requirePeer() {
     var peer = GrpcPeerIdentity.current();
     if (peer == null) {
@@ -1072,19 +1163,21 @@ public final class StartSessionLaunchDescriptorProducer {
   }
 
   /**
-   * Exact selected-release descriptor and its independently validated authored actor-core sources.
+   * Internal result pairing an exact selected-release descriptor with minimal retained projections.
+   * Projection construction validates canonical integrity, not producer authentication; the
+   * producer returns this result only after its owner path cross-checks the private source proofs.
    */
   public record ResolvedBinding(
       Request request,
       Result associationRead,
       ResolvedLaunchDescriptorDto descriptor,
-      List<AuthoredInitialActorCoreSourceBinding> actorCoreBindings) {
+      List<AuthoredInitialActorCoreProjection> actorCoreProjections) {
     public ResolvedBinding {
       Objects.requireNonNull(request, "request");
       Objects.requireNonNull(associationRead, "associationRead");
       Objects.requireNonNull(descriptor, "descriptor");
-      actorCoreBindings =
-          List.copyOf(Objects.requireNonNull(actorCoreBindings, "actorCoreBindings"));
+      actorCoreProjections =
+          List.copyOf(Objects.requireNonNull(actorCoreProjections, "actorCoreProjections"));
       if (!request.equals(associationRead.request())
           || !request
               .decodedTuple()
@@ -1105,24 +1198,31 @@ public final class StartSessionLaunchDescriptorProducer {
       }
       var association = associationRead.association();
       var authoredWorld = descriptor.authoredWorldBinding();
-      for (var actorCore : actorCoreBindings) {
-        var selected = actorCore.selectedCommit();
+      if (actorCoreProjections.stream()
+              .map(AuthoredInitialActorCoreProjection::bindingId)
+              .distinct()
+              .count()
+          != actorCoreProjections.size()) {
+        throw new IllegalArgumentException(
+            "Authored actor-core projection identities must be unique");
+      }
+      for (var actorCore : actorCoreProjections) {
         if (!actorCore.worldSourceOperationId().equals(association.sourceOperationId())
             || !actorCore.worldSourceEvidenceDigest().equals(association.sourceEvidenceDigest())
-            || !actorCore.expectedWorldSlug().equals(association.worldSlug())
+            || !actorCore.worldSlug().equals(association.worldSlug())
             || !actorCore.publicationWorkflowId().equals(association.publishWorkflowId())
-            || !selected.target().canonicalTenantId().equals(association.canonicalTenantId())
-            || !selected.target().canonicalVersionId().equals(association.canonicalVersionId())
-            || !selected.commitId().equals(association.selectedCommitId())
-            || !actorCore.expectedWorldSlug().equals(authoredWorld.worldSlug())
+            || !actorCore.canonicalTenantId().equals(association.canonicalTenantId())
+            || !actorCore.canonicalVersionId().equals(association.canonicalVersionId())
+            || !actorCore.selectedCommitId().equals(association.selectedCommitId())
+            || !actorCore.worldSlug().equals(authoredWorld.worldSlug())
             || !actorCore
                 .worldSourceOperationId()
                 .equals(authoredWorld.authoredWorldSourceOperationId())
             || !actorCore
                 .worldSourceEvidenceDigest()
                 .equals(authoredWorld.authoredWorldSourceEvidenceDigest())
-            || !selected.target().canonicalTenantId().equals(authoredWorld.canonicalTenantId())
-            || selected.target().gameDesignVersionRowId() != authoredWorld.versionId()
+            || !actorCore.canonicalTenantId().equals(authoredWorld.canonicalTenantId())
+            || !actorCore.canonicalVersionId().equals(association.canonicalVersionId())
             || association.templateId() != authoredWorld.gameTemplateId()) {
           throw new IllegalArgumentException(
               "Authored actor core differs from the exact selected StartSession release");

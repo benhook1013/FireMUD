@@ -9,6 +9,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Function;
 import net.firedevops.firemud.account.v1.ReadRedeemedOperationProjectionResponse;
 import net.firedevops.firemud.common.account.StartSessionRedeemedOperationProjectionClient;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -21,6 +22,7 @@ import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationR
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Result;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
@@ -106,6 +108,21 @@ public final class StartSessionTemplateAssociationReadService {
    */
   public Result read(Request request) {
     requirePeer();
+    return readAuthorized(request, Function.identity());
+  }
+
+  /**
+   * Core-read-only qualification for one same-namespace Game Session or Entity caller. The exact
+   * Account operation is still verified by this Game Design workload before opening the snapshot;
+   * the callback runs within that same read-only snapshot with the exact association result.
+   */
+  <T> T readForAuthoredInitialActorCore(Request request, Function<Result, T> ownerRead) {
+    requireAuthoredInitialActorCorePeer();
+    Objects.requireNonNull(ownerRead, "ownerRead");
+    return readAuthorized(request, ownerRead);
+  }
+
+  private <T> T readAuthorized(Request request, Function<Result, T> ownerRead) {
     Objects.requireNonNull(request, "request");
     if (!workloadNamespace.equals(request.targetNamespace())) {
       throw Status.PERMISSION_DENIED
@@ -137,7 +154,8 @@ public final class StartSessionTemplateAssociationReadService {
 
     try {
       return Objects.requireNonNull(
-          snapshot.execute(ignored -> readSnapshot(request, tuple)),
+          snapshot.execute(
+              ignored -> ownerRead.apply(Objects.requireNonNull(readSnapshot(request, tuple)))),
           "StartSession association snapshot returned no result");
     } catch (StatusRuntimeException failure) {
       throw failure;
@@ -659,6 +677,29 @@ public final class StartSessionTemplateAssociationReadService {
         .equals(peer.uri())) {
       throw Status.PERMISSION_DENIED
           .withDescription("Exact same-namespace Game Session workload required")
+          .asRuntimeException();
+    }
+  }
+
+  void requireAuthoredInitialActorCorePeer() {
+    var peer = GrpcPeerIdentity.current();
+    if (peer == null) {
+      throw Status.UNAUTHENTICATED
+          .withDescription("Verified same-namespace Game Session or Entity workload required")
+          .asRuntimeException();
+    }
+    String expectedPrefix = "spiffe://firemud/ns/" + workloadNamespace + "/sa/";
+    if (!workloadNamespace.equals(peer.namespace())
+        || !("game-session-service".equals(peer.service())
+            || "entity-management-service".equals(peer.service()))
+        || !(expectedPrefix + peer.service()).equals(peer.uri())) {
+      throw Status.PERMISSION_DENIED
+          .withDescription("Exact same-namespace Game Session or Entity workload required")
+          .asRuntimeException();
+    }
+    if (SessionContext.hasAuthenticatedCallerContext()) {
+      throw Status.PERMISSION_DENIED
+          .withDescription("Workload-only authored-core read required")
           .asRuntimeException();
     }
   }
