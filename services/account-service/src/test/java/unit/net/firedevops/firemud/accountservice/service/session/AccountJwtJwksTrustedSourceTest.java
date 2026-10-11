@@ -84,11 +84,38 @@ class AccountJwtJwksTrustedSourceTest {
     assertThat(identity.apiServerOrigin()).isEqualTo("https://kubernetes.test:6443");
     assertThat(identity.servingCaSha256()).isEqualTo(API_CA_DIGEST);
     assertThat(snapshot.sourceIdentity()).isEqualTo(identity);
-    assertThat(snapshot.jwksBytes())
-        .containsExactly(fixture.publicJwks.getBytes(StandardCharsets.UTF_8));
+    assertThat(snapshot.jwksBytes()).containsExactly(JWKS_1.getBytes(StandardCharsets.UTF_8));
     verify(fixture.desiredStateRepository, never())
         .readCurrentCommittedSigner(any(), any(), any(), any());
     verify(fixture.configMapClient, never()).publish(any(), anyMap());
+  }
+
+  @Test
+  void allowsAbsentKeyOperationsOnlyForTrustedPublishedKeysAndRejectsOtherShapes() {
+    String jwkWithoutKeyOps = JWK_1.replace("\"key_ops\":[\"verify\"],", "");
+    Fixture absentKeyOps = new Fixture("{\"keys\":[" + jwkWithoutKeyOps + "]}");
+
+    SourceIdentity identity = absentKeyOps.source.sourceIdentity();
+    assertThat(absentKeyOps.source.load().jwksBytes())
+        .containsExactly(
+            absentKeyOps
+                .snapshot
+                .data()
+                .get(AccountJwtJwksPublicationRepository.JWKS_DATA_KEY)
+                .getBytes(StandardCharsets.UTF_8));
+    assertThat(identity.configMapUid()).isEqualTo(CONFIG_MAP_UID);
+
+    for (String malformedJwk :
+        List.of(
+            JWK_1.replace("\"use\":\"sig\"", "\"use\":\"sig\",\"unexpected\":true"),
+            JWK_1.replace("\"use\":\"sig\"", "\"use\":\"sig\",\"d\":\"AQID\""),
+            JWK_1.replace("\"n\":\"AQID\",", ""),
+            JWK_1.replace("[\"verify\"]", "[\"verify\",\"sign\"]"))) {
+      Fixture malformed = new Fixture("{\"keys\":[" + malformedJwk + "]}");
+      assertThatThrownBy(malformed.source::sourceIdentity)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Account trusted public JWKS source was rejected");
+    }
   }
 
   @Test
@@ -132,6 +159,18 @@ class AccountJwtJwksTrustedSourceTest {
     assertThat(snapshot.sourceIdentity()).isEqualTo(identity);
     assertThat(snapshot.jwksBytes()).containsExactly(nextJwks.getBytes(StandardCharsets.UTF_8));
     assertThat(new String(snapshot.jwksBytes(), StandardCharsets.UTF_8)).contains(JWK_1, JWK_2);
+  }
+
+  @Test
+  void requiresReceiptWhenCurrentPublicationExistsAlongsideCommittedSigner() {
+    Fixture fixture = new Fixture();
+    fixture.useCommittedState();
+    fixture.removeCurrentPublicationReceipt();
+
+    assertThatThrownBy(fixture.source::sourceIdentity)
+        .isInstanceOf(SourceUnavailableException.class)
+        .hasNoCause();
+    verify(fixture.configMapClient, never()).observe();
   }
 
   @Test
@@ -218,6 +257,22 @@ class AccountJwtJwksTrustedSourceTest {
   }
 
   @Test
+  void doesNotTrustUnexpectedOwnerFailureByMatchingItsMessageText() {
+    Fixture fixture = new Fixture();
+    IllegalStateException unrelated =
+        new IllegalStateException(
+            "unrelated adapter failure mentioning Account trusted public JWKS source was rejected");
+    when(fixture.desiredStateRepository.readEnrollmentState(fixture.binding.accountBinding()))
+        .thenThrow(unrelated);
+
+    assertThatThrownBy(fixture.source::sourceIdentity)
+        .isInstanceOf(IllegalStateException.class)
+        .isNotSameAs(unrelated)
+        .hasMessage("Account trusted public JWKS source was rejected")
+        .hasNoCause();
+  }
+
+  @Test
   void rejectsTrustChangeAcrossTheAuthenticatedRead() {
     Fixture fixture = new Fixture();
     Binding changedBinding = binding(CLUSTER_UID, NAMESPACE_UID, "materializer-r2");
@@ -235,7 +290,7 @@ class AccountJwtJwksTrustedSourceTest {
     Map<String, String> changedData =
         Map.of(
             AccountJwtJwksPublicationRepository.JWKS_DATA_KEY,
-            fixture.publicJwks,
+            JWKS_1,
             AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY,
             "{\"phase\":\"OTHER\"}");
     when(fixture.configMapClient.observe())
@@ -269,8 +324,7 @@ class AccountJwtJwksTrustedSourceTest {
             fingerprint(JWK_1),
             Optional.of(new ActiveSigner("1", "key_1")));
     PublicationEvidence conflicting =
-        fixture.publication(
-            fixture.publicJwks, activeMarker, "41", "42", "1", "key_1", Optional.empty());
+        fixture.publication(JWKS_1, activeMarker, "41", "42", "1", "key_1", Optional.empty());
     when(fixture.publicationRepository.readCurrentPublication(
             eq(fixture.binding.accountBinding()), eq(fixture.trustFence)))
         .thenReturn(Optional.of(conflicting));
@@ -362,17 +416,21 @@ class AccountJwtJwksTrustedSourceTest {
             API_CA_DIGEST,
             "system:serviceaccount:" + NAMESPACE + ":account-service");
     private final String publicFingerprint = fingerprint(JWK_1);
-    private final String publicJwks = JWKS_1;
     private final EnrollmentIdentity enrollmentIdentity;
     private final GenerationRequest initialRequest;
     private final GenerationResult initialResult;
     private final DesiredState initialDesiredState;
     private final String initialMarker;
     private final PublicationEvidence publication;
+    private PublicationEvidence nextPublication;
     private final ConfigMapSnapshot snapshot;
     private final AccountJwtJwksTrustedSource source;
 
     private Fixture() {
+      this(JWKS_1);
+    }
+
+    private Fixture(String jwks) {
       enrollmentIdentity =
           new EnrollmentIdentity(
               CLUSTER_UID,
@@ -425,15 +483,14 @@ class AccountJwtJwksTrustedSourceTest {
               Optional.of(INITIAL_OPERATION_ID),
               Optional.empty(),
               Optional.of(enrollmentIdentity));
-      publication =
-          publication(publicJwks, initialMarker, "41", "42", "1", "key_1", Optional.empty());
+      publication = publication(jwks, initialMarker, "41", "42", "1", "key_1", Optional.empty());
       snapshot =
           new ConfigMapSnapshot(
               CONFIG_MAP_UID,
               "42",
               Map.of(
                   AccountJwtJwksPublicationRepository.JWKS_DATA_KEY,
-                  publicJwks,
+                  jwks,
                   AccountJwtJwksPublicationRepository.GENERATION_MARKER_DATA_KEY,
                   initialMarker,
                   "operator.note",
@@ -477,7 +534,7 @@ class AccountJwtJwksTrustedSourceTest {
           mock(AccountJwtSignerDesiredStateRepository.ActiveJwksPromotionReceipt.class);
       String activeMarker = activeMarker(active);
       String activeDigest =
-          AccountJwtJwksPublicationRepository.publicDataDigest(publicJwks, activeMarker);
+          AccountJwtJwksPublicationRepository.publicDataDigest(JWKS_1, activeMarker);
       when(committed.promotion()).thenReturn(promotion);
       when(committed.desiredState()).thenReturn(committedState);
       when(committed.publicReceipt()).thenReturn(receipt);
@@ -485,7 +542,7 @@ class AccountJwtJwksTrustedSourceTest {
       when(promotion.targetKid()).thenReturn("key_1");
       when(promotion.targetPublicKeyFingerprint()).thenReturn(publicFingerprint);
       when(promotion.publicConfigMapUid()).thenReturn(CONFIG_MAP_UID);
-      when(promotion.expectedPublicJwksJson()).thenReturn(publicJwks);
+      when(promotion.expectedPublicJwksJson()).thenReturn(JWKS_1);
       when(promotion.expectedActiveMarkerJson()).thenReturn(activeMarker);
       when(promotion.activeJwksObservedResourceVersion()).thenReturn(Optional.of("42"));
       when(promotion.activeJwksPublicDataDigest()).thenReturn(Optional.of(activeDigest));
@@ -515,7 +572,7 @@ class AccountJwtJwksTrustedSourceTest {
 
       String nextMarker =
           marker(NEXT_OPERATION_ID, "2", "key_2", fingerprint(JWK_2), Optional.of(active));
-      PublicationEvidence nextPublication =
+      nextPublication =
           publication(JWKS_1_AND_2, nextMarker, "42", "43", "2", "key_2", Optional.of(active));
       when(publicationRepository.readCurrentPublication(eq(accountBinding), eq(trustFence)))
           .thenReturn(Optional.of(nextPublication));
@@ -533,6 +590,13 @@ class AccountJwtJwksTrustedSourceTest {
                       "preserved")));
     }
 
+    private void removeCurrentPublicationReceipt() {
+      PublicationEvidence unreceipted =
+          new PublicationEvidence(nextPublication.intent(), Optional.empty(), Optional.empty());
+      when(publicationRepository.readCurrentPublication(eq(accountBinding), eq(trustFence)))
+          .thenReturn(Optional.of(unreceipted));
+    }
+
     private void replaceNextJwks(String jwks) {
       String nextMarker =
           marker(
@@ -541,7 +605,7 @@ class AccountJwtJwksTrustedSourceTest {
               "key_2",
               fingerprint(JWK_2),
               Optional.of(new ActiveSigner("1", "key_1")));
-      PublicationEvidence nextPublication =
+      nextPublication =
           publication(
               jwks,
               nextMarker,

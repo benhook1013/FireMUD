@@ -6,6 +6,8 @@
 
 Live pin/convergence reads now expose the authoritative `{scriptPatchVersion, scriptPinEpoch, controlPlaneRequestId}` observation, and instance-bound Automation admission carries and validates the positive epoch. The current-pin/request-result ledger commits atomically with the owner tuple; complete append-only rollout history, bounded authoritative history readback, complete history fields and focused history proof, complete source/target command identity, and remote final-effect fencing remain implementation/proof gaps. See the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
 
+The StartSession owner-redemption composition is separately conditional and disabled by default at `firemud.start-session-operator-authorization.enabled`. Enabling it requires an explicit `owner-claim-lease`, the workload namespace, the existing database/transaction owners, and configured Account peer/mTLS client material. Missing startup inputs fail composition; enabling this preparation boundary does not launch an instance, activate gameplay, or expose an external operator ingress. The contextual configuration test is not full-service runtime proof.
+
 ## Environment Variables
 
 Game Session follows the configuration scheme from [Environment Variables & Secrets Management](../../infrastructure/environment-and-secrets.md). It requires the [PostgreSQL credentials](../../infrastructure/environment-and-secrets.md#postgresql-credentials) and [Redis connection](../../infrastructure/environment-and-secrets.md#redis-connection) variables.

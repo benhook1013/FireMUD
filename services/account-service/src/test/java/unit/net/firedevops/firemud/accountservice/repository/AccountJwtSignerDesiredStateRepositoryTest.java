@@ -56,6 +56,7 @@ class AccountJwtSignerDesiredStateRepositoryTest {
           "a".repeat(64),
           "binding-r1");
   private static final UUID SECRET_UID = UUID.fromString("33333333-3333-4333-8333-333333333333");
+  private static final String READINESS_EVIDENCE_PREIMAGE = "{\"verifiedProbes\":[{}]}";
   private static final EnrollmentIdentity ENROLLMENT =
       new EnrollmentIdentity(
           TRUST.expectedClusterIncarnationUid(),
@@ -78,6 +79,8 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     assertMandatory("initialize", Binding.class, EnrollmentIdentity.class);
     assertMandatory("read", Binding.class);
     assertMandatory("ensureCurrentGenerationRequest", Binding.class, TrustFence.class);
+    assertMandatoryWritable(
+        "abortUnpreparedGeneration", Binding.class, TrustFence.class, GenerationResult.class);
     assertMandatory("readCurrentGenerationRequest", Binding.class, TrustFence.class);
     assertMandatory(
         "recordSecretObservation",
@@ -157,6 +160,310 @@ class AccountJwtSignerDesiredStateRepositoryTest {
   }
 
   @Test
+  void preparedPromotionDispatchReturnsReadbackAndRetryDoesNotRepeatCas() throws Exception {
+    Conversation conversation = new Conversation();
+    GenerationRequest request = inWritableTransaction(conversation::ensureRequest);
+    GenerationRequest pending =
+        inWritableTransaction(
+            () ->
+                conversation.repository.recordSecretObservation(
+                    BINDING,
+                    TRUST,
+                    request.operationId(),
+                    request.operationDigest(),
+                    SECRET_UID.toString(),
+                    "12"));
+    PublicJwk jwk = publicJwk(request.targetKid());
+    GenerationResult result =
+        inWritableTransaction(
+            () ->
+                conversation.repository.recordGenerationResult(
+                    BINDING,
+                    TRUST,
+                    request.operationId(),
+                    pending.generationRequestDigest(),
+                    SECRET_UID.toString(),
+                    "12",
+                    "13",
+                    jwk.json()));
+    conversation.preparePromotionForDispatch(request, result);
+
+    var first =
+        inWritableTransaction(
+            () -> conversation.repository.readAndMarkPreparedPromotionDispatched(BINDING, TRUST));
+    assertThat(first.promotion().privatePromotionDispatched()).isTrue();
+    assertThat(conversation.promotionDispatchCasCount).isEqualTo(1);
+
+    var retry =
+        inWritableTransaction(
+            () -> conversation.repository.readAndMarkPreparedPromotionDispatched(BINDING, TRUST));
+    assertThat(retry.promotion().privatePromotionDispatched()).isTrue();
+    assertThat(retry).isEqualTo(first);
+    assertThat(conversation.promotionDispatchCasCount).isEqualTo(1);
+  }
+
+  @Test
+  void preparedPromotionDispatchRejectsExpiredReadinessBeforeDurableDispatch() throws Exception {
+    Conversation conversation = new Conversation();
+    GenerationRequest request = inWritableTransaction(conversation::ensureRequest);
+    GenerationRequest pending =
+        inWritableTransaction(
+            () ->
+                conversation.repository.recordSecretObservation(
+                    BINDING,
+                    TRUST,
+                    request.operationId(),
+                    request.operationDigest(),
+                    SECRET_UID.toString(),
+                    "12"));
+    PublicJwk jwk = publicJwk(request.targetKid());
+    GenerationResult result =
+        inWritableTransaction(
+            () ->
+                conversation.repository.recordGenerationResult(
+                    BINDING,
+                    TRUST,
+                    request.operationId(),
+                    pending.generationRequestDigest(),
+                    SECRET_UID.toString(),
+                    "12",
+                    "13",
+                    jwk.json()));
+    conversation.preparePromotionForDispatch(request, result);
+    assertThatThrownBy(
+            () ->
+                inWritableTransaction(
+                    () -> conversation.repository.readCurrentGenerationRequest(BINDING, TRUST)))
+        .isInstanceOf(
+            AccountJwtSignerDesiredStateRepository.PromotionPrerequisitesIncompleteException.class)
+        .hasMessageContaining(
+            "Existing PREPARED signer state requires unavailable lifecycle evidence");
+    conversation.expireReadinessPlan();
+
+    assertThatThrownBy(
+            () ->
+                inWritableTransaction(
+                    () ->
+                        conversation.repository.readAndMarkPreparedPromotionDispatched(
+                            BINDING, TRUST)))
+        .isInstanceOf(
+            AccountJwtSignerDesiredStateRepository.PromotionPrerequisitesIncompleteException.class)
+        .hasMessageContaining("expired before private dispatch");
+    assertThat(conversation.promotionDispatchCasCount).isZero();
+    assertThat(conversation.executedStatements)
+        .noneMatch(sql -> sql.contains("UPDATE account_jwt_signer_promotion_operations"));
+  }
+
+  @Test
+  void preparedPromotionDispatchCasRechecksReadinessDeadlineAtomically() throws Exception {
+    Conversation conversation = new Conversation();
+    GenerationRequest request = inWritableTransaction(conversation::ensureRequest);
+    GenerationRequest pending =
+        inWritableTransaction(
+            () ->
+                conversation.repository.recordSecretObservation(
+                    BINDING,
+                    TRUST,
+                    request.operationId(),
+                    request.operationDigest(),
+                    SECRET_UID.toString(),
+                    "12"));
+    PublicJwk jwk = publicJwk(request.targetKid());
+    GenerationResult result =
+        inWritableTransaction(
+            () ->
+                conversation.repository.recordGenerationResult(
+                    BINDING,
+                    TRUST,
+                    request.operationId(),
+                    pending.generationRequestDigest(),
+                    SECRET_UID.toString(),
+                    "12",
+                    "13",
+                    jwk.json()));
+    conversation.preparePromotionForDispatch(request, result);
+    conversation.expireReadinessAtDispatchCas();
+
+    assertThatThrownBy(
+            () ->
+                inWritableTransaction(
+                    () ->
+                        conversation.repository.readAndMarkPreparedPromotionDispatched(
+                            BINDING, TRUST)))
+        .isInstanceOf(AccountJwtSignerDesiredStateRepository.VersionConflictException.class);
+    assertThat(conversation.promotionDispatchCasCount).isZero();
+    assertThat(conversation.executedStatements)
+        .anySatisfy(
+            sql -> {
+              assertThat(sql).contains("WITH readiness_clock AS MATERIALIZED");
+              assertThat(sql).contains("clock_timestamp()");
+              assertThat(sql).contains("plan.expires_at_epoch_seconds");
+              assertThat(sql).contains("entry.expires_at_epoch_seconds");
+              assertThat(sql).doesNotContain("CURRENT_TIMESTAMP");
+            });
+  }
+
+  @Test
+  void exactDispatchedReadinessProofCanCommitAfterExpiryButChangedProofCannot() throws Exception {
+    Conversation conversation = new Conversation();
+    GenerationRequest request = inWritableTransaction(conversation::ensureRequest);
+    GenerationRequest pending =
+        inWritableTransaction(
+            () ->
+                conversation.repository.recordSecretObservation(
+                    BINDING,
+                    TRUST,
+                    request.operationId(),
+                    request.operationDigest(),
+                    SECRET_UID.toString(),
+                    "12"));
+    PublicJwk jwk = publicJwk(request.targetKid());
+    GenerationResult result =
+        inWritableTransaction(
+            () ->
+                conversation.repository.recordGenerationResult(
+                    BINDING,
+                    TRUST,
+                    request.operationId(),
+                    pending.generationRequestDigest(),
+                    SECRET_UID.toString(),
+                    "12",
+                    "13",
+                    jwk.json()));
+    conversation.preparePromotionForDispatch(request, result);
+    ReadinessPromotionProof exactProof =
+        conversation.readinessProof(
+            result, READINESS_EVIDENCE_PREIMAGE.getBytes(StandardCharsets.UTF_8));
+
+    conversation.expireReadinessPlan();
+    conversation.recordPromotionReceipts(result);
+    int statementsBeforeUndeliveredRecovery = conversation.executedStatements.size();
+    assertThatThrownBy(
+            () ->
+                inWritableTransaction(
+                    () ->
+                        conversation.repository.commitPreparedPromotion(
+                            BINDING, TRUST, conversation.preparedPromotionId, exactProof)))
+        .isInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
+        .hasMessageContaining(
+            "Promotion dispatch state is inconsistent with its receipts or terminal status");
+    assertThat(
+            conversation.executedStatements.subList(
+                statementsBeforeUndeliveredRecovery, conversation.executedStatements.size()))
+        .noneMatch(sql -> sql.contains("SET status = 'COMMITTED'"));
+
+    conversation.preparedPromotionValues.put("private_promotion_receipt_digest", null);
+    conversation.preparedPromotionValues.put("private_promotion_observed_resource_version", null);
+    conversation.preparedPromotionValues.put("active_jwks_receipt_digest", null);
+    conversation.preparedPromotionValues.put("active_jwks_public_data_digest", null);
+    conversation.preparedPromotionValues.put("active_jwks_observed_resource_version", null);
+    assertThatThrownBy(
+            () ->
+                inWritableTransaction(
+                    () ->
+                        conversation.repository.readAndMarkPreparedPromotionDispatched(
+                            BINDING, TRUST)))
+        .isInstanceOf(
+            AccountJwtSignerDesiredStateRepository.PromotionPrerequisitesIncompleteException.class)
+        .hasMessageContaining("expired before private dispatch");
+    assertThat(conversation.promotionDispatchCasCount).isZero();
+    conversation.readinessPlanExpired = false;
+
+    inWritableTransaction(
+        () -> conversation.repository.readAndMarkPreparedPromotionDispatched(BINDING, TRUST));
+    conversation.recordPromotionReceipts(result);
+    conversation.expireReadinessPlan();
+    Record expiredPlan = conversation.readinessPlanRow();
+    assertThat(expiredPlan.get("checked_epoch", Long.class))
+        .isGreaterThan(expiredPlan.get("expires_at_epoch_seconds", Long.class));
+
+    TrustFence changedTrust =
+        new TrustFence(
+            TRUST.expectedClusterIncarnationUid(),
+            TRUST.expectedNamespaceUid(),
+            TRUST.bindingDigest(),
+            "binding-r2");
+    int statementsBeforeChangedTrust = conversation.executedStatements.size();
+    assertThatThrownBy(
+            () ->
+                inWritableTransaction(
+                    () ->
+                        conversation.repository.commitPreparedPromotion(
+                            BINDING, changedTrust, conversation.preparedPromotionId, exactProof)))
+        .isInstanceOf(AccountJwtSignerDesiredStateRepository.BindingMismatchException.class)
+        .hasMessageContaining("pinned enrollment");
+    assertThat(
+            conversation.executedStatements.subList(
+                statementsBeforeChangedTrust, conversation.executedStatements.size()))
+        .noneMatch(sql -> sql.contains("SET status = 'COMMITTED'"));
+
+    conversation.changePreparedStateForCommit();
+    int statementsBeforeChangedState = conversation.executedStatements.size();
+    assertThatThrownBy(
+            () ->
+                inWritableTransaction(
+                    () ->
+                        conversation.repository.commitPreparedPromotion(
+                            BINDING, TRUST, conversation.preparedPromotionId, exactProof)))
+        .isInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
+        .hasMessageContaining("exact desired-state fence");
+    assertThat(
+            conversation.executedStatements.subList(
+                statementsBeforeChangedState, conversation.executedStatements.size()))
+        .noneMatch(sql -> sql.contains("SET status = 'COMMITTED'"));
+    conversation.restorePreparedStateForCommit();
+
+    byte[] changedPreimage = READINESS_EVIDENCE_PREIMAGE.getBytes(StandardCharsets.UTF_8);
+    changedPreimage[0] ^= 1;
+    ReadinessPromotionProof changedProof = conversation.readinessProof(result, changedPreimage);
+    int statementsBeforeChangedProof = conversation.executedStatements.size();
+    assertThatThrownBy(
+            () ->
+                inWritableTransaction(
+                    () ->
+                        conversation.repository.commitPreparedPromotion(
+                            BINDING, TRUST, conversation.preparedPromotionId, changedProof)))
+        .isInstanceOf(AccountJwtSignerDesiredStateRepository.IdempotencyConflictException.class)
+        .hasMessageContaining("frozen PREPARED evidence");
+    assertThat(
+            conversation.executedStatements.subList(
+                statementsBeforeChangedProof, conversation.executedStatements.size()))
+        .noneMatch(sql -> sql.contains("SET status = 'COMMITTED'"));
+
+    String exactPrivateReceiptDigest =
+        (String) conversation.preparedPromotionValues.get("private_promotion_receipt_digest");
+    conversation.preparedPromotionValues.put("private_promotion_receipt_digest", "0".repeat(64));
+    assertThatThrownBy(
+            () ->
+                inWritableTransaction(
+                    () ->
+                        conversation.repository.commitPreparedPromotion(
+                            BINDING, TRUST, conversation.preparedPromotionId, exactProof)))
+        .isInstanceOf(AccountJwtSignerDesiredStateRepository.QuarantinedStateException.class)
+        .hasMessageContaining("private promotion receipt digest is invalid");
+    conversation.preparedPromotionValues.put("status", "PREPARED");
+    conversation.preparedPromotionValues.put(
+        "private_promotion_receipt_digest", exactPrivateReceiptDigest);
+
+    var committed =
+        inWritableTransaction(
+            () ->
+                conversation.repository.commitPreparedPromotion(
+                    BINDING, TRUST, conversation.preparedPromotionId, exactProof));
+    assertThat(committed.promotion().status()).isEqualTo("COMMITTED");
+    assertThat(committed.desiredState().recordVersion()).isEqualTo(4L);
+    String terminalUpdate =
+        conversation.executedStatements.stream()
+            .filter(sql -> sql.contains("SET status = 'COMMITTED'"))
+            .findFirst()
+            .orElseThrow();
+    assertThat(terminalUpdate)
+        .contains("readiness_evidence_preimage")
+        .contains("entry.verified_at_epoch_seconds < entry.expires_at_epoch_seconds")
+        .doesNotContain("plan.expires_at_epoch_seconds", "CURRENT_TIMESTAMP", "clock_timestamp");
+  }
+
+  @Test
   void accountCreatesAndReplaysOnlyItsOwnBoundGenerationRequest() {
     Conversation conversation = new Conversation();
 
@@ -182,6 +489,26 @@ class AccountJwtSignerDesiredStateRepositoryTest {
         .anyMatch(sql -> sql.contains("generation_operation_id"))
         .noneMatch(sql -> sql.contains("target_public_key_fingerprint"));
     verify(conversation.dsl, times(2)).execute(anyString(), any(Object[].class));
+  }
+
+  @Test
+  void historicalAbortedGenerationHighWaterPreventsReuseWithoutActiveSigner() {
+    Conversation conversation = new Conversation(1L);
+
+    GenerationRequest next = inWritableTransaction(conversation::ensureRequest);
+
+    assertThat(next.targetGeneration()).isEqualTo("2");
+    assertThat(next.expectedActive()).isEmpty();
+    assertThat(next.expectedPublishedActive()).isEmpty();
+    assertThat(conversation.executedStatements)
+        .anyMatch(sql -> sql.contains("account_jwt_signer_generation_operations"));
+    verify(conversation.dsl)
+        .fetchOne(
+            org.mockito.ArgumentMatchers.argThat(
+                sql ->
+                    sql.contains("COALESCE(MAX(target_generation), 0)")
+                        && sql.contains("account_jwt_signer_generation_operations")),
+            any(Object[].class));
   }
 
   @Test
@@ -512,6 +839,26 @@ class AccountJwtSignerDesiredStateRepositoryTest {
       Long publishedGeneration,
       String publishedKid,
       UUID generationOperationId) {
+    return stateRow(
+        binding,
+        version,
+        durableGeneration,
+        durableKid,
+        publishedGeneration,
+        publishedKid,
+        generationOperationId,
+        null);
+  }
+
+  private static Record stateRow(
+      Binding binding,
+      long version,
+      Long durableGeneration,
+      String durableKid,
+      Long publishedGeneration,
+      String publishedKid,
+      UUID generationOperationId,
+      UUID preparedOperationId) {
     Map<String, Object> values = new HashMap<>();
     values.put("environment_id", binding.environmentId());
     values.put("cluster_id", binding.clusterId());
@@ -527,7 +874,7 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     values.put("published_active_generation", publishedGeneration);
     values.put("published_active_kid", publishedKid);
     values.put("generation_operation_id", generationOperationId);
-    values.put("prepared_operation_id", null);
+    values.put("prepared_operation_id", preparedOperationId);
     values.put(
         "enrollment_cluster_incarnation_uid",
         UUID.fromString(ENROLLMENT.expectedClusterIncarnationUid()));
@@ -622,6 +969,59 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     return record(values);
   }
 
+  private static String promotionRequestDigest(
+      UUID promotionId,
+      GenerationRequest generation,
+      GenerationResult result,
+      String publicJwksJson)
+      throws Exception {
+    Map<String, Object> preimage = new HashMap<>();
+    preimage.put("digestVersion", "account-jwt-signer-promotion-operation/v1");
+    preimage.put("operationId", promotionId.toString());
+    preimage.put("generationOperationId", generation.operationId().toString());
+    preimage.put("generationOperationDigest", generation.operationDigest());
+    preimage.put("generationReceiptDigest", result.receiptDigest());
+    preimage.put("environmentId", BINDING.environmentId());
+    preimage.put("clusterId", BINDING.clusterId());
+    preimage.put("namespace", BINDING.namespace());
+    preimage.put("custodyMode", BINDING.mode().value());
+    preimage.put("expectedRecordVersion", "2");
+    preimage.put("expectedPreviousActive", Map.of("present", false));
+    preimage.put("expectedPublishedActive", Map.of("present", false));
+    preimage.put("targetGeneration", generation.targetGeneration());
+    preimage.put("targetKid", generation.targetKid());
+    preimage.put("targetAlgorithm", "RS256");
+    preimage.put("targetPublicKeyFingerprint", result.publicKeyFingerprint());
+    preimage.put("expectedPrivateSecretUid", result.secretUid());
+    preimage.put("expectedPrivateSecretResourceVersion", result.observedResourceVersion());
+    preimage.put("expectedPublicConfigMapUid", ENROLLMENT.publicConfigMapUid());
+    preimage.put("expectedPublicJwksResourceVersion", "14");
+    preimage.put("expectedClusterIncarnationUid", TRUST.expectedClusterIncarnationUid());
+    preimage.put("expectedNamespaceUid", TRUST.expectedNamespaceUid());
+    preimage.put("materializerTrustBindingDigest", TRUST.bindingDigest());
+    preimage.put("materializerTrustConfigRevision", TRUST.configRevision());
+    preimage.put("apiBindingDigest", ENROLLMENT.apiBindingDigest());
+    preimage.put("apiConfigRevision", ENROLLMENT.apiConfigRevision());
+    preimage.put("prepublicationIntentDigest", "d".repeat(64));
+    preimage.put("prepublicationReceiptDigest", "e".repeat(64));
+    preimage.put("mountedObservationDigest", "f".repeat(64));
+    preimage.put("readinessPlanDigest", "1".repeat(64));
+    preimage.put("readinessEvidenceDigest", sha256(READINESS_EVIDENCE_PREIMAGE));
+    preimage.put("publicJwksSha256", sha256(publicJwksJson));
+    preimage.put("operationAction", "PROMOTE_PENDING");
+    preimage.put("allowedPrivateSlots", List.of("current", "pending", "previous"));
+    byte[] canonical =
+        Rfc8785CanonicalJson.canonicalizeUtf8(
+            JsonMapper.builder().build().writeValueAsString(preimage));
+    return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
+  }
+
+  private static String sha256(String value) throws Exception {
+    return HexFormat.of()
+        .formatHex(
+            MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+  }
+
   private static PublicJwk publicJwk(String kid) throws Exception {
     KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
     generator.initialize(3072);
@@ -670,6 +1070,12 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     return row;
   }
 
+  private static Record scalarLongRecord(long value) {
+    Record row = mock(Record.class);
+    when(row.get(0, Long.class)).thenReturn(value);
+    return row;
+  }
+
   private static <T> T inWritableTransaction(java.util.function.Supplier<T> operation) {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
@@ -687,12 +1093,24 @@ class AccountJwtSignerDesiredStateRepositoryTest {
     private final AccountJwtSignerDesiredStateRepository repository =
         new AccountJwtSignerDesiredStateRepository(dsl);
     private final List<String> executedStatements = new java.util.ArrayList<>();
+    private final long historicalGenerationHighWater;
     private Object[] operationInsert;
     private Object[] observationInsert;
     private Object[] resultInsert;
     private int stateReadCount;
+    private UUID preparedPromotionId;
+    private Map<String, Object> preparedPromotionValues;
+    private int promotionDispatchCasCount;
+    private boolean readinessPlanExpired;
+    private boolean readinessExpiresAtDispatchCas;
+    private boolean preparedStateChangedForCommit;
 
     private Conversation() {
+      this(0L);
+    }
+
+    private Conversation(long historicalGenerationHighWater) {
+      this.historicalGenerationHighWater = historicalGenerationHighWater;
       when(dsl.execute(anyString(), any(Object[].class)))
           .thenAnswer(
               invocation -> {
@@ -703,6 +1121,18 @@ class AccountJwtSignerDesiredStateRepositoryTest {
                         ? bindings
                         : java.util.Arrays.copyOfRange(arguments, 1, arguments.length);
                 executedStatements.add(sql);
+                if (sql.contains("UPDATE account_jwt_signer_promotion_operations")) {
+                  if (sql.contains(
+                      "private_promotion_dispatched_at = readiness_clock.checked_at")) {
+                    if (readinessExpiresAtDispatchCas) {
+                      return 0;
+                    }
+                    promotionDispatchCasCount++;
+                    preparedPromotionValues.put("private_promotion_dispatched", true);
+                  } else if (sql.contains("SET status = 'COMMITTED'")) {
+                    preparedPromotionValues.put("status", "COMMITTED");
+                  }
+                }
                 if (sql.contains("account_jwt_signer_generation_operations")) {
                   operationInsert = parameters.clone();
                 } else if (sql.contains("account_jwt_signer_secret_observations")) {
@@ -716,8 +1146,38 @@ class AccountJwtSignerDesiredStateRepositoryTest {
           .thenAnswer(
               invocation -> {
                 String sql = invocation.getArgument(0);
+                if (sql.contains("account_jwt_signer_promotion_operations")) {
+                  return preparedPromotionValues == null ? null : record(preparedPromotionValues);
+                }
+                if (sql.contains("account_jwt_readiness_probe_plans")) {
+                  return preparedPromotionValues == null ? null : readinessPlanRow();
+                }
+                if (sql.contains("account_jwt_readiness_probe_entries")) {
+                  return record(Map.of("total", 1L, "verified", 1L));
+                }
                 if (sql.contains("account_jwt_signer_desired_states")) {
-                  return stateReadCount++ == 0
+                  stateReadCount++;
+                  if (preparedPromotionId != null) {
+                    if ("COMMITTED".equals(preparedPromotionValues.get("status"))) {
+                      long activeGeneration =
+                          ((Number) preparedPromotionValues.get("target_generation")).longValue();
+                      return stateRow(
+                          BINDING,
+                          4,
+                          activeGeneration,
+                          (String) preparedPromotionValues.get("target_kid"),
+                          activeGeneration,
+                          (String) preparedPromotionValues.get("target_kid"),
+                          null,
+                          null);
+                    }
+                    if (preparedStateChangedForCommit) {
+                      return stateRow(
+                          BINDING, 4, null, null, null, null, null, preparedPromotionId);
+                    }
+                    return stateRow(BINDING, 3, null, null, null, null, null, preparedPromotionId);
+                  }
+                  return stateReadCount == 1
                       ? stateRow(BINDING, 1, null, null, null, null, null)
                       : stateRow(
                           BINDING,
@@ -727,6 +1187,9 @@ class AccountJwtSignerDesiredStateRepositoryTest {
                           null,
                           null,
                           operationInsert == null ? null : (UUID) operationInsert[0]);
+                }
+                if (sql.contains("COALESCE(MAX(target_generation), 0)")) {
+                  return scalarLongRecord(historicalGenerationHighWater);
                 }
                 if (sql.contains("account_jwt_signer_generation_operations")) {
                   return operationInsert == null ? null : generationOperationRow(operationInsert);
@@ -743,6 +1206,236 @@ class AccountJwtSignerDesiredStateRepositoryTest {
 
     private GenerationRequest ensureRequest() {
       return repository.ensureCurrentGenerationRequest(BINDING, TRUST);
+    }
+
+    private void expireReadinessPlan() {
+      readinessPlanExpired = true;
+    }
+
+    private void changePreparedStateForCommit() {
+      preparedStateChangedForCommit = true;
+    }
+
+    private void restorePreparedStateForCommit() {
+      preparedStateChangedForCommit = false;
+    }
+
+    private void expireReadinessAtDispatchCas() {
+      readinessExpiresAtDispatchCas = true;
+    }
+
+    private Record readinessPlanRow() {
+      Map<String, Object> values = new HashMap<>();
+      values.put("plan_digest", preparedPromotionValues.get("readiness_plan_digest"));
+      values.put("operation_digest", resultInsert[5]);
+      values.put("generation_request_digest", resultInsert[6]);
+      values.put("generation_receipt_digest", resultInsert[19]);
+      values.put("desired_state_version", resultInsert[7]);
+      values.put("target_generation", Long.parseLong(String.valueOf(resultInsert[15])));
+      values.put("target_kid", resultInsert[16]);
+      values.put("target_public_key_fingerprint", resultInsert[17]);
+      values.put(
+          "publication_intent_digest", preparedPromotionValues.get("prepublication_intent_digest"));
+      values.put(
+          "publication_receipt_digest",
+          preparedPromotionValues.get("prepublication_receipt_digest"));
+      values.put(
+          "mounted_observation_digest", preparedPromotionValues.get("mounted_observation_digest"));
+      values.put("validator_inventory_complete", true);
+      values.put("not_before_epoch_seconds", 100L);
+      values.put("expires_at_epoch_seconds", readinessPlanExpired ? 149L : 200L);
+      values.put("checked_epoch", 150L);
+      return record(values);
+    }
+
+    private ReadinessPromotionProof readinessProof(GenerationResult result, byte[] preimage)
+        throws Exception {
+      var plan = mock(AccountJwtReadinessProbeRepository.ReadinessProbePlan.class);
+      when(plan.operationId()).thenReturn(result.operationId());
+      when(plan.binding()).thenReturn(BINDING);
+      when(plan.trustFence()).thenReturn(TRUST);
+      when(plan.planDigest())
+          .thenReturn((String) preparedPromotionValues.get("readiness_plan_digest"));
+      when(plan.operationDigest()).thenReturn(result.operationDigest());
+      when(plan.generationRequestDigest()).thenReturn(result.generationRequestDigest());
+      when(plan.generationReceiptDigest()).thenReturn(result.receiptDigest());
+      when(plan.publicationIntentDigest())
+          .thenReturn((String) preparedPromotionValues.get("prepublication_intent_digest"));
+      when(plan.publicationReceiptDigest())
+          .thenReturn((String) preparedPromotionValues.get("prepublication_receipt_digest"));
+      when(plan.mountedObservationDigest())
+          .thenReturn((String) preparedPromotionValues.get("mounted_observation_digest"));
+      when(plan.desiredStateVersion()).thenReturn(result.desiredStateVersion());
+      when(plan.targetGeneration()).thenReturn(result.targetGeneration());
+      when(plan.targetKid()).thenReturn(result.targetKid());
+      when(plan.targetPublicKeyFingerprint()).thenReturn(result.publicKeyFingerprint());
+      when(plan.validatorInventoryComplete()).thenReturn(true);
+
+      var intent = mock(AccountJwtJwksPublicationRepository.PrepublicationIntent.class);
+      when(intent.operationId()).thenReturn(result.operationId());
+      when(intent.intentDigest())
+          .thenReturn((String) preparedPromotionValues.get("prepublication_intent_digest"));
+      when(intent.configMapUid()).thenReturn(ENROLLMENT.publicConfigMapUid());
+      when(intent.apiBindingDigest()).thenReturn(ENROLLMENT.apiBindingDigest());
+      when(intent.apiConfigRevision()).thenReturn(ENROLLMENT.apiConfigRevision());
+      when(intent.jwksJson())
+          .thenReturn((String) preparedPromotionValues.get("expected_public_jwks_json"));
+
+      var receipt = mock(AccountJwtJwksPublicationRepository.PublicationReceipt.class);
+      when(receipt.operationId()).thenReturn(result.operationId());
+      when(receipt.receiptDigest())
+          .thenReturn((String) preparedPromotionValues.get("prepublication_receipt_digest"));
+      when(receipt.observedResourceVersion()).thenReturn("14");
+
+      var mount = mock(AccountJwtJwksPublicationRepository.MountObservation.class);
+      when(mount.operationId()).thenReturn(result.operationId());
+      when(mount.observationDigest())
+          .thenReturn((String) preparedPromotionValues.get("mounted_observation_digest"));
+
+      var publication =
+          mock(AccountJwtJwksPublicationRepository.PromotionPublicationEvidence.class);
+      when(publication.intent()).thenReturn(intent);
+      when(publication.receipt()).thenReturn(receipt);
+      when(publication.mountedCorrespondence()).thenReturn(mount);
+
+      var proof = mock(ReadinessPromotionProof.class);
+      when(proof.plan()).thenReturn(plan);
+      when(proof.generationResult()).thenReturn(result);
+      when(proof.publication()).thenReturn(publication);
+      when(proof.inventoryEvidenceReference())
+          .thenReturn("protected-validator-inventory:" + "9".repeat(64));
+      when(proof.inventoryEvidenceDigest()).thenReturn("9".repeat(64));
+      when(proof.verifiedProbes())
+          .thenReturn(
+              List.of(mock(AccountJwtReadinessProbeRepository.VerifiedProbeEvidence.class)));
+      when(proof.readinessEvidenceDigest())
+          .thenReturn((String) preparedPromotionValues.get("readiness_evidence_digest"));
+      when(proof.readinessEvidencePreimage()).thenReturn(preimage.clone());
+      return proof;
+    }
+
+    private void recordPromotionReceipts(GenerationResult result) throws Exception {
+      String promotionId = preparedPromotionId.toString();
+      String operationDigest = (String) preparedPromotionValues.get("request_digest");
+      String privateObservedVersion = "15";
+      Map<String, Object> privateReceipt = new HashMap<>();
+      privateReceipt.put("receiptVersion", 1);
+      privateReceipt.put("promotionOperationId", promotionId);
+      privateReceipt.put("promotionRequestDigest", operationDigest);
+      privateReceipt.put("generationOperationId", result.operationId().toString());
+      privateReceipt.put("generationOperationDigest", result.operationDigest());
+      privateReceipt.put("generationReceiptDigest", result.receiptDigest());
+      privateReceipt.put("secretResource", Map.of("kind", "Secret", "name", "jwt-signing-keys"));
+      privateReceipt.put("secretUid", result.secretUid());
+      privateReceipt.put("expectedPriorResourceVersion", result.observedResourceVersion());
+      privateReceipt.put("observedResourceVersion", privateObservedVersion);
+      privateReceipt.put("action", "PROMOTE_PENDING");
+      privateReceipt.put("resultingSlots", List.of("current"));
+      privateReceipt.put(
+          "current",
+          Map.of(
+              "generation", result.targetGeneration(),
+              "kid", result.targetKid(),
+              "publicKeyFingerprint", result.publicKeyFingerprint()));
+      privateReceipt.put("previous", Map.of("present", false));
+      preparedPromotionValues.put(
+          "private_promotion_observed_resource_version", privateObservedVersion);
+      preparedPromotionValues.put(
+          "private_promotion_receipt_digest", canonicalDigest(privateReceipt));
+
+      String activeObservedVersion = "15";
+      String jwksJson = (String) preparedPromotionValues.get("expected_public_jwks_json");
+      String markerJson =
+          (String) preparedPromotionValues.get("expected_active_generation_marker_json");
+      String publicDataDigest =
+          AccountJwtJwksPublicationRepository.publicDataDigest(jwksJson, markerJson);
+      Map<String, Object> activeReceipt = new HashMap<>();
+      activeReceipt.put("receiptVersion", "account-jwt-active-jwks-promotion-receipt/v1");
+      activeReceipt.put("promotionOperationId", promotionId);
+      activeReceipt.put("promotionRequestDigest", operationDigest);
+      activeReceipt.put("generationOperationId", result.operationId().toString());
+      activeReceipt.put("generationOperationDigest", result.operationDigest());
+      activeReceipt.put("generationReceiptDigest", result.receiptDigest());
+      activeReceipt.put("configMapName", "jwt-jwks");
+      activeReceipt.put("configMapUid", ENROLLMENT.publicConfigMapUid());
+      activeReceipt.put("priorResourceVersion", "14");
+      activeReceipt.put("observedResourceVersion", activeObservedVersion);
+      activeReceipt.put("action", "MARK_ACTIVE");
+      activeReceipt.put("publicDataDigest", publicDataDigest);
+      preparedPromotionValues.put("active_jwks_observed_resource_version", activeObservedVersion);
+      preparedPromotionValues.put("active_jwks_public_data_digest", publicDataDigest);
+      preparedPromotionValues.put("active_jwks_receipt_digest", canonicalDigest(activeReceipt));
+    }
+
+    private String canonicalDigest(Map<String, Object> value) throws Exception {
+      byte[] canonical =
+          Rfc8785CanonicalJson.canonicalizeUtf8(
+              JsonMapper.builder().build().writeValueAsString(value));
+      return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(canonical));
+    }
+
+    private void preparePromotionForDispatch(GenerationRequest generation, GenerationResult result)
+        throws Exception {
+      preparedPromotionId = UUID.fromString("66666666-6666-4666-8666-666666666666");
+      String publicJwksJson = "{\"keys\":[" + result.publicJwkJson() + "]}";
+      String requestDigest =
+          promotionRequestDigest(preparedPromotionId, generation, result, publicJwksJson);
+      preparedPromotionValues = new HashMap<>();
+      preparedPromotionValues.put("operation_id", preparedPromotionId);
+      preparedPromotionValues.put("environment_id", BINDING.environmentId());
+      preparedPromotionValues.put("cluster_id", BINDING.clusterId());
+      preparedPromotionValues.put("kubernetes_namespace", BINDING.namespace());
+      preparedPromotionValues.put("custody_mode", BINDING.mode().value());
+      preparedPromotionValues.put("request_digest_version", (short) 1);
+      preparedPromotionValues.put("request_digest", requestDigest);
+      preparedPromotionValues.put("expected_record_version", 2L);
+      preparedPromotionValues.put("expected_previous_generation", null);
+      preparedPromotionValues.put("expected_previous_kid", null);
+      preparedPromotionValues.put("target_generation", Long.parseLong(result.targetGeneration()));
+      preparedPromotionValues.put("target_kid", result.targetKid());
+      preparedPromotionValues.put("target_algorithm", result.targetAlgorithm());
+      preparedPromotionValues.put("target_public_key_fingerprint", result.publicKeyFingerprint());
+      preparedPromotionValues.put(
+          "expected_private_secret_resource_version", result.observedResourceVersion());
+      preparedPromotionValues.put("expected_public_jwks_resource_version", "14");
+      preparedPromotionValues.put("expected_public_active_generation", null);
+      preparedPromotionValues.put("expected_public_active_kid", null);
+      preparedPromotionValues.put("operation_action", "PROMOTE_PENDING");
+      preparedPromotionValues.put(
+          "allowed_private_slots_canonical_bytes",
+          "[\"current\",\"pending\",\"previous\"]".getBytes(StandardCharsets.UTF_8));
+      preparedPromotionValues.put("status", "PREPARED");
+      preparedPromotionValues.put("generation_operation_id", generation.operationId());
+      preparedPromotionValues.put(
+          "expected_cluster_incarnation_uid",
+          UUID.fromString(TRUST.expectedClusterIncarnationUid()));
+      preparedPromotionValues.put(
+          "expected_namespace_uid", UUID.fromString(TRUST.expectedNamespaceUid()));
+      preparedPromotionValues.put("materializer_trust_binding_digest", TRUST.bindingDigest());
+      preparedPromotionValues.put("materializer_trust_config_revision", TRUST.configRevision());
+      preparedPromotionValues.put("api_binding_digest", ENROLLMENT.apiBindingDigest());
+      preparedPromotionValues.put("api_config_revision", ENROLLMENT.apiConfigRevision());
+      preparedPromotionValues.put("expected_private_secret_uid", SECRET_UID);
+      preparedPromotionValues.put(
+          "expected_public_config_map_uid", UUID.fromString(ENROLLMENT.publicConfigMapUid()));
+      preparedPromotionValues.put("prepublication_intent_digest", "d".repeat(64));
+      preparedPromotionValues.put("prepublication_receipt_digest", "e".repeat(64));
+      preparedPromotionValues.put("mounted_observation_digest", "f".repeat(64));
+      preparedPromotionValues.put("readiness_plan_digest", "1".repeat(64));
+      preparedPromotionValues.put("readiness_evidence_digest", sha256(READINESS_EVIDENCE_PREIMAGE));
+      preparedPromotionValues.put(
+          "readiness_evidence_preimage",
+          READINESS_EVIDENCE_PREIMAGE.getBytes(StandardCharsets.UTF_8));
+      preparedPromotionValues.put("expected_public_jwks_json", publicJwksJson);
+      preparedPromotionValues.put("expected_active_generation_marker_json", "{}");
+      preparedPromotionValues.put("private_promotion_dispatched", false);
+      preparedPromotionValues.put("private_promotion_observed_resource_version", null);
+      preparedPromotionValues.put("private_promotion_receipt_digest", null);
+      preparedPromotionValues.put("active_jwks_observed_resource_version", null);
+      preparedPromotionValues.put("active_jwks_public_data_digest", null);
+      preparedPromotionValues.put("active_jwks_receipt_digest", null);
+      preparedPromotionValues.put("generation_operation_digest", generation.operationDigest());
+      preparedPromotionValues.put("generation_receipt_digest", result.receiptDigest());
     }
   }
 }

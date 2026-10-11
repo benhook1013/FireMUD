@@ -152,11 +152,41 @@ def _check_text(check: Mapping[str, Any], key: str) -> str | None:
     return value.upper() if isinstance(value, str) else None
 
 
+def _workflow_check_identity(value: Mapping[str, Any], name: str) -> tuple[Any, ...] | None:
+    if value.get("__typename") != "CheckRun":
+        return None
+    if "workflowIdentity" not in value:
+        workflow_name = value.get("workflowName")
+        return ("legacy", workflow_name, name) if isinstance(workflow_name, str) and workflow_name else None
+    identity = value["workflowIdentity"]
+    if not isinstance(identity, Mapping):
+        return None
+    for key in ("repository_id", "workflow_id", "app_id"):
+        candidate = identity.get(key)
+        if isinstance(candidate, bool) or not isinstance(candidate, int) or candidate <= 0:
+            return None
+    head = identity.get("head_sha")
+    check_head = value.get("head_sha")
+    app = value.get("app")
+    if (
+        not isinstance(head, str)
+        or not EXACT_SHA.fullmatch(head)
+        or not isinstance(check_head, str)
+        or head.casefold() != check_head.casefold()
+        or identity["app_id"] != 15368
+        or not isinstance(app, Mapping)
+        or app.get("id") != identity["app_id"]
+        or app.get("slug") != "github-actions"
+    ):
+        return None
+    return ("actions", identity["repository_id"], identity["workflow_id"], head.lower(), identity["app_id"], name)
+
+
 def normalize_checks(raw: list[Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     """Return pending and failed checks, coalescing only safely ordered CheckRuns."""
     validated: list[tuple[dict[str, Any], str, str | None, str | None, str | None]] = []
-    groups: defaultdict[tuple[str, str], list[tuple[int, datetime]]] = defaultdict(list)
-    blocked: set[tuple[str, str]] = set()
+    groups: defaultdict[tuple[Any, ...], list[tuple[int, datetime]]] = defaultdict(list)
+    blocked: set[tuple[Any, ...]] = set()
     for index, value in enumerate(raw):
         if not isinstance(value, dict):
             raise StatusError(f"GitHub status check {index + 1} is not an object")
@@ -170,8 +200,8 @@ def normalize_checks(raw: list[Any]) -> tuple[list[dict[str, Any]], list[dict[st
             if value.get(key) is not None and not isinstance(value[key], str):
                 raise StatusError(f"GitHub status check {index + 1} has an invalid {key}")
         validated.append((value, name, conclusion, state, status))
-        if value.get("__typename") == "CheckRun" and value.get("workflowName"):
-            identity = (value["workflowName"], name)
+        identity = _workflow_check_identity(value, name)
+        if identity is not None:
             started = value.get("startedAt")
             if not isinstance(started, str):
                 blocked.add(identity)
@@ -277,6 +307,12 @@ def _inventory_entries(raw: list[Any], current_head: str) -> list[dict[str, Any]
             raise StatusError(f"GitHub status check {index} has an invalid head SHA")
         timestamp, parsed_timestamp = _check_timestamp(value, index)
         app = _app_identity(value)
+        workflow_identity = _workflow_check_identity(value, name) if "workflowIdentity" in value else None
+        started = value.get("startedAt", value.get("started_at"))
+        try:
+            parsed_start = _timestamp(started, "CheckRun startedAt")
+        except StatusError:
+            parsed_start = None
         entry = {
             "name": name,
             "kind": value.get("__typename", "CheckRun" if "conclusion" in value else "StatusContext"),
@@ -287,10 +323,16 @@ def _inventory_entries(raw: list[Any], current_head: str) -> list[dict[str, Any]
             "app": app,
             "timestamp": timestamp,
             "outcome": _check_outcome(value),
-            "url": next((value[key] for key in ("details_url", "detailsUrl", "target_url", "targetUrl") if value.get(key)), None),
+            "url": next(
+                (value[key] for key in ("details_url", "detailsUrl", "target_url", "targetUrl") if value.get(key)), None
+            ),
             "_timestamp": parsed_timestamp,
             "_index": index,
+            "_workflow_identity": workflow_identity,
+            "_started_at": parsed_start,
         }
+        if workflow_identity is not None:
+            entry["workflowIdentity"] = dict(value["workflowIdentity"])
         entry["exact_head"] = isinstance(head, str) and head.casefold() == current_head.casefold()
         entries.append(entry)
     return entries
@@ -360,21 +402,46 @@ def _required_authority(value: Any) -> dict[str, Any]:
     contexts = value.get("contexts", [])
     checks = value.get("checks", [])
     if not isinstance(contexts, list) or any(not isinstance(item, str) or not item for item in contexts):
-        return {"available": False, "status": "unavailable", "reason": "branch protection contexts are malformed", "contexts": []}
+        return {
+            "available": False,
+            "status": "unavailable",
+            "reason": "branch protection contexts are malformed",
+            "contexts": [],
+        }
     if not isinstance(checks, list) or any(not isinstance(item, Mapping) for item in checks):
-        return {"available": False, "status": "unavailable", "reason": "branch protection checks are malformed", "contexts": []}
+        return {
+            "available": False,
+            "status": "unavailable",
+            "reason": "branch protection checks are malformed",
+            "contexts": [],
+        }
     app_by_context: dict[str, Any] = {}
     for item in checks:
         context = item.get("context")
         app_id = item.get("app_id", item.get("appId"))
         if not isinstance(context, str) or not context:
-            return {"available": False, "status": "unavailable", "reason": "branch protection check has no context", "contexts": []}
+            return {
+                "available": False,
+                "status": "unavailable",
+                "reason": "branch protection check has no context",
+                "contexts": [],
+            }
         if app_id is not None and (isinstance(app_id, bool) or not isinstance(app_id, (int, str))):
-            return {"available": False, "status": "unavailable", "reason": f"branch protection app for {context} is malformed", "contexts": []}
+            return {
+                "available": False,
+                "status": "unavailable",
+                "reason": f"branch protection app for {context} is malformed",
+                "contexts": [],
+            }
         if isinstance(app_id, str) and app_id.isdigit():
             app_id = int(app_id)
         if context in app_by_context and app_by_context[context] != app_id:
-            return {"available": False, "status": "unavailable", "reason": f"branch protection has conflicting apps for {context}", "contexts": []}
+            return {
+                "available": False,
+                "status": "unavailable",
+                "reason": f"branch protection has conflicting apps for {context}",
+                "contexts": [],
+            }
         app_by_context[context] = app_id
     names = list(dict.fromkeys(contexts + list(app_by_context)))
     required = []
@@ -399,24 +466,43 @@ def _required_results(authority: dict[str, Any], inventory: dict[str, Any]) -> d
         matching = [entry for entry in entries if entry["name"] == context]
         exact = [entry for entry in matching if entry["exact_head"]]
 
-        def newest(values: list[dict[str, Any]]) -> dict[str, Any] | None:
-            values.sort(
-                key=lambda item: (
-                    item["_timestamp"] is not None,
-                    item["_timestamp"] or datetime.min.replace(tzinfo=timezone.utc),
-                    item["_index"],
-                )
+        def decisive(values: list[dict[str, Any]]) -> dict[str, Any] | None:
+            # Protection selects a context/app, not a workflow. Only proven
+            # retries of one workflow may supersede conflicting observations.
+            groups: defaultdict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+            effective = []
+            for entry in values:
+                identity = entry.get("_workflow_identity")
+                if identity is None:
+                    effective.append(entry)
+                else:
+                    groups[identity].append(entry)
+            for attempts in groups.values():
+                starts = [entry["_started_at"] for entry in attempts]
+                if all(start is not None for start in starts):
+                    latest = max(starts)
+                    selected = [entry for entry in attempts if entry["_started_at"] == latest]
+                    if len(selected) == 1:
+                        effective.extend(selected)
+                        continue
+                effective.extend(attempts)
+            if not effective:
+                return None
+            priority = {"FAILURE": 3, "PENDING": 2, "UNKNOWN": 1, "SUCCESS": 0}
+            return max(
+                effective,
+                key=lambda entry: (
+                    priority.get(entry["outcome"], 1),
+                    entry["_timestamp"] or datetime.min.replace(tzinfo=timezone.utc),
+                ),
             )
-            return values[-1] if values else None
 
         app_id = expected["expected_app"].get("id")
         app_matches = (
-            [entry for entry in exact if (entry["app"] or {}).get("id") == app_id]
-            if app_id is not None
-            else exact
+            [entry for entry in exact if (entry["app"] or {}).get("id") == app_id] if app_id is not None else exact
         )
-        result = newest(app_matches)
-        wrong_app_result = newest(exact) if exact else None
+        result = decisive(app_matches)
+        wrong_app_result = decisive(exact) if exact else None
         wrong_app_results = [
             {key: value for key, value in entry.items() if not key.startswith("_")}
             for entry in exact
@@ -664,7 +750,11 @@ def _review_decision(payload: Mapping[str, Any], current_head: str, pull_request
             if not isinstance(state, str):
                 raise StatusError(f"GitHub review {index} has no state")
             commit = (review.get("commit") or {}).get("oid")
-            if not isinstance(commit, str) or not EXACT_SHA.fullmatch(commit) or commit.casefold() != current_head.casefold():
+            if (
+                not isinstance(commit, str)
+                or not EXACT_SHA.fullmatch(commit)
+                or commit.casefold() != current_head.casefold()
+            ):
                 continue
             submitted_at = review.get("submittedAt")
             if not isinstance(submitted_at, str):
@@ -1067,12 +1157,16 @@ def build_report(
     if inventory.get("available"):
         required = _required_results(authority, inventory)
     else:
-        required = authority if not authority["available"] else {
-            "available": False,
-            "status": "unavailable",
-            "reason": inventory["reason"],
-            "contexts": [],
-        }
+        required = (
+            authority
+            if not authority["available"]
+            else {
+                "available": False,
+                "status": "unavailable",
+                "reason": inventory["reason"],
+                "contexts": [],
+            }
+        )
     if checkpoint_payload is None:
         try:
             checkpoints_payload = evidence.collect_evidence(_historical_comments(raw_payload))
@@ -1146,7 +1240,9 @@ def build_report(
     blocked_unknown = merge_state == "BLOCKED" and not reasons
     if blocked_unknown:
         reasons.append("BLOCKED — cause not exposed by available API")
-    verdict = "BLOCKED — cause not exposed by available API" if blocked_unknown else ("READY" if not reasons else "NOT READY")
+    verdict = (
+        "BLOCKED — cause not exposed by available API" if blocked_unknown else ("READY" if not reasons else "NOT READY")
+    )
     unresolved_threads = threads.pop("_items", [])
     optional_available = required["available"]
     required_names = {item["context"] for item in required.get("contexts", [])}
@@ -1245,11 +1341,14 @@ def emit_text(report: Mapping[str, Any]) -> str:
     """Render a compact human report from the same structure emitted as JSON."""
     pr = report["pull_request"]
     required = report["ci"]["required"]
-    required_contexts = ", ".join(
-        f"{item['context']}[app={item['expected_app'].get('id', 'any')}]={item['status']}/"
-        f"{(item.get('latest_exact_head') or {}).get('outcome', 'none')}"
-        for item in required.get("contexts", [])
-    ) or "none"
+    required_contexts = (
+        ", ".join(
+            f"{item['context']}[app={item['expected_app'].get('id', 'any')}]={item['status']}/"
+            f"{(item.get('latest_exact_head') or {}).get('outcome', 'none')}"
+            for item in required.get("contexts", [])
+        )
+        or "none"
+    )
     pending_names = ", ".join(item["name"] for item in report["ci"]["pending"]) or "none"
     failed_names = ", ".join(item["name"] for item in report["ci"]["failed"]) or "none"
     aggregate = report["ci"]["aggregate"]
@@ -1270,6 +1369,7 @@ def emit_text(report: Mapping[str, Any]) -> str:
             f" · rollup_observed={report['ci']['observed']}"
         )
     finding_counts = report["checkpoint_counts"]["by_type"]
+
     def count_triplet(kind: str) -> str:
         value = finding_counts[kind]
         routed = value["routed"] if value["routed"] is not None else "unknown"

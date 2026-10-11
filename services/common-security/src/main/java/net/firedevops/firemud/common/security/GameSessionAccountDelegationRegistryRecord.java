@@ -888,4 +888,3 @@ public final class GameSessionAccountDelegationRegistryRecord {
     }
   }
 }
-

@@ -275,7 +275,6 @@ class PublishedReleaseBundleServiceImplTest {
                     version(), "workflow-1", logoManifest(), "genrev-1", List.of()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageStartingWith("PUBLISH_SELECTION_REQUIRED");
-
     org.mockito.Mockito.verifyNoInteractions(repository, revisionRepository, versionRepository);
   }
 
@@ -299,7 +298,21 @@ class PublishedReleaseBundleServiceImplTest {
     assertNull(dto.publishedReleaseBundleRef());
     assertNull(dto.manifestSchemaVersion());
     assertNull(dto.artifactDigests());
+    assertNull(dto.worldPublishedStartLocationEvidence());
     assertNull(dto.participantDigests().getFirst().abilitySchemaDigest());
+  }
+
+  @Test
+  void corruptedSelectorEvidenceIsRejectedOnRead() {
+    PublishedReleaseBundle retained = new PublishedReleaseBundle();
+    retained.setAttestationSchemaVersion("v2");
+    retained.setTenantId("tenant-1");
+    retained.setVersionId(7L);
+    retained.setWorldPublishedStartLocationEvidenceJson("{}");
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
+
+    assertThrows(
+        IllegalArgumentException.class, () -> service.getPublishedReleaseBundle("tenant-1", 7L));
   }
 
   private Version sourceIdentity() {
@@ -401,6 +414,41 @@ class PublishedReleaseBundleServiceImplTest {
         .hasMessage("SELECTED_SOURCE_CAPTURE_UNAVAILABLE");
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
     org.mockito.Mockito.verifyNoInteractions(revisionRepository);
+  }
+
+  @Test
+  void createFullVersionBundleRejectsCanonicalIdAndAliasCollisions() {
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+    Revision first = new Revision();
+    first.setData(commandDefinition("salute", "greet"));
+    Revision second = new Revision();
+    second.setData(commandDefinition("hail", "SALUTE"));
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, "COMMAND_DEFINITION"))
+        .thenReturn(List.of(first, second));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createFullVersionBundle(
+                version(), "workflow-1", emptyManifest(), "genrev-1", List.of()));
+  }
+
+  @Test
+  void legacyFullVersionBundleDoesNotReachMutableCommandValidation() {
+    VersionDto version = version();
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
+    Revision commandDefinition = new Revision();
+    commandDefinition.setData(validCommandDefinition().replace("\"value\":1", "\"value\":\"one\""));
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
+            "tenant-1", 7L, "COMMAND_DEFINITION"))
+        .thenReturn(List.of(commandDefinition));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createFullVersionBundle(
+                version, "workflow-1", emptyManifest(), "genrev-1", List.of()));
   }
 
   private VersionDto version() {

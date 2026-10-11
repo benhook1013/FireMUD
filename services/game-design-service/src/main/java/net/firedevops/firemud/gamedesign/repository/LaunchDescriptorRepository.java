@@ -51,9 +51,17 @@ public class LaunchDescriptorRepository {
       DSL.field(DSL.name("target_namespace"), String.class);
   private static final Field<UUID> CANONICAL_TENANT_ID =
       DSL.field(DSL.name("canonical_tenant_id"), UUID.class);
+  private static final Field<String> SOURCE_TENANT_SLUG =
+      DSL.field(DSL.name("authored_world_source_tenant_slug"), String.class);
   private static final Field<String> WORLD_SLUG = DSL.field(DSL.name("world_slug"), String.class);
   private static final Field<UUID> SOURCE_OPERATION_ID =
       DSL.field(DSL.name("authored_world_source_operation_id"), UUID.class);
+  private static final Field<Long> SOURCE_GAME_ROW_ID =
+      DSL.field(DSL.name("authored_world_source_game_row_id"), Long.class);
+  private static final Field<String> SOURCE_GAME_TENANT_KEY =
+      DSL.field(DSL.name("authored_world_source_game_tenant_key"), String.class);
+  private static final Field<String> SOURCE_PROVENANCE_KIND =
+      DSL.field(DSL.name("authored_world_source_provenance_kind"), String.class);
   private static final Field<String> SOURCE_EVIDENCE_DIGEST =
       DSL.field(DSL.name("authored_world_source_evidence_digest"), String.class);
   private static final Field<String> REQUEST_DIGEST =
@@ -143,10 +151,14 @@ public class LaunchDescriptorRepository {
             .set(DESCRIPTOR_SCHEMA_VERSION, descriptor.getDescriptorSchemaVersion())
             .set(TARGET_NAMESPACE, descriptor.getTargetNamespace())
             .set(CANONICAL_TENANT_ID, UUID.fromString(descriptor.getCanonicalTenantId()))
+            .set(SOURCE_TENANT_SLUG, descriptor.getAuthoredWorldSourceTenantSlug())
             .set(WORLD_SLUG, descriptor.getWorldSlug())
             .set(
                 SOURCE_OPERATION_ID,
                 UUID.fromString(descriptor.getAuthoredWorldSourceOperationId()))
+            .set(SOURCE_GAME_ROW_ID, descriptor.getAuthoredWorldSourceGameRowId())
+            .set(SOURCE_GAME_TENANT_KEY, descriptor.getAuthoredWorldSourceGameTenantKey())
+            .set(SOURCE_PROVENANCE_KIND, descriptor.getAuthoredWorldSourceProvenanceKind())
             .set(SOURCE_EVIDENCE_DIGEST, descriptor.getAuthoredWorldSourceEvidenceDigest())
             .set(REQUEST_DIGEST, descriptor.getRequestDigest())
             .set(RESULT_DIGEST, descriptor.getResultDigest())
@@ -197,10 +209,14 @@ public class LaunchDescriptorRepository {
     UUID canonicalTenantId = record.get(CANONICAL_TENANT_ID, UUID.class);
     descriptor.setCanonicalTenantId(
         canonicalTenantId == null ? null : canonicalTenantId.toString());
+    descriptor.setAuthoredWorldSourceTenantSlug(record.get(SOURCE_TENANT_SLUG));
     descriptor.setWorldSlug(record.get(WORLD_SLUG));
     UUID sourceOperationId = record.get(SOURCE_OPERATION_ID, UUID.class);
     descriptor.setAuthoredWorldSourceOperationId(
         sourceOperationId == null ? null : sourceOperationId.toString());
+    descriptor.setAuthoredWorldSourceGameRowId(record.get(SOURCE_GAME_ROW_ID));
+    descriptor.setAuthoredWorldSourceGameTenantKey(record.get(SOURCE_GAME_TENANT_KEY));
+    descriptor.setAuthoredWorldSourceProvenanceKind(record.get(SOURCE_PROVENANCE_KIND));
     descriptor.setAuthoredWorldSourceEvidenceDigest(record.get(SOURCE_EVIDENCE_DIGEST));
     descriptor.setRequestDigest(record.get(REQUEST_DIGEST));
     descriptor.setResultDigest(record.get(RESULT_DIGEST));

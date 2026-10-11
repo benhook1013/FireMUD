@@ -454,32 +454,50 @@ public class AccountJwtReadinessProbeRepository {
     }
     ReadinessProbePlan stored = readbackPlan(plan, false);
     requirePreparedPlanMatches(stored, generation, promotion, publication);
-    if (readinessPlanOutOfWindow(stored)) {
+    boolean dispatched = promotion.privatePromotionDispatched();
+    if (!dispatched && readinessPlanOutOfWindow(stored)) {
       return Optional.empty();
     }
     if (!stored.validatorInventoryComplete()) {
       return Optional.empty();
     }
-    if (stored.planVersion() != INVENTORY_PLAN_VERSION || liveInventory == null) {
+    if (stored.planVersion() != INVENTORY_PLAN_VERSION) {
       return Optional.empty();
     }
-    requireLiveInventoryMatches(
-        stored,
-        binding,
-        trust,
-        liveInventory,
-        observationContext(
-            generation.operationId(), generation.operationDigest(), stored.expectedFence()));
+    String inventoryDigest;
+    if (dispatched) {
+      inventoryDigest = stored.inventorySnapshotDigest().orElseThrow();
+      if (!matchesStoredV2Inventory(stored)) {
+        return Optional.empty();
+      }
+    } else {
+      if (liveInventory == null) {
+        return Optional.empty();
+      }
+      requireLiveInventoryMatches(
+          stored,
+          binding,
+          trust,
+          liveInventory,
+          observationContext(
+              generation.operationId(), generation.operationDigest(), stored.expectedFence()));
+      inventoryDigest = liveInventory.digest();
+    }
     if (!hasCompletePodReceiptClosure(stored)) {
       return Optional.empty();
     }
-    return Optional.of(
+    ReadinessPromotionProof proof =
         new ReadinessPromotionProof(
             stored,
             generation,
             publication,
-            "protected-validator-inventory:" + liveInventory.digest(),
-            liveInventory.digest()));
+            "protected-validator-inventory:" + inventoryDigest,
+            inventoryDigest);
+    if (!promotion.readinessEvidenceDigest().equals(proof.readinessEvidenceDigest())) {
+      throw new QuarantinedStateException(
+          "Recovered readiness proof differs from the immutable PREPARED evidence");
+    }
+    return Optional.of(proof);
   }
 
   private boolean readinessPlanOutOfWindow(ReadinessProbePlan plan) {
@@ -1351,6 +1369,11 @@ public class AccountJwtReadinessProbeRepository {
       throw new ReceiverUnavailableException();
     }
     requireLiveInventoryMatches(plan, binding, trust, liveInventory, observationContext(current));
+    AccountJwtReadinessProbeOwnerSelector.LocalIdentity local = selector.localIdentity();
+    if (!local.sourceInventoryRevision().equals(liveInventory.inventoryBindingRevision())
+        || !local.sourceInventoryDigest().equals(liveInventory.inventoryBindingDigest())) {
+      throw new ReceiverUnavailableException();
+    }
     if (readinessPlanOutOfWindow(plan)) {
       throw new ReceiverUnavailableException();
     }
@@ -1402,7 +1425,6 @@ public class AccountJwtReadinessProbeRepository {
     ExpectedPod expectedPod = selectedPods.getFirst();
     PodTarget target = expectedPod.target();
     target.requireRoutablePodIdentity();
-    AccountJwtReadinessProbeOwnerSelector.LocalIdentity local = selector.localIdentity();
     if (!target.validatorId().equals(selector.validatorId())
         || !expectedPod.rotationOperationId().equals(selector.rotationOperationId())
         || !expectedPod.planDigest().equals(plan.planDigest())
@@ -2803,6 +2825,7 @@ public class AccountJwtReadinessProbeRepository {
     source.put("apiBindingDigest", snapshot.apiBindingDigest());
     source.put("apiBindingRevision", snapshot.apiBindingRevision());
     source.put("clusterIncarnationUid", snapshot.clusterIncarnationUid());
+    source.put("clusterId", snapshot.clusterId());
     source.put("environmentId", snapshot.environmentId());
     source.put("inventoryBindingDigest", snapshot.inventoryBindingDigest());
     source.put("inventoryBindingRevision", snapshot.inventoryBindingRevision());
@@ -3086,7 +3109,7 @@ public class AccountJwtReadinessProbeRepository {
     }
   }
 
-  private static String readinessPromotionDigest(
+  private static Map<String, Object> readinessPromotionPreimage(
       ReadinessProbePlan plan,
       GenerationResult generation,
       AccountJwtJwksPublicationRepository.PromotionPublicationEvidence publication,
@@ -3106,7 +3129,19 @@ public class AccountJwtReadinessProbeRepository {
         verifiedProbes.stream()
             .map(AccountJwtReadinessProbeRepository::verifiedProbeEvidenceMap)
             .toList());
-    return digest(preimage);
+    return preimage;
+  }
+
+  private static byte[] readinessPromotionPreimageBytes(Map<String, Object> preimage) {
+    try {
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(preimage));
+    } catch (IOException ex) {
+      throw new StorageUnavailableException("Readiness evidence cannot be canonicalized");
+    }
+  }
+
+  private static String readinessPromotionDigest(byte[] preimage) {
+    return sha256(preimage);
   }
 
   private static Map<String, Object> generationEvidenceMap(GenerationResult result) {
@@ -3839,6 +3874,7 @@ public class AccountJwtReadinessProbeRepository {
     private final String inventoryEvidenceReference;
     private final String inventoryEvidenceDigest;
     private final List<VerifiedProbeEvidence> verifiedProbes;
+    private final byte[] readinessEvidencePreimage;
     private final String readinessEvidenceDigest;
 
     private ReadinessPromotionProof(
@@ -3880,14 +3916,16 @@ public class AccountJwtReadinessProbeRepository {
             "Readiness proof differs from exact generation and verified probe evidence");
       }
       this.verifiedProbes = List.copyOf(verifiedProbes);
-      this.readinessEvidenceDigest =
-          readinessPromotionDigest(
-              plan,
-              generationResult,
-              publication,
-              inventoryEvidenceReference,
-              inventoryEvidenceDigest,
-              this.verifiedProbes);
+      this.readinessEvidencePreimage =
+          readinessPromotionPreimageBytes(
+              readinessPromotionPreimage(
+                  plan,
+                  generationResult,
+                  publication,
+                  inventoryEvidenceReference,
+                  inventoryEvidenceDigest,
+                  this.verifiedProbes));
+      this.readinessEvidenceDigest = readinessPromotionDigest(this.readinessEvidencePreimage);
     }
 
     public ReadinessProbePlan plan() {
@@ -3917,6 +3955,11 @@ public class AccountJwtReadinessProbeRepository {
     /** Digest computed by Account over all canonical proof fields except this digest itself. */
     public String readinessEvidenceDigest() {
       return readinessEvidenceDigest;
+    }
+
+    /** Exact non-secret RFC 8785 preimage bytes hashed for {@link #readinessEvidenceDigest()}. */
+    public byte[] readinessEvidencePreimage() {
+      return readinessEvidencePreimage.clone();
     }
   }
 

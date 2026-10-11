@@ -6,9 +6,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
@@ -34,6 +36,8 @@ import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding.ParsedBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding.Binding;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec;
+import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
@@ -75,6 +79,8 @@ import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -123,6 +129,7 @@ class AccountControlUiCurrentActorVerifierTest {
   private static final Instant NOW = Instant.parse("2035-04-05T06:07:08Z");
   private static final long NOW_SECONDS = NOW.getEpochSecond();
   private static final long EXPIRY_SECONDS = NOW_SECONDS + 300L;
+  private static final long CLEANUP_DEADLINE_MILLIS = EXPIRY_SECONDS * 1000L + 300_000L;
   private static KeyPair signingKey;
 
   @BeforeAll
@@ -159,6 +166,103 @@ class AccountControlUiCurrentActorVerifierTest {
             eq("api-r1"),
             eq(PROMOTION_OPERATION_ID),
             eq(GENERATION_OPERATION_ID));
+  }
+
+  @Test
+  void verifiesTheExactBillingCutoffFromTheCurrentTenantAuthorityEvent() throws Exception {
+    TenantAuthorityEventV1Codec.Event tenantEvent = currentTenantEvent();
+    Fixture fixture =
+        new Fixture(
+            ACCOUNT_ID,
+            null,
+            1,
+            1,
+            List.of("tenantAdmin"),
+            1,
+            false,
+            tenantEvent,
+            billingCutoff(tenantEvent));
+
+    AccountControlUiCurrentActorVerifier.CurrentActor actor =
+        fixture.verifier.verify(fixture.compactJwt, TENANT_ID);
+
+    assertThat(actor.tenantId()).isEqualTo(TENANT_ID);
+  }
+
+  @Test
+  void rejectsMissingBillingCutoffWhenTheCurrentTenantEventHasBillingEvidence() throws Exception {
+    Fixture fixture =
+        new Fixture(
+            ACCOUNT_ID, null, 1, 1, List.of("tenantAdmin"), 1, false, currentTenantEvent(), null);
+
+    assertDenied(() -> fixture.verifier.verify(fixture.compactJwt, TENANT_ID));
+  }
+
+  @Test
+  void rejectsChangedBillingCutoffWhenTheCurrentTenantEventHasBillingEvidence() throws Exception {
+    TenantAuthorityEventV1Codec.Event tenantEvent = currentTenantEvent();
+    Map<String, Object> changedCutoff = billingCutoff(tenantEvent);
+    changedCutoff.put(
+        TENANT_ID.toString(),
+        Map.of(
+            "tenantAuthorityGeneration", tenantEvent.tenantAuthorityGeneration(),
+            "tenantBillingSequence", tenantEvent.tenantBillingSequence() + 1L,
+            "outboxStreamKey", tenantEvent.outboxStreamKey(),
+            "outboxSequence", tenantEvent.outboxSequence()));
+    Fixture fixture =
+        new Fixture(
+            ACCOUNT_ID, null, 1, 1, List.of("tenantAdmin"), 1, false, tenantEvent, changedCutoff);
+
+    assertDenied(() -> fixture.verifier.verify(fixture.compactJwt, TENANT_ID));
+  }
+
+  @Test
+  void rejectsExtraBillingCutoffScopeWhenTheCurrentTenantEventHasBillingEvidence()
+      throws Exception {
+    TenantAuthorityEventV1Codec.Event tenantEvent = currentTenantEvent();
+    Map<String, Object> extraCutoff = billingCutoff(tenantEvent);
+    extraCutoff.put(
+        OTHER_TENANT_ID.toString(),
+        Map.of(
+            "tenantAuthorityGeneration", tenantEvent.tenantAuthorityGeneration(),
+            "tenantBillingSequence", tenantEvent.tenantBillingSequence(),
+            "outboxStreamKey", tenantEvent.outboxStreamKey(),
+            "outboxSequence", tenantEvent.outboxSequence()));
+    Fixture fixture =
+        new Fixture(
+            ACCOUNT_ID, null, 1, 1, List.of("tenantAdmin"), 1, false, tenantEvent, extraCutoff);
+
+    assertThatThrownBy(() -> fixture.verifier.verify(fixture.compactJwt, TENANT_ID))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class);
+  }
+
+  @Test
+  void futureRegistryCleanupDeadlineDoesNotExtendAnExpiredJwt() throws Exception {
+    Fixture fixture = new Fixture(ACCOUNT_ID, null, 1, 1, List.of("tenantAdmin"), 1, false);
+    Map<String, Object> expiredClaims = claims(ACCOUNT_ID, null);
+    expiredClaims.put("iat", NOW_SECONDS - 300L);
+    expiredClaims.put("nbf", NOW_SECONDS - 300L);
+    expiredClaims.put("exp", NOW_SECONDS - 1L);
+    String expiredJwt = sign(expiredClaims, signingKey);
+
+    assertThatThrownBy(() -> fixture.verifier.verify(expiredJwt, TENANT_ID))
+        .isInstanceOf(AccountAsymmetricJwtVerifier.VerificationException.class);
+
+    verify(fixture.issuances, never()).readCommitted(any());
+  }
+
+  @Test
+  void reusesPinnedFiniteKeyCacheButReloadsCurrentJwksOwnerEvidenceForEachVerification()
+      throws Exception {
+    Fixture fixture = new Fixture(ACCOUNT_ID, null, 1, 1, List.of("tenantAdmin"), 1, false);
+
+    fixture.verifier.verify(fixture.compactJwt, TENANT_ID);
+    fixture.verifier.verify(fixture.compactJwt, TENANT_ID);
+
+    verify(fixture.publicJwks, times(1)).sourceIdentity();
+    // One load populates the shared 30-second key cache; each verification still freshly loads
+    // its separate owner-receipt/current-publication snapshot.
+    verify(fixture.publicJwks, times(3)).load();
   }
 
   @Test
@@ -266,6 +370,7 @@ class AccountControlUiCurrentActorVerifierTest {
         mock(AccountAuthorityOutboxRepository.class);
     private final AccountJwtSignerDesiredStateRepository signerStates =
         mock(AccountJwtSignerDesiredStateRepository.class);
+    private final AccountJwtJwksTrustedSource publicJwks = mock(AccountJwtJwksTrustedSource.class);
 
     private Fixture(
         UUID tokenAccountId,
@@ -276,7 +381,34 @@ class AccountControlUiCurrentActorVerifierTest {
         int localAofCount,
         boolean mismatchPublicReceipt)
         throws Exception {
-      Map<String, Object> claims = claims(tokenAccountId, globalRoles);
+      this(
+          tokenAccountId,
+          globalRoles,
+          currentTenantGeneration,
+          currentMembershipGeneration,
+          roleSnapshot,
+          localAofCount,
+          mismatchPublicReceipt,
+          null,
+          null);
+    }
+
+    @SuppressFBWarnings(
+        value = "DMI_HARDCODED_ABSOLUTE_FILENAME",
+        justification =
+            "These fixed paths model the protected Account API CA and projected bearer-token trust inputs in the fixture; the test never reads them.")
+    private Fixture(
+        UUID tokenAccountId,
+        List<String> globalRoles,
+        long currentTenantGeneration,
+        long currentMembershipGeneration,
+        List<String> roleSnapshot,
+        int localAofCount,
+        boolean mismatchPublicReceipt,
+        TenantAuthorityEventV1Codec.Event currentTenantEvent,
+        Map<String, Object> tenantBillingCutoff)
+        throws Exception {
+      Map<String, Object> claims = claims(tokenAccountId, globalRoles, tenantBillingCutoff);
       compactJwt = sign(claims, signingKey);
       tokenHash = sha256(compactJwt.getBytes(StandardCharsets.US_ASCII));
 
@@ -284,7 +416,6 @@ class AccountControlUiCurrentActorVerifierTest {
       byte[] jwksBytes = jwksJson.getBytes(StandardCharsets.UTF_8);
       SourceIdentity sourceIdentity = sourceIdentity();
       PublicJwksSnapshot jwksSnapshot = new PublicJwksSnapshot(sourceIdentity, jwksBytes);
-      AccountJwtJwksTrustedSource publicJwks = mock(AccountJwtJwksTrustedSource.class);
       when(publicJwks.sourceIdentity()).thenReturn(sourceIdentity);
       when(publicJwks.load()).thenReturn(jwksSnapshot);
 
@@ -465,6 +596,7 @@ class AccountControlUiCurrentActorVerifierTest {
                   Map.entry("operationId", OPERATION_ID.toString()),
                   Map.entry("requestId", REQUEST_ID.toString()),
                   Map.entry("requestDigest", REQUEST_DIGEST),
+                  Map.entry("registryCleanupDeadlineEpochMillis", CLEANUP_DEADLINE_MILLIS),
                   Map.entry("state", "active"),
                   Map.entry("authoritySourceVersions", sourceVersions),
                   Map.entry("authEvidenceBundle", authBundleReference),
@@ -484,7 +616,7 @@ class AccountControlUiCurrentActorVerifierTest {
                   "recordDigest",
                   sha256(pendingRegistry),
                   "expiryMillis",
-                  Math.multiplyExact(EXPIRY_SECONDS, 1000L),
+                  CLEANUP_DEADLINE_MILLIS,
                   "aclIdentity",
                   "account_coord_app",
                   "localAofCount",
@@ -507,7 +639,7 @@ class AccountControlUiCurrentActorVerifierTest {
       when(committedIssuance.signerReceipt()).thenReturn(signerReceipt);
       when(committedIssuance.issuedAtEpochSecond()).thenReturn(NOW_SECONDS);
       when(committedIssuance.expiresAtEpochSecond()).thenReturn(EXPIRY_SECONDS);
-      when(committedIssuance.expiryMillis()).thenReturn(Math.multiplyExact(EXPIRY_SECONDS, 1000L));
+      when(committedIssuance.expiryMillis()).thenReturn(CLEANUP_DEADLINE_MILLIS);
       when(committedIssuance.status()).thenReturn("COMMITTED");
       when(committedIssuance.tokenHash()).thenReturn(tokenHash);
       when(committedIssuance.pendingRegistry()).thenReturn(pendingRegistry);
@@ -517,7 +649,8 @@ class AccountControlUiCurrentActorVerifierTest {
 
       configureSignerReadback(mismatchPublicReceipt ? "0".repeat(64) : publicDataDigest);
       configureRegistry(activeRegistry);
-      configureCurrentSources(currentTenantGeneration, currentMembershipGeneration, roleSnapshot);
+      configureCurrentSources(
+          currentTenantGeneration, currentMembershipGeneration, roleSnapshot, currentTenantEvent);
 
       PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
       when(transactionManager.getTransaction(any(TransactionDefinition.class)))
@@ -593,15 +726,15 @@ class AccountControlUiCurrentActorVerifierTest {
       when(connection.sync()).thenReturn(commands);
       when(commands.aclWhoami()).thenReturn(AccountControlUiRegistryReader.REQUIRED_ACL_IDENTITY);
       when(commands.get(any(byte[].class))).thenReturn(activeRegistry);
-      when(commands.pexpiretime(any(byte[].class)))
-          .thenReturn(Math.multiplyExact(EXPIRY_SECONDS, 1000L));
+      when(commands.pexpiretime(any(byte[].class))).thenReturn(CLEANUP_DEADLINE_MILLIS);
       registry = new AccountControlUiRegistryReader(() -> connection);
     }
 
     private void configureCurrentSources(
         long currentTenantGeneration,
         long currentMembershipGeneration,
-        List<String> currentRoleSnapshot) {
+        List<String> currentRoleSnapshot,
+        TenantAuthorityEventV1Codec.Event currentTenantEvent) {
       IssuanceFence fence = new IssuanceFence(ACCOUNT_ID, 1L, 1L);
       String issuerStream = "account:auth-authority:v1:issuer/" + ISSUER;
       String accountStream = "account:auth-authority:v1:account/" + ACCOUNT_ID;
@@ -659,10 +792,13 @@ class AccountControlUiCurrentActorVerifierTest {
               eq(ISSUER), eq(ACCOUNT_ID), eq(List.of(TENANT_ID)), eq(List.of(TENANT_ID))))
           .thenReturn(composite);
 
-      TenantAuthorityEventV1Codec.Event tenantEvent = mock(TenantAuthorityEventV1Codec.Event.class);
-      when(tenantEvent.tenantId()).thenReturn(TENANT_ID);
-      when(tenantEvent.tenantAuthorityGeneration()).thenReturn(currentTenantGeneration);
-      when(tenantEvent.tenantAuthoritySourceVersion()).thenReturn(currentTenantGeneration);
+      TenantAuthorityEventV1Codec.Event tenantEvent = currentTenantEvent;
+      if (tenantEvent == null) {
+        tenantEvent = mock(TenantAuthorityEventV1Codec.Event.class);
+        when(tenantEvent.tenantId()).thenReturn(TENANT_ID);
+        when(tenantEvent.tenantAuthorityGeneration()).thenReturn(currentTenantGeneration);
+        when(tenantEvent.tenantAuthoritySourceVersion()).thenReturn(currentTenantGeneration);
+      }
       when(tenantEvents.readCurrentByTenant(TENANT_ID)).thenReturn(tenantEvent);
 
       VerifiedTenantProvenance provenance =
@@ -725,7 +861,74 @@ class AccountControlUiCurrentActorVerifierTest {
     }
   }
 
+  private static TenantAuthorityEventV1Codec.Event currentTenantEvent() {
+    UUID creationRequestId = UUID.fromString("a1000000-0000-4000-8000-000000000001");
+    UUID operationId = UUID.fromString("a2000000-0000-4000-8000-000000000002");
+    UUID requestId = UUID.fromString("a3000000-0000-4000-8000-000000000003");
+    String requestDigest = "sha256:" + "1".repeat(64);
+    String sourceNamespace = "account-service";
+    String sourceTenantKey = "tenant-101";
+    String evidenceDigest =
+        GameTenantCreationDigest.evidenceDigest(
+            sourceNamespace,
+            creationRequestId,
+            operationId,
+            requestDigest,
+            TENANT_ID,
+            101L,
+            sourceTenantKey,
+            "NEW_GAME_ROW");
+    FreshTenantCreationEvidence source =
+        new FreshTenantCreationEvidence(
+            1,
+            sourceNamespace,
+            creationRequestId,
+            operationId,
+            requestDigest,
+            TENANT_ID,
+            101L,
+            sourceTenantKey,
+            "NEW_GAME_ROW",
+            evidenceDigest);
+    DemoTenantEntitlementRequest request =
+        new DemoTenantEntitlementRequest(
+            requestId,
+            TENANT_ID,
+            creationRequestId,
+            requestDigest,
+            null,
+            null,
+            null,
+            true,
+            true,
+            false,
+            false,
+            new DemoTenantEntitlementRequest.Quotas(3L, 2L, 4096L));
+    DemoTenantEntitlementEventV1Codec.Event billingEvent =
+        DemoTenantEntitlementEventV1Codec.seal(request, source, 1L, 1L, 1L, 7L);
+    TenantAuthorityEventV1Codec.Event authorityEvent =
+        TenantAuthorityEventV1Codec.seal(request, source, 1L, 1L, 11L, billingEvent);
+    return TenantAuthorityEventV1Codec.verify(authorityEvent.payload());
+  }
+
+  private static Map<String, Object> billingCutoff(TenantAuthorityEventV1Codec.Event event) {
+    Map<String, Object> cutoff = new LinkedHashMap<>();
+    cutoff.put(
+        TENANT_ID.toString(),
+        Map.of(
+            "tenantAuthorityGeneration", event.tenantAuthorityGeneration(),
+            "tenantBillingSequence", event.tenantBillingSequence(),
+            "outboxStreamKey", event.outboxStreamKey(),
+            "outboxSequence", event.outboxSequence()));
+    return cutoff;
+  }
+
   private static Map<String, Object> claims(UUID accountId, List<String> globalRoles) {
+    return claims(accountId, globalRoles, null);
+  }
+
+  private static Map<String, Object> claims(
+      UUID accountId, List<String> globalRoles, Map<String, Object> tenantBillingCutoff) {
     Map<String, Object> authorityTuple =
         new LinkedHashMap<>(
             Map.of(
@@ -750,6 +953,9 @@ class AccountControlUiCurrentActorVerifierTest {
                 Map.entry("membershipVersion", Map.of(TENANT_ID.toString(), 1)),
                 Map.entry("issuanceFence", 1),
                 Map.entry("scopedRoles", Map.of(TENANT_ID.toString(), List.of("tenantAdmin")))));
+    if (tenantBillingCutoff != null) {
+      authorityTuple.put("tenantBillingCutoff", tenantBillingCutoff);
+    }
     if (globalRoles != null) {
       claims.put("globalRoles", globalRoles);
     }

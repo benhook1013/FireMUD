@@ -14,16 +14,19 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.IssuanceFence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeKind;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
+import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountSecurityCutoff;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.IssuerEvent;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountAuthoritySourceEvidenceRepositoryTest {
   private static final UUID ACCOUNT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
@@ -131,6 +134,50 @@ class AccountAuthoritySourceEvidenceRepositoryTest {
   }
 
   @Test
+  void accountScopeEvidenceAllowsIssuanceFenceToAdvanceIndependently() {
+    String stream = "account:auth-authority:v1:account/" + ACCOUNT_ID;
+    var current =
+        new AccountAuthoritySourceEvidenceRepository.CurrentSourceEvidence(
+            AuthorityScope.account(ACCOUNT_ID),
+            4L,
+            4L,
+            new IssuanceFence(ACCOUNT_ID, 10L, 13L),
+            new AccountAuthoritySourceEvidenceRepository.SourceCheckpoint(
+                stream,
+                3L,
+                Optional.of("account-event-3"),
+                Optional.of("sha256:" + "c".repeat(64))),
+            Optional.of(new AccountSecurityCutoff("4", stream, "3")),
+            "ACCOUNT_REPOSITORY_INSERT",
+            9L,
+            "ACCOUNT_REPOSITORY_INSERT",
+            1L,
+            1L);
+
+    assertThat(current.generation()).isEqualTo(4L);
+    assertThat(current.issuanceFence().value()).isEqualTo(10L);
+    assertThat(current.issuanceFence().sourceVersion()).isEqualTo(13L);
+  }
+
+  @Test
+  void retainedReceiptEvidenceKeepsIndependentPositiveFenceCoordinates() {
+    String stream = "account:auth-authority:v1:account/" + ACCOUNT_ID;
+    var evidence =
+        new net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback
+            .RetainedEventEvidence(
+            stream, 3L, 4L, 4L, 10L, 13L, new AccountSecurityCutoff("4", stream, "3"));
+
+    assertThat(evidence.issuanceFence()).isEqualTo(10L);
+    assertThat(evidence.issuanceFenceSourceVersion()).isEqualTo(13L);
+    assertThatThrownBy(
+            () ->
+                new net.firedevops.firemud.accountservice.service
+                    .AccountAuthoritySourceEventReadback.RetainedEventEvidence(
+                    stream, 3L, 4L, 4L, 0L, 13L, new AccountSecurityCutoff("4", stream, "3")))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
   void issuerEnrollmentRequiresValidIdentityAndMandatoryOwnerTransaction()
       throws ReflectiveOperationException {
     assertThatThrownBy(() -> repository.initializeIssuerIfAbsent(" "))
@@ -139,6 +186,31 @@ class AccountAuthoritySourceEvidenceRepositoryTest {
     assertMandatory("initializeFreshAccount", AccountRepository.FreshAccountInsert.class);
     assertMandatory("recordAccountUpdate", AccountRepository.AccountUpdateEvidence.class);
 
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void currentAccountSourceReadRequiresAWritableMandatoryOwnerTransaction()
+      throws ReflectiveOperationException {
+    assertMandatory("readCurrentAccountSource", UUID.class, ScopeState.class);
+    ScopeState expected =
+        new ScopeState(
+            AuthorityScope.account(ACCOUNT_ID), 1L, 1L, new IssuanceFence(ACCOUNT_ID, 1L, 1L));
+
+    assertThatThrownBy(() -> repository.readCurrentAccountSource(ACCOUNT_ID, expected))
+        .isInstanceOf(
+            AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+    verifyNoInteractions(dsl);
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
+    try {
+      assertThatThrownBy(() -> repository.readCurrentAccountSource(ACCOUNT_ID, expected))
+          .isInstanceOf(
+              AccountAuthoritySourceEvidenceRepository.SourceEvidenceUnavailableException.class);
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
     verifyNoInteractions(dsl);
   }
 
@@ -382,11 +454,11 @@ class AccountAuthoritySourceEvidenceRepositoryTest {
         "account:auth-authority:v1:" + suffix, 0L, Optional.empty(), Optional.empty());
   }
 
-  private static void assertMandatory(String methodName, Class<?> parameterType)
+  private static void assertMandatory(String methodName, Class<?>... parameterTypes)
       throws ReflectiveOperationException {
     Transactional transactional =
         AccountAuthoritySourceEvidenceRepository.class
-            .getMethod(methodName, parameterType)
+            .getMethod(methodName, parameterTypes)
             .getAnnotation(Transactional.class);
     assertThat(transactional).isNotNull();
     assertThat(transactional.propagation()).isEqualTo(Propagation.MANDATORY);

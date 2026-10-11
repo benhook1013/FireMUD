@@ -210,11 +210,11 @@
         "/^services/common-test-support/src/testFixtures/resources/net/firedevops/firemud/test/container-images\\.properties$/"
       ],
       "matchStrings": [
-        "(?:postgres\\.image|redis\\.image)=(?<depName>postgres|redis):(?<currentValue>[0-9][A-Za-z0-9_.-]*)(?:@(?<currentDigest>sha256:[0-9a-f]{64}))?(?:\\r?\\n|$)"
+        "(?<depName>postgres|redis)\\.image=(?<packageName>public\\.ecr\\.aws/docker/library/(?:postgres|redis)):(?<currentValue>[0-9][A-Za-z0-9_.-]*)@(?<currentDigest>sha256:[0-9a-f]{64})(?:\\r?\\n|$)"
       ],
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker",
-      "autoReplaceStringTemplate": "{{{depName}}}.image={{{depName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{else}}{{#if currentDigest}}@{{{currentDigest}}}{{/if}}{{/if}}\n"
+      "autoReplaceStringTemplate": "{{{depName}}}.image={{{packageName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}{{#if newDigest}}@{{{newDigest}}}{{else}}{{#if currentDigest}}@{{{currentDigest}}}{{/if}}{{/if}}\n"
     },
     {
       "customType": "regex",
@@ -298,6 +298,36 @@
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker",
       "autoReplaceStringTemplate": "{{{indentation}}}image: {{{depName}}}:{{#if newValue}}{{{newValue}}}{{else}}{{{currentValue}}}{{/if}}@{{#if newDigest}}{{{newDigest}}}{{else}}{{{currentDigest}}}{{/if}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the published BSR protocolbuffers/java version and immutable rebuild revision together",
+      "managerFilePatterns": [
+        "/^config/protobuf/buf\\.gen\\.yaml$/"
+      ],
+      "matchStrings": [
+        "  - plugin: buf\\.build/protocolbuffers/java:(?<currentValue>v[0-9.]+)\\n    revision: (?<currentRevision>[0-9]+)"
+      ],
+      "datasourceTemplate": "custom.bsr-protocolbuffers-java",
+      "depNameTemplate": "buf.build/protocolbuffers/java",
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)(?:\\.(?<patch>\\d+))?-r(?<build>\\d+)$",
+      "currentValueTemplate": "{{{currentValue}}}-r{{{currentRevision}}}",
+      "autoReplaceStringTemplate": "  - plugin: buf.build/protocolbuffers/java:{{{replace '-r[0-9]+$' '' newValue}}}\n    revision: {{{replace '^.*-r' '' newValue}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the published BSR grpc/java version and immutable rebuild revision together",
+      "managerFilePatterns": [
+        "/^config/protobuf/buf\\.gen\\.yaml$/"
+      ],
+      "matchStrings": [
+        "  - plugin: buf\\.build/grpc/java:(?<currentValue>v[0-9.]+)\\n    revision: (?<currentRevision>[0-9]+)"
+      ],
+      "datasourceTemplate": "custom.bsr-grpc-java",
+      "depNameTemplate": "buf.build/grpc/java",
+      "versioningTemplate": "regex:^v(?<major>\\d+)\\.(?<minor>\\d+)(?:\\.(?<patch>\\d+))?-r(?<build>\\d+)$",
+      "currentValueTemplate": "{{{currentValue}}}-r{{{currentRevision}}}",
+      "autoReplaceStringTemplate": "  - plugin: buf.build/grpc/java:{{{replace '-r[0-9]+$' '' newValue}}}\n    revision: {{{replace '^.*-r' '' newValue}}}"
     }
   ],
   "pip-compile": {
@@ -466,7 +496,9 @@
       ],
       "matchPackageNames": [
         "postgres",
-        "redis"
+        "redis",
+        "public.ecr.aws/docker/library/postgres",
+        "public.ecr.aws/docker/library/redis"
       ],
       "matchUpdateTypes": [
         "major"
@@ -481,7 +513,7 @@
       "matchManagers": [
         "custom.regex"
       ],
-      "matchPackageNames": [
+      "matchDepNames": [
         "postgres",
         "redis"
       ],
@@ -525,6 +557,46 @@
         "busybox"
       ],
       "pinDigests": true
+    },
+    {
+      "description": "Group published BSR generator versions and revisions with the corresponding Gradle dependencies",
+      "matchPackageNames": [
+        "buf.build/protocolbuffers/java"
+      ],
+      "groupName": "protobuf Java dependencies",
+      "automerge": false
+    },
+    {
+      "description": "Group published BSR generator versions and revisions with the corresponding Gradle dependencies",
+      "matchPackageNames": [
+        "buf.build/grpc/java"
+      ],
+      "groupName": "grpc Java dependencies",
+      "automerge": false
+    },
+    {
+      "description": "Group protobuf runtimes and local compiler with the BSR generator",
+      "matchManagers": [
+        "gradle"
+      ],
+      "matchPackageNames": [
+        "com.google.protobuf:protobuf-java",
+        "com.google.protobuf:protobuf-java-util",
+        "com.google.protobuf:protoc"
+      ],
+      "groupName": "protobuf Java dependencies",
+      "automerge": false
+    },
+    {
+      "description": "Group gRPC runtimes and local compiler with the BSR generator",
+      "matchManagers": [
+        "gradle"
+      ],
+      "matchPackageNames": [
+        "io.grpc:*"
+      ],
+      "groupName": "grpc Java dependencies",
+      "automerge": false
     }
   ],
   "lockFileMaintenance": {
@@ -552,5 +624,21 @@
       "/^k8s\\/terraform(?:-production)?\\/.*values.*\\.ya?ml$/",
       "/^k8s\\/helm\\/.*\\/values-[^/]+\\.ya?ml$/"
     ]
+  },
+  "customDatasources": {
+    "bsr-protocolbuffers-java": {
+      "defaultRegistryUrlTemplate": "https://buf.build/buf.alpha.registry.v1alpha1.PluginCurationService/GetLatestCuratedPlugin?connect=v1&encoding=json&message=%7B%22owner%22%3A%22protocolbuffers%22%2C%22name%22%3A%22java%22%7D",
+      "format": "json",
+      "transformTemplates": [
+        "{\"releases\": $reduce(versions, function($acc, $v) { $append($acc, $map($v.revisions, function($r) { {\"version\": $v.version & \"-r\" & $string($r)} })) }, [])}"
+      ]
+    },
+    "bsr-grpc-java": {
+      "defaultRegistryUrlTemplate": "https://buf.build/buf.alpha.registry.v1alpha1.PluginCurationService/GetLatestCuratedPlugin?connect=v1&encoding=json&message=%7B%22owner%22%3A%22grpc%22%2C%22name%22%3A%22java%22%7D",
+      "format": "json",
+      "transformTemplates": [
+        "{\"releases\": $reduce(versions, function($acc, $v) { $append($acc, $map($v.revisions, function($r) { {\"version\": $v.version & \"-r\" & $string($r)} })) }, [])}"
+      ]
+    }
   }
 }

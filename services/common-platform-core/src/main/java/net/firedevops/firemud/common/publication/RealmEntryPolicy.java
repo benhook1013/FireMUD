@@ -3,13 +3,14 @@ package net.firedevops.firemud.common.publication;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-/** Closed v1 authored realm-entry policy shared by the publication owner and runtime receivers. */
+/** Closed authored realm-entry policy shared by the publication owner and runtime receivers. */
 public record RealmEntryPolicy(
     int schemaVersion,
     String worldSlug,
@@ -20,14 +21,18 @@ public record RealmEntryPolicy(
     boolean publicProduction,
     StateScope stateScope,
     EntryPolicy entryPolicy,
+    PlayerCreationDescriptor creationDescriptor,
+    AuthoredInitialActorCore initialActorCore,
     String canonicalJson) {
   public static final String REVISION_KIND = "REALM_ENTRY_POLICY";
   public static final int SCHEMA_VERSION = 1;
+  public static final int PLAYER_CREATED_SCHEMA_VERSION = 2;
+  public static final int AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION = 3;
   public static final int MAX_JSON_BYTES = 4096;
   public static final int MAX_SLUG_LENGTH = 64;
   public static final int MAX_DISPLAY_NAME_CODE_POINTS = 128;
 
-  private static final Set<String> FIELDS =
+  private static final Set<String> V1_FIELDS =
       Set.of(
           "schemaVersion",
           "worldSlug",
@@ -38,7 +43,60 @@ public record RealmEntryPolicy(
           "publicProduction",
           "stateScope",
           "entryPolicy");
+  private static final Set<String> V2_FIELDS =
+      Set.of(
+          "schemaVersion",
+          "worldSlug",
+          "worldDisplayName",
+          "realmSlug",
+          "realmDisplayName",
+          "visible",
+          "publicProduction",
+          "stateScope",
+          "entryPolicy",
+          "creationDescriptor");
+  private static final Set<String> V3_FIELDS =
+      Set.of(
+          "schemaVersion",
+          "worldSlug",
+          "worldDisplayName",
+          "realmSlug",
+          "realmDisplayName",
+          "visible",
+          "publicProduction",
+          "stateScope",
+          "entryPolicy",
+          "creationDescriptor",
+          "initialActorCore");
   private static final Pattern SLUG_PATTERN = Pattern.compile("[a-z0-9]+(?:-[a-z0-9]+)*");
+
+  public RealmEntryPolicy {
+    Objects.requireNonNull(stateScope, "stateScope");
+    Objects.requireNonNull(entryPolicy, "entryPolicy");
+    Objects.requireNonNull(canonicalJson, "canonicalJson");
+    if (schemaVersion == SCHEMA_VERSION) {
+      if (entryPolicy != EntryPolicy.PRESEEDED_ONLY
+          || creationDescriptor != null
+          || initialActorCore != null) {
+        throw invalid("schemaVersion 1 requires PRESEEDED_ONLY without a descriptor");
+      }
+    } else if (schemaVersion == PLAYER_CREATED_SCHEMA_VERSION) {
+      if (entryPolicy != EntryPolicy.PLAYER_CREATED
+          || creationDescriptor == null
+          || initialActorCore != null) {
+        throw invalid("schemaVersion 2 requires PLAYER_CREATED with a descriptor");
+      }
+    } else if (schemaVersion == AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION) {
+      if (entryPolicy != EntryPolicy.PLAYER_CREATED
+          || creationDescriptor == null
+          || initialActorCore == null) {
+        throw invalid(
+            "schemaVersion 3 requires PLAYER_CREATED with a descriptor and initialActorCore");
+      }
+    } else {
+      throw invalid("schemaVersion is unsupported");
+    }
+  }
 
   public enum StateScope {
     SHARED,
@@ -46,10 +104,11 @@ public record RealmEntryPolicy(
   }
 
   public enum EntryPolicy {
-    PRESEEDED_ONLY
+    PRESEEDED_ONLY,
+    PLAYER_CREATED
   }
 
-  /** Parses valid v1 JSON and returns the RFC 8785 canonical policy representation. */
+  /** Parses supported policy JSON and returns its RFC 8785 canonical representation. */
   public static RealmEntryPolicy parse(String json, ObjectMapper objectMapper) {
     if (json == null || json.isBlank()) {
       throw invalid("data is required");
@@ -74,21 +133,27 @@ public record RealmEntryPolicy(
     if (root == null || !root.isObject()) {
       throw invalid("must be a JSON object");
     }
-    for (String field : FIELDS) {
+    JsonNode schemaVersion = root.get("schemaVersion");
+    if (schemaVersion == null
+        || !schemaVersion.isIntegralNumber()
+        || !schemaVersion.canConvertToInt()) {
+      throw invalid("schemaVersion must be a supported integer");
+    }
+    int version = schemaVersion.intValue();
+    Set<String> fields =
+        switch (version) {
+          case SCHEMA_VERSION -> V1_FIELDS;
+          case PLAYER_CREATED_SCHEMA_VERSION -> V2_FIELDS;
+          case AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION -> V3_FIELDS;
+          default -> throw invalid("schemaVersion is unsupported");
+        };
+    for (String field : fields) {
       if (!root.has(field)) {
         throw invalid(field + " is required");
       }
     }
-    if (root.size() != FIELDS.size()) {
-      throw invalid("must contain exactly the v1 fields");
-    }
-
-    JsonNode schemaVersion = root.get("schemaVersion");
-    if (schemaVersion == null
-        || !schemaVersion.isIntegralNumber()
-        || !schemaVersion.canConvertToInt()
-        || schemaVersion.intValue() != SCHEMA_VERSION) {
-      throw invalid("schemaVersion must be the integer 1");
+    if (root.size() != fields.size()) {
+      throw invalid("must contain exactly the schema fields");
     }
     String worldSlug = requireSlug(root, "worldSlug");
     String worldDisplayName = requireDisplayName(root, "worldDisplayName");
@@ -98,9 +163,23 @@ public record RealmEntryPolicy(
     boolean publicProduction = requireBoolean(root, "publicProduction");
     StateScope stateScope = requireEnum(root, "stateScope", StateScope.class);
     EntryPolicy entryPolicy = requireEnum(root, "entryPolicy", EntryPolicy.class);
+    if (version == SCHEMA_VERSION && entryPolicy != EntryPolicy.PRESEEDED_ONLY) {
+      throw invalid("schemaVersion 1 supports only PRESEEDED_ONLY");
+    }
+    if (version >= PLAYER_CREATED_SCHEMA_VERSION && entryPolicy != EntryPolicy.PLAYER_CREATED) {
+      throw invalid("schemaVersion " + version + " supports only PLAYER_CREATED");
+    }
+    PlayerCreationDescriptor creationDescriptor =
+        version >= PLAYER_CREATED_SCHEMA_VERSION
+            ? PlayerCreationDescriptor.parse(root.get("creationDescriptor").toString())
+            : null;
+    AuthoredInitialActorCore initialActorCore =
+        version == AUTHORED_INITIAL_ACTOR_CORE_SCHEMA_VERSION
+            ? AuthoredInitialActorCore.parse(root.get("initialActorCore"))
+            : null;
 
     return new RealmEntryPolicy(
-        SCHEMA_VERSION,
+        version,
         worldSlug,
         worldDisplayName,
         realmSlug,
@@ -109,6 +188,8 @@ public record RealmEntryPolicy(
         publicProduction,
         stateScope,
         entryPolicy,
+        creationDescriptor,
+        initialActorCore,
         canonicalJson);
   }
 

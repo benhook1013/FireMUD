@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
@@ -23,7 +24,6 @@ import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindHoldDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RuntimeRoomDto;
-import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationResultDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
 import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldService;
 import net.firedevops.firemud.worldmanagement.service.PingService;
@@ -51,7 +51,6 @@ import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsReq
 import net.firedevops.firemud.worldmanagement.v1.ValidateWorldUpgradeMappingsResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
-import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -120,6 +119,56 @@ class WorldManagementGrpcServiceTest {
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     runWithPeer(peer, () -> ref.set(invokeDigest(service, request)));
     return ref.get();
+  }
+
+  private static ApplyWorldDesignMutationResponse invokeMutation(
+      WorldManagementGrpcService service, ApplyWorldDesignMutationRequest request) {
+    AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
+    service.applyWorldDesignMutation(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ApplyWorldDesignMutationResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            throw new AssertionError("Draft mutation RPC failed", t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+    return ref.get();
+  }
+
+  private static ApplyWorldDesignMutationRequest draftMutation(String tenantId) {
+    return ApplyWorldDesignMutationRequest.newBuilder()
+        .setTenantId(tenantId)
+        .setVersionId("7")
+        .setCommitId("commit-1")
+        .setRevisionId("revision-1")
+        .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
+        .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+        .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
+        .setScopeId("44")
+        .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
+        .build();
+  }
+
+  private static void assertDraftMutationUnavailable(ApplyWorldDesignMutationResponse response) {
+    assertNotNull(response);
+    assertEquals("FAILED_PRECONDITION", response.getError().getCode());
+    assertEquals(
+        "Complete Draft caller/tenant authorization and owner publication proof are unavailable.",
+        response.getError().getMessage());
+    assertEquals(1, response.getAllFields().size());
+    assertTrue(
+        response
+            .getAllFields()
+            .containsKey(
+                ApplyWorldDesignMutationResponse.getDescriptor().findFieldByName("error")));
   }
 
   private static AcquireInitialAdmissionBindHoldResponse invokeInitialBindAcquire(
@@ -587,112 +636,53 @@ class WorldManagementGrpcServiceTest {
   }
 
   @Test
-  void applyWorldDesignMutationReturnsTypedResult() {
-    PingService pingService = Mockito.mock(PingService.class);
-    RoomService roomService = Mockito.mock(RoomService.class);
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
+  void applyWorldDesignMutationFailsClosedBeforeOwnerReadsOrMutation() {
     WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
-    MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    Mockito.when(mutationService.applyMutation(Mockito.any()))
-        .thenReturn(new WorldDesignMutationResultDto("APPLIED", 1L, 7L, 44L, 1L, null));
-    SessionContext.setContext(
-        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
     WorldManagementGrpcService service =
         new WorldManagementGrpcService(
-            pingService,
-            roomService,
+            Mockito.mock(PingService.class),
+            Mockito.mock(RoomService.class),
             Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
+            Mockito.mock(WorldDraftDesignDigestService.class),
             mutationService,
             Mockito.mock(WorldUpgradeValidationService.class),
             Mockito.mock(GameplaySessionAttestationService.class),
-            meterRegistry,
+            new SimpleMeterRegistry(),
             new ObjectMapper(),
             (PublicationReadGuard) null);
 
-    AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
-    service.applyWorldDesignMutation(
-        ApplyWorldDesignMutationRequest.newBuilder()
-            .setTenantId("1")
-            .setVersionId("7")
-            .setCommitId("commit-1")
-            .setRevisionId("revision-1")
-            .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
-            .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
-            .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
-            .setScopeId("44")
-            .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(ApplyWorldDesignMutationResponse value) {
-            ref.set(value);
-          }
+    SessionContext.clear();
+    assertDraftMutationUnavailable(invokeMutation(service, draftMutation("42")));
 
-          @Override
-          public void onError(Throwable t) {}
+    AtomicReference<ApplyWorldDesignMutationResponse> gameDesignResponse = new AtomicReference<>();
+    runWithPeer(
+        peer("game-design-service"),
+        () -> gameDesignResponse.set(invokeMutation(service, draftMutation("42"))));
+    assertDraftMutationUnavailable(gameDesignResponse.get());
 
-          @Override
-          public void onCompleted() {}
-        });
+    AtomicReference<ApplyWorldDesignMutationResponse> otherWorkloadResponse =
+        new AtomicReference<>();
+    runWithPeer(
+        peer("account-service"),
+        () -> otherWorkloadResponse.set(invokeMutation(service, draftMutation("42"))));
+    assertDraftMutationUnavailable(otherWorkloadResponse.get());
 
-    assertEquals(
-        WorldDesignMutationResult.WORLD_DESIGN_MUTATION_RESULT_APPLIED, ref.get().getResult());
-    assertEquals("44", ref.get().getAggregateId());
-    assertEquals(1L, ref.get().getDraftRevisionEpoch());
-  }
+    AtomicReference<ApplyWorldDesignMutationResponse> crossTenantResponse = new AtomicReference<>();
+    runWithPeer(
+        peer("game-design-service"),
+        () -> crossTenantResponse.set(invokeMutation(service, draftMutation("84"))));
+    assertDraftMutationUnavailable(crossTenantResponse.get());
 
-  @Test
-  void applyWorldDesignMutationRejectsZeroVersionIdBeforeMutation() {
-    PingService pingService = Mockito.mock(PingService.class);
-    RoomService roomService = Mockito.mock(RoomService.class);
-    WorldDraftDesignDigestService digestService = Mockito.mock(WorldDraftDesignDigestService.class);
-    WorldDesignMutationService mutationService = Mockito.mock(WorldDesignMutationService.class);
-    MeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext(
         "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
-    WorldManagementGrpcService service =
-        new WorldManagementGrpcService(
-            pingService,
-            roomService,
-            Mockito.mock(WorldInstanceActivationService.class),
-            digestService,
-            mutationService,
-            Mockito.mock(WorldUpgradeValidationService.class),
-            Mockito.mock(GameplaySessionAttestationService.class),
-            meterRegistry,
-            new ObjectMapper(),
-            (PublicationReadGuard) null);
+    AtomicReference<ApplyWorldDesignMutationResponse> gameSessionResponse = new AtomicReference<>();
+    runWithPeer(
+        peer("game-session-service"),
+        () -> gameSessionResponse.set(invokeMutation(service, draftMutation("42"))));
+    assertDraftMutationUnavailable(gameSessionResponse.get());
 
-    AtomicReference<ApplyWorldDesignMutationResponse> ref = new AtomicReference<>();
-    service.applyWorldDesignMutation(
-        ApplyWorldDesignMutationRequest.newBuilder()
-            .setTenantId("1")
-            .setVersionId("0")
-            .setCommitId("commit-1")
-            .setRevisionId("revision-1")
-            .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
-            .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
-            .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
-            .setScopeId("44")
-            .setRegion(RegionDesignMutation.newBuilder().setName("North").build())
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(ApplyWorldDesignMutationResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("versionId must be positive", ref.get().getError().getMessage());
     Mockito.verifyNoInteractions(mutationService);
+    SessionContext.clear();
   }
 
   @Test

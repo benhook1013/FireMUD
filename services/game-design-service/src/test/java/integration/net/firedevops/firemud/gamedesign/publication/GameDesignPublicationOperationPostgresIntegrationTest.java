@@ -47,6 +47,7 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence;
@@ -993,7 +994,10 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     bundle.setParticipantDigestsJson(
         new ObjectMapper()
             .writeValueAsString(
-                PublishedWorldSelectorFixtures.participants(op.versionId(), op.world())));
+                PublishedWorldSelectorFixtures.participants(
+                    op.versionId(),
+                    op.world(),
+                    AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION)));
     bundle.setWorldPublishedStartLocationEvidenceJson(
         new String(op.world().canonicalBytes(), StandardCharsets.UTF_8));
     return bundle;

@@ -481,7 +481,7 @@ public final class AccountJwtValidatorInventoryBinding {
         || !path.equals(path.toRealPath())) {
       throw unavailable();
     }
-    verifyProtectedDirectory(PROTECTED_ROOT);
+    verifyProtectedDirectoryChain(PROTECTED_ROOT);
     BasicFileAttributes before =
         Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
     Set<PosixFilePermission> mode = Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS);
@@ -549,6 +549,28 @@ public final class AccountJwtValidatorInventoryBinding {
         || mode.contains(PosixFilePermission.OTHERS_WRITE)) {
       throw unavailable();
     }
+  }
+
+  static void verifyProtectedDirectoryChain(Path directory) throws IOException {
+    verifyProtectedDirectoryChain(
+        directory, AccountJwtValidatorInventoryBinding::verifyProtectedDirectory);
+  }
+
+  static void verifyProtectedDirectoryChain(Path directory, ProtectedDirectoryVerifier verifier)
+      throws IOException {
+    Path normalized = directory.toAbsolutePath().normalize();
+    Path canonical = normalized.toRealPath();
+    if (!normalized.equals(canonical)) {
+      throw unavailable();
+    }
+    for (Path current = canonical; current != null; current = current.getParent()) {
+      verifier.verify(current);
+    }
+  }
+
+  @FunctionalInterface
+  interface ProtectedDirectoryVerifier {
+    void verify(Path directory) throws IOException;
   }
 
   private static void requireObjectFields(JsonNode node, Set<String> expected) {

@@ -392,7 +392,7 @@ class GameInstanceServiceImplTest {
                 .setLaunchDescriptor(
                     net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                         .setLaunchDescriptorId("ld-pinned")
-                        .setTenantId("1")
+                        .setCanonicalTenantId("1")
                         .setGameTemplateId(3L)
                         .setControlPlaneRequestId("cp-pinned")
                         .setVersionId(11L)
@@ -1430,7 +1430,8 @@ class GameInstanceServiceImplTest {
                     .setLaunchDescriptor(
                         net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                             .setLaunchDescriptorId("ld-" + invocation.getArgument(2, String.class))
-                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
+                            .setCanonicalTenantId(
+                                Long.toString(invocation.getArgument(0, Long.class)))
                             .setGameTemplateId(invocation.getArgument(1, Long.class))
                             .setControlPlaneRequestId(invocation.getArgument(2, String.class))
                             .setVersionId(11L)
@@ -1541,7 +1542,7 @@ class GameInstanceServiceImplTest {
                 .setLaunchDescriptor(
                     net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                         .setLaunchDescriptorId("ld-cp-launch-tenant")
-                        .setTenantId("0")
+                        .setCanonicalTenantId("0")
                         .setGameTemplateId(3L)
                         .setControlPlaneRequestId("cp-launch-tenant")
                         .setVersionId(11L)

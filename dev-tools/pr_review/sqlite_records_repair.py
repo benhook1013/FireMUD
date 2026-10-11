@@ -15,6 +15,7 @@ origin-link contract.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import hashlib
 import json
 import os
@@ -25,7 +26,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from . import evidence, github, sqlite_hosted_capture, sqlite_provider_imports
+from . import evidence, github, sqlite_hosted_capture, sqlite_provider_imports, sqlite_review_records
 from .sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
 
 _API_VERSION = 1
@@ -259,6 +260,41 @@ def _import_one(
                     "matching provider attempt names a different public checkpoint"
                 )
 
+            if checkpoint.type == "Hosted" and not any(
+                path.exists() or path.is_symlink()
+                for path in evidence._hosted_snapshot_candidates(
+                    repo, pr_number, checkpoint.hosted_review_id or 0, common
+                )
+            ):
+                attempt_artifacts = records.attempt_artifacts(attempt["attempt_id"])
+                try:
+                    retained_reviews = json.loads(attempt_artifacts["hosted_review"])
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise SqliteRecordsRepairError(
+                        "completed Hosted attempt has malformed retained review evidence"
+                    ) from exc
+                if not isinstance(retained_reviews, list):
+                    raise SqliteRecordsRepairError("completed Hosted attempt has malformed retained review evidence")
+                if any(not isinstance(review, dict) for review in retained_reviews):
+                    raise SqliteRecordsRepairError("completed Hosted attempt has malformed retained review evidence")
+                matching_reviews = [
+                    review
+                    for review in retained_reviews
+                    if github.immutable_database_id(review) == checkpoint.hosted_review_id
+                ]
+                if len(matching_reviews) > 1:
+                    raise SqliteRecordsRepairError("retained Hosted evidence has duplicate exact provider reviews")
+                if matching_reviews:
+                    retained = _retained_hosted_attempt_import(
+                        records,
+                        repo=repo,
+                        pr_number=pr_number,
+                        checkpoint=checkpoint,
+                        attempt=attempt,
+                        hosted_payload=hosted_payload,
+                    )
+                    return retained, _provider_id(checkpoint, retained)
+
             # Validate the supplied capture with the canonical importer on a
             # snapshot, then compare it to the automatic attempt's existing
             # projection before linking any public origin or archive rows.
@@ -428,6 +464,329 @@ def _import_one(
     return imported, _provider_id(checkpoint, imported)
 
 
+def _retained_hosted_attempt_import(
+    records: SqliteReviewRecords,
+    *,
+    repo: str,
+    pr_number: int,
+    checkpoint: evidence.Checkpoint,
+    attempt: Mapping[str, Any],
+    hosted_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Link a synced Hosted run from its immutable SQLite evidence and decisions."""
+
+    review_id = checkpoint.hosted_review_id
+    if review_id is None or checkpoint.comment_id is None or hosted_payload is None:
+        raise SqliteRecordsRepairError("retained Hosted evidence lacks an exact public checkpoint identity")
+
+    try:
+        pull_request = sqlite_hosted_capture._complete_pull_request(hosted_payload, pr_number)
+    except (sqlite_hosted_capture.HostedCaptureError, KeyError, TypeError, ValueError) as exc:
+        raise SqliteRecordsRepairError(f"complete Hosted history is unavailable: {exc}") from exc
+    checkpoint_matches: list[evidence.Checkpoint] = []
+    raw_checkpoint_comments: list[dict[str, Any]] = []
+    for item in pull_request["comments"]["nodes"]:
+        if github.immutable_database_id(item) != checkpoint.comment_id:
+            continue
+        normalized = {
+            "id": checkpoint.comment_id,
+            "body": item.get("body"),
+            "created_at": item.get("createdAt"),
+            "updated_at": item.get("updatedAt"),
+            "author_login": (item.get("author") or {}).get("login"),
+        }
+        parsed, _ = evidence.parse_checkpoint_comments([normalized])
+        checkpoint_matches.extend(parsed)
+        raw_checkpoint_comments.append(item)
+    if (
+        len(raw_checkpoint_comments) != 1
+        or len(checkpoint_matches) != 1
+        or sqlite_provider_imports._checkpoint_fingerprint(checkpoint_matches[0])
+        != sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
+    ):
+        raise SqliteRecordsRepairError("Hosted checkpoint does not exactly match one public pull-request comment")
+
+    attempt_id = attempt.get("attempt_id")
+    if not isinstance(attempt_id, str):
+        raise SqliteRecordsRepairError("matching Hosted attempt has no exact attempt identity")
+    stored_attempt = records.attempt(attempt_id)
+    if (
+        stored_attempt["source_pr"] != pr_number
+        or stored_attempt["channel"] != "hosted"
+        or stored_attempt["state"] != "completed"
+        or stored_attempt["run_id"] != attempt_id
+        or stored_attempt["candidate_sha"] != checkpoint.reviewed_sha
+        and not (
+            isinstance(stored_attempt["candidate_sha"], str)
+            and isinstance(checkpoint.reviewed_sha, str)
+            and stored_attempt["candidate_sha"].casefold().startswith(checkpoint.reviewed_sha.casefold())
+        )
+    ):
+        raise SqliteRecordsRepairError("retained Hosted attempt does not match the checkpoint head and completion")
+
+    artifacts = records.attempt_artifacts(attempt_id)
+    if set(artifacts) != {"hosted_review", "hosted_comments", "metadata"}:
+        raise SqliteRecordsRepairError("completed Hosted attempt lacks its exact retained review evidence")
+    try:
+        reviews = json.loads(artifacts["hosted_review"])
+        archived_comments = json.loads(artifacts["hosted_comments"])
+        metadata = json.loads(artifacts["metadata"])
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise SqliteRecordsRepairError("completed Hosted attempt has malformed retained review evidence") from exc
+    if (
+        not isinstance(reviews, list)
+        or any(not isinstance(item, dict) for item in reviews)
+        or not isinstance(archived_comments, dict)
+        or not isinstance(archived_comments.get("comments"), list)
+        or not isinstance(archived_comments.get("review_threads"), list)
+        or not isinstance(metadata, dict)
+        or metadata.get("state") != "completed"
+        or metadata.get("attributable") is not True
+        or not isinstance(metadata.get("repository"), str)
+        or metadata["repository"].casefold() != repo.casefold()
+        or metadata.get("pull_request") != pr_number
+        or metadata.get("head_sha") != attempt.get("candidate_sha")
+        or str(metadata.get("response_id")) != str(review_id)
+        or str(metadata.get("trigger_id")) != attempt.get("trigger_id")
+        or attempt.get("provider_review_id") != str(review_id)
+        or attempt.get("candidate_sha") != stored_attempt["candidate_sha"]
+        or not isinstance(checkpoint.reviewed_sha, str)
+        or not stored_attempt["candidate_sha"].casefold().startswith(checkpoint.reviewed_sha.casefold())
+    ):
+        raise SqliteRecordsRepairError("retained Hosted evidence conflicts with its immutable attempt identity")
+
+    matching_reviews = [
+        review for review in reviews if github.immutable_database_id(review) == review_id
+    ]
+    if len(matching_reviews) != 1:
+        raise SqliteRecordsRepairError("retained Hosted evidence has no unique exact provider review")
+    review = matching_reviews[0]
+    author = review.get("author")
+    commit = review.get("commit")
+    review_head = commit.get("oid") if isinstance(commit, dict) else None
+    if (
+        not github.is_coderabbit_login(author.get("login") if isinstance(author, dict) else None)
+        or review.get("state") in {"PENDING", "DISMISSED"}
+        or not isinstance(review.get("submittedAt"), str)
+        or review_head != stored_attempt["candidate_sha"]
+    ):
+        raise SqliteRecordsRepairError("retained Hosted provider review does not prove the exact completed head")
+
+    archived_finding_keys: set[str] = set()
+    try:
+        for thread in archived_comments["review_threads"]:
+            if not isinstance(thread, dict):
+                raise sqlite_hosted_capture.HostedCaptureError("retained Hosted thread is malformed")
+            comments = thread.get("comments")
+            nodes = comments.get("nodes") if isinstance(comments, dict) else None
+            if not isinstance(nodes, list):
+                raise sqlite_hosted_capture.HostedCaptureError("retained Hosted thread comments are malformed")
+            if not nodes:
+                continue
+            comment = nodes[0]
+            author = comment.get("author") if isinstance(comment, dict) else None
+            if not github.is_coderabbit_login(author.get("login") if isinstance(author, dict) else None):
+                continue
+            comment_id = github.immutable_database_id(comment)
+            body = comment.get("body")
+            for finding in sqlite_hosted_capture._hosted_comment_finding_segments(comment_id, body):
+                key = finding["key"]
+                if key in archived_finding_keys:
+                    raise sqlite_hosted_capture.HostedCaptureError("retained Hosted finding identity is duplicated")
+                archived_finding_keys.add(key)
+    except (sqlite_hosted_capture.HostedCaptureError, TypeError, ValueError) as exc:
+        raise SqliteRecordsRepairError(f"retained Hosted finding evidence is invalid: {exc}") from exc
+
+    review_body = review.get("body")
+    if isinstance(review_body, str):
+        try:
+            outside_diff, duplicate = evidence.summary_action_counts(review_body)
+            has_sections = evidence.has_summary_action_sections(review_body)
+        except evidence.EvidenceError as exc:
+            raise SqliteRecordsRepairError(f"retained Hosted summary evidence is invalid: {exc}") from exc
+        if has_sections:
+            for kind, count in (("outside_diff", outside_diff), ("duplicate", duplicate)):
+                archived_finding_keys.update(
+                    f"hosted-summary:review:{review_id}:{kind}:{ordinal}"
+                    for ordinal in range(1, count + 1)
+                )
+
+    history = records.history(pr_number)
+    runs = [run for run in history["runs"] if run["run_id"] == attempt_id]
+    if len(runs) != 1:
+        raise SqliteRecordsRepairError("matching Hosted attempt has no unique retained source run")
+    stored_run = runs[0]
+    if (
+        stored_run["source_pr"] != pr_number
+        or stored_run["channel"] != "hosted"
+        or stored_run["outcome"] != "completed"
+        or stored_run["attributable"] is not True
+        or stored_run["finalized"] is not True
+        or stored_run["source_head"] != stored_attempt["candidate_sha"]
+    ):
+        raise SqliteRecordsRepairError("matching Hosted source run is incomplete or conflicts with its attempt")
+
+    stored_findings = [item for item in history["findings"] if item["run_id"] == attempt_id]
+    finding_keys = [item["source_finding_key"] for item in stored_findings]
+    if len(finding_keys) != len(set(finding_keys)) or set(finding_keys) != archived_finding_keys:
+        raise SqliteRecordsRepairError("retained Hosted findings do not match the exact archived provider findings")
+    finding_ids = {item["finding_id"]: item["source_finding_key"] for item in stored_findings}
+    source_decisions = [
+        item for item in history["decisions"] if item["run_id"] == attempt_id and item["scope"] == "source"
+    ]
+    decisions_by_key: dict[str, str] = {}
+    for decision in source_decisions:
+        key = finding_ids.get(decision["finding_id"])
+        if key is None or key in decisions_by_key:
+            raise SqliteRecordsRepairError("retained Hosted decisions do not map one-to-one to findings")
+        decisions_by_key[key] = decision["decision"]
+    if set(decisions_by_key) != archived_finding_keys:
+        raise SqliteRecordsRepairError("retained Hosted source decisions are incomplete")
+    observed_counts = {
+        "found": len(archived_finding_keys),
+        "accepted": sum(decision == "accepted" for decision in decisions_by_key.values()),
+        "routed": sum(decision == "routed" for decision in decisions_by_key.values()),
+    }
+    if (
+        checkpoint.raw_found != observed_counts["found"]
+        or checkpoint.accepted != observed_counts["accepted"]
+        or checkpoint.routed is not None and checkpoint.routed != observed_counts["routed"]
+    ):
+        raise SqliteRecordsRepairError("Hosted checkpoint counts do not match retained source findings and decisions")
+
+    imported_artifacts, archive_reused = _existing_hosted_checkpoint_archive(
+        records,
+        repo=repo,
+        pr_number=pr_number,
+        run_id=attempt_id,
+        review_id=review_id,
+        checkpoint=checkpoint,
+    )
+    if imported_artifacts is None:
+        imported_artifacts = {
+            "hosted_review": artifacts["hosted_review"],
+            "hosted_comments": artifacts["hosted_comments"],
+            "metadata": _artifact_text(
+                {
+                    "capture_format": "firemud-hosted-synced-attempt/v1",
+                    "repository": repo.casefold(),
+                    "pull_request": pr_number,
+                    "review_id": review_id,
+                    "checkpoint": checkpoint.as_json(),
+                    "checkpoint_fields": dataclasses.asdict(checkpoint),
+                    "checkpoint_fingerprint": sqlite_provider_imports._checkpoint_fingerprint(checkpoint),
+                    "retained_attempt_id": attempt_id,
+                }
+            ),
+        }
+    sqlite_provider_imports._validate_archive_artifacts(imported_artifacts)
+    return {
+        "run_id": attempt_id,
+        "counts": stored_run["counts"],
+        "provider_id": f"review:{review_id}",
+        "archive_artifacts": imported_artifacts,
+        "idempotent_replay": True,
+        "_verified_archive_reuse": archive_reused,
+    }
+
+
+def _existing_hosted_checkpoint_archive(
+    records: SqliteReviewRecords,
+    *,
+    repo: str,
+    pr_number: int,
+    run_id: str,
+    review_id: int,
+    checkpoint: evidence.Checkpoint,
+) -> tuple[dict[str, str] | None, bool]:
+    """Reuse only a valid immutable archive already linked to this checkpoint."""
+
+    fingerprint = sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
+    try:
+        with contextlib.closing(records._connect(read_only=True)) as connection:
+            records._require_compatible(connection)
+            origin = connection.execute(
+                "SELECT repository, source_pr, channel, provider_id, checkpoint_id, checkpoint_fingerprint "
+                "FROM provider_origins WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            rows = connection.execute(
+                "SELECT kind, content, source_sha256, redactions FROM imported_artifacts "
+                "WHERE run_id = ? ORDER BY kind",
+                (run_id,),
+            ).fetchall()
+            if origin is None:
+                if rows:
+                    raise SqliteRecordsRepairError("retained Hosted archive exists without its exact checkpoint origin")
+                return None, False
+            expected_origin = (repo.casefold(), pr_number, "hosted", f"review:{review_id}", checkpoint.comment_id, fingerprint)
+            if origin != expected_origin:
+                raise SqliteRecordsRepairError("retained Hosted archive is linked to a different checkpoint identity")
+            if not rows:
+                # Origin linking commits before artifact archiving. Exact origin
+                # identity with no artifacts is the documented resumable state.
+                return None, False
+            if not records._source_checkpoint_matches(connection, run_id, fingerprint, checkpoint):
+                raise SqliteRecordsRepairError("retained Hosted archive does not prove the exact checkpoint")
+            if {row[0] for row in rows} != {"hosted_review", "hosted_comments", "metadata"}:
+                raise SqliteRecordsRepairError("linked Hosted checkpoint has incomplete imported archive evidence")
+            archived: dict[str, str] = {}
+            for kind, content, source_sha256, redactions in rows:
+                try:
+                    sanitized, stored_digest, detected_redactions = sqlite_review_records._archive_artifact(kind, content)
+                except ReviewRecordsError as exc:
+                    raise SqliteRecordsRepairError(f"linked Hosted archive artifact {kind} is invalid") from exc
+                if (
+                    sanitized != content
+                    or detected_redactions != 0
+                    or not isinstance(source_sha256, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", source_sha256)
+                    or isinstance(redactions, bool)
+                    or not isinstance(redactions, int)
+                    or redactions < 0
+                    or (redactions == 0 and source_sha256 != stored_digest)
+                ):
+                    raise SqliteRecordsRepairError(f"linked Hosted archive artifact {kind} has invalid sanitized content or receipt")
+                archived[kind] = content
+    except (sqlite3.DatabaseError, ReviewRecordsError, OSError) as exc:
+        raise SqliteRecordsRepairError(f"cannot validate existing Hosted archive: {exc}") from exc
+
+    try:
+        metadata = json.loads(archived["metadata"])
+        review = json.loads(archived["hosted_review"])
+        comments = json.loads(archived["hosted_comments"])
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise SqliteRecordsRepairError("linked Hosted checkpoint has malformed imported archive evidence") from exc
+    capture_format = metadata.get("capture_format") if isinstance(metadata, dict) else None
+    if capture_format == "firemud-hosted-synced-attempt/v1":
+        if not isinstance(review, list) or any(not isinstance(item, dict) for item in review):
+            raise SqliteRecordsRepairError("linked Hosted archive has malformed retained review evidence")
+        matching_reviews = [item for item in review if github.immutable_database_id(item) == review_id]
+        review = matching_reviews[0] if len(matching_reviews) == 1 else None
+    if (
+        not isinstance(metadata, dict)
+        or capture_format not in {"firemud-hosted-capture/v1", "firemud-hosted-synced-attempt/v1"}
+        or metadata.get("repository") != repo.casefold()
+        or metadata.get("pull_request") != pr_number
+        or metadata.get("review_id") != review_id
+        or not isinstance(review, dict)
+        or github.immutable_database_id(review) != review_id
+        or not isinstance(comments, dict)
+    ):
+        raise SqliteRecordsRepairError("linked Hosted archive conflicts with its exact provider review")
+    review_head = review.get("commit_id")
+    if review_head is None and isinstance(review.get("commit"), dict):
+        review_head = review["commit"].get("oid")
+    if review_head != checkpoint.reviewed_sha and not (
+        isinstance(review_head, str)
+        and isinstance(checkpoint.reviewed_sha, str)
+        and review_head.casefold().startswith(checkpoint.reviewed_sha.casefold())
+    ):
+        raise SqliteRecordsRepairError("linked Hosted archive does not prove the checkpoint review head")
+    sqlite_provider_imports._validate_archive_artifacts(archived)
+    return archived, True
+
+
 def _bounded_capture_text(directory: Path, name: str, maximum: int, *, required: bool = False) -> str | None:
     path = evidence._contained_file(directory, name, required=required)
     if path is None:
@@ -562,7 +921,8 @@ def _preview(
                 checkpoint=checkpoint,
                 imported=imported,
             )
-            _archive_artifacts(clone, imported["run_id"], artifacts)
+            if not imported.get("_verified_archive_reuse"):
+                _archive_artifacts(clone, imported["run_id"], artifacts)
             counts = imported["counts"]
             plan.append(
                 {
@@ -729,7 +1089,8 @@ def repair_provider_checkpoints(
                 run_id=imported["run_id"],
             )
             item["origin_linked"] = True
-            _archive_artifacts(records, imported["run_id"], artifacts)
+            if not imported.get("_verified_archive_reuse"):
+                _archive_artifacts(records, imported["run_id"], artifacts)
             item["artifacts_archived"] = True
         except (OSError, sqlite3.DatabaseError) as exc:
             return {

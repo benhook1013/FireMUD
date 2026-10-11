@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Canonical World initial-admission hold owner operations. Runtime composition is explicitly
+// opt-in and default-disabled; each operation authenticates the exact Game Session workload.
+service WorldCanonicalInitialAdmissionHoldService {
+  rpc AcquireCanonicalInitialAdmissionHold(AcquireCanonicalInitialAdmissionHoldRequest)
+      returns (AcquireCanonicalInitialAdmissionHoldResponse);
+  rpc ReadCanonicalInitialAdmissionHoldIdentity(ReadCanonicalInitialAdmissionHoldIdentityRequest)
+      returns (ReadCanonicalInitialAdmissionHoldIdentityResponse);
+  rpc ReadCanonicalInitialAdmissionHoldState(ReadCanonicalInitialAdmissionHoldStateRequest)
+      returns (ReadCanonicalInitialAdmissionHoldStateResponse);
+}
+
+message AcquireCanonicalInitialAdmissionHoldRequest {
+  // Complete closed canonical World initial-admission hold request bytes.
+  bytes canonical_hold_request_bytes = 1;
+
+  // Complete closed canonical World lifecycle read request bytes for the exact target.
+  bytes canonical_lifecycle_read_request_bytes = 2;
+}
+
+message AcquireCanonicalInitialAdmissionHoldResponse {
+  // Immutable World-issued hold identity, including the exact request bytes and binding digest.
+  bytes hold_identity_bytes = 1;
+}
+
+message ReadCanonicalInitialAdmissionHoldIdentityRequest {
+  // Fresh non-nil UUID correlation for this read, in canonical lowercase form.
+  string read_request_id = 1;
+
+  // Complete closed canonical World initial-admission hold request bytes.
+  bytes canonical_hold_request_bytes = 2;
+}
+
+message ReadCanonicalInitialAdmissionHoldIdentityResponse {
+  // Exact correlation echoed from this read request.
+  string read_request_id = 1;
+
+  // Historical immutable acquisition identity only; this is not terminal state, current
+  // admission, or an absence checkpoint.
+  bytes hold_identity_bytes = 2;
+}
+
+message ReadCanonicalInitialAdmissionHoldStateRequest {
+  // Fresh non-nil UUID correlation for this read, in canonical lowercase form.
+  string read_request_id = 1;
+
+  // Complete immutable World-issued hold identity bytes, not merely the acquisition request.
+  bytes hold_identity_bytes = 2;
+
+  // Complete closed canonical World lifecycle read request for the same target and read UUID.
+  bytes canonical_lifecycle_read_request_bytes = 3;
+}
+
+message ReadCanonicalInitialAdmissionHoldStateResponse {
+  // Exact correlation echoed from this read request.
+  string read_request_id = 1;
+
+  // Closed canonical same-snapshot hold status and complete lifecycle evidence.
+  bytes hold_state_bytes = 2;
+}

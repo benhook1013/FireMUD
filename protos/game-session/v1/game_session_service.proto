@@ -4,6 +4,7 @@ package game_session.v1;
 
 import "entity-management/v1/entity_management_service.proto";
 import "game-design/v1/game_design_service.proto";
+import "google/protobuf/timestamp.proto";
 import "shared/v1/errors.proto";
 
 option java_package = "net.firedevops.firemud.gamesession.v1";
@@ -12,6 +13,8 @@ option java_multiple_files = true;
 service GameSessionService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc StartSession(StartSessionRequest) returns (StartSessionResponse);
+  rpc AuthorizeStartSession(AuthorizeStartSessionRequest)
+      returns (AuthorizeStartSessionResponse);
   rpc StopSession(StopSessionRequest) returns (StopSessionResponse);
   rpc RestartSession(RestartSessionRequest) returns (RestartSessionResponse);
   rpc EnqueueCommand(EnqueueCommandRequest) returns (EnqueueCommandResponse);
@@ -41,6 +44,10 @@ service GameSessionControlPlaneService {
   // Read exact durable owner proof for a World-owned initial-admission hold.
   rpc GetInitialAdmissionBindProof(GetInitialAdmissionBindProofRequest)
       returns (GetInitialAdmissionBindProofResponse);
+  // Read the exact Game Session-owned STARTING launch association for World composition.
+  rpc GetCanonicalGameInstanceLaunchAssociation(
+      GetCanonicalGameInstanceLaunchAssociationRequest)
+      returns (GetCanonicalGameInstanceLaunchAssociationResponse);
   rpc ValidateBuiltInCommandAlias(ValidateBuiltInCommandAliasRequest)
       returns (ValidateBuiltInCommandAliasResponse);
   rpc ListAdmissionPointers(ListAdmissionPointersRequest)
@@ -87,6 +94,14 @@ service GameSessionControlPlaneService {
       returns (PurgeQueuedTickCommandsForPluginVersionResponse);
 }
 
+// Dedicated World-only read surface for canonical initial-admission owner proof.
+service CanonicalInitialAdmissionOwnerProofReadService {
+  // Read the exact canonical Game Session-owned initial-admission terminal outcome for World.
+  rpc GetCanonicalInitialAdmissionOwnerProof(
+      GetCanonicalInitialAdmissionOwnerProofRequest)
+      returns (GetCanonicalInitialAdmissionOwnerProofResponse);
+}
+
 message StartSessionRequest {
   string tenant_id = 1;
   string game_template_id = 2;
@@ -98,6 +113,32 @@ message StartSessionRequest {
 message StartSessionResponse {
   string session_id = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+// Typed non-activating operator handoff. This transport only records Account redemption progress;
+// it does not create or start a game instance and does not return a session identifier.
+message AuthorizeStartSessionRequest {
+  bytes canonical_post_authorization_execution_tuple_bytes = 1;
+  string operator_authorization_reference = 2;
+}
+
+enum StartSessionOwnerAuthorizationProgress {
+  START_SESSION_OWNER_AUTHORIZATION_PROGRESS_UNSPECIFIED = 0;
+  START_SESSION_OWNER_AUTHORIZATION_PROGRESS_EXACT_REPLAY = 1;
+  START_SESSION_OWNER_AUTHORIZATION_PROGRESS_ACCOUNT_OUTCOME_AMBIGUOUS = 2;
+  START_SESSION_OWNER_AUTHORIZATION_PROGRESS_ACCOUNT_PROJECTION_ATTACHED = 3;
+}
+
+message AuthorizeStartSessionResponse {
+  string target_namespace = 1;
+  string control_plane_request_id = 2;
+  string mutation_digest = 3;
+  string owner_attempt_id = 4;
+  string owner_mutation_id = 5;
+  int64 owner_fence = 6;
+  string owner_phase_state = 7;
+  StartSessionOwnerAuthorizationProgress progress = 8;
+  shared.v1.ErrorDetail error = 9;
 }
 
 message StopSessionRequest {
@@ -498,6 +539,111 @@ message GetInitialAdmissionBindProofResponse {
   string pointer_audit_request_digest = 18;
   bool future_commit_prevented = 19;
   shared.v1.ErrorDetail error = 20;
+}
+
+enum CanonicalInitialAdmissionOrigin {
+  CANONICAL_INITIAL_ADMISSION_ORIGIN_UNSPECIFIED = 0;
+  CANONICAL_INITIAL_ADMISSION_ORIGIN_NO_PRIOR_POINTER = 1;
+  CANONICAL_INITIAL_ADMISSION_ORIGIN_EXPECT_CLOSED = 2;
+}
+
+enum CanonicalInitialAdmissionOwnerProofOutcome {
+  CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_UNSPECIFIED = 0;
+  CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_PENDING = 1;
+  CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_COMMITTED = 2;
+  CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_ABORTED = 3;
+}
+
+// World supplies the complete immutable request it acquired the hold for. No numeric runtime
+// identifier is substituted for a canonical UUID, and World's hold digest remains distinct from
+// the bare Game Session request digest.
+message GetCanonicalInitialAdmissionOwnerProofRequest {
+  string target_namespace = 1;
+  string initial_admission_request_id = 2;
+  string initial_admission_request_digest = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string realm_id = 6;
+  string playable_state_namespace_id = 7;
+  string playable_state_scope = 8;
+  string canonical_game_instance_id = 9;
+  string canonical_version_id = 10;
+  int64 active_lifecycle_epoch = 11;
+  int64 expected_catalog_revision = 12;
+  CanonicalInitialAdmissionOrigin origin = 13;
+  optional int64 expected_prior_pointer_version = 14;
+  string hold_id = 15;
+  string hold_fence = 16;
+  string hold_binding_digest = 17;
+}
+
+// Every successful domain result echoes the complete expected operation tuple. Only a COMMITTED
+// pointer/audit result or a positively fenced durable ABORTED result is terminal proof. Missing
+// owner attempts and reads that cannot establish an exact result use non-OK gRPC status, never a
+// NOT_FOUND/UNAVAILABLE outcome or an inferred abort.
+message GetCanonicalInitialAdmissionOwnerProofResponse {
+  string target_namespace = 1;
+  string initial_admission_request_id = 2;
+  string initial_admission_request_digest = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string realm_id = 6;
+  string playable_state_namespace_id = 7;
+  string playable_state_scope = 8;
+  string canonical_game_instance_id = 9;
+  string canonical_version_id = 10;
+  int64 active_lifecycle_epoch = 11;
+  int64 expected_catalog_revision = 12;
+  CanonicalInitialAdmissionOrigin origin = 13;
+  optional int64 expected_prior_pointer_version = 14;
+  string hold_id = 15;
+  string hold_fence = 16;
+  string hold_binding_digest = 17;
+  CanonicalInitialAdmissionOwnerProofOutcome outcome = 18;
+  optional int64 committed_pointer_version = 19;
+  optional int64 audit_event_id = 20;
+  // Terminal Game Session proof digest; sha256:-prefixed and distinct from the bare request digest.
+  string proof_digest = 21;
+  bool positive_durable_abort = 22;
+  google.protobuf.Timestamp terminal_at = 23;
+}
+
+// A transport retry has a separate read identity and cannot create a new launch operation.
+message GetCanonicalGameInstanceLaunchAssociationRequest {
+  string read_request_id = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  string world_slug = 4;
+  string game_instance_uuid = 5;
+  string control_plane_request_id = 6;
+  string launch_descriptor_id = 7;
+  string expected_descriptor_request_digest = 8;
+  string expected_descriptor_result_digest = 9;
+  string expected_release_attestation_evidence_digest = 10;
+}
+
+message GetCanonicalGameInstanceLaunchAssociationResponse {
+  string read_request_id = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  string world_slug = 4;
+  string game_instance_uuid = 5;
+  string control_plane_request_id = 6;
+  string launch_descriptor_id = 7;
+  string descriptor_request_digest = 8;
+  string descriptor_result_digest = 9;
+  string release_attestation_evidence_digest = 10;
+  string playable_state_namespace_id = 11;
+  string playable_state_scope = 12;
+  // Current Game Session row projection only; World lifecycle authority remains separate.
+  string current_game_instance_status = 13;
+  int64 current_row_version = 14;
+  gamedesign.v1.LaunchDescriptor launch_descriptor = 15;
+  gamedesign.v1.AuthoredWorldReleaseAttestationEvidence release_attestation = 16;
+  shared.v1.ErrorDetail error = 17;
+  bool public_production = 18;
+  string owner_attempt_id = 19;
+  int64 owner_fence = 20;
 }
 
 message GetGameplayCommandStatusRequest {

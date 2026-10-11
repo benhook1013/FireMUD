@@ -23,8 +23,10 @@ import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.RSAPublicKeySpec;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +71,7 @@ public final class AccountMountedJwtSignerBundle {
   static final String READINESS_CANARY_TYPE = "account_jwt_readiness_canary";
   static final String READINESS_CANARY_AUDIENCE = "firemud-account-jwt-readiness";
   static final String READINESS_VALIDATOR_ID = "account-service";
+  static final String GAME_SESSION_VALIDATOR_ID = "game-session-service";
   static final String REPRESENTATIVE_PROFILE = GameSessionAccountDelegationProfile.PROFILE;
   static final String REPRESENTATIVE_AUDIENCE = GameSessionAccountDelegationProfile.AUDIENCE;
   private static final String ISSUER = "firemud-account-service";
@@ -208,7 +211,11 @@ public final class AccountMountedJwtSignerBundle {
         throw invalid();
       }
       deliveryBytes = compactBytes.clone();
-      deliveryConsumer.persistAttemptAndDeliver(result, deliveryBytes);
+      try {
+        deliveryConsumer.persistAttemptAndDeliver(result, deliveryBytes);
+      } catch (RuntimeException failure) {
+        throw invalid();
+      }
       if (!sha256(deliveryBytes).equals(result.compactTokenSha256())) {
         throw invalid();
       }
@@ -272,7 +279,7 @@ public final class AccountMountedJwtSignerBundle {
       if (spec.bound().isPresent()) {
         var bound = spec.bound().orElseThrow();
         delegation.put("tenantId", bound.tenantId());
-        delegation.put("authorityTuple", bound.authorityTuple());
+        delegation.put("authorityTuple", mergeBoundAuthorityTuple(authority, bound));
         delegation.put("membershipVersion", bound.membershipVersion());
       }
       net.firedevops.firemud.common.security.GameSessionAccountDelegationJwtProfileValidator
@@ -341,6 +348,87 @@ public final class AccountMountedJwtSignerBundle {
     }
   }
 
+  /**
+   * Distinct control-ui entry, available only to the Account owner. The owner must have retained
+   * genuine primary authentication and exact committed signer evidence before calling outside SQL
+   * locks. Mounted correspondence alone supplies neither authority nor permission to deliver.
+   */
+  static String signCommittedControlUiDigest(
+      Path privateMountRoot,
+      Path privateBundlePath,
+      Path publicMountRoot,
+      Path publicJwksPath,
+      ExpectedIdentity expectedIdentity,
+      AccountControlUiSigningSpec spec,
+      java.util.function.BiConsumer<String, byte[]> exactCandidateConsumer) {
+    Objects.requireNonNull(spec);
+    Objects.requireNonNull(exactCandidateConsumer);
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+        .isActualTransactionActive()) {
+      throw new IllegalStateException("Control-ui signing must occur outside owner SQL locks");
+    }
+    VerifiedMountedSigner mounted =
+        readAndVerifyMounted(
+            privateMountRoot, privateBundlePath, publicMountRoot, publicJwksPath, expectedIdentity);
+    byte[] header = null;
+    byte[] claims = null;
+    byte[] input = null;
+    byte[] signature = null;
+    byte[] compact = null;
+    byte[] callback = null;
+    try {
+      ControlUiJwtProfileValidator.validateClaims(spec.claims(), 1);
+      header =
+          canonicalJsonBytes(Map.of("alg", ALGORITHM, "kid", expectedIdentity.kid(), "typ", "JWT"));
+      claims = canonicalJsonBytes(spec.claims());
+      input =
+          joinCompactParts(
+              Base64.getUrlEncoder().withoutPadding().encode(header),
+              Base64.getUrlEncoder().withoutPadding().encode(claims),
+              null);
+      int signatureLength = (mounted.publicKey().getModulus().bitLength() + 7) / 8;
+      int encodedSignatureLength = (signatureLength * 8 + 5) / 6;
+      if (input.length + 1 + encodedSignatureLength > MAX_READINESS_COMPACT_JWT_BYTES) {
+        throw invalid();
+      }
+      Signature signer = Signature.getInstance("SHA256withRSA");
+      signer.initSign(mounted.privateKey());
+      signer.update(input);
+      signature = signer.sign();
+      Signature verifier = Signature.getInstance("SHA256withRSA");
+      verifier.initVerify(mounted.publicKey());
+      verifier.update(input);
+      if (!verifier.verify(signature)) {
+        throw invalid();
+      }
+      compact =
+          joinCompactParts(
+              Base64.getUrlEncoder().withoutPadding().encode(header),
+              Base64.getUrlEncoder().withoutPadding().encode(claims),
+              Base64.getUrlEncoder().withoutPadding().encode(signature));
+      if (compact.length > MAX_READINESS_COMPACT_JWT_BYTES) {
+        throw invalid();
+      }
+      String digest = sha256(compact);
+      callback = compact.clone();
+      exactCandidateConsumer.accept(digest, callback);
+      if (!digest.equals(sha256(callback))) {
+        throw invalid();
+      }
+      return digest;
+    } catch (Exception failure) {
+      // Never retain a credential in a callback exception chain.
+      throw invalid();
+    } finally {
+      wipe(header);
+      wipe(claims);
+      wipe(input);
+      wipe(signature);
+      wipe(compact);
+      wipe(callback);
+    }
+  }
+
   private static Map<String, Object> delegationClaims(
       AccountGameplayDelegationPendingIdentity identity, AccountAuthoritySnapshot authority) {
     if (!authority.accountId().equals(identity.accountId())) {
@@ -365,6 +453,84 @@ public final class AccountMountedJwtSignerBundle {
     claims.put("membershipVersion", Map.of());
     claims.put("issuanceFence", Long.toString(authority.issuanceFence()));
     return claims;
+  }
+
+  private static Map<String, Object> mergeBoundAuthorityTuple(
+      AccountAuthoritySnapshot authority, BoundDelegationClaims bound) {
+    Map<String, Object> supplied = bound.authorityTuple();
+    Map<String, Object> canonical =
+        GameSessionAccountDelegationProfile.authorityTuple(
+            authority.issuerGeneration(),
+            authority.accountGeneration(),
+            authority.accountSecurityCutoff());
+    if (!Objects.equals(supplied.get("issuerAuthGeneration"), canonical.get("issuerAuthGeneration"))
+        || !Objects.equals(
+            supplied.get("accountAuthorityGeneration"), canonical.get("accountAuthorityGeneration"))
+        || supplied.containsKey("accountSecurityCutoff")
+            != canonical.containsKey("accountSecurityCutoff")
+        || !Objects.equals(
+            supplied.get("accountSecurityCutoff"), canonical.get("accountSecurityCutoff"))) {
+      throw invalid();
+    }
+
+    Map<String, Object> merged = new LinkedHashMap<>(canonical);
+    merged.put("tenantAuthorityGeneration", supplied.get("tenantAuthorityGeneration"));
+    merged.put("membershipAuthorityGeneration", supplied.get("membershipAuthorityGeneration"));
+    if (supplied.containsKey("tenantBillingCutoff")) {
+      merged.put("tenantBillingCutoff", supplied.get("tenantBillingCutoff"));
+    }
+    return merged;
+  }
+
+  private static Map<String, Object> immutableAuthorityTupleCopy(Map<String, Object> source) {
+    Object copied = immutableJsonValueCopy(source, new IdentityHashMap<>());
+    if (!(copied instanceof Map<?, ?> copiedMap)) {
+      throw invalid();
+    }
+    Map<String, Object> result = new LinkedHashMap<>();
+    for (Map.Entry<?, ?> entry : copiedMap.entrySet()) {
+      if (!(entry.getKey() instanceof String key)) {
+        throw invalid();
+      }
+      result.put(key, entry.getValue());
+    }
+    return Collections.unmodifiableMap(result);
+  }
+
+  private static Object immutableJsonValueCopy(
+      Object value, IdentityHashMap<Object, Boolean> active) {
+    if (value instanceof Map<?, ?> source) {
+      if (active.put(source, Boolean.TRUE) != null) {
+        throw invalid();
+      }
+      try {
+        Map<String, Object> copy = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : source.entrySet()) {
+          if (!(entry.getKey() instanceof String key)) {
+            throw invalid();
+          }
+          copy.put(key, immutableJsonValueCopy(entry.getValue(), active));
+        }
+        return Collections.unmodifiableMap(copy);
+      } finally {
+        active.remove(source);
+      }
+    }
+    if (value instanceof List<?> source) {
+      if (active.put(source, Boolean.TRUE) != null) {
+        throw invalid();
+      }
+      try {
+        List<Object> copy = new java.util.ArrayList<>(source.size());
+        for (Object item : source) {
+          copy.add(immutableJsonValueCopy(item, active));
+        }
+        return Collections.unmodifiableList(copy);
+      } finally {
+        active.remove(source);
+      }
+    }
+    return value;
   }
 
   private static VerifiedMountedSigner readAndVerifyMounted(
@@ -454,6 +620,16 @@ public final class AccountMountedJwtSignerBundle {
     claims.put("authorityTuple", authorityTuple);
     claims.put("membershipVersion", Map.of());
     claims.put("issuanceFence", initialCounter);
+    if (ControlUiJwtProfileValidator.PROFILE.equals(spec.tokenProfile())) {
+      ControlUiJwtProfileValidator.validateClaims(claims, 1);
+    } else if (PlayerBootstrapJwtProfileValidator.PROFILE.equals(spec.tokenProfile())) {
+      PlayerBootstrapJwtProfileValidator.validateClaims(claims);
+    } else if (REPRESENTATIVE_PROFILE.equals(spec.tokenProfile())) {
+      net.firedevops.firemud.common.security.GameSessionAccountDelegationJwtProfileValidator
+          .validateClaims(claims);
+    } else {
+      throw invalid();
+    }
     return claims;
   }
 
@@ -959,10 +1135,10 @@ public final class AccountMountedJwtSignerBundle {
   record BoundDelegationClaims(
       String tenantId, Map<String, Object> authorityTuple, Map<String, String> membershipVersion) {
     BoundDelegationClaims {
+      authorityTuple = immutableAuthorityTupleCopy(authorityTuple);
+      membershipVersion = Map.copyOf(membershipVersion);
       net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile
           .requirePublicTenantBoundAuthority(tenantId, authorityTuple, membershipVersion);
-      authorityTuple = Map.copyOf(authorityTuple);
-      membershipVersion = Map.copyOf(membershipVersion);
     }
   }
 
@@ -1088,7 +1264,8 @@ public final class AccountMountedJwtSignerBundle {
       long expiresAtEpochSecond) {
     ReadinessProbeSigningSpec {
       if (validatorId == null
-          || !READINESS_VALIDATOR_ID.equals(validatorId)
+          || (!READINESS_VALIDATOR_ID.equals(validatorId)
+              && !GAME_SESSION_VALIDATOR_ID.equals(validatorId))
           || probeKind == null
           || jti == null
           || jti.version() != 4
@@ -1109,12 +1286,12 @@ public final class AccountMountedJwtSignerBundle {
         }
       } else {
         boolean exactProfileAudience =
-            (ControlUiJwtProfileValidator.PROFILE.equals(tokenProfile)
+            (REPRESENTATIVE_PROFILE.equals(tokenProfile)
+                    && REPRESENTATIVE_AUDIENCE.equals(audience))
+                || (ControlUiJwtProfileValidator.PROFILE.equals(tokenProfile)
                     && ControlUiJwtProfileValidator.AUDIENCE.equals(audience))
                 || (PlayerBootstrapJwtProfileValidator.PROFILE.equals(tokenProfile)
-                    && PlayerBootstrapJwtProfileValidator.AUDIENCE.equals(audience))
-                || (REPRESENTATIVE_PROFILE.equals(tokenProfile)
-                    && REPRESENTATIVE_AUDIENCE.equals(audience));
+                    && PlayerBootstrapJwtProfileValidator.AUDIENCE.equals(audience));
         if (!exactProfileAudience) {
           throw invalid();
         }

@@ -12,6 +12,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 class PostgresImageCompatibilityTest {
+  private static final String OFFICIAL_ECR_PREFIX = "public.ecr.aws/docker/library/";
+  private static final String DIGEST = "sha256:" + "a".repeat(64);
+
   @Test
   void usesSelectedClasspathImageReferencesForContainers() throws Exception {
     Properties images = new Properties();
@@ -24,62 +27,78 @@ class PostgresImageCompatibilityTest {
 
     assertEquals(images.getProperty("postgres.image"), postgres.asCanonicalNameString());
     assertEquals(images.getProperty("redis.image"), redis.asCanonicalNameString());
-    assertTrue(postgres.asCanonicalNameString().matches("postgres:[^@]+@sha256:[0-9a-f]{64}"));
-    assertTrue(
-        redis.getRepository().equals("redis")
-            || (redis.getRepository().matches("redis:[^@]+")
-                && redis.asCanonicalNameString().startsWith(redis.getRepository() + "@sha256:")));
+    assertTrue(postgres.asCanonicalNameString().startsWith(OFFICIAL_ECR_PREFIX + "postgres:"));
+    assertTrue(redis.asCanonicalNameString().startsWith(OFFICIAL_ECR_PREFIX + "redis:"));
+    assertDoesNotThrow(() -> postgres.assertCompatibleWith(DockerImageName.parse("postgres")));
     assertDoesNotThrow(() -> new PostgreSQLContainer<>(postgres));
     assertDoesNotThrow(() -> new GenericContainer<>(redis));
   }
 
   @Test
-  void rejectsMissingMalformedOrUnpinnedPostgresSelections() {
+  void acceptsDigestPinnedServiceSpecificEcrSelections() {
     Properties images = new Properties();
-    assertThrows(
-        IllegalStateException.class,
-        () -> TestContainerImages.selectedReference(images, "postgres", true));
-    for (String invalid :
-        new String[] {
-          "", "postgres:" + "18", "postgres:18@sha256:invalid", "redis:7@sha256:" + "0".repeat(64)
-        }) {
-      images.setProperty("postgres.image", invalid);
-      assertThrows(
-          IllegalStateException.class,
-          () -> TestContainerImages.selectedReference(images, "postgres", true));
+    for (String repository : new String[] {"postgres", "redis"}) {
+      String reference = OFFICIAL_ECR_PREFIX + repository + ":18-alpine@" + DIGEST;
+      images.setProperty(repository + ".image", reference);
+      assertEquals(reference, TestContainerImages.selectedReference(images, repository));
     }
-    images.setProperty("redis.image", "postgres:" + "18");
-    assertThrows(
-        IllegalStateException.class,
-        () -> TestContainerImages.selectedReference(images, "redis", false));
   }
 
   @Test
-  void acceptsCanonicalPostgresTagAndDigestReferencesAsCompatibleSubstitutes() {
-    for (String imageReference :
-        new String[] {
-          "postgres:" + "16-alpine",
-          "postgres:16-alpine@"
-              + "sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
-          "postgres:18-alpine@"
-              + "sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"
-        }) {
+  void rejectsMissingMalformedUnpinnedOrWrongRepositorySelections() {
+    Properties images = new Properties();
+    for (String repository : new String[] {"postgres", "redis"}) {
+      assertThrows(
+          IllegalStateException.class,
+          () -> TestContainerImages.selectedReference(images, repository));
+      String otherRepository = repository.equals("postgres") ? "redis" : "postgres";
+      for (String invalid :
+          new String[] {
+            "",
+            repository + ":18@" + DIGEST,
+            OFFICIAL_ECR_PREFIX + repository + ":18",
+            OFFICIAL_ECR_PREFIX + repository + ":18@sha256:invalid",
+            OFFICIAL_ECR_PREFIX + repository + "@" + DIGEST,
+            OFFICIAL_ECR_PREFIX + otherRepository + ":18@" + DIGEST,
+            "registry.invalid/docker/library/" + repository + ":18@" + DIGEST,
+            "publicXecrXaws/docker/library/" + repository + ":18@" + DIGEST,
+            "public.ecr.aws/other/" + repository + ":18@" + DIGEST
+          }) {
+        images.setProperty(repository + ".image", invalid);
+        assertThrows(
+            IllegalStateException.class,
+            () -> TestContainerImages.selectedReference(images, repository));
+      }
+    }
+  }
+
+  @Test
+  void acceptsCanonicalPostgresTaggedDigestsAsCompatibleSubstitutes() {
+    for (String tag : new String[] {"18", "18-alpine"}) {
+      String imageReference = OFFICIAL_ECR_PREFIX + "postgres:" + tag + "@" + DIGEST;
       DockerImageName image = PostgresBackedServiceTestSupport.postgresImage(imageReference);
 
       assertEquals(imageReference, image.asCanonicalNameString());
+      assertDoesNotThrow(() -> image.assertCompatibleWith(DockerImageName.parse("postgres")));
       assertDoesNotThrow(() -> new PostgreSQLContainer<>(image));
     }
   }
 
   @Test
-  void rejectsImagesOutsideTheCanonicalPostgresRepository() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> PostgresBackedServiceTestSupport.postgresImage("redis:" + "7-alpine"));
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            PostgresBackedServiceTestSupport.postgresImage(
-                "registry.invalid/" + "postgres:" + "16-alpine"));
+  void rejectsUnpinnedMalformedOrNoncanonicalPostgresImages() {
+    for (String invalid :
+        new String[] {
+          "postgres:18@" + DIGEST,
+          OFFICIAL_ECR_PREFIX + "postgres:18",
+          OFFICIAL_ECR_PREFIX + "postgres:18@sha256:invalid",
+          OFFICIAL_ECR_PREFIX + "redis:18@" + DIGEST,
+          "registry.invalid/docker/library/postgres:18@" + DIGEST,
+          "publicXecrXaws/docker/library/postgres:18@" + DIGEST,
+          "public.ecr.aws/other/postgres:18@" + DIGEST
+        }) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> PostgresBackedServiceTestSupport.postgresImage(invalid));
+    }
   }
 }

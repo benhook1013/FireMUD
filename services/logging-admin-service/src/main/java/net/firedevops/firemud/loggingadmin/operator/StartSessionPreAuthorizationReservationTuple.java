@@ -16,6 +16,7 @@ public final class StartSessionPreAuthorizationReservationTuple {
   public static final int MAX_CONTROL_PLANE_REQUEST_ID_UTF8_BYTES =
       net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple
           .MAX_CONTROL_PLANE_REQUEST_ID_UTF8_BYTES;
+  public static final int MAX_CANONICAL_TUPLE_UTF8_BYTES = 8 * 1_024;
 
   private final net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple
       value;

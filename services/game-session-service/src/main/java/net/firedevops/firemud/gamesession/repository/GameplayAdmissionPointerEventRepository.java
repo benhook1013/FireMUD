@@ -5,11 +5,17 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPointerEvent.GAMEPLAY_ADMISSION_POINTER_EVENT;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionLaunchTarget;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
+import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionPointerEventRecord;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
@@ -18,6 +24,9 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Repository
 @SuppressFBWarnings(
@@ -159,6 +168,135 @@ public class GameplayAdmissionPointerEventRepository {
           "Failed to update gameplay_admission_pointer_event id=" + entity.getId());
     }
     return findById(entity.getId());
+  }
+
+  /** Appends the exact canonical first-OPEN event inside the pointer/attempt owner transaction. */
+  public long appendCanonicalInitialAdmissionOpen(
+      CanonicalInitialAdmissionRequest request,
+      CanonicalRealmCatalogSnapshot catalog,
+      CanonicalInitialAdmissionLaunchTarget launchTarget,
+      long pointerVersion,
+      long auditCatalogRevision,
+      Instant occurredAt) {
+    Objects.requireNonNull(request, "request");
+    Objects.requireNonNull(catalog, "catalog");
+    Objects.requireNonNull(launchTarget, "launchTarget");
+    Objects.requireNonNull(occurredAt, "occurredAt");
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "Canonical initial admission audit requires the writable owner transaction");
+    }
+    var association = launchTarget.association();
+    Record inserted =
+        dsl.fetchOne(
+            "INSERT INTO gameplay_admission_pointer_event ("
+                + "world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+                + "game_instance_id, pointer_version, visible, requires_character_selection, "
+                + "state_scope, character_creation_policy, actor_principal, reason, "
+                + "control_plane_request_id, occurred_at, prepared_version_upgrade_id, "
+                + "public_production_realm, catalog_revision, realm_id, "
+                + "playable_state_namespace_id, representation_version, target_namespace, "
+                + "canonical_tenant_id, admission_state, canonical_game_instance_id, "
+                + "canonical_version_id, runtime_version_id, initial_admission_request_id, "
+                + "initial_admission_request_digest, initial_admission_origin_kind, "
+                + "initial_admission_prior_pointer_version, initial_admission_active_epoch, "
+                + "initial_admission_hold_id, initial_admission_hold_fence, "
+                + "initial_admission_hold_binding_digest) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, "
+                + "'game-session-canonical-initial-admission', "
+                + "'World-held initial admission', ?, ?, NULL, ?, ?, ?, ?, 3, ?, ?, 'OPEN', ?, ?, "
+                + "?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+            catalog.worldSlug(),
+            catalog.realmSlug(),
+            catalog.sourceIntakeReceipt().source().worldDisplayName(),
+            catalog.realmDisplayName(),
+            association.gameSessionTenantId(),
+            launchTarget.gameInstanceId(),
+            pointerVersion,
+            catalog.visible(),
+            catalog.stateScope(),
+            catalog.characterCreationPolicy(),
+            request.initialAdmissionRequestId(),
+            toLocalDateTime(occurredAt),
+            catalog.publicProduction(),
+            auditCatalogRevision,
+            catalog.realmId(),
+            catalog.playableStateNamespaceId(),
+            request.targetNamespace(),
+            request.canonicalTenantId(),
+            request.canonicalGameInstanceId(),
+            request.canonicalVersionId(),
+            launchTarget.runtimeVersionId(),
+            request.initialAdmissionRequestId(),
+            request.requestDigest(),
+            request.originKind().name(),
+            request.expectedPriorPointerVersion(),
+            request.activeLifecycleEpoch(),
+            request.holdId(),
+            request.holdFence(),
+            request.holdBindingDigest());
+    if (inserted == null || inserted.get("id", Long.class) == null) {
+      throw new IllegalStateException("Canonical initial admission audit insert returned no event");
+    }
+    return inserted.get("id", Long.class);
+  }
+
+  /** Appends the single canonical CLOSED audit event inside its pointer owner transaction. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public long appendCanonicalClosed(
+      String targetNamespace,
+      UUID canonicalTenantId,
+      UUID realmId,
+      String worldSlug,
+      String realmSlug,
+      long catalogRevision,
+      String actorPrincipal,
+      String reason,
+      UUID requestId,
+      Instant occurredAt) {
+    Objects.requireNonNull(targetNamespace, "targetNamespace");
+    Objects.requireNonNull(canonicalTenantId, "canonicalTenantId");
+    Objects.requireNonNull(realmId, "realmId");
+    Objects.requireNonNull(worldSlug, "worldSlug");
+    Objects.requireNonNull(realmSlug, "realmSlug");
+    Objects.requireNonNull(actorPrincipal, "actorPrincipal");
+    Objects.requireNonNull(reason, "reason");
+    Objects.requireNonNull(requestId, "requestId");
+    Objects.requireNonNull(occurredAt, "occurredAt");
+    if (catalogRevision <= 0L) {
+      throw new IllegalArgumentException("catalogRevision must be positive");
+    }
+    Record inserted =
+        dsl.fetchOne(
+            "INSERT INTO gameplay_admission_pointer_event ("
+                + "world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+                + "game_instance_id, pointer_version, visible, requires_character_selection, "
+                + "state_scope, character_creation_policy, actor_principal, reason, "
+                + "control_plane_request_id, occurred_at, prepared_version_upgrade_id, "
+                + "public_production_realm, representation_version, target_namespace, "
+                + "canonical_tenant_id, realm_id, catalog_revision, admission_state) "
+                + "VALUES (?, ?, NULL, NULL, NULL, NULL, 1, NULL, NULL, NULL, NULL, ?, ?, ?, ?, "
+                + "NULL, NULL, 2, ?, ?, ?, ?, 'CLOSED') RETURNING id",
+            worldSlug,
+            realmSlug,
+            actorPrincipal,
+            reason,
+            requestId.toString(),
+            toLocalDateTime(occurredAt),
+            targetNamespace,
+            canonicalTenantId,
+            realmId,
+            catalogRevision);
+    if (inserted == null) {
+      throw new IllegalStateException(
+          "Canonical CLOSED admission-pointer audit insert returned no id");
+    }
+    Long eventId = inserted.get("id", Long.class);
+    if (eventId == null || eventId <= 0L) {
+      throw new IllegalStateException("Canonical CLOSED admission-pointer event id is invalid");
+    }
+    return eventId;
   }
 
   public void deleteAllInBatch() {

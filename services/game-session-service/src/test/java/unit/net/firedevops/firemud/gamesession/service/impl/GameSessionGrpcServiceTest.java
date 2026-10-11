@@ -1,18 +1,29 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.IOException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
+import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.command.text.TextCommandInterpretationResult;
@@ -21,17 +32,23 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameSessionStartSessionOperatorAuthorizationCoordinator;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.TickService;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import net.firedevops.firemud.gamesession.v1.AuthorizeStartSessionRequest;
+import net.firedevops.firemud.gamesession.v1.AuthorizeStartSessionResponse;
 import net.firedevops.firemud.gamesession.v1.GetAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.v1.GetAdmissionPointerResponse;
 import net.firedevops.firemud.gamesession.v1.GetTickStatusRequest;
@@ -62,8 +79,31 @@ import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import tools.jackson.databind.json.JsonMapper;
 
 class GameSessionGrpcServiceTest {
+  private static final String OPERATOR_NAMESPACE = "world-runtime";
+  private static final String OPERATOR_LOGGING_IDENTITY =
+      "spiffe://firemud/ns/world-runtime/sa/logging-admin-service";
+  private static final String OPERATOR_REFERENCE = "A".repeat(43);
+  private static final UUID OPERATOR_TENANT =
+      UUID.fromString("9f8f06b4-36e5-4d11-9c2a-5adfd7f41531");
+  private static final UUID OPERATOR_ACTOR =
+      UUID.fromString("a4f5f4eb-8243-4d42-903a-33495456a622");
+  private static final UUID OPERATOR_ACCOUNT =
+      UUID.fromString("36aa9ce5-0ebc-4c14-9f6b-d160edc6059a");
+  private static final UUID OPERATOR_RESERVATION =
+      UUID.fromString("7c005b65-fcb1-4ac9-a714-f3d0f449edcf");
+  private static final UUID OPERATOR_ATTEMPT =
+      UUID.fromString("69116466-a576-4fa6-9e11-4c0c6b2a92f0");
+  private static final UUID OPERATOR_MUTATION =
+      UUID.fromString("89da7d84-12f5-4cf8-b69b-30ba8eb115a4");
+  private static final UUID OPERATOR_CLAIM_OWNER =
+      UUID.fromString("31f85ac3-e621-4c38-a207-0e5aab116d34");
+  private static final UUID OPERATOR_ISSUANCE =
+      UUID.fromString("f5d044bd-7e5f-4e2d-9859-9025cbdcc60f");
+  private static final JsonMapper OPERATOR_JSON = JsonMapper.builder().build();
+
   @AfterEach
   void tearDown() {
     SessionContext.clear();
@@ -3186,5 +3226,315 @@ class GameSessionGrpcServiceTest {
           public void onCompleted() {}
         });
     Mockito.verify(gameInstanceService, Mockito.never()).stopSession(Mockito.anyLong());
+  }
+
+  @Test
+  void typedStartSessionHandoffRejectsWrongPeerBeforeDecodingOrOwnerCall() {
+    GameSessionStartSessionOperatorAuthorizationCoordinator coordinator =
+        Mockito.mock(GameSessionStartSessionOperatorAuthorizationCoordinator.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    GameSessionGrpcService service = operatorService(gameInstanceService, coordinator);
+    AuthorizeStartSessionRequest malformed =
+        AuthorizeStartSessionRequest.newBuilder()
+            .setCanonicalPostAuthorizationExecutionTupleBytes(
+                com.google.protobuf.ByteString.copyFromUtf8("not canonical"))
+            .setOperatorAuthorizationReference(OPERATOR_REFERENCE)
+            .build();
+
+    AuthorizeStartSessionResponse response =
+        authorizeWithPeer(service, malformed, operatorPeer("account-service", OPERATOR_NAMESPACE));
+
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
+    Mockito.verifyNoInteractions(coordinator);
+    Mockito.verify(gameInstanceService, Mockito.never())
+        .startSession(
+            Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
+            Mockito.anyBoolean());
+  }
+
+  @Test
+  void typedStartSessionHandoffRejectsMalformedTupleBeforeOwnerCall() {
+    GameSessionStartSessionOperatorAuthorizationCoordinator coordinator =
+        Mockito.mock(GameSessionStartSessionOperatorAuthorizationCoordinator.class);
+    GameSessionGrpcService service =
+        operatorService(Mockito.mock(GameInstanceService.class), coordinator);
+    AuthorizeStartSessionRequest malformed =
+        AuthorizeStartSessionRequest.newBuilder()
+            .setCanonicalPostAuthorizationExecutionTupleBytes(
+                com.google.protobuf.ByteString.copyFromUtf8("not canonical"))
+            .setOperatorAuthorizationReference(OPERATOR_REFERENCE)
+            .build();
+
+    AuthorizeStartSessionResponse response =
+        authorizeWithPeer(
+            service, malformed, operatorPeer("logging-admin-service", OPERATOR_NAMESPACE));
+
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    Mockito.verifyNoInteractions(coordinator);
+  }
+
+  @Test
+  void typedStartSessionHandoffFailsClosedWhenOptionalOwnerCoordinatorIsAbsent()
+      throws IOException {
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    GameSessionGrpcService service = operatorService(gameInstanceService, null);
+    AuthorizeStartSessionRequest request = operatorRequest(operatorTuple());
+
+    AuthorizeStartSessionResponse response =
+        authorizeWithPeer(
+            service, request, operatorPeer("logging-admin-service", OPERATOR_NAMESPACE));
+
+    assertEquals("FAILED_PRECONDITION", response.getError().getCode());
+    Mockito.verify(gameInstanceService, Mockito.never())
+        .startSession(
+            Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
+            Mockito.anyBoolean());
+  }
+
+  @Test
+  void typedStartSessionHandoffReturnsOnlyExactDurableOwnerProgressWithoutStartingInstance()
+      throws IOException {
+    StartSessionPostAuthorizationExecutionTuple expected = operatorTuple();
+    GameSessionStartSessionOperatorAuthorizationCoordinator coordinator =
+        Mockito.mock(GameSessionStartSessionOperatorAuthorizationCoordinator.class);
+    GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
+    GameSessionGrpcService service = operatorService(gameInstanceService, coordinator);
+    AttemptClaim claim =
+        new AttemptClaim(
+            OPERATOR_NAMESPACE,
+            expected.controlPlaneRequestId(),
+            OPERATOR_ATTEMPT,
+            OPERATOR_MUTATION,
+            OPERATOR_CLAIM_OWNER,
+            37L);
+    AttemptSnapshot snapshot = operatorSnapshot(expected);
+    GameSessionStartSessionOperatorAuthorizationCoordinator.AuthorizationResult
+        authorizationResult =
+            new GameSessionStartSessionOperatorAuthorizationCoordinator.AuthorizationResult(
+                snapshot,
+                Optional.of(claim),
+                GameSessionStartSessionOperatorAuthorizationCoordinator.Progress
+                    .ACCOUNT_OUTCOME_AMBIGUOUS);
+    Mockito.when(
+            coordinator.authorize(
+                Mockito.any(StartSessionPostAuthorizationExecutionTuple.class),
+                Mockito.eq(OPERATOR_REFERENCE)))
+        .thenReturn(authorizationResult);
+
+    AuthorizeStartSessionResponse response =
+        authorizeWithPeer(
+            service,
+            operatorRequest(expected),
+            operatorPeer("logging-admin-service", OPERATOR_NAMESPACE));
+
+    assertEquals(expected.controlPlaneRequestId(), response.getControlPlaneRequestId());
+    assertEquals(expected.mutationDigest(), response.getMutationDigest());
+    assertEquals(OPERATOR_ATTEMPT.toString(), response.getOwnerAttemptId());
+    assertEquals(OPERATOR_MUTATION.toString(), response.getOwnerMutationId());
+    assertEquals(37L, response.getOwnerFence());
+    assertEquals("OWNER_EXECUTION_PENDING", response.getOwnerPhaseState());
+    assertEquals(
+        net.firedevops.firemud.gamesession.v1.StartSessionOwnerAuthorizationProgress
+            .START_SESSION_OWNER_AUTHORIZATION_PROGRESS_ACCOUNT_OUTCOME_AMBIGUOUS,
+        response.getProgress());
+    org.mockito.ArgumentCaptor<StartSessionPostAuthorizationExecutionTuple> tupleCaptor =
+        org.mockito.ArgumentCaptor.forClass(StartSessionPostAuthorizationExecutionTuple.class);
+    Mockito.verify(coordinator).authorize(tupleCaptor.capture(), Mockito.eq(OPERATOR_REFERENCE));
+    assertArrayEquals(expected.canonicalBytes(), tupleCaptor.getValue().canonicalBytes());
+    Mockito.verify(gameInstanceService, Mockito.never())
+        .startSession(
+            Mockito.any(net.firedevops.firemud.gamesession.dto.StartSessionRequest.class),
+            Mockito.anyBoolean());
+  }
+
+  @Test
+  void typedStartSessionHandoffMapsOwnerConflictAndStaleClaimToBoundedErrors() throws IOException {
+    StartSessionPostAuthorizationExecutionTuple tuple = operatorTuple();
+    AuthorizeStartSessionRequest request = operatorRequest(tuple);
+    GameSessionStartSessionOperatorAuthorizationCoordinator conflictCoordinator =
+        Mockito.mock(GameSessionStartSessionOperatorAuthorizationCoordinator.class);
+    Mockito.when(
+            conflictCoordinator.authorize(
+                Mockito.any(StartSessionPostAuthorizationExecutionTuple.class),
+                Mockito.eq(OPERATOR_REFERENCE)))
+        .thenThrow(
+            new GameSessionStartSessionOperatorAttemptRepository
+                .StartSessionOperatorAttemptConflictException(OPERATOR_REFERENCE));
+    AuthorizeStartSessionResponse conflict =
+        authorizeWithPeer(
+            operatorService(Mockito.mock(GameInstanceService.class), conflictCoordinator),
+            request,
+            operatorPeer("logging-admin-service", OPERATOR_NAMESPACE));
+    assertEquals("IDEMPOTENCY_CONFLICT", conflict.getError().getCode());
+    assertFalse(conflict.getError().getMessage().contains(OPERATOR_REFERENCE));
+
+    GameSessionStartSessionOperatorAuthorizationCoordinator staleCoordinator =
+        Mockito.mock(GameSessionStartSessionOperatorAuthorizationCoordinator.class);
+    Mockito.when(
+            staleCoordinator.authorize(
+                Mockito.any(StartSessionPostAuthorizationExecutionTuple.class),
+                Mockito.eq(OPERATOR_REFERENCE)))
+        .thenThrow(
+            new GameSessionStartSessionOperatorAttemptRepository
+                .StaleStartSessionOperatorAttemptClaimException(OPERATOR_REFERENCE));
+    AuthorizeStartSessionResponse stale =
+        authorizeWithPeer(
+            operatorService(Mockito.mock(GameInstanceService.class), staleCoordinator),
+            request,
+            operatorPeer("logging-admin-service", OPERATOR_NAMESPACE));
+    assertEquals("FAILED_PRECONDITION", stale.getError().getCode());
+    assertFalse(stale.getError().getMessage().contains(OPERATOR_REFERENCE));
+  }
+
+  private static GameSessionGrpcService operatorService(
+      GameInstanceService gameInstanceService,
+      GameSessionStartSessionOperatorAuthorizationCoordinator coordinator) {
+    GameSessionGrpcService service =
+        newService(
+            Mockito.mock(PingService.class),
+            gameInstanceService,
+            Mockito.mock(FeatureFlagService.class),
+            Mockito.mock(TextCommandInterpreter.class),
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry(),
+            Mockito.mock(IpConnectionLimiter.class));
+    if (coordinator != null) {
+      service.setOperatorCoordinator(coordinator);
+    }
+    return service;
+  }
+
+  private static AuthorizeStartSessionResponse authorizeWithPeer(
+      GameSessionGrpcService service, AuthorizeStartSessionRequest request, GrpcPeerIdentity peer) {
+    AtomicReference<AuthorizeStartSessionResponse> response = new AtomicReference<>();
+    Context.current()
+        .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+        .run(
+            () ->
+                service.authorizeStartSession(
+                    request,
+                    new StreamObserver<>() {
+                      @Override
+                      public void onNext(AuthorizeStartSessionResponse value) {
+                        response.set(value);
+                      }
+
+                      @Override
+                      public void onError(Throwable error) {
+                        fail(error);
+                      }
+
+                      @Override
+                      public void onCompleted() {}
+                    }));
+    return response.get();
+  }
+
+  private static GrpcPeerIdentity operatorPeer(String service, String namespace) {
+    return GrpcPeerIdentity.parseUri("spiffe://firemud/ns/" + namespace + "/sa/" + service)
+        .orElseThrow();
+  }
+
+  private static AuthorizeStartSessionRequest operatorRequest(
+      StartSessionPostAuthorizationExecutionTuple tuple) {
+    return AuthorizeStartSessionRequest.newBuilder()
+        .setCanonicalPostAuthorizationExecutionTupleBytes(
+            com.google.protobuf.ByteString.copyFrom(tuple.canonicalBytes()))
+        .setOperatorAuthorizationReference(OPERATOR_REFERENCE)
+        .build();
+  }
+
+  private static AttemptSnapshot operatorSnapshot(
+      StartSessionPostAuthorizationExecutionTuple tuple) {
+    AttemptSnapshot snapshot = Mockito.mock(AttemptSnapshot.class);
+    Mockito.when(snapshot.targetNamespace()).thenReturn(OPERATOR_NAMESPACE);
+    Mockito.when(snapshot.controlPlaneRequestId()).thenReturn(tuple.controlPlaneRequestId());
+    Mockito.when(snapshot.ownerAttemptId()).thenReturn(OPERATOR_ATTEMPT);
+    Mockito.when(snapshot.ownerMutationId()).thenReturn(OPERATOR_MUTATION);
+    Mockito.when(snapshot.ownerFence()).thenReturn(37L);
+    Mockito.when(snapshot.phaseState()).thenReturn("OWNER_EXECUTION_PENDING");
+    Mockito.when(snapshot.postAuthorizationExecutionTuple()).thenReturn(tuple.canonicalBytes());
+    return snapshot;
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple operatorTuple() throws IOException {
+    StartSessionOperatorAction action =
+        new StartSessionOperatorAction(
+            StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
+            StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+            new StartSessionOperatorAction.Scope(OPERATOR_TENANT, OPERATOR_NAMESPACE),
+            new StartSessionOperatorAction.Target(91L, OPERATOR_ACCOUNT),
+            StartSessionOperatorAction.ExpectedVersion.ABSENT,
+            new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
+            "Game Session typed owner transport test");
+    StartSessionPreAuthorizationReservationTuple preTuple =
+        StartSessionPreAuthorizationReservationTuple.createHuman(
+            "grpc-typed-owner-transport", OPERATOR_ACTOR, action);
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        preTuple,
+        OPERATOR_LOGGING_IDENTITY,
+        "arfp/v1/test-key/" + "b".repeat(64),
+        OPERATOR_RESERVATION,
+        19L,
+        operatorAuthorityBundle(preTuple),
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+            "17",
+            "23",
+            "18446744073709551615"));
+  }
+
+  private static byte[] operatorAuthorityBundle(StartSessionPreAuthorizationReservationTuple tuple)
+      throws IOException {
+    String tenant = OPERATOR_TENANT.toString();
+    Map<String, Object> evidence =
+        Map.of(
+            "evidenceType", StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
+            "actorAccountId", OPERATOR_ACTOR.toString(),
+            "controlUiTokenJti", "a681bba7-c215-4cf1-a35b-14348912cbdc",
+            "role", "tenantAdmin",
+            "accountGeneration", "2",
+            "tenantGeneration", "3");
+    Map<String, Object> value =
+        Map.of(
+            "bundleVersion", StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+            "authorityScope",
+                Map.of(
+                    "scope", Map.of("tenantId", tenant, "targetNamespace", OPERATOR_NAMESPACE),
+                    "actionFamily", tuple.actionFamily(),
+                    "applicableAccountId", OPERATOR_ACTOR.toString(),
+                    "applicableTenantId", tenant),
+            "accountProjectionEvidence",
+                Map.of(
+                    "sourceType", "ACCOUNT",
+                    "sourceEvidenceId", "sha256:" + "a".repeat(64),
+                    "sourceEvidenceVersion", "17",
+                    "projectionStatus", "CURRENT",
+                    "evaluatedAt", "2026-10-09T00:00:00Z",
+                    "expiresAt", "2026-10-09T00:05:00Z"),
+            "issuanceOperationIdentity",
+                Map.of(
+                    "issuanceOperationId", OPERATOR_ISSUANCE.toString(),
+                    "controlPlaneRequestId", tuple.controlPlaneRequestId(),
+                    "actionFamilyRequestIdentity",
+                        Map.of(
+                            "requestIdentityKind",
+                            "controlPlaneRequestId",
+                            "requestId",
+                            tuple.controlPlaneRequestId()),
+                    "mutationDigest", tuple.mutationDigest()),
+            "issuanceKind", "human_operator",
+            "authorityTuple",
+                Map.of(
+                    "issuerAuthGeneration", 1L,
+                    "accountAuthorityGeneration", 2L,
+                    "tenantAuthorityGeneration", Map.of(tenant, 3L),
+                    "membershipAuthorityGeneration", Map.of(tenant, 4L),
+                    "privateRealmGrantVersions", List.of()),
+            "membershipVersion", Map.of(tenant, 5L),
+            "issuanceFence", "23",
+            "issuanceEvidence", evidence);
+    return Rfc8785CanonicalJson.canonicalizeUtf8(OPERATOR_JSON.writeValueAsString(value));
   }
 }
