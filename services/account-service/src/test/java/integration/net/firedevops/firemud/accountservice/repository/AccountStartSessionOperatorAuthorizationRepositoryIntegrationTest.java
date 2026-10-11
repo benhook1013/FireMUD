@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +28,7 @@ import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundl
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.IntegrityConstraintViolationException;
@@ -226,6 +228,34 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
           .isInstanceOf(IllegalArgumentException.class);
       assertThat(context.countRows()).isEqualTo(rowsBeforeInvalidDigest);
     }
+  }
+
+  @Test
+  void realPostgresAndRepositoryAcceptOnlyThe160KiBEnvelopeStorageBound() {
+    Context context = context();
+    IssuanceCandidate base = candidate(context, tuple());
+    byte[] maximumEnvelope = new byte[160 * 1024];
+    Arrays.fill(maximumEnvelope, (byte) 0x5a);
+    IssuanceCandidate maximum = withEnvelope(base, maximumEnvelope);
+
+    var created = context.inTransaction(() -> context.repository.createOrReadExact(maximum));
+    assertThat(created.created()).isTrue();
+    assertThat(created.issuance().encryptedResponseEnvelope()).containsExactly(maximumEnvelope);
+
+    IssuanceCandidate overLimit =
+        candidateWithUniqueIdentity(
+            context, new byte[(160 * 1024) + 1], "repository and SQL envelope bound + 1");
+    int rowCountBeforeRejectedCandidates = context.countRows();
+    assertThatThrownBy(
+            () -> context.inTransaction(() -> context.repository.createOrReadExact(overLimit)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("encrypted response envelope");
+    assertThat(context.countRows()).isEqualTo(rowCountBeforeRejectedCandidates);
+
+    assertThatThrownBy(() -> insertV126Row(context, overLimit))
+        .isInstanceOf(IntegrityConstraintViolationException.class)
+        .hasMessageContaining("account_start_session_operator_authz_envelope_size_bound");
+    assertThat(context.countRows()).isEqualTo(rowCountBeforeRejectedCandidates);
   }
 
   @Test
@@ -670,6 +700,102 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         .isEqualTo(candidate.authorizationReferenceFingerprint());
   }
 
+  @Test
+  void v1262RetainedMaximumLegacyEnvelopeSurvivesForwardSizeMigration() {
+    Context context = contextAt("126.2");
+    IssuanceCandidate base = candidate(context, tuple());
+    byte[] retainedLegacyEnvelope = new byte[64 * 1024];
+    Arrays.fill(retainedLegacyEnvelope, (byte) 0x2d);
+    IssuanceCandidate legacy = withEnvelope(base, retainedLegacyEnvelope);
+    insertV126Row(context, legacy);
+
+    Flyway.configure()
+        .dataSource(context.dataSource)
+        .schemas(context.schema)
+        .defaultSchema(context.schema)
+        .placeholders(Map.of("serviceSchema", context.schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+
+    var retained =
+        context.inTransaction(
+            () -> context.repository.findByControlPlaneRequestId(REQUEST_ID).orElseThrow());
+    assertThat(retained.encryptedResponseEnvelope()).containsExactly(retainedLegacyEnvelope);
+    assertThat(retained.responseEnvelopeErasedAt()).isNull();
+    assertThat(retained.preAuthorizationTuple()).containsExactly(legacy.preAuthorizationTuple());
+    assertThat(retained.authorityEvidenceBundle())
+        .containsExactly(legacy.authorityEvidenceBundle());
+    assertThat(retained.status())
+        .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.ISSUED);
+
+    assertThatThrownBy(
+            () ->
+                context.inTransactionWithoutResult(
+                    () ->
+                        context.transactionDsl.execute(
+                            "UPDATE account_start_session_operator_authorizations "
+                                + "SET authority_evidence_bundle = ? "
+                                + "WHERE control_plane_request_id = ?",
+                            bytes("changed-retained-evidence"),
+                            legacy.controlPlaneRequestId())))
+        .isInstanceOf(IntegrityConstraintViolationException.class);
+    assertThat(
+            context.inTransaction(
+                () ->
+                    context
+                        .repository
+                        .findByControlPlaneRequestId(legacy.controlPlaneRequestId())
+                        .orElseThrow()
+                        .encryptedResponseEnvelope()))
+        .containsExactly(retainedLegacyEnvelope);
+  }
+
+  @Test
+  void v1263FailsClosedWhenLegacyEnvelopeSizeGuardIsAmbiguous() {
+    Context context = contextAt("126.2");
+    context.adminDsl.execute(
+        "ALTER TABLE account_start_session_operator_authorizations "
+            + "ADD CONSTRAINT account_start_session_operator_authorizations_duplicate_size_guard "
+            + "CHECK (octet_length(encrypted_response_envelope) BETWEEN 1 AND 65536)");
+    assertThat(legacyEnvelopeSizeGuardCount(context)).isEqualTo(2L);
+
+    assertThatThrownBy(
+            () ->
+                Flyway.configure()
+                    .dataSource(context.dataSource)
+                    .schemas(context.schema)
+                    .defaultSchema(context.schema)
+                    .placeholders(Map.of("serviceSchema", context.schema))
+                    .locations("classpath:db/migration")
+                    .load()
+                    .migrate())
+        .isInstanceOf(FlywayException.class)
+        .hasMessageContaining("V126.3");
+
+    assertThat(legacyEnvelopeSizeGuardCount(context)).isEqualTo(2L);
+  }
+
+  private long legacyEnvelopeSizeGuardCount(Context context) {
+    var countRecord =
+        Objects.requireNonNull(
+            context.adminDsl.fetchOne(
+                "SELECT count(*) "
+                    + "FROM pg_constraint c "
+                    + "JOIN pg_attribute a ON a.attrelid = c.conrelid "
+                    + "AND a.attname = 'encrypted_response_envelope' AND NOT a.attisdropped "
+                    + "WHERE c.conrelid = 'account_start_session_operator_authorizations'::regclass "
+                    + "AND c.contype = 'c' AND c.convalidated "
+                    + "AND c.conkey = ARRAY[a.attnum]::SMALLINT[] "
+                    + "AND lower(replace(regexp_replace(pg_get_expr(c.conbin, c.conrelid), "
+                    + "'[[:space:]()]', '', 'g'), '\"', '')) IN ("
+                    + "'octet_lengthencrypted_response_envelopebetween1and65536', "
+                    + "'octet_lengthencrypted_response_envelope>=1andoctet_lengthencrypted_response_envelope<=65536')"),
+            "Expected a count row for legacy envelope size guards");
+    return Objects.requireNonNull(
+        countRecord.get(0, Long.class), "Expected a non-null legacy envelope guard count");
+  }
+
   private Context context() {
     return contextAt(null);
   }
@@ -879,6 +1005,52 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         issuedAt,
         issuedAt.plusSeconds(180),
         issuedAt.plusSeconds(210));
+  }
+
+  private static IssuanceCandidate withEnvelope(
+      IssuanceCandidate source, byte[] encryptedResponseEnvelope) {
+    return new IssuanceCandidate(
+        source.controlPlaneRequestId(),
+        source.preAuthorizationTuple(),
+        source.mutationDigest(),
+        source.issuanceWorkloadUri(),
+        source.reservationOwnerId(),
+        source.reservationClaimFence(),
+        source.issuanceOperationId(),
+        source.issuanceFence(),
+        source.bundleReference(),
+        source.authorityEvidenceBundle(),
+        source.authorizationReferenceFingerprint(),
+        encryptedResponseEnvelope,
+        source.issuedAt(),
+        source.referenceExpiresAt(),
+        source.responseEnvelopeExpiresAt());
+  }
+
+  private static IssuanceCandidate candidateWithUniqueIdentity(
+      Context context, byte[] encryptedResponseEnvelope, String auditReason) {
+    String requestId = "start-session/operator/" + UUID.randomUUID();
+    var tuple = tuple(requestId, auditReason);
+    IssuanceCandidate base = candidate(context, tuple, requestId);
+    String randomHex =
+        UUID.randomUUID().toString().replace("-", "")
+            + UUID.randomUUID().toString().replace("-", "");
+    return new IssuanceCandidate(
+        base.controlPlaneRequestId(),
+        base.preAuthorizationTuple(),
+        base.mutationDigest(),
+        base.issuanceWorkloadUri(),
+        base.reservationOwnerId(),
+        base.reservationClaimFence(),
+        UUID.randomUUID(),
+        base.issuanceFence(),
+        base.bundleReference(),
+        base.authorityEvidenceBundle(),
+        "arfp/v1/key-1/" + randomHex,
+        encryptedResponseEnvelope,
+        base.issuedAt(),
+        base.referenceExpiresAt(),
+        base.responseEnvelopeExpiresAt());
   }
 
   private static IssuanceCandidate candidate(

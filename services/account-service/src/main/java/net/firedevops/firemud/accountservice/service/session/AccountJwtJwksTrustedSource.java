@@ -267,14 +267,14 @@ public final class AccountJwtJwksTrustedSource
                 Optional<PublicationEvidence> currentPublication =
                     publicationRepository.readCurrentPublication(
                         binding.accountBinding(), trustFence(binding));
-                if (currentPublication.isEmpty()
-                    || currentPublication.orElseThrow().receipt().isEmpty()) {
+                if (currentPublication.isEmpty()) {
                   return new OwnerProjection(committed, projection);
                 }
                 PublicationEvidence evidence = currentPublication.orElseThrow();
                 requirePublicationBinding(evidence, binding, api);
                 PrepublicationIntent intent = evidence.intent();
-                var receipt = evidence.receipt().orElseThrow();
+                var receipt =
+                    evidence.receipt().orElseThrow(AccountJwtJwksTrustedSource::unavailable);
                 if (!intent.operationId().equals(request.operationId())
                     || !intent.operationDigest().equals(request.operationDigest())
                     || !intent.generationRequestDigest().equals(request.generationRequestDigest())

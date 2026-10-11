@@ -162,6 +162,18 @@ class AccountJwtJwksTrustedSourceTest {
   }
 
   @Test
+  void requiresReceiptWhenCurrentPublicationExistsAlongsideCommittedSigner() {
+    Fixture fixture = new Fixture();
+    fixture.useCommittedState();
+    fixture.removeCurrentPublicationReceipt();
+
+    assertThatThrownBy(fixture.source::sourceIdentity)
+        .isInstanceOf(SourceUnavailableException.class)
+        .hasNoCause();
+    verify(fixture.configMapClient, never()).observe();
+  }
+
+  @Test
   void historicalKeyFingerprintRequiresTheCurrentOwnerProvedSetToRetainItsExactIdentity() {
     Fixture missingKey = new Fixture();
     missingKey.useCommittedState();
@@ -410,6 +422,7 @@ class AccountJwtJwksTrustedSourceTest {
     private final DesiredState initialDesiredState;
     private final String initialMarker;
     private final PublicationEvidence publication;
+    private PublicationEvidence nextPublication;
     private final ConfigMapSnapshot snapshot;
     private final AccountJwtJwksTrustedSource source;
 
@@ -559,7 +572,7 @@ class AccountJwtJwksTrustedSourceTest {
 
       String nextMarker =
           marker(NEXT_OPERATION_ID, "2", "key_2", fingerprint(JWK_2), Optional.of(active));
-      PublicationEvidence nextPublication =
+      nextPublication =
           publication(JWKS_1_AND_2, nextMarker, "42", "43", "2", "key_2", Optional.of(active));
       when(publicationRepository.readCurrentPublication(eq(accountBinding), eq(trustFence)))
           .thenReturn(Optional.of(nextPublication));
@@ -577,6 +590,13 @@ class AccountJwtJwksTrustedSourceTest {
                       "preserved")));
     }
 
+    private void removeCurrentPublicationReceipt() {
+      PublicationEvidence unreceipted =
+          new PublicationEvidence(nextPublication.intent(), Optional.empty(), Optional.empty());
+      when(publicationRepository.readCurrentPublication(eq(accountBinding), eq(trustFence)))
+          .thenReturn(Optional.of(unreceipted));
+    }
+
     private void replaceNextJwks(String jwks) {
       String nextMarker =
           marker(
@@ -585,7 +605,7 @@ class AccountJwtJwksTrustedSourceTest {
               "key_2",
               fingerprint(JWK_2),
               Optional.of(new ActiveSigner("1", "key_1")));
-      PublicationEvidence nextPublication =
+      nextPublication =
           publication(
               jwks,
               nextMarker,
