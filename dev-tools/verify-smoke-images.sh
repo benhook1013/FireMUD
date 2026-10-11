@@ -20,6 +20,7 @@ ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 COMPOSE_UP_ARGS=(up -d --remove-orphans)
 SMOKE_COMPOSE_UP_ATTEMPTS="${SMOKE_COMPOSE_UP_ATTEMPTS:-3}"
 SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS="${SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS:-5}"
+COMPOSE_START_ATTEMPTED=false
 # shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 export FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false
@@ -102,6 +103,16 @@ if [[ "$SMOKE_MINIO_LOCAL_ONLY" == "true" && "${SMOKE_COMPOSE_CONFIG_ONLY:-false
 fi
 
 cleanup() {
+  local exit_status=$?
+  trap - EXIT
+  if ((exit_status != 0)) && [[ "$COMPOSE_START_ATTEMPTED" == true ]]; then
+    echo "Capturing bounded Game Design and Game Session logs for the failed run-owned smoke." >&2
+    if ! docker compose "${COMPOSE_FILES[@]}" logs \
+      --no-color --timestamps --tail 200 \
+      game-design-service game-session-service 2>&1 | head -c 65536; then
+      echo "Could not capture run-owned smoke service logs." >&2
+    fi
+  fi
   if [[ -n "$COMPOSE_CONFIG_FILE" ]]; then
     rm -f "$COMPOSE_CONFIG_FILE"
   fi
@@ -111,6 +122,7 @@ cleanup() {
   else
     rm -f "$ROOT_ENV_FILE"
   fi
+  exit "$exit_status"
 }
 trap cleanup EXIT
 
@@ -226,6 +238,7 @@ if [[ "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" == "true" ]]; then
   exit 0
 fi
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
+COMPOSE_START_ATTEMPTED=true
 compose_up_with_retry
 bash "$HEALTH_CHECK_SCRIPT" "${COMPOSE_FILES[@]}"
 

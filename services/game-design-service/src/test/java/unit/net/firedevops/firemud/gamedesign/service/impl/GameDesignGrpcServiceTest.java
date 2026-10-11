@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
@@ -187,7 +189,25 @@ class GameDesignGrpcServiceTest {
             List.of("logo.png", "manifest.json"),
             List.of(
                 new PublishParticipantDigestDto(
-                    "GAME_DESIGN_CONTROL_PLANE", "7", "version:7", "digest-1", 1, null, null)),
+                    "GAME_DESIGN_CONTROL_PLANE",
+                    "7",
+                    null,
+                    "version:7",
+                    "digest-1",
+                    1,
+                    null,
+                    null,
+                    null),
+                new PublishParticipantDigestDto(
+                    "GAME_LOGIC",
+                    "7",
+                    null,
+                    "version:7",
+                    "digest-2",
+                    1,
+                    "sha256:" + "c".repeat(64),
+                    null,
+                    null)),
             List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
             "genrev-1",
             false,
@@ -220,7 +240,11 @@ class GameDesignGrpcServiceTest {
     assertEquals(
         List.of("{\"commandId\":\"block\",\"schemaVersion\":1}"),
         mapped.getCommandDefinitionsList());
-    assertEquals(1, mapped.getParticipantDigestsCount());
+    assertEquals(2, mapped.getParticipantDigestsCount());
+    assertFalse(mapped.getParticipantDigests(0).hasAbilitySchemaDigest());
+    assertTrue(mapped.getParticipantDigests(1).hasAbilitySchemaDigest());
+    assertEquals(
+        "sha256:" + "c".repeat(64), mapped.getParticipantDigests(1).getAbilitySchemaDigest());
     assertEquals("", mapped.getWorkflowFamily());
     assertEquals("", mapped.getWorkflowStatus());
     assertEquals("", mapped.getWorkflowRunId());
