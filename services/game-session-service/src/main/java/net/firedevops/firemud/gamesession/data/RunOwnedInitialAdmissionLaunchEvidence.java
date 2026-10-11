@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.data;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
@@ -17,6 +18,7 @@ public final class RunOwnedInitialAdmissionLaunchEvidence {
   private final PublishedReleaseBundle publishedReleaseBundle;
   private final VersionAssetArtifactState versionAssetArtifactState;
   private final VersionStateSnapshot versionState;
+  private final LaunchDescriptor launchDescriptor;
 
   RunOwnedInitialAdmissionLaunchEvidence(
       AuthoredWorldSourceEvidence sourceEvidence,
@@ -24,7 +26,8 @@ public final class RunOwnedInitialAdmissionLaunchEvidence {
       long gameTemplateId,
       PublishedReleaseBundle publishedReleaseBundle,
       VersionAssetArtifactState versionAssetArtifactState,
-      VersionStateSnapshot versionState) {
+      VersionStateSnapshot versionState,
+      LaunchDescriptor launchDescriptor) {
     this.sourceEvidence = Objects.requireNonNull(sourceEvidence, "sourceEvidence");
     this.schema = Objects.requireNonNull(schema, "schema");
     if (gameTemplateId <= 0L) {
@@ -36,6 +39,7 @@ public final class RunOwnedInitialAdmissionLaunchEvidence {
     this.versionAssetArtifactState =
         Objects.requireNonNull(versionAssetArtifactState, "versionAssetArtifactState");
     this.versionState = Objects.requireNonNull(versionState, "versionState");
+    this.launchDescriptor = Objects.requireNonNull(launchDescriptor, "launchDescriptor");
   }
 
   static RunOwnedInitialAdmissionLaunchEvidence fromVerifiedSourceReceipt(
@@ -50,7 +54,8 @@ public final class RunOwnedInitialAdmissionLaunchEvidence {
         readEvidence.gameTemplateId(),
         readEvidence.publishedReleaseBundle(),
         readEvidence.versionAssetArtifactState(),
-        readEvidence.versionState());
+        readEvidence.versionState(),
+        readEvidence.launchDescriptor());
   }
 
   public AuthoredWorldSourceEvidence sourceEvidence() {
@@ -84,5 +89,12 @@ public final class RunOwnedInitialAdmissionLaunchEvidence {
       justification = "Generated protobuf messages are immutable snapshots.")
   public VersionStateSnapshot versionState() {
     return versionState;
+  }
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification = "Generated protobuf messages are immutable snapshots.")
+  public LaunchDescriptor launchDescriptor() {
+    return launchDescriptor;
   }
 }
