@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -103,6 +104,66 @@ class PublishedReleaseBundleServiceImplTest {
     assertNull(dto.publishedReleaseBundleRef());
     assertNull(dto.manifestSchemaVersion());
     assertNull(dto.artifactDigests());
+  }
+
+  @Test
+  void retainedBundleWithBlankArtifactDigestStorageKeepsArtifactProofAbsent() {
+    PublishedReleaseBundle retained = new PublishedReleaseBundle();
+    retained.setId(11L);
+    retained.setTenantId("tenant-1");
+    retained.setVersionId(7L);
+    retained.setArtifactDigestsJson(" \t ");
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
+
+    var dto = service.findPublishedReleaseBundle("tenant-1", 7L).orElseThrow();
+
+    assertNull(dto.canonicalTenantId());
+    assertNull(dto.canonicalVersionId());
+    assertNull(dto.publishedReleaseBundleRef());
+    assertNull(dto.manifestSchemaVersion());
+    assertNull(dto.artifactDigests());
+  }
+
+  @Test
+  void retainedBundleReadsPopulatedArtifactEvidence() {
+    PublishedReleaseBundle retained = new PublishedReleaseBundle();
+    retained.setId(11L);
+    retained.setTenantId("tenant-1");
+    retained.setVersionId(7L);
+    retained.setManifestSchemaVersion(1);
+    retained.setArtifactDigestsJson(
+        "[{\"usageKey\":\"logo.png\",\"artifactKind\":\"IMAGE\","
+            + "\"immutableObjectKey\":\"artifacts/sha256/"
+            + "0000000000000000000000000000000000000000000000000000000000000000\","
+            + "\"contentDigest\":\"sha256:"
+            + "0000000000000000000000000000000000000000000000000000000000000000\","
+            + "\"contentType\":\"image/png\",\"artifactSchemaVersion\":1}]");
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
+
+    var dto = service.findPublishedReleaseBundle("tenant-1", 7L).orElseThrow();
+
+    assertEquals(
+        List.of(
+            new PublishedArtifactDigest(
+                "logo.png",
+                "IMAGE",
+                "artifacts/sha256/0000000000000000000000000000000000000000000000000000000000000000",
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "image/png",
+                1)),
+        dto.artifactDigests());
+  }
+
+  @Test
+  void retainedBundleRejectsNonblankMalformedArtifactDigestStorage() {
+    PublishedReleaseBundle retained = new PublishedReleaseBundle();
+    retained.setId(11L);
+    retained.setTenantId("tenant-1");
+    retained.setVersionId(7L);
+    retained.setArtifactDigestsJson("[{}]");
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
+
+    assertThrows(RuntimeException.class, () -> service.findPublishedReleaseBundle("tenant-1", 7L));
   }
 
   @Test
