@@ -40,7 +40,8 @@ class LaunchDescriptorRepositoryTest {
               + "authored_world_source_provenance_kind VARCHAR(32), "
               + "authored_world_source_evidence_digest VARCHAR(72), request_digest VARCHAR(72), "
               + "result_digest VARCHAR(72), original_request_json VARCHAR(4000), "
-              + "source_evidence_json VARCHAR(4000), outcome_status VARCHAR(16), "
+              + "source_evidence_json VARCHAR(4000), "
+              + "outcome_status VARCHAR(16) NOT NULL DEFAULT 'SUCCESS', "
               + "failure_code VARCHAR(64), failure_message VARCHAR(1000), created_at TIMESTAMP)");
       dsl.execute(
           "INSERT INTO launch_descriptor (id, launch_descriptor_id, tenant_id, game_template_id, "
@@ -102,7 +103,7 @@ class LaunchDescriptorRepositoryTest {
       assertThat(saved.getDescriptorSchemaVersion()).isNull();
       assertThat(saved.getCanonicalTenantId()).isNull();
       assertThat(saved.getAuthoredWorldSourceOperationId()).isNull();
-      assertThat(saved.getOutcomeStatus()).isNull();
+      assertThat(saved.getOutcomeStatus()).isEqualTo(LaunchDescriptor.OUTCOME_SUCCESS);
       assertThat(
               repository
                   .findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
