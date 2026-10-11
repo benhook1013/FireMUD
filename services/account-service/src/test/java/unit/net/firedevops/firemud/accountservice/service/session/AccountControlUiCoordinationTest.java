@@ -14,6 +14,7 @@ import io.lettuce.core.ClientOptions;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -65,6 +66,24 @@ class AccountControlUiCoordinationTest {
           HexFormat.of()
               .formatHex(MessageDigest.getInstance("SHA-256").digest(resource.readAllBytes()));
       assertThat(sourceDigest).isEqualTo(descriptor.sha256());
+    }
+  }
+
+  @Test
+  void registryLuaRejectsNonNumericExpiryBeforeExpiryArithmetic() throws Exception {
+    var descriptor = AccountControlUiRegistryContract.descriptor();
+    var resource =
+        AccountControlUiCoordination.class
+            .getClassLoader()
+            .getResourceAsStream(descriptor.resourcePath());
+    assertThat(resource).isNotNull();
+
+    try (resource) {
+      String source = new String(resource.readAllBytes(), StandardCharsets.UTF_8);
+      int numericGuard = source.indexOf("or type(nextRecord.exp) ~= 'number'");
+      int expiryMath = source.indexOf("or nextRecord.exp * 1000 ~= deadline then return -1 end");
+      assertThat(numericGuard).isGreaterThanOrEqualTo(0);
+      assertThat(expiryMath).isGreaterThan(numericGuard);
     }
   }
 
@@ -199,25 +218,35 @@ class AccountControlUiCoordinationTest {
   private static byte[] record(String state) {
     // A service-double observation only, never an authenticated actor or canonical owner bundle.
     return AccountControlUiAuthority.canonical(
-        Map.of(
-            "schemaVersion",
-            1,
-            "registryVersion",
-            state.equals("active") ? 2 : state.equals("revoked") ? 3 : 1,
-            "profile",
-            "control-ui",
-            "type",
-            "control-ui",
-            "audience",
-            "control-ui",
-            "issuer",
-            "firemud-account-service",
-            "tokenHash",
-            HASH,
-            "state",
-            state,
-            "exp",
-            EXPIRY / 1000));
+        Map.ofEntries(
+            Map.entry("schemaVersion", 1),
+            Map.entry(
+                "registryVersion", state.equals("active") ? 2 : state.equals("revoked") ? 3 : 1),
+            Map.entry("tokenHash", HASH),
+            Map.entry("kid", "key-1"),
+            Map.entry("signerGeneration", "1"),
+            Map.entry("issuer", "firemud-account-service"),
+            Map.entry("profile", "control-ui"),
+            Map.entry("type", "control-ui"),
+            Map.entry("audience", "control-ui"),
+            Map.entry("accountId", "10000000-0000-4000-8000-000000000001"),
+            Map.entry("jti", "30000000-0000-4000-8000-000000000003"),
+            Map.entry("iat", EXPIRY / 1000 - 300),
+            Map.entry("nbf", EXPIRY / 1000 - 300),
+            Map.entry("exp", EXPIRY / 1000),
+            Map.entry("tokenGeneration", 1),
+            Map.entry("authorityTuple", Map.of("accountAuthorityGeneration", 1)),
+            Map.entry("membershipVersion", Map.of("20000000-0000-4000-8000-000000000002", 1)),
+            Map.entry("issuanceFence", 1),
+            Map.entry("operationId", "40000000-0000-4000-8000-000000000004"),
+            Map.entry("requestId", "50000000-0000-4000-8000-000000000005"),
+            Map.entry("requestDigest", "b".repeat(64)),
+            Map.entry("state", state),
+            Map.entry(
+                "authoritySourceVersions",
+                Map.of("ACCOUNT:10000000-0000-4000-8000-000000000001", 1)),
+            Map.entry("authEvidenceBundle", Map.of("bundleVersion", "1")),
+            Map.entry("originalSignerReceiptDigest", "c".repeat(64))));
   }
 
   private static final class Fixture {

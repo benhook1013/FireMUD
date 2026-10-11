@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +50,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.util.StreamUtils;
 
 class StartSessionOperatorAuthorizationGrpcServiceTest {
@@ -365,7 +367,7 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
     for (Class<? extends RuntimeException> unavailableType : unavailableTypes) {
       AccountStartSessionOperatorAuthorizationService unavailableOwner =
           mock(AccountStartSessionOperatorAuthorizationService.class);
-      RuntimeException unavailable = unavailableFailure(unavailableType);
+      RuntimeException unavailable = runtimeFailureWithPrivateCause(unavailableType);
       when(unavailableOwner.issue(any())).thenThrow(unavailable);
       var unavailableService =
           new StartSessionOperatorAuthorizationGrpcService(unavailableOwner, NAMESPACE);
@@ -377,8 +379,66 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
       assertThat(observer.failure.getDescription())
           .isEqualTo("Account operator authorization is temporarily unavailable")
           .doesNotContain(unavailableType.getSimpleName(), "private failure detail");
-      assertThat(observer.failureThrowable).hasNoCause();
+      assertThat(observer.failureHasCause).isFalse();
     }
+  }
+
+  @Test
+  void mapsSpringDataAccessFailuresBySqlStateAndSanitizesThem() {
+    List<Map.Entry<RuntimeException, Status.Code>> failures =
+        List.of(
+            Map.entry(
+                new DataAccessResourceFailureException(
+                    "private connection detail", new SQLException("private", "08006")),
+                Status.Code.UNAVAILABLE),
+            Map.entry(
+                new DataAccessResourceFailureException(
+                    "private constraint detail", new SQLException("private", "23505")),
+                Status.Code.INTERNAL));
+
+    for (Map.Entry<RuntimeException, Status.Code> entry : failures) {
+      AccountStartSessionOperatorAuthorizationService failingOwner =
+          mock(AccountStartSessionOperatorAuthorizationService.class);
+      when(failingOwner.issue(any())).thenThrow(entry.getKey());
+      var receiver = new StartSessionOperatorAuthorizationGrpcService(failingOwner, NAMESPACE);
+
+      TestObserver<IssueHumanOperatorAuthorizationReferenceResponse> observer =
+          callIssue(receiver, issueRequest(canonicalTupleBytes()), LOGGING_URI);
+
+      assertThat(status(observer)).isEqualTo(entry.getValue());
+      assertThat(observer.failure.getDescription())
+          .doesNotContain("private connection detail", "private constraint detail");
+    }
+  }
+
+  @Test
+  void mapsExpiredResponseRecoveryToTerminalPreconditionAndUnexpectedRuntimeToInternal() {
+    AccountStartSessionOperatorAuthorizationService expiredOwner =
+        mock(AccountStartSessionOperatorAuthorizationService.class);
+    when(expiredOwner.recover(any()))
+        .thenThrow(
+            runtimeFailureWithPrivateCause(
+                AccountResponseEnvelopeCryptography.ResponseRecoveryExpiredException.class));
+    var expiredReceiver = new StartSessionOperatorAuthorizationGrpcService(expiredOwner, NAMESPACE);
+    TestObserver<RecoverOperatorAuthorizationReferenceResponse> expired =
+        callRecover(expiredReceiver, recoverRequest(canonicalTupleBytes()), LOGGING_URI);
+
+    AccountStartSessionOperatorAuthorizationService unexpectedOwner =
+        mock(AccountStartSessionOperatorAuthorizationService.class);
+    when(unexpectedOwner.issue(any())).thenThrow(new RuntimeException("private owner detail"));
+    var unexpectedReceiver =
+        new StartSessionOperatorAuthorizationGrpcService(unexpectedOwner, NAMESPACE);
+    TestObserver<IssueHumanOperatorAuthorizationReferenceResponse> unexpected =
+        callIssue(unexpectedReceiver, issueRequest(canonicalTupleBytes()), LOGGING_URI);
+
+    assertThat(status(expired)).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(expired.failure.getDescription())
+        .isEqualTo("Original StartSession authorization response is no longer recoverable")
+        .doesNotContain("private owner detail");
+    assertThat(status(unexpected)).isEqualTo(Status.Code.INTERNAL);
+    assertThat(unexpected.failure.getDescription())
+        .isEqualTo("Account operator authorization could not be completed")
+        .doesNotContain("private owner detail");
   }
 
   @Test
@@ -474,8 +534,15 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
 
   private TestObserver<RecoverOperatorAuthorizationReferenceResponse> callRecover(
       RecoverOperatorAuthorizationReferenceRequest request, String peerUri) {
+    return callRecover(service, request, peerUri);
+  }
+
+  private TestObserver<RecoverOperatorAuthorizationReferenceResponse> callRecover(
+      StartSessionOperatorAuthorizationGrpcService receiver,
+      RecoverOperatorAuthorizationReferenceRequest request,
+      String peerUri) {
     TestObserver<RecoverOperatorAuthorizationReferenceResponse> observer = new TestObserver<>();
-    runWithPeer(peerUri, () -> service.recoverOperatorAuthorizationReference(request, observer));
+    runWithPeer(peerUri, () -> receiver.recoverOperatorAuthorizationReference(request, observer));
     return observer;
   }
 
@@ -610,7 +677,7 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
     return observer.failure.getCode();
   }
 
-  private static RuntimeException unavailableFailure(
+  private static RuntimeException runtimeFailureWithPrivateCause(
       Class<? extends RuntimeException> failureType) {
     try {
       Constructor<? extends RuntimeException> constructor = failureType.getDeclaredConstructor();
@@ -619,14 +686,14 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
       failure.initCause(new IllegalStateException("private failure detail"));
       return failure;
     } catch (ReflectiveOperationException failure) {
-      throw new AssertionError("Unable to construct focused unavailable failure", failure);
+      throw new AssertionError("Unable to construct focused runtime failure", failure);
     }
   }
 
   private static final class TestObserver<T> implements StreamObserver<T> {
     private T value;
     private Status failure;
-    private Throwable failureThrowable;
+    private boolean failureHasCause;
     private boolean completed;
 
     @Override
@@ -636,7 +703,7 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
 
     @Override
     public void onError(Throwable throwable) {
-      failureThrowable = throwable;
+      failureHasCause = throwable.getCause() != null;
       failure = Status.fromThrowable(throwable);
     }
 

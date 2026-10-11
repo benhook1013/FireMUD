@@ -28,6 +28,7 @@ import net.firedevops.firemud.account.v1.StartSessionOperatorAuthorizationServic
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionResult;
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.KeyUnavailableException;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography.CryptographyUnavailableException;
+import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography.ResponseRecoveryExpiredException;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeKeyring;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorityBundle.BundleReference;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService;
@@ -536,6 +537,11 @@ public final class StartSessionOperatorAuthorizationGrpcService
       observer.onCompleted();
     } catch (AccountStartSessionOperatorAuthorizationService.NotFoundException missing) {
       fail(observer, Status.NOT_FOUND, "No original StartSession authorization exists");
+    } catch (ResponseRecoveryExpiredException expired) {
+      fail(
+          observer,
+          Status.FAILED_PRECONDITION,
+          "Original StartSession authorization response is no longer recoverable");
     } catch (CannotCreateTransactionException unavailable) {
       fail(
           observer,
@@ -548,7 +554,7 @@ public final class StartSessionOperatorAuthorizationGrpcService
           observer,
           Status.UNAVAILABLE,
           "Account operator authorization is temporarily unavailable");
-    } catch (DataAccessException failure) {
+    } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
       Status status = hasConnectionFailureSqlState(failure) ? Status.UNAVAILABLE : Status.INTERNAL;
       fail(
           observer,
