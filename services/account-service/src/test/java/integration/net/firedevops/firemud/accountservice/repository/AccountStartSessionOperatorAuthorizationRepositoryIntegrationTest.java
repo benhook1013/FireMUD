@@ -176,6 +176,32 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   void realPostgresEnforcesCanonicalPositiveLongRangeForBundleSourceFence() {
     Context context = context();
     Instant issuedAt = canonicalMillisecond(databaseNow(context));
+    List<String> checkConstraintNames =
+        context
+            .adminDsl
+            .fetch(
+                "SELECT conname FROM pg_constraint "
+                    + "WHERE conrelid = ?::regclass AND contype = 'c'",
+                context.schema + ".account_start_session_operator_authorizations")
+            .getValues("conname", String.class);
+    assertThat(checkConstraintNames)
+        .contains("account_ss_operator_bundle_source_fence_canonical_check")
+        .doesNotContain("account_start_session_operator_authorizations_check");
+
+    String distinctFenceRequestId = REQUEST_ID + "-source-fence-distinct";
+    IssuanceCandidate distinctFences =
+        candidateWithReference(
+            tuple(distinctFenceRequestId, "independent Account source and owner fences"),
+            bundleReference(7L),
+            issuedAt);
+    assertThat(distinctFences.issuanceFence()).isEqualTo(31L);
+    assertThat(distinctFences.bundleReference().sourceFence()).isEqualTo("7");
+    assertThat(
+            context
+                .inTransaction(() -> context.repository.createOrReadExact(distinctFences))
+                .created())
+        .isTrue();
+
     String maxFenceRequestId = REQUEST_ID + "-source-fence-max";
     IssuanceCandidate maxFence =
         candidateWithReference(
