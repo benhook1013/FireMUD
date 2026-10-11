@@ -173,7 +173,7 @@ public final class WorldCanonicalInstancePreparationRepository {
                 authority.requireHeld();
                 Record beginRow =
                     dsl.fetchOne(
-                        "SELECT world_begin_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "SELECT world_begin_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
                         inputJson,
                         inputDigest,
                         executionIdentity.originalPostAuthorizationTuple(),
@@ -302,7 +302,7 @@ public final class WorldCanonicalInstancePreparationRepository {
               authority.requireHeld();
               Record claimRow =
                   dsl.fetchOne(
-                      "SELECT world_claim_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      "SELECT world_claim_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
                       identity.preparationInputJson(),
                       identity.preparationInputDigest(),
                       identity.originalPostAuthorizationTuple(),

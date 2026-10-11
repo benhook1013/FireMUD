@@ -1367,7 +1367,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                               intentRow == null ? null : intentRow.get(0, Long.class);
                           Record claimRow =
                               dsl.fetchOne(
-                                  "SELECT world_claim_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                  "SELECT world_claim_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
                                   inputJson,
                                   inputDigest,
                                   identity.originalPostAuthorizationTuple(),
@@ -1384,7 +1384,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                           Long claimFence = claimRow == null ? null : claimRow.get(0, Long.class);
                           Record executionRow =
                               dsl.fetchOne(
-                                  "SELECT world_begin_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                  "SELECT world_begin_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
                                   inputJson,
                                   inputDigest,
                                   identity.originalPostAuthorizationTuple(),
@@ -2144,7 +2144,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
                   Long retainedFence = intentRow == null ? null : intentRow.get(0, Long.class);
                   Record claimRow =
                       dsl.fetchOne(
-                          "SELECT world_claim_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                          "SELECT world_claim_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
                           inputJson,
                           inputDigest,
                           identity.originalPostAuthorizationTuple(),
@@ -2172,7 +2172,7 @@ class WorldCanonicalInstanceAssociationPostgresIntegrationTest {
       long executionFence) {
     Record begunRow =
         dsl.fetchOne(
-            "SELECT world_begin_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "SELECT world_begin_canonical_instance_execution_with_original_attempt(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
             inputJson,
             inputDigest,
             identity.originalPostAuthorizationTuple(),

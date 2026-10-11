@@ -4794,7 +4794,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     Record claimed =
         Objects.requireNonNull(
             dsl.fetchOne(
-                "SELECT world_claim_canonical_instance_execution_with_original_attempt(?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "SELECT world_claim_canonical_instance_execution_with_original_attempt(?,?,?,?,?,?,?,?,?,?,CAST(? AS TIMESTAMPTZ),?,?) "
                     + "AS world_execution_fence",
                 identity.preparationInputJson(),
                 identity.preparationInputDigest(),
@@ -4814,7 +4814,7 @@ class WorldDraftGraphApplicationPostgresIntegrationTest {
     Record begun =
         Objects.requireNonNull(
             dsl.fetchOne(
-                "SELECT world_begin_canonical_instance_execution_with_original_attempt(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "SELECT world_begin_canonical_instance_execution_with_original_attempt(?,?,?,?,?,?,?,?,?,?,?,CAST(? AS TIMESTAMPTZ),?,?) "
                     + "AS world_execution_fence",
                 identity.preparationInputJson(),
                 identity.preparationInputDigest(),
