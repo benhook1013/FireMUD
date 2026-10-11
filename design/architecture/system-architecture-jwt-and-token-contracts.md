@@ -10,6 +10,8 @@ Account now has a bounded passive storage/source-evidence preparation for desire
 
 It also includes unregistered, caller-transaction-bound Control-UI creator-source composition and authority/signing-input preparation; this does not establish token issuance, receiver approval, stale-authority rejection, or playable admission.
 
+The same source-only preparation now records one immutable cleanup deadline for each new Control-UI issuance, separate from the JWT's logical `exp`; the exact deadline must match owner readback, the registry record, and Redis physical expiry. Retained rows without that evidence remain unchanged and cannot establish current issuance or be retried as a new identity. This does not register or activate the issuer, rewrite retained Redis bytes/receipts, or claim bounded cleanup or late revocation.
+
 Each registry-backed revocable `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT has exactly one Account-owned Coordination Redis record: `session:auth:token:<tokenHash>`. The separate `gameplay-connect` profile is not registry-backed and uses its dedicated single-use replay contract.
 
 ## Canonical Authority Tuple

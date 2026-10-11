@@ -20,10 +20,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 /**
  * Composed negative boundary, NOT successful issuer/end-to-end proof. Actual primary auth,
  * canonical source composition/currentness, issuance service/repository and PostgreSQL transactions
- * execute together. External creation/bootstrap, party verification, legal action/publication and
- * environment observations are explicitly stipulated test-only fixtures. Real signer owner is
- * deliberately unavailable: no fabricated committed signer, private Capture, registry receipt or
- * successful issuance is manufactured. Missing custody/signing/Redis never become authority.
+ * execute together. External creation/bootstrap, party verification, legal action/publication,
+ * environment observations, and the isolated materializer/API deployment identity are explicitly
+ * stipulated test-only fixtures. The real signer lifecycle reaches only receipt-backed initial
+ * public prepublication; no committed signer, private Capture, registry receipt or successful
+ * issuance is manufactured. Missing committed signer/custody/signing/Redis never become authority.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
@@ -38,7 +39,8 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
   @TempDir Path temporary;
 
   @Test
-  void realSourceAndPrimaryCompositionRollsBackOtpWhenGenuineSignerIsUnavailable() {
+  void realSourceAndPrimaryCompositionRollsBackOtpWhenGenuineSignerIsUnavailable()
+      throws Exception {
     var f =
         new AccountControlUiOwnerSourcesFixture(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), temporary, true);
@@ -68,7 +70,8 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
   }
 
   @Test
-  void invalidOtpBudgetPersistsThroughProxiedPrimaryDenialAndExhaustsExistingFiveAttemptLimit() {
+  void invalidOtpBudgetPersistsThroughProxiedPrimaryDenialAndExhaustsExistingFiveAttemptLimit()
+      throws Exception {
     var f =
         new AccountControlUiOwnerSourcesFixture(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), temporary, true);
@@ -148,7 +151,8 @@ class AccountControlUiOwnerWorkflowPostgresIntegrationTest {
   }
 
   @Test
-  void changedProtectedCallerAndUnboundCurrentEnvironmentDenyWithoutConsumingOtp() {
+  void changedProtectedCallerAndUnboundCurrentEnvironmentDenyWithoutConsumingOtp()
+      throws Exception {
     var f =
         new AccountControlUiOwnerSourcesFixture(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), temporary, true);

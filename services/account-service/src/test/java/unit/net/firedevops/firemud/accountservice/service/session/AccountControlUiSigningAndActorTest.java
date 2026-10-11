@@ -432,6 +432,7 @@ class AccountControlUiSigningAndActorTest {
       values.put("active_registry", new byte[] {12});
       values.put("issued_at_epoch_second", NOW.getEpochSecond());
       values.put("expires_at_epoch_second", NOW.plusSeconds(300).getEpochSecond());
+      values.put("registry_cleanup_deadline_epoch_millis", NOW.plusSeconds(600).toEpochMilli());
       values.put(
           "recovery_expires_at", OffsetDateTime.ofInstant(NOW.plusSeconds(60), ZoneOffset.UTC));
       Record row = mock(Record.class);

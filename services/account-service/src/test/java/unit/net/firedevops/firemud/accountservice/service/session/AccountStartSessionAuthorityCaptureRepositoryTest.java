@@ -55,6 +55,8 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
       UUID.fromString("44444444-4444-4444-8444-444444444444");
   private static final UUID CONTROL_UI_TOKEN_JTI =
       UUID.fromString("55555555-5555-4555-8555-555555555555");
+  private static final long ISSUANCE_EXPIRES_AT_EPOCH_SECOND = 1_900_000_000L;
+  private static final long REGISTRY_CLEANUP_MARGIN_MILLIS = 300_000L;
 
   private static final Field<String> CONTROL_PLANE_REQUEST_ID =
       field(name("control_plane_request_id"), SQLDataType.VARCHAR);
@@ -131,6 +133,8 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
       field(name("issued_at_epoch_second"), SQLDataType.BIGINT);
   private static final Field<Long> ISSUANCE_EXPIRES_AT =
       field(name("expires_at_epoch_second"), SQLDataType.BIGINT);
+  private static final Field<Long> ISSUANCE_REGISTRY_CLEANUP_DEADLINE =
+      field(name("registry_cleanup_deadline_epoch_millis"), SQLDataType.BIGINT);
   private static final Field<OffsetDateTime> ISSUANCE_RECOVERY_EXPIRES_AT =
       field(name("recovery_expires_at"), SQLDataType.OFFSETDATETIME);
 
@@ -515,6 +519,7 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
                 ISSUANCE_ACTIVE_REGISTRY,
                 ISSUANCE_CREATED_AT,
                 ISSUANCE_EXPIRES_AT,
+                ISSUANCE_REGISTRY_CLEANUP_DEADLINE,
                 ISSUANCE_RECOVERY_EXPIRES_AT);
     row.setValue(ISSUANCE_REQUEST_ID, CONTROL_UI_OPERATION_ID);
     row.setValue(ISSUANCE_OPERATION_ID, CONTROL_UI_OPERATION_ID);
@@ -536,7 +541,10 @@ class AccountStartSessionAuthorityCaptureRepositoryTest {
     row.setValue(ISSUANCE_PENDING_REGISTRY, "pending".getBytes(StandardCharsets.UTF_8));
     row.setValue(ISSUANCE_ACTIVE_REGISTRY, "active".getBytes(StandardCharsets.UTF_8));
     row.setValue(ISSUANCE_CREATED_AT, 1_800_000_000L);
-    row.setValue(ISSUANCE_EXPIRES_AT, 1_900_000_000L);
+    row.setValue(ISSUANCE_EXPIRES_AT, ISSUANCE_EXPIRES_AT_EPOCH_SECOND);
+    row.setValue(
+        ISSUANCE_REGISTRY_CLEANUP_DEADLINE,
+        ISSUANCE_EXPIRES_AT_EPOCH_SECOND * 1_000L + REGISTRY_CLEANUP_MARGIN_MILLIS);
     row.setValue(ISSUANCE_RECOVERY_EXPIRES_AT, OffsetDateTime.parse("2040-01-01T00:00:00Z"));
     return new AccountControlUiIssuanceRepository.Stored(row);
   }

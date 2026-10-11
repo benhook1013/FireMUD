@@ -255,6 +255,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
               actors,
               f.manager,
               Clock.systemUTC(),
+              300_000L,
               AccountControlUiOwnerWorkflowPostgresIntegrationTest.CALLER);
       var environment = f.terms.captureCurrentEnvironmentBoundary();
       String compact;
