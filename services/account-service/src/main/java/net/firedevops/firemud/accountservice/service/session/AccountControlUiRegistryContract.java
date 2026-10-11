@@ -15,7 +15,7 @@ public final class AccountControlUiRegistryContract {
     return new RedisScriptDescriptor(
         SCRIPT_ID,
         RESOURCE,
-        "65cb013abd1d32b4a718b5a67ea4e8b568693adc8388f3a9303713d4284d3f14",
+        "ab52db88e282ac8a70d1409a563357ed623363dab5c3c44a11c8274f378dd33b",
         "account-service",
         "account_coord_app",
         RedisRole.COORDINATION,

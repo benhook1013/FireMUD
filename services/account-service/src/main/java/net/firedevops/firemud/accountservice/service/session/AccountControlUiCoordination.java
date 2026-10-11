@@ -21,6 +21,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  */
 public final class AccountControlUiCoordination {
   private final AccountCoordinationPinnedConnectionProvider connections;
+  private final AccountControlUiRegistryReader registryReader;
   private final AcknowledgementRequirements acknowledgements;
   private final RedisScriptCatalog catalog;
 
@@ -29,40 +30,14 @@ public final class AccountControlUiCoordination {
       AcknowledgementRequirements acknowledgements,
       RedisScriptCatalog catalog) {
     this.connections = Objects.requireNonNull(connections);
+    this.registryReader = new AccountControlUiRegistryReader(this.connections);
     this.acknowledgements = Objects.requireNonNull(acknowledgements);
     this.catalog = Objects.requireNonNull(catalog);
   }
 
   /** Read-only pinned GET and physical expiry; no repair or gameplay-profile interpretation. */
   public byte[] readActive(String tokenHash) {
-    outsideSql();
-    return withConnection(
-        commands -> {
-          byte[] value = commands.get(key(tokenHash));
-          if (value == null || value.length == 0 || value.length > 32768) {
-            throw denied();
-          }
-          var record = AccountControlUiIssuanceRepository.object(value);
-          if (!"control-ui".equals(record.get("profile"))
-              || !"control-ui".equals(record.get("type"))
-              || !"control-ui".equals(record.get("audience"))
-              || !"active".equals(record.get("state"))
-              || !tokenHash.equals(record.get("tokenHash"))) {
-            throw denied();
-          }
-          Object encodedExpiry = record.get("exp");
-          if (!(encodedExpiry instanceof Number number)
-              || !number.toString().matches("[1-9][0-9]{0,18}")) {
-            throw denied();
-          }
-          long exactExpiry = Math.multiplyExact(Long.parseLong(number.toString()), 1000L);
-          Long physicalExpiry = commands.pexpiretime(key(tokenHash));
-          // This distinct minimum profile uses zero cleanup margin, never an inferred/renewed TTL.
-          if (physicalExpiry == null || physicalExpiry != exactExpiry) {
-            throw denied();
-          }
-          return value.clone();
-        });
+    return registryReader.readActive(tokenHash);
   }
 
   /** Exact readback for the owner's protected delivery workflow. */

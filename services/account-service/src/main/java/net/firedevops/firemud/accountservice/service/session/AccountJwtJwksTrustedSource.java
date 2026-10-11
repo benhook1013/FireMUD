@@ -308,9 +308,7 @@ public final class AccountJwtJwksTrustedSource
       if (ownerStateUnavailable instanceof SourceUnavailableException unavailable) {
         throw unavailable;
       }
-      if (ownerStateUnavailable instanceof IllegalStateException
-          && ownerStateUnavailable.getMessage() != null
-          && ownerStateUnavailable.getMessage().contains("Account trusted public JWKS source")) {
+      if (ownerStateUnavailable instanceof SourceRejectedException) {
         throw ownerStateUnavailable;
       }
       throw rejected();
@@ -759,8 +757,14 @@ public final class AccountJwtJwksTrustedSource
     return new SourceUnavailableException();
   }
 
-  private static IllegalStateException rejected() {
-    return new IllegalStateException("Account trusted public JWKS source was rejected");
+  private static SourceRejectedException rejected() {
+    return new SourceRejectedException();
+  }
+
+  private static final class SourceRejectedException extends IllegalStateException {
+    private SourceRejectedException() {
+      super("Account trusted public JWKS source was rejected");
+    }
   }
 
   private record TrustedPin(

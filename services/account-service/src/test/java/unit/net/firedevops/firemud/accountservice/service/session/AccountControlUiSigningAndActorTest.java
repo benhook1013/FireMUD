@@ -9,6 +9,7 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -122,11 +123,16 @@ class AccountControlUiSigningAndActorTest {
     assertThat(callback.get()).containsOnly((byte) 0);
     assertThat(digest).isEqualTo(AccountControlUiIssuanceRepository.hash(retained.get()));
     var verified = f.actors.verifySigned(new String(retained.get(), StandardCharsets.US_ASCII));
+    var verifiedAgain =
+        f.actors.verifySigned(new String(retained.get(), StandardCharsets.US_ASCII));
     assertThat(verified.claims.claims())
         .containsEntry("accountId", f.actor.toString())
         .containsEntry("scopedRoles", Map.of(f.tenant.toString(), List.of("tenantAdmin")));
+    assertThat(verifiedAgain.claims.claims()).isEqualTo(verified.claims.claims());
     assertThat(verified.claims.claims())
         .doesNotContainKeys("globalRoles", "tokenProfile", "tokenType");
+    verify(f.source, times(1)).sourceIdentity();
+    verify(f.source, times(1)).load();
   }
 
   @Test

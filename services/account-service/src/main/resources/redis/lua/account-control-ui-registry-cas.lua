@@ -14,6 +14,7 @@ if not ok or type(nextRecord) ~= 'table' or nextRecord.schemaVersion ~= 1
     or nextRecord.audience ~= 'control-ui' or nextRecord.issuer ~= 'firemud-account-service'
     or nextRecord.tokenHash ~= string.sub(key, 20)
     or nextRecord.globalRoles ~= nil or nextRecord.scopedRoles ~= nil
+    or type(nextRecord.exp) ~= 'number'
     or nextRecord.exp * 1000 ~= deadline then return -1 end
 local current = redis.call('GET', key)
 if current == replacement then

@@ -16,6 +16,11 @@ import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.codec.ByteArrayCodec;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
@@ -65,6 +70,45 @@ class LettuceAccountCoordinationPinnedConnectionProviderTest {
           .isSameAs(failure);
 
       verify(client).shutdown();
+    }
+  }
+
+  @Test
+  void disposesConnectionThatFinishesAfterConcurrentProviderClose() throws Exception {
+    RedisClient client = mock(RedisClient.class);
+    StatefulRedisConnection<byte[], byte[]> connection = connection();
+    RedisURI uri = RedisURI.Builder.redis("coordination.example.invalid").build();
+    CountDownLatch connectStarted = new CountDownLatch(1);
+    CountDownLatch finishConnect = new CountDownLatch(1);
+    when(client.connect(ByteArrayCodec.INSTANCE))
+        .thenAnswer(
+            ignored -> {
+              connectStarted.countDown();
+              if (!finishConnect.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("test connection was not released");
+              }
+              return connection;
+            });
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try (MockedStatic<RedisClient> redisClientFactory = mockStatic(RedisClient.class)) {
+      redisClientFactory.when(() -> RedisClient.create(uri)).thenReturn(client);
+      LettuceAccountCoordinationPinnedConnectionProvider provider =
+          new LettuceAccountCoordinationPinnedConnectionProvider(uri);
+      var opening = executor.submit(provider::openPinnedConnection);
+
+      assertThat(connectStarted.await(5, TimeUnit.SECONDS)).isTrue();
+      provider.close();
+      finishConnect.countDown();
+
+      assertThatThrownBy(() -> opening.get(5, TimeUnit.SECONDS))
+          .isInstanceOf(ExecutionException.class)
+          .hasCauseInstanceOf(IllegalStateException.class);
+      verify(connection).close();
+      provider.close();
+      verify(client, times(1)).shutdown();
+    } finally {
+      finishConnect.countDown();
+      executor.shutdownNow();
     }
   }
 
