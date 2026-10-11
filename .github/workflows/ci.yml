@@ -1005,11 +1005,9 @@ jobs:
       # Cached negative Spring Boot 4.1.1 resolution requires metadata revalidation (CI 37847761035).
       - name: 🧪 Run Gradle Checks
         id: checks
-        env:
-          GRADLE_MAX_WORKERS: ${{ matrix.module == 'tcp-proxy-service' && '2' || '4' }}
         run: |
           echo "::group::Run Module Validation"
-          ./gradlew --max-workers="$GRADLE_MAX_WORKERS" --refresh-dependencies :${{ matrix.module }}:check -PfullCheck
+          ./gradlew --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:check -PfullCheck
           echo "::endgroup::"
 
       - name: 📦 Build Runtime JAR
