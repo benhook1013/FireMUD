@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.doAnswer;
@@ -86,7 +87,17 @@ class AccountControlUiIssuanceWorkflowTest {
     assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
     verifyNoInteractions(fixture.signers, fixture.cryptography, fixture.registry, fixture.actors);
     verify(fixture.operations, never())
-        .prepare(any(), anyString(), any(), anyString(), anyString(), any(), any(), any(), any());
+        .prepare(
+            any(),
+            anyString(),
+            any(),
+            anyString(),
+            anyString(),
+            any(),
+            any(),
+            any(),
+            any(),
+            anyLong());
   }
 
   @Test
@@ -390,6 +401,7 @@ class AccountControlUiIssuanceWorkflowTest {
                 actors,
                 transactions,
                 Clock.fixed(NOW, ZoneOffset.UTC),
+                300_000L,
                 ISSUER);
       }
       return service;
@@ -473,6 +485,7 @@ class AccountControlUiIssuanceWorkflowTest {
       values.put("active_registry", new byte[] {5});
       values.put("issued_at_epoch_second", NOW.getEpochSecond());
       values.put("expires_at_epoch_second", NOW.plusSeconds(300).getEpochSecond());
+      values.put("registry_cleanup_deadline_epoch_millis", NOW.plusSeconds(600).toEpochMilli());
       values.put("recovery_expires_at", OffsetDateTime.ofInstant(expiry, ZoneOffset.UTC));
       Record row = rowForValues(values);
       return new AccountControlUiIssuanceRepository.Stored(row);
@@ -499,6 +512,7 @@ class AccountControlUiIssuanceWorkflowTest {
       values.put("active_registry", stored.activeRegistry);
       values.put("issued_at_epoch_second", stored.issuedAt.getEpochSecond());
       values.put("expires_at_epoch_second", stored.expiresAt.getEpochSecond());
+      values.put("registry_cleanup_deadline_epoch_millis", stored.expiryMillis());
       values.put(
           "recovery_expires_at", OffsetDateTime.ofInstant(stored.recoveryExpiry, ZoneOffset.UTC));
       return rowForValues(values);

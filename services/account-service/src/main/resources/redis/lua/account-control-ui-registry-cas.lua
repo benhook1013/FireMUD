@@ -1,10 +1,10 @@
 -- Account-owned control-ui only. The client separately proves owner COMMITTED before activation.
 if #KEYS ~= 1 or #ARGV ~= 3 then return -1 end
-local key, expected, replacement, expiry = KEYS[1], ARGV[1], ARGV[2], ARGV[3]
+local key, expected, replacement, cleanupDeadline = KEYS[1], ARGV[1], ARGV[2], ARGV[3]
 if not string.match(key, '^session:auth:token:[0-9a-f]+$') or #key ~= 83
     or #replacement == 0 or #replacement > 32768 or #expected > 32768
-    or not string.match(expiry, '^[1-9][0-9]*$') or #expiry > 16 then return -1 end
-local deadline = tonumber(expiry)
+    or not string.match(cleanupDeadline, '^[1-9][0-9]*$') or #cleanupDeadline > 16 then return -1 end
+local deadline = tonumber(cleanupDeadline)
 if not deadline or deadline > 9007199254740991 then return -1 end
 local now = redis.call('TIME')
 if deadline <= tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) then return -2 end
@@ -15,12 +15,18 @@ if not ok or type(nextRecord) ~= 'table' or nextRecord.schemaVersion ~= 1
     or nextRecord.tokenHash ~= string.sub(key, 20)
     or nextRecord.globalRoles ~= nil or nextRecord.scopedRoles ~= nil
     or type(nextRecord.exp) ~= 'number'
-    or nextRecord.exp * 1000 ~= deadline then return -1 end
+    or nextRecord.exp <= 0 or math.floor(nextRecord.exp) ~= nextRecord.exp
+    or nextRecord.exp > 9007199254740
+    or type(nextRecord.registryCleanupDeadlineEpochMillis) ~= 'number'
+    or math.floor(nextRecord.registryCleanupDeadlineEpochMillis)
+        ~= nextRecord.registryCleanupDeadlineEpochMillis
+    or nextRecord.registryCleanupDeadlineEpochMillis ~= deadline
+    or nextRecord.registryCleanupDeadlineEpochMillis < nextRecord.exp * 1000 then return -1 end
 local current = redis.call('GET', key)
 if current == replacement then
     if redis.call('PEXPIRETIME', key) ~= deadline then return -3 end
     -- Reassert identical bytes/deadline on this physical connection so its WAITAOF covers retry.
-    redis.call('SET', key, replacement, 'PXAT', expiry)
+    redis.call('SET', key, replacement, 'PXAT', cleanupDeadline)
     return 0
 end
 if expected == '' then
@@ -48,6 +54,6 @@ else
     nextRecord.state, nextRecord.registryVersion = nil, nil
     if not equal(prior,nextRecord) then return -1 end
 end
-redis.call('SET', key, replacement, 'PXAT', expiry)
+redis.call('SET', key, replacement, 'PXAT', cleanupDeadline)
 return 1
 
