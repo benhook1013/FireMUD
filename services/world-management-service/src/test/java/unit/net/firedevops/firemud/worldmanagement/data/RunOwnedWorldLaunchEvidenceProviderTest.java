@@ -109,13 +109,25 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
   }
 
   @Test
-  void enabledFixtureRejectsRelativeCapabilityPathAtFileReadStage(CapturedOutput output) {
+  void enabledFixtureRejectsRelativeCapabilityPathAtFileReadStage(CapturedOutput output)
+      throws Exception {
     GameDesignClient gameDesignClient = mock(GameDesignClient.class);
+    Path capability = temporaryDirectory.resolve("relative-capability.json");
+    Path receipt = temporaryDirectory.resolve("relative-receipt.json");
+    Files.writeString(capability, "{}", StandardCharsets.UTF_8);
+    Files.writeString(receipt, "{}", StandardCharsets.UTF_8);
+    Files.setPosixFilePermissions(
+        capability, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.GROUP_READ));
+    Files.setPosixFilePermissions(
+        receipt, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.GROUP_READ));
+    Path workingDirectory = Path.of("").toAbsolutePath().normalize();
+    String relativeCapabilityPath =
+        workingDirectory.relativize(capability.toAbsolutePath().normalize()).toString();
     RunOwnedWorldLaunchEvidenceProvider provider =
         new RunOwnedWorldLaunchEvidenceProvider(
             true,
-            Path.of("capability.json").toString(),
-            temporaryDirectory.resolve("receipt.json").toString(),
+            relativeCapabilityPath,
+            receipt.toString(),
             "fixture-run",
             "firemud-fixture-run",
             new CommonGrpcClientProperties(),
