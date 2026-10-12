@@ -447,6 +447,7 @@ class LaunchDescriptorServiceIntegrationTest {
     Fixture fixture = fixture("cp-rollback");
     AuthoredWorldLaunchDescriptorEvidence evidence = evidence(fixture, "ld-rollback-candidate");
     LaunchDescriptor candidate = entity(evidence, fixture);
+    candidate.setOutcomeStatus(LaunchDescriptor.OUTCOME_SUCCESS);
     TransactionTemplate transaction = new TransactionTemplate(transactionManager);
 
     assertThatThrownBy(

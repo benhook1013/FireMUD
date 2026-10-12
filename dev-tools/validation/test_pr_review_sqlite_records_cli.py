@@ -2173,6 +2173,40 @@ class ReviewRecordsCliTest(unittest.TestCase):
         open_file.assert_called_once_with("rb")
         self.assertEqual(stream.requested_bytes, 512_001)
 
+    def test_retrospective_zero_finding_import_has_unknown_review_clocks(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        for explicit_null in (False, True):
+            run = {
+                "run_id": f"pr3163-sol-medium-retro-{explicit_null}", "source_pr": 3163,
+                "channel": "subagent", "reviewer": "gpt-5.6-sol (reasoning medium)",
+                "scope": "broad", "coverage_limits": ["Retrospective import; exact review clocks unknown."],
+                "outcome": "completed", "source_head": "2d52d8be43b8563e796151b5959a9050c5152ad9",
+            }
+            if explicit_null:
+                run.update(started_at=None, finished_at=None)
+            document = {"api_version": 1, "run": run, "findings": []}
+            self.import_file.write_text(json.dumps(document), encoding="utf-8")
+            with patch.object(sqlite_review_records, "_now", return_value="2026-10-11T15:49:59Z"):
+                code, imported = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
+            self.assertEqual(code, 0)
+            self.assertTrue(imported["result"]["finalized"])
+            _, history = self.invoke("history", "--pr", "3163", "--database", str(self.database))
+            retained = next(item for item in history["result"]["runs"] if item["run_id"] == run["run_id"])
+            self.assertIsNone(retained["started_at"])
+            self.assertIsNone(retained["finished_at"])
+            self.assertEqual(retained["storage_timestamps"]["started_at"], {"value": "2026-10-11T15:49:59Z", "source": "generated"})
+            self.assertEqual(retained["finalized_at"], "2026-10-11T15:49:59Z")
+            self.assertEqual(history["result"]["attempts"], [])
+            code, replay = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
+            self.assertEqual(code, 0)
+            self.assertTrue(replay["result"]["idempotent_replay"])
+            document["run"]["started_at"] = "2026-10-11T15:00:00Z"
+            self.import_file.write_text(json.dumps(document), encoding="utf-8")
+            code, _ = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
+            self.assertEqual(code, 2)
+            _, after = self.invoke("history", "--pr", "3163", "--database", str(self.database))
+            self.assertEqual(history, after)
+
     def test_complete_batch_import_decides_and_finalizes_atomically(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         self.import_file.write_text(
@@ -2220,6 +2254,80 @@ class ReviewRecordsCliTest(unittest.TestCase):
         _, history = self.invoke("history", "--pr", "2828", "--database", str(self.database))
         self.assertEqual(len(history["result"]["runs"]), 1)
         self.assertEqual(len(history["result"]["decisions"]), 2)
+
+    def test_batch_import_validate_only_reuses_validators_without_touching_database(self) -> None:
+        missing_database = self.database.parent / "uncreated" / "controller.sqlite3"
+        completed = {
+            "api_version": 1,
+            "run": {
+                "run_id": "manual-validate-completed",
+                "source_pr": 2828,
+                "channel": "manual",
+                "reviewer": "reviewer",
+                "scope": "narrow",
+                "coverage_limits": ["static inspection only"],
+                "outcome": "completed",
+            },
+            "findings": [
+                {
+                    "source_finding_key": "accepted",
+                    "title": "Validate the import boundary",
+                    "decision": "accepted",
+                    "actor": "owner",
+                    "reason": "validated source finding",
+                }
+            ],
+        }
+        incomplete = {
+            "api_version": 1,
+            "run": {
+                **completed["run"],
+                "run_id": "manual-validate-incomplete",
+                "outcome": "incomplete",
+            },
+            "findings": [{"source_finding_key": "pending", "title": "Pending source finding"}],
+        }
+
+        for document in (completed, incomplete):
+            with self.subTest(outcome=document["run"]["outcome"]):
+                self.import_file.write_text(json.dumps(document), encoding="utf-8")
+                code, result = self.invoke(
+                    "import-run",
+                    "--input",
+                    str(self.import_file),
+                    "--database",
+                    str(missing_database),
+                    "--validate-only",
+                )
+                self.assertEqual(code, 0, result)
+                self.assertEqual(result["result"]["status"], "valid")
+                self.assertFalse(result["result"]["imported"])
+                self.assertFalse(result["result"]["database_state_checked"])
+                self.assertFalse(missing_database.parent.exists())
+
+        valid_completed = json.loads(json.dumps(completed))
+        completed["findings"][0]["reason"] = "r" * 301
+        self.import_file.write_text(json.dumps(completed), encoding="utf-8")
+        code, result = self.invoke(
+            "import-run",
+            "--input",
+            str(self.import_file),
+            "--database",
+            str(missing_database),
+            "--validate-only",
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("reason must be text of at most 300 characters", result["error"])
+        self.assertFalse(missing_database.parent.exists())
+
+        self.invoke("bootstrap", "--database", str(self.database))
+        self.import_file.write_text(json.dumps(valid_completed), encoding="utf-8")
+        before = self.database.read_bytes()
+        code, result = self.invoke(
+            "import-run", "--input", str(self.import_file), "--database", str(self.database), "--validate-only"
+        )
+        self.assertEqual(code, 0, result)
+        self.assertEqual(self.database.read_bytes(), before)
 
     def test_empty_incomplete_batch_is_recorded_as_unattributable(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))

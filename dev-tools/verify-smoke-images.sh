@@ -20,6 +20,7 @@ ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 COMPOSE_UP_ARGS=(up -d --remove-orphans)
 SMOKE_COMPOSE_UP_ATTEMPTS="${SMOKE_COMPOSE_UP_ATTEMPTS:-3}"
 SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS="${SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS:-5}"
+COMPOSE_START_ATTEMPTED=false
 # shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 export FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false
@@ -102,6 +103,33 @@ if [[ "$SMOKE_MINIO_LOCAL_ONLY" == "true" && "${SMOKE_COMPOSE_CONFIG_ONLY:-false
 fi
 
 cleanup() {
+  local exit_status=$?
+  local capture_failed=false
+  local capture_file
+  local service
+  trap - EXIT
+  if ((exit_status != 0)) && [[ "$COMPOSE_START_ATTEMPTED" == true ]]; then
+    for service in game-design-service game-session-service world-management-service; do
+      echo "Capturing bounded run-owned smoke logs for $service." >&2
+      if ! capture_file="$(mktemp)"; then
+        capture_failed=true
+        continue
+      fi
+      if docker compose "${COMPOSE_FILES[@]}" logs \
+        --no-color --timestamps --tail 200 "$service" >"$capture_file" 2>&1; then
+        if ! head -c 65536 "$capture_file"; then
+          capture_failed=true
+        fi
+      else
+        capture_failed=true
+        head -c 65536 "$capture_file" || true
+      fi
+      rm -f "$capture_file"
+    done
+    if [[ "$capture_failed" == true ]]; then
+      echo "Could not capture run-owned smoke service logs." >&2
+    fi
+  fi
   if [[ -n "$COMPOSE_CONFIG_FILE" ]]; then
     rm -f "$COMPOSE_CONFIG_FILE"
   fi
@@ -111,6 +139,7 @@ cleanup() {
   else
     rm -f "$ROOT_ENV_FILE"
   fi
+  exit "$exit_status"
 }
 trap cleanup EXIT
 
@@ -226,6 +255,7 @@ if [[ "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" == "true" ]]; then
   exit 0
 fi
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
+COMPOSE_START_ATTEMPTED=true
 compose_up_with_retry
 bash "$HEALTH_CHECK_SCRIPT" "${COMPOSE_FILES[@]}"
 

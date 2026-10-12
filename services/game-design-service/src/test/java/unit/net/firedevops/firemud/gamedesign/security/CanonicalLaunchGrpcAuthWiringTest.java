@@ -81,7 +81,7 @@ class CanonicalLaunchGrpcAuthWiringTest {
   private static final String DIGEST = "sha256:" + "a".repeat(64);
 
   @Test
-  void sameNamespaceGameSessionPeerReachesEachRealCanonicalLaunchHandlerWithoutBearer() {
+  void sameNamespaceGameSessionPeerReachesResolveAndDescriptorReadButBindingReadIsDenied() {
     AuthTokenInterceptor interceptor = interceptor();
     Harness harness = harness();
     when(harness.launchDescriptorService().resolveLaunchDescriptor(any()))
@@ -96,17 +96,6 @@ class CanonicalLaunchGrpcAuthWiringTest {
                 anyString(),
                 anyString()))
         .thenThrow(new IllegalArgumentException("intentional exact read probe"));
-    when(harness
-            .completeLaunchBindingService()
-            .getCompleteLaunchBinding(
-                any(UUID.class),
-                any(UUID.class),
-                anyString(),
-                anyString(),
-                anyString(),
-                anyString()))
-        .thenThrow(new IllegalArgumentException("intentional complete read probe"));
-
     DispatchResult<ResolveLaunchDescriptorResponse> resolve =
         dispatchHandler(
             interceptor,
@@ -150,13 +139,12 @@ class CanonicalLaunchGrpcAuthWiringTest {
     assertThat(completeRead.dispatched()).isTrue();
     assertThat(completeRead.closedStatus()).isNull();
     assertThat(completeRead.response()).isNotNull();
+    assertThat(completeRead.response().getError().getCode()).isEqualTo("PERMISSION_DENIED");
     verify(harness.launchDescriptorService()).resolveLaunchDescriptor(any());
     verify(harness.launchDescriptorService())
         .getLaunchDescriptor(
             any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString());
-    verify(harness.completeLaunchBindingService())
-        .getCompleteLaunchBinding(
-            any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString());
+    verifyNoInteractions(harness.completeLaunchBindingService());
   }
 
   @Test
@@ -169,7 +157,7 @@ class CanonicalLaunchGrpcAuthWiringTest {
   }
 
   @Test
-  void worldAndEntityPeersAreLimitedToTheirDeclaredLaunchReadHandlers() {
+  void worldDescriptorReadIsAllowedButCompleteBindingCandidatePeersAreDenied() {
     AuthTokenInterceptor interceptor = interceptor();
     Harness harness = harness();
     when(harness
@@ -182,17 +170,6 @@ class CanonicalLaunchGrpcAuthWiringTest {
                 anyString(),
                 anyString()))
         .thenThrow(new IllegalArgumentException("intentional exact read probe"));
-    when(harness
-            .completeLaunchBindingService()
-            .getCompleteLaunchBinding(
-                any(UUID.class),
-                any(UUID.class),
-                anyString(),
-                anyString(),
-                anyString(),
-                anyString()))
-        .thenThrow(new IllegalArgumentException("intentional complete read probe"));
-
     DispatchResult<GetLaunchDescriptorResponse> worldDescriptorRead =
         dispatchHandler(
             interceptor,
@@ -228,14 +205,18 @@ class CanonicalLaunchGrpcAuthWiringTest {
             GameDesignGrpcService::getCompleteLaunchBinding);
 
     assertAllowedHandlerReached(worldDescriptorRead);
-    assertAllowedHandlerReached(worldCompleteRead);
-    assertAllowedHandlerReached(entityCompleteRead);
+    assertThat(worldCompleteRead.dispatched()).isTrue();
+    assertThat(worldCompleteRead.closedStatus()).isNull();
+    assertThat(worldCompleteRead.response()).isNotNull();
+    assertThat(worldCompleteRead.response().getError().getCode()).isEqualTo("PERMISSION_DENIED");
+    assertThat(entityCompleteRead.dispatched()).isTrue();
+    assertThat(entityCompleteRead.closedStatus()).isNull();
+    assertThat(entityCompleteRead.response()).isNotNull();
+    assertThat(entityCompleteRead.response().getError().getCode()).isEqualTo("PERMISSION_DENIED");
     verify(harness.launchDescriptorService())
         .getLaunchDescriptor(
             any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString());
-    verify(harness.completeLaunchBindingService(), org.mockito.Mockito.times(2))
-        .getCompleteLaunchBinding(
-            any(UUID.class), any(UUID.class), anyString(), anyString(), anyString(), anyString());
+    verifyNoInteractions(harness.completeLaunchBindingService());
 
     assertDenied(
         interceptor,

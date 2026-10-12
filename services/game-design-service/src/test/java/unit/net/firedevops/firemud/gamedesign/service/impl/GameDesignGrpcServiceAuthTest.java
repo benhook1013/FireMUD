@@ -23,6 +23,8 @@ import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
+import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateRequest;
+import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateRequest;
@@ -42,6 +44,49 @@ class GameDesignGrpcServiceAuthTest {
   @AfterEach
   void tearDown() {
     SessionContext.clear();
+  }
+
+  @Test
+  void versionStateMutationDeniesPlayerBeforeOwnerRead() {
+    VersionService versionService = Mockito.mock(VersionService.class);
+    GameDesignGrpcService service =
+        new GameDesignGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RevisionService.class),
+            versionService,
+            Mockito.mock(LaunchDescriptorService.class),
+            Mockito.mock(CompleteLaunchBindingService.class),
+            Mockito.mock(TemplateRemapSetService.class),
+            Mockito.mock(VersionAssetArtifactService.class),
+            Mockito.mock(SettingsAuthorityService.class),
+            Mockito.mock(GameAuthoredHelpTopicService.class),
+            new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty()),
+            new SimpleMeterRegistry());
+    SessionContext.setContext("1", List.of("player"), Map.of());
+    AtomicReference<CompareAndSetVersionStateResponse> response = new AtomicReference<>();
+    service.compareAndSetVersionState(
+        CompareAndSetVersionStateRequest.newBuilder()
+            .setTenantId("1")
+            .setVersionId(7L)
+            .setExpectedVersionStateEpoch(1L)
+            .setNewState(
+                net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                    .VERSION_LIFECYCLE_STATE_RETIRED)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CompareAndSetVersionStateResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable throwable) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+    assertEquals("PERMISSION_DENIED", response.get().getError().getCode());
+    Mockito.verifyNoInteractions(versionService);
   }
 
   @Test
@@ -140,6 +185,43 @@ class GameDesignGrpcServiceAuthTest {
         "game-session-service",
         "world-management-service");
     verifyNoInteractions(artifactService);
+  }
+
+  @Test
+  void completeLaunchBindingReadDeniesEveryIdentityBeforeOwnerServiceAccess() {
+    CompleteLaunchBindingService bindingService = Mockito.mock(CompleteLaunchBindingService.class);
+    GameDesignGrpcService service =
+        new GameDesignGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RevisionService.class),
+            Mockito.mock(VersionService.class),
+            Mockito.mock(LaunchDescriptorService.class),
+            bindingService,
+            Mockito.mock(TemplateRemapSetService.class),
+            Mockito.mock(VersionAssetArtifactService.class),
+            Mockito.mock(SettingsAuthorityService.class),
+            Mockito.mock(GameAuthoredHelpTopicService.class),
+            new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty()),
+            new SimpleMeterRegistry());
+    ReflectionTestUtils.setField(service, "workloadNamespace", WORKLOAD_NAMESPACE);
+
+    this.<net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse>assertDeniedMatrix(
+        observer ->
+            service.getCompleteLaunchBinding(
+                net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest.newBuilder()
+                    .setRequestId("12345678-1234-4234-8234-123456789abc")
+                    .setCanonicalTenantId("22345678-1234-4234-8234-123456789abc")
+                    .setWorldSlug("world")
+                    .setControlPlaneRequestId("request-1")
+                    .setExpectedRequestDigest("request-digest")
+                    .setExpectedResultDigest("result-digest")
+                    .build(),
+                observer),
+        response -> response.getError().getCode(),
+        "game-session-service",
+        "world-management-service",
+        "entity-management-service");
+    verifyNoInteractions(bindingService);
   }
 
   private GameDesignGrpcService newService(

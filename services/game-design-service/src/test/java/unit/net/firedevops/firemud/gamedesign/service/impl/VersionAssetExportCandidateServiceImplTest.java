@@ -10,6 +10,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -31,11 +32,13 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.AssetSelection;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.ExportSnapshot;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.AssetExportOutcomePendingException;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.FrozenAssetExportCandidate;
 import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.VersionAssetExportCandidateService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetPublicationService;
@@ -46,7 +49,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
-import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -70,11 +73,14 @@ class VersionAssetExportCandidateServiceImplTest {
   private final PublishAttemptRepository attemptRepository = mock(PublishAttemptRepository.class);
   private final VersionAssetArtifactRepository artifactRepository =
       mock(VersionAssetArtifactRepository.class);
+  private final VersionAssetPublicationRepository publicationRepository =
+      mock(VersionAssetPublicationRepository.class);
   private final VersionAssetPublicationService publicationService =
       mock(VersionAssetPublicationService.class);
   private final PlatformTransactionManager transactionManager = new NoOpTransactionManager();
   private final S3Client s3Client = mock(S3Client.class);
   private final Map<String, StoredObject> objectStore = new HashMap<>();
+  private final byte[] sourceBytes = "published logo bytes".getBytes(StandardCharsets.UTF_8);
 
   private VersionAssetExportCandidateService candidateService;
   private Version version;
@@ -85,7 +91,6 @@ class VersionAssetExportCandidateServiceImplTest {
 
   @BeforeEach
   void setUp() throws IOException {
-    byte[] sourceBytes = "published logo bytes".getBytes(StandardCharsets.UTF_8);
     String sourceDigest = digest(sourceBytes);
     snapshot =
         new ExportSnapshot(
@@ -96,7 +101,8 @@ class VersionAssetExportCandidateServiceImplTest {
             CANONICAL_TENANT_ID,
             CANONICAL_VERSION_ID,
             List.of(
-                new AssetSelection("branding/logo", 41L, sourceBytes, "image/png", sourceDigest)));
+                new AssetSelection(
+                    "branding/logo", 41L, sourceBytes.length, "image/png", sourceDigest)));
 
     version = new Version();
     version.setId(VERSION_ID);
@@ -140,8 +146,12 @@ class VersionAssetExportCandidateServiceImplTest {
         .thenReturn(Optional.of(artifact));
     when(artifactRepository.save(any(VersionAssetArtifact.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(publicationRepository.readFrozenSnapshot(TENANT_ID, VERSION_NUMBER)).thenReturn(snapshot);
     when(publicationService.freezeOrReadSnapshot(TENANT_ID, VERSION_NUMBER)).thenReturn(snapshot);
     when(publicationService.readFrozenSnapshot(TENANT_ID, VERSION_NUMBER)).thenReturn(snapshot);
+    when(publicationService.readFrozenAssetBytes(
+            TENANT_ID, VERSION_NUMBER, snapshot.items().get(0)))
+        .thenReturn(sourceBytes.clone());
     when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
         .thenAnswer(
             invocation -> {
@@ -154,7 +164,7 @@ class VersionAssetExportCandidateServiceImplTest {
               objectStore.put(request.key(), new StoredObject(bytes, request.contentType()));
               return PutObjectResponse.builder().build();
             });
-    when(s3Client.getObjectAsBytes(any(GetObjectRequest.class)))
+    when(s3Client.getObject(any(GetObjectRequest.class)))
         .thenAnswer(
             invocation -> {
               GetObjectRequest request = invocation.getArgument(0);
@@ -162,12 +172,12 @@ class VersionAssetExportCandidateServiceImplTest {
               if (stored == null) {
                 throw new IllegalStateException("object is missing");
               }
-              return ResponseBytes.fromByteArray(
+              return new ResponseInputStream<>(
                   GetObjectResponse.builder()
                       .contentType(stored.contentType())
                       .contentLength((long) stored.bytes().length)
                       .build(),
-                  stored.bytes());
+                  new ByteArrayInputStream(stored.bytes()));
             });
 
     candidateService =
@@ -176,7 +186,7 @@ class VersionAssetExportCandidateServiceImplTest {
             gameRepository,
             attemptRepository,
             artifactRepository,
-            publicationService,
+            publicationRepository,
             transactionManager,
             new ObjectMapper());
     AssetStoreProperties properties = new AssetStoreProperties();
@@ -190,6 +200,7 @@ class VersionAssetExportCandidateServiceImplTest {
   @Test
   void publishedRepairReusesCandidateAfterSuccessfulPublishAttempt() {
     ExportedAssetManifest published = exporter.exportAssets(TENANT_ID, VERSION_NUMBER);
+    assertEquals("https://assets.example.invalid/assets", artifact.getCandidatePublicBaseUrl());
     attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     version.setVersionStateEpoch(4L);
@@ -218,19 +229,20 @@ class VersionAssetExportCandidateServiceImplTest {
         puts.getAllValues().stream().map(PutObjectRequest::ifNoneMatch).toList());
 
     ArgumentCaptor<GetObjectRequest> readbacks = ArgumentCaptor.forClass(GetObjectRequest.class);
-    verify(s3Client, times(2)).getObjectAsBytes(readbacks.capture());
+    verify(s3Client, times(2)).getObject(readbacks.capture());
     assertEquals(
         List.of(artifactKey, manifestKey),
         readbacks.getAllValues().stream().map(GetObjectRequest::key).toList());
     assertEquals(
         List.of(artifactKey, manifestKey), objectStore.keySet().stream().sorted().toList());
     assertEquals("image/png", objectStore.get(artifactKey).contentType());
-    assertEquals(
-        digest(snapshot.items().get(0).bytes()), digest(objectStore.get(artifactKey).bytes()));
+    assertEquals(digest(sourceBytes), digest(objectStore.get(artifactKey).bytes()));
     assertEquals(published.manifestHash(), digest(objectStore.get(manifestKey).bytes()));
     assertEquals("application/json", objectStore.get(manifestKey).contentType());
     verify(attemptRepository, never()).findByPublishWorkflowIdForUpdate(any());
     verify(artifactRepository, never()).save(any(VersionAssetArtifact.class));
+    verify(publicationService, times(2))
+        .readFrozenAssetBytes(TENANT_ID, VERSION_NUMBER, snapshot.items().get(0));
   }
 
   @Test
@@ -338,6 +350,7 @@ class VersionAssetExportCandidateServiceImplTest {
     artifact.setPublishedObjectProofsJson(null);
     artifact.setManifestSchemaVersion(null);
     artifact.setCandidateSnapshotVersionId(null);
+    artifact.setCandidatePublicBaseUrl(null);
     clearInvocations(s3Client);
 
     assertThrows(
@@ -355,9 +368,8 @@ class VersionAssetExportCandidateServiceImplTest {
                             new PublishedArtifactDigest(
                                 "branding/logo",
                                 "BINARY",
-                                "artifacts/sha256/"
-                                    + digest(snapshot.items().get(0).bytes()).substring(7),
-                                digest(snapshot.items().get(0).bytes()),
+                                "artifacts/sha256/" + digest(sourceBytes).substring(7),
+                                digest(sourceBytes),
                                 "image/png",
                                 1))))));
 
@@ -374,15 +386,77 @@ class VersionAssetExportCandidateServiceImplTest {
     artifact.setStateEpoch(3L);
     clearInvocations(s3Client);
 
-    assertEquals(retained, candidateService.readExportCandidate(TENANT_ID, VERSION_NUMBER));
+    FrozenAssetExportCandidate frozen =
+        candidateService.readExportCandidate(TENANT_ID, VERSION_NUMBER);
+    assertEquals(retained, frozen.manifest());
+    assertEquals("https://assets.example.invalid/assets", frozen.publicBaseUrl());
 
     assertThrows(
         IllegalStateException.class,
-        () -> candidateService.recordExportCandidate(TENANT_ID, VERSION_NUMBER, retained));
+        () ->
+            candidateService.recordExportCandidate(
+                TENANT_ID,
+                VERSION_NUMBER,
+                new FrozenAssetExportCandidate(retained, frozen.publicBaseUrl())));
     assertThrows(
         IllegalStateException.class, () -> exporter.exportAssets(TENANT_ID, VERSION_NUMBER));
 
     verify(s3Client, never()).putObject(any(PutObjectRequest.class), any(RequestBody.class));
+  }
+
+  @Test
+  void candidateOriginIsImmutableAndMissingRetainedOriginFailsClosed() {
+    ExportedAssetManifest manifest = exporter.exportAssets(TENANT_ID, VERSION_NUMBER);
+    FrozenAssetExportCandidate retained =
+        candidateService.readExportCandidate(TENANT_ID, VERSION_NUMBER);
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            candidateService.recordExportCandidate(
+                TENANT_ID,
+                VERSION_NUMBER,
+                new FrozenAssetExportCandidate(
+                    manifest, "https://replacement.example.invalid/assets")));
+
+    artifact.setCandidatePublicBaseUrl(null);
+    assertThrows(
+        IllegalStateException.class,
+        () -> candidateService.readExportCandidate(TENANT_ID, VERSION_NUMBER));
+    assertEquals("https://assets.example.invalid/assets", retained.publicBaseUrl());
+  }
+
+  @Test
+  void candidateOriginMustUseCanonicalHttpsAssetsPath() {
+    ExportedAssetManifest manifest = exporter.exportAssets(TENANT_ID, VERSION_NUMBER);
+    FrozenAssetExportCandidate original =
+        candidateService.readExportCandidate(TENANT_ID, VERSION_NUMBER);
+
+    for (String invalidOrigin :
+        List.of(
+            "http://assets.example.invalid/assets",
+            "https://assets.example.invalid/assets/",
+            "https://user@assets.example.invalid/assets",
+            "https://assets.example.invalid/assets?query=1")) {
+      IllegalStateException thrown =
+          assertThrows(
+              IllegalStateException.class,
+              () ->
+                  candidateService.recordExportCandidate(
+                      TENANT_ID,
+                      VERSION_NUMBER,
+                      new FrozenAssetExportCandidate(manifest, invalidOrigin)));
+
+      assertEquals("ASSET_EXPORT_CANDIDATE_CONFLICT", thrown.getMessage());
+      assertEquals(IllegalArgumentException.class, thrown.getCause().getClass());
+      assertEquals(
+          invalidOrigin.endsWith("/assets/")
+              ? "frozen origin must be canonical"
+              : "public base URL must be an HTTPS /assets origin",
+          thrown.getCause().getMessage());
+    }
+
+    assertEquals(original, candidateService.readExportCandidate(TENANT_ID, VERSION_NUMBER));
   }
 
   private PublishedReleaseBundleDto publishedBundle(ExportedAssetManifest manifest) {

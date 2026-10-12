@@ -77,11 +77,11 @@ import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactReposito
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.FrozenAssetExportCandidate;
 import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
 import net.firedevops.firemud.gamedesign.service.impl.VersionAssetArtifactServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.VersionAssetExportCandidateServiceImpl;
-import net.firedevops.firemud.gamedesign.service.impl.VersionAssetPublicationServiceImpl;
 import net.firedevops.firemud.gamedesign.v1.ReadGameDesignPublicationTerminalResponse;
 import net.firedevops.firemud.test.TlsTestSupport;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -493,16 +493,16 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
   }
 
   @Test
-  void retainedV50TerminalReadFailsPreconditionWithoutBackfillingEvidenceOrEpoch()
+  void retainedV50_6TerminalReadFailsPreconditionWithoutBackfillingEvidenceOrEpoch()
       throws Exception {
-    var fixture = fixture("50");
+    var fixture = fixture("50.6");
     assertThat(fixture.candidate()).isNull();
     var op = fixture.operation();
     var old = new ByteArrayOutputStream();
     DraftAuthorizationFenceBinding.frame(old, "game-design-publication-owner-readback/v1");
     DraftAuthorizationFenceBinding.frame(old, op.canonicalBytes());
     DraftAuthorizationFenceBinding.frame(old, "NO_PUBLICATION");
-    // V50 framed nullable release_row_json as a present, zero-byte fourth frame for
+    // V50.6 framed nullable release_row_json as a present, zero-byte fourth frame for
     // NO_PUBLICATION. Preserve that historical encoding exactly without routing an empty value
     // through the nonempty canonical-text helper.
     DraftAuthorizationFenceBinding.frame(old, new byte[0]);
@@ -882,8 +882,8 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     attempt.setStatus(PublishAttemptStatus.FAILED);
     attempt.setFailureCode("ISOLATED_BUSINESS_DENIAL");
     fixture.attempts().save(attempt);
-    // Emulate the historical V50/V51 seal storage directly. The current attempt wrapper also
-    // writes the V53 realm-policy association, which is absent from these schemas.
+    // Emulate the historical V50.6/V50.7 seal storage directly. The current attempt wrapper also
+    // writes the V50.9 realm-policy association, which is absent from these schemas.
     fixture
         .operations()
         .seal(op.tenantKey(), op.workflowId(), op.versionId(), op.selectionDigest(), false);
@@ -924,7 +924,8 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
     fixture.attempts().save(attempt);
     if (seal) {
-      // Emulate the historical V50/V51 seal storage without querying the V53 policy association.
+      // Emulate the historical V50.6/V50.7 seal storage without querying the V50.9 policy
+      // association.
       fixture
           .operations()
           .seal(op.tenantKey(), op.workflowId(), op.versionId(), op.selectionDigest(), true);
@@ -983,12 +984,13 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     bundle.setCanonicalVersionId(op.world().request().canonicalVersionId());
     bundle.setAttestationSchemaVersion("v2");
     bundle.setPublishWorkflowId(op.workflowId());
-    bundle.setManifestHash(fixture.candidate().manifestHash());
+    bundle.setManifestHash(fixture.candidate().manifest().manifestHash());
     bundle.setManifestSchemaVersion(1);
     bundle.setArtifactDigestsJson(
-        new ObjectMapper().writeValueAsString(fixture.candidate().artifactDigests()));
+        new ObjectMapper().writeValueAsString(fixture.candidate().manifest().artifactDigests()));
     bundle.setRequiredManifestAssetKeysJson(
-        new ObjectMapper().writeValueAsString(fixture.candidate().requiredManifestAssetKeys()));
+        new ObjectMapper()
+            .writeValueAsString(fixture.candidate().manifest().requiredManifestAssetKeys()));
     bundle.setCommandDefinitionsJson("[]");
     bundle.setGenerationConfigRevision("generation-1");
     bundle.setParticipantDigestsJson(
@@ -1025,7 +1027,7 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
   }
 
   private Fixture fixture() throws Exception {
-    return fixture("51");
+    return fixture("50.7");
   }
 
   private Version insertRetainedVersion(
@@ -1088,8 +1090,9 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               requested.setName("ISOLATED publication owner");
               return games.save(requested);
             });
-    // These V50/V51 cases model retained history. Insert the canonical owner row before V52 so
-    // the current VersionRepository does not enroll it in post-V51 source storage.
+    // These V50.6/V50.7 cases model retained history. Insert the canonical owner row before V50.8
+    // so
+    // the current VersionRepository does not enroll it in post-V50.7 source storage.
     Version version = write.execute(status -> insertRetainedVersion(dsl, versions, game, 1));
     var target =
         new TargetProof(
@@ -1111,8 +1114,8 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               }
             });
     var operations = new GameDesignPublicationOperationRepository(dsl);
-    ExportedAssetManifest readCandidate = null;
-    if (!"50".equals(migrationTarget)) {
+    FrozenAssetExportCandidate readCandidate = null;
+    if (!"50.6".equals(migrationTarget)) {
       var gameAssets = new GameAssetRepository(dsl);
       var asset =
           write.execute(
@@ -1125,12 +1128,15 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                 return gameAssets.save(requested);
               });
       var publicationRepository = new VersionAssetPublicationRepository(dsl);
-      var publicationService =
-          new VersionAssetPublicationServiceImpl(transactions, publicationRepository);
-      publicationService.associateDraftAsset(
-          game.getTenantId(), version.getId(), asset.getId(), "logo");
+      write.executeWithoutResult(
+          status ->
+              publicationRepository.associateDraftAsset(
+                  game.getTenantId(), version.getId(), asset.getId(), "logo"));
       var snapshot =
-          publicationService.freezeOrReadSnapshot(game.getTenantId(), version.getVersionNumber());
+          write.execute(
+              status ->
+                  publicationRepository.freezeOrReadSnapshot(
+                      game.getTenantId(), version.getVersionNumber()));
       var artifactService =
           new VersionAssetArtifactServiceImpl(
               new VersionAssetArtifactRepository(dsl),
@@ -1156,7 +1162,7 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               games,
               new PublishAttemptRepository(dsl),
               artifacts,
-              publicationService,
+              publicationRepository,
               transactions,
               new ObjectMapper());
       var requestedCandidate = candidate(snapshot);
@@ -1192,7 +1198,7 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                 .migrate());
   }
 
-  private ExportedAssetManifest candidate(
+  private FrozenAssetExportCandidate candidate(
       VersionAssetPublicationRepository.ExportSnapshot snapshot) {
     var source = snapshot.items().get(0);
     String contentDigest = source.contentDigest();
@@ -1217,11 +1223,13 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
             + "\",\"url\":\""
             + url
             + "\"}}}";
-    return new ExportedAssetManifest(
-        sha256(manifestJson.getBytes(StandardCharsets.UTF_8)),
-        1,
-        List.of(source.usageKey()),
-        List.of(digest));
+    return new FrozenAssetExportCandidate(
+        new ExportedAssetManifest(
+            sha256(manifestJson.getBytes(StandardCharsets.UTF_8)),
+            1,
+            List.of(source.usageKey()),
+            List.of(digest)),
+        PUBLIC_BASE_URL);
   }
 
   private static String sha256(byte[] bytes) {
@@ -1253,6 +1261,6 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
       GameDesignPublicationOperationRepository operations,
       GameDesignPublicationOperationService service,
       GameDesignPublicationOperation operation,
-      ExportedAssetManifest candidate,
+      FrozenAssetExportCandidate candidate,
       Runnable completeMigration) {}
 }

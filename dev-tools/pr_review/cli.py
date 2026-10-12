@@ -189,6 +189,11 @@ def _parser() -> argparse.ArgumentParser:
         help="project selected-PR readiness and holds without ancestor rows or check inventories",
     )
     status.add_argument(
+        "--compact",
+        action="store_true",
+        help="keep the full selected-status report but return only the selected review-stack row",
+    )
+    status.add_argument(
         "--full-scan",
         action="store_true",
         help="deeply fetch and reconcile every configured PR",
@@ -278,6 +283,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     import_run.add_argument(
         "--input", required=True, metavar="JSON", help="curated metadata file, not raw capture/stdout"
+    )
+    import_run.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="validate input only; do not import or check replay/database state",
     )
     records_database(import_run)
 
@@ -1079,6 +1089,34 @@ def _failed_cli_attempts_from_history(history: dict[str, Any]) -> dict[str, Any]
 def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
     if args.acceptance_fixture is not None or args.state_path is not None:
         raise CliError("review-records commands do not accept acceptance-fixture options")
+    if args.records_command == "import-run" and args.validate_only:
+        run, findings, decisions = _load_records_import(args.input)
+        try:
+            SqliteReviewRecords.validate_import_run(
+                run_id=run["run_id"],
+                source_pr=run["source_pr"],
+                channel=run["channel"],
+                findings=findings,
+                outcome=run["outcome"],
+                source_decisions=decisions,
+                source_head=run.get("source_head"),
+                reviewer=run["reviewer"],
+                scope=run["scope"],
+                coverage_limits=run["coverage_limits"],
+                started_at=run.get("started_at"),
+                finished_at=run.get("finished_at"),
+            )
+        except ReviewRecordsError as exc:
+            raise CliError(str(exc)) from exc
+        return {
+            "api_version": 1,
+            "result": {
+                "status": "valid",
+                "imported": False,
+                "database_state_checked": False,
+                "message": "Input is valid; no import or replay check was performed.",
+            },
+        }, 0
     store = _records_store(args)
     if args.records_command == "bootstrap":
         store.bootstrap()
@@ -1574,12 +1612,50 @@ def _selected_pr_status_summary(report: Mapping[str, Any], pr: int) -> dict[str,
     }
 
 
+def _compact_selected_pr_status(report: Mapping[str, Any], pr: int) -> dict[str, Any]:
+    """Keep the full status evidence while omitting non-selected stack rows."""
+
+    stack_report = report.get("review_stack")
+    nested_stack = isinstance(stack_report, Mapping)
+    if not nested_stack:
+        # Acceptance fixtures return the controller's stack report directly.
+        stack_report = report
+    rows = stack_report.get("prs")
+    if not isinstance(rows, list):
+        raise CliError("compact status report has no review-stack PR rows")
+
+    selected_rows = [row for row in rows if isinstance(row, Mapping) and row.get("pr") == pr]
+    compact_report = dict(report)
+    compact_stack = dict(stack_report)
+    compact_stack["prs"] = selected_rows
+    compact_stack["output_projection"] = {
+        "scope": "selected_pr_rows_only",
+        "selected_pr_row_count": len(selected_rows),
+        "omitted_pr_row_count": len(rows) - len(selected_rows),
+    }
+    if nested_stack:
+        compact_report["review_stack"] = compact_stack
+    else:
+        compact_report["prs"] = selected_rows
+        compact_report["output_projection"] = compact_stack["output_projection"]
+    return compact_report
+
+
 def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
     if args.command == "status" and args.summary:
         if args.pr is None:
             raise CliError("status --summary requires --pr")
         if args.full_scan:
             raise CliError("status --summary cannot be combined with --full-scan")
+    if args.command == "status" and args.compact:
+        if args.pr is None:
+            raise CliError("status --compact requires --pr")
+        if not args.as_json:
+            raise CliError("status --compact requires --json")
+        if args.summary:
+            raise CliError("status --compact cannot be combined with --summary")
+        if args.full_scan:
+            raise CliError("status --compact cannot be combined with --full-scan")
 
     if args.command == "state":
         if args.acceptance_fixture is not None or args.state_path is not None:
@@ -1701,6 +1777,8 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 return _selected_pr_status_summary(report, args.pr), 0
             if args.summary:
                 return _render_selected_pr_status(report), 0
+            if args.compact:
+                return _compact_selected_pr_status(report, args.pr), 0
             return report, 0
         if selected_pr_status:
             budget.set_phase("pr_review_evidence", total=1)
@@ -1724,7 +1802,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
         if args.full_scan:
             stack_report = controller.status()
         else:
-            status_options = {"summary_only": True} if args.summary else {}
+            status_options = {"summary_only": True} if args.summary or args.compact else {}
             if conversation_payload is not None:
                 stack_report = controller.status_for_pr(
                     args.pr,
@@ -1794,6 +1872,8 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             report["mergeability"]["diagnosis"] = "NOT READY"
         if args.summary and args.as_json:
             return _selected_pr_status_summary(report, args.pr), 0
+        if args.compact:
+            return _compact_selected_pr_status(report, args.pr), 0
         return report if args.as_json else _render_selected_pr_status(report), 0
     if args.command == "evidence":
         if args.pr is None:

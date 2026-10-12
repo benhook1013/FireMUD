@@ -557,7 +557,7 @@ class RealmPolicySourcePostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .table("flyway_schema_history_game_design_service")
-        .target("54")
+        .target("50.10")
         .load()
         .migrate();
     var transactions = new DataSourceTransactionManager(dataSource);
@@ -598,7 +598,7 @@ class RealmPolicySourcePostgresIntegrationTest {
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     dataSource.setSchema(schema);
-    migrate(dataSource, schema, "51");
+    migrate(dataSource, schema, "50.7");
     var transactions = new DataSourceTransactionManager(dataSource);
     var write = new TransactionTemplate(transactions);
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -614,7 +614,7 @@ class RealmPolicySourcePostgresIntegrationTest {
               return new GameRepository(dsl).save(created);
             });
     var version = write.execute(status -> insertRetainedVersion(dsl, properties, game, 1));
-    migrate(dataSource, schema, "54");
+    migrate(dataSource, schema, "50.10");
     var target = target(version);
     var baseline = policyBinding(target, "0", "main", true);
     var policies = new RealmPolicySourceRepository(dsl);

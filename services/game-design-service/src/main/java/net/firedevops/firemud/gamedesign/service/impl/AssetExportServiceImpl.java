@@ -2,11 +2,16 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.annotation.Timed;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -17,6 +22,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.AssetSelection;
@@ -24,11 +30,13 @@ import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepos
 import net.firedevops.firemud.gamedesign.service.AssetExportOutcomePendingException;
 import net.firedevops.firemud.gamedesign.service.AssetExportService;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.FrozenAssetExportCandidate;
 import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.VersionAssetExportCandidateService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetPublicationService;
+import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
-import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
@@ -41,6 +49,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
     justification =
         "Spring rejects missing collaborators before publication; this bean has no finalizer")
 public class AssetExportServiceImpl implements AssetExportService {
+  private static final Logger logger = LoggingUtil.getLogger(AssetExportServiceImpl.class);
   private static final String ASSET_USAGE_KEY_COLLISION = "ASSET_USAGE_KEY_COLLISION";
   private static final String SNAPSHOT_UNAVAILABLE = "VERSION_ASSET_SNAPSHOT_UNAVAILABLE";
   private static final String SNAPSHOT_MISMATCH = "VERSION_ASSET_SNAPSHOT_MISMATCH";
@@ -140,71 +149,92 @@ public class AssetExportServiceImpl implements AssetExportService {
       PublishedReleaseBundleDto publishedBundle) {
     List<AssetSelection> selections = validateAndOrderSnapshot(snapshot, tenantId, versionNumber);
 
-    String publicBaseUrl = requireApprovedPublicBaseUrl();
-    List<PreparedArtifact> artifacts =
-        selections.stream()
-            .map(
-                selection ->
-                    prepareArtifact(selection, publicBaseUrl, snapshot.canonicalVersionId()))
-            .toList();
-    byte[] manifestBytes = serializeManifest(artifacts);
-    String manifestHash = "sha256:" + sha256Hex(manifestBytes);
-    String manifestObjectKey = MANIFEST_OBJECT_ROOT + manifestHash.substring("sha256:".length());
-
-    List<PublishedArtifactDigest> artifactDigests =
-        artifacts.stream().map(PreparedArtifact::digest).toList();
-    List<String> requiredManifestAssetKeys =
-        artifactDigests.stream().map(PublishedArtifactDigest::usageKey).toList();
-    ExportedAssetManifest candidate =
-        new ExportedAssetManifest(manifestHash, 1, requiredManifestAssetKeys, artifactDigests);
-
-    if (publishedBundle == null) {
-      requireDurableCandidate(tenantId, versionNumber, candidate);
-    } else {
-      requireExistingCandidate(tenantId, versionNumber, candidate);
-      PublishedReleaseBundleContract.requireExactRepairMatch(publishedBundle, candidate);
-    }
-
-    // Candidate metadata and object proofs are durable before any private object write.
-    // This producer does not transition lifecycle state or expose a release.
-    for (PreparedArtifact artifact : artifacts) {
+    FrozenAssetExportCandidate existing =
+        readCandidate(tenantId, versionNumber, publishedBundle == null);
+    String publicBaseUrl =
+        requireApprovedPublicBaseUrl(
+            existing == null ? properties.getPublicBaseUrl() : existing.publicBaseUrl());
+    try (PrivateStaging staging = new PrivateStaging()) {
+      List<PreparedArtifact> artifacts = new ArrayList<>(selections.size());
+      for (AssetSelection selection : selections) {
+        artifacts.add(
+            stageArtifact(
+                tenantId,
+                versionNumber,
+                selection,
+                publicBaseUrl,
+                snapshot.canonicalVersionId(),
+                staging));
+      }
+      byte[] manifestBytes = serializeManifest(artifacts);
+      String manifestHash = "sha256:" + sha256Hex(manifestBytes);
+      String manifestObjectKey = MANIFEST_OBJECT_ROOT + manifestHash.substring("sha256:".length());
+      List<PublishedArtifactDigest> artifactDigests =
+          artifacts.stream().map(PreparedArtifact::digest).toList();
+      ExportedAssetManifest manifest =
+          new ExportedAssetManifest(
+              manifestHash,
+              1,
+              artifactDigests.stream().map(PublishedArtifactDigest::usageKey).toList(),
+              artifactDigests);
+      FrozenAssetExportCandidate candidate =
+          new FrozenAssetExportCandidate(manifest, publicBaseUrl);
+      if (existing != null) {
+        requireCandidateMatch("read", candidate, existing);
+      }
+      if (publishedBundle == null) {
+        requireDurableCandidate(tenantId, versionNumber, candidate);
+      } else {
+        PublishedReleaseBundleContract.requireExactRepairMatch(publishedBundle, manifest);
+      }
+      // The complete source selection is verified in private staging and candidate evidence is
+      // independently committed before any shared content-addressed object is written.
+      for (PreparedArtifact artifact : artifacts) {
+        writeAndVerifyImmutableObject(
+            artifact.digest().immutableObjectKey(),
+            RequestBody.fromFile(artifact.path()),
+            artifact.path(),
+            artifact.byteSize(),
+            artifact.digest().contentType());
+      }
       writeAndVerifyImmutableObject(
-          artifact.digest().immutableObjectKey(),
-          artifact.bytes(),
-          artifact.digest().contentType());
+          manifestObjectKey,
+          RequestBody.fromBytes(manifestBytes),
+          manifestBytes,
+          MANIFEST_CONTENT_TYPE);
+      return manifest;
+    } catch (IOException exception) {
+      throw new IllegalStateException("ASSET_PRIVATE_STAGING_UNAVAILABLE", exception);
     }
-    writeAndVerifyImmutableObject(manifestObjectKey, manifestBytes, MANIFEST_CONTENT_TYPE);
-    return candidate;
   }
 
-  private void requireExistingCandidate(
-      String tenantId, int versionNumber, ExportedAssetManifest candidate) {
-    ExportedAssetManifest independentlyRead;
+  private FrozenAssetExportCandidate readCandidate(
+      String tenantId, int versionNumber, boolean allowAbsent) {
     try {
-      independentlyRead = candidateService.readExportCandidate(tenantId, versionNumber);
+      FrozenAssetExportCandidate existing =
+          candidateService.readExportCandidate(tenantId, versionNumber);
+      if (existing == null) {
+        throw new AssetExportOutcomePendingException("export candidate readback is missing");
+      }
+      return existing;
     } catch (RuntimeException exception) {
+      if (allowAbsent && "ASSET_EXPORT_CANDIDATE_NOT_FOUND".equals(exception.getMessage())) {
+        return null;
+      }
       throw candidateFailure("read", exception);
     }
-    requireCandidateMatch("read", candidate, independentlyRead);
   }
 
   private void requireDurableCandidate(
-      String tenantId, int versionNumber, ExportedAssetManifest candidate) {
-    ExportedAssetManifest recorded;
+      String tenantId, int versionNumber, FrozenAssetExportCandidate candidate) {
+    FrozenAssetExportCandidate recorded;
     try {
       recorded = candidateService.recordExportCandidate(tenantId, versionNumber, candidate);
     } catch (RuntimeException exception) {
       throw candidateFailure("record", exception);
     }
     requireCandidateMatch("record", candidate, recorded);
-
-    ExportedAssetManifest independentlyRead;
-    try {
-      independentlyRead = candidateService.readExportCandidate(tenantId, versionNumber);
-    } catch (RuntimeException exception) {
-      throw candidateFailure("read", exception);
-    }
-    requireCandidateMatch("read", candidate, independentlyRead);
+    requireCandidateMatch("read", candidate, readCandidate(tenantId, versionNumber, false));
   }
 
   private RuntimeException candidateFailure(String operation, RuntimeException cause) {
@@ -216,7 +246,7 @@ public class AssetExportServiceImpl implements AssetExportService {
   }
 
   private void requireCandidateMatch(
-      String operation, ExportedAssetManifest expected, ExportedAssetManifest actual) {
+      String operation, FrozenAssetExportCandidate expected, FrozenAssetExportCandidate actual) {
     if (actual == null) {
       throw new AssetExportOutcomePendingException(
           "export candidate " + operation + " readback is missing");
@@ -263,7 +293,8 @@ public class AssetExportServiceImpl implements AssetExportService {
         throw new IllegalStateException(ASSET_USAGE_KEY_COLLISION);
       }
       if (selection.assetId() <= 0
-          || selection.bytes() == null
+          || selection.byteSize() < 0
+          || selection.byteSize() > 25L * 1024 * 1024
           || selection.contentType() == null
           || selection.contentType().isBlank()
           || !selection.contentType().equals(selection.contentType().trim())
@@ -276,8 +307,7 @@ public class AssetExportServiceImpl implements AssetExportService {
       }
       requireCanonicalText(selection.contentType(), "contentType");
       requireCanonicalText(selection.contentDigest(), "contentDigest");
-      String actualDigest = "sha256:" + sha256Hex(selection.bytes());
-      if (!actualDigest.equals(selection.contentDigest())) {
+      if (!selection.contentDigest().matches("sha256:[0-9a-f]{64}")) {
         throw new IllegalStateException(SOURCE_BYTES_MISMATCH);
       }
       ordered.add(selection);
@@ -337,24 +367,44 @@ public class AssetExportServiceImpl implements AssetExportService {
           || left.assetId() != right.assetId()
           || !Objects.equals(left.contentType(), right.contentType())
           || !Objects.equals(left.contentDigest(), right.contentDigest())
-          || !Arrays.equals(left.bytes(), right.bytes())) {
+          || left.byteSize() != right.byteSize()) {
         throw new IllegalStateException(SNAPSHOT_MISMATCH);
       }
     }
   }
 
-  private PreparedArtifact prepareArtifact(
-      AssetSelection selection, String publicBaseUrl, UUID canonicalVersionId) {
-    byte[] bytes = selection.bytes();
-    String contentHash = sha256Hex(bytes);
-    String digest = "sha256:" + contentHash;
+  private PreparedArtifact stageArtifact(
+      String tenantId,
+      int versionNumber,
+      AssetSelection selection,
+      String publicBaseUrl,
+      UUID canonicalVersionId,
+      PrivateStaging staging)
+      throws IOException {
+    byte[] bytes = publicationService.readFrozenAssetBytes(tenantId, versionNumber, selection);
+    if (bytes == null
+        || bytes.length != selection.byteSize()
+        || !("sha256:" + sha256Hex(bytes)).equals(selection.contentDigest())) {
+      throw new IllegalStateException(SOURCE_BYTES_MISMATCH);
+    }
+    Path path = staging.newFile();
+    Files.write(path, bytes);
+    String contentHash = selection.contentDigest().substring("sha256:".length());
     String immutableObjectKey = ARTIFACT_OBJECT_ROOT + contentHash;
-    String url = publicBaseUrl + "/" + immutableObjectKey;
-
-    PublishedArtifactDigest artifactDigest =
+    PublishedArtifactDigest digest =
         new PublishedArtifactDigest(
-            selection.usageKey(), "BINARY", immutableObjectKey, digest, selection.contentType(), 1);
-    return new PreparedArtifact(artifactDigest, bytes, canonicalVersionId, url);
+            selection.usageKey(),
+            "BINARY",
+            immutableObjectKey,
+            selection.contentDigest(),
+            selection.contentType(),
+            1);
+    return new PreparedArtifact(
+        digest,
+        path,
+        selection.byteSize(),
+        canonicalVersionId,
+        publicBaseUrl + "/" + immutableObjectKey);
   }
 
   private static byte[] serializeManifest(List<PreparedArtifact> artifacts) {
@@ -422,29 +472,12 @@ public class AssetExportServiceImpl implements AssetExportService {
     json.append('"');
   }
 
-  private String requireApprovedPublicBaseUrl() {
-    String configured = properties.getPublicBaseUrl();
+  private String requireApprovedPublicBaseUrl(String configured) {
     try {
-      if (configured == null || configured.isBlank()) {
-        throw new IllegalArgumentException("missing public base URL");
-      }
-      URI uri = new URI(configured);
-      String path = uri.getRawPath();
-      if (!uri.isAbsolute()
-          || !"https".equalsIgnoreCase(uri.getScheme())
-          || uri.getHost() == null
-          || uri.getPort() == 0
-          || uri.getPort() > 65535
-          || uri.getRawUserInfo() != null
-          || uri.getRawQuery() != null
-          || uri.getRawFragment() != null
-          || !("/assets".equals(path) || "/assets/".equals(path))) {
-        throw new IllegalArgumentException(
-            "public base URL must be an approved HTTPS /assets origin");
-      }
-      rejectPrivateEndpointAlias(uri);
-      return "https://" + uri.getRawAuthority() + "/assets";
-    } catch (URISyntaxException | IllegalArgumentException exception) {
+      String normalized = FrozenAssetExportCandidate.normalizePublicBaseUrl(configured);
+      rejectPrivateEndpointAlias(URI.create(normalized));
+      return normalized;
+    } catch (IllegalArgumentException exception) {
       throw new IllegalStateException(PUBLIC_BASE_URL_INVALID, exception);
     }
   }
@@ -473,7 +506,19 @@ public class AssetExportServiceImpl implements AssetExportService {
     return normalized.endsWith(".") ? normalized.substring(0, normalized.length() - 1) : normalized;
   }
 
-  private void writeAndVerifyImmutableObject(String key, byte[] bytes, String contentType) {
+  private void writeAndVerifyImmutableObject(
+      String key, RequestBody body, Path path, long size, String contentType) {
+    writeAndVerifyImmutableObject(key, body, size, contentType, () -> Files.newInputStream(path));
+  }
+
+  private void writeAndVerifyImmutableObject(
+      String key, RequestBody body, byte[] bytes, String contentType) {
+    writeAndVerifyImmutableObject(
+        key, body, bytes.length, contentType, () -> new ByteArrayInputStream(bytes));
+  }
+
+  private void writeAndVerifyImmutableObject(
+      String key, RequestBody body, long size, String contentType, ExpectedStream expected) {
     RuntimeException putFailure = null;
     try {
       s3Client.putObject(
@@ -481,16 +526,15 @@ public class AssetExportServiceImpl implements AssetExportService {
               .bucket(properties.getBucket())
               .key(key)
               .contentType(contentType)
-              .contentLength((long) bytes.length)
+              .contentLength(size)
               .ifNoneMatch("*")
               .build(),
-          RequestBody.fromBytes(bytes));
+          body);
     } catch (RuntimeException exception) {
       putFailure = exception;
     }
-
     try {
-      verifyReadback(key, bytes, contentType);
+      verifyReadback(key, size, expected);
     } catch (ImmutableObjectConflictException conflict) {
       if (putFailure != null) {
         conflict.addSuppressed(putFailure);
@@ -507,20 +551,41 @@ public class AssetExportServiceImpl implements AssetExportService {
     }
   }
 
-  private void verifyReadback(String key, byte[] expectedBytes, String expectedContentType) {
-    ResponseBytes<GetObjectResponse> response =
-        s3Client.getObjectAsBytes(
-            GetObjectRequest.builder().bucket(properties.getBucket()).key(key).build());
-    byte[] actualBytes = response.asByteArray();
-    Long actualSize = response.response().contentLength();
-    String actualContentType = response.response().contentType();
-    if (actualSize == null
-        || actualSize.longValue() != expectedBytes.length
-        || !Objects.equals(expectedContentType, actualContentType)
-        || !Arrays.equals(expectedBytes, actualBytes)
-        || !sha256Hex(expectedBytes).equals(sha256Hex(actualBytes))) {
-      throw new ImmutableObjectConflictException(key);
+  private void verifyReadback(String key, long size, ExpectedStream expected) {
+    try (ResponseInputStream<GetObjectResponse> actual =
+            s3Client.getObject(
+                GetObjectRequest.builder().bucket(properties.getBucket()).key(key).build());
+        InputStream source = expected.open()) {
+      Long reportedSize = actual.response().contentLength();
+      if (reportedSize == null || reportedSize.longValue() != size) {
+        actual.abort();
+        throw new ImmutableObjectConflictException(key);
+      }
+      byte[] wanted = new byte[8192];
+      byte[] received = new byte[8192];
+      long remaining = size;
+      while (remaining > 0) {
+        int count = (int) Math.min(wanted.length, remaining);
+        if (source.readNBytes(wanted, 0, count) != count
+            || actual.readNBytes(received, 0, count) != count
+            || !Arrays.equals(wanted, 0, count, received, 0, count)) {
+          actual.abort();
+          throw new ImmutableObjectConflictException(key);
+        }
+        remaining -= count;
+      }
+      if (source.read() != -1 || actual.read() != -1) {
+        actual.abort();
+        throw new ImmutableObjectConflictException(key);
+      }
+    } catch (IOException exception) {
+      throw new IllegalStateException("Object readback failed", exception);
     }
+  }
+
+  @FunctionalInterface
+  private interface ExpectedStream {
+    InputStream open() throws IOException;
   }
 
   @Override
@@ -545,14 +610,30 @@ public class AssetExportServiceImpl implements AssetExportService {
   }
 
   private record PreparedArtifact(
-      PublishedArtifactDigest digest, byte[] bytes, UUID manifestVersionId, String url) {
-    private PreparedArtifact {
-      bytes = bytes.clone();
+      PublishedArtifactDigest digest,
+      Path path,
+      long byteSize,
+      UUID manifestVersionId,
+      String url) {}
+
+  private static final class PrivateStaging implements AutoCloseable {
+    private final List<Path> files = new ArrayList<>();
+
+    private Path newFile() throws IOException {
+      Path path = Files.createTempFile("firemud-asset-candidate-", ".bin");
+      files.add(path);
+      return path;
     }
 
     @Override
-    public byte[] bytes() {
-      return bytes.clone();
+    public void close() {
+      for (Path path : files) {
+        try {
+          Files.deleteIfExists(path);
+        } catch (IOException exception) {
+          logger.warn("Failed to clean up private asset staging file {}", path, exception);
+        }
+      }
     }
   }
 

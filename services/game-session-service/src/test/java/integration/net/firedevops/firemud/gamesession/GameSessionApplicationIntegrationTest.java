@@ -67,6 +67,8 @@ import tools.jackson.databind.ObjectMapper;
       "firemud.auth.http.public-routes[0].path-pattern=/ping"
     })
 class GameSessionApplicationIntegrationTest {
+  private static final String OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF =
+      "6bf9e6d0-7f6b-4c85-b75e-d65949694f13";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
   private static final JwtUtil JWT_UTIL =
       new JwtUtil("testsecretkeytestsecretkeytest1234", 3600000L);
@@ -142,7 +144,7 @@ class GameSessionApplicationIntegrationTest {
                 .setLaunchDescriptor(
                     net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                         .setLaunchDescriptorId("ld-1")
-                        .setCanonicalTenantId("42")
+                        .setTenantId("42")
                         .setGameTemplateId(7L)
                         .setControlPlaneRequestId("cp-1")
                         .setVersionId(11L)
@@ -151,7 +153,7 @@ class GameSessionApplicationIntegrationTest {
                         .setGenerationConfigRevision("genrev-11")
                         .setVersionStateEpoch(77L)
                         .setReleaseBundleId(77L)
-                        .setPublishedReleaseBundleRef("prb:42:11:77")
+                        .setPublishedReleaseBundleRef(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                         .build())
                 .build());
     when(gameDesignClient.getPublishedReleaseBundle(42L, 11L))
@@ -165,6 +167,7 @@ class GameSessionApplicationIntegrationTest {
                         .setManifestHash("manifest-11")
                         .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
+                        .setPublishedReleaseBundleRef(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                         .build())
                 .build());
     when(gameDesignClient.getVersionAssetArtifactState(42L, 11L))
@@ -273,7 +276,7 @@ class GameSessionApplicationIntegrationTest {
             eq("{}"),
             eq("genrev-11"),
             eq(77L),
-            eq("prb:42:11:77"),
+            eq(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF),
             eq(77L),
             any());
 

@@ -191,13 +191,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
             entity.getCanonicalVersionId(),
             entity.getPublishedReleaseBundleRef(),
             entity.getManifestSchemaVersion(),
-            entity.getArtifactDigestsJson() == null
-                ? null
-                : objectMapper.readValue(
-                    entity.getArtifactDigestsJson(),
-                    objectMapper
-                        .getTypeFactory()
-                        .constructCollectionType(List.class, PublishedArtifactDigest.class)),
+            deserializeArtifactDigests(entity.getArtifactDigestsJson()),
             entity.getWorldPublishedStartLocationEvidenceJson() == null
                 ? null
                 : WorldPublishedStartLocationEvidence.fromStored(
@@ -211,12 +205,15 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     return dto;
   }
 
-  private boolean isCanonicalNonNilUuid(UUID value) {
-    return value != null && !value.equals(new UUID(0L, 0L));
-  }
-
-  private String serializeKeys(List<String> keys) {
-    return objectMapper.writeValueAsString(keys == null ? List.of() : List.copyOf(keys));
+  private List<PublishedArtifactDigest> deserializeArtifactDigests(String json) {
+    if (json == null || json.isBlank()) {
+      return null;
+    }
+    return objectMapper.readValue(
+        json,
+        objectMapper
+            .getTypeFactory()
+            .constructCollectionType(List.class, PublishedArtifactDigest.class));
   }
 
   private List<String> deserializeKeys(String json) {
@@ -225,6 +222,33 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     }
     return objectMapper.readValue(
         json, objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+  }
+
+  private List<String> deserializeCommandDefinitions(String json) {
+    if (json == null || json.isBlank()) {
+      return List.of();
+    }
+    return objectMapper.readValue(
+        json, objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+  }
+
+  private List<PublishParticipantDigestDto> deserializeParticipantDigests(String json) {
+    if (json == null || json.isBlank()) {
+      return List.of();
+    }
+    return objectMapper.readValue(
+        json,
+        objectMapper
+            .getTypeFactory()
+            .constructCollectionType(List.class, PublishParticipantDigestDto.class));
+  }
+
+  private boolean isCanonicalNonNilUuid(UUID value) {
+    return value != null && !value.equals(new UUID(0L, 0L));
+  }
+
+  private String serializeKeys(List<String> keys) {
+    return objectMapper.writeValueAsString(keys == null ? List.of() : List.copyOf(keys));
   }
 
   private String serializeParticipantDigests(List<PublishParticipantDigestDto> participantDigests) {
@@ -268,24 +292,5 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
       throw new IllegalStateException("published commandDefinition token must not be blank");
     }
     return value.trim().toLowerCase(Locale.ROOT);
-  }
-
-  private List<String> deserializeCommandDefinitions(String json) {
-    if (json == null || json.isBlank()) {
-      return List.of();
-    }
-    return objectMapper.readValue(
-        json, objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
-  }
-
-  private List<PublishParticipantDigestDto> deserializeParticipantDigests(String json) {
-    if (json == null || json.isBlank()) {
-      return List.of();
-    }
-    return objectMapper.readValue(
-        json,
-        objectMapper
-            .getTypeFactory()
-            .constructCollectionType(List.class, PublishParticipantDigestDto.class));
   }
 }

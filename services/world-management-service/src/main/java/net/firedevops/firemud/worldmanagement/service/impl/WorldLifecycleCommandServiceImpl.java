@@ -14,6 +14,8 @@ import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidenceProvider;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
 import net.firedevops.firemud.worldmanagement.entity.RegionInstance;
@@ -69,6 +71,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   private final EntityManagementClient entityManagementClient;
   private final MeterRegistry meterRegistry;
   private final TransactionOperations transactionOperations;
+  private final RunOwnedWorldLaunchEvidenceProvider runOwnedWorldLaunchEvidenceProvider;
 
   private Counter prepareCounter;
   private Counter activateCounter;
@@ -89,7 +92,8 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       GameDesignClient gameDesignClient,
       EntityManagementClient entityManagementClient,
       MeterRegistry meterRegistry,
-      PlatformTransactionManager transactionManager) {
+      PlatformTransactionManager transactionManager,
+      RunOwnedWorldLaunchEvidenceProvider runOwnedWorldLaunchEvidenceProvider) {
     this(
         worldInstanceRepository,
         regionInstanceRepository,
@@ -104,7 +108,8 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
         gameDesignClient,
         entityManagementClient,
         meterRegistry,
-        transactionTemplate(transactionManager));
+        transactionTemplate(transactionManager),
+        runOwnedWorldLaunchEvidenceProvider);
   }
 
   WorldLifecycleCommandServiceImpl(
@@ -122,6 +127,40 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       EntityManagementClient entityManagementClient,
       MeterRegistry meterRegistry,
       TransactionOperations transactionOperations) {
+    this(
+        worldInstanceRepository,
+        regionInstanceRepository,
+        zoneRepository,
+        zoneInstanceRepository,
+        roomRepository,
+        roomExitRepository,
+        roomInstanceRepository,
+        roomInstanceExitRepository,
+        worldEventRepository,
+        worldProperties,
+        gameDesignClient,
+        entityManagementClient,
+        meterRegistry,
+        transactionOperations,
+        null);
+  }
+
+  WorldLifecycleCommandServiceImpl(
+      WorldInstanceRepository worldInstanceRepository,
+      RegionInstanceRepository regionInstanceRepository,
+      ZoneRepository zoneRepository,
+      ZoneInstanceRepository zoneInstanceRepository,
+      RoomRepository roomRepository,
+      RoomExitRepository roomExitRepository,
+      RoomInstanceRepository roomInstanceRepository,
+      RoomInstanceExitRepository roomInstanceExitRepository,
+      WorldEventRepository worldEventRepository,
+      WorldProperties worldProperties,
+      GameDesignClient gameDesignClient,
+      EntityManagementClient entityManagementClient,
+      MeterRegistry meterRegistry,
+      TransactionOperations transactionOperations,
+      RunOwnedWorldLaunchEvidenceProvider runOwnedWorldLaunchEvidenceProvider) {
     this.worldInstanceRepository = worldInstanceRepository;
     this.regionInstanceRepository = regionInstanceRepository;
     this.zoneRepository = zoneRepository;
@@ -136,6 +175,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     this.entityManagementClient = entityManagementClient;
     this.meterRegistry = meterRegistry;
     this.transactionOperations = transactionOperations;
+    this.runOwnedWorldLaunchEvidenceProvider = runOwnedWorldLaunchEvidenceProvider;
   }
 
   WorldLifecycleCommandServiceImpl(
@@ -188,18 +228,50 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   public WorldInstanceLifecycleSnapshotDto prepareWorldInstance(
       PreparedWorldInstanceRequest request) {
     validatePrepareRequest(request);
+    RunOwnedWorldLaunchEvidence fixtureEvidence = configuredFixtureEvidence();
+    if (fixtureEvidence != null) {
+      fixtureEvidence.requireMatches(request);
+      worldInstanceRepository.lockRunOwnedFixtureOperation(
+          request.tenantId(), request.controlPlaneRequestId());
+      WorldInstance operationInstance =
+          worldInstanceRepository
+              .findRunOwnedFixtureByTenantIdAndControlPlaneRequestIdForUpdate(
+                  request.tenantId(), request.controlPlaneRequestId())
+              .orElse(null);
+      if (operationInstance != null
+          && !operationInstance.getGameInstanceId().equals(request.gameInstanceId())) {
+        throw fixtureIdentityConflict();
+      }
+    }
     WorldInstance existing =
-        worldInstanceRepository
-            .findByTenantIdAndGameInstanceId(request.tenantId(), request.gameInstanceId())
-            .orElse(null);
+        fixtureEvidence == null
+            ? worldInstanceRepository
+                .findByTenantIdAndGameInstanceId(request.tenantId(), request.gameInstanceId())
+                .orElse(null)
+            : worldInstanceRepository
+                .findByTenantIdAndGameInstanceIdForUpdate(
+                    request.tenantId(), request.gameInstanceId())
+                .orElse(null);
     if (existing != null) {
+      if (existing.getRunOwnedFixtureBindingSha256() != null) {
+        if (fixtureEvidence == null) {
+          throw fixtureEvidenceUnavailable();
+        }
+        requireRunOwnedFixtureBinding(existing, fixtureEvidence, request);
+        return snapshot(existing);
+      }
+      if (fixtureEvidence != null) {
+        throw fixtureIdentityConflict();
+      }
       if (!samePreparedRequest(existing, request)) {
         throw new IllegalArgumentException(
             "INVALID_ARGUMENT: gameInstanceId already exists with different activation inputs");
       }
       return snapshot(existing);
     }
-    validateAttestedLaunchInputs(request);
+    if (fixtureEvidence == null) {
+      validateAttestedLaunchInputs(request);
+    }
     WorldInstance worldInstance = new WorldInstance();
     worldInstance.setTenantId(request.tenantId());
     worldInstance.setGameInstanceId(request.gameInstanceId());
@@ -217,6 +289,10 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     worldInstance.setRemapSetId(normalizeBlank(request.remapSetId()));
     worldInstance.setLifecycleEpoch(1L);
     worldInstance.setStatus(STATUS_PREPARING);
+    if (fixtureEvidence != null) {
+      worldInstance.setRunOwnedFixtureBindingSha256(fixtureEvidence.bindingDigest(request, 1L));
+      worldInstance.setRunOwnedFixturePreparingLifecycleEpoch(1L);
+    }
     worldInstance.setCreatedAt(Instant.now());
     worldInstance.setUpdatedAt(Instant.now());
     WorldInstance saved = worldInstanceRepository.save(worldInstance);
@@ -251,29 +327,41 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   public WorldInstanceLifecycleSnapshotDto activatePreparedWorldInstance(
       long tenantId, long gameInstanceId, long expectedLifecycleEpoch) {
     WorldInstance worldInstance = requireWorldInstance(tenantId, gameInstanceId);
-    requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
-    if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {
-      return snapshot(worldInstance);
+    if (worldInstance.getRunOwnedFixtureBindingSha256() != null) {
+      if (!fixtureModeEnabled()) {
+        throw fixtureEvidenceUnavailable();
+      }
+      RunOwnedWorldLaunchEvidence fixtureEvidence =
+          runOwnedWorldLaunchEvidenceProvider.requireAuthenticatedEvidence();
+      worldInstance = requireLockedWorldInstance(tenantId, gameInstanceId);
+      PreparedWorldInstanceRequest preparedRequest = preparedRequest(worldInstance);
+      requireRunOwnedFixtureBinding(worldInstance, fixtureEvidence, preparedRequest);
+      if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {
+        long preparingEpoch = worldInstance.getRunOwnedFixturePreparingLifecycleEpoch();
+        if (worldInstance.getLifecycleEpoch() != preparingEpoch + 1L
+            || (expectedLifecycleEpoch != preparingEpoch
+                && expectedLifecycleEpoch != worldInstance.getLifecycleEpoch())) {
+          throw lifecycleEpochMismatch();
+        }
+        return snapshot(worldInstance);
+      }
+      requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
+    } else {
+      if (fixtureModeEnabled()) {
+        throw fixtureIdentityConflict();
+      }
+      requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
+      if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {
+        return snapshot(worldInstance);
+      }
     }
     if (!STATUS_PREPARING.equals(worldInstance.getStatus())) {
       throw new IllegalArgumentException(
           "INVALID_WORLD_INSTANCE_STATE: world instance is not in PREPARING state");
     }
-    validateAttestedLaunchInputs(
-        new PreparedWorldInstanceRequest(
-            worldInstance.getTenantId(),
-            worldInstance.getGameInstanceId(),
-            worldInstance.getGameTemplateId(),
-            worldInstance.getControlPlaneRequestId(),
-            worldInstance.getLaunchDescriptorId(),
-            worldInstance.getVersionId(),
-            worldInstance.getScriptPatchVersion(),
-            worldInstance.getRuntimeFlagsJson(),
-            worldInstance.getGenerationConfigRevision(),
-            worldInstance.getReleaseBundleId(),
-            worldInstance.getPublishedReleaseBundleRef(),
-            worldInstance.getVersionStateEpoch(),
-            worldInstance.getRemapSetId()));
+    if (worldInstance.getRunOwnedFixtureBindingSha256() == null) {
+      validateAttestedLaunchInputs(preparedRequest(worldInstance));
+    }
     worldInstance.setStatus(STATUS_ACTIVE);
     worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
     worldInstance.setFailureReason(null);
@@ -285,6 +373,72 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
         gameInstanceId,
         saved.getLifecycleEpoch());
     return snapshot(saved);
+  }
+
+  private PreparedWorldInstanceRequest preparedRequest(WorldInstance worldInstance) {
+    return new PreparedWorldInstanceRequest(
+        worldInstance.getTenantId(),
+        worldInstance.getGameInstanceId(),
+        worldInstance.getGameTemplateId(),
+        worldInstance.getControlPlaneRequestId(),
+        worldInstance.getLaunchDescriptorId(),
+        worldInstance.getVersionId(),
+        worldInstance.getScriptPatchVersion(),
+        worldInstance.getRuntimeFlagsJson(),
+        worldInstance.getGenerationConfigRevision(),
+        worldInstance.getReleaseBundleId(),
+        worldInstance.getPublishedReleaseBundleRef(),
+        worldInstance.getVersionStateEpoch(),
+        worldInstance.getRemapSetId());
+  }
+
+  private void requireRunOwnedFixtureBinding(
+      WorldInstance instance,
+      RunOwnedWorldLaunchEvidence fixtureEvidence,
+      PreparedWorldInstanceRequest request) {
+    Long preparingEpoch = instance.getRunOwnedFixturePreparingLifecycleEpoch();
+    if (instance.getRunOwnedFixtureBindingSha256() == null
+        || preparingEpoch == null
+        || preparingEpoch <= 0L
+        || preparingEpoch != 1L
+        || !samePreparedRequest(instance, request)
+        || !instance
+            .getRunOwnedFixtureBindingSha256()
+            .equals(fixtureEvidence.bindingDigest(request, preparingEpoch))) {
+      throw fixtureEvidenceMismatch();
+    }
+  }
+
+  private RunOwnedWorldLaunchEvidence configuredFixtureEvidence() {
+    if (!fixtureModeEnabled()) {
+      return null;
+    }
+    return runOwnedWorldLaunchEvidenceProvider.requireAuthenticatedEvidence();
+  }
+
+  private boolean fixtureModeEnabled() {
+    return runOwnedWorldLaunchEvidenceProvider != null
+        && runOwnedWorldLaunchEvidenceProvider.isEnabled();
+  }
+
+  private static IllegalArgumentException fixtureEvidenceUnavailable() {
+    return new IllegalArgumentException(
+        "RUN_OWNED_WORLD_LAUNCH_EVIDENCE_UNAVAILABLE: fixture-bound lifecycle requires verified run evidence");
+  }
+
+  private static IllegalArgumentException fixtureEvidenceMismatch() {
+    return new IllegalArgumentException(
+        "RUN_OWNED_WORLD_LAUNCH_EVIDENCE_MISMATCH: stored fixture binding or prepared identity changed");
+  }
+
+  private static IllegalArgumentException fixtureIdentityConflict() {
+    return new IllegalArgumentException(
+        "RUN_OWNED_WORLD_LAUNCH_IDENTITY_CONFLICT: fixture operation is bound to another instance");
+  }
+
+  private static IllegalArgumentException lifecycleEpochMismatch() {
+    return new IllegalArgumentException(
+        "WORLD_INSTANCE_LIFECYCLE_STALE: world instance lifecycle epoch mismatch");
   }
 
   @Override
@@ -480,8 +634,8 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: world activation request does not match the published release bundle");
     }
-    if (!releaseBundleRef(request.tenantId(), request.versionId(), request.releaseBundleId())
-        .equals(request.publishedReleaseBundleRef())) {
+    if (bundle.getPublishedReleaseBundleRef().isBlank()
+        || !bundle.getPublishedReleaseBundleRef().equals(request.publishedReleaseBundleRef())) {
       throw new IllegalArgumentException(
           "RELEASE_ATTESTATION_MISMATCH: published release bundle ref mismatch");
     }
@@ -641,10 +795,6 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
 
   private String normalizeBlank(String value) {
     return value == null || value.isBlank() ? null : value;
-  }
-
-  private String releaseBundleRef(long tenantId, long versionId, long releaseBundleId) {
-    return "prb:" + tenantId + ":" + versionId + ":" + releaseBundleId;
   }
 
   private void requireSupportedReleaseAttestationSchema(String schemaVersion) {

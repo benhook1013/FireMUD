@@ -560,7 +560,7 @@ class CompleteLaunchBindingServiceImplTest {
             PublishParticipantKey.WORLD_MANAGEMENT.name(),
             Long.toString(VERSION_ID),
             null,
-            "commit-1",
+            "commit-12",
             CONTENT_DIGEST,
             99,
             null,
@@ -583,7 +583,7 @@ class CompleteLaunchBindingServiceImplTest {
             bundle.artifactDigests(),
             false,
             null));
-    assertDenied();
+    assertDenied("PARTICIPANT_EVIDENCE_INVALID");
 
     List<PublishParticipantDigestDto> failed =
         new java.util.ArrayList<>(bundle.participantDigests());
@@ -593,9 +593,9 @@ class CompleteLaunchBindingServiceImplTest {
             PublishParticipantKey.WORLD_MANAGEMENT.name(),
             Long.toString(VERSION_ID),
             null,
-            "commit-1",
+            "commit-12",
             CONTENT_DIGEST,
-            2,
+            3,
             null,
             "OWNER_FAILED",
             "owner failed"));
@@ -616,7 +616,7 @@ class CompleteLaunchBindingServiceImplTest {
             bundle.artifactDigests(),
             false,
             null));
-    assertDenied();
+    assertDenied("PARTICIPANT_EVIDENCE_INVALID");
 
     List<PublishParticipantDigestDto> misordered =
         new java.util.ArrayList<>(bundle.participantDigests());
@@ -651,7 +651,7 @@ class CompleteLaunchBindingServiceImplTest {
             PublishParticipantKey.GAME_LOGIC.name(),
             Long.toString(VERSION_ID),
             null,
-            "commit-1",
+            "commit-12",
             CONTENT_DIGEST,
             1,
             null,
@@ -674,7 +674,7 @@ class CompleteLaunchBindingServiceImplTest {
             bundle.artifactDigests(),
             false,
             null));
-    assertDenied();
+    assertDenied("ABILITY_SCHEMA_EVIDENCE_MISSING");
 
     List<PublishParticipantDigestDto> mismatchedCommit =
         new java.util.ArrayList<>(bundle.participantDigests());
@@ -717,9 +717,9 @@ class CompleteLaunchBindingServiceImplTest {
             PublishParticipantKey.WORLD_MANAGEMENT.name(),
             Long.toString(VERSION_ID),
             null,
-            "commit-1",
+            "commit-12",
             CONTENT_DIGEST,
-            2,
+            3,
             ABILITY_SCHEMA_DIGEST,
             null,
             null));
@@ -740,7 +740,7 @@ class CompleteLaunchBindingServiceImplTest {
             bundle.artifactDigests(),
             false,
             null));
-    assertDenied();
+    assertDenied("ABILITY_SCHEMA_EVIDENCE_OWNER_MISMATCH");
   }
 
   private void givenValidSnapshot() {
@@ -793,6 +793,22 @@ class CompleteLaunchBindingServiceImplTest {
         denied.getMessage().startsWith("COMPLETE_LAUNCH_BINDING_")
             || denied.getMessage().startsWith("LAUNCH_DESCRIPTOR_")
             || denied.getMessage().startsWith("AUTHORED_WORLD_SOURCE_"));
+    verifyReadOnlyCallsOnly();
+  }
+
+  private void assertDenied(String reason) {
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.getCompleteLaunchBinding(
+                    READ_REQUEST_ID,
+                    CANONICAL_TENANT_ID,
+                    WORLD_SLUG,
+                    CONTROL_PLANE_REQUEST_ID,
+                    descriptor.requestDigest(),
+                    descriptor.resultDigest()));
+    assertTrue(denied.getMessage().startsWith("COMPLETE_LAUNCH_BINDING_" + reason + ":"));
     verifyReadOnlyCallsOnly();
   }
 

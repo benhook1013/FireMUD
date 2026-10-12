@@ -359,7 +359,7 @@ class GameDesignSourcePostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .table("flyway_schema_history_game_design_service")
-        .target("55")
+        .target("50.11")
         .load()
         .migrate();
     var write = new TransactionTemplate(new DataSourceTransactionManager(dataSource));

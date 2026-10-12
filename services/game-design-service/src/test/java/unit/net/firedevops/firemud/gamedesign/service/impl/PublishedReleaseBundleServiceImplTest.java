@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
@@ -48,7 +49,9 @@ class PublishedReleaseBundleServiceImplTest {
   void selectorV2PersistsActualOriginalBytesAndRetryReturnsStoredEvidenceWithoutResolvingDefaults()
       throws Exception {
     var evidence = selectorEvidence();
-    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    var participants =
+        PublishedWorldSelectorFixtures.participants(
+            7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
     // ISOLATED source-repository response; this test covers service assembly only.
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
         .thenReturn(List.of(validCommandDefinition()));
@@ -106,17 +109,20 @@ class PublishedReleaseBundleServiceImplTest {
     assertThatThrownBy(() -> PublishedReleaseBundleContract.requireSupportedSchemaForLaunch(first))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("SCHEMA_VERSION_UNSUPPORTED");
+    PublishedReleaseBundleContract.requireExactRepairMatch(first, emptyManifest());
     assertThatThrownBy(
-            () -> PublishedReleaseBundleContract.requireExactRepairMatch(first, emptyManifest()))
+            () -> PublishedReleaseBundleContract.requireExactRepairMatch(first, logoManifest()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("SCHEMA_VERSION_UNSUPPORTED");
+        .hasMessageStartingWith("REPAIR_ATTESTATION_MISMATCH");
   }
 
   @Test
   void selectorV2RejectsMissingEvidenceWrongWorkflowIncompleteOwnersAndChangedWorldDigest()
       throws Exception {
     var evidence = selectorEvidence();
-    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    var participants =
+        PublishedWorldSelectorFixtures.participants(
+            7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
     assertThatThrownBy(
             () ->
                 service.createFullVersionBundle(
@@ -187,7 +193,10 @@ class PublishedReleaseBundleServiceImplTest {
                     "publish-workflow",
                     emptyManifest(),
                     "genrev-1",
-                    PublishedWorldSelectorFixtures.participants(7L, evidence),
+                    PublishedWorldSelectorFixtures.participants(
+                        7L,
+                        evidence,
+                        AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                     evidence))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("SELECTED_SOURCE_CAPTURE_UNAVAILABLE");
@@ -213,7 +222,10 @@ class PublishedReleaseBundleServiceImplTest {
                     "publish-workflow",
                     emptyManifest(),
                     "genrev-1",
-                    PublishedWorldSelectorFixtures.participants(7L, evidence),
+                    PublishedWorldSelectorFixtures.participants(
+                        7L,
+                        evidence,
+                        AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                     evidence))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("selector-ineligible");
@@ -276,6 +288,34 @@ class PublishedReleaseBundleServiceImplTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageStartingWith("PUBLISH_SELECTION_REQUIRED");
     org.mockito.Mockito.verifyNoInteractions(repository, revisionRepository, versionRepository);
+  }
+
+  @Test
+  void legacyFullVersionBundleFailsClosedBeforeReadingMutableSources() {
+    var refusal =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.createFullVersionBundle(
+                    version(), "workflow-1", logoManifest(), "genrev-1", List.of()));
+    assertEquals(
+        "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation",
+        refusal.getMessage());
+    org.mockito.Mockito.verifyNoInteractions(repository);
+  }
+
+  @Test
+  void legacyFullVersionBundleRefusesEmptyManifestBeforeRepositoryAccess() {
+    var refusal =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.createFullVersionBundle(
+                    version(), "workflow-1", emptyManifest(), "genrev-1", List.of()));
+    assertEquals(
+        "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation",
+        refusal.getMessage());
+    org.mockito.Mockito.verifyNoInteractions(repository);
   }
 
   @Test
@@ -349,6 +389,66 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
+  void retainedBundleWithBlankArtifactDigestStorageKeepsArtifactProofAbsent() {
+    PublishedReleaseBundle retained = new PublishedReleaseBundle();
+    retained.setId(11L);
+    retained.setTenantId("tenant-1");
+    retained.setVersionId(7L);
+    retained.setArtifactDigestsJson(" \t ");
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
+
+    var dto = service.findPublishedReleaseBundle("tenant-1", 7L).orElseThrow();
+
+    assertNull(dto.canonicalTenantId());
+    assertNull(dto.canonicalVersionId());
+    assertNull(dto.publishedReleaseBundleRef());
+    assertNull(dto.manifestSchemaVersion());
+    assertNull(dto.artifactDigests());
+  }
+
+  @Test
+  void retainedBundleReadsPopulatedArtifactEvidence() {
+    PublishedReleaseBundle retained = new PublishedReleaseBundle();
+    retained.setId(11L);
+    retained.setTenantId("tenant-1");
+    retained.setVersionId(7L);
+    retained.setManifestSchemaVersion(1);
+    retained.setArtifactDigestsJson(
+        "[{\"usageKey\":\"logo.png\",\"artifactKind\":\"IMAGE\","
+            + "\"immutableObjectKey\":\"artifacts/sha256/"
+            + "0000000000000000000000000000000000000000000000000000000000000000\","
+            + "\"contentDigest\":\"sha256:"
+            + "0000000000000000000000000000000000000000000000000000000000000000\","
+            + "\"contentType\":\"image/png\",\"artifactSchemaVersion\":1}]");
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
+
+    var dto = service.findPublishedReleaseBundle("tenant-1", 7L).orElseThrow();
+
+    assertEquals(
+        List.of(
+            new PublishedArtifactDigest(
+                "logo.png",
+                "IMAGE",
+                "artifacts/sha256/0000000000000000000000000000000000000000000000000000000000000000",
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "image/png",
+                1)),
+        dto.artifactDigests());
+  }
+
+  @Test
+  void retainedBundleRejectsNonblankMalformedArtifactDigestStorage() {
+    PublishedReleaseBundle retained = new PublishedReleaseBundle();
+    retained.setId(11L);
+    retained.setTenantId("tenant-1");
+    retained.setVersionId(7L);
+    retained.setArtifactDigestsJson("[{}]");
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
+
+    assertThrows(RuntimeException.class, () -> service.findPublishedReleaseBundle("tenant-1", 7L));
+  }
+
+  @Test
   void optionalReadDistinguishesMissingBundleWhileRequiredReadStillFails() {
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
 
@@ -394,7 +494,9 @@ class PublishedReleaseBundleServiceImplTest {
   @Test
   void selectedBundleEntryPointRequiresCapturedCommandAndPolicySources() throws Exception {
     var evidence = selectorEvidence();
-    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    var participants =
+        PublishedWorldSelectorFixtures.participants(
+            7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
     when(versionRepository.findByTenantIdAndId("tenant-1", 7L))
         .thenReturn(Optional.of(sourceIdentity()));
@@ -469,7 +571,9 @@ class PublishedReleaseBundleServiceImplTest {
   @Test
   void selectedFullVersionBundlePersistsImmutableAttestation() throws Exception {
     var evidence = selectorEvidence();
-    var participants = PublishedWorldSelectorFixtures.participants(7L, evidence);
+    var participants =
+        PublishedWorldSelectorFixtures.participants(
+            7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
         .thenReturn(List.of(validCommandDefinition()));
     when(repository.save(any(PublishedReleaseBundle.class)))
@@ -553,7 +657,8 @@ class PublishedReleaseBundleServiceImplTest {
                 "publish-workflow",
                 emptyManifest(),
                 "genrev-1",
-                PublishedWorldSelectorFixtures.participants(7L, evidence),
+                PublishedWorldSelectorFixtures.participants(
+                    7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                 evidence));
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
     org.mockito.Mockito.verifyNoInteractions(revisionRepository);
