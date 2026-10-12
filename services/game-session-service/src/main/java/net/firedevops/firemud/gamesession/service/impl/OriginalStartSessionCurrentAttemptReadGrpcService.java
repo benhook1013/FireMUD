@@ -16,6 +16,8 @@ import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOper
 import net.firedevops.firemud.gamesession.v1.OriginalStartSessionCurrentAttemptReadServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.ReadOriginalStartSessionCurrentAttemptRequest;
 import net.firedevops.firemud.gamesession.v1.ReadOriginalStartSessionCurrentAttemptResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionOperations;
@@ -31,6 +33,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 public final class OriginalStartSessionCurrentAttemptReadGrpcService
     extends OriginalStartSessionCurrentAttemptReadServiceGrpc
         .OriginalStartSessionCurrentAttemptReadServiceImplBase {
+  private static final Logger LOG =
+      LoggerFactory.getLogger(OriginalStartSessionCurrentAttemptReadGrpcService.class);
   private final GameSessionStartSessionOperatorAttemptRepository repository;
   private final OriginalStartSessionCurrentAttemptReadWorkloadGuard workloadGuard;
   private final TransactionOperations ownerReadTransaction;
@@ -101,6 +105,9 @@ public final class OriginalStartSessionCurrentAttemptReadGrpcService
               .withDescription(unavailable.getMessage())
               .asRuntimeException());
     } catch (RuntimeException failure) {
+      LOG.warn(
+          "ReadOriginalStartSessionCurrentAttempt failed with exception class {}",
+          failure.getClass().getName());
       responseObserver.onError(
           Status.INTERNAL
               .withDescription("Current original StartSession attempt read failed")

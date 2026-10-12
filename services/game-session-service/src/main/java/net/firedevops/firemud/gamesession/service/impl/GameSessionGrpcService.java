@@ -353,6 +353,7 @@ public final class GameSessionGrpcService
       respondOperatorAuthorizationError(
           responseObserver, "INVALID_ARGUMENT", "StartSession handoff is malformed");
     } catch (RuntimeException ex) {
+      LOG.warn("AuthorizeStartSession failed with exception class {}", ex.getClass().getName());
       respondOperatorAuthorizationError(
           responseObserver, "INTERNAL", "StartSession owner handoff failed");
     }
