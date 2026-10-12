@@ -353,7 +353,9 @@ def _parser() -> argparse.ArgumentParser:
     source_decide.add_argument("--decision-id", required=True)
     source_decide.add_argument("--decision", required=True, choices=("accepted", "routed", "rejected"))
     source_decide.add_argument("--actor", required=True)
-    source_decide.add_argument("--reason", required=True)
+    source_decide.add_argument(
+        "--reason", required=True, help="source decision reason (maximum 300 characters)"
+    )
     source_decide.add_argument("--target-pr", type=_positive_int)
     source_decide.add_argument("--decided-at")
     records_database(source_decide)
@@ -371,7 +373,9 @@ def _parser() -> argparse.ArgumentParser:
     source_resolve.add_argument("--resolution-id", required=True)
     source_resolve.add_argument("--fix-sha", required=True, type=_source_fix_sha)
     source_resolve.add_argument("--actor", required=True)
-    source_resolve.add_argument("--proof-note", required=True)
+    source_resolve.add_argument(
+        "--proof-note", required=True, help="accepted-fix proof note (maximum 300 characters)"
+    )
     source_resolve.add_argument("--resolved-at")
     records_database(source_resolve)
 
@@ -2219,13 +2223,14 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 acknowledge_over_ceiling=args.acknowledge_over_ceiling,
             ), 0
         if args.decide_command == "reconcile":
-            return controller.decide_reconciliation(
+            result = controller.decide_reconciliation(
                 pr=args.pr,
                 channel=args.channel,
                 checkpoint=args.checkpoint,
                 prior_head=args.prior_head,
                 reason=args.reason,
-            ), 0
+            )
+            return {"decision": result["decision"]}, 0
         if args.decide_command in {"transition", "legacy-transition"}:
             return controller.decide_legacy_transition(
                 pr=args.pr,

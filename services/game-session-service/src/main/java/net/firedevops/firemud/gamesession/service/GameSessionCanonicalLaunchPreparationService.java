@@ -5,13 +5,13 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.gamesession.dto.CanonicalLaunchPreparationSnapshot;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
@@ -23,7 +23,6 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchP
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchPreparationRepository.LaunchPreparationConflictException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
-import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot;
 import org.springframework.lang.Nullable;
@@ -292,40 +291,12 @@ public class GameSessionCanonicalLaunchPreparationService {
           "Exact Account redemption projection is not attached to the StartSession attempt");
     }
     try {
-      StartSessionAuthorityEvidenceBundle bundle =
-          StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
-      bundle.requireTupleBinding(preTuple);
-      bundle.requireReferenceBinding(tuple.bundleReference());
-      long issuanceFence = positiveLongFence(tuple.issuanceFence());
-      byte[] expectedProjection =
-          new AccountRedemptionProjection(
-                  tuple.authorizationReferenceFingerprint(),
-                  tuple.authorityEvidenceBundleBytes(),
-                  bundle.issuanceOperationId(),
-                  issuanceFence)
-              .canonicalBytes();
-      if (!Arrays.equals(expectedProjection, storedProjection)) {
-        throw new InvalidLaunchPreparationEvidenceException(
-            "Attached Account redemption projection differs from the original post-authorization tuple");
-      }
+      StartSessionAccountRedemptionProjection.requireCurrentBinding(storedProjection, tuple);
     } catch (IllegalArgumentException malformed) {
       throw new InvalidLaunchPreparationEvidenceException(
           "StartSession Account redemption projection binding is invalid", malformed);
     }
     return tuple;
-  }
-
-  private static long positiveLongFence(String value) {
-    try {
-      long fence = Long.parseLong(value);
-      if (fence <= 0L) {
-        throw new NumberFormatException("non-positive fence");
-      }
-      return fence;
-    } catch (NumberFormatException malformed) {
-      throw new InvalidLaunchPreparationEvidenceException(
-          "Account issuance fence is outside the supported positive range", malformed);
-    }
   }
 
   private static void requireSameAuthorizedAttempt(

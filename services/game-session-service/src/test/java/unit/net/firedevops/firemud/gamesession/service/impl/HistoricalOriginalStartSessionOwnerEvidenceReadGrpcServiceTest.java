@@ -401,7 +401,8 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcServiceTest {
                     tuple.authorizationReferenceFingerprint(),
                     tuple.authorityEvidenceBundleBytes(),
                     ISSUANCE_ID,
-                    23L)
+                    23L,
+                    tuple.canonicalBytes())
                 .canonicalBytes(),
             firstSelection,
             descriptorPin,

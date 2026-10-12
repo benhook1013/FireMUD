@@ -45,6 +45,7 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientIntercepto
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -102,8 +103,14 @@ class StartSessionOperatorAuthorizationClientTest {
       assertThat(issued.authenticatedLoggingWorkloadIdentity())
           .isEqualTo(LOGGING_WORKLOAD_IDENTITY);
       assertThat(issued.decodedBundle().controlPlaneRequestId()).isEqualTo("client-βeta");
+      assertThat(issued.postAuthorizationTuple().canonicalBytes())
+          .containsExactly(
+              ownerTupleBytes(
+                  tuple, bundle, reference(), RESERVATION_OWNER, 9L, LOGGING_WORKLOAD_IDENTITY));
       assertThat(recovered.authorityEvidenceBundle()).containsExactly(bundle);
       assertThat(recovered.operatorAuthorizationReference()).isEqualTo(OPAQUE_REFERENCE);
+      assertThat(recovered.postAuthorizationTuple().canonicalBytes())
+          .containsExactly(issued.postAuthorizationTuple().canonicalBytes());
       assertThat(recovered.authenticatedLoggingWorkloadIdentity())
           .isEqualTo(LOGGING_WORKLOAD_IDENTITY);
 
@@ -212,6 +219,7 @@ class StartSessionOperatorAuthorizationClientTest {
     assertRejected(tuple, valid.toBuilder().setUnknownFields(unknownFields()).build());
     assertRejected(tuple, valid.toBuilder().clearExpiresAt().build());
     assertRejected(tuple, valid.toBuilder().clearBundleReference().build());
+    assertRejected(tuple, valid.toBuilder().clearOriginalAccountPostAuthorizationTuple().build());
     assertRejected(
         tuple,
         valid.toBuilder()
@@ -224,10 +232,25 @@ class StartSessionOperatorAuthorizationClientTest {
         valid.toBuilder()
             .setBundleReference(valid.getBundleReference().toBuilder().setSourceFence("24").build())
             .build();
+    assertRejected(tuple, distinctSourceAndIssuanceFences);
+    byte[] distinctTuple =
+        ownerTupleBytes(
+            tuple,
+            validBundle,
+            valid.getBundleReference().toBuilder().setSourceFence("24").build(),
+            RESERVATION_OWNER,
+            9L,
+            LOGGING_WORKLOAD_IDENTITY);
+    IssueHumanOperatorAuthorizationReferenceResponse independentSourceFence =
+        valid.toBuilder()
+            .setBundleReference(valid.getBundleReference().toBuilder().setSourceFence("24").build())
+            .setOriginalAccountPostAuthorizationTuple(ByteString.copyFrom(distinctTuple))
+            .build();
     StartSessionOperatorAuthorizationClient.AuthorizationReference accepted =
-        assertAccepted(tuple, distinctSourceAndIssuanceFences);
+        assertAccepted(tuple, independentSourceFence);
     assertThat(accepted.bundleReference().sourceFence()).isEqualTo("24");
     assertThat(accepted.decodedBundle().issuanceFence()).isEqualTo("23");
+    assertThat(accepted.postAuthorizationTuple().bundleReference().sourceFence()).isEqualTo("24");
     assertRejected(
         tuple,
         valid.toBuilder()
@@ -239,6 +262,61 @@ class StartSessionOperatorAuthorizationClientTest {
         valid.toBuilder()
             .setBundleReference(
                 valid.getBundleReference().toBuilder().setBundleVersion("unsupported").build())
+            .build());
+    assertRejected(
+        tuple,
+        valid.toBuilder()
+            .setBundleReference(
+                valid.getBundleReference().toBuilder().setLinearization("4").build())
+            .build());
+    assertRejected(
+        tuple,
+        valid.toBuilder()
+            .setOriginalAccountPostAuthorizationTuple(
+                ByteString.copyFrom(
+                    ownerTupleBytes(
+                        tuple,
+                        validBundle,
+                        valid.getBundleReference().toBuilder().setSourceFence("24").build(),
+                        RESERVATION_OWNER,
+                        9L,
+                        LOGGING_WORKLOAD_IDENTITY)))
+            .build());
+    String originalTupleJson =
+        new String(
+            valid.getOriginalAccountPostAuthorizationTuple().toByteArray(), StandardCharsets.UTF_8);
+    assertRejected(
+        tuple,
+        valid.toBuilder()
+            .setOriginalAccountPostAuthorizationTuple(
+                ByteString.copyFrom(
+                    originalTupleJson
+                        .replace("\"sourceVersion\":\"17\"", "\"sourceVersion\":\"18\"")
+                        .getBytes(StandardCharsets.UTF_8)))
+            .build());
+    assertRejected(
+        tuple,
+        valid.toBuilder()
+            .setOriginalAccountPostAuthorizationTuple(
+                ByteString.copyFrom(
+                    originalTupleJson
+                        .replace(
+                            "\"bundleVersion\":\"authorityEvidenceBundle/v1\"",
+                            "\"bundleVersion\":\"authorityEvidenceBundle/v2\"")
+                        .getBytes(StandardCharsets.UTF_8)))
+            .build());
+    assertRejected(
+        tuple,
+        valid.toBuilder()
+            .setOriginalAccountPostAuthorizationTuple(
+                ByteString.copyFrom(
+                    ownerTupleBytes(
+                        tuple,
+                        validBundle,
+                        valid.getBundleReference().toBuilder().setLinearization("4").build(),
+                        RESERVATION_OWNER,
+                        9L,
+                        LOGGING_WORKLOAD_IDENTITY)))
             .build());
     assertRejected(
         tuple,
@@ -416,6 +494,10 @@ class StartSessionOperatorAuthorizationClientTest {
         .setAuthorityEvidenceBundle(ByteString.copyFrom(bundle))
         .setBundleReference(reference())
         .setAuthenticatedLoggingWorkloadIdentity(LOGGING_WORKLOAD_IDENTITY)
+        .setOriginalAccountPostAuthorizationTuple(
+            ByteString.copyFrom(
+                ownerTupleBytes(
+                    tuple, bundle, reference(), RESERVATION_OWNER, 9L, LOGGING_WORKLOAD_IDENTITY)))
         .build();
   }
 
@@ -428,7 +510,33 @@ class StartSessionOperatorAuthorizationClientTest {
         .setAuthorityEvidenceBundle(ByteString.copyFrom(bundle))
         .setBundleReference(reference())
         .setAuthenticatedLoggingWorkloadIdentity(LOGGING_WORKLOAD_IDENTITY)
+        .setOriginalAccountPostAuthorizationTuple(
+            ByteString.copyFrom(
+                ownerTupleBytes(
+                    tuple, bundle, reference(), RESERVATION_OWNER, 9L, LOGGING_WORKLOAD_IDENTITY)))
         .build();
+  }
+
+  private static byte[] ownerTupleBytes(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      byte[] bundle,
+      AuthorityEvidenceBundleReference wireReference,
+      UUID reservationOwner,
+      long reservationClaimFence,
+      String loggingIdentity) {
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+            tuple,
+            loggingIdentity,
+            FINGERPRINT,
+            reservationOwner,
+            reservationClaimFence,
+            bundle,
+            new StartSessionAuthorityEvidenceBundle.BundleReference(
+                wireReference.getBundleVersion(),
+                wireReference.getSourceVersion(),
+                wireReference.getSourceFence(),
+                wireReference.getLinearization()))
+        .canonicalBytes();
   }
 
   private static Timestamp timestamp(Instant instant) {

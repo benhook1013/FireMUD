@@ -1,5 +1,6 @@
 package net.firedevops.firemud.loggingadmin.operator;
 
+import java.security.MessageDigest;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -120,14 +121,22 @@ public final class StartSessionAuthorizationCoordinator {
       AuthorizationReference accountResponse) {
     Objects.requireNonNull(accountResponse, "validated Account response is required");
     StartSessionPostAuthorizationExecutionTuple postAuthorizationTuple =
+        accountResponse.postAuthorizationTuple();
+    ClaimEvidence claimEvidence = claim.claimEvidence();
+    StartSessionPostAuthorizationExecutionTuple expectedTuple =
         StartSessionPostAuthorizationExecutionTuple.createHuman(
             sharedTuple(tuple),
             accountResponse.authenticatedLoggingWorkloadIdentity(),
             accountResponse.authorizationReferenceFingerprint(),
-            claim.claimEvidence().reservationOwnerId(),
-            claim.claimEvidence().reservationClaimFence(),
+            claimEvidence.reservationOwnerId(),
+            claimEvidence.reservationClaimFence(),
             accountResponse.authorityEvidenceBundle(),
             accountResponse.bundleReference());
+    if (!MessageDigest.isEqual(
+        expectedTuple.canonicalBytes(), postAuthorizationTuple.canonicalBytes())) {
+      throw new IllegalArgumentException(
+          "Account post-authorization tuple differs from its authorization response");
+    }
     AuthorizationCompletion completion =
         reservations.completeAuthorization(claim, postAuthorizationTuple);
     if (!completion.transitioned()) {
