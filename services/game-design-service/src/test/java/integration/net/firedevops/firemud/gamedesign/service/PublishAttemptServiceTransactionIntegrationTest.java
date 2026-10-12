@@ -764,7 +764,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(publishAttemptRepository.findByPublishWorkflowId(freshWorkflowId)).isEmpty();
     assertThat(versionRepository.findByTenantIdAndVersionNumber(freshTenantId, 1)).isEmpty();
 
-    String pendingTenantId = "9011";
+    String pendingTenantId = "9013";
     String pendingRequestId = "pending-public-denial";
     String pendingWorkflowId =
         FiremudWorkflowIds.workflowId(

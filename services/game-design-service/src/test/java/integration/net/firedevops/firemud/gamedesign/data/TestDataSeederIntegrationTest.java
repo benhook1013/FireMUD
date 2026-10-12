@@ -32,6 +32,7 @@ import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
+import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
@@ -954,6 +955,8 @@ class TestDataSeederIntegrationTest {
     var game = fixture.games().findByTenantId("1");
     var version = fixture.versions().findByTenantIdAndVersionNumber("1", 1).orElseThrow();
     var bundle = fixture.bundles().findByTenantIdAndVersionId("1", version.getId()).orElseThrow();
+    var artifact =
+        fixture.artifacts().findByTenantIdAndVersionId("1", version.getId()).orElseThrow();
     assertThat(version.getCanonicalTenantId()).isEqualTo(game.getCanonicalTenantId());
     assertThat(version.getCanonicalVersionId()).isNotNull().isNotEqualTo(new UUID(0L, 0L));
     assertThat(version.getIdentitySourceGameRowId()).isEqualTo(game.getId());
@@ -964,10 +967,17 @@ class TestDataSeederIntegrationTest {
     assertThat(bundle.getAttestationSchemaVersion()).isEqualTo("v1");
     assertThat(bundle.getPublishedReleaseBundleRef()).isNotBlank();
     String xmin = fixture.bundleXmin();
+    String artifactXmin = fixture.artifactXmin();
 
     fixture.seed();
 
     assertThat(fixture.bundleXmin()).isEqualTo(xmin);
+    assertThat(fixture.artifactXmin()).isEqualTo(artifactXmin);
+    var retainedArtifact =
+        fixture.artifacts().findByTenantIdAndVersionId("1", version.getId()).orElseThrow();
+    assertThat(retainedArtifact.getId()).isEqualTo(artifact.getId());
+    assertThat(retainedArtifact.getStateEpoch()).isEqualTo(artifact.getStateEpoch());
+    assertThat(retainedArtifact.getStateEpoch()).isEqualTo(1L);
     assertThat(fixture.bundles().findByTenantIdAndVersionId("1", version.getId()).orElseThrow())
         .usingRecursiveComparison()
         .isEqualTo(bundle);
@@ -1009,7 +1019,13 @@ class TestDataSeederIntegrationTest {
     fixture.migrate(null);
     String xmin = fixture.bundleXmin();
     fixture.seed();
+    var artifact = fixture.artifacts().findByTenantIdAndVersionId("1", versionId).orElseThrow();
+    Long artifactId = artifact.getId();
+    Long artifactEpoch = artifact.getStateEpoch();
+    String artifactXmin = fixture.artifactXmin();
+
     fixture.seed();
+
     var version = fixture.versions().findByTenantIdAndId("1", versionId).orElseThrow();
     var bundle = fixture.bundles().findByTenantIdAndVersionId("1", versionId).orElseThrow();
     assertThat(version.getCanonicalVersionId()).isNull();
@@ -1019,7 +1035,48 @@ class TestDataSeederIntegrationTest {
     assertThat(bundle.getPublishedReleaseBundleRef()).isNull();
     assertThat(bundle.getId()).isEqualTo(bundleId);
     assertThat(fixture.bundleXmin()).isEqualTo(xmin);
+    assertThat(fixture.artifactXmin()).isEqualTo(artifactXmin);
+    assertThat(fixture.artifacts().findByTenantIdAndVersionId("1", versionId).orElseThrow())
+        .extracting(VersionAssetArtifact::getId, VersionAssetArtifact::getStateEpoch)
+        .containsExactly(artifactId, artifactEpoch);
     assertRetainedDescriptorInsertAndRead(fixture, versionId, bundleId);
+  }
+
+  @Test
+  void retainedBaselineRejectsMismatchedArtifactWithoutChangingItsRow() {
+    FoundationFixture fixture = foundationFixture("30");
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO game (tenant_id, name, description) VALUES ('1', 'Demo Game', 'Seed game')");
+    Long versionId =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "INSERT INTO version (tenant_id, version_number, version_state, version_state_epoch, is_script_only, notes) VALUES ('1', 1, 'PUBLISHED', 1, false, 'Seed published version') RETURNING id")
+            .get("id", Long.class);
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO published_release_bundle (tenant_id, version_id, version_number, attestation_schema_version, publish_workflow_id, manifest_hash, generation_config_revision, required_manifest_asset_keys_json, participant_digests_json, command_definitions_json, script_only) VALUES ('1', ?, 1, 'v1', 'demo-seed-publish', 'demo-manifest-hash', 'genrev:demo', '[]', '[]', '[]', false)",
+            versionId);
+    fixture.migrate(null);
+    fixture.seed();
+    fixture
+        .dsl()
+        .execute(
+            "UPDATE version_asset_artifact SET state_epoch = 2 WHERE tenant_id = '1' AND version_id = ?",
+            versionId);
+    String artifactXmin = fixture.artifactXmin();
+
+    assertThatThrownBy(fixture::seed)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Existing version artifact does not exactly match the demo seed");
+
+    var retainedArtifact =
+        fixture.artifacts().findByTenantIdAndVersionId("1", versionId).orElseThrow();
+    assertThat(retainedArtifact.getStateEpoch()).isEqualTo(2L);
+    assertThat(fixture.artifactXmin()).isEqualTo(artifactXmin);
   }
 
   @Test
@@ -1146,6 +1203,10 @@ class TestDataSeederIntegrationTest {
       return new PublishedReleaseBundleRepository(dsl);
     }
 
+    VersionAssetArtifactRepository artifacts() {
+      return new VersionAssetArtifactRepository(dsl);
+    }
+
     void seed() {
       TestDataSeeder seeder =
           new TestDataSeeder(
@@ -1166,6 +1227,12 @@ class TestDataSeederIntegrationTest {
     String bundleXmin() {
       return dsl.fetchSingle(
               "SELECT xmin::text AS xmin FROM published_release_bundle WHERE tenant_id = '1'")
+          .get("xmin", String.class);
+    }
+
+    String artifactXmin() {
+      return dsl.fetchSingle(
+              "SELECT xmin::text AS xmin FROM version_asset_artifact WHERE tenant_id = '1'")
           .get("xmin", String.class);
     }
   }
