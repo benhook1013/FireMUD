@@ -36,7 +36,7 @@ public class LaunchDescriptor {
   private String resultDigest;
   private String originalRequestJson;
   private String sourceEvidenceJson;
-  private String outcomeStatus = OUTCOME_SUCCESS;
+  private String outcomeStatus;
   private String failureCode;
   private String failureMessage;
   private LocalDateTime createdAt = LocalDateTime.now();

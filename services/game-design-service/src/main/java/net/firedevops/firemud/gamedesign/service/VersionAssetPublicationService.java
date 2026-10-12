@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.service;
 
+import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.AssetSelection;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.ExportSnapshot;
 
 /** Owner-local authoring and durable-readback operations for ordinary Version assets. */
@@ -15,4 +16,7 @@ public interface VersionAssetPublicationService {
 
   /** Independently reads and verifies an already committed durable selection. */
   ExportSnapshot readFrozenSnapshot(String tenantId, int versionNumber);
+
+  /** Reads and verifies one frozen source payload in its own finite read-only transaction. */
+  byte[] readFrozenAssetBytes(String tenantId, int versionNumber, AssetSelection selection);
 }

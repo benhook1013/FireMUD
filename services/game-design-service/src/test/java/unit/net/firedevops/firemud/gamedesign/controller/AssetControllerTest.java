@@ -29,7 +29,7 @@ class AssetControllerTest {
     try (MockedStatic<SessionContext> ignored = Mockito.mockStatic(SessionContext.class)) {
       var response = controller.upload("1", file);
 
-      assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+      assertEquals(HttpStatus.SERVICE_UNAVAILABLE, response.getStatusCode());
       assertEquals("CREATOR_MUTATION_OWNER_PROOF_UNAVAILABLE", response.getBody().error().code());
     }
 

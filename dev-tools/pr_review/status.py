@@ -331,6 +331,7 @@ def _inventory_entries(raw: list[Any], current_head: str) -> list[dict[str, Any]
             "head_sha": head,
             "app": app,
             "timestamp": timestamp,
+            "started_at": started,
             "outcome": _check_outcome(value),
             "url": next(
                 (value[key] for key in ("details_url", "detailsUrl", "target_url", "targetUrl") if value.get(key)), None
@@ -339,9 +340,17 @@ def _inventory_entries(raw: list[Any], current_head: str) -> list[dict[str, Any]
             "_index": index,
             "_workflow_identity": workflow_identity,
             "_started_at": parsed_start,
+            "workflowIdentity": (
+                dict(value["workflowIdentity"])
+                if workflow_identity is not None and isinstance(value.get("workflowIdentity"), Mapping)
+                else None
+            ),
+            "workflowRunId": (
+                value.get("workflowRunId")
+                if workflow_identity is not None and isinstance(value.get("workflowIdentity"), Mapping)
+                else None
+            ),
         }
-        if workflow_identity is not None:
-            entry["workflowIdentity"] = dict(value["workflowIdentity"])
         entry["exact_head"] = isinstance(head, str) and head.casefold() == current_head.casefold()
         entries.append(entry)
     return entries

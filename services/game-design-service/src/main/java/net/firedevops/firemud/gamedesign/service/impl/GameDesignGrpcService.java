@@ -251,6 +251,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       builder.setError(
           GrpcAppErrors.error(
               meterRegistry, logger, "PublishVersion", ex.errorCode(), ex.getMessage()));
+    } catch (MutationOwnerProofUnavailableException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PublishVersion", ex.errorCode(), ex.getMessage()));
     } catch (IllegalStateException ex) {
       String errorCode = publishAttemptErrorCode(ex);
       builder.setError(
@@ -809,7 +813,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               request.getExpectedVersionStateEpoch(),
               fromProtoVersionState(request.getNewState()),
               request.getReason());
-      builder.setVersionState(toProtoVersionState(state)).setUpdated(true);
+      builder.setVersionState(toProtoVersionState(state)).setUpdated(false);
     } catch (AdminAuthorizationException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -2178,16 +2182,8 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
   }
 
   private void requireCompleteLaunchBindingReadAccess() {
-    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)
-        || peer == null
-        || !workloadNamespace.equals(peer.namespace())
-        || !(peer.isService("game-session-service")
-            || peer.isService("world-management-service")
-            || peer.isService("entity-management-service"))) {
-      throw new AdminAuthorizationException(
-          "Exact same-namespace Game Session, World Management, or Entity Management workload identity is required");
-    }
+    requireCandidatePeerThenDeny(
+        Set.of("game-session-service", "world-management-service", "entity-management-service"));
   }
 
   private void requireExactWorkloadPeer(String service) {

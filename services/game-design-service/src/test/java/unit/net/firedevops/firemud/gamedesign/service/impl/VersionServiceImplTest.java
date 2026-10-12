@@ -193,6 +193,40 @@ class VersionServiceImplTest {
   }
 
   @Test
+  void versionStateRefusalStillRejectsStaleEpochMissingTenantAndNullState() {
+    Version version = new Version();
+    version.setId(7L);
+    version.setTenantId("tenant-1");
+    version.setVersionState(VersionLifecycleState.DRAFT);
+    version.setVersionStateEpoch(4L);
+    when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.of(version));
+    when(versionRepository.findByTenantIdAndId("other-tenant", 7L)).thenReturn(Optional.empty());
+
+    assertTrue(
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                    service.compareAndSetVersionState(
+                        "tenant-1", 7L, 3L, VersionLifecycleState.DRAFT, "retry"))
+            .getMessage()
+            .startsWith("VERSION_STATE_EPOCH_STALE:"));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            service.compareAndSetVersionState(
+                "other-tenant", 7L, 4L, VersionLifecycleState.PUBLISHED, "publish"));
+    assertTrue(
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> service.compareAndSetVersionState("tenant-1", 7L, 4L, null, "publish"))
+            .getMessage()
+            .startsWith("INVALID_ARGUMENT:"));
+    assertEquals(VersionLifecycleState.DRAFT, version.getVersionState());
+    assertEquals(4L, version.getVersionStateEpoch());
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+  }
+
+  @Test
   void versionStateSameStateRequestRemainsAReadOnlyNoOp() {
     Version version = new Version();
     version.setId(7L);
@@ -520,7 +554,7 @@ class VersionServiceImplTest {
   }
 
   @Test
-  void failedScriptPatchRecordsStableAttemptAndRemovesDraftForRetry() {
+  void failedScriptPatchRecordsStableAttemptAndRetainsDraft() {
     Game game = new Game();
     game.setId(1L);
     game.setTenantId("tenant-1");
@@ -575,9 +609,10 @@ class VersionServiceImplTest {
             org.mockito.ArgumentMatchers.eq(
                 PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH.name()),
             org.mockito.ArgumentMatchers.eq("scope mismatch"));
-    verify(versionRepository).save(savedDraft);
-    assertEquals(VersionLifecycleState.FAILED, savedDraft.getVersionState());
-    assertEquals(2L, savedDraft.getVersionStateEpoch());
+    assertEquals(VersionLifecycleState.DRAFT, savedDraft.getVersionState());
+    assertEquals(3L, savedDraft.getBaseVersionId());
+    assertEquals("patch-2", savedDraft.getScriptPatchVersion());
+    verify(versionRepository, org.mockito.Mockito.never()).delete(savedDraft);
     verify(publishAttemptService, org.mockito.Mockito.never())
         .markScriptPatchSucceeded(any(String.class));
   }
@@ -757,10 +792,10 @@ class VersionServiceImplTest {
 
     assertEquals("recorded digest write failed", firstFailure.getMessage());
     String workflowId = binding.derivedWorkflowIdentity();
-    verify(versionRepository).save(draftAfterRollback);
-    assertEquals(11L, draftAfterRollback.getId());
-    assertEquals(VersionLifecycleState.FAILED, draftAfterRollback.getVersionState());
-    assertEquals(2L, draftAfterRollback.getVersionStateEpoch());
+    assertEquals(VersionLifecycleState.DRAFT, draftAfterRollback.getVersionState());
+    assertEquals(3L, draftAfterRollback.getBaseVersionId());
+    assertEquals("patch-2", draftAfterRollback.getScriptPatchVersion());
+    verify(versionRepository, org.mockito.Mockito.never()).delete(draftAfterRollback);
     verify(scriptingClient, org.mockito.Mockito.never())
         .notifyScriptVersionUpdate(
             any(String.class), any(Long.class), any(String.class), any(List.class));
@@ -783,7 +818,7 @@ class VersionServiceImplTest {
                 service.publishScriptPatchVersion(
                     "tenant-1", 3L, "patch-2", "different notes", PUBLISH_REQUEST_ID));
     assertEquals("recorded digest write failed", retryFailure.getMessage());
-    verify(versionRepository, times(3)).save(any(Version.class));
+    verify(versionRepository, times(2)).save(any(Version.class));
   }
 
   @Test

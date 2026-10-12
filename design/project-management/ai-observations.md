@@ -115,10 +115,28 @@ Entry format:
 
 - `2026-10-12`: Pin the authoritative checkout before resuming a review lane
   - Context: Gameplay resumed from inherited workspace on `develop` at `1ea2c934`, which predated the actual merged review runtime `4fad59e`.
-  - Observation: Reading the older workflow led Gameplay to treat the retired `check-coderabbit-review.py` and prior review taper as current. The Overseer restored the current native controller and its one Hosted/three CLI normal taper, preserving explicit allocations. `--expect-pr` blocked the wrong selection before quota was used, so no extra Hosted request was posted.
+  - Observation: Reading the older workflow led Gameplay to treat the retired standalone review checker and prior review taper as current. The Overseer restored the current native controller and its one Hosted/three CLI normal taper, preserving explicit allocations. `--expect-pr` blocked the wrong selection before quota was used, so no extra Hosted request was posted.
   - Expected pattern: On a resumed lane, identify and pin the current authoritative merged/source checkout before reading workflow guidance. Preserve standing review allocations and do not trust stale startup documentation.
 
 - `2026-10-12`: Make the next checkpoint action discoverable after CLI review
   - Context: CLI review completion produced captured evidence, but the next channel launch remained held until Gameplay posted and imported the established minimal public checkpoint.
   - Observation: Gameplay had to locate the exact checkpoint marker format in the current canonical implementation; the next publication command was not obvious from the returned help or output. Checkpoint publication then completed normally, so this is an improvement candidate rather than an established controller defect.
   - Expected pattern: Make the required next action discoverable while preserving the counts, head, file, duration line, attribution markers, and captured evidence. Do not issue a duplicate provider request.
+
+- `2026-10-12`: Bound review admission history work to its selected dependency
+  - Context: Gameplay requested the next Hosted review on #3171; FireController measured 55.2 seconds of preflight before posting the command and projected 170 history entries, including later unrelated queue PRs.
+  - Observation: Repeated whole-queue history work adds latency to a front review request even when its exact head and parent are already selected. The request posted successfully; this is an efficiency candidate, not evidence of incorrect admission or a provider review failure.
+  - Expected pattern: Reuse validated shared history where safe and bound fresh evidence to the selected target and dependencies, while preserving identity, reservation and quota checks. Overseer received the measured trace; no tool change has been attempted.
+
+- `2026-10-12`: Review-ready channel stops can disagree with the final PR readiness projection
+  - Context: On #3171 revision `60d495b36906ff72e12f57dda5a740333853110c`, native review status reported both channels `READY` with `CAP_AUDITED_STOP`, clear accepted findings/threads, fresh LOC, all required expected-app checks successful, and GitHub `MERGEABLE`/`CLEAN`.
+  - Observation: The final verdict remained `NOT READY`; its only reasons were the affirmative channel-ready and cap-stop descriptions. This forced manual evidence adjudication at merge closeout. The precise cause is still under investigation by Overseer.
+  - Expected pattern: Preserve mandatory findings, proof and CI holds while projecting exhausted human channel caps consistently into the final readiness result; a stop does not manufacture taper or review coverage.
+  - Current status: Reported to Overseer with the exact final guard; the existing controller readiness work owns diagnosis and correction.
+
+- `2026-10-12`: Retention follow-up for the Gameplay review-controller observations above
+  - Context: This dated follow-up supplies current retention reasons and reconsideration triggers without rewriting the preceding append-only observations; bounded removal remains with Overseer stewardship.
+  - Authoritative checkout observation: the immediate stale-checkout error is corrected. Stewardship disposition of the reusable startup lesson is deliberately deferred to the next observations checkpoint, because ordinary worker authority does not permit removing historical entries. Reconsideration trigger: the Overseer evaluates whether canonical startup guidance now covers the lesson and removes the entry if it no longer identifies a gap.
+  - CLI checkpoint discoverability observation: checkpoint publication works, but help/output guidance remains an improvement candidate rather than a demonstrated correctness blocker. Tool changes are deliberately deferred to the owning controller workstream while Gameplay repairs the front PR. Reconsideration trigger: the owner selects a bounded help/output change or demonstrates an existing discoverable next-action response.
+  - Admission-history latency observation: after the merged #3173 runtime promotion, the next measured request took 35.2 seconds with 86 history entries, improved from the recorded 55.2 seconds and 170 entries. Selected-target status still required substantial history work. Further optimization is deliberately deferred to the controller owner to preserve admission identity and quota checks. Reconsideration trigger: the owner evaluates these measured traces at its next controller performance checkpoint.
+  - Readiness-projection observation: Gameplay has not independently verified final capped-readiness recovery on a new candidate; the reported #3171 inconsistency remains owned by Overseer controller work. Reconsideration trigger: an exact candidate with exhausted human caps, resolved findings, current required checks and a current native guard establishes the final projection, allowing stewardship to retain only any remaining discrepancy.

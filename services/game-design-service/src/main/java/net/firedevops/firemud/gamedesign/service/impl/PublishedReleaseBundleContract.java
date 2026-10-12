@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
@@ -10,6 +9,8 @@ import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 final class PublishedReleaseBundleContract {
   static final String SUPPORTED_ATTESTATION_SCHEMA_VERSION = "v1";
   static final String SELECTOR_ATTESTATION_SCHEMA_VERSION = "v2";
+  static final int SUPPORTED_MANIFEST_SCHEMA_VERSION = 1;
+  static final int SUPPORTED_ARTIFACT_SCHEMA_VERSION = 1;
   static final String SCHEMA_VERSION_UNSUPPORTED = "SCHEMA_VERSION_UNSUPPORTED";
   static final String REPAIR_ATTESTATION_MISMATCH = "REPAIR_ATTESTATION_MISMATCH";
   static final String REPAIR_ATTESTED_ASSET_KEY_MISMATCH = "REPAIR_ATTESTED_ASSET_KEY_MISMATCH";
@@ -17,11 +18,6 @@ final class PublishedReleaseBundleContract {
   private PublishedReleaseBundleContract() {}
 
   static void requireSelectorBinding(PublishedReleaseBundleDto bundle) {
-    new ExportedAssetManifest(
-        bundle.manifestHash(),
-        Objects.requireNonNull(bundle.manifestSchemaVersion(), "manifestSchemaVersion"),
-        bundle.requiredManifestAssetKeys(),
-        Objects.requireNonNull(bundle.artifactDigests(), "artifactDigests"));
     var evidence =
         Objects.requireNonNull(bundle.worldPublishedStartLocationEvidence(), "World evidence");
     var request = evidence.request();
@@ -32,16 +28,33 @@ final class PublishedReleaseBundleContract {
         || !request.canonicalVersionId().equals(bundle.canonicalVersionId())
         || !request.publishWorkflowId().equals(bundle.publishWorkflowId())
         || bundle.manifestSchemaVersion() == null
-        || bundle.artifactDigests() == null) {
+        || bundle.manifestSchemaVersion() != SUPPORTED_MANIFEST_SCHEMA_VERSION
+        || bundle.artifactDigests() == null
+        || request.appliedCommitId() == null
+        || request.appliedCommitId().isBlank()) {
       throw new IllegalArgumentException(
           "World selector differs from complete immutable release binding");
     }
+    new ExportedAssetManifest(
+        bundle.manifestHash(),
+        bundle.manifestSchemaVersion(),
+        bundle.requiredManifestAssetKeys(),
+        bundle.artifactDigests());
+    if (bundle.artifactDigests().stream()
+        .anyMatch(
+            artifact -> artifact.artifactSchemaVersion() != SUPPORTED_ARTIFACT_SCHEMA_VERSION)) {
+      throw new IllegalArgumentException("World selector contains an unsupported artifact schema");
+    }
     var required = AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder();
-    var seen = new HashSet<String>();
-    for (var participant : bundle.participantDigests()) {
-      if (!required.contains(participant.participantKey())
-          || !seen.add(participant.participantKey())
+    if (bundle.participantDigests().size() != required.size()) {
+      throw new IllegalArgumentException("World selector release lacks required participants");
+    }
+    for (int index = 0; index < required.size(); index++) {
+      var participant = bundle.participantDigests().get(index);
+      String expectedParticipantKey = required.get(index);
+      if (!expectedParticipantKey.equals(participant.participantKey())
           || !participant.succeeded()
+          || (participant.errorMessage() != null && !participant.errorMessage().isBlank())
           || participant.baseVersionId() != null
           || !Long.toString(bundle.versionId()).equals(participant.scopeValue())
           || !request.appliedCommitId().equals(participant.appliedCommitId())
@@ -53,7 +66,7 @@ final class PublishedReleaseBundleContract {
                   participant.participantKey(),
                   AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION))) {
         throw new IllegalArgumentException(
-            "World selector requires all exact successful release participants");
+            "World selector requires all exact successful ordered release participants");
       }
       if ("WORLD_MANAGEMENT".equals(participant.participantKey())
           && (!request.contentDigest().equals(participant.contentDigest())
@@ -67,9 +80,11 @@ final class PublishedReleaseBundleContract {
         throw new IllegalArgumentException(
             "World selector release lacks Game Logic ability schema proof");
       }
-    }
-    if (seen.size() != required.size()) {
-      throw new IllegalArgumentException("World selector release lacks required participants");
+      if (!"GAME_LOGIC".equals(participant.participantKey())
+          && participant.abilitySchemaDigest() != null) {
+        throw new IllegalArgumentException(
+            "World selector ability schema proof must be owned by Game Logic");
+      }
     }
   }
 
@@ -101,7 +116,11 @@ final class PublishedReleaseBundleContract {
 
   static void requireExactRepairMatch(
       PublishedReleaseBundleDto bundle, ExportedAssetManifest exportedManifest) {
-    requireSupportedSchemaForRead(bundle);
+    if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
+      requireSelectorBinding(bundle);
+    } else {
+      requireSupportedSchemaForRead(bundle);
+    }
     if (!Objects.equals(bundle.manifestSchemaVersion(), exportedManifest.manifestSchemaVersion())
         || !Objects.equals(bundle.artifactDigests(), exportedManifest.artifactDigests())) {
       throw new IllegalStateException(

@@ -136,13 +136,22 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
 
       var replay = restartedService.activatePreparedWorldInstance(tenantId, gameInstanceId, 1L);
       assertThat(replay).isEqualTo(active);
+      verify(restartedProvider).requireAuthenticatedEvidence();
       assertThat(
               repository
                   .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
                   .orElseThrow()
                   .getRowVersion())
           .isEqualTo(activeRowVersion);
-      verify(restartedProvider).requireAuthenticatedEvidence();
+      var prepareReplay = restartedService.prepareWorldInstance(request);
+      assertThat(prepareReplay).isEqualTo(active);
+      assertThat(
+              repository
+                  .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+                  .orElseThrow()
+                  .getRowVersion())
+          .isEqualTo(activeRowVersion);
+      verify(restartedProvider, org.mockito.Mockito.times(2)).requireAuthenticatedEvidence();
 
       RunOwnedWorldLaunchEvidenceProvider changedProvider =
           mock(RunOwnedWorldLaunchEvidenceProvider.class);

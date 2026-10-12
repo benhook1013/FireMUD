@@ -1,17 +1,10 @@
 package net.firedevops.firemud.worldmanagement.data;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.channels.Channels;
-import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.nio.file.attribute.PosixFilePermission;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -22,7 +15,6 @@ import java.util.Collection;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
@@ -31,6 +23,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.smoke.RunOwnedFixtureImmutableFileReader;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient.LaunchDescriptorReadback;
@@ -316,65 +309,8 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
     if (!path.isAbsolute()) {
       throw invalidEvidence();
     }
-    try {
-      BasicFileAttributes before =
-          Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-      if (!before.isRegularFile()
-          || Files.isSymbolicLink(path)
-          || before.size() <= 0L
-          || before.size() > MAX_WIRE_BYTES
-          || !isReadOnly(path)) {
-        throw invalidEvidence();
-      }
-      ByteArrayOutputStream bytes = new ByteArrayOutputStream((int) before.size());
-      try (SeekableByteChannel channel =
-              Files.newByteChannel(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
-          InputStream input = Channels.newInputStream(channel)) {
-        byte[] buffer = new byte[1024];
-        int read;
-        while ((read = input.read(buffer)) >= 0) {
-          if (read == 0) {
-            continue;
-          }
-          if (bytes.size() + read > MAX_WIRE_BYTES) {
-            throw invalidEvidence();
-          }
-          bytes.write(buffer, 0, read);
-        }
-      }
-      BasicFileAttributes after =
-          Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-      if (!after.isRegularFile()
-          || Files.isSymbolicLink(path)
-          || before.size() != after.size()
-          || bytes.size() != before.size()
-          || !before.lastModifiedTime().equals(after.lastModifiedTime())
-          || !sameFileKey(before.fileKey(), after.fileKey())
-          || !isReadOnly(path)) {
-        throw invalidEvidence();
-      }
-      return bytes.toByteArray();
-    } catch (IOException | SecurityException exception) {
-      throw invalidEvidence();
-    }
-  }
-
-  private static boolean isReadOnly(Path path) throws IOException {
-    try {
-      Set<PosixFilePermission> permissions =
-          Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS);
-      return permissions.contains(PosixFilePermission.OWNER_READ)
-          && !permissions.contains(PosixFilePermission.OWNER_WRITE)
-          && !permissions.contains(PosixFilePermission.GROUP_WRITE)
-          && !permissions.contains(PosixFilePermission.OTHERS_WRITE);
-    } catch (UnsupportedOperationException exception) {
-      Object readOnly = Files.getAttribute(path, "dos:readonly", LinkOption.NOFOLLOW_LINKS);
-      return Boolean.TRUE.equals(readOnly) && !Files.isWritable(path);
-    }
-  }
-
-  private static boolean sameFileKey(Object before, Object after) {
-    return before == null || after == null || before.equals(after);
+    return RunOwnedFixtureImmutableFileReader.readBoundedImmutableFile(
+        path, MAX_WIRE_BYTES, RunOwnedWorldLaunchEvidenceProvider::invalidEvidence);
   }
 
   private static void requireExpectedRunBinding(String expectedRunId, String expectedProject) {

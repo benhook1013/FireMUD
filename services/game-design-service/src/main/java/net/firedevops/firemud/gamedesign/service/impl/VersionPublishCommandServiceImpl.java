@@ -108,10 +108,10 @@ public class VersionPublishCommandServiceImpl {
   }
 
   /**
-   * Private non-ingress seam retained for mechanics proof until a production Draft source exists.
+   * Package-private non-ingress seam retained for mechanics proof until a production Draft source
+   * exists.
    */
-  private PublishWorkflowSnapshot reconcileFullVersionPublishMechanics(
-      PublishWorkflowRequest request) {
+  PublishWorkflowSnapshot reconcileFullVersionPublishMechanics(PublishWorkflowRequest request) {
     request = request.recoverMissingPublishRequestId();
     validateRequestIdentity(request);
     logger.info(
@@ -766,14 +766,10 @@ public class VersionPublishCommandServiceImpl {
       ExportedAssetManifest candidate =
           versionAssetArtifactService.getExportCandidate(
               request.tenantId(), attempt.getVersionId());
-      if (candidate == null) {
-        return artifact.manifestHash() == null
-            && artifact.exportedManifestAssetKeys() != null
-            && artifact.exportedManifestAssetKeys().isEmpty();
-      }
-      return Objects.equals(artifact.manifestHash(), candidate.manifestHash())
-          && Objects.equals(
-              artifact.exportedManifestAssetKeys(), candidate.requiredManifestAssetKeys());
+      return candidate == null
+          && artifact.manifestHash() == null
+          && artifact.exportedManifestAssetKeys() != null
+          && artifact.exportedManifestAssetKeys().isEmpty();
     } catch (RuntimeException malformedOrAmbiguousCandidate) {
       // Candidate evidence is not a committed release. Any unreadable or contradictory candidate
       // remains reconciliation-required rather than being treated as an empty staged intent.

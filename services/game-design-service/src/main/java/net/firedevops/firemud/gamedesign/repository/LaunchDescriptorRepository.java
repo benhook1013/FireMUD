@@ -117,6 +117,68 @@ public class LaunchDescriptorRepository {
             .fetchOne(this::toEntity));
   }
 
+  public Optional<LaunchDescriptor> findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
+      String tenantId, Long gameTemplateId, String controlPlaneRequestId) {
+    return Optional.ofNullable(
+        dsl.selectFrom(TABLE_REF)
+            .where(
+                TENANT_ID
+                    .eq(tenantId)
+                    .and(GAME_TEMPLATE_ID.eq(gameTemplateId))
+                    .and(CONTROL_PLANE_REQUEST_ID.eq(controlPlaneRequestId)))
+            .limit(1)
+            .fetchOne(this::toEntity));
+  }
+
+  public LaunchDescriptor save(LaunchDescriptor descriptor) {
+    if (descriptor.getId() != null) {
+      throw new IllegalStateException("Launch descriptors are immutable");
+    }
+    if (descriptor.getDescriptorSchemaVersion() != null
+        || descriptor.getTargetNamespace() != null
+        || descriptor.getCanonicalTenantId() != null
+        || descriptor.getAuthoredWorldSourceOperationId() != null
+        || descriptor.getAuthoredWorldSourceTenantSlug() != null
+        || descriptor.getWorldSlug() != null
+        || descriptor.getAuthoredWorldSourceGameRowId() != null
+        || descriptor.getAuthoredWorldSourceGameTenantKey() != null
+        || descriptor.getAuthoredWorldSourceProvenanceKind() != null
+        || descriptor.getAuthoredWorldSourceEvidenceDigest() != null
+        || descriptor.getRequestDigest() != null
+        || descriptor.getResultDigest() != null
+        || descriptor.getOriginalRequestJson() != null
+        || descriptor.getSourceEvidenceJson() != null
+        || descriptor.getOutcomeStatus() != null
+        || descriptor.getFailureCode() != null
+        || descriptor.getFailureMessage() != null) {
+      throw new IllegalArgumentException(
+          "Bound launch descriptors require the immutable owner insert");
+    }
+    LocalDateTime createdAt =
+        descriptor.getCreatedAt() == null ? LocalDateTime.now() : descriptor.getCreatedAt();
+    dsl.insertInto(TABLE_REF)
+        .set(LAUNCH_DESCRIPTOR_ID, descriptor.getLaunchDescriptorId())
+        .set(TENANT_ID, descriptor.getTenantId())
+        .set(GAME_TEMPLATE_ID, descriptor.getGameTemplateId())
+        .set(CONTROL_PLANE_REQUEST_ID, descriptor.getControlPlaneRequestId())
+        .set(REQUEST_HASH, descriptor.getRequestHash())
+        .set(VERSION_ID, descriptor.getVersionId())
+        .set(SCRIPT_PATCH_VERSION, descriptor.getScriptPatchVersion())
+        .set(RUNTIME_FLAGS_JSON, descriptor.getRuntimeFlagsJson())
+        .set(GENERATION_CONFIG_REVISION, descriptor.getGenerationConfigRevision())
+        .set(VERSION_STATE_EPOCH, descriptor.getVersionStateEpoch())
+        .set(RELEASE_BUNDLE_ID, descriptor.getReleaseBundleId())
+        .set(PUBLISHED_RELEASE_BUNDLE_REF, descriptor.getPublishedReleaseBundleRef())
+        .set(REMAP_SET_ID, descriptor.getRemapSetId())
+        .set(CREATED_AT, Timestamp.valueOf(createdAt))
+        .execute();
+    return findByTenantIdAndGameTemplateIdAndControlPlaneRequestId(
+            descriptor.getTenantId(),
+            descriptor.getGameTemplateId(),
+            descriptor.getControlPlaneRequestId())
+        .orElseThrow();
+  }
+
   public boolean existsByTenantIdAndVersionId(String tenantId, Long versionId) {
     return dsl.fetchExists(TABLE_REF, TENANT_ID.eq(tenantId).and(VERSION_ID.eq(versionId)));
   }
