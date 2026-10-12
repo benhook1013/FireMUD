@@ -10,6 +10,7 @@ import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionMutat
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionMutationRequest.RestrictionState;
 import net.firedevops.firemud.accountservice.dto.AccountPlatformRestrictionMutationRequest.SourceKind;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
@@ -128,7 +129,7 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
 
   @Test
   void retainedPreV137BirthDoesNotBecomeCurrentRestrictionAbsenceAfterMigration() {
-    Context context = context("126");
+    Context context = context("126.3");
     Account account = account();
     context
         .transaction()
@@ -172,6 +173,190 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
         .isInstanceOf(
             AccountPlatformRestrictionOperationRepository.RestrictionProjectionUnavailableException
                 .class);
+  }
+
+  @Test
+  void nonrestrictedSecurityLockResultPreservesPendingDeletionAndPunitiveBanIsIndependent() {
+    Context context = context("126.3");
+    Account account = account();
+    account.setLifecycleState(AccountLifecycleState.DEACTIVATED_PENDING_DELETE);
+    context
+        .transaction()
+        .executeWithoutResult(status -> new AccountRepository(context.dsl()).save(account));
+    migrate(context, null);
+
+    var birthRows =
+        context
+            .dsl()
+            .fetch(
+                "SELECT * FROM account_platform_restriction_births WHERE account_uuid = ? "
+                    + "ORDER BY category",
+                account.getAccountUuid())
+            .intoMaps();
+    var birthProjectionRows =
+        context
+            .dsl()
+            .fetch(
+                "SELECT * FROM account_platform_restriction_projections WHERE account_uuid = ? "
+                    + "ORDER BY category",
+                account.getAccountUuid())
+            .intoMaps();
+    var birthEventRows =
+        context
+            .dsl()
+            .fetch(
+                "SELECT * FROM account_platform_restriction_birth_outbox WHERE account_uuid = ? "
+                    + "ORDER BY category",
+                account.getAccountUuid())
+            .intoMaps();
+
+    commitDraft(context, account, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.NONRESTRICTED);
+
+    assertThat(lifecycle(context, account)).isEqualTo("deactivated_pending_delete");
+    assertThat(
+            context
+                .dsl()
+                .fetch(
+                    "SELECT * FROM account_platform_restriction_births WHERE account_uuid = ? "
+                        + "ORDER BY category",
+                    account.getAccountUuid())
+                .intoMaps())
+        .isEqualTo(birthRows);
+    assertThat(
+            context
+                .dsl()
+                .fetch(
+                    "SELECT * FROM account_platform_restriction_projections WHERE account_uuid = ? "
+                        + "ORDER BY category",
+                    account.getAccountUuid())
+                .intoMaps())
+        .isEqualTo(birthProjectionRows);
+    assertThat(
+            context
+                .dsl()
+                .fetch(
+                    "SELECT * FROM account_platform_restriction_birth_outbox WHERE account_uuid = ? "
+                        + "ORDER BY category",
+                    account.getAccountUuid())
+                .intoMaps())
+        .isEqualTo(birthEventRows);
+    assertThat(
+            context
+                .transaction()
+                .execute(
+                    status ->
+                        restrictionRepository(context.dsl())
+                            .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK))
+                .state())
+        .isEqualTo(RestrictionState.NONRESTRICTED);
+
+    commitDraft(context, account, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.NONRESTRICTED);
+    assertThat(lifecycle(context, account)).isEqualTo("deactivated_pending_delete");
+    assertThat(
+            context
+                .transaction()
+                .execute(
+                    status ->
+                        restrictionRepository(context.dsl())
+                            .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK))
+                .revision())
+        .isEqualTo(3L);
+
+    commitDraft(context, account, Category.PLATFORM_ACCESS_BAN, RestrictionState.RESTRICTED);
+
+    assertThat(lifecycle(context, account)).isEqualTo("deactivated_pending_delete");
+    assertThat(
+            context
+                .transaction()
+                .execute(
+                    status ->
+                        restrictionRepository(context.dsl())
+                            .readCurrent(account.getAccountUuid(), Category.PLATFORM_ACCESS_BAN))
+                .state())
+        .isEqualTo(RestrictionState.RESTRICTED);
+  }
+
+  private static void commitDraft(
+      Context context, Account account, Category category, RestrictionState state) {
+    context
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              var birthSource = new AccountPlatformRestrictionBirthRepository(context.dsl());
+              var birth = birthSource.readCurrentBirthSource(account.getAccountUuid());
+              var categoryBirth =
+                  category == Category.ACCOUNT_SECURITY_LOCK
+                      ? birth.accountSecurityLock()
+                      : birth.platformAccessBan();
+              var currentProjection =
+                  context
+                      .dsl()
+                      .fetchOne(
+                          "SELECT revision, enforcement_epoch, result_id FROM "
+                              + "account_platform_restriction_current_projections "
+                              + "WHERE account_uuid = ? AND category = ?",
+                          account.getAccountUuid(),
+                          category.storageValue());
+              long expectedRevision =
+                  currentProjection == null
+                      ? categoryBirth.revision()
+                      : currentProjection.get("revision", Long.class);
+              long expectedEpoch =
+                  currentProjection == null
+                      ? categoryBirth.enforcementEpoch()
+                      : currentProjection.get("enforcement_epoch", Long.class);
+              UUID expectedResult =
+                  currentProjection == null
+                      ? categoryBirth.resultId()
+                      : currentProjection.get("result_id", UUID.class);
+              var sourceKind =
+                  category == Category.ACCOUNT_SECURITY_LOCK
+                      ? net.firedevops.firemud.accountservice.dto
+                          .AccountPlatformRestrictionMutationRequest.SourceKind
+                          .ACCOUNT_SECURITY_RECOVERY
+                      : net.firedevops.firemud.accountservice.dto
+                          .AccountPlatformRestrictionMutationRequest.SourceKind
+                          .LOGGING_ADMIN_MODERATION;
+              var request =
+                  new AccountPlatformRestrictionMutationRequest(
+                      UUID.randomUUID(),
+                      account.getAccountUuid(),
+                      category,
+                      birth.currentAuthority().generation(),
+                      birth.currentAuthority().sourceVersion(),
+                      expectedRevision,
+                      expectedEpoch,
+                      expectedResult,
+                      state,
+                      sourceKind,
+                      UUID.randomUUID(),
+                      "sha256:" + "1".repeat(64));
+              try {
+                var repository = restrictionRepository(context.dsl());
+                var persist =
+                    AccountPlatformRestrictionOperationRepository.class.getDeclaredMethod(
+                        "persistWithoutOwnerProof",
+                        AccountPlatformRestrictionMutationRequest.class);
+                persist.setAccessible(true);
+                persist.invoke(repository, request);
+              } catch (ReflectiveOperationException failure) {
+                throw new IllegalStateException(
+                    "Could not invoke the closed restriction draft", failure);
+              }
+            });
+  }
+
+  private static String lifecycle(Context context, Account account) {
+    var row =
+        context
+            .dsl()
+            .fetchOne(
+                "SELECT lifecycle_state FROM accounts WHERE account_uuid = ?",
+                account.getAccountUuid());
+    if (row == null) {
+      throw new AssertionError("Expected lifecycle row for account " + account.getAccountUuid());
+    }
+    return row.get("lifecycle_state", String.class);
   }
 
   private static AccountPlatformRestrictionOperationRepository restrictionRepository(

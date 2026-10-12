@@ -521,10 +521,12 @@ public final class AccountPlatformRestrictionOperationRepository {
         dsl.fetchOne(
             "SELECT lifecycle_state FROM accounts WHERE account_uuid = ? FOR SHARE",
             projection.accountUuid());
-    String expectedLifecycle =
-        projection.state() == RestrictionState.RESTRICTED ? "security_locked" : "active";
-    if (account == null
-        || !expectedLifecycle.equals(account.get("lifecycle_state", String.class))) {
+    if (account == null) {
+      throw new RestrictionProjectionUnavailableException();
+    }
+    boolean lifecycleLocked =
+        "security_locked".equals(account.get("lifecycle_state", String.class));
+    if ((projection.state() == RestrictionState.RESTRICTED) != lifecycleLocked) {
       throw new RestrictionProjectionUnavailableException();
     }
   }
