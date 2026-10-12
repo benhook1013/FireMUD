@@ -27,8 +27,7 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
             ATTEMPT,
             MUTATION,
             8L);
-    byte[] projection =
-        "attached-account-projection".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    byte[] projection = request.canonicalPostAuthorizationTuple();
     Result result =
         new Result(request, Instant.parse("2030-01-01T00:00:00.123456789Z"), projection);
     var wireRequest = OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toRequest(request);
@@ -70,7 +69,10 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
 
     var response =
         OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(
-            new Result(request, Instant.parse("2030-01-01T00:00:00Z"), new byte[] {1, 2, 3}));
+            new Result(
+                request,
+                Instant.parse("2030-01-01T00:00:00Z"),
+                request.canonicalPostAuthorizationTuple()));
     assertThatThrownBy(
             () ->
                 OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
@@ -121,7 +123,7 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
   @Test
   void roundTripsGoogleTimestampSecondBoundariesExactly() {
     Request request = request();
-    byte[] projection = {1, 2, 3};
+    byte[] projection = request.canonicalPostAuthorizationTuple();
     Instant[] boundaries = {
       Instant.ofEpochSecond(-62_135_596_800L), Instant.ofEpochSecond(253_402_300_799L, 999_999_999)
     };
@@ -140,7 +142,7 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
   @Test
   void rejectsGoogleTimestampSecondsOutsideRangeOnEncodingAndDecoding() {
     Request request = request();
-    byte[] projection = {1, 2, 3};
+    byte[] projection = request.canonicalPostAuthorizationTuple();
     for (Instant outside :
         new Instant[] {
           Instant.ofEpochSecond(-62_135_596_801L), Instant.ofEpochSecond(253_402_300_800L)
@@ -174,7 +176,10 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
     Request request = request();
     var validResponse =
         OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(
-            new Result(request, Instant.parse("2030-01-01T00:00:00Z"), new byte[] {1, 2, 3}));
+            new Result(
+                request,
+                Instant.parse("2030-01-01T00:00:00Z"),
+                request.canonicalPostAuthorizationTuple()));
 
     for (int invalidNanos : new int[] {-1, 1_000_000_000}) {
       var response =

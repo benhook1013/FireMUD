@@ -9,16 +9,13 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidenceRepository.StoredEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.StoredParticipation;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Request;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
-import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
@@ -292,22 +289,7 @@ class AccountStartSessionWorldOriginalAttemptEvidenceRepositoryTest {
   }
 
   private static byte[] accountProjection(StartSessionPostAuthorizationExecutionTuple tuple) {
-    StartSessionAuthorityEvidenceBundle bundle =
-        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
-    return AccountControlUiAuthority.canonical(
-        Map.of(
-            "projectionSchemaId",
-            "accountStartSessionRedemptionProjection",
-            "projectionSchemaVersion",
-            "1",
-            "authorizationReferenceFingerprint",
-            tuple.authorizationReferenceFingerprint(),
-            "authorityEvidenceBundle",
-            bundle.jsonValue(),
-            "issuanceOperationId",
-            bundle.issuanceOperationId().toString(),
-            "issuanceFence",
-            9L));
+    return tuple.canonicalBytes();
   }
 
   private static String sha256Hex(byte[] bytes) {

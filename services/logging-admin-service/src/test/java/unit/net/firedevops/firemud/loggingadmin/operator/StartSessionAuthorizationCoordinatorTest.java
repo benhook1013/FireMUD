@@ -107,7 +107,6 @@ class StartSessionAuthorizationCoordinatorTest {
             eq(NOW_MILLIS)))
         .thenReturn(
             new StartSessionPreAuthorizationReservationRepository.TransitionResult(pending, true));
-    AuthorizationReference response = authorizationReference(tuple);
     when(accountClient.issueHuman(
             eq(shared(tuple)),
             eq(CONTROL_UI_TOKEN),
@@ -115,7 +114,12 @@ class StartSessionAuthorizationCoordinatorTest {
             eq(1L),
             any(UUID.class),
             eq(1L)))
-        .thenReturn(response);
+        .thenAnswer(
+            invocation ->
+                authorizationReference(
+                    tuple,
+                    (UUID) invocation.getArgument(2),
+                    ((Number) invocation.getArgument(3)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
 
     Result first = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
@@ -170,6 +174,8 @@ class StartSessionAuthorizationCoordinatorTest {
         .contains(LOGGING_IDENTITY)
         .doesNotContain(OPAQUE_REFERENCE)
         .doesNotContain(CONTROL_UI_TOKEN);
+    assertThat(persistedTuple.getValue())
+        .isEqualTo(first.handoff().postAuthorizationTuple().canonicalJson());
     persistenceOrder
         .verify(repository)
         .beginOwnerExecution(
@@ -195,10 +201,9 @@ class StartSessionAuthorizationCoordinatorTest {
             Optional.of(
                 new StartSessionPreAuthorizationReservationRepository.RecoveryClaimResult(
                     pending, ORIGINAL_OWNER)));
-    AuthorizationReference response = authorizationReference(tuple);
     when(accountClient.recover(
             eq(shared(tuple)), eq(ORIGINAL_OWNER), eq(1L), any(UUID.class), eq(3L)))
-        .thenReturn(response);
+        .thenAnswer(invocation -> authorizationReference(tuple, ORIGINAL_OWNER, 1L));
     stubAuthorizationEnrichment(tuple, true, true);
 
     Result result = coordinator.recover(tuple);
@@ -206,10 +211,23 @@ class StartSessionAuthorizationCoordinatorTest {
     assertThat(result.progress()).isEqualTo(Progress.OWNER_EXECUTION_PENDING);
     assertThat(result.handoff().postAuthorizationTuple().reservationOwnerId())
         .isEqualTo(ORIGINAL_OWNER);
+    ArgumentCaptor<String> persistedTuple = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<UUID> currentOwner = ArgumentCaptor.forClass(UUID.class);
     verify(accountClient)
         .recover(eq(shared(tuple)), eq(ORIGINAL_OWNER), eq(1L), currentOwner.capture(), eq(3L));
     assertThat(currentOwner.getValue()).isNotEqualTo(ORIGINAL_OWNER);
+    verify(repository)
+        .completeAuthorization(
+            eq(tuple),
+            eq(tuple.mutationDigest()),
+            eq(ORIGINAL_OWNER),
+            eq(1L),
+            eq(currentOwner.getValue()),
+            eq(3L),
+            persistedTuple.capture(),
+            eq(NOW_MILLIS));
+    assertThat(persistedTuple.getValue())
+        .isEqualTo(result.handoff().postAuthorizationTuple().canonicalJson());
     verify(accountClient, never())
         .issueHuman(any(), anyString(), any(), anyLong(), any(), anyLong());
   }
@@ -235,7 +253,6 @@ class StartSessionAuthorizationCoordinatorTest {
         .thenReturn(
             new StartSessionPreAuthorizationReservationRepository.TransitionResult(
                 alreadyPending, true));
-    AuthorizationReference response = authorizationReference(tuple);
     when(accountClient.issueHuman(
             eq(shared(tuple)),
             eq(CONTROL_UI_TOKEN),
@@ -243,7 +260,12 @@ class StartSessionAuthorizationCoordinatorTest {
             eq(1L),
             any(UUID.class),
             eq(1L)))
-        .thenReturn(response);
+        .thenAnswer(
+            invocation ->
+                authorizationReference(
+                    tuple,
+                    (UUID) invocation.getArgument(2),
+                    ((Number) invocation.getArgument(3)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
     GameSessionClient ownerClient = mock(GameSessionClient.class);
     StartSessionOwnerHandoffResult ownerEcho = ownerEcho(tuple);
@@ -317,10 +339,9 @@ class StartSessionAuthorizationCoordinatorTest {
             Optional.of(
                 new StartSessionPreAuthorizationReservationRepository.RecoveryClaimResult(
                     pending, ORIGINAL_OWNER)));
-    AuthorizationReference response = authorizationReference(tuple);
     when(accountClient.recover(
             eq(shared(tuple)), eq(ORIGINAL_OWNER), eq(1L), any(UUID.class), eq(3L)))
-        .thenReturn(response);
+        .thenAnswer(invocation -> authorizationReference(tuple, ORIGINAL_OWNER, 1L));
     stubAuthorizationEnrichment(tuple, true, true);
     GameSessionClient ownerClient = mock(GameSessionClient.class);
     StartSessionOwnerHandoffResult ownerEcho = ownerEcho(tuple);
@@ -412,10 +433,14 @@ class StartSessionAuthorizationCoordinatorTest {
         .thenReturn(
             new StartSessionPreAuthorizationReservationRepository.TransitionResult(
                 alreadyPending, true));
-    AuthorizationReference response = authorizationReference(tuple);
     when(accountClient.issueHuman(
             eq(shared(tuple)), anyString(), any(UUID.class), eq(1L), any(UUID.class), eq(1L)))
-        .thenReturn(response);
+        .thenAnswer(
+            invocation ->
+                authorizationReference(
+                    tuple,
+                    (UUID) invocation.getArgument(2),
+                    ((Number) invocation.getArgument(3)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
     GameSessionClient ownerClient = mock(GameSessionClient.class);
     io.grpc.StatusRuntimeException ambiguous = Status.UNAVAILABLE.asRuntimeException();
@@ -439,10 +464,14 @@ class StartSessionAuthorizationCoordinatorTest {
   void ownerPendingDuplicateCasDoesNotReturnTransientHandoff() throws Exception {
     StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-owner-duplicate");
     stubInitialReservation(tuple);
-    AuthorizationReference response = authorizationReference(tuple);
     when(accountClient.issueHuman(
             eq(shared(tuple)), anyString(), any(UUID.class), anyLong(), any(UUID.class), anyLong()))
-        .thenReturn(response);
+        .thenAnswer(
+            invocation ->
+                authorizationReference(
+                    tuple,
+                    (UUID) invocation.getArgument(2),
+                    ((Number) invocation.getArgument(3)).longValue()));
     stubAuthorizationEnrichment(tuple, true, false);
 
     Result result = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
@@ -470,10 +499,12 @@ class StartSessionAuthorizationCoordinatorTest {
   void ownerPendingTransitionFailureNeverReturnsTransientPayload() throws Exception {
     StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-owner-stale");
     stubInitialReservation(tuple);
-    AuthorizationReference response = authorizationReference(tuple);
     when(accountClient.issueHuman(
             eq(shared(tuple)), anyString(), any(UUID.class), anyLong(), any(UUID.class), anyLong()))
-        .thenReturn(response);
+        .thenAnswer(
+            invocation ->
+                authorizationReference(
+                    tuple, invocation.getArgument(2), invocation.getArgument(3)));
     stubAuthorizationEnrichment(tuple, true, true);
     when(repository.beginOwnerExecution(
             eq(tuple),
@@ -554,10 +585,14 @@ class StartSessionAuthorizationCoordinatorTest {
     StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-mismatch");
     StartSessionPreAuthorizationReservationTuple substituted = tuple("coordinator-substituted");
     stubInitialReservation(tuple);
-    AuthorizationReference substitutedResponse = authorizationReference(substituted);
     when(accountClient.issueHuman(
             eq(shared(tuple)), anyString(), any(UUID.class), anyLong(), any(UUID.class), anyLong()))
-        .thenReturn(substitutedResponse);
+        .thenAnswer(
+            invocation ->
+                authorizationReference(
+                    substituted,
+                    (UUID) invocation.getArgument(2),
+                    ((Number) invocation.getArgument(3)).longValue()));
 
     assertThatThrownBy(() -> coordinator.issueHuman(tuple, CONTROL_UI_TOKEN))
         .isInstanceOf(IllegalArgumentException.class);
@@ -570,7 +605,6 @@ class StartSessionAuthorizationCoordinatorTest {
 
     StartSessionPreAuthorizationReservationTuple staleTuple = tuple("coordinator-stale-return");
     stubInitialReservation(staleTuple);
-    AuthorizationReference staleResponse = authorizationReference(staleTuple);
     when(accountClient.issueHuman(
             eq(shared(staleTuple)),
             anyString(),
@@ -578,7 +612,12 @@ class StartSessionAuthorizationCoordinatorTest {
             anyLong(),
             any(UUID.class),
             anyLong()))
-        .thenReturn(staleResponse);
+        .thenAnswer(
+            invocation ->
+                authorizationReference(
+                    staleTuple,
+                    (UUID) invocation.getArgument(2),
+                    ((Number) invocation.getArgument(3)).longValue()));
     when(repository.completeAuthorization(
             eq(staleTuple),
             eq(staleTuple.mutationDigest()),
@@ -707,7 +746,8 @@ class StartSessionAuthorizationCoordinatorTest {
   }
 
   private static AuthorizationReference authorizationReference(
-      StartSessionPreAuthorizationReservationTuple tuple) throws Exception {
+      StartSessionPreAuthorizationReservationTuple tuple, UUID reservationOwner, long claimFence)
+      throws Exception {
     AuthorizationReference response = mock(AuthorizationReference.class);
     when(response.operatorAuthorizationReference()).thenReturn(OPAQUE_REFERENCE);
     when(response.authorizationReferenceFingerprint()).thenReturn(FINGERPRINT);
@@ -715,6 +755,16 @@ class StartSessionAuthorizationCoordinatorTest {
     when(response.authorityEvidenceBundle()).thenReturn(bundleBytes(tuple, NOW.plusSeconds(300)));
     when(response.bundleReference()).thenReturn(bundleReference());
     when(response.authenticatedLoggingWorkloadIdentity()).thenReturn(LOGGING_IDENTITY);
+    when(response.postAuthorizationTuple())
+        .thenReturn(
+            StartSessionPostAuthorizationExecutionTuple.createHuman(
+                shared(tuple),
+                LOGGING_IDENTITY,
+                FINGERPRINT,
+                reservationOwner,
+                claimFence,
+                bundleBytes(tuple, NOW.plusSeconds(300)),
+                bundleReference()));
     return response;
   }
 

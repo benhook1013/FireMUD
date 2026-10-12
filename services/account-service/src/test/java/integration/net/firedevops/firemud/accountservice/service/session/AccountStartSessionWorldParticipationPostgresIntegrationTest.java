@@ -211,6 +211,8 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
                           reservationClaimFence,
                           reservationOwnerId,
                           reservationClaimFence)));
+      var issuedRecord =
+          account.tx(() -> operatorRepository.findByControlPlaneRequestId(requestId).orElseThrow());
 
       // The exact Account issuance result becomes the original post-authorization tuple. The
       // target owner is still Game Session; World is only the same-namespace receiver.
@@ -227,23 +229,63 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
                   authorization.bundleReference().sourceVersion(),
                   authorization.bundleReference().sourceFence(),
                   authorization.bundleReference().linearization()));
+      assertThat(authorization.originalAccountPostAuthorizationTuple())
+          .containsExactly(originalTuple.canonicalBytes());
       assertThat(originalTuple.preAuthorizationTuple().targetOwner())
           .isEqualTo("game-session-service");
 
+      UUID recoveryClaimOwnerId = UUID.randomUUID();
+      var recoveryClaim =
+          claim.toBuilder()
+              .setClaimOwnerId(recoveryClaimOwnerId.toString())
+              .setClaimFence(2L)
+              .setPurpose(
+                  StartSessionReservationEvidencePurpose
+                      .START_SESSION_RESERVATION_EVIDENCE_PURPOSE_RECOVER)
+              .build();
+      when(claimClient.readCurrentClaimEvidence(
+              preAuthorizationTuple,
+              reservationOwnerId,
+              reservationClaimFence,
+              recoveryClaimOwnerId,
+              2L,
+              StartSessionReservationEvidenceClient.Purpose.RECOVER))
+          .thenReturn(recoveryClaim);
+      var recovered =
+          withPeer(
+              LOGGING_PEER_URI,
+              () ->
+                  operatorAuthorization.recover(
+                      new AccountStartSessionOperatorAuthorizationService.RecoverRequest(
+                          preAuthorizationTuple.canonicalJson().getBytes(StandardCharsets.UTF_8),
+                          reservationOwnerId,
+                          reservationClaimFence,
+                          recoveryClaimOwnerId,
+                          2L)));
+      assertThat(recovered.originalAccountPostAuthorizationTuple())
+          .containsExactly(originalTuple.canonicalBytes());
+      var recoveredRecord =
+          account.tx(() -> operatorRepository.findByControlPlaneRequestId(requestId).orElseThrow());
+      assertThat(recoveredRecord.encryptedResponseEnvelope())
+          .containsExactly(issuedRecord.encryptedResponseEnvelope());
+
       // Account performs its real one-time redemption. The Game Session peer and attempt/fence
       // are stipulated test inputs, not evidence from an authenticated Game Session producer.
-      withPeer(
-          GAME_SESSION_PEER_URI,
-          () ->
-              operatorAuthorization.redeem(
-                  new AccountStartSessionOperatorAuthorizationService.RedeemRequest(
-                      preAuthorizationTuple.canonicalJson().getBytes(StandardCharsets.UTF_8),
-                      authorization.operatorAuthorizationReference(),
-                      authorization.authorizationReferenceFingerprint(),
-                      reservationOwnerId,
-                      reservationClaimFence,
-                      gameSessionAttemptId,
-                      gameSessionOwnerFence)));
+      var redemption =
+          withPeer(
+              GAME_SESSION_PEER_URI,
+              () ->
+                  operatorAuthorization.redeem(
+                      new AccountStartSessionOperatorAuthorizationService.RedeemRequest(
+                          preAuthorizationTuple.canonicalJson().getBytes(StandardCharsets.UTF_8),
+                          recovered.operatorAuthorizationReference(),
+                          recovered.authorizationReferenceFingerprint(),
+                          reservationOwnerId,
+                          reservationClaimFence,
+                          gameSessionAttemptId,
+                          gameSessionOwnerFence)));
+      assertThat(redemption.originalAccountPostAuthorizationTuple())
+          .containsExactly(originalTuple.canonicalBytes());
 
       var redeemed =
           account.tx(() -> operatorRepository.findByControlPlaneRequestId(requestId).orElseThrow());
@@ -252,6 +294,8 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
       assertThat(redeemed.redemptionOwnerAttemptId()).isEqualTo(gameSessionAttemptId);
       assertThat(redeemed.redemptionOwnerFence()).isEqualTo(gameSessionOwnerFence);
       assertThat(redeemed.issuanceFence()).isPositive();
+      assertThat(redeemed.encryptedResponseEnvelope())
+          .containsExactly(issuedRecord.encryptedResponseEnvelope());
 
       var repository = new AccountStartSessionWorldParticipationRepository(account.dsl);
       var initialCapture =
