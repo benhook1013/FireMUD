@@ -596,6 +596,39 @@ class TestDataSeederIntegrationTest {
   }
 
   @Test
+  void rejectsUnknownCapabilityFieldBeforeOwnerRegistration(@TempDir Path testDirectory)
+      throws Exception {
+    Fixture fixture = prepareFixture(testDirectory);
+    String capability = Files.readString(fixture.capabilityPath());
+    Files.setPosixFilePermissions(
+        fixture.capabilityPath(),
+        Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
+    Files.writeString(
+        fixture.capabilityPath(),
+        capability.substring(0, capability.lastIndexOf('}')) + ",\"unexpected\":true}");
+    Files.setPosixFilePermissions(
+        fixture.capabilityPath(),
+        Set.of(
+            PosixFilePermission.OWNER_READ,
+            PosixFilePermission.GROUP_READ,
+            PosixFilePermission.OTHERS_READ));
+    configureSeeder(fixture);
+
+    assertThatThrownBy(() -> seeder.run(new DefaultApplicationArguments(new String[] {})))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Could not read run-owned fixture capability")
+        .hasCauseInstanceOf(IllegalArgumentException.class);
+    assertThat(fixture.receiptPath()).doesNotExist();
+    assertThat(dsl.fetchCount(SOURCE_OPERATIONS, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
+        .isZero();
+    assertThat(dsl.fetchCount(SOURCE_DELIVERIES, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
+        .isZero();
+    assertThat(
+            launchDescriptorRepository.findByPrivateRequest("1", fixture.operationId().toString()))
+        .isEmpty();
+  }
+
+  @Test
   void preservesConflictingReceiptInsteadOfReplacingIt(@TempDir Path testDirectory)
       throws Exception {
     Fixture fixture = prepareFixture(testDirectory);
