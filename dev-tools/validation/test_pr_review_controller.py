@@ -11814,6 +11814,92 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["review_targets"]["cli"]["status"], "MISSING_EVIDENCE")
         self.assertEqual(controller.resolve_cli_target().snapshot.head_sha, HEAD_1)
 
+    def test_actual_hosted_candidate_survives_configured_parent_merge_for_cli_selection(self):
+        anchor = {
+            **hosted_anchor(parent_identity="former-parent", parent_head=PARENT),
+            "actual_base_ref": "former-parent",
+            "actual_base_sha": PARENT,
+        }
+        active = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:123",
+            "held": True,
+            "reason": HOSTED_ACTIVE_RESPONSE_REASON,
+            "anchor": anchor,
+            "state": "active",
+            "active_reservation": True,
+            "attributable": True,
+            "terminal": False,
+            "trigger_id": 123,
+            "response_id": 124,
+        }
+        changes = (
+            {},
+            {"child_head": HEAD_2},
+            {"actual_base_ref": "different-base"},
+            {"actual_base_sha": HEAD_2},
+            {"parent_identity": None},
+            {"parent_head": HEAD_2},
+            {"merge_base": HEAD_2},
+            {"patch_id": "different-patch"},
+        )
+        for changed in changes:
+            with self.subTest(changed=changed):
+                observation = {**active, "anchor": {**anchor, **changed}}
+                controller = self.make(
+                    {1: pr(1, HEAD_1, "former-parent", PARENT)},
+                    {(1, "hosted"): [observation]},
+                    heads={"develop": HEAD_2, "former-parent": PARENT, "feature-1": HEAD_1},
+                )
+                controller.set_stack([1])
+
+                def adapter(candidate, **kwargs):
+                    self.assertTrue(kwargs["force"])
+                    kwargs["admit"](lambda: None)
+                    return candidate
+
+                controller.cli_adapter = adapter
+                if changed:
+                    with self.assertRaisesRegex(ControllerError, HOSTED_CLI_OVERLAP_HOLD_REASON):
+                        controller.run_cli(expected_pr=1, force=True)
+                else:
+                    selected = controller.run_cli(expected_pr=1, force=True)
+                    self.assertEqual(selected.snapshot.head_sha, HEAD_1)
+                    self.assertEqual(selected.parent.ref_name, "develop")
+                    self.assertEqual(selected.parent.head_sha, HEAD_2)
+                    self.assertEqual(selected.selected_base_ref_tip, PARENT)
+
+    def test_actual_hosted_overlap_still_refuses_duplicate_or_unverified_requests(self):
+        anchor = {
+            **hosted_anchor(parent_identity="former-parent", parent_head=PARENT),
+            "actual_base_ref": "former-parent",
+            "actual_base_sha": PARENT,
+        }
+        active = {
+            "pr": 1, "head": HEAD_1, "checkpoint": "trigger:123", "held": True,
+            "reason": HOSTED_ACTIVE_RESPONSE_REASON, "anchor": anchor, "state": "active",
+            "active_reservation": True, "attributable": True, "terminal": False,
+            "trigger_id": 123, "response_id": 124,
+        }
+        histories = (
+            [active, {**active, "checkpoint": "trigger:125", "trigger_id": 125}],
+            [{**active, "attributable": False}],
+            [{**active, "response_id": None}],
+            [{**active, "trigger_id": None}],
+            [{**active, "unstable": True}],
+            [{**active, "state": "awaiting_response", "response_id": None}],
+        )
+        for history in histories:
+            with self.subTest(history=history):
+                controller = self.make(
+                    {1: pr(1, HEAD_1, "former-parent", PARENT)}, {(1, "hosted"): history},
+                    heads={"develop": HEAD_2, "former-parent": PARENT, "feature-1": HEAD_1},
+                )
+                controller.set_stack([1])
+                with self.assertRaisesRegex(ControllerError, HOSTED_CLI_OVERLAP_HOLD_REASON):
+                    controller.resolve_cli_target()
+
     def test_active_review_target_hold_is_channel_specific(self):
         controller = self.make({1: pr(1, HEAD_1)})
         controller.set_stack([1])

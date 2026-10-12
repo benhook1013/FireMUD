@@ -3727,6 +3727,54 @@ class RuntimeTest(unittest.TestCase):
                     warning = runner._capture_terminal_attempt(42, record, self._payload(), current_path)
                     self.assertIn(type(failure).__name__, warning or "")
 
+    def test_terminal_capture_warning_retains_redacted_predecessor_identity_and_cause(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record = self._trigger_record()
+            record["sqlite_attempt_id"] = "predecessor-attempt"
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            path.parent.mkdir(parents=True)
+            hosted.atomic_write_json(path, record)
+            runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"), records=object())
+            failure = sqlite_hosted_capture.HostedCaptureError(
+                "attribution failed token=ghp_" + "a" * 36 + "\n\x1b" + "diagnostic " * 150,
+            )
+            failure.__context__ = ValueError("Bearer " + "secretcredential" * 4)
+            with patch.object(sqlite_hosted_capture, "record_hosted_terminal_result", side_effect=failure):
+                warning = runner._capture_terminal_attempt(42, record, self._payload(), path)
+            saved = hosted.load_trigger_record(path, "owner/repo", 42)
+            diagnostic = saved.pop("sqlite_capture_diagnostic")
+            self.assertEqual(saved, record)
+            self.assertEqual(diagnostic["phase"], "predecessor_terminal_capture")
+            self.assertEqual(diagnostic["pr"], 42)
+            self.assertEqual(diagnostic["attempt_id"], "predecessor-attempt")
+            self.assertEqual(diagnostic["trigger_id"], record["trigger"]["id"])
+            self.assertEqual(diagnostic["error_type"], "HostedCaptureError")
+            self.assertEqual(diagnostic["cause_type"], "ValueError")
+            self.assertIn("diagnostic_retained=true", warning)
+            self.assertNotIn("ghp_", json.dumps(diagnostic) + warning)
+            self.assertNotIn("secretcredential", json.dumps(diagnostic) + warning)
+            self.assertIn("redacted credential", json.dumps(diagnostic))
+            self.assertLessEqual(len(diagnostic["message"]), 1000)
+            self.assertNotIn("\x1b", diagnostic["message"])
+
+    def test_terminal_capture_warning_does_not_overwrite_changed_current_request(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = hosted.default_trigger_record_path("owner/repo", 42, Path(directory))
+            path.parent.mkdir(parents=True)
+            predecessor = self._trigger_record()
+            predecessor["sqlite_attempt_id"] = "predecessor-attempt"
+            current = {**predecessor, "sqlite_attempt_id": "current-attempt", "head_sha": "d" * 40}
+            hosted.atomic_write_json(path, current)
+            runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"), records=object())
+            with patch.object(
+                sqlite_hosted_capture, "record_hosted_terminal_result", side_effect=ValueError("capture failed"),
+            ):
+                warning = runner._capture_terminal_attempt(42, predecessor, self._payload(), path)
+            self.assertEqual(hosted.load_trigger_record(path, "owner/repo", 42), current)
+            self.assertIn("diagnostic_retained=false", warning)
+            self.assertIn("attempt_id=predecessor-attempt", warning)
+
     def test_status_history_does_not_mutate_hosted_attempt_records(self) -> None:
         scenarios = (
             (
