@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
 
@@ -87,6 +88,6 @@ public final class RunOwnedFixtureImmutableFileReader {
   }
 
   private static boolean sameFileKey(Object before, Object after) {
-    return before == null || after == null || before.equals(after);
+    return Objects.equals(before, after);
   }
 }
