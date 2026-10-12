@@ -23,6 +23,9 @@ import io.lettuce.core.protocol.ProtocolKeyword;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -810,6 +813,66 @@ class AccountGameplayDelegationRedisClientTest {
   }
 
   @Test
+  void pendingRecordExpiryUsesInjectedClockAndRejectsExactExpiryBoundary() throws Exception {
+    ActivationFixture fixture = activationFixture();
+    long expirySecond = fixture.pendingRecord().expiresAtEpochSecond();
+    long expiryMillis = fixture.absoluteExpiryMillis();
+    byte[] pendingBytes = fixture.registryValue().get().clone();
+    when(fixture.commands().type(any(byte[].class))).thenReturn("string");
+    when(fixture.commands().pttl(any(byte[].class))).thenReturn(1_000L);
+
+    AccountGameplayDelegationRedisClient beforeExpiry =
+        client(
+            () -> fixture.connection(),
+            Clock.fixed(Instant.ofEpochSecond(expirySecond - 1L), ZoneOffset.UTC));
+    beforeExpiry.requirePendingRecord(
+        fixture.pendingRecord().tokenHash(), pendingBytes, expiryMillis);
+
+    AccountGameplayDelegationRedisClient atExpiry =
+        client(
+            () -> fixture.connection(),
+            Clock.fixed(Instant.ofEpochSecond(expirySecond), ZoneOffset.UTC));
+    assertThatThrownBy(
+            () ->
+                atExpiry.requirePendingRecord(
+                    fixture.pendingRecord().tokenHash(), pendingBytes, expiryMillis))
+        .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+  }
+
+  @Test
+  void pendingRecordAbsoluteExpiryRejectsExactMillisecondBoundary() throws Exception {
+    ActivationFixture fixture = activationFixture();
+    AccountGameplayDelegationRedisClient atDeadline =
+        client(
+            () -> fixture.connection(),
+            Clock.fixed(Instant.ofEpochMilli(fixture.absoluteExpiryMillis()), ZoneOffset.UTC));
+
+    assertThatThrownBy(
+            () ->
+                atDeadline.requirePendingRecord(
+                    fixture.pendingRecord().tokenHash(),
+                    fixture.registryValue().get(),
+                    fixture.absoluteExpiryMillis()))
+        .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+  }
+
+  @Test
+  void committedActivationRejectsOwnerExpiryAtExactSecondBoundary() throws Exception {
+    ActivationFixture fixture =
+        activationFixture(Clock.fixed(Instant.ofEpochSecond(1_800_000_180L), ZoneOffset.UTC));
+
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .client()
+                    .activateCommittedPending(fixture.pendingReceipt(), fixture.owner()))
+        .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+    verify(fixture.commands(), times(1))
+        .<Long>evalsha(
+            anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class));
+  }
+
+  @Test
   void committedActivationRejectsChangedOwnerRecordAndMissingOrStaleRegistryValues()
       throws Exception {
     ActivationFixture ownerMismatch = activationFixture();
@@ -918,6 +981,10 @@ class AccountGameplayDelegationRedisClientTest {
 
   /** Unit-only fake owner metadata exercises low-level Lua mechanics; it is not COMMITTED proof. */
   private static ActivationFixture activationFixture() throws Exception {
+    return activationFixture(Clock.fixed(Instant.ofEpochSecond(1_800_000_000L), ZoneOffset.UTC));
+  }
+
+  private static ActivationFixture activationFixture(Clock clock) throws Exception {
     String accountStream = "account:auth-authority:v1:account/" + ACCOUNT_ID;
     var authority =
         new net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord
@@ -932,7 +999,7 @@ class AccountGameplayDelegationRedisClientTest {
             Optional.of(
                 new GameSessionAccountDelegationProfile.AccountSecurityCutoff(
                     "11", accountStream, "10")));
-    long now = java.time.Instant.now().getEpochSecond();
+    long now = 1_800_000_000L;
     PendingIntent intent =
         new PendingIntent(
             UUID.randomUUID(),
@@ -1012,7 +1079,7 @@ class AccountGameplayDelegationRedisClientTest {
         .when(commands)
         .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
 
-    AccountGameplayDelegationRedisClient client = client(connection);
+    AccountGameplayDelegationRedisClient client = client(() -> connection, clock);
     var pendingReceipt = client.registerPending(pendingRecord.tokenHash(), pendingBytes, deadline);
     doAnswer(
             invocation -> {
@@ -1101,6 +1168,11 @@ class AccountGameplayDelegationRedisClientTest {
 
   private static AccountGameplayDelegationRedisClient client(
       AccountCoordinationPinnedConnectionProvider connectionProvider) {
+    return client(connectionProvider, Clock.systemUTC());
+  }
+
+  private static AccountGameplayDelegationRedisClient client(
+      AccountCoordinationPinnedConnectionProvider connectionProvider, Clock clock) {
     return new AccountGameplayDelegationRedisClient(
         connectionProvider,
         RedisScriptCatalog.fromContributions(
@@ -1109,6 +1181,7 @@ class AccountGameplayDelegationRedisClientTest {
                 new net.firedevops.firemud.accountservice.service
                     .AccountGenerationProjectionRedisScriptContribution())),
         new AcknowledgementRequirements(1, 1, 1_000),
+        clock,
         GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES,
         AccountGameplayDelegationRedisClientTest.class.getClassLoader());
   }

@@ -460,6 +460,7 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
               provider,
               RedisScriptCatalog.loadInstalled(classLoader),
               new AcknowledgementRequirements(1, 1, 1_000),
+              Clock.systemUTC(),
               GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES,
               classLoader);
     }

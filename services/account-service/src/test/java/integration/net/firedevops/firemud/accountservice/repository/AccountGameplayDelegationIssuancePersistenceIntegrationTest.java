@@ -2498,6 +2498,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
               provider,
               RedisScriptCatalog.loadInstalled(resourceClassLoader),
               new AcknowledgementRequirements(1, 1, 1_000),
+              Clock.systemUTC(),
               GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES,
               resourceClassLoader);
     }
