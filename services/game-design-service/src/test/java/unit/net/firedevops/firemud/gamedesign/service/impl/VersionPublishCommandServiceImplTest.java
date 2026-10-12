@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
@@ -987,11 +988,10 @@ class VersionPublishCommandServiceImplTest {
   }
 
   @Test
-  void privateMechanicsRetriesFromExactPersistedStagedCandidateReadback() {
+  void exactPersistedStagedCandidateRequiresReconciliationBeforeRetry() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
     PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
     Version version = fullVersion(10L, 1, VersionLifecycleState.DRAFT);
-    List<PublishParticipantDigestDto> participantDigests = participantDigests();
     ExportedAssetManifest manifest = exportedManifest(List.of("manifest.json"));
     VersionAssetArtifactStateDto stagedCandidate =
         new VersionAssetArtifactStateDto(
@@ -1006,60 +1006,114 @@ class VersionPublishCommandServiceImplTest {
             null,
             LocalDateTime.now(),
             List.of("manifest.json"));
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(versionAssetArtifactService.findState("tenant-1", 10L))
+        .thenReturn(Optional.of(stagedCandidate));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L)).thenReturn(manifest);
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () ->
+                service.reconcileFullVersionPublishMechanics(
+                    new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    assertTrue(thrown.getMessage().contains("incomplete"));
+    assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
+    verify(versionAssetArtifactService).getExportCandidate("tenant-1", 10L);
+    verify(publishGateService, never())
+        .collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class));
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+    verify(publishAttemptService, never())
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, never()).delete(any(Version.class));
+  }
+
+  @Test
+  void candidateRecordedBeforeConflictReadbackKeepsAttemptPendingForReconciliation() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, VersionLifecycleState.DRAFT);
+    ExportedAssetManifest manifest = exportedManifest(List.of("manifest.json"));
+    VersionAssetArtifactStateDto emptyStagedArtifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            1L,
+            null,
+            workflowId,
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of());
+    VersionAssetArtifactStateDto candidateStagedArtifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            2L,
+            MANIFEST_HASH,
+            workflowId,
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of("manifest.json"));
     Game game = new Game();
     game.setTenantId("tenant-1");
+    AtomicBoolean possibleObjectWrite = new AtomicBoolean();
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
         .thenReturn(Optional.of(attempt));
     when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
     when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
     when(versionAssetArtifactService.findState("tenant-1", 10L))
-        .thenReturn(Optional.of(stagedCandidate), Optional.of(stagedCandidate));
-    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L)).thenReturn(manifest);
+        .thenReturn(Optional.of(emptyStagedArtifact), Optional.of(candidateStagedArtifact));
+    org.mockito.Mockito.doReturn(null, manifest)
+        .when(versionAssetArtifactService)
+        .getExportCandidate("tenant-1", 10L);
     when(publishGateService.collectFullVersionParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class)))
-        .thenReturn(participantDigests);
-    when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
-    when(controlPlaneDigestService.getDigestForVersion(any(VersionDto.class)))
-        .thenReturn(new DesignControlPlaneDigestDto("tenant-1", "10", "version:10", "digest", 1));
-    when(versionAssetArtifactService.markExportedUnattested(
+        .thenReturn(participantDigests());
+    org.mockito.Mockito.doAnswer(
+            ignored -> {
+              // The exporter can fail after writing one or more immutable objects.
+              possibleObjectWrite.set(true);
+              throw new IllegalStateException(
+                  "IMMUTABLE_OBJECT_CONFLICT: existing object differs from the candidate bytes");
+            })
+        .when(assetExportService)
+        .exportAssets("tenant-1", 1);
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () ->
+                service.reconcileFullVersionPublishMechanics(
+                    new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    assertTrue(thrown.getMessage().contains("failure marking"));
+    assertTrue(possibleObjectWrite.get());
+    assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
+    verify(assetExportService).exportAssets("tenant-1", 1);
+    verify(versionAssetArtifactService, never())
+        .markFailed(
             any(String.class),
             any(Long.class),
             any(Integer.class),
             any(String.class),
-            any(ExportedAssetManifest.class)))
-        .thenReturn(
-            new VersionAssetArtifactStateDto(
-                "tenant-1",
-                10L,
-                1,
-                "EXPORTED_UNATTESTED",
-                2L,
-                MANIFEST_HASH,
-                workflowId,
-                null,
-                null,
-                LocalDateTime.now(),
-                List.of("manifest.json")));
-
-    PublishWorkflowRequest request =
-        new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId);
-    PublishWorkflowSnapshot snapshot = service.reconcileFullVersionPublishMechanics(request);
-
-    assertEquals("SUCCEEDED", snapshot.status(), snapshot.toString());
-    verify(versionAssetArtifactService, org.mockito.Mockito.times(2))
-        .getExportCandidate("tenant-1", 10L);
-    verify(versionAssetArtifactService)
-        .markExportedUnattested("tenant-1", 10L, 1, workflowId, manifest);
-    verify(publishedReleaseBundleService)
-        .createFullVersionBundle(
-            any(VersionDto.class),
-            org.mockito.ArgumentMatchers.eq(workflowId),
-            org.mockito.ArgumentMatchers.eq(manifest),
+            any(ExportedAssetManifest.class),
             any(String.class),
-            org.mockito.ArgumentMatchers.eq(participantDigests));
-    verify(versionAssetArtifactService)
-        .markPublished("tenant-1", 10L, 2L, workflowId, MANIFEST_HASH);
-    verify(publishAttemptService).markFullVersionSucceeded(workflowId);
+            any(String.class));
+    verify(publishAttemptService, never())
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, never()).delete(any(Version.class));
+    verify(assetExportService, never())
+        .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
   }
 
   @Test
