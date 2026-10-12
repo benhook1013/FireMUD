@@ -1907,81 +1907,85 @@ def main() -> int:
     testcontainer_manager = testcontainer_managers[0]
     if testcontainer_manager.get("datasourceTemplate") != "docker":
         fail("Testcontainers database images must use the Docker datasource")
-    testcontainer_pattern = compile_re2_pattern(testcontainer_manager["matchStrings"][0])
-    ecr_prefix = "public.ecr.aws/docker/library/"
+    testcontainer_patterns = [
+        compile_re2_pattern(pattern) for pattern in testcontainer_manager["matchStrings"]
+    ]
     fixture_digest = "sha256:" + "b" * 64
     fixture = (
-        f"postgres.image={ecr_prefix}postgres:18@{fixture_digest}\n"
-        f"redis.image={ecr_prefix}redis:8.10-alpine@{fixture_digest}\n"
+        f"postgres.image=postgres:18@{fixture_digest}\n"
+        f"redis.image=redis:8.10-alpine@{fixture_digest}\n"
     )
     expected_images = Counter(
-        (("postgres", ecr_prefix + "postgres", "18"), ("redis", ecr_prefix + "redis", "8.10-alpine"))
+        (("postgres", "18"), ("redis", "8.10-alpine"))
     )
     if (
         Counter(
-            (m.group("depName"), m.group("packageName"), m.group("currentValue"))
-            for m in testcontainer_pattern.finditer(fixture)
+            (match.group("depName"), match.group("currentValue"))
+            for pattern in testcontainer_patterns
+            for match in pattern.finditer(fixture)
         )
         != expected_images
     ):
-        fail("Testcontainers image extraction loses logical dependency, ECR package, or image suffix")
+        fail("Testcontainers image extraction loses the logical dependency or image suffix")
     resource_path = root / (
         "services/common-test-support/src/testFixtures/resources/net/firedevops/firemud/test/"
         "container-images.properties"
     )
-    selected_images = list(testcontainer_pattern.finditer(resource_path.read_text()))
-    if Counter(m.group("depName") for m in selected_images) != Counter(("postgres", "redis")) or any(
-        m.group("packageName") != ecr_prefix + m.group("depName") for m in selected_images
-    ):
-        fail("Renovate must discover both canonical ECR fixture references exactly once")
+    selected_images = [
+        match for pattern in testcontainer_patterns for match in pattern.finditer(resource_path.read_text())
+    ]
+    if Counter(match.group("depName") for match in selected_images) != Counter(("postgres", "redis")):
+        fail("Renovate must discover both canonical fixture references exactly once")
     for invalid in (
         '"ghcr.io/benhook1013/logging-admin-service:latest"',
-        f"postgres.image=postgres:18@{fixture_digest}\n",
+        f"postgres.image=redis:18@{fixture_digest}\n",
         f"postgres.image=registry.invalid/postgres:18@{fixture_digest}\n",
         f"postgres.image=publicXecrXaws/docker/library/postgres:18@{fixture_digest}\n",
-        f"redis.image={ecr_prefix}redis:8.10-alpine\n",
+        f"postgres.image=public.ecr.aws/docker/library/postgres:18@{fixture_digest}\n",
+        "redis.image=redis:8.10-alpine\n",
     ):
-        if list(testcontainer_pattern.finditer(invalid)):
-            fail("Testcontainers manager must extract only pinned official ECR database images")
+        if any(pattern.search(invalid) for pattern in testcontainer_patterns):
+            fail("Testcontainers manager must extract only pinned short official database images")
     replacement_template = testcontainer_manager.get("autoReplaceStringTemplate", "")
-    if "{{{depName}}}.image={{{packageName}}}:" not in replacement_template:
-        fail("Testcontainers replacement must retain the logical property key and full ECR package")
-    for match in testcontainer_pattern.finditer(fixture):
-        context = match.groupdict()
-        for new_value, new_digest in (
-            ("19-alpine", "sha256:" + "c" * 64),
-            ("", "sha256:" + "c" * 64),
-            ("19-alpine", ""),
-            ("", ""),
-        ):
-            rendered = re.sub(
-                r"{{#if newValue}}(.*?){{else}}(.*?){{/if}}",
-                lambda value_match, new_value=new_value: value_match.group(1) if new_value else value_match.group(2),
-                replacement_template,
-            )
-            rendered = re.sub(
-                r"{{#if currentDigest}}(.*?){{/if}}",
-                lambda digest_match, current_digest=context["currentDigest"]: (
-                    digest_match.group(1) if current_digest else ""
-                ),
-                rendered,
-            )
-            rendered = re.sub(
-                r"{{#if newDigest}}(.*?){{else}}(.*?){{/if}}",
-                lambda digest_match, new_digest=new_digest: (
-                    digest_match.group(1) if new_digest else digest_match.group(2)
-                ),
-                rendered,
-            )
-            for key, value in context.items():
-                rendered = rendered.replace("{{{" + key + "}}}", value)
-            rendered = rendered.replace("{{{newValue}}}", new_value).replace("{{{newDigest}}}", new_digest)
-            expected = (
-                f"{context['depName']}.image={context['packageName']}:"
-                f"{new_value or context['currentValue']}@{new_digest or context['currentDigest']}\n"
-            )
-            if rendered != expected:
-                fail("Testcontainers replacement must preserve ECR source, tag suffix, and digest pins")
+    if "{{{depName}}}.image={{{depName}}}:" not in replacement_template:
+        fail("Testcontainers replacement must retain the logical property key and official repository")
+    for pattern in testcontainer_patterns:
+        for match in pattern.finditer(fixture):
+            context = match.groupdict()
+            for new_value, new_digest in (
+                ("19-alpine", "sha256:" + "c" * 64),
+                ("", "sha256:" + "c" * 64),
+                ("19-alpine", ""),
+                ("", ""),
+            ):
+                rendered = re.sub(
+                    r"{{#if newValue}}(.*?){{else}}(.*?){{/if}}",
+                    lambda value_match, new_value=new_value: value_match.group(1) if new_value else value_match.group(2),
+                    replacement_template,
+                )
+                rendered = re.sub(
+                    r"{{#if currentDigest}}(.*?){{/if}}",
+                    lambda digest_match, current_digest=context["currentDigest"]: (
+                        digest_match.group(1) if current_digest else ""
+                    ),
+                    rendered,
+                )
+                rendered = re.sub(
+                    r"{{#if newDigest}}(.*?){{else}}(.*?){{/if}}",
+                    lambda digest_match, new_digest=new_digest: (
+                        digest_match.group(1) if new_digest else digest_match.group(2)
+                    ),
+                    rendered,
+                )
+                for key, value in context.items():
+                    rendered = rendered.replace("{{{" + key + "}}}", value)
+                rendered = rendered.replace("{{{newValue}}}", new_value).replace("{{{newDigest}}}", new_digest)
+                expected = (
+                    f"{context['depName']}.image={context['depName']}:"
+                    f"{new_value or context['currentValue']}@{new_digest or context['currentDigest']}\n"
+                )
+                if rendered != expected:
+                    fail("Testcontainers replacement must preserve the official source, tag, and digest pin")
     database_major_rule = next(
         rule
         for rule in renovate["packageRules"]
@@ -1994,12 +1998,12 @@ def main() -> int:
     )
     if (
         database_major_rule.get("matchPackageNames")
-        != ["postgres", "redis", ecr_prefix + "postgres", ecr_prefix + "redis"]
+        != ["postgres", "redis"]
         or database_major_rule.get("matchDatasources") != ["docker"]
         or database_major_rule.get("matchUpdateTypes") != ["major"]
         or database_major_rule.get("automerge") is not False
     ):
-        fail("Native and fixture ECR database major updates must retain manual review")
+        fail("Database major updates must retain manual review")
     if (
         database_group_rule.get("matchDepNames") != ["postgres", "redis"]
         or database_group_rule.get("matchPackageNames")
@@ -2007,7 +2011,7 @@ def main() -> int:
         or database_group_rule.get("groupName") != "Testcontainers database images"
         or database_group_rule.get("automerge") is not False
     ):
-        fail("Fixture grouping must match logical dependency names rather than ECR lookup packages")
+        fail("Fixture grouping must match logical database dependency names")
     digest_image_managers = [
         testcontainer_manager,
         next(
@@ -2024,7 +2028,7 @@ def main() -> int:
     old_digest = "sha256:" + "a" * 64
     for manager, image in zip(
         digest_image_managers,
-        ("postgres.image=public.ecr.aws/docker/library/postgres:18", "postgres:16", "image: python:3.12-alpine"),
+        ("postgres.image=postgres:18", "postgres:16", "image: python:3.12-alpine"),
     ):
         pattern = compile_re2_pattern(manager["matchStrings"][0])
         pinned_image = image[:-1] + "@" + old_digest + '"' if image.startswith('"') else image + "@" + old_digest
