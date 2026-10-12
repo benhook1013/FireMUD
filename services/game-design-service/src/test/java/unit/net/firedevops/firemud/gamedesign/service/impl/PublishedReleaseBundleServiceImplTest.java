@@ -98,13 +98,6 @@ class PublishedReleaseBundleServiceImplTest {
         IllegalArgumentException.class, () -> service.getPublishedReleaseBundle("tenant-1", 7L));
   }
 
-  private Version sourceIdentity() {
-    Version version = new Version();
-    version.setCanonicalTenantId(UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"));
-    version.setCanonicalVersionId(UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"));
-    return version;
-  }
-
   @Test
   void retainedBundleWithBlankArtifactDigestStorageKeepsArtifactProofAbsent() {
     PublishedReleaseBundle retained = new PublishedReleaseBundle();
