@@ -5211,7 +5211,7 @@ class ReviewController:
         channel: policy.Channel | str,
         expected_pr: int | None = None,
         *,
-        allow_cli_prefix_optimization: bool = True,
+        allow_expected_prefix_optimization: bool = True,
         allow_completed_allocation: bool = False,
     ) -> Target:
         selected = policy.Channel(channel)
@@ -5223,7 +5223,7 @@ class ReviewController:
             getattr(self._require_github(), "batch_pull_requests", None)
         )
         scoped_expected_cli = (
-            allow_cli_prefix_optimization
+            allow_expected_prefix_optimization
             and use_current_batch
             and selected == policy.Channel.CLI
             and expected_pr in state.ordered_prs
@@ -5231,10 +5231,19 @@ class ReviewController:
             and callable(getattr(self._evidence_provider, "repository_cli_lock_status", None))
             and callable(getattr(self._evidence_provider, "request_history", None))
         )
+        scoped_expected_hosted = (
+            allow_expected_prefix_optimization
+            and use_current_batch
+            and selected == policy.Channel.HOSTED
+            and expected_pr in state.ordered_prs
+            and callable(getattr(self._evidence_provider, "request_history", None))
+            and callable(getattr(self._evidence_provider, "request_history_batch", None))
+        )
         selection_prs = state.ordered_prs
         selection_state = state
         expected_index: int | None = None
-        if scoped_expected_cli:
+        hosted_cooldown_pr: int | None = None
+        if scoped_expected_cli or scoped_expected_hosted:
             expected_index = state.ordered_prs.index(expected_pr)
             selection_prs = state.ordered_prs[: expected_index + 1]
             selection_state = dataclasses.replace(state, ordered_prs=selection_prs)
@@ -5296,13 +5305,21 @@ class ReviewController:
                 )
             request_batch = getattr(self._evidence_provider, "request_history_batch", None)
             merged_prs = tuple(pr for pr in selection_prs if _live(live_identities[pr], pr).merged)
-            if merged_prs and callable(request_batch):
+            request_history_prs = state.ordered_prs if scoped_expected_hosted else merged_prs
+            prepared_request_history: Mapping[tuple[int, str], list[dict[str, Any]]] = {}
+            if request_history_prs and callable(request_batch):
                 if budget is not None:
-                    budget.set_phase("target_merged_request_history", total=len(merged_prs))
-                prepared = request_batch(merged_prs, live_identities)
+                    budget.set_phase("target_current_request_history_batch", total=len(request_history_prs))
+                try:
+                    prepared = request_batch(request_history_prs, live_identities)
+                except github.HostedPreflightDeadlineExceeded:
+                    raise
+                except Exception as error:
+                    detail = "current Hosted request history" if scoped_expected_hosted else "merged current request history"
+                    raise ControllerError(f"{detail} cannot be verified") from error
                 if budget is not None:
-                    budget.set_phase("target_merged_request_history", total=len(merged_prs))
-                expected_keys = {(pr, channel) for pr in merged_prs for channel in ("hosted", "cli")}
+                    budget.set_phase("target_current_request_history_batch", total=len(request_history_prs))
+                expected_keys = {(pr, channel) for pr in request_history_prs for channel in ("hosted", "cli")}
                 if (
                     not isinstance(prepared, Mapping)
                     or set(prepared) != expected_keys
@@ -5320,12 +5337,46 @@ class ReviewController:
                         for key, values in prepared.items()
                     )
                 ):
-                    raise ControllerError("merged current request history cannot be verified")
-                history_cache.update(prepared)
+                    detail = "current Hosted request history" if scoped_expected_hosted else "merged current request history"
+                    raise ControllerError(f"{detail} cannot be verified")
+                prepared_request_history = prepared
+                # Current request evidence for later rows is an operational
+                # safety scan, not a substitute for the prefix's full policy
+                # history. Cache selected merged rows and stopped allocations,
+                # whose request-only projection is intentionally used here.
+                cached_request_keys = {
+                    (pr, channel)
+                    for pr in merged_prs
+                    for channel in ("hosted", "cli")
+                }
+                if scoped_expected_hosted:
+                    cached_request_keys.update(
+                        (allocation.pr, allocation.channel)
+                        for allocation in state.allocations.values()
+                        if allocation.pr in selection_prs and allocation.stop_basis is not None
+                    )
+                history_cache.update(
+                    {
+                        key: values
+                        for key, values in prepared.items()
+                        if key in cached_request_keys
+                    }
+                )
+                if scoped_expected_hosted:
+                    for (pr, channel_name), values in prepared.items():
+                        if channel_name != "hosted":
+                            continue
+                        for value in values:
+                            if value.get("active_review") is True or value.get("active_reservation") is True:
+                                raise ControllerError(
+                                    f"repository-wide Hosted review activity is active or ambiguous on PR #{pr}"
+                                )
+                            if value.get("rate_limited") is True and hosted_cooldown_pr is None:
+                                hosted_cooldown_pr = pr
                 if budget is not None:
-                    budget.set_completed(len(merged_prs))
+                    budget.set_completed(len(request_history_prs))
             cache_stopped_request_history()
-            if scoped_expected_cli:
+            if scoped_expected_cli or scoped_expected_hosted:
                 validated_identities: dict[int, LivePullRequest] = {}
                 for pr in state.ordered_prs:
                     identity = live_identities[pr]
@@ -5353,26 +5404,33 @@ class ReviewController:
                     problem = self._head_repository_problem(item)
                     if problem:
                         raise ControllerError(f"PR #{pr} {problem}")
+                # The current Hosted activity/cooldown scan above used the
+                # fresh all-queue identity snapshot through the production
+                # request-history batch adapter, avoiding per-PR refetches.
+                if scoped_expected_hosted and set(prepared_request_history) != {
+                    (pr, channel) for pr in state.ordered_prs for channel in ("hosted", "cli")
+                }:
+                    raise ControllerError("current Hosted request history cannot be verified")
                 active_candidates = tuple(
                     pr for pr, item in validated_identities.items() if not item.merged and item.state == "OPEN"
                 )
-                if budget is not None:
+                if scoped_expected_cli and budget is not None:
                     budget.set_phase("target_repository_cli_lock", total=1)
-                try:
-                    lock_status = self._evidence_provider.repository_cli_lock_status()
-                except github.HostedPreflightDeadlineExceeded:
-                    raise
-                except Exception as error:
-                    raise ControllerError("repository-wide CLI review activity cannot be verified") from error
-                if lock_status != "clear":
-                    detail = "active" if lock_status == "held" else "unknown or ambiguous"
-                    raise ControllerError(f"repository-wide CLI review activity is {detail}")
-                if budget is not None:
-                    budget.set_completed(1)
-                discover_active = getattr(self._evidence_provider, "active_review_targets", None)
-                if budget is not None:
-                    budget.set_phase("target_active_candidate_scan", total=1)
                 if scoped_expected_cli:
+                    try:
+                        lock_status = self._evidence_provider.repository_cli_lock_status()
+                    except github.HostedPreflightDeadlineExceeded:
+                        raise
+                    except Exception as error:
+                        raise ControllerError("repository-wide CLI review activity cannot be verified") from error
+                    if lock_status != "clear":
+                        detail = "active" if lock_status == "held" else "unknown or ambiguous"
+                        raise ControllerError(f"repository-wide CLI review activity is {detail}")
+                    if budget is not None:
+                        budget.set_completed(1)
+                    discover_active = getattr(self._evidence_provider, "active_review_targets", None)
+                    if budget is not None:
+                        budget.set_phase("target_active_candidate_scan", total=1)
                     try:
                         found_candidates = discover_active(active_candidates, live_identities)
                     except github.HostedPreflightDeadlineExceeded:
@@ -5425,7 +5483,7 @@ class ReviewController:
                     if budget is not None:
                         budget.set_phase("target_active_candidate_scan_complete", total=1)
                         budget.set_completed(1)
-                if not scoped_expected_cli:
+                if not (scoped_expected_cli or scoped_expected_hosted):
                     selection_prs = state.ordered_prs
                     selection_state = state
                     expected_index = None
@@ -5540,7 +5598,15 @@ class ReviewController:
             history_cache=history_cache,
         )
         if selected == policy.Channel.HOSTED and not allow_completed_allocation and decision.target is not None:
+            if hosted_cooldown_pr is not None:
+                decision = dataclasses.replace(
+                    decision,
+                    status=policy.ReviewStatus.RATE_LIMITED,
+                    reason=f"Hosted repository cooldown remains active on PR #{hosted_cooldown_pr}",
+                )
             for number, values in history.items():
+                if scoped_expected_hosted:
+                    break
                 if any(_field(value, "rate_limited") is True for value in values):
                     decision = dataclasses.replace(
                         decision,
@@ -5556,6 +5622,10 @@ class ReviewController:
                 and expected_pr in state.ordered_prs
                 and not live[expected_pr].merged
             ):
+                if scoped_expected_hosted and expected_pr is not None:
+                    raise WrongStackTarget(
+                        f"expected PR #{expected_pr}, but no eligible Hosted target exists through that PR"
+                    )
                 raise ControllerError(decision.reason)
             pr = expected_pr
             completed_allocation_override = True
@@ -7252,7 +7322,7 @@ class ReviewController:
                             lambda selected=selected: self._target(
                                 policy.Channel.CLI,
                                 selected.pr,
-                                allow_cli_prefix_optimization=expected_pr is not None,
+                                allow_expected_prefix_optimization=expected_pr is not None,
                             ),
                         )
             except github.HostedPreflightDeadlineExceeded as error:

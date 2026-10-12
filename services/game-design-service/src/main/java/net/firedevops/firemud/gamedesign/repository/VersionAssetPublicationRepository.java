@@ -24,6 +24,7 @@ import org.springframework.stereotype.Repository;
     justification =
         "Spring rejects a missing DSLContext before publication; this repository has no finalizer")
 public class VersionAssetPublicationRepository {
+  public static final long MAX_SOURCE_ASSET_BYTES = 25L * 1024L * 1024L;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Comparator<String> UTF8_BYTE_ORDER =
       VersionAssetPublicationRepository::compareUtf8;
@@ -130,16 +131,16 @@ public class VersionAssetPublicationRepository {
         throw new IllegalStateException(
             "Version asset mapping contains a duplicate source or usage key");
       }
-      byte[] bytes = requireBytes(source.bytes());
+      long byteSize = requireByteSize(source.byteSize());
+      requireSourceAssetLimit(byteSize);
       prepared.add(
           new PreparedAsset(
               source.usageKey(),
               source.assetId(),
               requireContentType(source.contentType()),
-              bytes,
-              digest(bytes)));
+              byteSize,
+              requireDigest(source.contentDigest())));
     }
-
     for (PreparedAsset asset : prepared) {
       dsl.execute(
           "INSERT INTO version_asset_export_item "
@@ -151,7 +152,7 @@ public class VersionAssetPublicationRepository {
           asset.assetId(),
           asset.contentType(),
           asset.contentDigest(),
-          (long) asset.bytes().length);
+          asset.byteSize());
     }
     dsl.execute(
         "INSERT INTO version_asset_export_snapshot "
@@ -181,6 +182,136 @@ public class VersionAssetPublicationRepository {
             .orElseThrow(() -> new IllegalStateException("Exact tenant Version was not found"));
     qualifyVersion(version);
     return readSnapshot(version);
+  }
+
+  /**
+   * Loads one source payload only after a bounded metadata read proves its exact frozen identity.
+   * The caller owns a finite read-only transaction around this method.
+   */
+  public byte[] readFrozenAssetBytes(String tenantId, int versionNumber, AssetSelection selection) {
+    requireTenantId(tenantId);
+    Objects.requireNonNull(selection, "selection");
+    if (versionNumber <= 0) {
+      throw new IllegalArgumentException("Version number must be positive");
+    }
+    VersionRow version =
+        readVersionByTenantAndVersionNumber(tenantId, versionNumber)
+            .orElseThrow(() -> new IllegalStateException("Exact tenant Version was not found"));
+    qualifyVersion(version);
+    Record metadata =
+        dsl.fetchOne(
+            "SELECT s.canonical_tenant_id, s.canonical_version_id, s.version_number, "
+                + "s.captured_version_state_epoch, s.item_count, "
+                + "i.usage_key AS snapshot_usage_key, i.asset_id AS snapshot_asset_id, "
+                + "i.content_type AS snapshot_content_type, i.content_hash AS snapshot_content_digest, "
+                + "i.byte_size AS snapshot_byte_size, va.usage_key AS mapping_usage_key, "
+                + "va.asset_id AS mapping_asset_id, ga.id AS source_asset_id, "
+                + "ga.tenant_id AS source_tenant_id, ga.file_name AS source_file_name, "
+                + "ga.content_type AS source_content_type, "
+                + "'sha256:' || encode(sha256(ga.data), 'hex') AS source_content_digest, "
+                + "octet_length(ga.data)::BIGINT AS source_byte_size "
+                + "FROM version_asset_export_snapshot s "
+                + "JOIN version_asset_export_item i ON i.tenant_id = s.tenant_id "
+                + "AND i.version_id = s.version_id "
+                + "JOIN version_asset va ON va.tenant_id = i.tenant_id "
+                + "AND va.version_id = i.version_id AND va.asset_id = i.asset_id "
+                + "AND va.usage_key = i.usage_key "
+                + "JOIN game_assets ga ON ga.tenant_id = i.tenant_id AND ga.id = i.asset_id "
+                + "WHERE s.tenant_id = ? AND s.version_id = ? AND s.version_number = ? "
+                + "AND i.usage_key = ? AND i.asset_id = ?",
+            tenantId,
+            version.id(),
+            versionNumber,
+            selection.usageKey(),
+            selection.assetId());
+    if (metadata == null) {
+      throw new IllegalStateException("Asset is not in the exact frozen Version snapshot");
+    }
+
+    UUID canonicalTenantId = metadata.get("canonical_tenant_id", UUID.class);
+    UUID canonicalVersionId = metadata.get("canonical_version_id", UUID.class);
+    Integer snapshotVersionNumber = metadata.get("version_number", Integer.class);
+    Long capturedEpoch = metadata.get("captured_version_state_epoch", Long.class);
+    Integer itemCount = metadata.get("item_count", Integer.class);
+    String usageKey = metadata.get("snapshot_usage_key", String.class);
+    Long assetId = metadata.get("snapshot_asset_id", Long.class);
+    String contentType = metadata.get("snapshot_content_type", String.class);
+    String contentDigest = metadata.get("snapshot_content_digest", String.class);
+    Long byteSize = metadata.get("snapshot_byte_size", Long.class);
+    Long mappingAssetId = metadata.get("mapping_asset_id", Long.class);
+    String mappingUsageKey = metadata.get("mapping_usage_key", String.class);
+    Long sourceAssetId = metadata.get("source_asset_id", Long.class);
+    String sourceTenantId = metadata.get("source_tenant_id", String.class);
+    String sourceFileName = metadata.get("source_file_name", String.class);
+    String sourceContentType = metadata.get("source_content_type", String.class);
+    String sourceContentDigest = metadata.get("source_content_digest", String.class);
+    Long sourceByteSize = metadata.get("source_byte_size", Long.class);
+    if (!Objects.equals(canonicalTenantId, version.canonicalTenantId())
+        || !Objects.equals(canonicalVersionId, version.canonicalVersionId())
+        || !Objects.equals(snapshotVersionNumber, version.versionNumber())
+        || capturedEpoch == null
+        || capturedEpoch <= 0
+        || version.stateEpoch() < capturedEpoch
+        || itemCount == null
+        || itemCount <= 0
+        || !Objects.equals(usageKey, selection.usageKey())
+        || !Objects.equals(assetId, selection.assetId())
+        || !Objects.equals(mappingAssetId, assetId)
+        || !Objects.equals(mappingUsageKey, usageKey)
+        || !Objects.equals(sourceAssetId, assetId)
+        || !Objects.equals(sourceTenantId, version.tenantId())
+        || !Objects.equals(sourceFileName, usageKey)
+        || !Objects.equals(sourceContentType, contentType)
+        || !Objects.equals(sourceContentDigest, contentDigest)
+        || byteSize == null
+        || !Objects.equals(sourceByteSize, byteSize)
+        || !Objects.equals(selection.contentType(), contentType)
+        || !Objects.equals(selection.contentDigest(), contentDigest)
+        || selection.byteSize() != byteSize) {
+      throw new IllegalStateException(
+          "Frozen Version asset source metadata or mapping failed verification");
+    }
+    validateUsageKey(usageKey);
+    requireContentType(contentType);
+    requireDigest(contentDigest);
+    requireSourceAssetLimit(requireByteSize(byteSize));
+
+    Record source =
+        dsl.fetchOne(
+            "SELECT ga.data AS source_data "
+                + "FROM version_asset_export_snapshot s "
+                + "JOIN version_asset_export_item i ON i.tenant_id = s.tenant_id "
+                + "AND i.version_id = s.version_id "
+                + "JOIN version_asset va ON va.tenant_id = i.tenant_id "
+                + "AND va.version_id = i.version_id AND va.asset_id = i.asset_id "
+                + "AND va.usage_key = i.usage_key "
+                + "JOIN game_assets ga ON ga.tenant_id = i.tenant_id AND ga.id = i.asset_id "
+                + "WHERE s.tenant_id = ? AND s.version_id = ? AND s.version_number = ? "
+                + "AND i.usage_key = ? AND i.asset_id = ? AND i.content_type = ? "
+                + "AND i.content_hash = ? AND i.byte_size = ? AND i.byte_size <= ? "
+                + "AND va.usage_key = ? AND ga.file_name = ? AND ga.content_type = ? "
+                + "AND octet_length(ga.data)::BIGINT = i.byte_size",
+            tenantId,
+            version.id(),
+            versionNumber,
+            usageKey,
+            assetId,
+            contentType,
+            contentDigest,
+            byteSize,
+            MAX_SOURCE_ASSET_BYTES,
+            usageKey,
+            usageKey,
+            contentType);
+    if (source == null) {
+      throw new IllegalStateException(
+          "Frozen Version asset source bytes or mapping failed verification");
+    }
+    byte[] bytes = source.get("source_data", byte[].class);
+    if (bytes == null || bytes.length != byteSize || !contentDigest.equals(digest(bytes))) {
+      throw new IllegalStateException("Frozen Version asset source bytes failed verification");
+    }
+    return bytes;
   }
 
   private ExportSnapshot readSnapshot(VersionRow version) {
@@ -232,7 +363,9 @@ public class VersionAssetPublicationRepository {
                 + "i.byte_size AS snapshot_byte_size, va.usage_key AS mapping_usage_key, "
                 + "va.asset_id AS mapping_asset_id, ga.id AS source_asset_id, "
                 + "ga.tenant_id AS source_tenant_id, ga.file_name AS source_file_name, "
-                + "ga.content_type AS source_content_type, ga.data AS source_data "
+                + "ga.content_type AS source_content_type, "
+                + "'sha256:' || encode(sha256(ga.data), 'hex') AS source_content_digest, "
+                + "octet_length(ga.data)::BIGINT AS source_byte_size "
                 + "FROM version_asset_export_item i "
                 + "LEFT JOIN version_asset va ON va.tenant_id = i.tenant_id "
                 + "AND va.version_id = i.version_id AND va.asset_id = i.asset_id "
@@ -260,7 +393,8 @@ public class VersionAssetPublicationRepository {
       String sourceTenantId = row.get("source_tenant_id", String.class);
       String sourceFileName = row.get("source_file_name", String.class);
       String sourceType = row.get("source_content_type", String.class);
-      byte[] sourceData = row.get("source_data", byte[].class);
+      String sourceDigest = row.get("source_content_digest", String.class);
+      Long sourceSize = row.get("source_byte_size", Long.class);
 
       validateUsageKey(usageKey);
       requireContentType(sourceType);
@@ -274,18 +408,19 @@ public class VersionAssetPublicationRepository {
           || !Objects.equals(version.tenantId(), sourceTenantId)
           || !Objects.equals(usageKey, sourceFileName)
           || !Objects.equals(snapshotType, sourceType)
-          || sourceData == null
-          || snapshotSize != sourceData.length
-          || !snapshotDigest.equals(digest(sourceData))) {
+          || sourceSize == null
+          || snapshotSize.longValue() != sourceSize.longValue()
+          || !Objects.equals(snapshotDigest, sourceDigest)) {
         throw new IllegalStateException(
             "Frozen Version asset source bytes or mapping failed verification");
       }
+      requireSourceAssetLimit(snapshotSize);
       if (!usageKeys.add(usageKey) || !assetIds.add(snapshotAssetId)) {
         throw new IllegalStateException(
             "Frozen Version asset snapshot contains duplicate keys or sources");
       }
       items.add(
-          new AssetSelection(usageKey, snapshotAssetId, sourceData, sourceType, snapshotDigest));
+          new AssetSelection(usageKey, snapshotAssetId, snapshotSize, sourceType, snapshotDigest));
     }
     items.sort(Comparator.comparing(AssetSelection::usageKey, UTF8_BYTE_ORDER));
 
@@ -301,7 +436,9 @@ public class VersionAssetPublicationRepository {
 
   private List<SourceAsset> lockMappedSourceAssets(String tenantId, long versionId) {
     return dsl.fetch(
-            "SELECT va.usage_key, va.asset_id, ga.file_name, ga.content_type, ga.data "
+            "SELECT va.usage_key, va.asset_id, ga.file_name, ga.content_type, "
+                + "'sha256:' || encode(sha256(ga.data), 'hex') AS content_digest, "
+                + "octet_length(ga.data)::BIGINT AS byte_size "
                 + "FROM version_asset va "
                 + "JOIN game_assets ga ON ga.tenant_id = va.tenant_id AND ga.id = va.asset_id "
                 + "AND ga.file_name = va.usage_key "
@@ -316,7 +453,8 @@ public class VersionAssetPublicationRepository {
                     row.get("asset_id", Long.class),
                     row.get("file_name", String.class),
                     row.get("content_type", String.class),
-                    row.get("data", byte[].class)));
+                    row.get("content_digest", String.class),
+                    row.get("byte_size", Long.class)));
   }
 
   private Optional<AssetRow> findAssetForUpdate(String tenantId, long assetId) {
@@ -476,11 +614,24 @@ public class VersionAssetPublicationRepository {
     return contentType;
   }
 
-  private static byte[] requireBytes(byte[] bytes) {
-    if (bytes == null) {
-      throw new IllegalStateException("Asset source bytes are missing");
+  private static long requireByteSize(Long byteSize) {
+    if (byteSize == null || byteSize < 0) {
+      throw new IllegalStateException("Asset source byte size is missing or invalid");
     }
-    return bytes.clone();
+    return byteSize;
+  }
+
+  private static String requireDigest(String digest) {
+    if (digest == null || !digest.matches("sha256:[0-9a-f]{64}")) {
+      throw new IllegalStateException("Asset source content digest is missing or invalid");
+    }
+    return digest;
+  }
+
+  private static void requireSourceAssetLimit(long byteSize) {
+    if (byteSize > MAX_SOURCE_ASSET_BYTES) {
+      throw new IllegalStateException("ASSET_TOO_LARGE");
+    }
   }
 
   private static String digest(byte[] bytes) {
@@ -522,28 +673,26 @@ public class VersionAssetPublicationRepository {
   private record AssetRow(String fileName) {}
 
   private record SourceAsset(
-      String usageKey, Long assetId, String fileName, String contentType, byte[] bytes) {}
+      String usageKey,
+      Long assetId,
+      String fileName,
+      String contentType,
+      String contentDigest,
+      Long byteSize) {}
 
   private record PreparedAsset(
-      String usageKey, long assetId, String contentType, byte[] bytes, String contentDigest) {}
+      String usageKey, long assetId, String contentType, long byteSize, String contentDigest) {}
 
   /**
-   * A defensive byte selection persisted in the immutable per-Version export projection. The
-   * numeric asset id is a private Game Design owner key, not an external identifier.
+   * Immutable metadata selection persisted in the per-Version export projection. The numeric asset
+   * id is a private Game Design owner key, not an external identifier.
    */
   public record AssetSelection(
-      String usageKey, long assetId, byte[] bytes, String contentType, String contentDigest) {
+      String usageKey, long assetId, long byteSize, String contentType, String contentDigest) {
     public AssetSelection {
       Objects.requireNonNull(usageKey, "usageKey");
-      Objects.requireNonNull(bytes, "bytes");
       Objects.requireNonNull(contentType, "contentType");
       Objects.requireNonNull(contentDigest, "contentDigest");
-      bytes = bytes.clone();
-    }
-
-    @Override
-    public byte[] bytes() {
-      return bytes.clone();
     }
   }
 
