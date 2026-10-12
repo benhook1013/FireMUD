@@ -28,9 +28,8 @@ import tools.jackson.databind.json.JsonMapper;
  * authorityEvidenceBundle/v1} contract.
  *
  * <p>This value proves only that supplied bytes are canonical and structurally bound to a typed
- * StartSession tuple and selected fields from the separate Account bundle reference. It does not
- * perform Account's full source/reference validation or establish current Account authority, source
- * freshness, a live reservation claim, or permission to dispatch.
+ * StartSession tuple and the separate Account source reference. It does not establish current
+ * Account authority, source freshness, a live reservation claim, or permission to dispatch.
  */
 public final class StartSessionAuthorityEvidenceBundle {
   public static final String BUNDLE_VERSION = "authorityEvidenceBundle/v1";
@@ -206,17 +205,17 @@ public final class StartSessionAuthorityEvidenceBundle {
   }
 
   /**
-   * Compares the bundle version, source version, and source fence with the corresponding bundle
-   * fields. This structural comparison is not Account's full source/reference validation, snapshot
-   * check, or redemption; it does not prove source freshness.
+   * Checks the bundle schema and capture source version against the separate Account reference. The
+   * source fence and Account issuance fence are independent owner identities; Account must match
+   * the complete reference to the exact owner-stored capture and issuance evidence. This integrity
+   * check is not authentication, freshness, a live reservation claim, or permission to dispatch.
    */
   public void requireReferenceBinding(BundleReference reference) {
     Objects.requireNonNull(reference, "Account bundle reference is required");
     Map<String, Object> projection =
         object(value.get("accountProjectionEvidence"), "accountProjectionEvidence");
     if (!BUNDLE_VERSION.equals(reference.bundleVersion())
-        || !reference.sourceVersion().equals(projection.get("sourceEvidenceVersion"))
-        || !reference.sourceFence().equals(value.get("issuanceFence"))) {
+        || !reference.sourceVersion().equals(projection.get("sourceEvidenceVersion"))) {
       throw denied("Account bundle reference differs from immutable authority evidence");
     }
   }

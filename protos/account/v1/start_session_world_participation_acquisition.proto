@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package account.v1;
+
+import "game-session/v1/original_start_session_current_attempt_read.proto";
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone and unregistered. This acquires Account-owned World source protection for one
+// original human StartSession and does not establish World execution admission.
+service AccountStartSessionWorldParticipationAcquisitionService {
+  rpc AcquireStartSessionWorldParticipation(
+      AcquireStartSessionWorldParticipationRequest)
+      returns (AcquireStartSessionWorldParticipationResponse);
+}
+
+message AcquireStartSessionWorldParticipationRequest {
+  int32 schema_version = 1;
+  // Fresh correlation UUID; independent of all retained mutation and authority identities.
+  string acquisition_request_id = 2;
+  string target_namespace = 3;
+  bytes original_post_authorization_tuple = 4;
+  string game_session_owner_mutation_id = 5;
+  string game_session_owner_attempt_id = 6;
+  int64 game_session_owner_fence = 7;
+  string canonical_game_instance_id = 8;
+  // Exact bounded World preparation JSON and its digest; these are not caller authority claims.
+  string preparation_input_json = 9;
+  string preparation_input_digest = 10;
+}
+
+message AcquireStartSessionWorldParticipationResponse {
+  // The complete exact request is echoed, including the independent acquisition correlation.
+  AcquireStartSessionWorldParticipationRequest request = 1;
+  string account_world_participation_id = 2;
+  int64 account_world_participation_fence = 3;
+  // Complete retained first original-attempt response, using the existing Game Session codec.
+  game_session.v1.ReadOriginalStartSessionCurrentAttemptResponse original_attempt_evidence = 4;
+}

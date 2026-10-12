@@ -4,11 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -21,12 +23,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.IssuanceCandidate;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionRequest;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
@@ -63,7 +68,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   void dropTestOwnedSchemas() {
     JdbcTemplate jdbc = new JdbcTemplate(POSTGRES.dataSource());
     for (String schema : schemas) {
-      if (!schema.matches("account_start_session_auth_[a-f0-9]{32}")) {
+      if (!schema.matches("account_start_session_[a-f0-9]{32}")) {
         throw new IllegalStateException("Refusing to dispose an unowned PostgreSQL schema");
       }
       jdbc.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
@@ -75,6 +80,8 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   void realPostgresCreateRetryAndRedemptionRetainTheOriginalAuthorityRecord() {
     Context context = context();
     IssuanceCandidate candidate = candidate(context, tuple());
+    assertThat(candidate.issuanceFence())
+        .isNotEqualTo(Long.parseLong(candidate.bundleReference().sourceFence()));
 
     var created = context.inTransaction(() -> context.repository.createOrReadExact(candidate));
     IssuanceCandidate differentOutput = withDifferentOutputs(candidate);
@@ -100,22 +107,24 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     var replay = context.inTransaction(() -> context.repository.redeemExact(request));
     assertThat(redeemed.replay()).isFalse();
     assertThat(replay.replay()).isTrue();
-    assertThat(replay.authorityEvidenceBundle()).containsExactly(bytes("authority-bundle-v1"));
+    assertThat(replay.authorityEvidenceBundle())
+        .containsExactly(candidate.authorityEvidenceBundle());
     var retainedAfterRedemption =
         context.inTransaction(
             () -> context.repository.findByControlPlaneRequestId(REQUEST_ID).orElseThrow());
     assertThat(retainedAfterRedemption.bundleReference()).isEqualTo(candidate.bundleReference());
     assertThat(retainedAfterRedemption.bundleReference().linearization()).isEqualTo("123456789");
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "UPDATE account_start_session_operator_authorizations "
-                                + "SET bundle_linearization = ? WHERE control_plane_request_id = ?",
-                            "123456788",
-                            REQUEST_ID)))
-        .isInstanceOf(IntegrityConstraintViolationException.class);
+    assertImmutableGuardRejected(
+        () ->
+            context.inTransactionWithoutResult(
+                () ->
+                    context.transactionDsl.execute(
+                        "UPDATE account_start_session_operator_authorizations "
+                            + "SET bundle_linearization = ? WHERE control_plane_request_id = ?",
+                        "123456788",
+                        REQUEST_ID)),
+        "StartSession authorization evidence is immutable except one exact redemption "
+            + "or expired envelope erasure");
     assertThat(
             context.inTransaction(
                 () ->
@@ -130,7 +139,9 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void realPostgresAllowsEqualIssueAndRedemptionTimestampsAtMillisecondPrecision() {
     Context context = context();
-    IssuanceCandidate candidate = candidate(context, tuple());
+    Instant issuedAt = canonicalMillisecond(databaseNow(context));
+    IssuanceCandidate candidate =
+        candidate(tuple(), issuedAt, issuedAt.plusSeconds(180), issuedAt.plusSeconds(210));
     context.inTransaction(() -> context.repository.createOrReadExact(candidate));
 
     RedemptionRequest request = redemption(candidate, OWNER_ATTEMPT_ID, 11L, candidate.issuedAt());
@@ -140,7 +151,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     var persisted =
         context.inTransaction(
             () -> context.repository.findByControlPlaneRequestId(REQUEST_ID).orElseThrow());
-    assertThat(persisted.redeemedAt()).isEqualTo(candidate.issuedAt());
+    assertThat(persisted.redeemedAt()).isEqualTo(issuedAt);
     assertThat(persisted.status())
         .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.REDEEMED);
   }
@@ -148,7 +159,9 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void realPostgresRejectsRedemptionTimestampEarlierThanIssuance() {
     Context context = context();
-    IssuanceCandidate candidate = candidate(context, tuple());
+    Instant issuedAt = canonicalMillisecond(databaseNow(context));
+    IssuanceCandidate candidate =
+        candidate(tuple(), issuedAt, issuedAt.plusSeconds(180), issuedAt.plusSeconds(210));
     context.inTransaction(() -> context.repository.createOrReadExact(candidate));
 
     RedemptionRequest request =
@@ -162,6 +175,198 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     assertThat(persisted.status())
         .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.ISSUED);
     assertThat(persisted.redeemedAt()).isNull();
+  }
+
+  @Test
+  void realPostgresEnforcesCanonicalPositiveLongRangeForBundleSourceFence() {
+    Context context = context();
+    Instant issuedAt = canonicalMillisecond(databaseNow(context));
+    List<String> checkConstraintNames =
+        context
+            .adminDsl
+            .fetch(
+                "SELECT conname FROM pg_constraint "
+                    + "WHERE conrelid = ?::regclass AND contype = 'c'",
+                context.schema + ".account_start_session_operator_authorizations")
+            .getValues("conname", String.class);
+    assertThat(checkConstraintNames)
+        .contains("account_ss_operator_bundle_source_fence_canonical_check")
+        .doesNotContain("account_start_session_operator_authorizations_check");
+
+    String distinctFenceRequestId = REQUEST_ID + "-source-fence-distinct";
+    IssuanceCandidate distinctFences =
+        candidateWithReference(
+            tuple(distinctFenceRequestId, "independent Account source and owner fences"),
+            bundleReference(7L),
+            issuedAt);
+    assertThat(distinctFences.issuanceFence()).isEqualTo(31L);
+    assertThat(distinctFences.bundleReference().sourceFence()).isEqualTo("7");
+    assertThat(
+            context
+                .inTransaction(() -> context.repository.createOrReadExact(distinctFences))
+                .created())
+        .isTrue();
+
+    String maxFenceRequestId = REQUEST_ID + "-source-fence-max";
+    IssuanceCandidate maxFence =
+        candidateWithReference(
+            tuple(maxFenceRequestId, "maximum Account source fence"),
+            bundleReference(Long.MAX_VALUE),
+            issuedAt);
+    var maxFenceCreated =
+        context.inTransaction(() -> context.repository.createOrReadExact(maxFence));
+    assertThat(maxFenceCreated.created()).isTrue();
+    assertThat(maxFenceCreated.issuance().bundleReference().sourceFence())
+        .isEqualTo(Long.toString(Long.MAX_VALUE));
+    assertThat(maxFenceCreated.issuance().issuanceFence())
+        .isNotEqualTo(Long.parseLong(maxFenceCreated.issuance().bundleReference().sourceFence()));
+
+    List<String> invalidSourceFences = List.of("0", "07", "9223372036854775808");
+    for (int index = 0; index < invalidSourceFences.size(); index++) {
+      String requestId = REQUEST_ID + "-source-fence-invalid-" + index;
+      String invalidSourceFence = invalidSourceFences.get(index);
+      IssuanceCandidate candidate =
+          candidateWithReference(
+              tuple(requestId, "invalid Account source fence"), bundleReference(7L), issuedAt);
+      int beforeInvalidFence = context.countRows();
+      assertThatThrownBy(
+              () -> insertCandidateWithSourceFence(context, candidate, invalidSourceFence))
+          .isInstanceOf(IntegrityConstraintViolationException.class)
+          .satisfies(
+              failure -> {
+                SQLException sqlFailure = findSqlException(failure);
+                assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+                if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+                  throw new AssertionError(
+                      "Source-fence rejection must be a PostgreSQL exception", sqlFailure);
+                }
+                var serverError = postgresFailure.getServerErrorMessage();
+                assertThat(serverError).isNotNull();
+                assertThat(serverError.getConstraint())
+                    .isEqualTo("account_ss_operator_bundle_source_fence_canonical_check");
+              });
+      assertThat(context.countRows()).isEqualTo(beforeInvalidFence);
+    }
+  }
+
+  @Test
+  void v1601ReplacesOnlyTheExactLegacyBundleSourceFenceGuard() {
+    Context context = contextAt("160");
+    Map<String, String> checksBeforeMigration = checkConstraintDefinitions(context);
+    String legacyConstraintName = "account_start_session_operator_authorizations_check";
+    String canonicalConstraintName = "account_ss_operator_bundle_source_fence_canonical_check";
+
+    assertThat(checksBeforeMigration)
+        .containsKey(legacyConstraintName)
+        .doesNotContainKey(canonicalConstraintName);
+    var legacyConstraint =
+        Objects.requireNonNull(
+            context.adminDsl.fetchOne(
+                "SELECT pg_get_expr(c.conbin, c.conrelid) AS expression, "
+                    + "c.convalidated, "
+                    + "array_to_string(ARRAY(SELECT a.attname "
+                    + "FROM unnest(c.conkey) AS key(attnum) "
+                    + "JOIN pg_attribute a ON a.attrelid = c.conrelid "
+                    + "AND a.attnum = key.attnum ORDER BY a.attname), ',') AS columns "
+                    + "FROM pg_constraint c "
+                    + "WHERE c.conrelid = ?::regclass AND c.contype = 'c' "
+                    + "AND c.conname = ?",
+                context.schema + ".account_start_session_operator_authorizations",
+                legacyConstraintName),
+            "Expected the legacy source-fence check on the schema-qualified authorization table");
+    assertThat(legacyConstraint.get("convalidated", Boolean.class)).isTrue();
+    assertThat(legacyConstraint.get("columns", String.class))
+        .isEqualTo("bundle_source_fence,issuance_fence");
+    assertThat(normalizeCheckExpression(legacyConstraint.get("expression", String.class)))
+        .isEqualTo("bundle_source_fence~'^[1-9][0-9]{0,18}$'andbundle_source_fence=issuance_fence");
+
+    Flyway.configure()
+        .dataSource(context.dataSource)
+        .schemas(context.schema)
+        .defaultSchema(context.schema)
+        .placeholders(Map.of("serviceSchema", context.schema))
+        .locations("classpath:db/migration")
+        .target(org.flywaydb.core.api.MigrationVersion.fromVersion("160.1"))
+        .load()
+        .migrate();
+
+    Map<String, String> checksAfterMigration = checkConstraintDefinitions(context);
+    assertThat(checksAfterMigration)
+        .doesNotContainKey(legacyConstraintName)
+        .containsKey(canonicalConstraintName);
+    var canonicalConstraint =
+        Objects.requireNonNull(
+            context.adminDsl.fetchOne(
+                "SELECT pg_get_expr(c.conbin, c.conrelid) AS expression "
+                    + "FROM pg_constraint c "
+                    + "WHERE c.conrelid = ?::regclass AND c.contype = 'c' "
+                    + "AND c.conname = ?",
+                context.schema + ".account_start_session_operator_authorizations",
+                canonicalConstraintName),
+            "Expected the canonical source-fence check after V160.1");
+    assertThat(normalizeCheckExpression(canonicalConstraint.get("expression", String.class)))
+        .contains("bundle_source_fence~'^[1-9][0-9]{0,18}$'")
+        .contains("bundle_source_fence::numeric<=");
+
+    Map<String, String> expectedChecksAfterMigration = new HashMap<>(checksBeforeMigration);
+    expectedChecksAfterMigration.remove(legacyConstraintName);
+    expectedChecksAfterMigration.put(
+        canonicalConstraintName, checksAfterMigration.get(canonicalConstraintName));
+    assertThat(checksAfterMigration).isEqualTo(expectedChecksAfterMigration);
+  }
+
+  private Map<String, String> checkConstraintDefinitions(Context context) {
+    return context
+        .adminDsl
+        .fetch(
+            "SELECT c.conname, pg_get_constraintdef(c.oid) AS definition "
+                + "FROM pg_constraint c "
+                + "WHERE c.conrelid = ?::regclass AND c.contype = 'c'",
+            context.schema + ".account_start_session_operator_authorizations")
+        .intoMap(
+            record -> record.get("conname", String.class),
+            record -> record.get("definition", String.class));
+  }
+
+  private String normalizeCheckExpression(String expression) {
+    return expression.toLowerCase().replaceAll("[\\s()\\\"]", "").replace("::text", "");
+  }
+
+  @Test
+  void repositoryRejectsClosedBundleWhenItsSourceVersionDiffersFromReference() {
+    Context context = context();
+    IssuanceCandidate candidate =
+        candidateWithReference(
+            tuple(), bundleReference(7L), canonicalMillisecond(databaseNow(context)));
+    BundleReference mismatchedReference =
+        new BundleReference(
+            candidate.bundleReference().bundleVersion(),
+            "13",
+            candidate.bundleReference().sourceFence(),
+            candidate.bundleReference().linearization());
+    IssuanceCandidate mismatched =
+        new IssuanceCandidate(
+            candidate.controlPlaneRequestId(),
+            candidate.preAuthorizationTuple(),
+            candidate.mutationDigest(),
+            candidate.issuanceWorkloadUri(),
+            candidate.reservationOwnerId(),
+            candidate.reservationClaimFence(),
+            candidate.issuanceOperationId(),
+            candidate.issuanceFence(),
+            mismatchedReference,
+            candidate.authorityEvidenceBundle(),
+            candidate.authorizationReferenceFingerprint(),
+            candidate.encryptedResponseEnvelope(),
+            candidate.issuedAt(),
+            candidate.referenceExpiresAt(),
+            candidate.responseEnvelopeExpiresAt());
+
+    assertThatThrownBy(
+            () -> context.inTransaction(() -> context.repository.createOrReadExact(mismatched)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Account bundle reference differs");
+    assertThat(context.countRows()).isZero();
   }
 
   @Test
@@ -190,9 +395,24 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
                 "\"requestId\":\"" + boundedRequestId + "\"",
                 "\"requestId\":\"" + oversizedRequestId + "\"");
     assertThat(malformedTupleJson).contains(oversizedRequestId);
+    IssuanceCandidate boundaryCandidate = candidate(context, boundaryTuple, boundedRequestId);
     IssuanceCandidate oversized =
-        candidate(
-            context, boundedRequestId, bytes(malformedTupleJson), boundaryTuple.mutationDigest());
+        new IssuanceCandidate(
+            boundedRequestId,
+            bytes(malformedTupleJson),
+            boundaryTuple.mutationDigest(),
+            boundaryCandidate.issuanceWorkloadUri(),
+            boundaryCandidate.reservationOwnerId(),
+            boundaryCandidate.reservationClaimFence(),
+            boundaryCandidate.issuanceOperationId(),
+            boundaryCandidate.issuanceFence(),
+            boundaryCandidate.bundleReference(),
+            boundaryCandidate.authorityEvidenceBundle(),
+            boundaryCandidate.authorizationReferenceFingerprint(),
+            boundaryCandidate.encryptedResponseEnvelope(),
+            boundaryCandidate.issuedAt(),
+            boundaryCandidate.referenceExpiresAt(),
+            boundaryCandidate.responseEnvelopeExpiresAt());
     int before = context.countRows();
     assertThatThrownBy(
             () -> context.inTransaction(() -> context.repository.createOrReadExact(oversized)))
@@ -494,32 +714,53 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         .isInstanceOf(
             AccountStartSessionOperatorAuthorizationRepository.ReferenceExpiredException.class);
 
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "UPDATE account_start_session_operator_authorizations "
-                                + "SET authority_evidence_bundle = ? WHERE control_plane_request_id = ?",
-                            bytes("rewritten"),
-                            REQUEST_ID)))
-        .isInstanceOf(IntegrityConstraintViolationException.class);
-    assertThatThrownBy(
-            () ->
-                context.inTransactionWithoutResult(
-                    () ->
-                        context.transactionDsl.execute(
-                            "DELETE FROM account_start_session_operator_authorizations "
-                                + "WHERE control_plane_request_id = ?",
-                            REQUEST_ID)))
-        .isInstanceOf(IntegrityConstraintViolationException.class);
+    assertImmutableGuardRejected(
+        () ->
+            context.inTransactionWithoutResult(
+                () ->
+                    context.transactionDsl.execute(
+                        "UPDATE account_start_session_operator_authorizations "
+                            + "SET authority_evidence_bundle = ? WHERE control_plane_request_id = ?",
+                        bytes("rewritten"),
+                        REQUEST_ID)),
+        "StartSession authorization evidence is immutable except one exact redemption "
+            + "or expired envelope erasure");
+    assertImmutableGuardRejected(
+        () ->
+            context.inTransactionWithoutResult(
+                () ->
+                    context.transactionDsl.execute(
+                        "DELETE FROM account_start_session_operator_authorizations "
+                            + "WHERE control_plane_request_id = ?",
+                        REQUEST_ID)),
+        "StartSession operator authorization evidence cannot be deleted");
     assertThatThrownBy(
             () ->
                 context.inTransactionWithoutResult(
                     () ->
                         context.transactionDsl.execute(
                             "TRUNCATE account_start_session_operator_authorizations")))
-        .isInstanceOf(IntegrityConstraintViolationException.class);
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .satisfies(
+            failure -> {
+              SQLException sqlFailure = findSqlException(failure);
+              assertThat(sqlFailure.getSQLState()).isEqualTo("0A000");
+              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+                throw new AssertionError(
+                    "Foreign-key truncate rejection must be a PostgreSQL exception", sqlFailure);
+              }
+              var serverError = postgresFailure.getServerErrorMessage();
+              assertThat(serverError).isNotNull();
+              assertThat(serverError.getMessage())
+                  .isEqualTo("cannot truncate a table referenced in a foreign key constraint");
+            });
+    assertImmutableGuardRejected(
+        () ->
+            context.inTransactionWithoutResult(
+                () ->
+                    context.transactionDsl.execute(
+                        "TRUNCATE account_start_session_operator_authorizations CASCADE")),
+        "StartSession operator authorization evidence cannot be truncated");
 
     var retained =
         context.inTransaction(
@@ -677,7 +918,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void v126RetainedEnvelopeSurvivesAdditiveErasureMigration() {
     Context context = contextAt("126");
-    IssuanceCandidate candidate = candidate(context, tuple());
+    IssuanceCandidate candidate = legacyCandidate(context, tuple());
     insertV126Row(context, candidate);
 
     Flyway.configure()
@@ -703,7 +944,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   @Test
   void v1262RetainedMaximumLegacyEnvelopeSurvivesForwardSizeMigration() {
     Context context = contextAt("126.2");
-    IssuanceCandidate base = candidate(context, tuple());
+    IssuanceCandidate base = legacyCandidate(context, tuple());
     byte[] retainedLegacyEnvelope = new byte[64 * 1024];
     Arrays.fill(retainedLegacyEnvelope, (byte) 0x2d);
     IssuanceCandidate legacy = withEnvelope(base, retainedLegacyEnvelope);
@@ -801,7 +1042,7 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   }
 
   private Context contextAt(String targetVersion) {
-    String schema = "account_start_session_auth_" + UUID.randomUUID().toString().replace("-", "");
+    String schema = "account_start_session_" + UUID.randomUUID().toString().replace("-", "");
     schemas.add(schema);
     DriverManagerDataSource dataSource = POSTGRES.dataSource(schema);
     var migration =
@@ -862,10 +1103,47 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         OffsetDateTime.ofInstant(candidate.responseEnvelopeExpiresAt(), ZoneOffset.UTC));
   }
 
+  private static void insertCandidateWithSourceFence(
+      Context context, IssuanceCandidate candidate, String sourceFence) {
+    context.adminDsl.execute(
+        "INSERT INTO account_start_session_operator_authorizations "
+            + "(control_plane_request_id, pre_authorization_tuple, mutation_digest, "
+            + "issuance_workload_uri, reservation_owner_id, reservation_claim_fence, "
+            + "issuance_operation_id, issuance_fence, bundle_version, bundle_source_version, "
+            + "bundle_source_fence, bundle_linearization, authority_evidence_bundle, "
+            + "authorization_reference_fingerprint, encrypted_response_envelope, issued_at, "
+            + "reference_expires_at, response_envelope_expires_at, status) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+            + "CAST(? AS TIMESTAMPTZ), CAST(? AS TIMESTAMPTZ), "
+            + "CAST(? AS TIMESTAMPTZ), 'ISSUED')",
+        candidate.controlPlaneRequestId(),
+        candidate.preAuthorizationTuple(),
+        candidate.mutationDigest(),
+        candidate.issuanceWorkloadUri(),
+        candidate.reservationOwnerId(),
+        candidate.reservationClaimFence(),
+        candidate.issuanceOperationId(),
+        candidate.issuanceFence(),
+        candidate.bundleReference().bundleVersion(),
+        candidate.bundleReference().sourceVersion(),
+        sourceFence,
+        candidate.bundleReference().linearization(),
+        candidate.authorityEvidenceBundle(),
+        candidate.authorizationReferenceFingerprint(),
+        candidate.encryptedResponseEnvelope(),
+        OffsetDateTime.ofInstant(candidate.issuedAt(), ZoneOffset.UTC),
+        OffsetDateTime.ofInstant(candidate.referenceExpiresAt(), ZoneOffset.UTC),
+        OffsetDateTime.ofInstant(candidate.responseEnvelopeExpiresAt(), ZoneOffset.UTC));
+  }
+
   private static Instant databaseNow(Context context) {
     return Objects.requireNonNull(
             (OffsetDateTime) context.adminDsl.fetchValue("SELECT clock_timestamp()"))
         .toInstant();
+  }
+
+  private static Instant canonicalMillisecond(Instant value) {
+    return Instant.ofEpochMilli(value.toEpochMilli());
   }
 
   private static Instant canonicalDatabaseNow(Context context) {
@@ -914,6 +1192,14 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
   }
 
   private static IssuanceCandidate withDifferentOutputs(IssuanceCandidate original) {
+    UUID operationId = UUID.randomUUID();
+    BundleReference reference =
+        bundleReference(Long.parseLong(original.bundleReference().sourceFence()) + 1L);
+    StartSessionPreAuthorizationReservationTuple tuple =
+        StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(
+            new String(original.preAuthorizationTuple(), StandardCharsets.UTF_8));
+    Instant expiresAt = original.referenceExpiresAt().plusSeconds(1);
+    long issuanceFence = original.issuanceFence() + 1L;
     return new IssuanceCandidate(
         original.controlPlaneRequestId(),
         original.preAuthorizationTuple(),
@@ -921,14 +1207,14 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         original.issuanceWorkloadUri(),
         original.reservationOwnerId(),
         original.reservationClaimFence(),
-        UUID.randomUUID(),
-        original.issuanceFence() + 1L,
-        bundleReference(original.issuanceFence() + 1L),
-        bytes("different bundle"),
+        operationId,
+        issuanceFence,
+        reference,
+        authorityBundle(tuple, operationId, issuanceFence, expiresAt, reference),
         "arfp/v1/key-2/" + "b".repeat(64),
         bytes("different encrypted response"),
         original.issuedAt().plusSeconds(1),
-        original.referenceExpiresAt().plusSeconds(1),
+        expiresAt,
         original.responseEnvelopeExpiresAt().plusSeconds(1));
   }
 
@@ -997,9 +1283,36 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         RESERVATION_OWNER_ID,
         3L,
         ISSUANCE_OPERATION_ID,
-        7L,
+        31L,
         bundleReference(7L),
-        bytes("authority-bundle-v1"),
+        authorityBundle(
+            tupleFromBytes(tupleBytes),
+            ISSUANCE_OPERATION_ID,
+            31L,
+            issuedAt.plusSeconds(180),
+            bundleReference(7L)),
+        "arfp/v1/key-1/" + "a".repeat(64),
+        bytes("encrypted-original-response-envelope"),
+        issuedAt,
+        issuedAt.plusSeconds(180),
+        issuedAt.plusSeconds(210));
+  }
+
+  private static IssuanceCandidate legacyCandidate(
+      Context context, StartSessionPreAuthorizationReservationTuple tuple) {
+    Instant issuedAt = canonicalDatabaseNow(context).minusSeconds(2);
+    BundleReference reference = bundleReference(7L);
+    return new IssuanceCandidate(
+        tuple.controlPlaneRequestId(),
+        canonicalBytes(tuple),
+        tuple.mutationDigest(),
+        ISSUER_URI,
+        RESERVATION_OWNER_ID,
+        3L,
+        ISSUANCE_OPERATION_ID,
+        7L,
+        reference,
+        authorityBundle(tuple, ISSUANCE_OPERATION_ID, 7L, issuedAt.plusSeconds(180), reference),
         "arfp/v1/key-1/" + "a".repeat(64),
         bytes("encrypted-original-response-envelope"),
         issuedAt,
@@ -1066,9 +1379,9 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         RESERVATION_OWNER_ID,
         3L,
         ISSUANCE_OPERATION_ID,
-        7L,
+        31L,
         bundleReference(7L),
-        bytes("authority-bundle-v1"),
+        authorityBundle(tuple, ISSUANCE_OPERATION_ID, 31L, referenceExpiresAt, bundleReference(7L)),
         "arfp/v1/key-1/" + "a".repeat(64),
         bytes("encrypted-original-response-envelope"),
         issuedAt,
@@ -1076,8 +1389,34 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         responseEnvelopeExpiresAt);
   }
 
+  private static IssuanceCandidate candidateWithReference(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      BundleReference reference,
+      Instant issuedAt) {
+    UUID operationId = UUID.randomUUID();
+    String keyId = UUID.randomUUID().toString().replace("-", "");
+    Instant referenceExpiresAt = issuedAt.plusSeconds(180);
+    return new IssuanceCandidate(
+        tuple.controlPlaneRequestId(),
+        canonicalBytes(tuple),
+        tuple.mutationDigest(),
+        ISSUER_URI,
+        RESERVATION_OWNER_ID,
+        3L,
+        operationId,
+        31L,
+        reference,
+        authorityBundle(tuple, operationId, 31L, referenceExpiresAt, reference),
+        "arfp/v1/" + keyId + "/" + "a".repeat(64),
+        bytes("encrypted-original-response-envelope"),
+        issuedAt,
+        referenceExpiresAt,
+        issuedAt.plusSeconds(210));
+  }
+
   private static IssuanceCandidate expiredCandidate(
       StartSessionPreAuthorizationReservationTuple tuple, Instant databaseNow) {
+    UUID operationId = UUID.randomUUID();
     String uniqueFingerprint =
         "arfp/v1/key-1/"
             + UUID.randomUUID().toString().replace("-", "")
@@ -1089,10 +1428,10 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         ISSUER_URI,
         RESERVATION_OWNER_ID,
         3L,
-        UUID.randomUUID(),
-        8L,
-        bundleReference(8L),
-        bytes("expired-authority-bundle-v1"),
+        operationId,
+        31L,
+        bundleReference(7L),
+        authorityBundle(tuple, operationId, 31L, databaseNow.minusSeconds(60), bundleReference(7L)),
         uniqueFingerprint,
         bytes("expired-original-response-envelope"),
         databaseNow.minusSeconds(240),
@@ -1156,6 +1495,114 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
         "authorityEvidenceBundle/v1", "12", Long.toString(sourceFence), "123456789");
   }
 
+  private static StartSessionPreAuthorizationReservationTuple tupleFromBytes(byte[] tupleBytes) {
+    return StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(
+        new String(tupleBytes, StandardCharsets.UTF_8));
+  }
+
+  private static byte[] authorityBundle(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      UUID operationId,
+      long issuanceFence,
+      Instant expiresAt,
+      BundleReference reference) {
+    String tenantId = tuple.action().scope().tenantId().toString();
+    String actorId = tuple.actor().accountId().toString();
+    Map<String, Object> authorityTuple =
+        Map.of(
+            "issuerAuthGeneration", 1L,
+            "accountAuthorityGeneration", 1L,
+            "tenantAuthorityGeneration", Map.of(tenantId, 1L),
+            "membershipAuthorityGeneration", Map.of(tenantId, 1L),
+            "privateRealmGrantVersions", List.of());
+    Map<String, Object> bundle =
+        Map.of(
+            "bundleVersion", StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+            "authorityScope",
+                Map.of(
+                    "scope",
+                    Map.of(
+                        "tenantId",
+                        tenantId,
+                        "targetNamespace",
+                        tuple.action().scope().targetNamespace()),
+                    "actionFamily",
+                    tuple.actionFamily(),
+                    "applicableAccountId",
+                    actorId,
+                    "applicableTenantId",
+                    tenantId),
+            "accountProjectionEvidence",
+                Map.of(
+                    "sourceType",
+                    "ACCOUNT",
+                    "sourceEvidenceId",
+                    "sha256:" + "a".repeat(64),
+                    "sourceEvidenceVersion",
+                    reference.sourceVersion(),
+                    "projectionStatus",
+                    "CURRENT",
+                    "evaluatedAt",
+                    Instant.parse("2026-10-09T00:00:00Z").toString(),
+                    "expiresAt",
+                    expiresAt.toString()),
+            "issuanceOperationIdentity",
+                Map.of(
+                    "issuanceOperationId", operationId.toString(),
+                    "controlPlaneRequestId", tuple.controlPlaneRequestId(),
+                    "actionFamilyRequestIdentity",
+                        Map.of(
+                            "requestIdentityKind",
+                            "controlPlaneRequestId",
+                            "requestId",
+                            tuple.controlPlaneRequestId()),
+                    "mutationDigest", tuple.mutationDigest()),
+            "issuanceKind", "human_operator",
+            "authorityTuple", authorityTuple,
+            "membershipVersion", Map.of(tenantId, 2L),
+            "issuanceFence", Long.toString(issuanceFence),
+            "issuanceEvidence",
+                Map.of(
+                    "evidenceType",
+                    StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
+                    "actorAccountId",
+                    actorId,
+                    "controlUiTokenJti",
+                    UUID.fromString("2e19f788-10d2-4f33-aed6-9a46db136dcc").toString(),
+                    "role",
+                    "tenantAdmin",
+                    "accountGeneration",
+                    "1",
+                    "tenantGeneration",
+                    "1"));
+    return AccountControlUiAuthority.canonical(bundle);
+  }
+
+  private static void assertImmutableGuardRejected(
+      ThrowingCallable action, String expectedDiagnostic) {
+    assertThatThrownBy(action)
+        .isInstanceOf(IntegrityConstraintViolationException.class)
+        .satisfies(
+            failure -> {
+              SQLException sqlFailure = findSqlException(failure);
+              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+                throw new AssertionError(
+                    "Immutable guard rejection must be a PostgreSQL exception", sqlFailure);
+              }
+              var serverError = postgresFailure.getServerErrorMessage();
+              assertThat(serverError).isNotNull();
+              assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
+            });
+  }
+
+  private static SQLException findSqlException(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlFailure) return sqlFailure;
+    }
+    throw new AssertionError("Immutable guard rejection did not retain its SQLException", failure);
+  }
+
   private static final UUID TENANT_ID = UUID.fromString("6d1e5ce5-6127-4d35-88b8-7a6f40692038");
   private static final UUID TARGET_ACCOUNT_ID =
       UUID.fromString("1df91ae6-5125-4e47-9f1d-2e45eab8a4a0");
@@ -1203,11 +1650,12 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
     }
 
     int countRows() {
-      return Objects.requireNonNull(
+      var row =
+          Objects.requireNonNull(
               adminDsl.fetchOne(
                   "SELECT count(*) FROM account_start_session_operator_authorizations"),
-              "Missing Account StartSession authorization row-count readback")
-          .get(0, Integer.class);
+              "COUNT query must return a row");
+      return Objects.requireNonNull(row.get(0, Integer.class), "COUNT query must return a value");
     }
   }
 }

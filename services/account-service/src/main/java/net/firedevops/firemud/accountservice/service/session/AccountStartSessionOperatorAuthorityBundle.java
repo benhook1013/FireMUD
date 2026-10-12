@@ -13,12 +13,13 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority.Snapshot;
-import net.firedevops.firemud.accountservice.service.session.AccountControlUiIssuanceRepository.OwnerLinearization;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiIssuanceRepository.Stored;
-import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
-import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Exact ADR 0047 Account authority evidence for the tenantAdmin StartSession branch. */
 public final class AccountStartSessionOperatorAuthorityBundle {
@@ -26,6 +27,36 @@ public final class AccountStartSessionOperatorAuthorityBundle {
   public static final String HUMAN_EVIDENCE_TYPE =
       StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE;
   private static final Pattern DECIMAL = Pattern.compile("[1-9][0-9]{0,18}");
+  private static final Set<String> CAPTURE_SNAPSHOT_FIELDS =
+      Set.of(
+          "schema",
+          "controlPlaneRequestId",
+          "preAuthorizationTuple",
+          "mutationDigest",
+          "accountId",
+          "tenantId",
+          "targetOwner",
+          "loggingWorkloadUri",
+          "reservationOwnerId",
+          "reservationClaimFence",
+          "controlUiOperationId",
+          "controlUiTokenJti",
+          "controlUiTokenHash",
+          "controlUiSignerReceipt",
+          "controlUiSignerReceiptSha256",
+          "sourceVectorEvidence",
+          "sourceVector",
+          "outboxCheckpoints",
+          "authorityTuple",
+          "membershipVersion",
+          "accountIdentitySource",
+          "issuanceFence",
+          "issuanceFenceSourceVersion");
+  private static final JsonMapper JSON =
+      JsonMapper.builder()
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
 
   private final StartSessionAuthorityEvidenceBundle decoded;
   private final byte[] canonicalBytes;
@@ -38,44 +69,46 @@ public final class AccountStartSessionOperatorAuthorityBundle {
   }
 
   /**
-   * Builds the one supported human branch from Account's already-current source snapshot and the
-   * control-ui token row proven by {@link AccountControlUiActorService}.
+   * Builds the one supported human branch only from Account's already committed immutable capture
+   * and the original control-ui token row proven by {@link AccountControlUiActorService}.
    */
   public static AccountStartSessionOperatorAuthorityBundle create(
       StartSessionPreAuthorizationReservationTuple tuple,
-      Snapshot source,
+      AccountStartSessionAuthorityCapture capture,
       Stored controlUiIssuance,
       UUID issuanceOperationId,
-      OwnerLinearization linearization,
       Instant issuedAt,
       Instant referenceExpiresAt) {
     Objects.requireNonNull(tuple, "pre-authorization tuple is required");
-    Objects.requireNonNull(source, "current Account source is required");
-    Objects.requireNonNull(controlUiIssuance, "current control-ui issuance is required");
+    Objects.requireNonNull(capture, "durable Account authority capture is required");
+    Objects.requireNonNull(controlUiIssuance, "original control-ui issuance is required");
     Objects.requireNonNull(issuanceOperationId, "issuance operation identity is required");
-    Objects.requireNonNull(linearization, "Account owner linearization is required");
     requireTimeWindow(issuedAt, referenceExpiresAt);
 
-    if (!tuple.actor().accountId().equals(source.actor())
-        || !tuple.action().scope().tenantId().equals(source.tenant())
-        || !controlUiIssuance.accountId.equals(source.actor())
-        || !controlUiIssuance.tenantId.equals(source.tenant())) {
-      throw denied("Current Account and control-ui source must exactly match the typed actor");
-    }
-
+    Map<String, Object> snapshot = captureSnapshot(capture);
+    UUID actor = canonicalUuid(snapshot.get("accountId"), "captured accountId");
+    UUID tenant = canonicalUuid(snapshot.get("tenantId"), "captured tenantId");
+    UUID controlUiJti = canonicalUuid(snapshot.get("controlUiTokenJti"), "captured token jti");
+    Map<String, Object> authorityTuple = object(snapshot.get("authorityTuple"), "authorityTuple");
+    Map<String, Object> membershipVersion =
+        object(snapshot.get("membershipVersion"), "membershipVersion");
     Map<String, Object> claims =
         AccountControlUiIssuanceRepository.object(controlUiIssuance.claims);
-    requireCurrentTenantClaims(tuple, source, controlUiIssuance, claims, false);
-    SourceEvidence accountSource = uniqueAccountSource(source, source.actor());
-    BundleReference reference =
-        new BundleReference(
-            BUNDLE_VERSION,
-            accountSource.sourceVersion(),
-            Long.toString(linearization.sourceFence()),
-            linearization.transactionId());
-    String sourceEvidenceId =
-        sourceEvidenceId(source.evidence(), accountSource.sourceVersion(), reference);
+    requireCapturedTenantClaims(
+        tuple, actor, tenant, authorityTuple, membershipVersion, controlUiIssuance, claims);
+    if (!tuple.controlPlaneRequestId().equals(snapshot.get("controlPlaneRequestId"))
+        || !tuple.targetOwner().equals(snapshot.get("targetOwner"))
+        || !tuple.mutationDigest().equals(snapshot.get("mutationDigest"))
+        || !Base64.getEncoder()
+            .encodeToString(tuple.canonicalJson().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            .equals(snapshot.get("preAuthorizationTuple"))
+        || !controlUiIssuance.operationId.toString().equals(snapshot.get("controlUiOperationId"))
+        || !controlUiIssuance.tokenHash.equals(snapshot.get("controlUiTokenHash"))
+        || !controlUiIssuance.jti.equals(controlUiJti)) {
+      throw denied("Retained Account capture differs from the original request or credential");
+    }
 
+    BundleReference reference = referenceForCaptureValue(capture);
     Map<String, Object> typedScope =
         Map.of(
             "tenantId", tuple.action().scope().tenantId().toString(),
@@ -84,22 +117,25 @@ public final class AccountStartSessionOperatorAuthorityBundle {
         Map.of(
             "scope", typedScope,
             "actionFamily", tuple.actionFamily(),
-            "applicableAccountId", source.actor().toString(),
-            "applicableTenantId", source.tenant().toString());
+            "applicableAccountId", actor.toString(),
+            "applicableTenantId", tenant.toString());
     Map<String, Object> projection =
         Map.of(
-            "sourceType",
-            "ACCOUNT",
+            "sourceType", "ACCOUNT",
             "sourceEvidenceId",
-            sourceEvidenceId,
-            "sourceEvidenceVersion",
-            accountSource.sourceVersion(),
-            "projectionStatus",
-            "CURRENT",
-            "evaluatedAt",
-            issuedAt.toString(),
-            "expiresAt",
-            referenceExpiresAt.toString());
+                sourceEvidenceId(
+                    Base64.getDecoder()
+                        .decode(
+                            string(snapshot.get("sourceVectorEvidence"), "sourceVectorEvidence")),
+                    reference,
+                    positiveNumber(snapshot.get("issuanceFence"), "captured issuanceFence"),
+                    positiveNumber(
+                        snapshot.get("issuanceFenceSourceVersion"),
+                        "captured issuanceFenceSourceVersion")),
+            "sourceEvidenceVersion", reference.sourceVersion(),
+            "projectionStatus", "CURRENT",
+            "evaluatedAt", canonicalCaptureTimestamp(capture),
+            "expiresAt", referenceExpiresAt.toString());
     Map<String, Object> operationIdentity =
         Map.of(
             "issuanceOperationId", issuanceOperationId.toString(),
@@ -112,7 +148,7 @@ public final class AccountStartSessionOperatorAuthorityBundle {
                     tuple.controlPlaneRequestId()),
             "mutationDigest", tuple.mutationDigest());
     Map<String, Object> humanEvidence =
-        humanTenantEvidence(source, controlUiIssuance.jti, claims, false);
+        humanTenantEvidence(actor, tenant, authorityTuple, controlUiJti, claims);
 
     Map<String, Object> bundle = new LinkedHashMap<>();
     bundle.put("bundleVersion", BUNDLE_VERSION);
@@ -120,15 +156,16 @@ public final class AccountStartSessionOperatorAuthorityBundle {
     bundle.put("accountProjectionEvidence", projection);
     bundle.put("issuanceOperationIdentity", operationIdentity);
     bundle.put("issuanceKind", "human_operator");
-    bundle.put("authorityTuple", source.authorityTuple());
-    bundle.put("membershipVersion", source.membershipVersion());
-    bundle.put("issuanceFence", reference.sourceFence());
+    bundle.put("authorityTuple", authorityTuple);
+    bundle.put("membershipVersion", membershipVersion);
+    bundle.put(
+        "issuanceFence",
+        positiveDecimalString(snapshot.get("issuanceFence"), "captured issuanceFence"));
     bundle.put("issuanceEvidence", humanEvidence);
-    byte[] encoded = AccountControlUiAuthority.canonical(bundle);
-    AccountStartSessionOperatorAuthorityBundle result = decode(encoded);
+    AccountStartSessionOperatorAuthorityBundle result =
+        decode(AccountControlUiAuthority.canonical(bundle));
     result.requireTupleBinding(tuple);
-    result.requireReferenceBinding(reference);
-    result.requireCurrent(source, controlUiIssuance, tuple, reference, issuedAt);
+    result.requireCaptureBinding(capture, tuple, reference);
     return result;
   }
 
@@ -168,15 +205,11 @@ public final class AccountStartSessionOperatorAuthorityBundle {
       Map<String, Object> claims =
           AccountControlUiIssuanceRepository.object(currentControlUiIssuance.claims);
       requireCurrentTenantClaims(tuple, currentSource, currentControlUiIssuance, claims, true);
-      SourceEvidence source = uniqueAccountSource(currentSource, currentSource.actor());
-      if (!source.sourceVersion().equals(projection.get("sourceEvidenceVersion"))
-          || !source.sourceVersion().equals(originalReference.sourceVersion())
-          || !sourceEvidenceId(currentSource.evidence(), source.sourceVersion(), originalReference)
-              .equals(projection.get("sourceEvidenceId"))
-          || !canonicalEquals(currentSource.authorityTuple(), value.get("authorityTuple"))
+      if (!canonicalEquals(currentSource.authorityTuple(), value.get("authorityTuple"))
           || !canonicalEquals(currentSource.membershipVersion(), value.get("membershipVersion"))) {
         throw denied(true, "Current Account source, generation, or membership changed");
       }
+      requireCurrentSourceEvidence(currentSource, originalReference);
       Map<String, Object> expectedEvidence =
           humanTenantEvidence(currentSource, currentControlUiIssuance.jti, claims, true);
       if (!canonicalEquals(expectedEvidence, value.get("issuanceEvidence"))) {
@@ -209,16 +242,9 @@ public final class AccountStartSessionOperatorAuthorityBundle {
       Map<String, Object> claims =
           AccountControlUiIssuanceRepository.object(currentControlUiIssuance.claims);
       requireCurrentTenantClaims(tuple, currentSource, currentControlUiIssuance, claims, true);
-      SourceEvidence accountSource = uniqueAccountSource(currentSource, currentSource.actor());
-      Map<String, Object> projection =
-          object(value.get("accountProjectionEvidence"), "accountProjectionEvidence");
-      if (!accountSource.sourceVersion().equals(originalReference.sourceVersion())
-          || !accountSource.sourceVersion().equals(projection.get("sourceEvidenceVersion"))
-          || !sourceEvidenceId(
-                  currentSource.evidence(), accountSource.sourceVersion(), originalReference)
-              .equals(projection.get("sourceEvidenceId"))
-          || !canonicalEquals(currentSource.authorityTuple(), value.get("authorityTuple"))
+      if (!canonicalEquals(currentSource.authorityTuple(), value.get("authorityTuple"))
           || !canonicalEquals(currentSource.membershipVersion(), value.get("membershipVersion"))
+          || !currentSourceMatchesEvidence(currentSource, originalReference)
           || !canonicalEquals(
               humanTenantEvidence(currentSource, currentControlUiIssuance.jti, claims, true),
               value.get("issuanceEvidence"))) {
@@ -239,20 +265,45 @@ public final class AccountStartSessionOperatorAuthorityBundle {
     return canonicalBytes.clone();
   }
 
-  public BundleReference referenceForSource(Snapshot source, OwnerLinearization linearization) {
-    SourceEvidence accountSource = uniqueAccountSource(source, source.actor());
-    BundleReference reference =
-        new BundleReference(
-            BUNDLE_VERSION,
-            accountSource.sourceVersion(),
-            Long.toString(linearization.sourceFence()),
-            linearization.transactionId());
-    requireReferenceBinding(reference);
-    if (!sourceEvidenceId(source.evidence(), accountSource.sourceVersion(), reference)
-        .equals(sourceEvidenceId())) {
-      throw denied("Account source reference does not identify this captured source");
-    }
+  public BundleReference referenceForCapture(AccountStartSessionAuthorityCapture capture) {
+    Objects.requireNonNull(capture, "original Account source capture is required");
+    BundleReference reference = referenceForCaptureValue(capture);
+    requireCaptureBinding(capture, null, reference);
     return reference;
+  }
+
+  /** Requires the bundle and immutable source reference to identify the same stored capture. */
+  public void requireCaptureBinding(
+      AccountStartSessionAuthorityCapture capture,
+      StartSessionPreAuthorizationReservationTuple tuple,
+      BundleReference expectedReference) {
+    Objects.requireNonNull(capture, "original Account source capture is required");
+    Objects.requireNonNull(expectedReference, "original Account bundle reference is required");
+    Map<String, Object> projection =
+        object(value.get("accountProjectionEvidence"), "accountProjectionEvidence");
+    Map<String, Object> snapshot = captureSnapshot(capture);
+    String expectedEvidenceId =
+        sourceEvidenceId(
+            Base64.getDecoder()
+                .decode(string(snapshot.get("sourceVectorEvidence"), "sourceVectorEvidence")),
+            expectedReference,
+            positiveNumber(snapshot.get("issuanceFence"), "captured issuanceFence"),
+            positiveNumber(
+                snapshot.get("issuanceFenceSourceVersion"), "captured issuanceFenceSourceVersion"));
+    if (!referenceForCaptureValue(capture).equals(expectedReference)
+        || !expectedEvidenceId.equals(projection.get("sourceEvidenceId"))
+        || !Long.toString(capture.sourceVersion()).equals(projection.get("sourceEvidenceVersion"))
+        || !canonicalCaptureTimestamp(capture).equals(projection.get("evaluatedAt"))
+        || !capture.controlPlaneRequestId().equals(controlPlaneRequestId())
+        || (tuple != null && !tuple.controlPlaneRequestId().equals(controlPlaneRequestId()))
+        || !canonicalEquals(snapshot.get("authorityTuple"), value.get("authorityTuple"))
+        || !canonicalEquals(snapshot.get("membershipVersion"), value.get("membershipVersion"))) {
+      throw denied("Authority bundle does not bind the exact retained Account capture");
+    }
+    if (!Long.toString(positiveNumber(snapshot.get("issuanceFence"), "captured issuanceFence"))
+        .equals(decoded.issuanceFence())) {
+      throw denied("Account issuance fence differs from the retained source snapshot");
+    }
   }
 
   public Map<String, Object> authorityTuple() {
@@ -283,6 +334,10 @@ public final class AccountStartSessionOperatorAuthorityBundle {
     return decoded.sourceEvidenceVersion();
   }
 
+  public long issuanceFence() {
+    return positiveNumber(decoded.issuanceFence(), "Account issuance fence");
+  }
+
   public UUID controlUiTokenJti() {
     return decoded.controlUiTokenJti();
   }
@@ -293,10 +348,6 @@ public final class AccountStartSessionOperatorAuthorityBundle {
 
   private Instant originalReferenceExpiresAt() {
     return decoded.expiresAt();
-  }
-
-  private void requireReferenceBinding(BundleReference reference) {
-    decoded.requireReferenceBinding(toSharedReference(reference));
   }
 
   static StartSessionAuthorityEvidenceBundle.BundleReference toSharedReference(
@@ -317,6 +368,105 @@ public final class AccountStartSessionOperatorAuthorityBundle {
         reference.sourceVersion(),
         reference.sourceFence(),
         reference.linearization());
+  }
+
+  private static BundleReference referenceForCaptureValue(
+      AccountStartSessionAuthorityCapture capture) {
+    return fromSharedReference(capture.bundleReference());
+  }
+
+  private static Map<String, Object> captureSnapshot(AccountStartSessionAuthorityCapture capture) {
+    try {
+      byte[] bytes = capture.snapshotBytes();
+      Map<String, Object> snapshot =
+          JSON.readValue(
+              new String(bytes, java.nio.charset.StandardCharsets.UTF_8), new TypeReference<>() {});
+      if (!CAPTURE_SNAPSHOT_FIELDS.equals(snapshot.keySet())
+          || !"account-start-session-authority-snapshot/v1".equals(snapshot.get("schema"))
+          || !MessageDigest.isEqual(bytes, AccountControlUiAuthority.canonical(snapshot))) {
+        throw denied("Retained Account source snapshot is not exact canonical data");
+      }
+      return snapshot;
+    } catch (RuntimeException malformed) {
+      throw denied("Retained Account source snapshot is malformed");
+    }
+  }
+
+  private static UUID canonicalUuid(Object value, String field) {
+    String text = string(value, field);
+    try {
+      UUID parsed = UUID.fromString(text);
+      if (!parsed.toString().equals(text)) throw new IllegalArgumentException();
+      return parsed;
+    } catch (RuntimeException malformed) {
+      throw denied(field + " must be a canonical UUID");
+    }
+  }
+
+  private static String positiveDecimalString(Object value, String field) {
+    return Long.toString(positiveNumber(value, field));
+  }
+
+  private static long positive(long value, String field) {
+    if (value <= 0L) throw denied(field + " must be positive");
+    return value;
+  }
+
+  private static void requireCapturedTenantClaims(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      UUID actor,
+      UUID tenant,
+      Map<String, Object> authorityTuple,
+      Map<String, Object> membershipVersion,
+      Stored stored,
+      Map<String, Object> claims) {
+    if (!tuple.actor().accountId().equals(actor)
+        || !tuple.actor().accountId().equals(stored.accountId)
+        || !tuple.action().scope().tenantId().equals(tenant)
+        || !tuple.action().scope().tenantId().equals(stored.tenantId)
+        || !"COMMITTED".equals(stored.status)
+        || stored.jti == null
+        || !stored.jti.toString().equals(claims.get("jti"))
+        || !actor.toString().equals(claims.get("sub"))
+        || !actor.toString().equals(claims.get("accountId"))
+        || !"control-ui".equals(claims.get("aud"))
+        || positiveNumber(claims.get("tokenGeneration"), "tokenGeneration") != 1L
+        || claims.containsKey("assurance")
+        || claims.containsKey("globalRoles")
+        || !Map.of(tenant.toString(), List.of("tenantAdmin")).equals(claims.get("scopedRoles"))
+        || !canonicalEquals(authorityTuple, claims.get("authorityTuple"))
+        || !canonicalEquals(membershipVersion, claims.get("membershipVersion"))) {
+      throw denied("Captured tenantAdmin control-ui evidence is required");
+    }
+  }
+
+  private static Map<String, Object> humanTenantEvidence(
+      UUID actor,
+      UUID tenant,
+      Map<String, Object> authorityTuple,
+      UUID tokenJti,
+      Map<String, Object> claims) {
+    if (claims.containsKey("assurance") || claims.containsKey("globalRoles")) {
+      throw denied("Tenant authority must omit assurance and global-role evidence");
+    }
+    long accountGeneration =
+        positiveNumber(
+            authorityTuple.get("accountAuthorityGeneration"), "accountAuthorityGeneration");
+    Map<String, Object> tenantGenerations =
+        object(authorityTuple.get("tenantAuthorityGeneration"), "tenantAuthorityGeneration");
+    if (!tenantGenerations.keySet().equals(Set.of(tenant.toString()))) {
+      throw denied("Exact selected tenant authority generation is required");
+    }
+    long tenantGeneration =
+        positiveNumber(tenantGenerations.get(tenant.toString()), "tenantAuthorityGeneration");
+    Map<String, Object> evidence = new LinkedHashMap<>();
+    evidence.put("evidenceType", HUMAN_EVIDENCE_TYPE);
+    evidence.put("actorAccountId", actor.toString());
+    evidence.put("controlUiTokenJti", tokenJti.toString());
+    evidence.put("role", "tenantAdmin");
+    evidence.put("accountGeneration", Long.toString(accountGeneration));
+    evidence.put("tenantGeneration", Long.toString(tenantGeneration));
+    return Map.copyOf(evidence);
   }
 
   private static void requireCurrentTenantClaims(
@@ -371,21 +521,30 @@ public final class AccountStartSessionOperatorAuthorityBundle {
   }
 
   private static String sourceEvidenceId(
-      byte[] sourceEvidence, String sourceVersion, BundleReference reference) {
+      byte[] sourceEvidence,
+      BundleReference reference,
+      long accountIssuanceFence,
+      long accountIssuanceFenceSourceVersion) {
     Map<String, Object> value =
         Map.of(
             "schema",
-            "account-authority-source-linearization/v1",
+            "account-start-session-source-capture-evidence/v1",
             "sourceType",
             "ACCOUNT",
             "sourceEvidenceBytesBase64",
             Base64.getEncoder().encodeToString(sourceEvidence),
             "sourceVersion",
-            sourceVersion,
+            reference.sourceVersion(),
             "sourceFence",
             reference.sourceFence(),
-            "transactionId",
-            reference.linearization());
+            "linearization",
+            reference.linearization(),
+            "accountIssuanceFence",
+            Long.toString(positive(accountIssuanceFence, "Account issuance fence")),
+            "accountIssuanceFenceSourceVersion",
+            Long.toString(
+                positive(
+                    accountIssuanceFenceSourceVersion, "Account issuance fence source version")));
     try {
       byte[] digest =
           MessageDigest.getInstance("SHA-256").digest(AccountControlUiAuthority.canonical(value));
@@ -395,18 +554,25 @@ public final class AccountStartSessionOperatorAuthorityBundle {
     }
   }
 
-  private static SourceEvidence uniqueAccountSource(Snapshot source, UUID actor) {
-    List<SourceEvidence> matches =
-        source.sources().stream()
-            .filter(
-                candidate ->
-                    candidate.kind() == SourceKind.ACCOUNT
-                        && actor.toString().equals(candidate.scopeId()))
-            .toList();
-    if (matches.size() != 1) {
-      throw denied("One exact Account source version for the human actor is required");
+  private void requireCurrentSourceEvidence(Snapshot source, BundleReference reference) {
+    if (!currentSourceMatchesEvidence(source, reference)) {
+      throw denied(
+          true,
+          "Current Account source evidence or issuance fence differs from the original capture");
     }
-    return matches.getFirst();
+  }
+
+  private boolean currentSourceMatchesEvidence(Snapshot source, BundleReference reference) {
+    Map<String, Object> projection =
+        object(value.get("accountProjectionEvidence"), "accountProjectionEvidence");
+    if (source.issuanceFence() <= 0L || source.issuanceFenceSourceVersion() <= 0L) return false;
+    return Long.toString(source.issuanceFence()).equals(decoded.issuanceFence())
+        && sourceEvidenceId(
+                source.evidence(),
+                reference,
+                source.issuanceFence(),
+                source.issuanceFenceSourceVersion())
+            .equals(projection.get("sourceEvidenceId"));
   }
 
   private static void requireTimeWindow(Instant issuedAt, Instant expiresAt) {
@@ -418,6 +584,24 @@ public final class AccountStartSessionOperatorAuthorityBundle {
         || expiresAt.getNano() % 1_000_000 != 0) {
       throw denied("Operator evidence timestamps must be positive exact milliseconds");
     }
+  }
+
+  /**
+   * V128 stores a fixed-width UTC millisecond timestamp, while the shared bundle contract uses the
+   * canonical {@link Instant#toString()} representation. Preserve the captured instant and
+   * precision while normalizing only that textual representation (notably, dropping .000).
+   */
+  private static String canonicalCaptureTimestamp(AccountStartSessionAuthorityCapture capture) {
+    final Instant capturedAt;
+    try {
+      capturedAt = Instant.parse(capture.capturedAt());
+    } catch (RuntimeException malformed) {
+      throw denied("Capture timestamp is malformed");
+    }
+    if (capturedAt.getNano() % 1_000_000 != 0) {
+      throw denied("Capture timestamp must use exact millisecond precision");
+    }
+    return capturedAt.toString();
   }
 
   private static Instant instant(String value) {

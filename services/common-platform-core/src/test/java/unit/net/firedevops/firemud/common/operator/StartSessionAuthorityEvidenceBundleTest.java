@@ -201,12 +201,13 @@ class StartSessionAuthorityEvidenceBundleTest {
                     new StartSessionAuthorityEvidenceBundle.BundleReference(
                         StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "18", "23", "17")))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(
-            () ->
-                decoded.requireReferenceBinding(
-                    new StartSessionAuthorityEvidenceBundle.BundleReference(
-                        StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "24", "17")))
-        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(
+            org.assertj.core.api.Assertions.catchThrowable(
+                () ->
+                    decoded.requireReferenceBinding(
+                        new StartSessionAuthorityEvidenceBundle.BundleReference(
+                            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "24", "17"))))
+        .isNull();
     assertThatThrownBy(
             () ->
                 new StartSessionAuthorityEvidenceBundle.BundleReference(

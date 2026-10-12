@@ -13,8 +13,10 @@ import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuth
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.OwnerKeySource;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeKeyring;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCaptureRepository;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import org.jooq.DSLContext;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -39,6 +41,13 @@ public class AccountStartSessionOperatorAuthorizationConfiguration {
   static final String PROPERTY_PREFIX = "firemud.account.start-session-operator-authorization";
   static final String OPERATOR_RESPONSE_CRYPTOGRAPHY_BEAN =
       "startSessionOperatorResponseEnvelopeCryptography";
+
+  /** Keeps capture storage inside this disabled-by-default feature boundary. */
+  @Bean
+  public AccountStartSessionAuthorityCaptureRepository
+      accountStartSessionAuthorityCaptureRepository(DSLContext accountDsl) {
+    return new AccountStartSessionAuthorityCaptureRepository(accountDsl);
+  }
 
   /** Creates Account's explicit active/retained HMAC calculator from an owner-supplied source. */
   @Bean
@@ -85,6 +94,7 @@ public class AccountStartSessionOperatorAuthorizationConfiguration {
       accountStartSessionOperatorAuthorizationService(
           AccountControlUiActorService actors,
           AccountControlUiIssuanceRepository issuanceOperations,
+          AccountStartSessionAuthorityCaptureRepository captureRepository,
           StartSessionReservationEvidenceClient reservationEvidence,
           AccountStartSessionOperatorAuthorizationRepository repository,
           AccountOperatorAuthorizationFingerprintKeyring fingerprintKeys,
@@ -105,6 +115,7 @@ public class AccountStartSessionOperatorAuthorizationConfiguration {
     return new AccountStartSessionOperatorAuthorizationService(
         actors,
         issuanceOperations,
+        captureRepository,
         reservationEvidence,
         repository,
         fingerprintKeys,
