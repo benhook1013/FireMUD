@@ -203,7 +203,7 @@ Required control-plane APIs:
 
 `versionStateEpoch` increments on any lifecycle transition that can affect activation eligibility (for example `Published -> Retired`, `Failed -> Draft`, or admin policy transitions).
 
-The target `CompareAndSetVersionState` contract requires a database epoch predicate and affected-row/lock proof, not only a service-memory comparison. The current `VersionService` checks the loaded epoch and then performs an unconditional row-ID save, so concurrent state writers can overwrite one another; this is an implementation gap that blocks treating `expectedVersionStateEpoch` as abandonment or purge invalidation evidence.
+The target `CompareAndSetVersionState` contract requires a database epoch predicate and affected-row/lock proof, not only a service-memory comparison. The current path preserves tenant/version and expected-epoch checks and an exact same-state no-op, but refuses state-changing requests with `VERSION_STATE_MUTATION_UNAVAILABLE` before any Version write. The target compare-and-set transition remains unimplemented, so `expectedVersionStateEpoch` cannot establish abandonment or purge invalidation evidence.
 
 Normative CAS call flow for activation and rollback:
 

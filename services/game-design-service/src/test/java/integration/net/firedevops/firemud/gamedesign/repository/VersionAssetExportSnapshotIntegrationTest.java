@@ -137,24 +137,27 @@ class VersionAssetExportSnapshotIntegrationTest {
   }
 
   @Test
-  void rejectsChangedSourceBytesAfterMetadataSnapshotRead() {
+  void preservesFrozenSourceBytesAgainstUpdateAfterMetadataSnapshotRead() {
     Fixture fixture = fixture();
     insertItemAndSnapshot(fixture);
     VersionAssetPublicationRepository repository =
         new VersionAssetPublicationRepository(fixture.dsl);
     VersionAssetPublicationRepository.AssetSelection selection =
         repository.readFrozenSnapshot(fixture.tenantId, 1).items().get(0);
-    fixture.dsl.execute(
-        "UPDATE game_assets SET data = ? WHERE tenant_id = ? AND id = ?",
-        new byte[] {9, 8, 7, 6},
-        fixture.tenantId,
-        fixture.assetId);
-    assertThatThrownBy(() -> repository.readFrozenSnapshot(fixture.tenantId, 1))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("source bytes or mapping failed verification");
-    assertThatThrownBy(() -> repository.readFrozenAssetBytes(fixture.tenantId, 1, selection))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("source metadata or mapping failed verification");
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "UPDATE game_assets SET data = ? WHERE tenant_id = ? AND id = ?",
+                    new byte[] {9, 8, 7, 6},
+                    fixture.tenantId,
+                    fixture.assetId))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining(
+            "game asset source rows are immutable while a frozen version snapshot references them");
+    assertThat(repository.readFrozenSnapshot(fixture.tenantId, 1).items())
+        .containsExactly(selection);
+    assertThat(repository.readFrozenAssetBytes(fixture.tenantId, 1, selection))
+        .containsExactly(SOURCE_BYTES);
   }
 
   @Test
