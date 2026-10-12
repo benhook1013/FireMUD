@@ -11,6 +11,7 @@ import javax.crypto.Mac;
 import net.firedevops.firemud.accountservice.dto.CanonicalGameplayLoginRequest;
 import net.firedevops.firemud.accountservice.dto.GameplayCredentialSourceContext;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayCredentialRequestBinding;
+import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 
 /** Computes the non-reusable, Account-keyed identity of one exact gameplay LOGIN request. */
 public final class AccountGameplayCredentialRequestDigester {
@@ -86,8 +87,9 @@ public final class AccountGameplayCredentialRequestDigester {
 
   private static void requireVerifiedWorkload(String workload) {
     if (workload == null
-        || !workload.matches(
-            "^spiffe://firemud/ns/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?/sa/game-session-service$")) {
+        || !GameSessionAccountDelegationProfile.GAME_SESSION_CALLER_WORKLOAD
+            .matcher(workload)
+            .matches()) {
       throw new IllegalArgumentException("Verified Game Session workload identity is required");
     }
   }

@@ -97,7 +97,6 @@ public final class AccountGameplayDelegationIssuanceCommitService {
 
       PendingRegistrationReceipt registration = tokenRegistry.registerPending(requestId);
       PublicationObservation publication = authorityProjection.publishCurrent(proof.accountId());
-      if (publication == null) throw unavailable();
       ProjectionObservation projection = authorityProjection.observeCurrent(proof.accountId());
       if (projection == null
           || !publication.issuerDigest().equals(projection.issuerDigest())

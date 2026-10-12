@@ -2,6 +2,12 @@ package net.firedevops.firemud.accountservice.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -10,6 +16,11 @@ import java.util.List;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.connection.RedisScriptingCommands;
+import org.springframework.data.redis.connection.ReturnType;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 class AccountGenerationProjectionRedisContractTest {
   @Test
@@ -160,6 +171,36 @@ class AccountGenerationProjectionRedisContractTest {
         .isInstanceOf(IllegalStateException.class);
   }
 
+  @Test
+  void registeredCasUsesIntegerReplyTransportAndDecodesTheOutcome() throws Exception {
+    StringRedisTemplate template = mock(StringRedisTemplate.class);
+    RedisConnection connection = mock(RedisConnection.class);
+    RedisScriptingCommands scripting = mock(RedisScriptingCommands.class);
+    when(connection.scriptingCommands()).thenReturn(scripting);
+    when(scripting.scriptLoad(any(byte[].class)))
+        .thenAnswer(invocation -> sha1(invocation.getArgument(0)));
+    when(scripting.evalSha(anyString(), eq(ReturnType.INTEGER), eq(1), any(byte[][].class)))
+        .thenReturn(1L);
+    when(template.execute(any(RedisCallback.class)))
+        .thenAnswer(
+            invocation -> ((RedisCallback<?>) invocation.getArgument(0)).doInRedis(connection));
+
+    String key =
+        AccountGenerationProjectionRedisContract.KEY_PREFIX
+            + "c980fa44-619e-4ca4-8ad6-75b0538a66a3";
+    String result =
+        CurrentGenerationProjectionRedisSupport.executeRegistered(
+            template,
+            AccountGenerationProjectionRedisContract.descriptor(),
+            key,
+            "ABSENT",
+            "",
+            "candidate");
+
+    assertThat(result).isEqualTo("APPLIED");
+    verify(scripting).evalSha(anyString(), eq(ReturnType.INTEGER), eq(1), any(byte[][].class));
+  }
+
   private static RedisScriptDescriptor.OutcomeSpec outcome(
       String code,
       RedisScriptDescriptor.OutcomeCategory category,
@@ -169,5 +210,9 @@ class AccountGenerationProjectionRedisContractTest {
 
   private static String sha256(byte[] value) throws Exception {
     return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+  }
+
+  private static String sha1(byte[] value) throws Exception {
+    return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(value));
   }
 }
