@@ -25,6 +25,9 @@ public final class GameSessionAccountDelegationProfile {
   public static final int MAX_COMPACT_JWT_BYTES = 16 * 1024;
   public static final int MAX_AUTHORITY_TUPLE_BYTES = 4 * 1024;
   public static final int MAX_REGISTRY_RECORD_BYTES = 16 * 1024;
+  public static final Pattern GAME_SESSION_CALLER_WORKLOAD =
+      Pattern.compile(
+          "^spiffe://firemud/ns/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?/sa/game-session-service$");
   private static final Pattern POSITIVE_DECIMAL = Pattern.compile("[1-9][0-9]{0,18}");
 
   private GameSessionAccountDelegationProfile() {}

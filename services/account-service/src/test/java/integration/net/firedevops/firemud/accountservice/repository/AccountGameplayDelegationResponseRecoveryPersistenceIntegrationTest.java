@@ -444,6 +444,12 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
                           + snapshot.account().scope().accountId())
                       .getBytes(StandardCharsets.US_ASCII))))
           .thenReturn(-1L);
+      when(commands.pttl(
+              eq(
+                  (AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
+                          + GameSessionAccountDelegationProfile.ISSUER)
+                      .getBytes(StandardCharsets.US_ASCII))))
+          .thenReturn(-1L);
       Mockito.doReturn(java.util.List.of(1L, 1L))
           .when(commands)
           .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));

@@ -47,10 +47,6 @@ public final class AccountAuthEvidenceBundle {
   private static final Pattern POSITIVE_DECIMAL = Pattern.compile("[1-9][0-9]{0,18}");
   private static final Pattern NONNEGATIVE_DECIMAL = Pattern.compile("0|[1-9][0-9]{0,18}");
   private static final Pattern POSITIVE_XID8 = Pattern.compile("[1-9][0-9]{0,19}");
-  private static final Pattern WORKLOAD =
-      Pattern.compile(
-          "^spiffe://firemud/ns/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?/sa/game-session-service$");
-
   private static final Set<String> ROOT_FIELDS =
       Set.of(
           "schema",
@@ -288,7 +284,9 @@ public final class AccountAuthEvidenceBundle {
     requireHash(operation.get("requestDigest"), "operation.requestDigest");
     String caller =
         requireBoundedText(operation.get("callerWorkload"), "operation.callerWorkload", 256);
-    if (!WORKLOAD.matcher(caller).matches()) {
+    if (!GameSessionAccountDelegationProfile.GAME_SESSION_CALLER_WORKLOAD
+        .matcher(caller)
+        .matches()) {
       throw invalid(
           "Account auth-evidence bundle caller workload is not the exact Game Session peer");
     }
@@ -726,7 +724,10 @@ public final class AccountAuthEvidenceBundle {
       requireV4Uuid(operationId == null ? null : operationId.toString(), "operationId");
       requireV4Uuid(requestId == null ? null : requestId.toString(), "requestId");
       requireHash(requestDigest, "requestDigest");
-      if (callerWorkload == null || !WORKLOAD.matcher(callerWorkload).matches()) {
+      if (callerWorkload == null
+          || !GameSessionAccountDelegationProfile.GAME_SESSION_CALLER_WORKLOAD
+              .matcher(callerWorkload)
+              .matches()) {
         throw invalid("Account auth-evidence caller is not the exact Game Session workload");
       }
       requireV4Uuid(callerContextId == null ? null : callerContextId.toString(), "callerContextId");
