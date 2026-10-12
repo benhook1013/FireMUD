@@ -207,6 +207,7 @@ def record_hosted_terminal_result(
         "trigger_id": trigger["id"],
         "response_id": result.response_id,
         "observed_at": finish_time,
+        "trigger_record": record,
     }
     artifacts = {
         "hosted_review": _json(window["reviews"]),

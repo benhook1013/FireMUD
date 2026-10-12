@@ -385,21 +385,40 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
         .transaction()
         .executeWithoutResult(status -> new AccountRepository(context.dsl()).save(account));
     commitDraft(context, account, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.NONRESTRICTED);
+    commitDraft(context, account, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.NONRESTRICTED);
+    commitDraft(context, account, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.NONRESTRICTED);
+    var retainedProjection =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    restrictionRepository(context.dsl())
+                        .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK));
+    assertThat(retainedProjection.state()).isEqualTo(RestrictionState.NONRESTRICTED);
+    assertThat(retainedProjection.revision()).isEqualTo(4L);
 
     transitionLifecycleWithLegacyAuthorityReceipt(
         context, account, AccountLifecycleState.DEACTIVATED_PENDING_DELETE);
     assertThat(lifecycle(context, account)).isEqualTo("deactivated_pending_delete");
-
-    commitDraft(context, account, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.NONRESTRICTED);
-    assertThat(lifecycle(context, account)).isEqualTo("deactivated_pending_delete");
-    assertThat(currentRevision(context, account, Category.ACCOUNT_SECURITY_LOCK)).isEqualTo(3L);
+    var pendingDeletionProjection =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    restrictionRepository(context.dsl())
+                        .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK));
+    assertThat(pendingDeletionProjection).isEqualTo(retainedProjection);
 
     transitionLifecycleWithLegacyAuthorityReceipt(context, account, AccountLifecycleState.DELETED);
     assertThat(lifecycle(context, account)).isEqualTo("deleted");
-
-    commitDraft(context, account, Category.ACCOUNT_SECURITY_LOCK, RestrictionState.NONRESTRICTED);
-    assertThat(lifecycle(context, account)).isEqualTo("deleted");
-    assertThat(currentRevision(context, account, Category.ACCOUNT_SECURITY_LOCK)).isEqualTo(4L);
+    var deletedProjection =
+        context
+            .transaction()
+            .execute(
+                status ->
+                    restrictionRepository(context.dsl())
+                        .readCurrent(account.getAccountUuid(), Category.ACCOUNT_SECURITY_LOCK));
+    assertThat(deletedProjection).isEqualTo(retainedProjection);
   }
 
   @Test
