@@ -36,8 +36,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Narrow receipt validator for the three closed Account account-scope source-event schemas. It does
- * not authenticate a caller or turn source evidence into recipient authority.
+ * Narrow receipt validator for the closed Account account-scope source-event variants. It does not
+ * authenticate a caller or turn source evidence into recipient authority.
  */
 public final class AccountAuthoritySourceEventReadback {
   private static final JsonMapper SNAPSHOT_JSON =
@@ -145,6 +145,8 @@ public final class AccountAuthoritySourceEventReadback {
       requirePasswordResetReceipt(account, receipt, latestEvent, verified, current);
     } else if (verified.securityState().isPresent()) {
       requireSecurityStateReceipt(account, latestEvent, verified, current, true);
+    } else if (verified.restriction().isPresent()) {
+      requireRestrictionReceipt(account, latestEvent, verified, current, true);
     } else {
       UUID requestId = parseLogoutAllRequestId(verified.requestId());
       LogoutAllReceipt receipt =
@@ -231,6 +233,28 @@ public final class AccountAuthoritySourceEventReadback {
           receipt.sourceState().issuanceFence().value(),
           receipt.sourceState().issuanceFence().sourceVersion());
     }
+    if (verified.restriction().isPresent()) {
+      var operation =
+          securityStateRepository
+              .findRestrictionByRequestIdShared(UUID.fromString(verified.requestId()))
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Selected Account restriction event has no immutable operation receipt"));
+      var receipt =
+          operation
+              .receipt()
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Selected Account restriction operation is not COMMITTED"));
+      requireRestrictionReceipt(account, event, verified, current, false);
+      return retainedEvidence(
+          event,
+          verified,
+          receipt.sourceState().issuanceFence().value(),
+          receipt.sourceState().issuanceFence().sourceVersion());
+    }
     UUID requestId = parseLogoutAllRequestId(verified.requestId());
     LogoutAllReceipt receipt =
         logoutAllRepository
@@ -296,6 +320,54 @@ public final class AccountAuthoritySourceEventReadback {
         current,
         "Security-state");
     if (latest) securityStateRepository.requireCurrentPostState(operation, current);
+  }
+
+  private void requireRestrictionReceipt(
+      Account account,
+      Event event,
+      VerifiedSourceEvent verified,
+      ScopeState current,
+      boolean latest) {
+    var operation =
+        securityStateRepository
+            .findRestrictionByRequestIdShared(UUID.fromString(verified.requestId()))
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Account restriction event has no immutable operation receipt"));
+    var receipt =
+        operation
+            .receipt()
+            .orElseThrow(
+                () -> new IllegalStateException("Account restriction operation is not COMMITTED"));
+    var restriction = verified.restriction().orElseThrow();
+    if (!operation.request().accountUuid().equals(account.getAccountUuid())
+        || operation.accountId() != account.getId()
+        || operation.provenance() != account.getAccountUuidProvenance()
+        || operation.expectedFence().value() != receipt.sourceState().issuanceFence().value() - 1L
+        || operation.expectedFence().sourceVersion()
+            != receipt.sourceState().issuanceFence().sourceVersion() - 1L
+        || !receipt.event().equals(event)
+        || !restriction.category().equals(operation.request().category().storageValue())
+        || !restriction.revision().equals(Long.toString(receipt.categoryRevision()))
+        || !restriction.enforcementEpoch().equals(Long.toString(receipt.enforcementEpoch()))
+        || !restriction.resultId().equals(receipt.resultId().toString())
+        || !restriction.state().equals(receipt.state().name())
+        || !restriction.requestDigest().equals(operation.request().requestDigest())
+        || !restriction.sourceKind().equals(operation.request().sourceKind().name())
+        || !restriction.sourceRequestId().equals(operation.request().sourceRequestId().toString())
+        || !restriction.sourceDigest().equals(operation.request().sourceDigest())) {
+      throw new IllegalStateException(
+          "Account restriction operation association/result differs from its source event");
+    }
+    requireReceiptNotAhead(
+        receipt.sourceState().generation(),
+        receipt.sourceState().sourceVersion(),
+        receipt.sourceState().issuanceFence().value(),
+        receipt.sourceState().issuanceFence().sourceVersion(),
+        current,
+        "Restriction");
+    if (latest) securityStateRepository.requireCurrentRestrictionPostState(operation, current);
   }
 
   private void requirePasswordResetReceipt(
@@ -452,7 +524,7 @@ public final class AccountAuthoritySourceEventReadback {
           yield VerifiedSourceEvent.logoutAll(logout);
         }
         case AccountSecurityStateAuthorityEventV1Codec.SCHEMA_VERSION -> {
-          var security = AccountSecurityStateAuthorityEventV1Codec.verify(payload);
+          var security = AccountSecurityStateAuthorityEventV1Codec.verifyFamily(payload);
           requireEventBinding(
               event,
               accountUuid,
@@ -462,8 +534,11 @@ public final class AccountAuthoritySourceEventReadback {
               security.eventDigest(),
               security.outboxStreamKey(),
               security.outboxSequence(),
-              security.canonicalJsonUtf8());
-          yield VerifiedSourceEvent.securityState(security);
+              security.canonicalJson().getBytes(StandardCharsets.UTF_8));
+          if (security.securityState().isPresent()) {
+            yield VerifiedSourceEvent.securityState(security.securityState().orElseThrow());
+          }
+          yield VerifiedSourceEvent.restriction(security.restriction().orElseThrow());
         }
         default -> throw new SourceEvidenceUnavailableException();
       };
@@ -671,7 +746,9 @@ public final class AccountAuthoritySourceEventReadback {
       AccountSecurityCutoff accountSecurityCutoff,
       Optional<PasswordResetAuthorityEvent> passwordReset,
       Optional<AccountSecurityStateAuthorityEventV1Codec.AccountSecurityStateAuthorityEvent>
-          securityState) {
+          securityState,
+      Optional<AccountSecurityStateAuthorityEventV1Codec.AccountRestrictionAuthorityEvent>
+          restriction) {
     private static VerifiedSourceEvent passwordReset(PasswordResetAuthorityEvent event) {
       return new VerifiedSourceEvent(
           event.requestId(),
@@ -682,6 +759,7 @@ public final class AccountAuthoritySourceEventReadback {
               event.accountSecurityCutoff().outboxStreamKey(),
               event.accountSecurityCutoff().outboxSequence()),
           Optional.of(event),
+          Optional.empty(),
           Optional.empty());
     }
 
@@ -694,6 +772,7 @@ public final class AccountAuthoritySourceEventReadback {
               event.accountSecurityCutoff().accountAuthorityGeneration(),
               event.accountSecurityCutoff().outboxStreamKey(),
               event.accountSecurityCutoff().outboxSequence()),
+          Optional.empty(),
           Optional.empty(),
           Optional.empty());
     }
@@ -708,6 +787,22 @@ public final class AccountAuthoritySourceEventReadback {
               event.accountSecurityCutoff().accountAuthorityGeneration(),
               event.accountSecurityCutoff().outboxStreamKey(),
               event.accountSecurityCutoff().outboxSequence()),
+          Optional.empty(),
+          Optional.of(event),
+          Optional.empty());
+    }
+
+    private static VerifiedSourceEvent restriction(
+        AccountSecurityStateAuthorityEventV1Codec.AccountRestrictionAuthorityEvent event) {
+      return new VerifiedSourceEvent(
+          event.requestId(),
+          event.accountAuthorityGeneration(),
+          event.sourceVersion(),
+          new AccountSecurityCutoff(
+              event.accountSecurityCutoff().accountAuthorityGeneration(),
+              event.accountSecurityCutoff().outboxStreamKey(),
+              event.accountSecurityCutoff().outboxSequence()),
+          Optional.empty(),
           Optional.empty(),
           Optional.of(event));
     }
