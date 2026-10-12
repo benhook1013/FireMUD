@@ -13,6 +13,7 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.UUID;
@@ -33,6 +34,9 @@ import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReserv
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 /** Verifies authentication-before-codec ordering; this is not mTLS or producer proof. */
 class AccountStartSessionWorldParticipationHistoricalReadGrpcServiceTest {
@@ -189,6 +193,48 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcServiceTest {
     verify(owner).read(decoded);
   }
 
+  @Test
+  void mapsConnectionFailuresToRedactedUnavailable() {
+    assertOwnerFailure(
+        new CannotCreateTransactionException("sensitive transaction detail"),
+        Status.Code.UNAVAILABLE);
+    assertOwnerFailure(
+        new org.jooq.exception.DataAccessException(
+            "sensitive jOOQ detail", new SQLException("sensitive SQL detail", "08006")),
+        Status.Code.UNAVAILABLE);
+    assertOwnerFailure(
+        new DataAccessResourceFailureException(
+            "sensitive Spring detail", new SQLException("sensitive SQL detail", "08001")),
+        Status.Code.UNAVAILABLE);
+  }
+
+  @Test
+  void mapsNonConnectionPersistenceAndUnexpectedFailuresToRedactedInternal() {
+    assertOwnerFailure(
+        new org.jooq.exception.DataAccessException(
+            "sensitive jOOQ detail", new SQLException("sensitive SQL detail", "23505")),
+        Status.Code.INTERNAL);
+    assertOwnerFailure(
+        new DataIntegrityViolationException(
+            "sensitive Spring detail", new SQLException("sensitive SQL detail", "23505")),
+        Status.Code.INTERNAL);
+    assertOwnerFailure(new RuntimeException("sensitive runtime detail"), Status.Code.INTERNAL);
+  }
+
+  @Test
+  void mapsOwnerEvidenceMismatchesToFailedPrecondition() {
+    assertOwnerFailure(
+        new IllegalArgumentException("sensitive mismatch detail"), Status.Code.FAILED_PRECONDITION);
+    assertOwnerFailure(
+        new IllegalStateException("sensitive mismatch detail"), Status.Code.FAILED_PRECONDITION);
+  }
+
+  @Test
+  void preservesExplicitGrpcStatusFailures() {
+    var expected = Status.PERMISSION_DENIED.withDescription("upstream denial");
+    assertOwnerFailure(expected.asRuntimeException(), expected.getCode(), "upstream denial");
+  }
+
   private static ReadHistoricalStartSessionWorldParticipationRequest validWire() {
     return ReadHistoricalStartSessionWorldParticipationRequest.newBuilder()
         .setSchemaVersion(1)
@@ -257,6 +303,41 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcServiceTest {
       ReadHistoricalStartSessionWorldParticipationRequest request,
       StreamObserver<ReadHistoricalStartSessionWorldParticipationResponse> observer) {
     receiver.readHistoricalStartSessionWorldParticipation(request, observer);
+  }
+
+  private void assertOwnerFailure(RuntimeException failure, Status.Code expected) {
+    assertOwnerFailure(failure, expected, null);
+  }
+
+  private void assertOwnerFailure(
+      RuntimeException failure, Status.Code expected, String expectedDescription) {
+    org.mockito.Mockito.reset(owner);
+    var wire = validWire();
+    var decoded = AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromRequest(wire);
+    when(owner.read(decoded)).thenThrow(failure);
+    @SuppressWarnings("unchecked")
+    var observer =
+        (StreamObserver<ReadHistoricalStartSessionWorldParticipationResponse>)
+            mock(StreamObserver.class);
+
+    peer(
+        NAMESPACE,
+        "world-management-service",
+        () -> {
+          invoke(wire, observer);
+          return null;
+        });
+
+    var error = org.mockito.ArgumentCaptor.forClass(Throwable.class);
+    verify(observer).onError(error.capture());
+    Status status = Status.fromThrowable(error.getValue());
+    assertThat(status.getCode()).isEqualTo(expected);
+    if (expectedDescription == null) {
+      assertThat(String.valueOf(status.getDescription())).doesNotContain("sensitive");
+    } else {
+      assertThat(status.getDescription()).isEqualTo(expectedDescription);
+    }
+    verify(owner).read(decoded);
   }
 
   private static void assertRpcStatus(
