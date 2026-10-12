@@ -924,7 +924,8 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
     fixture.attempts().save(attempt);
     if (seal) {
-      // Emulate the historical V50.6/V50.7 seal storage without querying the V50.9 policy association.
+      // Emulate the historical V50.6/V50.7 seal storage without querying the V50.9 policy
+      // association.
       fixture
           .operations()
           .seal(op.tenantKey(), op.workflowId(), op.versionId(), op.selectionDigest(), true);
@@ -1089,7 +1090,8 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               requested.setName("ISOLATED publication owner");
               return games.save(requested);
             });
-    // These V50.6/V50.7 cases model retained history. Insert the canonical owner row before V50.8 so
+    // These V50.6/V50.7 cases model retained history. Insert the canonical owner row before V50.8
+    // so
     // the current VersionRepository does not enroll it in post-V50.7 source storage.
     Version version = write.execute(status -> insertRetainedVersion(dsl, versions, game, 1));
     var target =

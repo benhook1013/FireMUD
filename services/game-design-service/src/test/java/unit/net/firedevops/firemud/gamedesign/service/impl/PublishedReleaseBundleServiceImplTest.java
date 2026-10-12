@@ -109,10 +109,11 @@ class PublishedReleaseBundleServiceImplTest {
     assertThatThrownBy(() -> PublishedReleaseBundleContract.requireSupportedSchemaForLaunch(first))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("SCHEMA_VERSION_UNSUPPORTED");
+    PublishedReleaseBundleContract.requireExactRepairMatch(first, emptyManifest());
     assertThatThrownBy(
-            () -> PublishedReleaseBundleContract.requireExactRepairMatch(first, emptyManifest()))
+            () -> PublishedReleaseBundleContract.requireExactRepairMatch(first, logoManifest()))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("SCHEMA_VERSION_UNSUPPORTED");
+        .hasMessageStartingWith("REPAIR_ATTESTATION_MISMATCH");
   }
 
   @Test
@@ -289,7 +290,6 @@ class PublishedReleaseBundleServiceImplTest {
     org.mockito.Mockito.verifyNoInteractions(repository, revisionRepository, versionRepository);
   }
 
-
   @Test
   void legacyFullVersionBundleFailsClosedBeforeReadingMutableSources() {
     var refusal =
@@ -303,7 +303,6 @@ class PublishedReleaseBundleServiceImplTest {
         refusal.getMessage());
     org.mockito.Mockito.verifyNoInteractions(repository);
   }
-
 
   @Test
   void legacyFullVersionBundleRefusesEmptyManifestBeforeRepositoryAccess() {

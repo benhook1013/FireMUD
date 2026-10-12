@@ -672,7 +672,7 @@ class GameDesignGrpcServiceTest {
         new MutationOwnerProofUnavailableException(
             "FULL_VERSION_PUBLICATION_UNAVAILABLE",
             "fresh and pending full-version publication require a production Draft association");
-    Mockito.when(versionService.publishVersion("tenant-1", "notes", "request-1"))
+    Mockito.when(versionService.replayLegacyFullVersion("tenant-1", "notes", "request-1"))
         .thenThrow(refusal);
     AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
 

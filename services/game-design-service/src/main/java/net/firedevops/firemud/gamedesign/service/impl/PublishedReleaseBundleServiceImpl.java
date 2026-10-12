@@ -155,6 +155,7 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
     toDto(entity);
     return toDto(repository.save(entity));
   }
+
   @Override
   @Transactional(readOnly = true)
   public PublishedReleaseBundleDto getPublishedReleaseBundle(String tenantId, long versionId) {

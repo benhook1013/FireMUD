@@ -12,17 +12,20 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
@@ -1829,7 +1832,6 @@ class VersionPublishCommandServiceImplTest {
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
   }
 
-
   @Test
   void pendingFullVersionPublishIsDeniedBeforeAnyMutationOrReadbackWork() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
@@ -1863,7 +1865,6 @@ class VersionPublishCommandServiceImplTest {
     verify(versionAssetArtifactService, never()).findState(any(String.class), any(Long.class));
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
   }
-
 
   @Test
   void privateMechanicsUsesDurablySelectedVersionWithoutSequenceReservation() {
@@ -2016,7 +2017,6 @@ class VersionPublishCommandServiceImplTest {
     publishOrder.verify(publishAttemptRepository).sealPublication(attempt, true);
   }
 
-
   @Test
   void privateMechanicsRecordsTypedPublishGateFailures() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
@@ -2045,7 +2045,6 @@ class VersionPublishCommandServiceImplTest {
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
   }
 
-
   @Test
   void privateMechanicsGateRejectionDoesNotRecordDigestsOrExportAssets() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
@@ -2071,20 +2070,33 @@ class VersionPublishCommandServiceImplTest {
     verify(publishAttemptRepository).sealPublication(fixture.attempt(), false);
   }
 
-
   @Test
   void privateMechanicsPreservesSharedAssetsWhenAttestationWriteIsUncertain() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
     PublishWorkflowRequest request = fixture.request();
     ExportedAssetManifest manifest = exportedManifest(List.of("manifest.json"));
     VersionAssetArtifactStateDto staged = stagedArtifact(request, fixture.version());
+    VersionAssetArtifactStateDto stagedCandidate =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "STAGED",
+            2L,
+            MANIFEST_HASH,
+            request.publishWorkflowId(),
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of("manifest.json"));
     when(versionAssetArtifactService.findState("tenant-1", 10L))
         .thenReturn(
             Optional.empty(),
             Optional.of(staged),
-            Optional.of(staged),
-            Optional.of(staged),
-            Optional.of(staged));
+            Optional.of(stagedCandidate),
+            Optional.of(stagedCandidate));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L))
+        .thenReturn(null, manifest, manifest);
     when(versionAssetArtifactService.stageExport("tenant-1", 10L, 1, request.publishWorkflowId()))
         .thenReturn(staged);
     when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
@@ -2105,9 +2117,20 @@ class VersionPublishCommandServiceImplTest {
             VersionPublishCommandServiceImpl.PendingReconciliationException.class,
             () -> reflectiveUnitHarnessReconcileSelectedPublicationMechanics(request));
 
-    assertTrue(thrown.getMessage().contains("readback/reconciliation is required"));
+    assertTrue(
+        thrown.getMessage().contains("exported candidate requires exact retry/reconciliation"));
+    assertEquals("attestation write outcome is unknown", thrown.getCause().getMessage());
     assertEquals(PublishAttemptStatus.PENDING, fixture.attempt().getStatus());
     verify(assetExportService).exportAssets("tenant-1", 1);
+    verify(versionAssetArtifactService)
+        .markExportedUnattested(
+            org.mockito.ArgumentMatchers.eq("tenant-1"),
+            org.mockito.ArgumentMatchers.eq(10L),
+            org.mockito.ArgumentMatchers.eq(1),
+            org.mockito.ArgumentMatchers.eq(request.publishWorkflowId()),
+            same(manifest));
+    verify(versionAssetArtifactService, org.mockito.Mockito.times(4))
+        .getExportCandidate("tenant-1", 10L);
     verify(assetExportService, never())
         .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
     verify(publishAttemptService, never())
@@ -2116,31 +2139,126 @@ class VersionPublishCommandServiceImplTest {
         .sealPublication(any(PublishAttempt.class), org.mockito.ArgumentMatchers.anyBoolean());
   }
 
-
   @Test
-  void privateMechanicsReconcilesPendingAttemptThroughCurrentGates() {
+  void privateMechanicsReconcilesPendingAttemptThroughCurrentGates() throws Exception {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
-    String workflowId = fixture.request().publishWorkflowId();
+    SelectionSnapshot seedReservation = fixture.reservation();
+    AuthoredDraftPublishSelection seedSelection = seedReservation.selection();
+    DraftCommitBinding seedCommit = seedSelection.selectedCommit();
+    DraftCommitBinding expandedCommit =
+        PublishedWorldSelectorFixtures.withIsolatedFreshWorldGraph(seedCommit);
+    List<RevisionPayload> graphRevisions = new java.util.ArrayList<>();
+    for (RevisionPayload revision : expandedCommit.revisions()) {
+      if (seedCommit.revisions().contains(revision)) continue;
+      graphRevisions.add(
+          new RevisionPayload(
+              Integer.toString(graphRevisions.size()),
+              revision.revisionId(),
+              revision.owner(),
+              revision.payload()));
+    }
+    List<AffectedUnit> graphAffectedUnits =
+        expandedCommit.affectedUnits().stream()
+            .filter(unit -> !seedCommit.affectedUnits().contains(unit))
+            .toList();
+    DraftCommitBinding typedCommit =
+        DraftCommitBinding.create(
+            seedCommit.target(),
+            seedCommit.requestId(),
+            seedCommit.commitId(),
+            seedCommit.baseCommitId(),
+            graphRevisions,
+            graphAffectedUnits);
+    PublishIntent seedIntent = seedSelection.intent();
+    PublishIntent typedIntent =
+        new PublishIntent(
+            seedIntent.canonicalTenantId(),
+            seedIntent.canonicalVersionId(),
+            seedIntent.publishRequestId(),
+            seedIntent.expectedVersionStateEpoch(),
+            seedIntent.notes(),
+            seedIntent.selectedCommitRequestId(),
+            seedIntent.selectedCommitId(),
+            typedCommit.digest());
+    VisibilityFence typedFence =
+        new VisibilityFence(
+            seedSelection.target(),
+            seedSelection.fenceRequestId(),
+            seedSelection.fenceCommitId(),
+            typedCommit.digest(),
+            seedSelection.fenceResultVectorJson(),
+            OffsetDateTime.parse(seedSelection.fenceCreatedAt()));
+    SelectionSnapshot reservation =
+        new SelectionSnapshot(
+            AuthoredDraftPublishSelection.capture(
+                typedIntent,
+                seedSelection.target(),
+                new PublicationEvidence(typedCommit, typedFence)),
+            seedReservation.createdAt());
+    PublishWorkflowRequest request = selectedRequest(reservation);
     PublishAttempt attempt = fixture.attempt();
+    attempt.setRequestDigest(reservation.selection().digest());
     Version version = fixture.version();
+    fixture = new SelectedPublishFixture(reservation, request, attempt, version);
+    when(authoredSelections.readByPublishRequest(
+            typedIntent.canonicalTenantId(), request.publishRequestId()))
+        .thenReturn(Optional.of(reservation));
+    String workflowId = request.publishWorkflowId();
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     version.setVersionStateEpoch(2L);
-    List<PublishParticipantDigestDto> participantDigests = participantDigests();
+    version.setCanonicalTenantId(CANONICAL_TENANT_ID);
+    version.setCanonicalVersionId(CANONICAL_VERSION_ID);
+    // This fixture stipulates historical Account/APPLIED bytes; it proves no live owner authority.
+    WorldPublishedStartLocationEvidence fixtureEvidence =
+        PublishedWorldSelectorFixtures.evidence(
+            fixture.reservation().selection().target(),
+            fixture.reservation().selection().selectedCommit());
+    WorldPublishedStartLocationEvidence.Request fixtureRequest = fixtureEvidence.request();
+    WorldPublishedStartLocationEvidence selectedEvidence =
+        new WorldPublishedStartLocationEvidence(
+            new WorldPublishedStartLocationEvidence.Request(
+                fixtureRequest.targetNamespace(),
+                fixtureRequest.canonicalTenantId(),
+                fixtureRequest.canonicalVersionId(),
+                fixtureRequest.intakeRequestId(),
+                fixtureRequest.publicationFence(),
+                request.publishRequestId(),
+                fixtureRequest.requestDigest(),
+                Long.parseLong(request.intent().expectedVersionStateEpoch()),
+                workflowId,
+                fixtureRequest.appliedCommitId(),
+                fixtureRequest.contentDigest(),
+                fixtureRequest.digestSchemaVersion(),
+                fixtureRequest.worldAffectedTuples()),
+            fixtureEvidence.selectorReceiptBytes(),
+            fixtureEvidence.originalAccountBindingBytes(),
+            fixtureEvidence.appliedResultBytes());
+    List<PublishParticipantDigestDto> participantDigests =
+        PublishedWorldSelectorFixtures.participants(
+            10L, selectedEvidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+    ExportedAssetManifest manifest = exportedManifest(List.of("manifest.json"));
     PublishedReleaseBundleDto bundle =
-        publishedReleaseBundleDto(
+        new PublishedReleaseBundleDto(
             1L,
             "tenant-1",
             10L,
             1,
-            "v1",
+            "v2",
             workflowId,
             MANIFEST_HASH,
             List.of("manifest.json"),
             participantDigests,
+            List.of(),
             "generation-revision",
             false,
             null,
-            LocalDateTime.now());
+            LocalDateTime.now(),
+            CANONICAL_TENANT_ID,
+            CANONICAL_VERSION_ID,
+            "opaque-release-reference-from-owner",
+            1,
+            artifactDigests(List.of("manifest.json")),
+            selectedEvidence);
     VersionAssetArtifactStateDto artifact =
         new VersionAssetArtifactStateDto(
             "tenant-1",
@@ -2163,10 +2281,10 @@ class VersionPublishCommandServiceImplTest {
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
         .thenReturn(Optional.of(bundle));
     when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.of(artifact));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L)).thenReturn(manifest);
 
-    PublishWorkflowRequest request =
-        fixture.request();
-    PublishWorkflowSnapshot snapshot = reflectiveUnitHarnessReconcileSelectedPublicationMechanics(request);
+    PublishWorkflowSnapshot snapshot =
+        reflectiveUnitHarnessReconcileSelectedPublicationMechanics(request);
 
     assertEquals("SUCCEEDED", snapshot.status());
     verify(publishGateService)
@@ -2179,10 +2297,6 @@ class VersionPublishCommandServiceImplTest {
             "tenant-1", PublishType.FULL_VERSION, workflowId, participantDigests);
     verify(publishAttemptService).markFullVersionSucceeded(workflowId);
   }
-
-
-
-
 
   @Test
   void candidateRecordedBeforeConflictReadbackKeepsAttemptPendingForReconciliation() {
@@ -2246,8 +2360,7 @@ class VersionPublishCommandServiceImplTest {
     VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
         assertThrows(
             VersionPublishCommandServiceImpl.PendingReconciliationException.class,
-            () ->
-                reflectiveUnitHarnessReconcileSelectedPublicationMechanics(request));
+            () -> reflectiveUnitHarnessReconcileSelectedPublicationMechanics(request));
 
     assertTrue(thrown.getMessage().contains("candidate/write reconciliation"));
     assertTrue(possibleObjectWrite.get());
@@ -2268,7 +2381,6 @@ class VersionPublishCommandServiceImplTest {
     verify(assetExportService, never())
         .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
   }
-
 
   @Test
   void mismatchedPersistedStagedCandidateRemainsPartial() {
@@ -2294,7 +2406,6 @@ class VersionPublishCommandServiceImplTest {
     verify(versionAssetArtifactService).getExportCandidate("tenant-1", 10L);
   }
 
-
   @Test
   void malformedPersistedStagedCandidateReadbackRemainsPartial() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
@@ -2319,7 +2430,6 @@ class VersionPublishCommandServiceImplTest {
     verify(versionAssetArtifactService).getExportCandidate("tenant-1", 10L);
   }
 
-
   @Test
   void mismatchedStagedArtifactWorkflowRemainsPartial() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
@@ -2339,7 +2449,6 @@ class VersionPublishCommandServiceImplTest {
 
     assertSelectedStagedArtifactRemainsPartial(fixture, artifact);
   }
-
 
   @Test
   void mismatchedStagedArtifactScopeRemainsPartial() {
@@ -2361,7 +2470,6 @@ class VersionPublishCommandServiceImplTest {
     assertSelectedStagedArtifactRemainsPartial(fixture, artifact);
   }
 
-
   @Test
   void stagedArtifactForPublishedVersionRemainsPartial() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
@@ -2371,7 +2479,6 @@ class VersionPublishCommandServiceImplTest {
 
     assertSelectedStagedArtifactRemainsPartial(fixture, artifact);
   }
-
 
   @Test
   void legacyFullAttemptWithMismatchedVersionEvidenceIsNotRewritten() {
@@ -2397,7 +2504,6 @@ class VersionPublishCommandServiceImplTest {
     assertEquals(fixture.reservation().selection().digest(), attempt.getRequestDigest());
   }
 
-
   @Test
   void legacyFullMixedScopeAttemptIsNotRebound() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
@@ -2420,7 +2526,6 @@ class VersionPublishCommandServiceImplTest {
     assertEquals(fixture.reservation().selection().digest(), attempt.getRequestDigest());
   }
 
-
   @Test
   void postExportFinalizationFailureWithExactCandidateRemainsPendingWithoutCleanup() {
     SelectedPublishFixture fixture = selectedPublishFixture(1);
@@ -2430,19 +2535,6 @@ class VersionPublishCommandServiceImplTest {
     List<PublishParticipantDigestDto> participantDigests = participantDigests();
     ExportedAssetManifest manifest = exportedManifest(List.of("manifest.json"));
     VersionAssetArtifactStateDto staged = stagedArtifact(request, version);
-    VersionAssetArtifactStateDto exportedState =
-        new VersionAssetArtifactStateDto(
-            "tenant-1",
-            10L,
-            1,
-            "EXPORTED_UNATTESTED",
-            2L,
-            MANIFEST_HASH,
-            workflowId,
-            null,
-            null,
-            LocalDateTime.now(),
-            List.of("manifest.json"));
     VersionAssetArtifactStateDto stagedCandidate =
         new VersionAssetArtifactStateDto(
             "tenant-1",
@@ -2474,7 +2566,6 @@ class VersionPublishCommandServiceImplTest {
     when(versionAssetArtifactService.findState("tenant-1", 10L))
         .thenReturn(
             Optional.empty(),
-            Optional.empty(),
             Optional.of(staged),
             Optional.of(stagedCandidate),
             Optional.of(stagedCandidate));
@@ -2500,7 +2591,7 @@ class VersionPublishCommandServiceImplTest {
                 10L,
                 1,
                 "EXPORTED_UNATTESTED",
-                1L,
+                3L,
                 MANIFEST_HASH,
                 workflowId,
                 null,
@@ -2538,12 +2629,28 @@ class VersionPublishCommandServiceImplTest {
     assertEquals(VersionLifecycleState.DRAFT, version.getVersionState());
     assertEquals(1L, version.getVersionStateEpoch());
     verify(assetExportService).exportAssets("tenant-1", 1);
+    verify(versionAssetArtifactService)
+        .markExportedUnattested(
+            org.mockito.ArgumentMatchers.eq("tenant-1"),
+            org.mockito.ArgumentMatchers.eq(10L),
+            org.mockito.ArgumentMatchers.eq(1),
+            org.mockito.ArgumentMatchers.eq(workflowId),
+            same(manifest));
     verify(versionAssetArtifactService, org.mockito.Mockito.times(4))
         .getExportCandidate("tenant-1", 10L);
+    verify(versionRepository).save(version);
+    verify(publishedReleaseBundleService)
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            org.mockito.ArgumentMatchers.eq(workflowId),
+            same(manifest),
+            any(String.class),
+            org.mockito.ArgumentMatchers.eq(participantDigests),
+            same(capturedWorldPublicationEvidence));
     verify(publishAttemptService, never())
         .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
     verify(publishAttemptRepository, never())
-        .sealPublication(fixture.attempt(), org.mockito.ArgumentMatchers.anyBoolean());
+        .sealPublication(same(fixture.attempt()), org.mockito.ArgumentMatchers.anyBoolean());
     verify(versionAssetArtifactService, never())
         .markFailed(
             any(String.class),
@@ -2557,7 +2664,6 @@ class VersionPublishCommandServiceImplTest {
     verify(assetExportService, never())
         .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
   }
-
 
   @ParameterizedTest
   @EnumSource(
@@ -2657,8 +2763,8 @@ class VersionPublishCommandServiceImplTest {
     AuthoredDraftPublishSelection selection =
         AuthoredDraftPublishSelection.capture(
             intent, target, new PublicationEvidence(binding, fence));
-    // This is an existing synchronized source selection fixture only. It carries no Account
-    // authorization or authenticated World publication freeze.
+    // This fixture selects an existing intent for the private conditional mechanics seam; it
+    // carries no Account authorization or authenticated World publication freeze.
     return new SelectionSnapshot(selection, OffsetDateTime.parse("2026-10-08T00:00:00Z"));
   }
 
@@ -2726,7 +2832,20 @@ class VersionPublishCommandServiceImplTest {
 
   private PublishWorkflowSnapshot reflectiveUnitHarnessReconcileSelectedPublicationMechanics(
       PublishWorkflowRequest request) {
-    return service.reconcileFullVersionPublishMechanics(request);
+    try {
+      Method mechanics =
+          VersionPublishCommandServiceImpl.class.getDeclaredMethod(
+              "reconcileSelectedPublicationMechanics", PublishWorkflowRequest.class);
+      mechanics.setAccessible(true);
+      return (PublishWorkflowSnapshot) mechanics.invoke(service, request);
+    } catch (InvocationTargetException exception) {
+      Throwable cause = exception.getCause();
+      if (cause instanceof RuntimeException runtimeException) throw runtimeException;
+      if (cause instanceof Error error) throw error;
+      throw new AssertionError("selected publication mechanics failed", cause);
+    } catch (ReflectiveOperationException exception) {
+      throw new AssertionError("selected publication mechanics harness is unavailable", exception);
+    }
   }
 
   private Version fullVersion(long versionId, int versionNumber, VersionLifecycleState state) {

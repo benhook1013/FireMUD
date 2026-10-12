@@ -1,8 +1,8 @@
 package net.firedevops.firemud.gamedesign.service;
 
-import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -22,7 +22,6 @@ import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
-import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
@@ -45,7 +44,6 @@ import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleReposi
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionTemplateRemapSetRepository;
-import net.firedevops.firemud.gamedesign.service.FrozenAssetExportCandidate;
 import net.firedevops.firemud.gamedesign.service.impl.PublishAttemptServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
 import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWorkflow;
@@ -348,7 +346,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(storedAttempt.getRequestDigest()).isEqualTo("exact-identity-digest");
   }
 
-
   @Test
   void failedScriptPatchRetainsCandidateForReplayAndReservesItsTuple() {
     String tenantId = "9011";
@@ -524,7 +521,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(participantCollectionCount).hasValue(2);
   }
 
-
   @Test
   void scriptPatchFinalizationFailureRollsBackToRetainedDraftAndMarksAttemptFailed() {
     String tenantId = "9012";
@@ -600,8 +596,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
         .containsExactly(retainedCandidate.getId());
   }
 
-
-
   @Test
   void selectedMechanicsRetainsCandidatePendingCompletePublicationReadback() {
     String tenantId = "9013";
@@ -620,7 +614,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
 
     assertThat(reconciliationFailure)
         .isInstanceOf(IllegalStateException.class)
-        .hasMessage("published release evidence is incomplete; readback/reconciliation is required");
+        .hasMessage(
+            "published release evidence is incomplete; readback/reconciliation is required");
     assertThat(reconciliationFailure.getClass().getName())
         .isEqualTo(
             "net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl"
@@ -628,9 +623,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     Version retainedDraft =
-        versionRepository
-            .findByTenantIdAndId(tenantId, fixture.version().getId())
-            .orElseThrow();
+        versionRepository.findByTenantIdAndId(tenantId, fixture.version().getId()).orElseThrow();
     assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
     assertThat(attempt.getFailureCode()).isNull();
     assertThat(attempt.getFailureMessage()).isNull();
@@ -658,7 +651,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
             Mockito.eq(publishWorkflowId),
             Mockito.anyString());
   }
-
 
   @Test
   void fullVersionMechanicsLeavesPostExportFinalizationFailurePendingWithCandidateAndRemap() {
@@ -827,8 +819,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             Mockito.anyString(),
             Mockito.anyString());
     Mockito.verify(assetExportService, Mockito.never())
-        .deleteExportedAssets(
-            Mockito.eq(tenantId), Mockito.anyInt(), Mockito.anyList());
+        .deleteExportedAssets(Mockito.eq(tenantId), Mockito.anyInt(), Mockito.anyList());
     VersionTemplateRemapSet retainedRemapSet =
         templateRemapSetRepository
             .findByTenantIdAndRemapSetId(tenantId, remapSetId.get())
@@ -1059,8 +1050,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
             Mockito.anyString(),
             Mockito.anyString());
     Mockito.verify(assetExportService, Mockito.never())
-        .deleteExportedAssets(
-            Mockito.eq(tenantId), Mockito.anyInt(), Mockito.anyList());
+        .deleteExportedAssets(Mockito.eq(tenantId), Mockito.anyInt(), Mockito.anyList());
     VersionTemplateRemapSet retainedRemapSet =
         templateRemapSetRepository
             .findByTenantIdAndRemapSetId(tenantId, remapSetId.get())
@@ -1403,7 +1393,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 "application/octet-stream",
                 1)));
   }
-
 
   private long createGameAndPublishedBaseVersion(String tenantId, String gameName) {
     Game game = new Game();
