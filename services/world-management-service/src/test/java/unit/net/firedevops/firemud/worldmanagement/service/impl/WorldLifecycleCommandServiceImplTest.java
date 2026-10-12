@@ -938,6 +938,50 @@ class WorldLifecycleCommandServiceImplTest {
     verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
   }
 
+  @Test
+  void fixtureActivationRejectsOriginalEpochForNonActiveRowsWithoutWrites() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("c".repeat(64));
+    WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
+    AtomicReference<WorldInstance> currentRow = new AtomicReference<>();
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenAnswer(invocation -> Optional.of(currentRow.get()));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenAnswer(invocation -> Optional.of(currentRow.get()));
+
+    String[] statuses = {"FAILED_PRE_ACTIVATION", "TERMINATING", "TERMINATED"};
+    long[] lifecycleEpochs = {2L, 3L, 4L};
+    for (int index = 0; index < statuses.length; index++) {
+      WorldInstance row = boundFixtureInstance(statuses[index], lifecycleEpochs[index]);
+      currentRow.set(row);
+
+      IllegalArgumentException stale =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> fixtureService.activatePreparedWorldInstance(42L, 101L, 1L));
+
+      assertTrue(stale.getMessage().startsWith("WORLD_INSTANCE_LIFECYCLE_STALE:"));
+      assertEquals(statuses[index], row.getStatus());
+      assertEquals(lifecycleEpochs[index], row.getLifecycleEpoch());
+    }
+
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verify(regionInstanceRepository, never()).save(any());
+    verify(zoneInstanceRepository, never()).save(any());
+    verify(roomInstanceRepository, never()).save(any());
+    verify(roomInstanceExitRepository, never()).save(any());
+    verify(worldEventRepository, never()).save(any());
+    verify(regionInstanceRepository, never()).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(zoneInstanceRepository, never()).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(roomInstanceRepository, never()).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(roomInstanceExitRepository, never()).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(worldEventRepository, never()).deleteByTenantIdAndGameInstanceId(42L, 101L);
+  }
+
   private WorldLifecycleCommandServiceImpl fixtureService(
       RunOwnedWorldLaunchEvidenceProvider provider) {
     WorldProperties worldProperties = new WorldProperties();
