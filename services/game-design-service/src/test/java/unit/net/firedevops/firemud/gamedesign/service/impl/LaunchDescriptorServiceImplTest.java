@@ -101,7 +101,10 @@ class LaunchDescriptorServiceImplTest {
     when(publishedReleaseBundleService.getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L))
         .thenReturn(selectorBundle(true));
 
-    assertThrows(IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    assertEquals("World selector release lacks required participants", denied.getMessage());
     verify(launchDescriptorRepository, never()).insertImmutable(any(LaunchDescriptor.class));
   }
 
@@ -113,7 +116,12 @@ class LaunchDescriptorServiceImplTest {
     when(publishedReleaseBundleService.getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L))
         .thenReturn(selectorBundle(false, true));
 
-    assertThrows(IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    assertEquals(
+        "World selector requires all exact successful ordered release participants",
+        denied.getMessage());
     verify(launchDescriptorRepository, never()).insertImmutable(any(LaunchDescriptor.class));
   }
 
@@ -121,7 +129,9 @@ class LaunchDescriptorServiceImplTest {
   void selectorV2RejectsUnsupportedManifestAndArtifactSchemas() throws Exception {
     var valid = selectorBundle(false);
     assertSelectorResolutionRejected(
-        "cp-unsupported-selector-manifest-schema", withBundle(valid, 2, null, null, null));
+        "cp-unsupported-selector-manifest-schema",
+        withBundle(valid, 2, null, null, null),
+        "World selector differs from complete immutable release binding");
 
     var artifact =
         new PublishedArtifactDigest(
@@ -133,7 +143,8 @@ class LaunchDescriptorServiceImplTest {
             2);
     assertSelectorResolutionRejected(
         "cp-unsupported-selector-artifact-schema",
-        withBundle(valid, 1, List.of("branding/logo"), List.of(artifact), null));
+        withBundle(valid, 1, List.of("branding/logo"), List.of(artifact), null),
+        "World selector contains an unsupported artifact schema");
   }
 
   @Test
@@ -148,7 +159,9 @@ class LaunchDescriptorServiceImplTest {
             participants.get(3),
             participants.get(4));
     assertSelectorResolutionRejected(
-        "cp-selector-participants-out-of-order", withBundle(valid, null, null, null, outOfOrder));
+        "cp-selector-participants-out-of-order",
+        withBundle(valid, null, null, null, outOfOrder),
+        "World selector requires all exact successful ordered release participants");
 
     var first = participants.getFirst();
     var errorContent =
@@ -166,7 +179,8 @@ class LaunchDescriptorServiceImplTest {
     withErrorContent.set(0, errorContent);
     assertSelectorResolutionRejected(
         "cp-selector-participant-error-content",
-        withBundle(valid, null, null, null, withErrorContent));
+        withBundle(valid, null, null, null, withErrorContent),
+        "World selector requires all exact successful ordered release participants");
   }
 
   @Test
@@ -189,17 +203,21 @@ class LaunchDescriptorServiceImplTest {
 
     assertSelectorResolutionRejected(
         "cp-selector-ability-schema-wrong-owner",
-        withBundle(valid, null, null, null, participants));
+        withBundle(valid, null, null, null, participants),
+        "World selector ability schema proof must be owned by Game Logic");
   }
 
-  private void assertSelectorResolutionRejected(String requestId, PublishedReleaseBundleDto bundle)
-      throws Exception {
+  private void assertSelectorResolutionRejected(
+      String requestId, PublishedReleaseBundleDto bundle, String expectedMessage) throws Exception {
     var request = request(requestId, 9L);
     stubSuccessfulLaunch(request, 7L, 11L);
     when(publishedReleaseBundleService.getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L))
         .thenReturn(bundle);
 
-    assertThrows(IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    assertEquals(expectedMessage, denied.getMessage());
     verify(launchDescriptorRepository, never()).insertImmutable(any(LaunchDescriptor.class));
   }
 
