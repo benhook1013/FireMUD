@@ -9,6 +9,21 @@ import org.junit.jupiter.api.Test;
 
 class WorldPublicationTerminalReadEvidenceTest {
   @Test
+  void rejectsAnOversizedOriginalOperationBeforeParsingTheTerminal() {
+    assertThatThrownBy(
+            () ->
+                new WorldPublicationTerminalReadEvidence.Request(
+                    1,
+                    "test",
+                    UUID.randomUUID(),
+                    new byte[GameDesignPublicationOperationBinding.MAX_OPERATION_BYTES + 1],
+                    new byte[] {1}))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Complete bounded original publication operation required")
+        .hasNoCause();
+  }
+
+  @Test
   void retainsExactRequestAndWorldOutcomeForPublishedAndAborted() throws Exception {
     var operation = GameDesignPublicationTerminalReadGrpcCodecTest.operation();
     for (Outcome producerOutcome : Outcome.values()) {

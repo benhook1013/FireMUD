@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
@@ -39,14 +40,17 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
   void seedLegacyRowsBeforeV2() {
     schema = "entity_empty_source_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .locations(MIGRATION_LOCATION)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .target("1")
-        .load()
-        .migrate();
+    var legacyFlywayConfiguration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .locations(MIGRATION_LOCATION)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .target("1");
+    legacyFlywayConfiguration
+        .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
+        .setTransactionalLock(false);
+    legacyFlywayConfiguration.load().migrate();
 
     DSLContext legacyDsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     // Synthetic pre-V2 rows exercise migration occupancy only. They are not selected-source
@@ -60,14 +64,17 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
             + "source_holder_kind, destination_holder_kind) "
             + "VALUES (61001, 99001, 1, 'MOVE', 'legacy-audit', 'UNKNOWN', 'UNKNOWN')");
 
-    Flyway.configure()
-        .dataSource(dataSource)
-        .locations(MIGRATION_LOCATION)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .load()
-        .migrate();
+    var flywayConfiguration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .locations(MIGRATION_LOCATION)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema));
+    flywayConfiguration
+        .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
+        .setTransactionalLock(false);
+    flywayConfiguration.load().migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
   }
 

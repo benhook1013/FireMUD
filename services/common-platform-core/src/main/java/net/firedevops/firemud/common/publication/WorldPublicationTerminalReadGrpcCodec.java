@@ -52,9 +52,16 @@ public final class WorldPublicationTerminalReadGrpcCodec {
       GameDesignPublicationTerminalEvidence terminal) {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(terminal, "terminal");
-    var evidence =
-        WorldPublicationTerminalReadEvidence.fromOwnerRead(
-            request, request.expectedWorldOutcome(), terminal.canonicalBytes());
+    byte[] terminalBytes = terminal.canonicalBytes();
+    if (!Arrays.equals(request.originalOperation(), terminal.operationBytes())
+        || !Arrays.equals(request.expectedGameDesignTerminalEvidence(), terminalBytes)) {
+      throw new IllegalArgumentException(
+          "World terminal read differs from the exact operation, terminal, or owner phase");
+    }
+    WorldOutcome outcome =
+        terminal.outcome() == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
+            ? WorldOutcome.PUBLISHED
+            : WorldOutcome.ABORTED;
     return ReadPublicationTerminalResponse.newBuilder()
         .setSchemaVersion(request.schemaVersion())
         .setTargetNamespace(request.targetNamespace())
@@ -62,8 +69,8 @@ public final class WorldPublicationTerminalReadGrpcCodec {
         .setOriginalOperation(ByteString.copyFrom(request.originalOperation()))
         .setExpectedGameDesignTerminalEvidence(
             ByteString.copyFrom(request.expectedGameDesignTerminalEvidence()))
-        .setWorldOutcome(toWireOutcome(evidence.worldOutcome()))
-        .setWorldTerminalEvidence(ByteString.copyFrom(evidence.worldTerminalEvidence()))
+        .setWorldOutcome(toWireOutcome(outcome))
+        .setWorldTerminalEvidence(ByteString.copyFrom(terminalBytes))
         .build();
   }
 

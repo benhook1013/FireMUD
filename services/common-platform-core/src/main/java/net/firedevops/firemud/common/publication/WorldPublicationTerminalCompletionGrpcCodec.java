@@ -59,7 +59,11 @@ public final class WorldPublicationTerminalCompletionGrpcCodec {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(terminal, "terminal");
     byte[] terminalBytes = terminal.canonicalBytes();
-    requireExactTerminal(request, terminalBytes);
+    if (!Arrays.equals(request.originalOperation(), terminal.operationBytes())
+        || !Arrays.equals(request.gameDesignTerminalEvidence(), terminalBytes)) {
+      throw new IllegalArgumentException(
+          "World publication terminal differs from the exact requested operation or evidence");
+    }
     // The full terminal appears once in the request echo and once as the stored result.
     if ((long) request.originalOperation().length + 2L * terminalBytes.length
         > MAX_MESSAGE_BYTES - MESSAGE_ENVELOPE_OVERHEAD_RESERVE) {
@@ -98,11 +102,11 @@ public final class WorldPublicationTerminalCompletionGrpcCodec {
       throw new IllegalArgumentException("World changed the exact publication completion request");
     }
     byte[] terminalBytes = response.getStoredTerminalEvidence().toByteArray();
-    requireExactTerminal(request, terminalBytes);
-    return GameDesignPublicationTerminalEvidence.fromStored(terminalBytes);
+    return requireExactTerminal(request, terminalBytes);
   }
 
-  private static void requireExactTerminal(Request request, byte[] terminalBytes) {
+  private static GameDesignPublicationTerminalEvidence requireExactTerminal(
+      Request request, byte[] terminalBytes) {
     final GameDesignPublicationTerminalEvidence terminal;
     try {
       terminal = GameDesignPublicationTerminalEvidence.fromStored(terminalBytes);
@@ -115,6 +119,7 @@ public final class WorldPublicationTerminalCompletionGrpcCodec {
       throw new IllegalArgumentException(
           "World publication terminal differs from the exact requested operation or evidence");
     }
+    return terminal;
   }
 
   private static void requireWireBudget(Message message) {
@@ -177,22 +182,19 @@ public final class WorldPublicationTerminalCompletionGrpcCodec {
       }
       originalOperation = originalOperation.clone();
       gameDesignTerminalEvidence = gameDesignTerminalEvidence.clone();
-      GameDesignPublicationOperationBinding operation;
       GameDesignPublicationTerminalEvidence terminal;
       try {
-        operation = GameDesignPublicationOperationBinding.fromStored(originalOperation);
         terminal = GameDesignPublicationTerminalEvidence.fromStored(gameDesignTerminalEvidence);
       } catch (RuntimeException malformed) {
         throw new IllegalArgumentException(
             "Complete canonical publication operation and terminal required", malformed);
       }
-      if (!Arrays.equals(originalOperation, operation.canonicalBytes())
-          || !Arrays.equals(gameDesignTerminalEvidence, terminal.canonicalBytes())
-          || !Arrays.equals(originalOperation, terminal.operationBytes())) {
+      if (!Arrays.equals(originalOperation, terminal.operationBytes())
+          || !Arrays.equals(gameDesignTerminalEvidence, terminal.canonicalBytes())) {
         throw new IllegalArgumentException(
             "Game Design terminal differs from the complete original operation");
       }
-      if (!targetNamespace.equals(operation.world().request().targetNamespace())) {
+      if (!targetNamespace.equals(terminal.worldEvidence().request().targetNamespace())) {
         throw new IllegalArgumentException(
             "Original publication operation differs from the World workload namespace");
       }

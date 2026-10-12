@@ -195,8 +195,8 @@ public final class AccountPublicationAuthorizationRepository {
       String worldOutcome,
       byte[] worldTerminalEvidence) {
     requireTransaction();
-    operation = GameDesignPublicationOperationBinding.fromStored(operation.canonicalBytes());
-    gameDesign = GameDesignPublicationTerminalEvidence.fromStored(gameDesign.canonicalBytes());
+    Objects.requireNonNull(operation, "operation");
+    Objects.requireNonNull(gameDesign, "gameDesign");
     var world = GameDesignPublicationTerminalEvidence.fromStored(worldTerminalEvidence);
     String expectedPhase =
         gameDesign.outcome() == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED

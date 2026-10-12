@@ -85,8 +85,11 @@ public final class WorldPublicationTerminalReadEvidence {
       if (readRequestId == null || readRequestId.equals(new UUID(0L, 0L))) {
         throw new IllegalArgumentException("Non-nil canonical read request identity required");
       }
-      if (originalOperation == null || originalOperation.length == 0) {
-        throw new IllegalArgumentException("Complete original publication operation required");
+      if (originalOperation == null
+          || originalOperation.length == 0
+          || originalOperation.length > GameDesignPublicationOperationBinding.MAX_OPERATION_BYTES) {
+        throw new IllegalArgumentException(
+            "Complete bounded original publication operation required");
       }
       if (expectedGameDesignTerminalEvidence == null
           || expectedGameDesignTerminalEvidence.length == 0) {
@@ -94,23 +97,20 @@ public final class WorldPublicationTerminalReadEvidence {
       }
       originalOperation = originalOperation.clone();
       expectedGameDesignTerminalEvidence = expectedGameDesignTerminalEvidence.clone();
-      GameDesignPublicationOperationBinding operation;
       GameDesignPublicationTerminalEvidence terminal;
       try {
-        operation = GameDesignPublicationOperationBinding.fromStored(originalOperation);
         terminal =
             GameDesignPublicationTerminalEvidence.fromStored(expectedGameDesignTerminalEvidence);
       } catch (RuntimeException malformed) {
         throw new IllegalArgumentException(
             "Canonical complete publication operation and terminal evidence required", malformed);
       }
-      if (!Arrays.equals(originalOperation, operation.canonicalBytes())
-          || !Arrays.equals(expectedGameDesignTerminalEvidence, terminal.canonicalBytes())
-          || !Arrays.equals(originalOperation, terminal.operationBytes())) {
+      if (!Arrays.equals(originalOperation, terminal.operationBytes())
+          || !Arrays.equals(expectedGameDesignTerminalEvidence, terminal.canonicalBytes())) {
         throw new IllegalArgumentException(
             "Expected terminal evidence differs from the exact original operation");
       }
-      if (!targetNamespace.equals(operation.world().request().targetNamespace())) {
+      if (!targetNamespace.equals(terminal.worldEvidence().request().targetNamespace())) {
         throw new IllegalArgumentException(
             "Original publication operation differs from the World workload namespace");
       }

@@ -16,7 +16,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** Physical V127 installation proof for both known V126 inventory guard shapes. */
+/** Physical Account selected-inventory migration and retained-ordering guard proof. */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountSelectedInventoryEmptyArraysMigrationPostgresIntegrationTest {
   private static final String HISTORY_TABLE = ".flyway_schema_history";
@@ -95,6 +95,28 @@ class AccountSelectedInventoryEmptyArraysMigrationPostgresIntegrationTest {
         });
   }
 
+  @Test
+  void upgradesV162ToPairedClosureProfileWithoutChangingOtherGuardsOrHistory() {
+    withVersion162(
+        context -> {
+          String before = functionDefinition(context);
+          Long originalOid = functionOid(context);
+          Map<String, Integer> originalChecksums = migrationChecksums(context);
+          assertCanonicalOrderingGuards(before);
+
+          migrateTo163(context);
+
+          String after = functionDefinition(context);
+          assertVersionApplied(context, "163");
+          assertThat(after).isEqualTo(expectedV163Definition(before));
+          assertThat(functionOid(context)).isEqualTo(originalOid);
+          assertThat(migrationChecksums(context)).containsAllEntriesOf(originalChecksums);
+          assertThat(migrationChecksums(context)).containsKeys("162", "163");
+          assertCanonicalOrderingGuards(after);
+          assertThat(sourceKeyLength(context)).isEqualTo(2048);
+        });
+  }
+
   private static void withVersion126(Consumer<TestContext> proof) {
     String schema = "selected_inventory_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource =
@@ -106,6 +128,23 @@ class AccountSelectedInventoryEmptyArraysMigrationPostgresIntegrationTest {
       TestContext context = new TestContext(schema, jdbc, dataSource);
       assertVersionApplied(context, "126");
       assertVersionNotApplied(context, "127");
+      proof.accept(context);
+    } finally {
+      jdbc.execute("DROP SCHEMA IF EXISTS " + quotedSchema(schema) + " CASCADE");
+    }
+  }
+
+  private static void withVersion162(Consumer<TestContext> proof) {
+    String schema = "selected_inventory_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    try {
+      migration(dataSource, schema, "162").migrate();
+      TestContext context = new TestContext(schema, jdbc, dataSource);
+      assertVersionApplied(context, "162");
+      assertVersionNotApplied(context, "163");
       proof.accept(context);
     } finally {
       jdbc.execute("DROP SCHEMA IF EXISTS " + quotedSchema(schema) + " CASCADE");
@@ -128,6 +167,10 @@ class AccountSelectedInventoryEmptyArraysMigrationPostgresIntegrationTest {
     migration(context.dataSource(), context.schema(), "127").migrate();
   }
 
+  private static void migrateTo163(TestContext context) {
+    migration(context.dataSource(), context.schema(), "163").migrate();
+  }
+
   private static void assertV127RejectedWithoutChangingV126(TestContext context) {
     assertThatThrownBy(() -> migrateTo127(context))
         .hasStackTraceContaining(
@@ -143,6 +186,114 @@ class AccountSelectedInventoryEmptyArraysMigrationPostgresIntegrationTest {
         context
             .jdbc()
             .queryForObject("SELECT pg_get_functiondef(?::regprocedure)", String.class, signature));
+  }
+
+  private static Long functionOid(TestContext context) {
+    String signature =
+        quotedSchema(context.schema()) + ".require_selected_inventory_operation_v2(bytea)";
+    return Objects.requireNonNull(
+        context
+            .jdbc()
+            .queryForObject("SELECT ?::regprocedure::oid::bigint", Long.class, signature));
+  }
+
+  private static Map<String, Integer> migrationChecksums(TestContext context) {
+    var checksums = new java.util.HashMap<String, Integer>();
+    context
+        .jdbc()
+        .query(
+            "SELECT version, checksum FROM "
+                + quotedSchema(context.schema())
+                + HISTORY_TABLE
+                + " WHERE version IS NOT NULL AND success",
+            row -> {
+              checksums.put(row.getString("version"), row.getInt("checksum"));
+            });
+    return Map.copyOf(checksums);
+  }
+
+  private static String expectedV163Definition(String before) {
+    String expected = replaceExactlyOnce(before, modelShapeAnchor(), modelShapeReplacement());
+    expected =
+        replaceExactlyOnce(expected, inventoryProfileAnchor(), inventoryProfileReplacement());
+    expected = replaceExactlyOnce(expected, modelCountAnchor(), modelCountReplacement());
+    return replaceExactlyOnce(expected, profileAnchor(), profileReplacement());
+  }
+
+  private static String modelShapeAnchor() {
+    return "        (model, ARRAY['modelId','graphSchemaVersion','graphDigest','topologyResultDigest',"
+        + "'familyCounts','regionGeneratorInputs','generationRuleFields','regionFields','zoneFields',"
+        + "'roomFields','roomExitFields','spawnBindingFields','spawnBindingInputs','generationRuleInputCount',"
+        + "'spawnBindingCount','appliedEpochs'])";
+  }
+
+  private static String modelShapeReplacement() {
+    return "        (model, CASE\n"
+        + "            WHEN inventory->>'schema' = 'world-selected-publication-artifact-inventory/v2'\n"
+        + "                AND inventory->'schemaVersion' = '2'::JSONB\n"
+        + "            THEN ARRAY['modelId','graphSchemaVersion','graphDigest','topologyResultDigest',"
+        + "'familyCounts','regionGeneratorInputs','generationRuleFields','regionFields','zoneFields',"
+        + "'roomFields','roomExitFields','spawnBindingFields','spawnBindingInputs','generationRuleInputCount',"
+        + "'spawnBindingCount','appliedEpochs','inboundSourceClosure']\n"
+        + "            ELSE ARRAY['modelId','graphSchemaVersion','graphDigest','topologyResultDigest',"
+        + "'familyCounts','regionGeneratorInputs','generationRuleFields','regionFields','zoneFields',"
+        + "'roomFields','roomExitFields','spawnBindingFields','spawnBindingInputs','generationRuleInputCount',"
+        + "'spawnBindingCount','appliedEpochs']\n"
+        + "        END)";
+  }
+
+  private static String inventoryProfileAnchor() {
+    return "        OR inventory->>'schema' IS DISTINCT FROM 'world-selected-publication-artifact-inventory/v1'\n"
+        + "        OR inventory->'schemaVersion' IS DISTINCT FROM '1'::JSONB OR inventory->>'completeness' IS DISTINCT FROM 'COMPLETE'";
+  }
+
+  private static String inventoryProfileReplacement() {
+    return "        OR NOT ((inventory->>'schema' = 'world-selected-publication-artifact-inventory/v1'\n"
+        + "                AND inventory->'schemaVersion' = '1'::JSONB)\n"
+        + "            OR (inventory->>'schema' = 'world-selected-publication-artifact-inventory/v2'\n"
+        + "                AND inventory->'schemaVersion' = '2'::JSONB))\n"
+        + "        OR inventory->>'completeness' IS DISTINCT FROM 'COMPLETE'";
+  }
+
+  private static String modelCountAnchor() {
+    return "        OR (SELECT count(*) FROM jsonb_object_keys(model)) <> 16";
+  }
+
+  private static String modelCountReplacement() {
+    return "        OR (SELECT count(*) FROM jsonb_object_keys(model)) <> (CASE\n"
+        + "            WHEN inventory->>'schema' = 'world-selected-publication-artifact-inventory/v2'\n"
+        + "                AND inventory->'schemaVersion' = '2'::JSONB THEN 17\n"
+        + "            ELSE 16\n"
+        + "        END)";
+  }
+
+  private static String profileAnchor() {
+    return "        OR model->>'modelId' IS DISTINCT FROM 'WORLD_LOGICAL_ROOM_EXIT_ADJACENCY_V1'\n"
+        + "        OR model->'graphSchemaVersion' IS DISTINCT FROM '2'::JSONB";
+  }
+
+  private static String profileReplacement() {
+    return "        OR ((inventory->>'schema' = 'world-selected-publication-artifact-inventory/v1'\n"
+        + "                AND inventory->'schemaVersion' = '1'::JSONB\n"
+        + "                AND model->>'modelId' = 'WORLD_LOGICAL_ROOM_EXIT_ADJACENCY_V1'\n"
+        + "                AND model->'graphSchemaVersion' = '2'::JSONB\n"
+        + "                AND checkpoint->'digestSchemaVersion' = '3'::JSONB\n"
+        + "                AND selector->'request'->'digestSchemaVersion' = '3'::JSONB\n"
+        + "                AND NOT (model ? 'inboundSourceClosure'))\n"
+        + "            OR (inventory->>'schema' = 'world-selected-publication-artifact-inventory/v2'\n"
+        + "                AND inventory->'schemaVersion' = '2'::JSONB\n"
+        + "                AND model->>'modelId' = 'WORLD_LOGICAL_ROOM_EXIT_ADJACENCY_INBOUND_EMPTY_V1'\n"
+        + "                AND model->'graphSchemaVersion' = '3'::JSONB\n"
+        + "                AND checkpoint->'digestSchemaVersion' = '4'::JSONB\n"
+        + "                AND selector->'request'->'digestSchemaVersion' = '4'::JSONB\n"
+        + "                AND model ?& ARRAY['modelId', 'graphSchemaVersion', 'graphDigest',\n"
+        + "                    'topologyResultDigest', 'familyCounts', 'regionGeneratorInputs',\n"
+        + "                    'generationRuleFields', 'regionFields', 'zoneFields', 'roomFields',\n"
+        + "                    'roomExitFields', 'spawnBindingFields', 'spawnBindingInputs',\n"
+        + "                    'generationRuleInputCount', 'spawnBindingCount', 'appliedEpochs',\n"
+        + "                    'inboundSourceClosure']\n"
+        + "                AND model->'inboundSourceClosure' IS NOT DISTINCT FROM\n"
+        + "                    '{\"schemaVersion\":1,\"familyCounts\":[{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT\",\"count\":0},{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT\",\"count\":0},{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION\",\"count\":0},{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING\",\"count\":0},{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK\",\"count\":0},{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE\",\"count\":0},{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING\",\"count\":0}]}'::JSONB)) IS NOT TRUE";
   }
 
   private static void executeFunctionDefinition(TestContext context, String definition) {

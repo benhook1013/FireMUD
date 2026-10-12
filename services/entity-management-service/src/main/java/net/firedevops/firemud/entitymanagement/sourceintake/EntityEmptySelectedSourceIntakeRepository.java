@@ -734,16 +734,20 @@ public final class EntityEmptySelectedSourceIntakeRepository {
         || !Objects.equals(row.get(14, String.class), receipt.worldReadRequestDigest())
         || !Objects.equals(row.get(15, String.class), receipt.worldClosureDigest())
         || !Objects.equals(row.get(16, String.class), receipt.receiptDigest())
-        || !Objects.equals(row.get(17, OffsetDateTime.class), receipt.retainedAt())
+        || !sameInstant(row.get(17, OffsetDateTime.class), receipt.retainedAt())
         || !Objects.equals(row.get(18, String.class), receipt.requestDigest())
         || !Objects.equals(row.get(19, String.class), receipt.schemaDigest())
         || !Objects.equals(row.get(20, String.class), receipt.receiptDigest())
-        || !Objects.equals(row.get(22, OffsetDateTime.class), receipt.retainedAt())) {
+        || !sameInstant(row.get(22, OffsetDateTime.class), receipt.retainedAt())) {
       throw new IllegalStateException("Entity association differs from its immutable receipt");
     }
     requirePersistedEmptyOnlyProviderStates(tx, receipt);
     requirePersistedFamilyStates(tx, receipt);
     return Optional.of(receipt);
+  }
+
+  private static boolean sameInstant(OffsetDateTime actual, OffsetDateTime expected) {
+    return actual != null && expected != null && actual.toInstant().equals(expected.toInstant());
   }
 
   private static void requirePersistedEmptyOnlyProviderStates(
@@ -778,7 +782,7 @@ public final class EntityEmptySelectedSourceIntakeRepository {
               row.get(6, String.class), receipt.selectedSourceRevisionBindingDigest())
           || !Objects.equals(row.get(7, String.class), receipt.worldClosureDigest())
           || !Objects.equals(row.get(8, String.class), receipt.providerStateDigest(state.family()))
-          || !Objects.equals(row.get(9, OffsetDateTime.class), receipt.retainedAt())) {
+          || !sameInstant(row.get(9, OffsetDateTime.class), receipt.retainedAt())) {
         throw new IllegalStateException(
             "Entity EMPTY-only provider readback is missing or differs for " + state.family());
       }

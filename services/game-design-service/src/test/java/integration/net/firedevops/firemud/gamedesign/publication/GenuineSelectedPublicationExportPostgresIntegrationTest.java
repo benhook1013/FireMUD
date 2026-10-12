@@ -27,6 +27,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateFactory;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -45,6 +46,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationRequest;
 import net.firedevops.firemud.account.v1.StartSessionOperatorAuthorizationServiceGrpc;
@@ -407,6 +409,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
+import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -443,6 +446,8 @@ import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Object;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Real original GD+World source settlement and Account/GL intake-to-GD-receipt, followed by actual
@@ -3250,8 +3255,75 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
             .isZero();
 
         byte[] originalPublicationOperation = publicationReservation.operation().canonicalBytes();
+        accountAccess
+            .sources()
+            .dsl
+            .fetch(
+                "SELECT require_selected_inventory_operation_v2(?)", originalPublicationOperation);
         var originalPublicationBinding =
             GameDesignPublicationOperationBinding.fromStored(originalPublicationOperation);
+        assertSelectedInventoryProfileRejected(
+            accountAccess.sources().dsl,
+            rebindSelectedInventory(
+                originalPublicationBinding,
+                inventory -> {
+                  inventory.put("schema", "world-selected-publication-artifact-inventory/v1");
+                  inventory.put("schemaVersion", 1);
+                }));
+        assertSelectedInventoryProfileRejected(
+            accountAccess.sources().dsl,
+            rebindSelectedInventory(
+                originalPublicationBinding,
+                inventory ->
+                    ((ObjectNode) inventory.get("sourceModel")).put("unknownSourceFamily", true)));
+        assertSelectedInventoryProfileRejected(
+            accountAccess.sources().dsl,
+            rebindSelectedInventory(
+                originalPublicationBinding,
+                inventory ->
+                    ((ArrayNode)
+                            inventory
+                                .get("sourceModel")
+                                .get("inboundSourceClosure")
+                                .get("familyCounts"))
+                        .remove(0)));
+        assertSelectedInventoryProfileRejected(
+            accountAccess.sources().dsl,
+            rebindSelectedInventory(
+                originalPublicationBinding,
+                inventory ->
+                    ((ObjectNode)
+                            inventory
+                                .get("sourceModel")
+                                .get("inboundSourceClosure")
+                                .get("familyCounts")
+                                .get(0))
+                        .put("count", 1)));
+        assertSelectedInventoryProfileRejected(
+            accountAccess.sources().dsl,
+            rebindSelectedInventory(
+                originalPublicationBinding,
+                inventory ->
+                    ((ObjectNode) inventory.get("sourceModel")).remove("inboundSourceClosure")));
+        assertSelectedInventoryProfileRejected(
+            accountAccess.sources().dsl,
+            rebindSelectedInventory(
+                originalPublicationBinding,
+                inventory ->
+                    ((ObjectNode)
+                            inventory
+                                .get("sourceModel")
+                                .get("inboundSourceClosure")
+                                .get("familyCounts")
+                                .get(0))
+                        .put("family", "WORLD_INBOUND_SOURCE_FAMILY_UNKNOWN")));
+        assertSelectedInventoryProfileRejected(
+            accountAccess.sources().dsl,
+            rebindSelectedInventory(
+                originalPublicationBinding,
+                inventory ->
+                    ((ObjectNode) inventory.get("sourceModel").get("inboundSourceClosure"))
+                        .put("unknownFamily", true)));
         var gameDesignTerminalRequest =
             GameDesignPublicationTerminalReadEvidence.Request.create(
                 NAMESPACE, originalPublicationBinding);
@@ -6575,15 +6647,20 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     data.setSchema(schema);
-    Flyway.configure()
-        .dataSource(data)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history_" + service.replace('-', '_'))
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations(migrationLocation(service))
-        .load()
-        .migrate();
+    var flyway =
+        Flyway.configure()
+            .dataSource(data)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table("flyway_schema_history_" + service.replace('-', '_'))
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations(migrationLocation(service));
+    if ("entity-management".equals(service)) {
+      flyway
+          .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
+          .setTransactionalLock(false);
+    }
+    flyway.load().migrate();
     var transactions = new DataSourceTransactionManager(data);
     var configuration = new DefaultConfiguration();
     configuration.set(SQLDialect.POSTGRES);
@@ -7390,6 +7467,35 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     }
   }
 
+  private static byte[] rebindSelectedInventory(
+      GameDesignPublicationOperationBinding operation, Consumer<ObjectNode> mutation)
+      throws IOException {
+    var mapper = new ObjectMapper();
+    var inventory = (ObjectNode) mapper.readTree(operation.inventory().canonicalBytes());
+    mutation.accept(inventory);
+    byte[] inventoryBytes =
+        Rfc8785CanonicalJson.canonicalizeUtf8(mapper.writeValueAsString(inventory));
+    var rebound = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(rebound, GameDesignPublicationOperationBinding.SCHEMA);
+    DraftAuthorizationFenceBinding.frame(rebound, operation.account().canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(rebound, operation.world().canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(rebound, inventoryBytes);
+    DraftAuthorizationFenceBinding.frame(rebound, "sha256:" + sha256(inventoryBytes));
+    return rebound.toByteArray();
+  }
+
+  private static void assertSelectedInventoryProfileRejected(
+      org.jooq.DSLContext accountDsl, byte[] operationBytes) {
+    assertThatThrownBy(
+            () ->
+                accountDsl.fetch(
+                    "SELECT require_selected_inventory_operation_v2(?)", operationBytes))
+        .rootCause()
+        .isInstanceOf(SQLException.class)
+        .satisfies(
+            failure -> assertThat(((SQLException) failure).getSQLState()).isEqualTo("23514"));
+  }
+
   private static String selectedEmptyPublicationDigest(
       String domain,
       int schemaVersion,
@@ -7733,6 +7839,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     private final PublicationDigestRequestBinding request;
     private final AtomicInteger puts = new AtomicInteger();
     private final AtomicInteger gets = new AtomicInteger();
+    private final String bucket;
     private final URI endpoint;
     private final S3Client client;
     private byte[] inventoryBytes;
@@ -7744,6 +7851,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
         VersionAssetExportCandidateService candidates, PublicationDigestRequestBinding request) {
       this.candidates = candidates;
       this.request = request;
+      this.bucket = MINIO_BUCKET + "-" + UUID.randomUUID().toString().replace("-", "");
       endpoint = URI.create("http://" + MINIO.getHost() + ":" + MINIO.getMappedPort(9000));
       client =
           S3Client.builder()
@@ -7759,7 +7867,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                           new CandidateReadbackExecutionInterceptor()))
               .build();
       try {
-        client.createBucket(CreateBucketRequest.builder().bucket(MINIO_BUCKET).build());
+        client.createBucket(CreateBucketRequest.builder().bucket(bucket).build());
       } catch (RuntimeException failure) {
         client.close();
         throw failure;
@@ -7781,7 +7889,7 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     }
 
     String bucket() {
-      return MINIO_BUCKET;
+      return bucket;
     }
 
     S3Client client() {
@@ -7789,14 +7897,12 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
     }
 
     List<S3Object> objects() {
-      return client
-          .listObjectsV2(ListObjectsV2Request.builder().bucket(MINIO_BUCKET).build())
-          .contents();
+      return client.listObjectsV2(ListObjectsV2Request.builder().bucket(bucket).build()).contents();
     }
 
     StoredObject objectAt(String key) {
       var observed =
-          client.getObjectAsBytes(GetObjectRequest.builder().bucket(MINIO_BUCKET).key(key).build());
+          client.getObjectAsBytes(GetObjectRequest.builder().bucket(bucket).key(key).build());
       return new StoredObject(observed.asByteArray(), observed.response().contentType());
     }
 
@@ -7851,18 +7957,24 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
 
     private final class CandidateReadbackExecutionInterceptor implements ExecutionInterceptor {
       @Override
+      public void beforeExecution(
+          software.amazon.awssdk.core.interceptor.Context.BeforeExecution context,
+          ExecutionAttributes executionAttributes) {
+        if (context.request() instanceof GetObjectRequest get && bucket.equals(get.bucket())) {
+          gets.incrementAndGet();
+        }
+      }
+
+      @Override
       public void beforeTransmission(
           software.amazon.awssdk.core.interceptor.Context.BeforeTransmission context,
           ExecutionAttributes executionAttributes) {
         if (context.request() instanceof PutObjectRequest put) {
-          if (!MINIO_BUCKET.equals(put.bucket()) || !"*".equals(put.ifNoneMatch())) {
+          if (!bucket.equals(put.bucket()) || !"*".equals(put.ifNoneMatch())) {
             throw new AssertionError("Selected object PUT was not conditional to the test bucket");
           }
           puts.incrementAndGet();
           requireExactCandidateBeforePut();
-        } else if (context.request() instanceof GetObjectRequest get
-            && MINIO_BUCKET.equals(get.bucket())) {
-          gets.incrementAndGet();
         }
       }
     }

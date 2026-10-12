@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TimeZone;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -22,6 +23,7 @@ import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedS
 import net.firedevops.firemud.entitymanagement.sourceintake.EntitySelectedEmptyPublicationDigestService;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
 import org.jooq.SQLDialect;
@@ -32,6 +34,8 @@ import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -72,14 +76,17 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
   void migrateFreshIsolatedSchema() {
     schema = "entity_empty_source_repo_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = dataSource(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .locations(MIGRATION_LOCATION)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .load()
-        .migrate();
+    var flywayConfiguration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .locations(MIGRATION_LOCATION)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema));
+    flywayConfiguration
+        .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
+        .setTransactionalLock(false);
+    flywayConfiguration.load().migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     repository = new EntityEmptySelectedSourceIntakeRepository(dsl);
   }
@@ -95,6 +102,7 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
   }
 
   @Test
+  @ResourceLock(Resources.TIME_ZONE)
   void persistsAllTwentyThreeExplicitEmptyStatesAndReplaysOriginalReceiptBytes() {
     var fixture = EntityEmptySelectedSourceIntakePostgresFixture.create("1");
     var inputs = fixture.inputs();
@@ -110,7 +118,14 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
         .allSatisfy(count -> assertThat(count.count()).isZero());
     String requestDigest = requestDigest(fixture);
 
-    EntityEmptySelectedSourceIntakeReceipt first = repository.retainFresh(inputs, requestDigest);
+    TimeZone originalTimeZone = TimeZone.getDefault();
+    EntityEmptySelectedSourceIntakeReceipt first;
+    try {
+      TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+      first = repository.retainFresh(inputs, requestDigest);
+    } finally {
+      TimeZone.setDefault(originalTimeZone);
+    }
     assertThat(first.familyStates())
         .hasSize(23)
         .allSatisfy(
@@ -150,12 +165,16 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
     for (String table : EMPTY_ONLY_TABLES) {
       assertThat(rowCount("SELECT COUNT(*) FROM " + table)).as(table).isEqualTo(1L);
     }
-    assertThat(
-            repository
-                .read(first.targetNamespace(), first.intakeRequestId())
-                .orElseThrow()
-                .canonicalBytes())
-        .containsExactly(first.canonicalBytes());
+    EntityEmptySelectedSourceIntakeReceipt readBack;
+    try {
+      TimeZone.setDefault(TimeZone.getTimeZone("Pacific/Auckland"));
+      readBack = repository.read(first.targetNamespace(), first.intakeRequestId()).orElseThrow();
+    } finally {
+      TimeZone.setDefault(originalTimeZone);
+    }
+    assertThat(readBack.canonicalBytes()).containsExactly(first.canonicalBytes());
+    assertThat(readBack.receiptDigest()).isEqualTo(first.receiptDigest());
+    assertThat(readBack.retainedAt().toInstant()).isEqualTo(first.retainedAt().toInstant());
 
     assertThatThrownBy(
             () ->
@@ -172,9 +191,16 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
         EntityEmptySelectedSourceIntakePostgresFixture.withFreshWorldReadCorrelation(fixture);
     assertThat(retry.worldEvidence().request().readRequestId())
         .isNotEqualTo(fixture.worldEvidence().request().readRequestId());
-    EntityEmptySelectedSourceIntakeReceipt replay =
-        repository.retainFresh(retry.inputs(), requestDigest(retry));
+    EntityEmptySelectedSourceIntakeReceipt replay;
+    try {
+      TimeZone.setDefault(TimeZone.getTimeZone("Pacific/Auckland"));
+      replay = repository.retainFresh(retry.inputs(), requestDigest(retry));
+    } finally {
+      TimeZone.setDefault(originalTimeZone);
+    }
     assertThat(replay.canonicalBytes()).containsExactly(first.canonicalBytes());
+    assertThat(replay.receiptDigest()).isEqualTo(first.receiptDigest());
+    assertThat(replay.retainedAt().toInstant()).isEqualTo(first.retainedAt().toInstant());
     assertThat(replay.worldReadRequestId()).isEqualTo(first.worldReadRequestId());
 
     var changed = EntityEmptySelectedSourceIntakePostgresFixture.create("2");

@@ -37,11 +37,19 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.ObjectMapper;
 
-/** Physical V69-to-V71 upgrade proof using isolated, explicitly synthetic upstream evidence. */
+/** Physical V69-to-V74 upgrade proof using isolated, explicitly synthetic upstream evidence. */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class SelectedInventoryProfileUpgradeIntegrationTest {
   private static final ObjectMapper JSON = new ObjectMapper();
+  private static final String V72_ACCOUNT_SCHEMA_GUARD =
+      "        OR convert_from(published_world_selector_frame(account_bytes, 0),'UTF8')"
+          + " IS DISTINCT FROM 'account-draft-authorization-fence/v1'";
+  private static final String V74_ACCOUNT_SCHEMA_GUARD =
+      "        OR (convert_from(published_world_selector_frame(account_bytes, 0),'UTF8')\n"
+          + "                IS DISTINCT FROM 'account-draft-authorization-fence/v1'\n"
+          + "            AND convert_from(published_world_selector_frame(account_bytes, 0),'UTF8')\n"
+          + "                IS DISTINCT FROM 'account-draft-authorization-fence/v2')";
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
@@ -107,11 +115,26 @@ class SelectedInventoryProfileUpgradeIntegrationTest {
     // The actual V56 validator is still installed at V69 and must accept the historical bytes.
     dsl.fetch("SELECT require_selected_inventory_operation_v2(?)", originalOperationBytes);
 
-    flyway(dataSource, schema, null).migrate();
+    flyway(dataSource, schema, "72").migrate();
+    FunctionSnapshot afterV72 = selectedEvidenceFunction(dsl, schema);
+    flyway(dataSource, schema, "73").migrate();
+    FunctionSnapshot beforeV74 = selectedEvidenceFunction(dsl, schema);
+    assertThat(beforeV74.definition()).isEqualTo(afterV72.definition());
+    assertThat(beforeV74.oid()).isEqualTo(afterV72.oid());
+    Map<String, Integer> beforeV74MigrationChecksums = migrationChecksums(dsl);
+    String expectedV74Definition =
+        replaceExactlyOnce(
+            beforeV74.definition(), V72_ACCOUNT_SCHEMA_GUARD, V74_ACCOUNT_SCHEMA_GUARD);
+
+    flyway(dataSource, schema, "74").migrate();
+    FunctionSnapshot afterV74 = selectedEvidenceFunction(dsl, schema);
+    assertThat(afterV74.definition()).isEqualTo(expectedV74Definition);
+    assertThat(afterV74.oid()).isEqualTo(beforeV74.oid());
 
     Map<String, Integer> upgradedMigrationChecksums = migrationChecksums(dsl);
     assertThat(upgradedMigrationChecksums).containsAllEntriesOf(originalMigrationChecksums);
-    assertThat(upgradedMigrationChecksums).containsKeys("70", "71");
+    assertThat(upgradedMigrationChecksums).containsAllEntriesOf(beforeV74MigrationChecksums);
+    assertThat(upgradedMigrationChecksums).containsKeys("70", "71", "72", "73", "74");
     assertThat(readOperationBytes(dsl, historicalV1.workflowId()))
         .containsExactly(originalOperationBytes);
     var repository = new GameDesignPublicationOperationRepository(dsl);
@@ -222,6 +245,30 @@ class SelectedInventoryProfileUpgradeIntegrationTest {
                     row.get("version", String.class), row.get("checksum", Integer.class)));
     return checksums;
   }
+
+  private static FunctionSnapshot selectedEvidenceFunction(DSLContext dsl, String schema) {
+    var row =
+        dsl.fetchSingle(
+            "SELECT p.oid::bigint AS function_oid, pg_get_functiondef(p.oid) AS definition "
+                + "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+                + "WHERE n.nspname = ? AND p.proname = ? "
+                + "AND pg_get_function_identity_arguments(p.oid) = ''",
+            schema,
+            "enforce_published_world_start_location_evidence");
+    return new FunctionSnapshot(
+        java.util.Objects.requireNonNull(row.get("function_oid", Long.class), "function_oid"),
+        java.util.Objects.requireNonNull(row.get("definition", String.class), "definition"));
+  }
+
+  private static String replaceExactlyOnce(String value, String anchor, String replacement) {
+    int start = value.indexOf(anchor);
+    if (start < 0 || value.indexOf(anchor, start + anchor.length()) >= 0) {
+      throw new AssertionError("V72 Account schema guard does not match exactly once");
+    }
+    return value.substring(0, start) + replacement + value.substring(start + anchor.length());
+  }
+
+  private record FunctionSnapshot(long oid, String definition) {}
 
   private static byte[] rebindInventory(
       GameDesignPublicationOperation operation,

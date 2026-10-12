@@ -63,10 +63,9 @@ final class WorldGameDesignPublicationTerminalVerifier
       throw new SecurityException(
           "Authenticated Game Design terminal differs from the submitted exact operation or result");
     }
-    WorldPublicationTerminal.Request worldRequest =
-        WorldPublicationTerminal.Request.fromStored(terminal.canonicalBytes());
+    WorldPublicationTerminal.Request worldRequest = new WorldPublicationTerminal.Request(terminal);
     return new WorldPublicationTerminalService.VerifiedTerminal(
-        worldRequest, new ExactTerminalReadAuthority(operationBytes, terminal.canonicalBytes()));
+        worldRequest, new ExactTerminalReadAuthority(operationBytes, worldRequest));
   }
 
   private void requireAuthenticatedGameDesignCaller() {
@@ -91,22 +90,22 @@ final class WorldGameDesignPublicationTerminalVerifier
   private static final class ExactTerminalReadAuthority
       implements WorldPublicationTerminalService.HeldTerminalAuthority {
     private final byte[] operationBytes;
-    private final byte[] terminalBytes;
+    private final WorldPublicationTerminal.Request terminal;
     private final AtomicBoolean open = new AtomicBoolean(true);
 
-    private ExactTerminalReadAuthority(byte[] operationBytes, byte[] terminalBytes) {
+    private ExactTerminalReadAuthority(
+        byte[] operationBytes, WorldPublicationTerminal.Request terminal) {
       this.operationBytes = operationBytes.clone();
-      this.terminalBytes = terminalBytes.clone();
+      // Reuse the immutable result whose complete bytes were compared before creating authority.
+      this.terminal = Objects.requireNonNull(terminal, "terminal");
     }
 
     @Override
     public void requireHeld() {
       if (!open.get()
           || operationBytes.length == 0
-          || terminalBytes.length == 0
-          || !Arrays.equals(
-              operationBytes,
-              WorldPublicationTerminal.Request.fromStored(terminalBytes).operationBytes())) {
+          || terminal.terminalBytes().length == 0
+          || !Arrays.equals(operationBytes, terminal.operationBytes())) {
         throw new IllegalStateException(
             "Exact authenticated Game Design terminal read authority is no longer valid");
       }

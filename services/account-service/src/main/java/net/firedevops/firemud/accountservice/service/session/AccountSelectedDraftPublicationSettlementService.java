@@ -60,14 +60,10 @@ public final class AccountSelectedDraftPublicationSettlementService {
     var gameDesignRequest =
         GameDesignPublicationTerminalReadEvidence.Request.create(workloadNamespace, operation);
     var gameDesign = gameDesignClient.read(gameDesignRequest);
-    if (gameDesign == null
-        || !gameDesignRequest.equals(gameDesign.request())
-        || gameDesign.terminalEvidence() == null) {
+    var terminal = gameDesign == null ? null : gameDesign.terminalEvidence();
+    if (gameDesign == null || !gameDesignRequest.equals(gameDesign.request()) || terminal == null) {
       throw new IllegalStateException("Game Design terminal differs from exact owner read request");
     }
-    var terminal =
-        GameDesignPublicationTerminalEvidence.fromStored(
-            gameDesign.terminalEvidence().canonicalBytes());
     if (!Arrays.equals(operation.canonicalBytes(), terminal.operationBytes())) {
       throw new IllegalStateException("Game Design terminal substitutes original operation");
     }
@@ -76,9 +72,13 @@ public final class AccountSelectedDraftPublicationSettlementService {
         WorldPublicationTerminalReadEvidence.Request.create(
             workloadNamespace, operation.canonicalBytes(), terminal.canonicalBytes());
     var world = worldClient.read(worldRequest);
+    var expectedWorldOutcome =
+        terminal.outcome() == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
+            ? WorldPublicationTerminalReadEvidence.WorldOutcome.PUBLISHED
+            : WorldPublicationTerminalReadEvidence.WorldOutcome.ABORTED;
     if (world == null
         || !worldRequest.equals(world.request())
-        || world.worldOutcome() != worldRequest.expectedWorldOutcome()
+        || world.worldOutcome() != expectedWorldOutcome
         || world.terminalEvidence() == null
         || !Arrays.equals(operation.canonicalBytes(), world.terminalEvidence().operationBytes())
         || !Arrays.equals(terminal.canonicalBytes(), world.terminalEvidence().canonicalBytes())

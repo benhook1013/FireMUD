@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.entitymanagement.entity.ActorIdentityStatus;
 import net.firedevops.firemud.entitymanagement.entity.Character;
@@ -12,6 +13,7 @@ import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
+import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
@@ -65,9 +67,18 @@ class CanonicalActorIdentityFoundationPostgresIntegrationTest {
 
   @Test
   void retainedNumericRowsAreQuarantinedAndLegacyWriterCannotPromoteThem() {
-    CharacterRepository legacyWriter = new CharacterRepository(dsl);
-    Character retained = legacyCharacter(7101L, 8101L, "retained-legacy");
-    long retainedId = legacyWriter.save(retained).getId();
+    long retainedId =
+        Objects.requireNonNull(
+            dsl.fetchSingle(
+                    "INSERT INTO characters (tenant_id, account_id, playable_state_key, name, "
+                        + "body_layout_key, level, experience, strength, agility, intelligence, stamina, "
+                        + "health, mana, last_login_at, version) "
+                        + "VALUES (?, ?, 'legacy-numeric', ?, 'DEFAULT', 0, 0, 0, 0, 0, 0, 0, 0, NULL, 0) "
+                        + "RETURNING id",
+                    7101L,
+                    8101L,
+                    "retained-legacy")
+                .get("id", Long.class));
 
     migrateAll();
 
@@ -92,6 +103,7 @@ class CanonicalActorIdentityFoundationPostgresIntegrationTest {
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .isEmpty();
 
+    CharacterRepository legacyWriter = new CharacterRepository(dsl);
     Character writtenByLegacyPath =
         legacyWriter.save(legacyCharacter(7102L, 8102L, "new-legacy-path"));
     var newlyWritten = readIdentityRow(writtenByLegacyPath.getId());
@@ -221,6 +233,9 @@ class CanonicalActorIdentityFoundationPostgresIntegrationTest {
             .schemas(schema)
             .defaultSchema(schema)
             .placeholders(Map.of("serviceSchema", schema));
+    configuration
+        .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
+        .setTransactionalLock(false);
     return (target == null ? configuration : configuration.target(target)).load();
   }
 

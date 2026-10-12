@@ -6,7 +6,6 @@ import java.util.Arrays;
 import java.util.Objects;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadEvidence;
 import org.springframework.dao.DataAccessException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -42,10 +41,8 @@ public final class WorldPublicationTerminalReadService {
           .asRuntimeException();
     }
 
-    final GameDesignPublicationOperationBinding operation;
     final WorldPublicationTerminal.Request terminalRequest;
     try {
-      operation = GameDesignPublicationOperationBinding.fromStored(request.originalOperation());
       terminalRequest =
           WorldPublicationTerminal.request(request.expectedGameDesignTerminalEvidence());
     } catch (RuntimeException malformed) {
@@ -53,11 +50,10 @@ public final class WorldPublicationTerminalReadService {
           .withDescription("Canonical original publication operation and terminal are required")
           .asRuntimeException();
     }
-    if (!Arrays.equals(operation.canonicalBytes(), request.originalOperation())
-        || !Arrays.equals(terminalRequest.operationBytes(), request.originalOperation())
+    if (!Arrays.equals(terminalRequest.operationBytes(), request.originalOperation())
         || !Arrays.equals(
             terminalRequest.terminalBytes(), request.expectedGameDesignTerminalEvidence())
-        || !workloadNamespace.equals(operation.world().request().targetNamespace())) {
+        || !workloadNamespace.equals(terminalRequest.worldEvidence().request().targetNamespace())) {
       throw Status.FAILED_PRECONDITION
           .withDescription("World terminal lookup differs from the exact original publication")
           .asRuntimeException();

@@ -327,6 +327,7 @@ class AccountSelectedDraftPublicationSettlementServiceTest {
       when(worldRequest.targetNamespace()).thenReturn("test");
       when(terminal.canonicalBytes()).thenReturn(terminalBytes);
       when(terminal.operationBytes()).thenReturn(operationBytes);
+      when(terminal.worldEvidence()).thenReturn(world);
       when(terminal.outcome()).thenReturn(outcome);
       operations
           .when(() -> GameDesignPublicationOperationBinding.fromStored(operationBytes))

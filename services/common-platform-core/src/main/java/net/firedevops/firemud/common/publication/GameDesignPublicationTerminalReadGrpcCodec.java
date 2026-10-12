@@ -40,13 +40,16 @@ public final class GameDesignPublicationTerminalReadGrpcCodec {
       GameDesignPublicationTerminalEvidence terminal) {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(terminal, "terminal");
-    requireExactTerminal(request, terminal.canonicalBytes());
+    byte[] terminalBytes = terminal.canonicalBytes();
+    if (!Arrays.equals(request.originalOperation(), terminal.operationBytes())) {
+      throw new IllegalArgumentException("Terminal evidence differs from the original operation");
+    }
     return ReadPublicationTerminalResponse.newBuilder()
         .setSchemaVersion(request.schemaVersion())
         .setTargetNamespace(request.targetNamespace())
         .setReadRequestId(request.readRequestId().toString())
         .setOriginalOperation(ByteString.copyFrom(request.originalOperation()))
-        .setTerminalEvidence(ByteString.copyFrom(terminal.canonicalBytes()))
+        .setTerminalEvidence(ByteString.copyFrom(terminalBytes))
         .build();
   }
 
@@ -64,22 +67,13 @@ public final class GameDesignPublicationTerminalReadGrpcCodec {
       throw new IllegalArgumentException("Game Design changed the exact publication terminal read");
     }
     byte[] originalTerminal = response.getTerminalEvidence().toByteArray();
-    requireExactTerminal(request, originalTerminal);
-    return new GameDesignPublicationTerminalReadEvidence(request, originalTerminal);
-  }
-
-  private static void requireExactTerminal(
-      GameDesignPublicationTerminalReadEvidence.Request request, byte[] bytes) {
-    final GameDesignPublicationTerminalEvidence terminal;
     try {
-      terminal = GameDesignPublicationTerminalEvidence.fromStored(bytes);
+      // The carrier performs strict canonical decoding and exact operation comparison once.
+      return new GameDesignPublicationTerminalReadEvidence(request, originalTerminal);
     } catch (RuntimeException malformed) {
+      if (malformed instanceof IllegalArgumentException invalid) throw invalid;
       throw new IllegalArgumentException(
           "Complete canonical original terminal evidence required", malformed);
-    }
-    if (!Arrays.equals(request.originalOperation(), terminal.operationBytes())
-        || !Arrays.equals(bytes, terminal.canonicalBytes())) {
-      throw new IllegalArgumentException("Terminal evidence differs from the original operation");
     }
   }
 

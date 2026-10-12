@@ -90,7 +90,7 @@ public final class StartSessionLaunchDescriptorGrpcCodec {
     return toResponse(expectedRequest, associationRead, new ApplicationFailure(code, message));
   }
 
-  /** Encodes one complete result and runs the same closed decoder used by receiving callers. */
+  /** Encodes one complete result after validating its typed bindings and closed wire fields. */
   public static ResolveStartSessionLaunchDescriptorResponse toResponse(
       Request expectedRequest, Result associationRead, Outcome outcome) {
     requireAssociationBinding(expectedRequest, associationRead);
@@ -114,7 +114,7 @@ public final class StartSessionLaunchDescriptorGrpcCodec {
       throw new IllegalArgumentException("Unsupported StartSession descriptor outcome");
     }
     ResolveStartSessionLaunchDescriptorResponse response = builder.build();
-    fromResponse(expectedRequest, response);
+    requireNoUnknownFields(response, "ResolveStartSessionLaunchDescriptorResponse");
     return response;
   }
 

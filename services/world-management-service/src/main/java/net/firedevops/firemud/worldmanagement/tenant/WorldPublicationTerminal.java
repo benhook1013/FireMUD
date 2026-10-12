@@ -24,7 +24,7 @@ public final class WorldPublicationTerminal {
   public record Request(GameDesignPublicationTerminalEvidence evidence) {
     public Request {
       Objects.requireNonNull(evidence, "evidence");
-      evidence = GameDesignPublicationTerminalEvidence.fromStored(evidence.canonicalBytes());
+      // The final evidence type already validates and defensively retains its canonical bytes.
     }
 
     public WorldPublishedStartLocationEvidence worldEvidence() {
