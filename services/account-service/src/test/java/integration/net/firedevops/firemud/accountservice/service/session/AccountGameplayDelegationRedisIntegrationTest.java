@@ -1378,6 +1378,25 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThat(first.tokenSha256()).isEqualTo(committed.tokenSha256());
       assertThat(first.expiresAtEpochSecond()).isEqualTo(pending.expiresAtEpochSecond());
       assertThat(first.toString()).isEqualTo("RecoveredCredential[secret,redacted]");
+      var currentCandidate =
+          committedOwner.requireCurrentActiveCommittedCandidateByJti(pending.tokenJti());
+      assertThat(currentCandidate.tokenSha256()).isEqualTo(committed.tokenSha256());
+      assertThat(admin.get(ascii(tokenKey))).containsExactly(activeRegistryBytes);
+      assertThat(admin.pexpiretime(ascii(tokenKey))).isEqualTo(originalRegistryDeadline);
+
+      signerFixture.withdrawOriginalKeyFromCurrentJwks();
+      int connectionsBeforeCurrentnessMissingHistoricalKey = writerProvider.openedConnections();
+      assertThatThrownBy(
+              () -> committedOwner.requireCurrentActiveCommittedCandidateByJti(pending.tokenJti()))
+          .isInstanceOf(
+              AccountGameplayDelegationCommittedIssuanceOwner.OwnerUnavailableException.class)
+          .hasNoCause();
+      assertThat(writerProvider.openedConnections())
+          .isEqualTo(connectionsBeforeCurrentnessMissingHistoricalKey);
+      assertThat(admin.get(ascii(tokenKey))).containsExactly(activeRegistryBytes);
+      assertThat(admin.pexpiretime(ascii(tokenKey))).isEqualTo(originalRegistryDeadline);
+      signerFixture.restoreOriginalKeyInCurrentJwks();
+
       byte[] originalCredentialBytes = first.compactJwtBytes();
       assertThat(originalCredentialBytes).isNotEmpty();
       String originalCompactJwt = new String(originalCredentialBytes, StandardCharsets.US_ASCII);
