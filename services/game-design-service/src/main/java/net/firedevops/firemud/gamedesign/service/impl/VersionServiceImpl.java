@@ -414,10 +414,7 @@ public class VersionServiceImpl implements VersionService {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_INCONSISTENT: pending attempt references a non-draft version");
     }
-    draft.setVersionState(VersionLifecycleState.FAILED);
-    draft.setVersionStateEpoch(Math.addExact(draft.getVersionStateEpoch(), 1L));
-    draft.setUpdatedAt(LocalDateTime.now());
-    versionRepository.save(draft);
+    // Retain the DRAFT candidate so its canonical identity continues reserving the tuple.
     publishAttemptService.markScriptPatchFailed(
         reservation.publishWorkflowId(), failureCode, failureMessage);
     return new ScriptPatchFinalization(

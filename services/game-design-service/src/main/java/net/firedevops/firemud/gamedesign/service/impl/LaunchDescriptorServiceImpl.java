@@ -214,6 +214,7 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
             remapSetId != null,
             remapSetId);
     LaunchDescriptor descriptor = new LaunchDescriptor();
+    descriptor.setOutcomeStatus(LaunchDescriptor.OUTCOME_SUCCESS);
     descriptor.setLaunchDescriptorId(descriptorId);
     descriptor.setTenantId(source.sourceGameTenantKey());
     descriptor.setGameTemplateId(request.gameTemplateId());

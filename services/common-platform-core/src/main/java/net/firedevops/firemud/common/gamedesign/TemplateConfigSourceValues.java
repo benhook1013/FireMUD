@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
@@ -89,9 +90,10 @@ public final class TemplateConfigSourceValues {
               "targetScopeId");
           text(event, "eventType");
           text(event, "eventSchemaVersion");
-          for (String key : List.of("bindingId", "targetScopeType", "targetScopeId"))
-            if (!event.path(key).isTextual())
-              throw new IllegalArgumentException("Exact Automation binding key required");
+          text(event, "bindingId");
+          text(event, "targetScopeType");
+          if (!event.path("targetScopeId").isTextual())
+            throw new IllegalArgumentException("Exact Automation binding key required");
           if (!bindings.add(TemplateConfigSourceJson.canonical(event)))
             throw new IllegalArgumentException("Duplicate template event binding");
         }
@@ -213,13 +215,7 @@ public final class TemplateConfigSourceValues {
               "Template config base differs from its exact source version");
       } else if (operation == OperationKind.DELETE && config != null)
         throw new IllegalArgumentException("Template DELETE carries no config");
-      var revision =
-          binding.revisions().stream()
-              .filter(r -> r.owner() == Owner.GAME_DESIGN_CONTROL_PLANE)
-              .filter(
-                  r -> r.revisionId().equals(revisionId) && r.revisionOrder().equals(revisionOrder))
-              .findFirst()
-              .orElseThrow();
+      var revision = boundRevision(binding, revisionOrder, revisionId);
       String expected =
           payloadFor(
               operation,
@@ -294,6 +290,16 @@ public final class TemplateConfigSourceValues {
           "createdName",
           createdName == null ? "" : createdName);
     }
+  }
+
+  static RevisionPayload boundRevision(
+      DraftCommitBinding binding, String revisionOrder, UUID revisionId) {
+    return binding.revisions().stream()
+        .filter(r -> r.owner() == Owner.GAME_DESIGN_CONTROL_PLANE)
+        .filter(r -> r.revisionId().equals(revisionId) && r.revisionOrder().equals(revisionOrder))
+        .findFirst()
+        .orElseThrow(
+            () -> new IllegalArgumentException("Exact original template source revision required"));
   }
 
   public static List<Mutation> mutations(DraftCommitBinding binding) {

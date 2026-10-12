@@ -945,10 +945,14 @@ public record GameplayRuleManifest(Map<Family, List<Definition>> families) {
     Set<String> stats = new HashSet<>(keys.get(Family.STATS));
     for (String resource : keys.get(Family.RESOURCES))
       if (!stats.add(resource)) fail("Resource/stat key collision");
+    Set<String> numericStatValues = new HashSet<>();
     Set<String> numericStats = new HashSet<>(keys.get(Family.RESOURCES));
     for (Definition definition : families.get(Family.STATS)) {
       Stat stat = (Stat) definition;
-      if (stat.primitiveKind() == PrimitiveKind.NUMERIC) numericStats.add(stat.key());
+      if (stat.primitiveKind() == PrimitiveKind.NUMERIC) {
+        numericStatValues.add(stat.key());
+        numericStats.add(stat.key());
+      }
     }
     for (List<Definition> values : families.values())
       for (Definition definition : values) {
@@ -958,8 +962,8 @@ public record GameplayRuleManifest(Map<Family, List<Definition>> families) {
             if (value.operation() == EffectOperation.ADJUST_RESOURCE
                 || value.statField() == StatField.MAXIMUM)
               ref(keys, Family.RESOURCES, value.statKey());
-            else if (!numericStats.contains(value.statKey()))
-              fail("Effect requires a declared numeric stat");
+            else if (!numericStatValues.contains(value.statKey()))
+              fail("Effect VALUE modifier requires a declared numeric STATS key");
           }
           if (value.conditionKey() != null) ref(keys, Family.CONDITIONS, value.conditionKey());
         } else if (definition instanceof Ability value)

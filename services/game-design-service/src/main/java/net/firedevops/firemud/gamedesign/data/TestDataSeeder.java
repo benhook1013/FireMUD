@@ -2,18 +2,12 @@ package net.firedevops.firemud.gamedesign.data;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
-import java.nio.charset.CharacterCodingException;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
-import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
@@ -29,6 +23,8 @@ import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.smoke.RunOwnedFixtureImmutableFileReader;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.entity.Game;
@@ -55,11 +51,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import tools.jackson.core.StreamReadFeature;
-import tools.jackson.databind.DeserializationFeature;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.json.JsonMapper;
 
 @Component
 @ConditionalOnProperty(
@@ -133,6 +125,20 @@ public class TestDataSeeder implements ApplicationRunner {
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
+    if (!initialAdmissionFixtureEnabled
+        && versionRepository
+            .findByTenantIdAndVersionNumber(DEMO_TENANT_ID, DEMO_VERSION_NUMBER)
+            .filter(
+                version ->
+                    version.getCanonicalVersionId() == null
+                        && version.getCanonicalTenantId() == null
+                        && version.getIdentitySourceGameRowId() == null
+                        && version.getIdentitySourceGameTenantKey() == null
+                        && version.getIdentitySourceProvenanceKind() == null)
+            .isPresent()) {
+      seedRetainedBaselineRuntime();
+      return;
+    }
     Game game = gameRepository.findByTenantId(DEMO_TENANT_ID);
     if (game == null) {
       game = new Game();
@@ -238,6 +244,108 @@ public class TestDataSeeder implements ApplicationRunner {
 
     if (initialAdmissionFixtureEnabled) {
       registerRunOwnedAuthoredWorldSource(game, template, version);
+    }
+  }
+
+  /** Preserves the ordinary retained-v1 seed boundary without granting fixture source authority. */
+  private void seedRetainedBaselineRuntime() {
+    Game game = gameRepository.findByTenantId(DEMO_TENANT_ID);
+    if (game == null) {
+      game = new Game();
+    }
+    game.setTenantId(DEMO_TENANT_ID);
+    game.setName("Demo Game");
+    game.setDescription("Seed game");
+    gameRepository.save(game);
+
+    Version version =
+        versionRepository
+            .findByTenantIdAndVersionNumber(DEMO_TENANT_ID, DEMO_VERSION_NUMBER)
+            .orElse(null);
+    if (version == null) {
+      version = new Version();
+      version.setTenantId(DEMO_TENANT_ID);
+      version.setVersionNumber(DEMO_VERSION_NUMBER);
+    }
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    version.setVersionStateEpoch(1L);
+    version.setScriptPatchVersion(null);
+    version.setBaseVersionId(null);
+    version.setScriptOnly(false);
+    version.setNotes("Seed published version");
+    version = versionRepository.save(version);
+    Long versionId = version.getId();
+
+    GameTemplate template =
+        templateRepository.findByTenantIdAndName(DEMO_TENANT_ID, DEMO_TEMPLATE_NAME).orElse(null);
+    if (template == null) {
+      template = new GameTemplate();
+      template.setTenantId(DEMO_TENANT_ID);
+      template.setName(DEMO_TEMPLATE_NAME);
+    }
+    template.setDescription("Demo template");
+    template.setConfig("{}");
+    template.setDefaultVersionId(version.getId());
+    template.setDefaultScriptPatchVersion(null);
+    template.setDefaultRuntimeFlagsJson("{}");
+    templateRepository.save(template);
+
+    Revision revision =
+        revisionRepository
+            .findByTenantIdAndVersionIdAndRevisionKind(
+                DEMO_TENANT_ID, versionId, DEMO_REVISION_KIND)
+            .orElse(null);
+    if (revision == null) {
+      revision = new Revision();
+      revision.setTenantId(DEMO_TENANT_ID);
+      revision.setVersionId(versionId);
+      revision.setRevisionKind(DEMO_REVISION_KIND);
+    }
+    revision.setAuthorAccountId(1L);
+    revision.setData("{}");
+    revisionRepository.save(revision);
+
+    PublishedReleaseBundle bundle =
+        publishedReleaseBundleRepository
+            .findByTenantIdAndVersionId(DEMO_TENANT_ID, versionId)
+            .orElse(null);
+    if (bundle == null) {
+      bundle = new PublishedReleaseBundle();
+      bundle.setTenantId(DEMO_TENANT_ID);
+      bundle.setVersionId(versionId);
+      bundle.setVersionNumber(version.getVersionNumber());
+      bundle.setAttestationSchemaVersion("v1");
+      bundle.setPublishWorkflowId(DEMO_PUBLISH_WORKFLOW_ID);
+      bundle.setManifestHash(DEMO_MANIFEST_HASH);
+      bundle.setGenerationConfigRevision(DEMO_GENERATION_CONFIG_REVISION);
+      bundle.setRequiredManifestAssetKeysJson("[]");
+      bundle.setParticipantDigestsJson("[]");
+      bundle.setCommandDefinitionsJson("[]");
+      bundle.setScriptOnly(false);
+      bundle.setScriptPatchVersion(null);
+      bundle = publishedReleaseBundleRepository.save(bundle);
+    }
+
+    VersionAssetArtifact artifact =
+        versionAssetArtifactRepository
+            .findByTenantIdAndVersionId(DEMO_TENANT_ID, versionId)
+            .orElse(null);
+    if (artifact == null) {
+      artifact = new VersionAssetArtifact();
+      artifact.setTenantId(DEMO_TENANT_ID);
+      artifact.setVersionId(versionId);
+      artifact.setExportedVersionNumber(version.getVersionNumber());
+      artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
+      artifact.setStateEpoch(1L);
+      artifact.setManifestHash(bundle.getManifestHash());
+      artifact.setLastWorkflowId(DEMO_PUBLISH_WORKFLOW_ID);
+      artifact.setLastErrorCode(null);
+      artifact.setLastErrorMessage(null);
+      artifact.setExportedManifestAssetKeysJson("[]");
+      versionAssetArtifactRepository.save(artifact);
+    } else if (!matchesDemoArtifact(artifact, version, bundle)) {
+      throw new IllegalStateException(
+          "Existing version artifact does not exactly match the demo seed; refusing to reuse it");
     }
   }
 
@@ -413,53 +521,25 @@ public class TestDataSeeder implements ApplicationRunner {
           "Run-owned authored-world fixture configuration is incomplete");
     }
 
-    JsonNode capability = readStrictJson(Path.of(fixtureCapabilityPath));
-    Set<String> expectedFields =
-        Set.of(
-            "schema",
-            "runId",
-            "composeProjectName",
-            "operationId",
-            "tenantId",
-            "gameTemplateId",
-            "ownerAccountId",
-            "worldSlug",
-            "worldDisplayName",
-            "realmSlug",
-            "realmDisplayName",
-            "visible",
-            "publicProductionRealm",
-            "requiresCharacterSelection",
-            "stateScope",
-            "characterCreationPolicy",
-            "gameSessionLeafSha256",
-            "gameSessionUriSan",
-            "worldManagementLeafSha256",
-            "worldManagementUriSan",
-            "caCertificateSha256");
-    requireExactObjectFields(capability, expectedFields, "initial-admission capability");
-    requireText(capability, "schema", "firemud.run-owned-initial-admission-fixture.v1");
-    requireText(capability, "runId", fixtureRunId);
-    requireText(capability, "composeProjectName", fixtureComposeProjectName);
-    requireLong(capability, "tenantId", 1L);
-    long gameTemplateId = requirePositiveLong(capability, "gameTemplateId");
-    requireLong(capability, "ownerAccountId", 1L);
-    requireText(capability, "worldSlug", FIXTURE_WORLD_SLUG);
-    requireText(capability, "worldDisplayName", FIXTURE_WORLD_DISPLAY_NAME);
-    requireText(capability, "realmSlug", "production");
-    requireText(capability, "realmDisplayName", "Live Realm");
-    requireBoolean(capability, "visible", true);
-    requireBoolean(capability, "publicProductionRealm", true);
-    requireBoolean(capability, "requiresCharacterSelection", false);
-    requireText(capability, "stateScope", "SHARED");
-    requireText(capability, "characterCreationPolicy", "ALLOW_NEW");
-    requireText(capability, "gameSessionUriSan", FIXTURE_GAME_SESSION_URI_SAN);
-    requireText(capability, "worldManagementUriSan", FIXTURE_WORLD_MANAGEMENT_URI_SAN);
-
-    UUID operationId = canonicalUuid(text(capability, "operationId"), "operationId");
-    String gameSessionLeafDigest = digestHex(text(capability, "gameSessionLeafSha256"));
-    String worldManagementLeafDigest = digestHex(text(capability, "worldManagementLeafSha256"));
-    String caDigest = digestHex(text(capability, "caCertificateSha256"));
+    RunOwnedInitialAdmissionFixtureWireCodec.Capability capability;
+    try {
+      capability =
+          RunOwnedInitialAdmissionFixtureWireCodec.parseCapability(
+              readBoundedImmutableFile(Path.of(fixtureCapabilityPath), "capability"));
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException("Could not read run-owned fixture capability", exception);
+    }
+    if (!fixtureRunId.equals(capability.runId())
+        || !fixtureComposeProjectName.equals(capability.composeProjectName())
+        || capability.tenantId() != 1L) {
+      throw new IllegalStateException(
+          "Run-owned fixture capability does not match the configured Game Design scope");
+    }
+    UUID operationId = UUID.fromString(capability.operationId());
+    long gameTemplateId = capability.gameTemplateId();
+    String gameSessionLeafDigest = capability.gameSessionLeafSha256();
+    String worldManagementLeafDigest = capability.worldManagementLeafSha256();
+    String caDigest = capability.caCertificateSha256();
     X509Certificate gameSessionCertificate = readCertificate(Path.of(gameSessionLeafCertPath));
     X509Certificate worldManagementCertificate =
         readCertificate(Path.of(worldManagementLeafCertPath));
@@ -613,90 +693,24 @@ public class TestDataSeeder implements ApplicationRunner {
   }
 
   private void requireExistingReceipt(Path destination, byte[] expected) throws IOException {
-    byte[] existing = readBoundedRegularReadOnlyFile(destination);
+    byte[] existing = readBoundedImmutableFile(destination, "receipt");
     if (!MessageDigest.isEqual(existing, expected)) {
       throw new IllegalStateException(
           "Existing authored-world source receipt conflicts with committed owner evidence");
     }
   }
 
-  private JsonNode readStrictJson(Path path) {
-    try {
-      byte[] bytes = readBoundedRegularReadOnlyFile(path);
-      String json =
-          StandardCharsets.UTF_8
-              .newDecoder()
-              .onMalformedInput(CodingErrorAction.REPORT)
-              .onUnmappableCharacter(CodingErrorAction.REPORT)
-              .decode(ByteBuffer.wrap(bytes))
-              .toString();
-      ObjectMapper strictMapper =
-          JsonMapper.builder()
-              .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
-              .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-              .build();
-      JsonNode node = strictMapper.readTree(json);
-      if (node == null || !node.isObject()) {
-        throw new IllegalStateException("Run-owned fixture capability must be one JSON object");
-      }
-      return node;
-    } catch (CharacterCodingException exception) {
-      throw new IllegalStateException(
-          "Run-owned fixture capability is not strict UTF-8", exception);
-    } catch (IOException | RuntimeException exception) {
-      throw new IllegalStateException("Could not read run-owned fixture capability", exception);
-    }
-  }
-
-  private byte[] readBoundedRegularReadOnlyFile(Path path) throws IOException {
-    if (Files.isSymbolicLink(path)) {
-      throw new IllegalStateException("Run-owned fixture file must not be a symlink");
-    }
-    BasicFileAttributes before =
-        Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-    if (!before.isRegularFile() || before.size() <= 0 || before.size() > MAX_FIXTURE_FILE_BYTES) {
-      throw new IllegalStateException("Run-owned fixture file must be a bounded regular file");
-    }
-    Set<PosixFilePermission> permissions =
-        Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS);
-    if (permissions.stream().anyMatch(permission -> permission.name().endsWith("WRITE"))) {
-      throw new IllegalStateException("Run-owned fixture file must be read-only");
-    }
-    byte[] content;
-    Set<OpenOption> options = Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
-    try (FileChannel channel = FileChannel.open(path, options)) {
-      ByteBuffer buffer = ByteBuffer.allocate(MAX_FIXTURE_FILE_BYTES + 1);
-      while (buffer.hasRemaining() && channel.read(buffer) >= 0) {
-        // The extra byte detects growth beyond the contract's file bound.
-      }
-      if (buffer.position() > MAX_FIXTURE_FILE_BYTES) {
-        throw new IllegalStateException("Run-owned fixture file exceeds its 16 KiB bound");
-      }
-      content = new byte[buffer.position()];
-      buffer.flip();
-      buffer.get(content);
-      BasicFileAttributes after =
-          Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-      if (!after.isRegularFile()
-          || !sameFile(before.fileKey(), after.fileKey())
-          || before.size() != after.size()
-          || !before.lastModifiedTime().equals(after.lastModifiedTime())
-          || content.length != after.size()
-          || Files.isSymbolicLink(path)) {
-        throw new IllegalStateException("Run-owned fixture file changed while it was read");
-      }
-      if (Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS).stream()
-          .anyMatch(permission -> permission.name().endsWith("WRITE"))) {
-        throw new IllegalStateException(
-            "Run-owned fixture file changed to writable while it was read");
-      }
-    }
-    return content;
+  private byte[] readBoundedImmutableFile(Path path, String fileDescription) {
+    return RunOwnedFixtureImmutableFileReader.readBoundedImmutableFile(
+        path,
+        MAX_FIXTURE_FILE_BYTES,
+        () ->
+            new IllegalStateException("Run-owned fixture " + fileDescription + " file is invalid"));
   }
 
   private X509Certificate readCertificate(Path path) {
     try {
-      byte[] bytes = readBoundedRegularReadOnlyFile(path);
+      byte[] bytes = readBoundedImmutableFile(path, "TLS certificate");
       return (X509Certificate)
           CertificateFactory.getInstance("X.509")
               .generateCertificate(new ByteArrayInputStream(bytes));
@@ -765,76 +779,6 @@ public class TestDataSeeder implements ApplicationRunner {
     }
   }
 
-  private void requireExactObjectFields(JsonNode object, Set<String> expectedFields, String label) {
-    if (!object.isObject() || object.size() != expectedFields.size()) {
-      throw new IllegalStateException(label + " has unknown or missing fields");
-    }
-    for (String name : object.propertyNames()) {
-      if (!expectedFields.contains(name)) {
-        throw new IllegalStateException(label + " has unknown or missing fields");
-      }
-    }
-  }
-
-  private void requireText(JsonNode node, String field, String expected) {
-    JsonNode value = node.get(field);
-    if (value == null || !value.isTextual() || !expected.equals(value.textValue())) {
-      throw new IllegalStateException("Run-owned fixture capability has an unexpected " + field);
-    }
-  }
-
-  private String text(JsonNode node, String field) {
-    JsonNode value = node.get(field);
-    if (value == null || !value.isTextual()) {
-      throw new IllegalStateException("Run-owned fixture capability has an invalid " + field);
-    }
-    return value.textValue();
-  }
-
-  private long requirePositiveLong(JsonNode node, String field) {
-    JsonNode value = node.get(field);
-    if (value == null
-        || !value.isIntegralNumber()
-        || !value.canConvertToLong()
-        || value.longValue() <= 0L) {
-      throw new IllegalStateException("Run-owned fixture capability has an unexpected " + field);
-    }
-    return value.longValue();
-  }
-
-  private void requireLong(JsonNode node, String field, long expected) {
-    if (requirePositiveLong(node, field) != expected) {
-      throw new IllegalStateException("Run-owned fixture capability has an unexpected " + field);
-    }
-  }
-
-  private void requireBoolean(JsonNode node, String field, boolean expected) {
-    JsonNode value = node.get(field);
-    if (value == null || !value.isBoolean() || value.booleanValue() != expected) {
-      throw new IllegalStateException("Run-owned fixture capability has an unexpected " + field);
-    }
-  }
-
-  private UUID canonicalUuid(String value, String field) {
-    try {
-      UUID parsed = UUID.fromString(value);
-      if (!parsed.toString().equals(value) || parsed.equals(new UUID(0L, 0L))) {
-        throw new IllegalArgumentException("not canonical");
-      }
-      return parsed;
-    } catch (IllegalArgumentException exception) {
-      throw new IllegalStateException(
-          "Run-owned fixture capability has an invalid " + field, exception);
-    }
-  }
-
-  private String digestHex(String value) {
-    if (value == null || !value.matches("[a-f0-9]{64}")) {
-      throw new IllegalStateException("Run-owned fixture capability has an invalid SHA-256 pin");
-    }
-    return value;
-  }
-
   private String sha256(byte[] bytes) throws Exception {
     return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
   }
@@ -869,10 +813,6 @@ public class TestDataSeeder implements ApplicationRunner {
         && parent != null
         && parentName != null
         && "run-owned-authored-world-source".equals(parentName.toString());
-  }
-
-  private boolean sameFile(Object left, Object right) {
-    return left == null || right == null ? left == right : left.equals(right);
   }
 
   private record FixtureCapability(

@@ -21,5 +21,6 @@ public class VersionAssetArtifact {
   private String artifactDigestsJson;
   private String publishedObjectProofsJson;
   private Long candidateSnapshotVersionId;
+  private String candidatePublicBaseUrl;
   private LocalDateTime updatedAt = LocalDateTime.now();
 }

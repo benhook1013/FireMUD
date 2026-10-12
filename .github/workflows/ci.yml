@@ -1012,7 +1012,7 @@ jobs:
 
       - name: 📦 Build Runtime JAR
         if: ${{ contains(fromJSON(needs.changes.outputs.bootable_modules), matrix.module) }}
-        run: ./gradlew :${{ matrix.module }}:bootJar -PfullCheck
+        run: ./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:bootJar -PfullCheck
 
       - name: 📈 Parse Coverage %
         id: coverage

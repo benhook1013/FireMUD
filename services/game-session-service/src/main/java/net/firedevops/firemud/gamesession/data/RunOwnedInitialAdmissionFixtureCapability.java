@@ -1,17 +1,10 @@
 package net.firedevops.firemud.gamesession.data;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.channels.Channels;
-import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.nio.file.attribute.PosixFilePermission;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -21,10 +14,10 @@ import java.security.cert.X509Certificate;
 import java.util.Collection;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Set;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.smoke.RunOwnedFixtureImmutableFileReader;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
@@ -114,60 +107,16 @@ record RunOwnedInitialAdmissionFixtureCapability(
           expectedComposeProjectName,
           capability,
           configuredCertificatePins(grpcProperties));
-    } catch (InvalidCapabilityException exception) {
-      throw invalidSourceReceipt();
     } catch (RuntimeException exception) {
       throw invalidSourceReceipt();
     }
   }
 
   static byte[] readSourceReceipt(Path path) {
-    if (path == null || !path.isAbsolute()) {
-      throw invalidSourceReceipt();
-    }
-    try {
-      BasicFileAttributes before =
-          Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-      if (!before.isRegularFile()
-          || Files.isSymbolicLink(path)
-          || before.size() <= 0L
-          || before.size() > MAX_SOURCE_RECEIPT_BYTES
-          || !isReadOnly(path)) {
-        throw invalidSourceReceipt();
-      }
-
-      ByteArrayOutputStream bytes = new ByteArrayOutputStream((int) before.size());
-      try (SeekableByteChannel channel =
-              Files.newByteChannel(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
-          InputStream input = Channels.newInputStream(channel)) {
-        byte[] buffer = new byte[1024];
-        int read;
-        while ((read = input.read(buffer)) >= 0) {
-          if (read == 0) {
-            continue;
-          }
-          if (bytes.size() + read > MAX_SOURCE_RECEIPT_BYTES) {
-            throw invalidSourceReceipt();
-          }
-          bytes.write(buffer, 0, read);
-        }
-      }
-
-      BasicFileAttributes after =
-          Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-      if (!after.isRegularFile()
-          || Files.isSymbolicLink(path)
-          || before.size() != after.size()
-          || bytes.size() != before.size()
-          || !before.lastModifiedTime().equals(after.lastModifiedTime())
-          || !sameFileKey(before.fileKey(), after.fileKey())
-          || !isReadOnly(path)) {
-        throw invalidSourceReceipt();
-      }
-      return bytes.toByteArray();
-    } catch (IOException | SecurityException exception) {
-      throw invalidSourceReceipt();
-    }
+    return RunOwnedFixtureImmutableFileReader.readBoundedImmutableFile(
+        path,
+        MAX_SOURCE_RECEIPT_BYTES,
+        RunOwnedInitialAdmissionFixtureCapability::invalidSourceReceipt);
   }
 
   static SourceReceipt parseSourceReceipt(
@@ -376,65 +325,8 @@ record RunOwnedInitialAdmissionFixtureCapability(
   }
 
   static byte[] readCapability(Path path) {
-    if (path == null || !path.isAbsolute()) {
-      throw invalidCapability();
-    }
-    try {
-      BasicFileAttributes before =
-          Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-      if (!before.isRegularFile()
-          || Files.isSymbolicLink(path)
-          || before.size() <= 0L
-          || before.size() > MAX_CAPABILITY_BYTES
-          || !isReadOnly(path)) {
-        throw invalidCapability();
-      }
-
-      ByteArrayOutputStream bytes = new ByteArrayOutputStream((int) before.size());
-      try (SeekableByteChannel channel =
-              Files.newByteChannel(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
-          InputStream input = Channels.newInputStream(channel)) {
-        byte[] buffer = new byte[1024];
-        int read;
-        while ((read = input.read(buffer)) >= 0) {
-          if (read == 0) {
-            continue;
-          }
-          if (bytes.size() + read > MAX_CAPABILITY_BYTES) {
-            throw invalidCapability();
-          }
-          bytes.write(buffer, 0, read);
-        }
-      }
-
-      BasicFileAttributes after =
-          Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-      if (!after.isRegularFile()
-          || Files.isSymbolicLink(path)
-          || before.size() != after.size()
-          || !before.lastModifiedTime().equals(after.lastModifiedTime())
-          || !sameFileKey(before.fileKey(), after.fileKey())
-          || !isReadOnly(path)) {
-        throw invalidCapability();
-      }
-      return bytes.toByteArray();
-    } catch (IOException | SecurityException exception) {
-      throw invalidCapability();
-    }
-  }
-
-  private static boolean isReadOnly(Path path) throws IOException {
-    try {
-      Set<PosixFilePermission> permissions =
-          Files.getPosixFilePermissions(path, LinkOption.NOFOLLOW_LINKS);
-      return permissions.contains(PosixFilePermission.OWNER_READ)
-          && !permissions.contains(PosixFilePermission.OWNER_WRITE)
-          && !permissions.contains(PosixFilePermission.GROUP_WRITE)
-          && !permissions.contains(PosixFilePermission.OTHERS_WRITE);
-    } catch (UnsupportedOperationException exception) {
-      Object readOnly = Files.getAttribute(path, "dos:readonly", LinkOption.NOFOLLOW_LINKS);
-      return Boolean.TRUE.equals(readOnly) && !Files.isWritable(path);
-    }
+    return RunOwnedFixtureImmutableFileReader.readBoundedImmutableFile(
+        path, MAX_CAPABILITY_BYTES, RunOwnedInitialAdmissionFixtureCapability::invalidCapability);
   }
 
   private static void requireExpectedRunBinding(String runId, String projectName) {
@@ -444,10 +336,6 @@ record RunOwnedInitialAdmissionFixtureCapability(
         || !SAFE_ID.matcher(projectName).matches()) {
       throw invalidCapability();
     }
-  }
-
-  private static boolean sameFileKey(Object before, Object after) {
-    return before == null || after == null || before.equals(after);
   }
 
   private static boolean hasText(String value) {

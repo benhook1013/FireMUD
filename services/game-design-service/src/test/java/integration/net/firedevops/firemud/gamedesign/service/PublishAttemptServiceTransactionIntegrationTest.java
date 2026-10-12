@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
@@ -12,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
@@ -29,6 +31,7 @@ import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
 import net.firedevops.firemud.gamedesign.entity.VersionTemplateRemapSet;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
+import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
@@ -91,6 +94,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   private static final String TENANT_ID = "9001";
   private static final String WORKFLOW_ID = "full-version-transaction-integration-test";
   private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
+  private static final String FIXTURE_PUBLIC_BASE_URL = "https://assets.example.test/assets";
   private static final String ARTIFACT_DIGEST =
       "sha256:6eb74f970ab34ad786c5089af8780d7a218f91f9d6a7ed03675185e39b317e94";
   private static final byte[] FIXTURE_ASSET_BYTES =
@@ -213,17 +217,15 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Test
   void failedScriptPatchRetainsCanonicalVersionAndReplaysDurableFailure() {
     String tenantId = "9012";
-    Long baseVersionId = 3L;
+    long baseVersionId =
+        createGameAndPublishedBaseVersion(tenantId, "script-patch-failure-replay-game");
     String scriptPatchVersion = "patch-failed-replay";
     String publishRequestId = "script-patch-failure-replay";
     String workflowId =
         PublicationDigestRequestBinding.patch(
                 tenantId, String.valueOf(baseVersionId), scriptPatchVersion, publishRequestId)
             .derivedWorkflowIdentity();
-    Game game = new Game();
-    game.setTenantId(tenantId);
-    game.setName("script-patch-failure-replay-game");
-    Game savedGame = gameRepository.save(game);
+    Game savedGame = gameRepository.findByTenantId(tenantId);
 
     Mockito.doThrow(new IllegalStateException("script patch participant unavailable"))
         .when(publishGateService)
@@ -249,8 +251,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .stream()
             .findFirst()
             .orElseThrow();
-    assertThat(retainedVersion.getVersionState()).isEqualTo(VersionLifecycleState.FAILED);
-    assertThat(retainedVersion.getVersionStateEpoch()).isEqualTo(2L);
+    assertThat(retainedVersion.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
+    assertThat(retainedVersion.getVersionStateEpoch()).isEqualTo(1L);
     assertThat(retainedVersion.getCanonicalVersionId()).isNotNull();
     assertThat(retainedVersion.getCanonicalTenantId()).isEqualTo(savedGame.getCanonicalTenantId());
 
@@ -273,7 +275,8 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(replayedVersion.getId()).isEqualTo(retainedVersion.getId());
     assertThat(replayedVersion.getCanonicalVersionId())
         .isEqualTo(retainedVersion.getCanonicalVersionId());
-    assertThat(replayedVersion.getVersionState()).isEqualTo(VersionLifecycleState.FAILED);
+    assertThat(replayedVersion.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
+    assertThat(replayedVersion.getVersionStateEpoch()).isEqualTo(1L);
     assertThat(replayedAttempt.getVersionId()).isEqualTo(retainedVersion.getId());
     assertThat(replayedAttempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
 
@@ -343,6 +346,490 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(storedAttempt.getRequestDigest()).isEqualTo("exact-identity-digest");
   }
 
+  @Test
+  void failedScriptPatchRetainsCandidateForReplayAndReservesItsTuple() {
+    String tenantId = "9011";
+    String publishRequestId = "script-patch-gate-failure-request";
+    String scriptPatchVersion = "patch-gate-failure";
+    long baseVersionId = createGameAndPublishedBaseVersion(tenantId, "script-patch-gate-proof");
+    Game actualGame = gameRepository.findByTenantId(tenantId);
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch(
+            tenantId, String.valueOf(baseVersionId), scriptPatchVersion, publishRequestId);
+    AtomicInteger participantCollectionCount = new AtomicInteger();
+
+    Mockito.when(
+            publishGateService.collectScriptPatchParticipantDigests(
+                Mockito.any(VersionDto.class), Mockito.anyString(), Mockito.anyString()))
+        .thenAnswer(
+            invocation -> {
+              participantCollectionCount.incrementAndGet();
+              throw new PublishGateFailureException(
+                  PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH, "script scope mismatch");
+            });
+
+    Throwable firstFailure =
+        catchThrowable(
+            () ->
+                versionService.publishScriptPatchVersion(
+                    tenantId,
+                    baseVersionId,
+                    scriptPatchVersion,
+                    "gate failure notes",
+                    publishRequestId));
+
+    assertThat(firstFailure).isInstanceOf(PublishGateFailureException.class);
+    PublishGateFailureException firstGateFailure = (PublishGateFailureException) firstFailure;
+    assertThat(firstGateFailure.failureCode())
+        .isEqualTo(PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH);
+    assertThat(firstGateFailure).hasMessage("script scope mismatch");
+
+    PublishAttempt failedAttempt =
+        publishAttemptRepository
+            .findByPublishWorkflowId(binding.derivedWorkflowIdentity())
+            .orElseThrow();
+    Version retainedCandidate =
+        versionRepository.findByTenantIdAndId(tenantId, failedAttempt.getVersionId()).orElseThrow();
+    assertThat(failedAttempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(failedAttempt.getFailureCode())
+        .isEqualTo(PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH.name());
+    assertThat(failedAttempt.getFailureMessage()).isEqualTo("script scope mismatch");
+    assertThat(failedAttempt.getRequestDigest()).isEqualTo(binding.requestDigest());
+    assertThat(failedAttempt.getBaseVersionId()).isEqualTo(baseVersionId);
+    assertThat(failedAttempt.getScriptPatchVersion()).isEqualTo(scriptPatchVersion);
+    assertThat(failedAttempt.getCompletedAt()).isNotNull();
+    assertThat(retainedCandidate.getVersionNumber()).isEqualTo(failedAttempt.getVersionNumber());
+    assertThat(retainedCandidate.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
+    assertThat(retainedCandidate.getVersionStateEpoch()).isEqualTo(1L);
+    assertThat(retainedCandidate.getBaseVersionId()).isEqualTo(baseVersionId);
+    assertThat(retainedCandidate.getScriptPatchVersion()).isEqualTo(scriptPatchVersion);
+    assertThat(retainedCandidate.getCanonicalVersionId()).isNotNull();
+    assertThat(retainedCandidate.getCanonicalTenantId())
+        .isEqualTo(actualGame.getCanonicalTenantId());
+    assertThat(retainedCandidate.isScriptOnly()).isTrue();
+    assertThat(retainedCandidate.getNotes()).isEqualTo("gate failure notes");
+    assertThat(
+            versionRepository.findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndScriptOnly(
+                tenantId, baseVersionId, scriptPatchVersion))
+        .extracting(Version::getId)
+        .containsExactly(retainedCandidate.getId());
+
+    Throwable replayFailure =
+        catchThrowable(
+            () ->
+                versionService.publishScriptPatchVersion(
+                    tenantId,
+                    baseVersionId,
+                    scriptPatchVersion,
+                    "gate failure notes",
+                    publishRequestId));
+    assertThat(replayFailure).isInstanceOf(PublishGateFailureException.class);
+    PublishGateFailureException replayGateFailure = (PublishGateFailureException) replayFailure;
+    assertThat(replayGateFailure.failureCode())
+        .isEqualTo(PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH);
+    assertThat(replayGateFailure).hasMessage("script scope mismatch");
+    assertThat(participantCollectionCount).hasValue(1);
+    Version replayCandidate =
+        versionRepository.findByTenantIdAndId(tenantId, retainedCandidate.getId()).orElseThrow();
+    assertThat(replayCandidate.getCanonicalVersionId())
+        .isEqualTo(retainedCandidate.getCanonicalVersionId());
+    assertThat(replayCandidate.getCanonicalTenantId())
+        .isEqualTo(retainedCandidate.getCanonicalTenantId());
+    assertThat(replayCandidate.getCanonicalTenantId()).isEqualTo(actualGame.getCanonicalTenantId());
+    assertThat(
+            versionRepository.findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndScriptOnly(
+                tenantId, baseVersionId, scriptPatchVersion))
+        .extracting(Version::getId)
+        .containsExactly(retainedCandidate.getId());
+
+    Throwable changedNotesReplayFailure =
+        catchThrowable(
+            () ->
+                versionService.publishScriptPatchVersion(
+                    tenantId,
+                    baseVersionId,
+                    scriptPatchVersion,
+                    "changed replay notes",
+                    publishRequestId));
+    assertThat(changedNotesReplayFailure).isInstanceOf(PublishGateFailureException.class);
+    PublishGateFailureException changedNotesReplayGateFailure =
+        (PublishGateFailureException) changedNotesReplayFailure;
+    assertThat(changedNotesReplayGateFailure.failureCode())
+        .isEqualTo(PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH);
+    assertThat(changedNotesReplayGateFailure).hasMessage("script scope mismatch");
+    assertThat(participantCollectionCount).hasValue(1);
+    PublishAttempt attemptAfterReplay =
+        publishAttemptRepository
+            .findByPublishWorkflowId(binding.derivedWorkflowIdentity())
+            .orElseThrow();
+    assertThat(attemptAfterReplay.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(attemptAfterReplay.getVersionId()).isEqualTo(retainedCandidate.getId());
+
+    Throwable tupleConflict =
+        catchThrowable(
+            () ->
+                versionService.publishScriptPatchVersion(
+                    tenantId,
+                    baseVersionId,
+                    scriptPatchVersion,
+                    "new request notes",
+                    "script-patch-same-tuple-new-request"));
+    assertThat(tupleConflict)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT");
+    assertThat(
+            publishAttemptRepository
+                .findByPublishWorkflowId(binding.derivedWorkflowIdentity())
+                .orElseThrow()
+                .getStatus())
+        .isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(
+            versionRepository.findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndScriptOnly(
+                tenantId, baseVersionId, scriptPatchVersion))
+        .extracting(Version::getId)
+        .containsExactly(retainedCandidate.getId());
+    assertThat(participantCollectionCount).hasValue(1);
+
+    String independentPatchVersion = "patch-independent";
+    String independentRequestId = "script-patch-independent-request";
+    PublicationDigestRequestBinding independentBinding =
+        PublicationDigestRequestBinding.patch(
+            tenantId, String.valueOf(baseVersionId), independentPatchVersion, independentRequestId);
+    Throwable independentPatchFailure =
+        catchThrowable(
+            () ->
+                versionService.publishScriptPatchVersion(
+                    tenantId,
+                    baseVersionId,
+                    independentPatchVersion,
+                    "independent patch notes",
+                    independentRequestId));
+    assertThat(independentPatchFailure).isInstanceOf(PublishGateFailureException.class);
+    PublishAttempt independentAttempt =
+        publishAttemptRepository
+            .findByPublishWorkflowId(independentBinding.derivedWorkflowIdentity())
+            .orElseThrow();
+    Version independentCandidate =
+        versionRepository
+            .findByTenantIdAndId(tenantId, independentAttempt.getVersionId())
+            .orElseThrow();
+    assertThat(independentAttempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(independentCandidate.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
+    assertThat(independentCandidate.getBaseVersionId()).isEqualTo(baseVersionId);
+    assertThat(independentCandidate.getScriptPatchVersion()).isEqualTo(independentPatchVersion);
+    assertThat(independentCandidate.getId()).isNotEqualTo(retainedCandidate.getId());
+    assertThat(participantCollectionCount).hasValue(2);
+  }
+
+  @Test
+  void scriptPatchFinalizationFailureRollsBackToRetainedDraftAndMarksAttemptFailed() {
+    String tenantId = "9012";
+    String publishRequestId = "script-patch-finalization-failure-request";
+    String scriptPatchVersion = "patch-finalization-failure";
+    long baseVersionId =
+        createGameAndPublishedBaseVersion(tenantId, "script-patch-finalization-proof");
+    Game actualGame = gameRepository.findByTenantId(tenantId);
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch(
+            tenantId, String.valueOf(baseVersionId), scriptPatchVersion, publishRequestId);
+    AtomicInteger participantCollectionCount = new AtomicInteger();
+
+    Mockito.when(
+            publishGateService.collectScriptPatchParticipantDigests(
+                Mockito.any(VersionDto.class), Mockito.anyString(), Mockito.anyString()))
+        .thenAnswer(
+            invocation -> {
+              participantCollectionCount.incrementAndGet();
+              return List.of();
+            });
+    Mockito.doThrow(new IllegalStateException("recorded digest write failed"))
+        .when(recordedParticipantDigestService)
+        .recordVerifiedDigests(
+            Mockito.eq(tenantId),
+            Mockito.eq(PublishType.SCRIPT_PATCH),
+            Mockito.eq(binding.derivedWorkflowIdentity()),
+            Mockito.anyList());
+
+    Throwable publishFailure =
+        catchThrowable(
+            () ->
+                versionService.publishScriptPatchVersion(
+                    tenantId,
+                    baseVersionId,
+                    scriptPatchVersion,
+                    "finalization failure notes",
+                    publishRequestId));
+
+    assertThat(publishFailure)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("recorded digest write failed");
+    Mockito.verify(recordedParticipantDigestService)
+        .recordVerifiedDigests(
+            Mockito.eq(tenantId),
+            Mockito.eq(PublishType.SCRIPT_PATCH),
+            Mockito.eq(binding.derivedWorkflowIdentity()),
+            Mockito.anyList());
+    assertThat(participantCollectionCount).hasValue(1);
+
+    PublishAttempt failedAttempt =
+        publishAttemptRepository
+            .findByPublishWorkflowId(binding.derivedWorkflowIdentity())
+            .orElseThrow();
+    Version retainedCandidate =
+        versionRepository.findByTenantIdAndId(tenantId, failedAttempt.getVersionId()).orElseThrow();
+    assertThat(failedAttempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(failedAttempt.getFailureCode()).isEqualTo("PUBLISH_FAILED");
+    assertThat(failedAttempt.getFailureMessage()).isEqualTo("recorded digest write failed");
+    assertThat(failedAttempt.getCompletedAt()).isNotNull();
+    assertThat(retainedCandidate.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
+    assertThat(retainedCandidate.getVersionStateEpoch()).isEqualTo(1L);
+    assertThat(retainedCandidate.getBaseVersionId()).isEqualTo(baseVersionId);
+    assertThat(retainedCandidate.getScriptPatchVersion()).isEqualTo(scriptPatchVersion);
+    assertThat(retainedCandidate.getCanonicalVersionId()).isNotNull();
+    assertThat(retainedCandidate.getCanonicalTenantId())
+        .isEqualTo(actualGame.getCanonicalTenantId());
+    assertThat(retainedCandidate.isScriptOnly()).isTrue();
+    assertThat(
+            versionRepository.findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndScriptOnly(
+                tenantId, baseVersionId, scriptPatchVersion))
+        .extracting(Version::getId)
+        .containsExactly(retainedCandidate.getId());
+  }
+
+  @Test
+  void selectedMechanicsRetainsCandidatePendingCompletePublicationReadback() {
+    String tenantId = "9013";
+    SelectedPublicationFixture fixture =
+        selectedPublicationFixture(tenantId, "pending-readback-proof-game", false);
+    String publishWorkflowId = fixture.operation().workflowId();
+    ExportedAssetManifest candidate = recordFixtureCandidate(fixture);
+    versionAssetArtifactService.stageExport(
+        tenantId,
+        fixture.version().getId(),
+        fixture.version().getVersionNumber(),
+        publishWorkflowId);
+
+    Throwable reconciliationFailure =
+        catchThrowable(() -> reconcileSelectedFullVersionPublishMechanics(fixture));
+
+    assertThat(reconciliationFailure)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "published release evidence is incomplete; readback/reconciliation is required");
+    assertThat(reconciliationFailure.getClass().getName())
+        .isEqualTo(
+            "net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl"
+                + "$PendingReconciliationException");
+    PublishAttempt attempt =
+        publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
+    Version retainedDraft =
+        versionRepository.findByTenantIdAndId(tenantId, fixture.version().getId()).orElseThrow();
+    assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+    assertThat(attempt.getFailureCode()).isNull();
+    assertThat(attempt.getFailureMessage()).isNull();
+    assertThat(retainedDraft.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
+    assertThat(
+            publishedReleaseBundleRepository.findByTenantIdAndVersionId(
+                tenantId, retainedDraft.getId()))
+        .isEmpty();
+    VersionAssetArtifact storedArtifact =
+        versionAssetArtifactRepository
+            .findByTenantIdAndVersionId(tenantId, retainedDraft.getId())
+            .orElseThrow();
+    assertThat(storedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.STAGED);
+    FrozenAssetExportCandidate retainedCandidate =
+        exportCandidateService.readExportCandidate(tenantId, retainedDraft.getVersionNumber());
+    assertThat(retainedCandidate)
+        .isEqualTo(new FrozenAssetExportCandidate(candidate, "https://assets.example.test/assets"));
+    Mockito.verify(assetExportService, Mockito.never())
+        .exportAssets(Mockito.eq(tenantId), Mockito.anyInt());
+    Mockito.verify(versionAssetArtifactService, Mockito.never())
+        .markPublished(
+            Mockito.eq(tenantId),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.eq(publishWorkflowId),
+            Mockito.anyString());
+  }
+
+  @Test
+  void fullVersionMechanicsLeavesPostExportFinalizationFailurePendingWithCandidateAndRemap() {
+    String tenantId = "9014";
+    SelectedPublicationFixture fixture =
+        selectedPublicationFixture(tenantId, "failed-remap-proof-game", true);
+    String publishRequestId =
+        fixture.operation().account().input().selection().intent().publishRequestId();
+    String publishWorkflowId = fixture.operation().workflowId();
+    Version sourceVersion =
+        versionRepository.findByTenantIdAndVersionNumber(tenantId, 1).orElseThrow();
+    long sourceVersionId = sourceVersion.getId();
+    AtomicReference<Long> candidateVersionId = new AtomicReference<>();
+    AtomicReference<Integer> candidateVersionNumber = new AtomicReference<>();
+    AtomicReference<Integer> exportedVersionNumber = new AtomicReference<>();
+    AtomicReference<String> remapSetId = new AtomicReference<>();
+    AtomicReference<Throwable> recordedDigestFailure = new AtomicReference<>();
+    AtomicReference<Throwable> exportCallbackFailure = new AtomicReference<>();
+    AtomicReference<Throwable> controlPlaneDigestFailure = captureControlPlaneDigestFailure();
+    AtomicBoolean exportCompleted = new AtomicBoolean();
+    AtomicBoolean finalizationFailureInjected = new AtomicBoolean();
+
+    Mockito.when(
+            publishGateService.collectFullVersionParticipantDigests(
+                Mockito.any(VersionDto.class),
+                Mockito.eq(publishRequestId),
+                Mockito.eq(publishWorkflowId)))
+        .thenAnswer(
+            invocation -> {
+              VersionDto candidate = invocation.getArgument(0);
+              candidateVersionId.set(candidate.id());
+              candidateVersionNumber.set(candidate.versionNumber());
+              return PublishedWorldSelectorFixtures.participants(
+                  candidate.id(),
+                  fixture.operation().world(),
+                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+            });
+    Mockito.doAnswer(
+            invocation -> {
+              try {
+                invocation.callRealMethod();
+              } catch (Throwable failure) {
+                recordedDigestFailure.set(failure);
+                throw failure;
+              }
+              return null;
+            })
+        .when(recordedParticipantDigestService)
+        .assertMatchesRecordedDigests(
+            Mockito.eq(tenantId), Mockito.eq(PublishType.FULL_VERSION), Mockito.anyList());
+    ExportedAssetManifest exportedManifest = exportedManifest();
+    Mockito.when(assetExportService.exportAssets(Mockito.eq(tenantId), Mockito.anyInt()))
+        .thenAnswer(
+            invocation -> {
+              exportedVersionNumber.set(invocation.getArgument(1));
+              try {
+                VersionTemplateRemapSet approvedRemapSet = new VersionTemplateRemapSet();
+                approvedRemapSet.setRemapSetId("failed-candidate-approved-remap");
+                approvedRemapSet.setTenantId(tenantId);
+                approvedRemapSet.setSourceVersionId(sourceVersionId);
+                approvedRemapSet.setTargetVersionId(candidateVersionId.get());
+                approvedRemapSet.setStatus(TemplateRemapSetStatus.APPROVED);
+                approvedRemapSet.setCreatedReason(
+                    "approved remap references publication candidate");
+                approvedRemapSet.setApprovalReason("approved for replacement launch");
+                approvedRemapSet.setApprovedAt(LocalDateTime.now());
+                templateRemapSetRepository.save(approvedRemapSet);
+                remapSetId.set(approvedRemapSet.getRemapSetId());
+                exportCompleted.set(true);
+                return recordFixtureCandidate(fixture, exportedManifest);
+              } catch (Throwable failure) {
+                exportCallbackFailure.set(failure);
+                throw failure;
+              }
+            });
+    Mockito.doAnswer(
+            invocation -> {
+              finalizationFailureInjected.set(true);
+              throw new IllegalStateException("forced finalization failure");
+            })
+        .when(versionAssetArtifactService)
+        .markPublished(
+            Mockito.eq(tenantId),
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.eq(publishWorkflowId),
+            Mockito.eq(exportedManifest.manifestHash()));
+
+    Throwable reconciliationFailure =
+        catchThrowable(() -> reconcileSelectedFullVersionPublishMechanics(fixture));
+    assertNoControlPlaneDigestFailure(controlPlaneDigestFailure.get());
+    assertThat(reconciliationFailure)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("exported candidate requires exact retry/reconciliation");
+    PublishAttempt attempt =
+        publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
+    String reconciliationContext =
+        "mechanics reconciliation context (candidateVersionId="
+            + candidateVersionId.get()
+            + ", candidateVersionNumber="
+            + candidateVersionNumber.get()
+            + ", exportedVersionNumber="
+            + exportedVersionNumber.get()
+            + ", attemptStatus="
+            + attempt.getStatus()
+            + ", attemptFailureCode="
+            + attempt.getFailureCode()
+            + ", attemptFailureMessage="
+            + attempt.getFailureMessage()
+            + ", recordedDigestFailure="
+            + recordedDigestFailure.get()
+            + ", exportCallbackFailure="
+            + exportCallbackFailure.get()
+            + ", exportCallbackFailureFrame="
+            + firstStackFrame(exportCallbackFailure.get())
+            + ", reconciliationFailure="
+            + reconciliationFailure
+            + ")";
+    assertThat(exportCompleted.get()).as(reconciliationContext).isTrue();
+    assertThat(finalizationFailureInjected.get()).as(reconciliationContext).isTrue();
+    assertThat(exportedVersionNumber.get())
+        .as("asset export uses the candidate's persisted version number")
+        .isEqualTo(candidateVersionNumber.get());
+    assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+    assertThat(attempt.getFailureCode()).isNull();
+    assertThat(attempt.getFailureMessage()).isNull();
+    Version retainedCandidate =
+        versionRepository.findByTenantIdAndId(tenantId, candidateVersionId.get()).orElseThrow();
+    assertThat(retainedCandidate.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
+    assertThat(retainedCandidate.getVersionStateEpoch())
+        .isEqualTo(
+            Long.parseLong(
+                fixture
+                    .operation()
+                    .account()
+                    .input()
+                    .selection()
+                    .intent()
+                    .expectedVersionStateEpoch()));
+    assertThat(
+            publishedReleaseBundleRepository.findByTenantIdAndVersionId(
+                tenantId, candidateVersionId.get()))
+        .isEmpty();
+    VersionAssetArtifact retainedArtifact =
+        versionAssetArtifactRepository
+            .findByTenantIdAndVersionId(tenantId, candidateVersionId.get())
+            .orElseThrow();
+    assertThat(retainedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.STAGED);
+    FrozenAssetExportCandidate expectedCandidate =
+        new FrozenAssetExportCandidate(exportedManifest, FIXTURE_PUBLIC_BASE_URL);
+    assertThat(
+            exportCandidateService.readExportCandidate(
+                tenantId, retainedCandidate.getVersionNumber()))
+        .isEqualTo(expectedCandidate);
+    assertThat(
+            exportCandidateService.recordExportCandidate(
+                tenantId, retainedCandidate.getVersionNumber(), expectedCandidate))
+        .isEqualTo(expectedCandidate);
+    Mockito.verify(versionAssetArtifactService, Mockito.never())
+        .markFailed(
+            Mockito.eq(tenantId),
+            Mockito.eq(candidateVersionId.get()),
+            Mockito.eq(candidateVersionNumber.get()),
+            Mockito.eq(publishWorkflowId),
+            Mockito.any(ExportedAssetManifest.class),
+            Mockito.anyString(),
+            Mockito.anyString());
+    Mockito.verify(assetExportService, Mockito.never())
+        .deleteExportedAssets(Mockito.eq(tenantId), Mockito.anyInt(), Mockito.anyList());
+    VersionTemplateRemapSet retainedRemapSet =
+        templateRemapSetRepository
+            .findByTenantIdAndRemapSetId(tenantId, remapSetId.get())
+            .orElseThrow();
+    assertThat(retainedRemapSet.getStatus()).isEqualTo(TemplateRemapSetStatus.APPROVED);
+    assertThat(retainedRemapSet.getApprovedAt()).isNotNull();
+    assertThat(retainedRemapSet.getSourceVersionId()).isEqualTo(sourceVersionId);
+    assertThat(retainedRemapSet.getTargetVersionId()).isEqualTo(candidateVersionId.get());
+  }
+
   // These private mechanics tests use isolated Account/World fixture evidence. They exercise
   // selected publication and finalization recovery, not live authorization or ingress.
   @Test
@@ -397,7 +884,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Test
-  void privateMechanicsHarnessRetainsCandidateAndRemapAfterFinalizationFailure() {
+  void selectedMechanicsLeavesPostExportFinalizationFailurePendingWithCandidateAndRemap() {
     String tenantId = "9003";
     SelectedPublicationFixture fixture =
         selectedPublicationFixture(tenantId, "failed-remap-proof-game", true);
@@ -483,13 +970,16 @@ class PublishAttemptServiceTransactionIntegrationTest {
             Mockito.eq(publishWorkflowId),
             Mockito.eq(exportedManifest.manifestHash()));
 
-    Object snapshot = reconcileSelectedPublicationMechanics(fixture);
+    Throwable reconciliationFailure =
+        catchThrowable(() -> reconcileSelectedPublicationMechanics(fixture));
     assertNoControlPlaneDigestFailure(controlPlaneDigestFailure.get());
-    assertMechanicsSnapshot(snapshot, "FAILED", "forced finalization failure");
+    assertThat(reconciliationFailure)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("exported candidate requires exact retry/reconciliation");
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
-    String failureContext =
-        "mechanics snapshot context (candidateVersionId="
+    String reconciliationContext =
+        "mechanics reconciliation context (candidateVersionId="
             + candidateVersionId.get()
             + ", candidateVersionNumber="
             + candidateVersionNumber.get()
@@ -507,40 +997,60 @@ class PublishAttemptServiceTransactionIntegrationTest {
             + exportCallbackFailure.get()
             + ", exportCallbackFailureFrame="
             + firstStackFrame(exportCallbackFailure.get())
-            + ", snapshotStatus="
-            + snapshotValue(snapshot, "status")
-            + ", snapshotFailureMessage="
-            + snapshotValue(snapshot, "failureMessage")
+            + ", reconciliationFailure="
+            + reconciliationFailure
             + ")";
-    assertThat(exportCompleted.get()).as(failureContext).isTrue();
-    assertThat(finalizationFailureInjected.get()).as(failureContext).isTrue();
+    assertThat(exportCompleted.get()).as(reconciliationContext).isTrue();
+    assertThat(finalizationFailureInjected.get()).as(reconciliationContext).isTrue();
     assertThat(exportedVersionNumber.get())
         .as("asset export uses the candidate's persisted version number")
         .isEqualTo(candidateVersionNumber.get());
-    assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
-    assertThat(attempt.getFailureMessage()).isEqualTo("forced finalization failure");
+    assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+    assertThat(attempt.getFailureCode()).isNull();
+    assertThat(attempt.getFailureMessage()).isNull();
     Version retainedCandidate =
         versionRepository.findByTenantIdAndId(tenantId, candidateVersionId.get()).orElseThrow();
     assertThat(retainedCandidate.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
+    assertThat(retainedCandidate.getVersionStateEpoch())
+        .isEqualTo(
+            Long.parseLong(
+                fixture
+                    .operation()
+                    .account()
+                    .input()
+                    .selection()
+                    .intent()
+                    .expectedVersionStateEpoch()));
     assertThat(
             publishedReleaseBundleRepository.findByTenantIdAndVersionId(
                 tenantId, candidateVersionId.get()))
         .isEmpty();
-    VersionAssetArtifact failedArtifact =
+    VersionAssetArtifact retainedArtifact =
         versionAssetArtifactRepository
             .findByTenantIdAndVersionId(tenantId, candidateVersionId.get())
             .orElseThrow();
-    assertThat(failedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.FAILED);
+    assertThat(retainedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.STAGED);
+    FrozenAssetExportCandidate expectedCandidate =
+        new FrozenAssetExportCandidate(exportedManifest, FIXTURE_PUBLIC_BASE_URL);
     assertThat(
             exportCandidateService.readExportCandidate(
                 tenantId, retainedCandidate.getVersionNumber()))
-        .isEqualTo(exportedManifest);
-    assertThatThrownBy(
-            () ->
-                exportCandidateService.recordExportCandidate(
-                    tenantId, retainedCandidate.getVersionNumber(), exportedManifest))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("ASSET_EXPORT_CANDIDATE_CONFLICT");
+        .isEqualTo(expectedCandidate);
+    assertThat(
+            exportCandidateService.recordExportCandidate(
+                tenantId, retainedCandidate.getVersionNumber(), expectedCandidate))
+        .isEqualTo(expectedCandidate);
+    Mockito.verify(versionAssetArtifactService, Mockito.never())
+        .markFailed(
+            Mockito.eq(tenantId),
+            Mockito.eq(candidateVersionId.get()),
+            Mockito.eq(candidateVersionNumber.get()),
+            Mockito.eq(publishWorkflowId),
+            Mockito.any(ExportedAssetManifest.class),
+            Mockito.anyString(),
+            Mockito.anyString());
+    Mockito.verify(assetExportService, Mockito.never())
+        .deleteExportedAssets(Mockito.eq(tenantId), Mockito.anyInt(), Mockito.anyList());
     VersionTemplateRemapSet retainedRemapSet =
         templateRemapSetRepository
             .findByTenantIdAndRemapSetId(tenantId, remapSetId.get())
@@ -729,6 +1239,54 @@ class PublishAttemptServiceTransactionIntegrationTest {
     }
   }
 
+  private Object reconcileSelectedFullVersionPublishMechanics(SelectedPublicationFixture fixture) {
+    try {
+      Class<?> requestType =
+          Class.forName("net.firedevops.firemud.gamedesign.service.impl.PublishWorkflowRequest");
+      var selected = fixture.operation().account().input().selection();
+      var selectedIntent = selected.intent();
+      var selectedCommit = selected.selectedCommit();
+      PublishIntent intent =
+          new PublishIntent(
+              selected.target().canonicalTenantId(),
+              selected.target().canonicalVersionId(),
+              selectedIntent.publishRequestId(),
+              selectedIntent.expectedVersionStateEpoch(),
+              selectedIntent.notes(),
+              selectedCommit.requestId(),
+              selectedCommit.commitId(),
+              selectedCommit.digest());
+      Constructor<?> requestConstructor =
+          requestType.getDeclaredConstructor(
+              String.class, String.class, String.class, String.class, PublishIntent.class);
+      requestConstructor.setAccessible(true);
+      Object request =
+          requestConstructor.newInstance(
+              fixture.version().getTenantId(),
+              selectedIntent.notes(),
+              selectedIntent.publishRequestId(),
+              fixture.operation().workflowId(),
+              intent);
+      Method mechanics =
+          VersionPublishCommandServiceImpl.class.getDeclaredMethod(
+              "reconcileFullVersionPublishMechanics", requestType);
+      mechanics.setAccessible(true);
+      Object target = AopTestUtils.getTargetObject(versionPublishCommandService);
+      return mechanics.invoke(target, request);
+    } catch (InvocationTargetException exception) {
+      Throwable cause = exception.getCause();
+      if (cause instanceof RuntimeException runtimeException) {
+        throw runtimeException;
+      }
+      if (cause instanceof Error error) {
+        throw error;
+      }
+      throw new AssertionError("private publication mechanics failed", cause);
+    } catch (ReflectiveOperationException exception) {
+      throw new AssertionError("private publication mechanics harness is unavailable", exception);
+    }
+  }
+
   private ExportedAssetManifest recordFixtureCandidate(SelectedPublicationFixture fixture) {
     return recordFixtureCandidate(fixture, exportedManifest());
   }
@@ -750,7 +1308,12 @@ class PublishAttemptServiceTransactionIntegrationTest {
     versionAssetPublicationService.associateDraftAsset(
         tenantId, version.getId(), persistedAsset.getId(), "fixture.bin");
     versionAssetPublicationService.freezeOrReadSnapshot(tenantId, versionNumber);
-    return exportCandidateService.recordExportCandidate(tenantId, versionNumber, candidate);
+    FrozenAssetExportCandidate frozenCandidate =
+        exportCandidateService.recordExportCandidate(
+            tenantId,
+            versionNumber,
+            new FrozenAssetExportCandidate(candidate, FIXTURE_PUBLIC_BASE_URL));
+    return frozenCandidate.manifest();
   }
 
   private record SelectedPublicationFixture(
@@ -829,5 +1392,20 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 ARTIFACT_DIGEST,
                 "application/octet-stream",
                 1)));
+  }
+
+  private long createGameAndPublishedBaseVersion(String tenantId, String gameName) {
+    Game game = new Game();
+    game.setTenantId(tenantId);
+    game.setName(gameName);
+    gameRepository.save(game);
+
+    Version baseVersion = new Version();
+    baseVersion.setTenantId(tenantId);
+    baseVersion.setVersionNumber(1);
+    baseVersion.setVersionState(VersionLifecycleState.PUBLISHED);
+    baseVersion.setVersionStateEpoch(2L);
+    baseVersion.setNotes("published script patch base");
+    return versionRepository.save(baseVersion).getId();
   }
 }
