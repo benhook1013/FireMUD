@@ -102,6 +102,14 @@ Entry format:
   - Expected pattern: require complete immutable publication membership before completion, and recover verified older partial unfinalized runs additively without replacing dispositions or inventing another round. Retain original and supplemental evidence together.
   - Current status: the bounded controller repair passes focused local regression proof; trusted promotion and canonical live recovery remain separate steps, so the live missing finding is not yet confirmed recovered.
 
+- `2026-10-11`: Concurrent CI watchers can exhaust shared GitHub API quota
+  - Context: six native `gh run watch` processes in the Gameplay lane encountered the same REST rate limit while waiting for one candidate's checks.
+  - Observation: separate low-cost-looking watchers share one credential's API budget; multiplying short-interval reads can block artifact inspection and other workers' CI evidence collection.
+  - Expected pattern: use one quota-aware observation owner with bounded low-frequency consolidated reads across relevant exact heads, and back off until the reported reset. One helper launching six independent pollers is still prohibited fanout, not a single observer. Stop redundant local watchers without cancelling GitHub runs; continue safe local implementation and validation.
+  - Current status: the six distinct workflow watchers are stopped and the correction is recorded in the SQL job brief. Exact artifact qualification and CI completion remain separate evidence, not inferred from historical green runs.
+
+  - Reconsideration trigger: revisit after one quota-aware observer completes exact-head artifact qualification and CI without a rate-limit error, or the controller provides a shared consolidated watcher. Retain while either proof or the tooling improvement remains incomplete.
+
 - `2026-10-12`: Retrospective evidence needs source-clock provenance
   - Context: a curated import of an independently completed review retained unknown review clocks but displayed generated recording timestamps as its start and finish.
   - Observation: a storage default can create false chronology even when the immutable evidence accurately discloses missing clocks.
@@ -158,3 +166,10 @@ Entry format:
   - Observation: A saved head/base tuple and prior proof did not establish current mergeability. The normal merge exposed one documentation conflict; the maintenance fixture changes merged cleanly.
   - Expected pattern: At publication and closeout, verify the actual base branch tip and current mergeability through the bounded canonical topology/status checks. Treat a stale PR base OID or missing new-head source CI as unresolved state, and reconcile before claiming readiness.
   - Reconsideration trigger: Verify the next published front against its actual remote base and current required CI; retain any remaining stale-base diagnostic gap for controller maintenance.
+
+- `2026-10-13`: Local PostgreSQL availability can fail after container startup
+  - Context: Gameplay’s #3120 final-parent full gate at `42c524c` selected 105 PostgreSQL cases but 13 errors in three suites reported connection refusal on ephemeral localhost ports, after the preceding complete gate at `d0362dd` passed all 105 cases.
+  - Observation: Docker daemon availability and a started-container event do not prove a fixture’s JDBC endpoint remains reachable; the failure cause and responsible lifecycle are unknown. These connection errors do not establish failed product assertions.
+  - Expected pattern: classify connection-refused fixture failures separately from product assertions; capture live container events, PostgreSQL logs and endpoint state before fixture cleanup, and qualify the exact suites before crediting physical proof. Retained Docker events are bounded and destroyed containers lose inspect/log evidence; an exit code of 137 after an explicit cleanup kill does not establish OOM or external cleanup.
+  - Current status: the three affected suites passed all 13 cases in the composed #3125 run and fresh exact-parent #3120 CI (all 105 PostgreSQL cases passed). The subsequent #3155 local Account gate also failed before assertions in 24 of 218 integration cases across eight suites, leaving PostgreSQL proof partial and Redis initialization unproved. The local connection-refused cause remains unknown; retain time-correlated container and endpoint evidence without weakening fixtures or changing the environment speculatively.
+  - Reconsideration trigger: revisit after the affected cases execute physically against the final parent and the endpoint failure is explained or shown to be transient; retain until the cause and proof limits are recorded.
