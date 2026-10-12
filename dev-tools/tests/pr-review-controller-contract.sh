@@ -36,6 +36,58 @@ grep -Fq 'trigger-recover-prepost' <<<"$(python3 dev-tools/pr-review decide --he
   || fail 'decide help does not expose guarded pre-POST recovery'
 grep -Fq 'reconcile' <<<"$(python3 dev-tools/pr-review decide --help)" \
   || fail 'decide help does not expose exact stack reconciliation'
+source_decide_help="$(python3 dev-tools/pr-review records source decide --help)"
+grep -Fq 'maximum 300 characters' <<<"$source_decide_help" \
+  || fail 'source decision help does not expose the 300-character reason bound'
+source_resolve_help="$(python3 dev-tools/pr-review records source resolve --help)"
+grep -Fq 'maximum 300 characters' <<<"$source_resolve_help" \
+  || fail 'source resolution help does not expose the 300-character proof-note bound'
+
+python3 - <<'PY'
+import json
+import sys
+
+sys.path.insert(0, "dev-tools")
+from pr_review import cli
+
+decision = {"pr": 7, "channel": "hosted", "reason": "reconcile this anchor"}
+
+
+class FakeController:
+    def decide_reconciliation(self, **kwargs):
+        assert kwargs == {
+            "pr": 7,
+            "channel": "hosted",
+            "checkpoint": "checkpoint-1",
+            "prior_head": "a" * 40,
+            "reason": "reconcile this anchor",
+        }
+        return {"decision": decision, "reconciliations": [decision, {"pr": 8}]}
+
+
+cli._controller = lambda _args: (FakeController(), None)
+args = cli._parser().parse_args(
+    [
+        "decide",
+        "reconcile",
+        "--pr",
+        "7",
+        "--channel",
+        "hosted",
+        "--checkpoint",
+        "checkpoint-1",
+        "--prior-head",
+        "a" * 40,
+        "--reason",
+        "reconcile this anchor",
+        "--json",
+    ]
+)
+result, exit_status = cli._dispatch(args)
+rendered = json.loads(cli._render(result, args.as_json))
+assert exit_status == 0
+assert rendered == {"decision": decision}, rendered
+PY
 
 # Keep the deletion/reference assertion hermetic. The contract itself constructs
 # the retired basenames so it can check every other tracked file without failing
