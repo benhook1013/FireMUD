@@ -556,7 +556,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .orElseThrow();
     assertThat(artifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.FAILED);
     assertThat(
-            exportCandidateService.readExportCandidate(tenantId, storedVersion.getVersionNumber()))
+            exportCandidateService
+                .readExportCandidate(tenantId, storedVersion.getVersionNumber())
+                .manifest())
         .isEqualTo(exportedManifest());
     Mockito.verify(versionAssetArtifactService, Mockito.never())
         .markPublished(
@@ -713,13 +715,17 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .orElseThrow();
     assertThat(failedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.FAILED);
     assertThat(
-            exportCandidateService.readExportCandidate(
-                tenantId, retainedCandidate.getVersionNumber()))
+            exportCandidateService
+                .readExportCandidate(tenantId, retainedCandidate.getVersionNumber())
+                .manifest())
         .isEqualTo(exportedManifest);
     assertThatThrownBy(
             () ->
                 exportCandidateService.recordExportCandidate(
-                    tenantId, retainedCandidate.getVersionNumber(), exportedManifest))
+                    tenantId,
+                    retainedCandidate.getVersionNumber(),
+                    new FrozenAssetExportCandidate(
+                        exportedManifest, "https://assets.example.test/assets")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("ASSET_EXPORT_CANDIDATE_CONFLICT");
     Mockito.verify(versionAssetArtifactService, Mockito.never())
@@ -936,7 +942,12 @@ class PublishAttemptServiceTransactionIntegrationTest {
     versionAssetPublicationService.associateDraftAsset(
         tenantId, version.getId(), persistedAsset.getId(), "fixture.bin");
     versionAssetPublicationService.freezeOrReadSnapshot(tenantId, versionNumber);
-    return exportCandidateService.recordExportCandidate(tenantId, versionNumber, candidate);
+    return exportCandidateService
+        .recordExportCandidate(
+            tenantId,
+            versionNumber,
+            new FrozenAssetExportCandidate(candidate, "https://assets.example.test/assets"))
+        .manifest();
   }
 
   private long createGameAndPublishedBaseVersion(String tenantId, String gameName) {

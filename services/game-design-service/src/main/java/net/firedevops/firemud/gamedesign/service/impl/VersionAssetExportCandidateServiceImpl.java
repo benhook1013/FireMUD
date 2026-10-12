@@ -3,11 +3,8 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
 import java.util.HashSet;
-import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
@@ -25,6 +22,7 @@ import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepos
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.ExportSnapshot;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.FrozenAssetExportCandidate;
 import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.VersionAssetExportCandidateService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetPublicationService;
@@ -45,6 +43,7 @@ public final class VersionAssetExportCandidateServiceImpl
   private static final String ARTIFACT_OBJECT_ROOT = "artifacts/sha256/";
   private static final String MANIFEST_USAGE_KEY = "manifest.json";
   private static final String BINARY_ARTIFACT_KIND = "BINARY";
+  private static final long MAX_SOURCE_ASSET_BYTES = 25L * 1024L * 1024L;
   private final VersionRepository versionRepository;
   private final GameRepository gameRepository;
   private final PublishAttemptRepository attemptRepository;
@@ -85,11 +84,11 @@ public final class VersionAssetExportCandidateServiceImpl
   }
 
   @Override
-  public ExportedAssetManifest recordExportCandidate(
-      String tenantId, int versionNumber, ExportedAssetManifest candidate) {
+  public FrozenAssetExportCandidate recordExportCandidate(
+      String tenantId, int versionNumber, FrozenAssetExportCandidate candidate) {
     requireScope(tenantId, versionNumber);
     Objects.requireNonNull(candidate, "candidate");
-    ExportedAssetManifest committed =
+    FrozenAssetExportCandidate committed =
         ownerWrite.execute(status -> recordInOwnerTransaction(tenantId, versionNumber, candidate));
     if (committed == null) {
       throw new IllegalStateException("Export candidate transaction returned no proof");
@@ -100,9 +99,9 @@ public final class VersionAssetExportCandidateServiceImpl
   }
 
   @Override
-  public ExportedAssetManifest readExportCandidate(String tenantId, int versionNumber) {
+  public FrozenAssetExportCandidate readExportCandidate(String tenantId, int versionNumber) {
     requireScope(tenantId, versionNumber);
-    ExportedAssetManifest result =
+    FrozenAssetExportCandidate result =
         ownerRead.execute(status -> readInOwnerTransaction(tenantId, versionNumber));
     if (result == null) {
       throw new IllegalStateException("Independent export candidate readback returned no proof");
@@ -110,8 +109,8 @@ public final class VersionAssetExportCandidateServiceImpl
     return result;
   }
 
-  private ExportedAssetManifest recordInOwnerTransaction(
-      String tenantId, int versionNumber, ExportedAssetManifest requested) {
+  private FrozenAssetExportCandidate recordInOwnerTransaction(
+      String tenantId, int versionNumber, FrozenAssetExportCandidate requested) {
     if (gameRepository.findByTenantIdForUpdate(tenantId) == null) {
       throw new IllegalStateException(CANDIDATE_NOT_FOUND);
     }
@@ -154,11 +153,11 @@ public final class VersionAssetExportCandidateServiceImpl
     CandidateEvidence requestedEvidence = candidateEvidence(requested, snapshot);
     if (hasAnyCandidateEvidence(artifact)) {
       CandidateEvidence storedEvidence = storedEvidence(artifact, version, snapshot);
-      if (!sameCandidate(requested, storedEvidence.manifest())
+      if (!sameCandidate(requested, storedEvidence.candidate())
           || !sameEvidence(requestedEvidence, storedEvidence)) {
         throw new IllegalStateException(CANDIDATE_CONFLICT);
       }
-      return storedEvidence.manifest();
+      return storedEvidence.candidate();
     }
 
     if (version.getVersionState() != VersionLifecycleState.DRAFT
@@ -180,24 +179,26 @@ public final class VersionAssetExportCandidateServiceImpl
     } catch (ArithmeticException exception) {
       throw new IllegalStateException(CANDIDATE_CONFLICT, exception);
     }
-    artifact.setManifestHash(requested.manifestHash());
-    artifact.setManifestSchemaVersion(requested.manifestSchemaVersion());
-    artifact.setArtifactDigestsJson(serialize(requested.artifactDigests()));
+    artifact.setManifestHash(requested.manifest().manifestHash());
+    artifact.setManifestSchemaVersion(requested.manifest().manifestSchemaVersion());
+    artifact.setArtifactDigestsJson(serialize(requested.manifest().artifactDigests()));
     artifact.setPublishedObjectProofsJson(serialize(requestedEvidence.objectProofs()));
     artifact.setCandidateSnapshotVersionId(snapshot.versionId());
-    artifact.setExportedManifestAssetKeysJson(serialize(requested.requiredManifestAssetKeys()));
+    artifact.setCandidatePublicBaseUrl(requested.publicBaseUrl());
+    artifact.setExportedManifestAssetKeysJson(
+        serialize(requested.manifest().requiredManifestAssetKeys()));
     artifact.setStateEpoch(nextEpoch);
 
     VersionAssetArtifact saved = artifactRepository.save(artifact);
     CandidateEvidence readback = storedEvidence(saved, version, snapshot);
     if (!sameEvidence(requestedEvidence, readback)
-        || !sameCandidate(requested, readback.manifest())) {
+        || !sameCandidate(requested, readback.candidate())) {
       throw new IllegalStateException(CANDIDATE_CONFLICT);
     }
-    return readback.manifest();
+    return readback.candidate();
   }
 
-  private ExportedAssetManifest readInOwnerTransaction(String tenantId, int versionNumber) {
+  private FrozenAssetExportCandidate readInOwnerTransaction(String tenantId, int versionNumber) {
     Version version =
         versionRepository
             .findByTenantIdAndVersionNumber(tenantId, versionNumber)
@@ -212,7 +213,7 @@ public final class VersionAssetExportCandidateServiceImpl
     if (!hasAnyCandidateEvidence(artifact)) {
       throw new IllegalStateException(CANDIDATE_NOT_FOUND);
     }
-    return storedEvidence(artifact, version, snapshot).manifest();
+    return storedEvidence(artifact, version, snapshot).candidate();
   }
 
   private ExportSnapshot readAndValidateSnapshot(
@@ -240,6 +241,7 @@ public final class VersionAssetExportCandidateServiceImpl
         || artifact.getArtifactDigestsJson() == null
         || artifact.getPublishedObjectProofsJson() == null
         || artifact.getCandidateSnapshotVersionId() == null
+        || artifact.getCandidatePublicBaseUrl() == null
         || !Objects.equals(artifact.getCandidateSnapshotVersionId(), version.getId())
         || artifact.getManifestHash() == null
         || artifact.getExportedVersionNumber() != snapshot.versionNumber()
@@ -267,7 +269,9 @@ public final class VersionAssetExportCandidateServiceImpl
       ExportedAssetManifest manifest =
           new ExportedAssetManifest(
               artifact.getManifestHash(), artifact.getManifestSchemaVersion(), keys, digests);
-      CandidateEvidence verified = candidateEvidence(manifest, snapshot);
+      FrozenAssetExportCandidate candidate =
+          new FrozenAssetExportCandidate(manifest, artifact.getCandidatePublicBaseUrl());
+      CandidateEvidence verified = candidateEvidence(candidate, snapshot);
       if (!Objects.equals(artifact.getArtifactDigestsJson(), serialize(digests))
           || !Objects.equals(artifact.getPublishedObjectProofsJson(), serialize(proofs))
           || !Objects.equals(artifact.getExportedManifestAssetKeysJson(), serialize(keys))
@@ -284,7 +288,8 @@ public final class VersionAssetExportCandidateServiceImpl
   }
 
   private CandidateEvidence candidateEvidence(
-      ExportedAssetManifest manifest, ExportSnapshot snapshot) {
+      FrozenAssetExportCandidate candidate, ExportSnapshot snapshot) {
+    ExportedAssetManifest manifest = candidate.manifest();
     if (manifest.manifestSchemaVersion() != 1
         || manifest.manifestHash() == null
         || !manifest.manifestHash().matches("sha256:[0-9a-f]{64}")
@@ -308,7 +313,8 @@ public final class VersionAssetExportCandidateServiceImpl
           || !isCanonicalText(source.usageKey())
           || MANIFEST_USAGE_KEY.equals(source.usageKey())
           || source.assetId() <= 0
-          || source.bytes() == null
+          || source.byteSize() < 0
+          || source.byteSize() > MAX_SOURCE_ASSET_BYTES
           || source.contentType() == null
           || source.contentType().isBlank()
           || !source.contentType().equals(source.contentType().trim())
@@ -317,7 +323,6 @@ public final class VersionAssetExportCandidateServiceImpl
           || !isCanonicalText(source.contentType())
           || source.contentDigest() == null
           || !source.contentDigest().matches("sha256:[0-9a-f]{64}")
-          || !source.contentDigest().equals(digest(source.bytes()))
           || !usageKeys.add(source.usageKey())
           || !assetIds.add(source.assetId())
           || !Objects.equals(digest.usageKey(), source.usageKey())
@@ -342,7 +347,7 @@ public final class VersionAssetExportCandidateServiceImpl
         proofsByKey.values().stream()
             .sorted(Comparator.comparing(ObjectProof::immutableObjectKey))
             .toList();
-    return new CandidateEvidence(manifest, objectProofs);
+    return new CandidateEvidence(candidate, objectProofs);
   }
 
   private void putProof(
@@ -403,7 +408,8 @@ public final class VersionAssetExportCandidateServiceImpl
     return artifact.getManifestSchemaVersion() != null
         || artifact.getArtifactDigestsJson() != null
         || artifact.getPublishedObjectProofsJson() != null
-        || artifact.getCandidateSnapshotVersionId() != null;
+        || artifact.getCandidateSnapshotVersionId() != null
+        || artifact.getCandidatePublicBaseUrl() != null;
   }
 
   private boolean isEmptyKeysJson(String json) {
@@ -418,12 +424,13 @@ public final class VersionAssetExportCandidateServiceImpl
     }
   }
 
-  private static boolean sameCandidate(ExportedAssetManifest left, ExportedAssetManifest right) {
+  private static boolean sameCandidate(
+      FrozenAssetExportCandidate left, FrozenAssetExportCandidate right) {
     return Objects.equals(left, right);
   }
 
   private static boolean sameEvidence(CandidateEvidence left, CandidateEvidence right) {
-    return sameCandidate(left.manifest(), right.manifest())
+    return sameCandidate(left.candidate(), right.candidate())
         && Objects.equals(left.objectProofs(), right.objectProofs());
   }
 
@@ -440,15 +447,6 @@ public final class VersionAssetExportCandidateServiceImpl
       throw new IllegalStateException(CANDIDATE_CONFLICT);
     }
     return json;
-  }
-
-  private static String digest(byte[] bytes) {
-    try {
-      return "sha256:"
-          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-    } catch (NoSuchAlgorithmException exception) {
-      throw new IllegalStateException("SHA-256 is unavailable", exception);
-    }
   }
 
   private static boolean isCanonicalUuid(UUID value) {
@@ -476,7 +474,8 @@ public final class VersionAssetExportCandidateServiceImpl
   /** Exact immutable key/content-digest proof; candidate rows use camel-case record JSON fields. */
   private record ObjectProof(String immutableObjectKey, String contentDigest) {}
 
-  private record CandidateEvidence(ExportedAssetManifest manifest, List<ObjectProof> objectProofs) {
+  private record CandidateEvidence(
+      FrozenAssetExportCandidate candidate, List<ObjectProof> objectProofs) {
     private CandidateEvidence {
       objectProofs = List.copyOf(objectProofs);
     }
