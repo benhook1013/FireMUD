@@ -194,8 +194,7 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcServiceTest {
         .setSchemaVersion(1)
         .setReadRequestId("d1f41bfb-265a-4f3b-8b2a-124cba20ce43")
         .setTargetNamespace(NAMESPACE)
-        .setOriginalPostAuthorizationTuple(
-            ByteString.copyFrom(originalTuple().canonicalBytes()))
+        .setOriginalPostAuthorizationTuple(ByteString.copyFrom(originalTuple().canonicalBytes()))
         .build();
   }
 
@@ -251,8 +250,7 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcServiceTest {
     return "sha256:"
         + HexFormat.of()
             .formatHex(
-                MessageDigest.getInstance("SHA-256")
-                    .digest(json.getBytes(StandardCharsets.UTF_8)));
+                MessageDigest.getInstance("SHA-256").digest(json.getBytes(StandardCharsets.UTF_8)));
   }
 
   private void invoke(

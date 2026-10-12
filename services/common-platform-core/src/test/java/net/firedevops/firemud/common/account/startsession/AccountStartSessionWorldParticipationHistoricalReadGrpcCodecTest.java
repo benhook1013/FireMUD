@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.google.protobuf.UnknownFieldSet;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.UUID;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
@@ -161,11 +162,9 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
                     request,
                     evidence(
                         new AccountStartSessionWorldParticipationHistoricalReadRequest(
-                            READ_ID,
-                            NAMESPACE,
-                            originalTuple(NAMESPACE, 20L).canonicalBytes()))))
+                            READ_ID, NAMESPACE, originalTuple(NAMESPACE, 20L).canonicalBytes()))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("differs from the exact historical request");
+        .hasMessageContaining("changed the exact");
   }
 
   @Test

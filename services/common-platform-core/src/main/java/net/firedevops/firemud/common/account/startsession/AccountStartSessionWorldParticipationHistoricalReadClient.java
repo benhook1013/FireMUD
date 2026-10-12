@@ -18,8 +18,8 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientIntercepto
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Explicit file-backed mTLS client for Account's unregistered historical World participation
- * lookup by the complete unchanged original StartSession tuple.
+ * Explicit file-backed mTLS client for Account's unregistered historical World participation lookup
+ * by the complete unchanged original StartSession tuple.
  */
 public final class AccountStartSessionWorldParticipationHistoricalReadClient
     extends AbstractReloadingBlockingGrpcClient<

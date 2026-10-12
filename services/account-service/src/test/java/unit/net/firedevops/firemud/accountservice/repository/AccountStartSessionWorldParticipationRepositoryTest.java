@@ -29,10 +29,9 @@ import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorld
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCapture;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
-import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
-import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
@@ -420,7 +419,8 @@ class AccountStartSessionWorldParticipationRepositoryTest {
             "1",
             bytes("changed retained source evidence"));
 
-    for (List<SourceEvidence> children : List.of(List.<SourceEvidence>of(), List.of(changedSource))) {
+    for (List<SourceEvidence> children :
+        List.of(List.<SourceEvidence>of(), List.of(changedSource))) {
       List<String> reads = new java.util.ArrayList<>();
       AtomicReference<Object[]> writes = new AtomicReference<>();
       AccountStartSessionWorldParticipationRepository repository =
@@ -768,11 +768,6 @@ class AccountStartSessionWorldParticipationRepositoryTest {
     row.setValue(CAPTURE_CANONICAL_BYTES_FIELD, capture.canonicalBytes());
     row.setValue(CAPTURE_CREATED_AT_FIELD, capturedAt);
     return row;
-  }
-
-  private static org.jooq.Result<org.jooq.Record3<UUID, String, byte[]>> sourceRows(
-      UUID participationId, SourceEvidence source) {
-    return sourceRows(participationId, List.of(source));
   }
 
   private static org.jooq.Result<org.jooq.Record3<UUID, String, byte[]>> sourceRows(

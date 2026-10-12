@@ -60,8 +60,7 @@ public final class AccountStartSessionWorldParticipationHistoricalReadService {
             ownerTransaction.execute(
                 ignored ->
                     repository
-                        .findHistoricalForOriginalTuple(
-                            request.originalPostAuthorizationTuple())
+                        .findHistoricalForOriginalTuple(request.originalPostAuthorizationTuple())
                         .orElseThrow(
                             () ->
                                 Status.FAILED_PRECONDITION
@@ -73,8 +72,10 @@ public final class AccountStartSessionWorldParticipationHistoricalReadService {
     if (!java.security.MessageDigest.isEqual(
             participation.originalPostAuthorizationTuple(),
             request.originalPostAuthorizationTuple())
-        || !request.decodedOriginalTuple().controlPlaneRequestId().equals(
-            participation.controlPlaneRequestId())
+        || !request
+            .decodedOriginalTuple()
+            .controlPlaneRequestId()
+            .equals(participation.controlPlaneRequestId())
         || !workloadNamespace.equals(participation.targetNamespace())) {
       throw Status.FAILED_PRECONDITION
           .withDescription(

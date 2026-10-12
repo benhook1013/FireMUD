@@ -12,9 +12,9 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
 import io.grpc.Status;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -25,7 +25,6 @@ import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorld
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.StoredParticipation;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.StoredSettlement;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;

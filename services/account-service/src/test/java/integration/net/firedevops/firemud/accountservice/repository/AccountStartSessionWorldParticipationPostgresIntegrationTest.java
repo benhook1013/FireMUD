@@ -26,8 +26,8 @@ import net.firedevops.firemud.accountservice.service.session.AccountStartSession
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadRequest;
 import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
-import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Request;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
@@ -49,7 +49,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** PostgreSQL proof for Account World participation guards, storage, and original-tuple recovery. */
+/**
+ * PostgreSQL proof for Account World participation guards, storage, and original-tuple recovery.
+ */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountStartSessionWorldParticipationPostgresIntegrationTest {
   private static final String NAMESPACE = "control-ui-owner-proof";
@@ -112,8 +114,7 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
             redis.getMappedPort(6379),
             temporary)) {
       var proof =
-          new AccountOriginalStartSessionAuthorizationProofFixture(
-              controlUi, temporary, NAMESPACE);
+          new AccountOriginalStartSessionAuthorizationProofFixture(controlUi, temporary, NAMESPACE);
       String requestId = "tuple-recovery-" + UUID.randomUUID();
       UUID reservationOwnerId = UUID.randomUUID();
       UUID gameSessionAttemptId = UUID.randomUUID();
@@ -128,8 +129,7 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
               new StartSessionOperatorAction.Scope(controlUi.tenantId(), NAMESPACE),
               new StartSessionOperatorAction.Target(GAME_TEMPLATE_ID, proof.creatorAccountId()),
               StartSessionOperatorAction.ExpectedVersion.ABSENT,
-              new StartSessionOperatorAction.Mutation(
-                  StartSessionOperatorAction.ClientIp.absent()),
+              new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
               "test-only lost World participation response recovery");
       var original =
           proof.issueAndRedeemOriginal(
@@ -149,7 +149,8 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
               "tuple-recovery-world",
               GAME_TEMPLATE_ID);
       String preparationDigest = digest(preparationInput);
-      Instant leaseExpiresAt = databaseNow(proof.sourceDsl()).plusSeconds(4L);
+      Instant leaseExpiresAt =
+          Instant.ofEpochMilli(databaseNow(proof.sourceDsl()).toEpochMilli()).plusSeconds(4L);
       // The Game Session point-in-time observation is stipulated; Account's original issue,
       // redemption, source capture, acquisition gates, and PostgreSQL retention are real.
       var acquisition =
@@ -176,8 +177,7 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
                       preparationDigest)));
 
       var sql =
-          physicalSql(
-              postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), proof);
+          physicalSql(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(), proof);
       awaitDatabaseExpiry(sql.dsl(), leaseExpiresAt);
       var committedRow =
           Objects.requireNonNull(
@@ -189,8 +189,7 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
                       requestId),
               "Committed participation must remain physically retained");
       UUID committedParticipationId = committedRow.get("participation_id", UUID.class);
-      long committedParticipationFence =
-          committedRow.get("participation_fence", Long.class);
+      long committedParticipationFence = committedRow.get("participation_fence", Long.class);
       var transaction = new TransactionTemplate(sql.transactionManager());
       transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
       var attemptRepository =
@@ -214,8 +213,7 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
                   transaction.execute(
                       status ->
                           attemptRepository
-                              .findCurrentExact(
-                                  expiredParticipation, expiredAttemptRequest)
+                              .findCurrentExact(expiredParticipation, expiredAttemptRequest)
                               .orElseThrow()))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("unavailable");
@@ -342,6 +340,7 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
                     dsl.fetchOne(
                         "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal "
                             + "AND tgname = 'account_start_session_world_participation_complete' "
+                            + "AND tgrelid = 'account_start_session_world_participations'::regclass "
                             + "AND tgconstraint <> 0 AND tgdeferrable AND tginitdeferred"),
                     "deferred participation completion trigger query must return a row")
                 .get(0, Long.class))
@@ -349,7 +348,11 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
     assertThat(
             Objects.requireNonNull(
                     dsl.fetchOne(
-                        "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgname IN ("
+                        "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal "
+                            + "AND tgrelid IN ('account_start_session_world_participations'::regclass, "
+                            + "'account_start_session_world_participation_sources'::regclass, "
+                            + "'account_start_session_world_participation_settlements'::regclass) "
+                            + "AND tgname IN ("
                             + "'account_start_session_world_participation_validate', "
                             + "'account_start_session_world_participation_immutable', "
                             + "'account_start_session_world_participation_no_truncate', "
@@ -447,8 +450,9 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
       AccountOriginalStartSessionAuthorizationProofFixture proof) {
     String schema =
         Objects.requireNonNull(
-            proof.sourceDsl().fetchValue("SELECT current_schema()", String.class),
-            "Account test schema must be available");
+                proof.sourceDsl().fetchOne("SELECT current_schema() AS schema_name"),
+                "Account test schema must be available")
+            .get("schema_name", String.class);
     DriverManagerDataSource source = new DriverManagerDataSource(jdbcUrl, username, password);
     source.setSchema(schema);
     return new PhysicalSql(
@@ -456,13 +460,13 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES));
   }
 
-  private record PhysicalSql(
-      DataSourceTransactionManager transactionManager, DSLContext dsl) {}
+  private record PhysicalSql(DataSourceTransactionManager transactionManager, DSLContext dsl) {}
 
   private static Instant databaseNow(DSLContext dsl) {
     return Objects.requireNonNull(
-            dsl.fetchValue("SELECT clock_timestamp()", OffsetDateTime.class),
+            dsl.fetchOne("SELECT clock_timestamp() AS observed_at"),
             "PostgreSQL clock must return the current instant")
+        .get("observed_at", OffsetDateTime.class)
         .toInstant();
   }
 
@@ -491,15 +495,16 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
 
   private static String changedFingerprint(String fingerprint) {
     char finalCharacter = fingerprint.charAt(fingerprint.length() - 1);
-    return fingerprint.substring(0, fingerprint.length() - 1)
-        + (finalCharacter == '0' ? '1' : '0');
+    return fingerprint.substring(0, fingerprint.length() - 1) + (finalCharacter == '0' ? '1' : '0');
   }
 
   private static String digest(String value) {
     try {
       return "sha256:"
           + java.util.HexFormat.of()
-              .formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+              .formatHex(
+                  MessageDigest.getInstance("SHA-256")
+                      .digest(value.getBytes(StandardCharsets.UTF_8)));
     } catch (NoSuchAlgorithmException impossible) {
       throw new IllegalStateException("SHA-256 is unavailable", impossible);
     }

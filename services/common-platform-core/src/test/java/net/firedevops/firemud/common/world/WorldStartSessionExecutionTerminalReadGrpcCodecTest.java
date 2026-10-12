@@ -4,11 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.UnknownFieldSet;
-import java.io.IOException;
-import java.util.List;
-import java.util.Map;
+import java.time.Instant;
 import java.util.UUID;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;

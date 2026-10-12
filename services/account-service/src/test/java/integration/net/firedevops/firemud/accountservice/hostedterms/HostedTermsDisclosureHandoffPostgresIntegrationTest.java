@@ -272,8 +272,7 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
   }
 
   @Test
-  void exactAuthorizedReadbackSurvivesLaterPendingParticipationOnNonTermsSource()
-      throws Exception {
+  void exactAuthorizedReadbackSurvivesLaterPendingParticipationOnNonTermsSource() throws Exception {
     // The shared fixture writes genuine Account rows while its upstream claim and peer evidence
     // remain test-only; this does not establish a production World authority path.
     try (var controlUi =
@@ -285,8 +284,7 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
             redis.getMappedPort(6379),
             temporary)) {
       var proof =
-          new AccountOriginalStartSessionAuthorizationProofFixture(
-              controlUi, temporary, NAMESPACE);
+          new AccountOriginalStartSessionAuthorizationProofFixture(controlUi, temporary, NAMESPACE);
       Database database = database(proof.sourceDsl());
       UUID reservationOwner = UUID.randomUUID();
       long reservationFence = 31L;
@@ -301,8 +299,7 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
               new StartSessionOperatorAction.Scope(controlUi.tenantId(), NAMESPACE),
               new StartSessionOperatorAction.Target(42L, proof.creatorAccountId()),
               StartSessionOperatorAction.ExpectedVersion.ABSENT,
-              new StartSessionOperatorAction.Mutation(
-                  StartSessionOperatorAction.ClientIp.absent()),
+              new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
               "test-only exact authorized-readback regression");
       var original =
           proof.issueAndRedeemOriginal(
@@ -326,7 +323,8 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
 
       byte[] snapshotBytes =
           Objects.requireNonNull(
-                  proof.sourceDsl()
+                  proof
+                      .sourceDsl()
                       .fetchOne(
                           "SELECT canonical_snapshot_bytes FROM account_start_session_authority_captures "
                               + "WHERE control_plane_request_id = ?",
@@ -338,11 +336,14 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
               .build()
               .readValue(snapshotBytes, Map.class);
       SourceEvidence source =
-          ((List<?>) captureSnapshot.get("sourceVector")).stream()
-              .map(value -> SourceEvidence.fromStored(Base64.getDecoder().decode((String) value)))
-              .filter(value -> value.kind() != SourceKind.HOSTED_TERMS)
-              .findFirst()
-              .orElseThrow(() -> new IllegalStateException("Expected a non-terms source"));
+          ((List<?>) captureSnapshot.get("sourceVector"))
+              .stream()
+                  .map(
+                      value ->
+                          SourceEvidence.fromStored(Base64.getDecoder().decode((String) value)))
+                  .filter(value -> value.kind() != SourceKind.HOSTED_TERMS)
+                  .findFirst()
+                  .orElseThrow(() -> new IllegalStateException("Expected a non-terms source"));
       var journal =
           new HostedTermsDisclosureHandoffRepository(
               database.dsl(), new DraftAuthorizationFenceRepository(database.dsl()));
@@ -359,7 +360,8 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
               request ->
                   new Result(
                       request,
-                      Instant.now().plus(Duration.ofMinutes(1)),
+                      Instant.ofEpochMilli(
+                          Instant.now().plus(Duration.ofMinutes(1)).toEpochMilli()),
                       StartSessionAccountRedemptionProjection.fromOriginalTuple(
                           request.originalTuple())));
       var acquisitionRequest =
@@ -860,10 +862,7 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
     String jdbcUrl = postgres.getJdbcUrl();
     DriverManagerDataSource source =
         new DriverManagerDataSource(
-            jdbcUrl
-                + (jdbcUrl.contains("?") ? "&" : "?")
-                + "currentSchema="
-                + schema,
+            jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schema,
             postgres.getUsername(),
             postgres.getPassword());
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(source);
