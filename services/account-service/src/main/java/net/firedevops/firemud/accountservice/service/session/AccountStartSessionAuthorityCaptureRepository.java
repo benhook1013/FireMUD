@@ -20,6 +20,9 @@ import net.firedevops.firemud.common.security.SessionContext;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Account-local immutable capture of the complete current ControlUI source for StartSession.
@@ -39,6 +42,11 @@ public final class AccountStartSessionAuthorityCaptureRepository {
   private static final Pattern LOGGING_WORKLOAD =
       Pattern.compile(
           "^spiffe://firemud/ns/([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)/sa/logging-admin-service$");
+  private static final JsonMapper STRICT_JSON_MAPPER =
+      JsonMapper.builder()
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
 
   private final DSLContext dsl;
 
@@ -514,11 +522,7 @@ public final class AccountStartSessionAuthorityCaptureRepository {
   private static Map<?, ?> parseObject(byte[] bytes) {
     try {
       Object value =
-          tools.jackson.databind.json.JsonMapper.builder()
-              .enable(tools.jackson.core.StreamReadFeature.STRICT_DUPLICATE_DETECTION)
-              .enable(tools.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
-              .build()
-              .readValue(new String(bytes, StandardCharsets.UTF_8), Object.class);
+          STRICT_JSON_MAPPER.readValue(new String(bytes, StandardCharsets.UTF_8), Object.class);
       if (value instanceof Map<?, ?> map) return map;
       throw unavailable();
     } catch (RuntimeException malformed) {
