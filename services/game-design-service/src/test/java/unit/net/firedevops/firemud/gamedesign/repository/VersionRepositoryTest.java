@@ -22,6 +22,11 @@ class VersionRepositoryTest {
           "CREATE TABLE \"version\" ("
               + "\"id\" BIGINT PRIMARY KEY, "
               + "\"tenant_id\" VARCHAR(36) NOT NULL, "
+              + "\"canonical_version_id\" UUID, "
+              + "\"canonical_tenant_id\" UUID, "
+              + "\"identity_source_game_row_id\" BIGINT, "
+              + "\"identity_source_game_tenant_key\" VARCHAR(36), "
+              + "\"identity_source_provenance_kind\" VARCHAR(32), "
               + "\"version_number\" INT NOT NULL, "
               + "\"version_state\" VARCHAR(32) NOT NULL, "
               + "\"version_state_epoch\" BIGINT NOT NULL, "
@@ -58,6 +63,15 @@ class VersionRepositoryTest {
               VersionLifecycleState.RETIRED,
               VersionLifecycleState.ACTIVE,
               VersionLifecycleState.PUBLISHED);
+      assertThat(candidates)
+          .allSatisfy(
+              candidate -> {
+                assertThat(candidate.getCanonicalVersionId()).isNull();
+                assertThat(candidate.getCanonicalTenantId()).isNull();
+                assertThat(candidate.getIdentitySourceGameRowId()).isNull();
+                assertThat(candidate.getIdentitySourceGameTenantKey()).isNull();
+                assertThat(candidate.getIdentitySourceProvenanceKind()).isNull();
+              });
     }
   }
 

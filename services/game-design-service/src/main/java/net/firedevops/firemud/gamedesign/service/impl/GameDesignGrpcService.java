@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
+import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
 import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
@@ -709,42 +710,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       TemporalVersionPublishWorkflowMetadataResolver.WorkflowMetadata workflowMetadata =
           publishWorkflowMetadataResolver.resolve(bundle.publishWorkflowId());
       builder.setBundle(
-          net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
-              .setId(bundle.id())
-              .setVersionId(bundle.versionId())
-              .setVersionNumber(bundle.versionNumber())
-              .setAttestationSchemaVersion(bundle.attestationSchemaVersion())
-              .setPublishWorkflowId(bundle.publishWorkflowId())
+          GameDesignLaunchReadProjectionMapper.toProto(bundle).toBuilder()
               .setWorkflowRunId(workflowMetadata.workflowRunId())
               .setWorkflowStatus(workflowMetadata.workflowStatus())
               .setWorkflowFamily(workflowMetadata.workflowFamily())
-              .setManifestHash(bundle.manifestHash())
-              .addAllRequiredManifestAssetKeys(bundle.requiredManifestAssetKeys())
-              .addAllCommandDefinitions(bundle.commandDefinitions())
-              .addAllParticipantDigests(
-                  bundle.participantDigests().stream()
-                      .map(
-                          digest ->
-                              net.firedevops.firemud.gamedesign.v1.ParticipantDigest.newBuilder()
-                                  .setParticipantKey(digest.participantKey())
-                                  .setScopeValue(digest.scopeValue())
-                                  .setAppliedCommitId(
-                                      digest.appliedCommitId() == null
-                                          ? ""
-                                          : digest.appliedCommitId())
-                                  .setContentDigest(
-                                      digest.contentDigest() == null ? "" : digest.contentDigest())
-                                  .setDigestSchemaVersion(
-                                      digest.digestSchemaVersion() == null
-                                          ? 0
-                                          : digest.digestSchemaVersion())
-                                  .build())
-                      .toList())
-              .setGenerationConfigRevision(bundle.generationConfigRevision())
-              .setIsScriptOnly(bundle.scriptOnly())
-              .setScriptPatchVersion(
-                  bundle.scriptPatchVersion() == null ? "" : bundle.scriptPatchVersion())
-              .setPublishedAt(bundle.publishedAt().toString())
               .build());
     } catch (AdminAuthorizationException ex) {
       builder.setError(
@@ -825,7 +794,11 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               request.getExpectedVersionStateEpoch(),
               fromProtoVersionState(request.getNewState()),
               request.getReason());
-      builder.setVersionState(toProtoVersionState(state)).setUpdated(true);
+      builder.setVersionState(toProtoVersionState(state)).setUpdated(false);
+    } catch (MutationOwnerProofUnavailableException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "CompareAndSetVersionState", ex.errorCode(), ex.getMessage()));
     } catch (AdminAuthorizationException ex) {
       builder.setError(
           GrpcAppErrors.error(
@@ -1027,13 +1000,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   private net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot toProtoVersionState(
       net.firedevops.firemud.gamedesign.dto.VersionStateDto state) {
-    return net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot.newBuilder()
-        .setTenantId(state.tenantId())
-        .setVersionId(state.versionId())
-        .setVersionState(toProtoVersionLifecycleState(state.versionState()))
-        .setVersionStateEpoch(state.versionStateEpoch())
-        .setUpdatedAt(state.updatedAt().toString())
-        .build();
+    return GameDesignLaunchReadProjectionMapper.toProto(state);
   }
 
   private PublishedScriptPatchVersion toProtoPublishedScriptPatch(
@@ -1088,19 +1055,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   private VersionLifecycleState toProtoVersionLifecycleState(
       net.firedevops.firemud.gamedesign.model.VersionLifecycleState state) {
-    return switch (state) {
-      case DRAFT -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT;
-      case PUBLISHED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED;
-      case ACTIVE -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_ACTIVE;
-      case FAILED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_FAILED;
-      case RETIRED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_RETIRED;
-      case UPLOAD_REJECTED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_UPLOAD_REJECTED;
-      case SIGNATURE_VERIFIED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_SIGNATURE_VERIFIED;
-      case VALIDATION_FAILED_DESIGN ->
-          VersionLifecycleState.VERSION_LIFECYCLE_STATE_VALIDATION_FAILED_DESIGN;
-      case SUPERSEDED -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_SUPERSEDED;
-      case REVOKED_DESIGN -> VersionLifecycleState.VERSION_LIFECYCLE_STATE_REVOKED_DESIGN;
-    };
+    return GameDesignLaunchReadProjectionMapper.toProto(state);
   }
 
   private net.firedevops.firemud.gamedesign.model.VersionLifecycleState
@@ -1750,19 +1705,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
 
   private net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState toProto(
       net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto state) {
-    return net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState.newBuilder()
-        .setTenantId(state.tenantId())
-        .setVersionId(state.versionId())
-        .setExportedVersionNumber(state.exportedVersionNumber())
-        .setArtifactState(ArtifactState.valueOf("ARTIFACT_STATE_" + state.artifactState()))
-        .setStateEpoch(state.stateEpoch())
-        .setManifestHash(state.manifestHash() == null ? "" : state.manifestHash())
-        .setLastWorkflowId(state.lastWorkflowId() == null ? "" : state.lastWorkflowId())
-        .setLastErrorCode(state.lastErrorCode() == null ? "" : state.lastErrorCode())
-        .setLastErrorMessage(state.lastErrorMessage() == null ? "" : state.lastErrorMessage())
-        .setUpdatedAt(state.updatedAt().toString())
-        .addAllExportedManifestAssetKeys(state.exportedManifestAssetKeys())
-        .build();
+    return GameDesignLaunchReadProjectionMapper.toProto(state);
   }
 
   private net.firedevops.firemud.gamedesign.v1.VersionAssetPurgeWorkflowStatus toProto(

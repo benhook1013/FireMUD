@@ -106,20 +106,23 @@ public class TestDataSeeder implements ApplicationRunner {
     PublishedReleaseBundle bundle =
         publishedReleaseBundleRepository
             .findByTenantIdAndVersionId(DEMO_TENANT_ID, versionId)
-            .orElseGet(PublishedReleaseBundle::new);
-    bundle.setTenantId(DEMO_TENANT_ID);
-    bundle.setVersionId(versionId);
-    bundle.setVersionNumber(version.getVersionNumber());
-    bundle.setAttestationSchemaVersion("v1");
-    bundle.setPublishWorkflowId(DEMO_PUBLISH_WORKFLOW_ID);
-    bundle.setManifestHash(DEMO_MANIFEST_HASH);
-    bundle.setGenerationConfigRevision(DEMO_GENERATION_CONFIG_REVISION);
-    bundle.setRequiredManifestAssetKeysJson("[]");
-    bundle.setParticipantDigestsJson("[]");
-    bundle.setCommandDefinitionsJson("[]");
-    bundle.setScriptOnly(false);
-    bundle.setScriptPatchVersion(null);
-    bundle = publishedReleaseBundleRepository.save(bundle);
+            .orElse(null);
+    if (bundle == null) {
+      bundle = new PublishedReleaseBundle();
+      bundle.setTenantId(DEMO_TENANT_ID);
+      bundle.setVersionId(versionId);
+      bundle.setVersionNumber(version.getVersionNumber());
+      bundle.setAttestationSchemaVersion("v1");
+      bundle.setPublishWorkflowId(DEMO_PUBLISH_WORKFLOW_ID);
+      bundle.setManifestHash(DEMO_MANIFEST_HASH);
+      bundle.setGenerationConfigRevision(DEMO_GENERATION_CONFIG_REVISION);
+      bundle.setRequiredManifestAssetKeysJson("[]");
+      bundle.setParticipantDigestsJson("[]");
+      bundle.setCommandDefinitionsJson("[]");
+      bundle.setScriptOnly(false);
+      bundle.setScriptPatchVersion(null);
+      bundle = publishedReleaseBundleRepository.save(bundle);
+    }
 
     VersionAssetArtifact artifact =
         versionAssetArtifactRepository

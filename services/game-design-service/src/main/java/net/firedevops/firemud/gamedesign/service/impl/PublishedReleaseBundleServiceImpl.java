@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -99,21 +100,39 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
   }
 
   private PublishedReleaseBundleDto toDto(PublishedReleaseBundle entity) {
-    return new PublishedReleaseBundleDto(
-        entity.getId(),
-        entity.getTenantId(),
-        entity.getVersionId(),
-        entity.getVersionNumber(),
-        entity.getAttestationSchemaVersion(),
-        entity.getPublishWorkflowId(),
-        entity.getManifestHash(),
-        deserializeKeys(entity.getRequiredManifestAssetKeysJson()),
-        deserializeParticipantDigests(entity.getParticipantDigestsJson()),
-        deserializeCommandDefinitions(entity.getCommandDefinitionsJson()),
-        entity.getGenerationConfigRevision(),
-        entity.isScriptOnly(),
-        entity.getScriptPatchVersion(),
-        entity.getPublishedAt());
+    PublishedReleaseBundleDto dto =
+        new PublishedReleaseBundleDto(
+            entity.getId(),
+            entity.getTenantId(),
+            entity.getVersionId(),
+            entity.getVersionNumber(),
+            entity.getAttestationSchemaVersion(),
+            entity.getPublishWorkflowId(),
+            entity.getManifestHash(),
+            deserializeKeys(entity.getRequiredManifestAssetKeysJson()),
+            deserializeParticipantDigests(entity.getParticipantDigestsJson()),
+            deserializeCommandDefinitions(entity.getCommandDefinitionsJson()),
+            entity.getGenerationConfigRevision(),
+            entity.isScriptOnly(),
+            entity.getScriptPatchVersion(),
+            entity.getPublishedAt(),
+            entity.getCanonicalTenantId(),
+            entity.getCanonicalVersionId(),
+            entity.getPublishedReleaseBundleRef(),
+            entity.getManifestSchemaVersion(),
+            deserializeArtifactDigests(entity.getArtifactDigestsJson()));
+    return dto;
+  }
+
+  private List<PublishedArtifactDigest> deserializeArtifactDigests(String json) {
+    if (json == null || json.isBlank()) {
+      return null;
+    }
+    return objectMapper.readValue(
+        json,
+        objectMapper
+            .getTypeFactory()
+            .constructCollectionType(List.class, PublishedArtifactDigest.class));
   }
 
   private String serializeKeys(List<String> keys) {

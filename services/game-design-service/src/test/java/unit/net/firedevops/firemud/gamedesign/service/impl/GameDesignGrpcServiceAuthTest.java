@@ -20,6 +20,8 @@ import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import net.firedevops.firemud.gamedesign.service.VersionService;
+import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateRequest;
+import net.firedevops.firemud.gamedesign.v1.CompareAndSetVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.ListVersionsRequest;
@@ -71,6 +73,48 @@ class GameDesignGrpcServiceAuthTest {
     assertNotNull(ref.get());
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
     assertEquals("Admin role required", ref.get().getError().getMessage());
+  }
+
+  @Test
+  void versionStateMutationDeniesPlayerBeforeOwnerRead() {
+    VersionService versionService = Mockito.mock(VersionService.class);
+    GameDesignGrpcService service =
+        new GameDesignGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RevisionService.class),
+            versionService,
+            Mockito.mock(LaunchDescriptorService.class),
+            Mockito.mock(TemplateRemapSetService.class),
+            Mockito.mock(VersionAssetArtifactService.class),
+            Mockito.mock(SettingsAuthorityService.class),
+            Mockito.mock(GameAuthoredHelpTopicService.class),
+            new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty()),
+            new SimpleMeterRegistry());
+    SessionContext.setContext("1", List.of("player"), Map.of());
+    AtomicReference<CompareAndSetVersionStateResponse> response = new AtomicReference<>();
+    service.compareAndSetVersionState(
+        CompareAndSetVersionStateRequest.newBuilder()
+            .setTenantId("1")
+            .setVersionId(7L)
+            .setExpectedVersionStateEpoch(1L)
+            .setNewState(
+                net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                    .VERSION_LIFECYCLE_STATE_RETIRED)
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CompareAndSetVersionStateResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable throwable) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+    assertEquals("PERMISSION_DENIED", response.get().getError().getCode());
+    Mockito.verifyNoInteractions(versionService);
   }
 
   @Test
