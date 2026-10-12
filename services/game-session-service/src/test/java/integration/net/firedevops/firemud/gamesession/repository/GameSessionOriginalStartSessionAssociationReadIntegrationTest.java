@@ -233,14 +233,19 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Persisted original StartSession association evidence is malformed");
     assertThat(
-            fixture
-                .dsl()
-                .fetchOne(
-                    "SELECT account_redemption_projection FROM "
-                        + "game_session_start_session_operator_attempt "
-                        + "WHERE target_namespace = ? AND control_plane_request_id = ?",
-                    starting.startingInstance().launchAssociation().targetNamespace(),
-                    starting.startingInstance().launchAssociation().controlPlaneRequestId())
+            Objects.requireNonNull(
+                    fixture
+                        .dsl()
+                        .fetchOne(
+                            "SELECT account_redemption_projection FROM "
+                                + "game_session_start_session_operator_attempt "
+                                + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+                            starting.startingInstance().launchAssociation().targetNamespace(),
+                            starting
+                                .startingInstance()
+                                .launchAssociation()
+                                .controlPlaneRequestId()),
+                    "persisted historical owner attempt row is required")
                 .get("account_redemption_projection", byte[].class))
         .containsExactly(legacyProjection);
   }
