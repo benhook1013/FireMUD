@@ -317,6 +317,16 @@ require_equal(
     "ci workflow",
 )
 
+runtime_jar_step = find_step(
+    ci, "build-and-test", "Build Runtime JAR", "ci workflow"
+)
+require_equal(
+    runtime_jar_step,
+    ("run",),
+    "./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:bootJar -PfullCheck",
+    "ci workflow",
+)
+
 test_logs_step = find_step(
     ci, "build-and-test", "Upload Test Logs if Failed", "ci workflow"
 )
