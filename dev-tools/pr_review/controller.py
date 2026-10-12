@@ -5809,11 +5809,14 @@ class ReviewController:
         reason: str | None = None,
         proof: str | None = None,
         target_pr: int | None = None,
+        unassigned: bool = False,
     ) -> dict[str, Any]:
         """Disposition one target-owned route while preserving its stable identity."""
 
         if not re.fullmatch(r"[0-9a-f]{24}", route_id):
             raise ControllerError("route ID must be a 24-character stable route identity")
+        if not isinstance(unassigned, bool) or (unassigned and (decision != "retargeted" or target_pr is not None)):
+            raise ControllerError("--unassigned requires retargeted without --target-pr")
         if decision == "accepted-fixed":
             if not isinstance(proof, str) or not proof.strip() or reason is not None or target_pr is not None:
                 raise ControllerError("accepted-fixed route disposition requires only --proof")
@@ -5830,14 +5833,12 @@ class ReviewController:
                 raise ControllerError("rejected route reason must not contain control characters")
         elif decision == "retargeted":
             if (
-                isinstance(target_pr, bool)
-                or not isinstance(target_pr, int)
-                or target_pr <= 0
+                (not unassigned and (type(target_pr) is not int or target_pr <= 0))
                 or not isinstance(reason, str)
                 or not reason.strip()
                 or proof is not None
             ):
-                raise ControllerError("retargeted route disposition requires --target-pr and --reason")
+                raise ControllerError("retargeted route disposition requires --target-pr or --unassigned and --reason")
             if len(f"Retargeted: {reason}") > 500 or any(ord(character) < 0x20 for character in reason):
                 raise ControllerError("retarget reason must fit within a 500-character route observation")
         else:
@@ -5863,7 +5864,7 @@ class ReviewController:
                 selected = dataclasses.replace(
                     existing,
                     target_pr=target_pr,
-                    observations=(*existing.observations, f"Retargeted: {reason}"),
+                    observations=(*existing.observations, f"{'Unassigned' if unassigned else 'Retargeted'}: {reason}"),
                     target_history=(*existing.target_history, existing.target_pr),
                 )
             return dataclasses.replace(

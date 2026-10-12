@@ -994,6 +994,51 @@ class SqliteReviewRecords:
         }
 
     @_translate_database_errors
+    def reserve_checkpoint_publication(self, attempt_id: str, content: str) -> bool:
+        """Append an immutable pre-POST intent to existing attempt metadata.
+
+        True means this caller created it. A replay must recover public evidence
+        rather than issue another POST, including after a killed publisher.
+        Provider capture artifacts remain unchanged.
+        """
+        attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
+        if not isinstance(content, str) or len(content.encode("utf-8")) > 128 * 1024:
+            raise ReviewRecordsError("checkpoint publication intent is invalid")
+        intent = json.loads(content)
+        if not isinstance(intent, dict):
+            raise ReviewRecordsError("checkpoint publication intent must be an object")
+        with self._write_connection() as connection:
+            row = connection.execute(
+                "SELECT state, run_id, metadata_json FROM review_attempts WHERE attempt_id = ?", (attempt_id,)
+            ).fetchone()
+            if row is None or row[:2] != ("completed", attempt_id):
+                raise ReviewRecordsError("checkpoint publication requires an exact completed attempt")
+            metadata = json.loads(row[2])
+            if not isinstance(metadata, dict):
+                raise ReviewRecordsError("checkpoint attempt metadata is malformed")
+            if "checkpoint_publication_intent" in metadata:
+                if metadata["checkpoint_publication_intent"] != intent:
+                    raise ReviewRecordsError("checkpoint publication intent conflicts with prior attribution")
+                return False
+            metadata["checkpoint_publication_intent"] = intent
+            connection.execute("UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
+                               (json.dumps(metadata, sort_keys=True), attempt_id))
+            return True
+
+    @_translate_database_errors
+    def run_source(self, run_id: str) -> dict[str, Any]:
+        """Read the stored source identity for explicit CLI finalization."""
+        run_id = _safe_identifier(run_id, "run ID", maximum=100)
+        with contextlib.closing(self._connect(read_only=True)) as connection:
+            self._require_compatible(connection)
+            row = connection.execute(
+                "SELECT source_pr, channel, outcome, attributable FROM review_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        if row is None:
+            raise ReviewRecordsError("source run does not exist")
+        return {"source_pr": row[0], "channel": row[1], "outcome": row[2], "attributable": bool(row[3])}
+
+    @_translate_database_errors
     def attempt_artifacts(
         self,
         attempt_id: str,
