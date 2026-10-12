@@ -7,6 +7,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.Status;
@@ -37,6 +40,7 @@ import net.firedevops.firemud.gamesession.v1.ReadOriginalStartSessionCurrentAtte
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -203,6 +207,50 @@ class OriginalStartSessionCurrentAttemptReadGrpcServiceTest {
     assertThat(observer.response()).isNull();
     verify(repository).readCurrentOriginalAttempt(request);
     verifyNoMoreInteractions(repository);
+  }
+
+  @Test
+  void unexpectedFailureLogsOnlyExceptionClassAndKeepsInternal() {
+    Request request = request(NAMESPACE);
+    String secretMessage = "synthetic attempt storage diagnostic secret";
+    String secretReference = "opaque-reference-secret-123456789";
+    String expectedLogMessage =
+        "ReadOriginalStartSessionCurrentAttempt failed with exception class "
+            + IllegalStateException.class.getName();
+    GameSessionStartSessionOperatorAttemptRepository repository = mockRepository();
+    when(repository.readCurrentOriginalAttempt(ArgumentMatchers.any(Request.class)))
+        .thenThrow(new IllegalStateException(secretMessage + " " + secretReference));
+    var service = newService(repository, NAMESPACE);
+    Logger logger =
+        (Logger) LoggerFactory.getLogger(OriginalStartSessionCurrentAttemptReadGrpcService.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+
+    try {
+      var observer =
+          invokeAs(
+              service,
+              OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toRequest(request),
+              "account-service");
+
+      assertThat(observer.status()).isEqualTo(Status.Code.INTERNAL);
+      assertThat(observer.error()).isInstanceOf(StatusRuntimeException.class);
+      assertThat(observer.error().getMessage())
+          .contains("Current original StartSession attempt read failed")
+          .doesNotContain(secretMessage, secretReference);
+      assertThat(observer.error()).hasNoCause();
+      assertThat(appender.list).hasSize(1);
+      ILoggingEvent event = appender.list.get(0);
+      assertThat(event.getFormattedMessage())
+          .isEqualTo(expectedLogMessage)
+          .doesNotContain(secretMessage, secretReference);
+      assertThat(event.getArgumentArray()).containsExactly(IllegalStateException.class.getName());
+      assertThat(event.getThrowableProxy()).isNull();
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
   }
 
   private static OriginalStartSessionCurrentAttemptReadGrpcService newService(
