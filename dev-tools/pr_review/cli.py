@@ -44,6 +44,13 @@ class _CliArgumentParser(argparse.ArgumentParser):
         parsed = super().parse_args(args, namespace)
         if (
             getattr(parsed, "command", None) == "decide"
+            and getattr(parsed, "decide_command", None) == "route"
+            and getattr(parsed, "unassigned", False)
+            and getattr(parsed, "action", None) != "retargeted"
+        ):
+            self.error("--unassigned is only valid for route retargeted")
+        if (
+            getattr(parsed, "command", None) == "decide"
             and getattr(parsed, "decide_command", None) == "allocation"
             and getattr(parsed, "exact_additional_completed", None) is not None
             and (
@@ -353,6 +360,7 @@ def _parser() -> argparse.ArgumentParser:
     source_finalize = source_subcommands.add_parser("finalize")
     source_finalize.add_argument("--run-id", required=True)
     source_finalize.add_argument("--finalized-at")
+    source_finalize.add_argument("--repo", help="provider publication repository; defaults to the current repository")
     records_database(source_finalize)
     source_resolve = source_subcommands.add_parser(
         "resolve", help="record an accepted-fix proof for one exact accepted source finding"
@@ -647,7 +655,9 @@ def _parser() -> argparse.ArgumentParser:
     route.add_argument("--review")
     route.add_argument("--finding")
     route.add_argument("--observation")
-    route.add_argument("--target-pr", type=_positive_int)
+    route_target = route.add_mutually_exclusive_group()
+    route_target.add_argument("--target-pr", type=_positive_int)
+    route_target.add_argument("--unassigned", action="store_true")
     route.add_argument("--reason")
     route.add_argument("--proof")
     route.add_argument("--json", action="store_true", dest="as_json")
@@ -1306,6 +1316,13 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
     if args.records_command == "source":
         if args.source_command == "finalize":
             result = store.finalize_run(args.run_id, finalized_at=args.finalized_at)
+            source = store.run_source(args.run_id)
+            if source["channel"] in {"hosted", "cli"} and source["outcome"] == "completed" and source["attributable"]:
+                from .checkpoint_publication import publish_checkpoint
+
+                result["publication"] = publish_checkpoint(
+                    store, repo=github.infer_repo(args.repo), source_pr=source["source_pr"], run_id=args.run_id
+                )
         elif args.source_command == "decide":
             result = store.record_source_decision(
                 args.run_id,
@@ -2010,6 +2027,8 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
             controller.store.update(record)
             return {"status": "recorded", "disposition": disposition.to_dict()}, 0
         if args.decide_command == "route":
+            if args.unassigned and args.action != "retargeted":
+                raise CliError("--unassigned is only valid for route retargeted")
             if args.action == "open":
                 required = (args.source_pr, args.channel, args.review, args.finding, args.observation)
                 if any(value is None for value in required) or args.route_id or args.reason or args.proof:
@@ -2030,6 +2049,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 reason=args.reason,
                 proof=args.proof,
                 target_pr=args.target_pr,
+                unassigned=args.unassigned,
             ), 0
         if args.decide_command == "trigger-recover-prepost":
             if not args.confirmed_not_posted:
