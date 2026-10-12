@@ -40,6 +40,7 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingIntent;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationPendingIdentity;
+import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationAuthorityProjection;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisClient;
@@ -90,6 +91,192 @@ class AccountGameplayDelegationRedisClientTest {
         assertThat(source).isNotNull();
         assertThat(sha256(source.readAllBytes())).isEqualTo(descriptor.sha256());
       }
+    }
+  }
+
+  @Test
+  void selectedEventPageUsesOnePinnedConnectionAndOneDurabilityAckFor128OrderedCasCalls()
+      throws Exception {
+    UUID tenant =
+        net.firedevops.firemud.accountservice.service.session
+            .AccountSelectedGameplayAuthorityProjectionTest.TENANT;
+    List<byte[]> candidates = membershipPage(tenant, 1, 128);
+    StatefulRedisConnection<byte[], byte[]> connection = connection();
+    RedisCommands<byte[], byte[]> commands = connection.sync();
+    Map<String, byte[]> stored = new java.util.HashMap<>();
+    AtomicInteger openedConnections = new AtomicInteger();
+    when(commands.scriptLoad(any(byte[].class)))
+        .thenAnswer(invocation -> sha1(invocation.getArgument(0)));
+    when(commands.<Long>evalsha(
+            anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
+        .thenAnswer(
+            invocation -> {
+              byte[][] keys = invocation.getArgument(2);
+              Object[] rawArguments = invocation.getRawArguments();
+              if (rawArguments.length != 4
+                  || !(rawArguments[3] instanceof byte[][] arguments)
+                  || arguments.length != 3) return -1L;
+              String key = new String(keys[0], StandardCharsets.UTF_8);
+              String mode = new String(arguments[0], StandardCharsets.US_ASCII);
+              byte[] current = stored.get(key);
+              if (current != null && Arrays.equals(current, arguments[2])) return 0L;
+              if (("ABSENT".equals(mode) && current != null)
+                  || ("PRESENT".equals(mode) && !Arrays.equals(current, arguments[1]))) {
+                return -1L;
+              }
+              stored.put(key, arguments[2].clone());
+              return 1L;
+            });
+    doReturn(List.of(1L, 1L))
+        .when(commands)
+        .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
+    when(commands.get(any(byte[].class)))
+        .thenAnswer(
+            invocation ->
+                stored.get(new String(invocation.getArgument(0), StandardCharsets.UTF_8)));
+    AccountGameplayDelegationRedisClient client =
+        client(
+            () -> {
+              openedConnections.incrementAndGet();
+              return connection;
+            });
+
+    assertThat(
+            client.publishSelectedAuthorityEventPage(ACCOUNT_ID, tenant, false, null, candidates))
+        .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+
+    ArgumentCaptor<byte[][]> args = ArgumentCaptor.forClass(byte[][].class);
+    verify(commands, times(128))
+        .<Long>evalsha(
+            anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), args.capture());
+    assertThat(openedConnections.get()).isEqualTo(1);
+    verify(commands).aclWhoami();
+    verify(commands, times(1)).scriptLoad(any(byte[].class));
+    verify(commands, times(1))
+        .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
+    verify(commands)
+        .get(
+            argThat(
+                key ->
+                    Arrays.equals(
+                        key,
+                        ascii("session:auth:generation:membership:" + ACCOUNT_ID + ":" + tenant))));
+    verify(connection).close();
+    assertThat(args.getAllValues()).hasSize(128);
+    for (int index = 0; index < candidates.size(); index++) {
+      byte[][] actual = args.getAllValues().get(index);
+      assertThat(actual[0]).containsExactly(ascii(index == 0 ? "ABSENT" : "PRESENT"));
+      assertThat(actual[1]).containsExactly(index == 0 ? new byte[0] : candidates.get(index - 1));
+      assertThat(actual[2]).containsExactly(candidates.get(index));
+    }
+    assertThat(stored.get("session:auth:generation:membership:" + ACCOUNT_ID + ":" + tenant))
+        .containsExactly(candidates.getLast());
+  }
+
+  @Test
+  void selectedEventPageDeniesPartialCasAndRecoversFromActualContiguousRedisHead()
+      throws Exception {
+    UUID tenant =
+        net.firedevops.firemud.accountservice.service.session
+            .AccountSelectedGameplayAuthorityProjectionTest.TENANT;
+    List<byte[]> candidates = membershipPage(tenant, 1, 4);
+    String key = "session:auth:generation:membership:" + ACCOUNT_ID + ":" + tenant;
+    Map<String, byte[]> stored = new java.util.HashMap<>();
+    StatefulRedisConnection<byte[], byte[]> failedConnection = connection();
+    RedisCommands<byte[], byte[]> failedCommands = failedConnection.sync();
+    AtomicInteger attempts = new AtomicInteger();
+    when(failedCommands.scriptLoad(any(byte[].class)))
+        .thenAnswer(invocation -> sha1(invocation.getArgument(0)));
+    when(failedCommands.<Long>evalsha(
+            anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
+        .thenAnswer(
+            invocation -> {
+              int attempt = attempts.incrementAndGet();
+              if (attempt == 3) return -1L;
+              Object[] rawArguments = invocation.getRawArguments();
+              if (rawArguments.length != 4
+                  || !(rawArguments[3] instanceof byte[][] arguments)
+                  || arguments.length != 3) return -1L;
+              stored.put(key, arguments[2].clone());
+              return 1L;
+            });
+    assertThatThrownBy(
+            () ->
+                client(failedConnection)
+                    .publishSelectedAuthorityEventPage(ACCOUNT_ID, tenant, false, null, candidates))
+        .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+    assertThat(stored.get(key)).containsExactly(candidates.get(1));
+    verify(failedCommands, org.mockito.Mockito.never())
+        .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
+    verify(failedCommands, org.mockito.Mockito.never()).get(any(byte[].class));
+    verify(failedConnection).close();
+
+    StatefulRedisConnection<byte[], byte[]> recoveryConnection = connection();
+    RedisCommands<byte[], byte[]> recoveryCommands = recoveryConnection.sync();
+    when(recoveryCommands.scriptLoad(any(byte[].class)))
+        .thenAnswer(invocation -> sha1(invocation.getArgument(0)));
+    when(recoveryCommands.<Long>evalsha(
+            anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
+        .thenAnswer(
+            invocation -> {
+              Object[] rawArguments = invocation.getRawArguments();
+              if (rawArguments.length != 4
+                  || !(rawArguments[3] instanceof byte[][] arguments)
+                  || arguments.length != 3) return -1L;
+              stored.put(key, arguments[2].clone());
+              return 1L;
+            });
+    doReturn(List.of(1L, 1L))
+        .when(recoveryCommands)
+        .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
+    when(recoveryCommands.get(any(byte[].class)))
+        .thenAnswer(
+            invocation ->
+                stored.get(new String(invocation.getArgument(0), StandardCharsets.UTF_8)));
+
+    assertThat(
+            client(recoveryConnection)
+                .publishSelectedAuthorityEventPage(
+                    ACCOUNT_ID, tenant, false, candidates.get(1), candidates.subList(2, 4)))
+        .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+    assertThat(stored.get(key)).containsExactly(candidates.getLast());
+    verify(recoveryCommands, times(2))
+        .<Long>evalsha(
+            anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class));
+    verify(recoveryCommands, times(1))
+        .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
+    verify(recoveryConnection).close();
+  }
+
+  @Test
+  void selectedEventPageDeniesUnacknowledgedDurabilityAndIncorrectFinalReadback() throws Exception {
+    UUID tenant =
+        net.firedevops.firemud.accountservice.service.session
+            .AccountSelectedGameplayAuthorityProjectionTest.TENANT;
+    List<byte[]> candidates = membershipPage(tenant, 1, 2);
+    for (boolean badReadback : List.of(false, true)) {
+      StatefulRedisConnection<byte[], byte[]> connection = connection();
+      RedisCommands<byte[], byte[]> commands = connection.sync();
+      when(commands.scriptLoad(any(byte[].class)))
+          .thenAnswer(invocation -> sha1(invocation.getArgument(0)));
+      when(commands.<Long>evalsha(
+              anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
+          .thenReturn(1L, 1L);
+      doReturn(badReadback ? List.of(1L, 1L) : List.of(1L, 0L))
+          .when(commands)
+          .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
+      if (badReadback) when(commands.get(any(byte[].class))).thenReturn(ascii("wrong head"));
+
+      assertThatThrownBy(
+              () ->
+                  client(connection)
+                      .publishSelectedAuthorityEventPage(
+                          ACCOUNT_ID, tenant, false, null, candidates))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      verify(connection).close();
+      if (badReadback) verify(commands).get(any(byte[].class));
+      else verify(commands, org.mockito.Mockito.never()).get(any(byte[].class));
     }
   }
 
@@ -836,10 +1023,27 @@ class AccountGameplayDelegationRedisClientTest {
     return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value));
   }
 
+  private static List<byte[]> membershipPage(UUID tenant, int firstSequence, int lastSequence) {
+    List<byte[]> candidates = new java.util.ArrayList<>(lastSequence - firstSequence + 1);
+    for (int sequence = firstSequence; sequence <= lastSequence; sequence++) {
+      String sequenceText = Integer.toString(sequence);
+      candidates.add(
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.membershipBytes(
+              ACCOUNT_ID, tenant, sequenceText, Integer.toString(sequence + 1), "1"));
+    }
+    return List.copyOf(candidates);
+  }
+
   private static AccountGameplayDelegationRedisClient client(
       StatefulRedisConnection<byte[], byte[]> connection) {
+    return client(() -> connection);
+  }
+
+  private static AccountGameplayDelegationRedisClient client(
+      AccountCoordinationPinnedConnectionProvider connectionProvider) {
     return new AccountGameplayDelegationRedisClient(
-        () -> connection,
+        connectionProvider,
         RedisScriptCatalog.fromContributions(
             List.of(
                 new AccountGameplayDelegationRedisScriptContribution(),

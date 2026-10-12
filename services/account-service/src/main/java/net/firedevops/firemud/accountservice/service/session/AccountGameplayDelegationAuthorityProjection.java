@@ -422,19 +422,18 @@ public final class AccountGameplayDelegationAuthorityProjection {
         pageCursor = event.outboxSequence();
         last = event;
       }
-      for (AccountSelectedGameplayAuthorityProjection projection : projections) {
-        var outcome =
-            coordinationRedis.publishSelectedAuthorityEvent(
-                accountId,
-                tenantId,
-                tenant,
-                prior == null ? null : prior.canonicalBytes(),
-                projection.canonicalBytes());
-        exactRetry &=
-            outcome
-                == AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY;
-        prior = projection;
-      }
+      var outcome =
+          coordinationRedis.publishSelectedAuthorityEventPage(
+              accountId,
+              tenantId,
+              tenant,
+              prior == null ? null : prior.canonicalBytes(),
+              projections.stream()
+                  .map(AccountSelectedGameplayAuthorityProjection::canonicalBytes)
+                  .toList());
+      exactRetry &=
+          outcome == AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY;
+      prior = pagePrior;
       cursor = pageCursor;
     }
     if (last == null
