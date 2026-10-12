@@ -678,7 +678,6 @@ public final class AccountGameplayDelegationRedisClient {
       requireProjectionResult(accountResult);
       boolean selectedReplay = true;
       if (selected != null) {
-        if (!Long.valueOf(-1L).equals(commands.pttl(issuerKey))) throw unavailable();
         for (int index = 0; index < 2; index++) {
           var value =
               AccountSelectedGameplayAuthorityProjection.decode(
@@ -713,6 +712,7 @@ public final class AccountGameplayDelegationRedisClient {
       byte[] accountReadback = commands.get(accountKey);
       if (!Arrays.equals(issuerProjectionBytes, issuerReadback)
           || !Arrays.equals(accountProjectionBytes, accountReadback)
+          || !Long.valueOf(-1L).equals(commands.pttl(issuerKey))
           || !Long.valueOf(-1L).equals(commands.pttl(accountKey))) {
         throw unavailable();
       }
@@ -829,21 +829,18 @@ public final class AccountGameplayDelegationRedisClient {
     try {
       RedisCommands<byte[], byte[]> commands = requirePinnedCommands(connection);
       requireAccountAclIdentity(commands);
-      byte[] issuer =
-          commands.get(
-              ascii(
-                  AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
-                      + GameSessionAccountDelegationProfile.ISSUER));
-      byte[] account =
-          commands.get(
-              ascii(AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId));
-      if (!boundedProjection(issuer) || !boundedProjection(account)) throw unavailable();
-      if (!Long.valueOf(-1L)
-          .equals(
-              commands.pttl(
-                  ascii(
-                      AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX
-                          + accountId)))) {
+      byte[] issuerKey =
+          ascii(
+              AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
+                  + GameSessionAccountDelegationProfile.ISSUER);
+      byte[] accountKey =
+          ascii(AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId);
+      byte[] issuer = commands.get(issuerKey);
+      byte[] account = commands.get(accountKey);
+      if (!boundedProjection(issuer)
+          || !boundedProjection(account)
+          || !Long.valueOf(-1L).equals(commands.pttl(issuerKey))
+          || !Long.valueOf(-1L).equals(commands.pttl(accountKey))) {
         throw unavailable();
       }
       AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
@@ -851,12 +848,6 @@ public final class AccountGameplayDelegationRedisClient {
       AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
           account, "account", accountId.toString());
       if (tenantId != null) {
-        if (!Long.valueOf(-1L)
-            .equals(
-                commands.pttl(
-                    ascii(
-                        AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
-                            + GameSessionAccountDelegationProfile.ISSUER)))) throw unavailable();
         byte[] tenantKey =
             ascii(AccountSelectedGameplayAuthorityProjection.TENANT_PREFIX + tenantId);
         byte[] membershipKey =
