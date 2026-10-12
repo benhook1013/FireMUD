@@ -3,6 +3,7 @@ package unit.net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -178,6 +179,463 @@ class AccountGameplayDelegationAuthorityProjectionTest {
               AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
       org.mockito.Mockito.verify(fixture.memberships, org.mockito.Mockito.times(2))
           .findFreshMembershipForUpdate(ACCOUNT_ID, fixture.tenant);
+    }
+
+    @Test
+    void selectedPublicationRejectsMissingMembershipPrefixBeforeMembershipCas() {
+      SelectedOwnerFixture fixture = new SelectedOwnerFixture();
+      when(fixture.redis.publishAuthorityProjections(
+              eq(ACCOUNT_ID), any(byte[].class), any(byte[].class)))
+          .thenReturn(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      when(fixture.redis.readSelectedAuthorityHeads(ACCOUNT_ID, fixture.tenant))
+          .thenReturn(
+              new byte[][] {null, null}, new byte[][] {fixture.values[2], fixture.values[3]});
+      when(fixture.outbox.findEventPage(
+              "account:auth-authority:v1:membership/" + ACCOUNT_ID + "/" + fixture.tenant, 0L, 1L))
+          .thenReturn(List.of());
+
+      assertThatThrownBy(
+              () -> fixture.projection.publishSelectedCurrent(ACCOUNT_ID, fixture.tenant))
+          .isInstanceOf(
+              AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
+      org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(1))
+          .publishSelectedAuthorityEvent(
+              any(UUID.class),
+              any(UUID.class),
+              org.mockito.ArgumentMatchers.anyBoolean(),
+              org.mockito.ArgumentMatchers.nullable(byte[].class),
+              any(byte[].class));
+    }
+
+    @Test
+    void firstSelectedPublicationReplaysRetainedPrefixThroughCapturedHeadAboveOne() {
+      SelectedOwnerFixture fixture = new SelectedOwnerFixture();
+      when(fixture.redis.publishAuthorityProjections(
+              eq(ACCOUNT_ID), any(byte[].class), any(byte[].class)))
+          .thenReturn(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+
+      var eventOne =
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.member(
+              ACCOUNT_ID, fixture.tenant, "1", "2", "1");
+      var eventTwo =
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.member(
+              ACCOUNT_ID, fixture.tenant, "2", "3", "1");
+      String stream = eventOne.outboxStreamKey();
+      var rowOne =
+          new net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository
+              .Event(
+              stream,
+              eventOne.requestId(),
+              1L,
+              eventOne.eventId(),
+              eventOne.eventDigest(),
+              eventOne.canonicalJsonUtf8());
+      var rowTwo =
+          new net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository
+              .Event(
+              stream,
+              eventTwo.requestId(),
+              2L,
+              eventTwo.eventId(),
+              eventTwo.eventDigest(),
+              eventTwo.canonicalJsonUtf8());
+      when(fixture.member.getMembershipVersion()).thenReturn(3L);
+      when(fixture.outbox.readCheckpoint(stream))
+          .thenReturn(
+              Optional.of(
+                  new net.firedevops.firemud.accountservice.repository
+                      .AccountAuthorityOutboxRepository.Checkpoint(
+                      stream, 2L, eventTwo.eventId(), eventTwo.eventDigest())));
+      when(fixture.outbox.findEvent(stream, 2L)).thenReturn(Optional.of(rowTwo));
+      when(fixture.outbox.findEventPage(stream, 0L, 2L)).thenReturn(List.of(rowOne, rowTwo));
+      var tenantEvent =
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.tenant(fixture.tenant);
+      var provenance =
+          new net.firedevops.firemud.accountservice.repository
+              .AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance(
+              null,
+              net.firedevops.firemud.accountservice.repository
+                  .AccountMembershipPairAuthorityRepository.TenantProvenanceKind.FRESH_GAME_DESIGN,
+              tenantEvent.sourceEvidence().operationId(),
+              tenantEvent.sourceEvidence().evidenceDigest());
+      when(fixture.pairs.readForUpdate(ACCOUNT_ID, fixture.tenant))
+          .thenReturn(
+              Optional.of(
+                  new net.firedevops.firemud.accountservice.repository
+                      .AccountMembershipPairAuthorityRepository.PairAuthority(
+                      ACCOUNT_ID,
+                      fixture.tenant,
+                      provenance,
+                      true,
+                      3L,
+                      1L,
+                      2L,
+                      eventTwo.eventId(),
+                      eventTwo.eventDigest(),
+                      false)));
+
+      byte[] currentMembership =
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.membershipBytes(
+              ACCOUNT_ID, fixture.tenant, "2", "3", "1");
+      when(fixture.redis.readSelectedAuthorityHeads(ACCOUNT_ID, fixture.tenant))
+          .thenReturn(
+              new byte[][] {null, null}, new byte[][] {fixture.values[2], currentMembership});
+
+      fixture.projection.publishSelectedCurrent(ACCOUNT_ID, fixture.tenant);
+
+      org.mockito.ArgumentCaptor<byte[]> prior = org.mockito.ArgumentCaptor.forClass(byte[].class);
+      org.mockito.ArgumentCaptor<byte[]> candidate =
+          org.mockito.ArgumentCaptor.forClass(byte[].class);
+      org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(2))
+          .publishSelectedAuthorityEvent(
+              eq(ACCOUNT_ID), eq(fixture.tenant), eq(false), prior.capture(), candidate.capture());
+      assertThat(prior.getAllValues().get(0)).isNull();
+      assertThat(prior.getAllValues().get(1))
+          .containsExactly(
+              net.firedevops.firemud.accountservice.service.session
+                  .AccountSelectedGameplayAuthorityProjectionTest.membershipBytes(
+                  ACCOUNT_ID, fixture.tenant, "1", "2", "1"));
+      assertThat(candidate.getAllValues())
+          .containsExactly(
+              net.firedevops.firemud.accountservice.service.session
+                  .AccountSelectedGameplayAuthorityProjectionTest.membershipBytes(
+                  ACCOUNT_ID, fixture.tenant, "1", "2", "1"),
+              currentMembership);
+    }
+
+    @Test
+    void selectedPublicationRejectsInterpublicationGapInRetainedPages() {
+      SelectedOwnerFixture fixture = new SelectedOwnerFixture();
+      when(fixture.redis.publishAuthorityProjections(
+              eq(ACCOUNT_ID), any(byte[].class), any(byte[].class)))
+          .thenReturn(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      when(fixture.redis.readSelectedAuthorityHeads(ACCOUNT_ID, fixture.tenant))
+          .thenReturn(new byte[][] {null, null});
+
+      var eventOne =
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.member(
+              ACCOUNT_ID, fixture.tenant, "1", "2", "1");
+      var eventThree =
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.member(
+              ACCOUNT_ID, fixture.tenant, "3", "4", "1");
+      String stream = eventOne.outboxStreamKey();
+      var rowOne =
+          new net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository
+              .Event(
+              stream,
+              eventOne.requestId(),
+              1L,
+              eventOne.eventId(),
+              eventOne.eventDigest(),
+              eventOne.canonicalJsonUtf8());
+      var rowThree =
+          new net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository
+              .Event(
+              stream,
+              eventThree.requestId(),
+              3L,
+              eventThree.eventId(),
+              eventThree.eventDigest(),
+              eventThree.canonicalJsonUtf8());
+      when(fixture.member.getMembershipVersion()).thenReturn(4L);
+      when(fixture.outbox.readCheckpoint(stream))
+          .thenReturn(
+              Optional.of(
+                  new net.firedevops.firemud.accountservice.repository
+                      .AccountAuthorityOutboxRepository.Checkpoint(
+                      stream, 3L, eventThree.eventId(), eventThree.eventDigest())));
+      when(fixture.outbox.findEvent(stream, 3L)).thenReturn(Optional.of(rowThree));
+      when(fixture.outbox.findEventPage(stream, 0L, 3L)).thenReturn(List.of(rowOne, rowThree));
+      var tenantEvent =
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.tenant(fixture.tenant);
+      var provenance =
+          new net.firedevops.firemud.accountservice.repository
+              .AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance(
+              null,
+              net.firedevops.firemud.accountservice.repository
+                  .AccountMembershipPairAuthorityRepository.TenantProvenanceKind.FRESH_GAME_DESIGN,
+              tenantEvent.sourceEvidence().operationId(),
+              tenantEvent.sourceEvidence().evidenceDigest());
+      when(fixture.pairs.readForUpdate(ACCOUNT_ID, fixture.tenant))
+          .thenReturn(
+              Optional.of(
+                  new net.firedevops.firemud.accountservice.repository
+                      .AccountMembershipPairAuthorityRepository.PairAuthority(
+                      ACCOUNT_ID,
+                      fixture.tenant,
+                      provenance,
+                      true,
+                      4L,
+                      1L,
+                      3L,
+                      eventThree.eventId(),
+                      eventThree.eventDigest(),
+                      false)));
+
+      assertThatThrownBy(
+              () -> fixture.projection.publishSelectedCurrent(ACCOUNT_ID, fixture.tenant))
+          .isInstanceOf(
+              AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
+      org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(1))
+          .publishSelectedAuthorityEvent(
+              eq(ACCOUNT_ID),
+              eq(fixture.tenant),
+              eq(true),
+              org.mockito.ArgumentMatchers.nullable(byte[].class),
+              any(byte[].class));
+      org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.never())
+          .publishSelectedAuthorityEvent(
+              eq(ACCOUNT_ID),
+              eq(fixture.tenant),
+              eq(false),
+              org.mockito.ArgumentMatchers.nullable(byte[].class),
+              any(byte[].class));
+    }
+
+    @Test
+    void exactCachedSelectedHeadsSkipRetainedPrefixReadsAndCas() {
+      SelectedOwnerFixture fixture = new SelectedOwnerFixture();
+      when(fixture.redis.publishAuthorityProjections(
+              eq(ACCOUNT_ID), any(byte[].class), any(byte[].class)))
+          .thenReturn(
+              AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY);
+      when(fixture.redis.readSelectedAuthorityHeads(ACCOUNT_ID, fixture.tenant))
+          .thenReturn(
+              new byte[][] {fixture.values[2], fixture.values[3]},
+              new byte[][] {fixture.values[2], fixture.values[3]});
+
+      var result = fixture.projection.publishSelectedCurrent(ACCOUNT_ID, fixture.tenant);
+
+      assertThat(result.publicationOutcome())
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY);
+      org.mockito.Mockito.verify(fixture.outbox, org.mockito.Mockito.never())
+          .findEventPage(
+              org.mockito.ArgumentMatchers.anyString(),
+              org.mockito.ArgumentMatchers.anyLong(),
+              org.mockito.ArgumentMatchers.anyLong());
+      org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.never())
+          .publishSelectedAuthorityEvent(
+              any(UUID.class),
+              any(UUID.class),
+              org.mockito.ArgumentMatchers.anyBoolean(),
+              org.mockito.ArgumentMatchers.nullable(byte[].class),
+              any(byte[].class));
+    }
+
+    @Test
+    void selectedPublicationRejectsCachedHeadThatDiffersFromRetainedEvent() {
+      SelectedOwnerFixture fixture = new SelectedOwnerFixture();
+      when(fixture.redis.publishAuthorityProjections(
+              eq(ACCOUNT_ID), any(byte[].class), any(byte[].class)))
+          .thenReturn(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      byte[] conflictingHead =
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.membershipBytes(
+              ACCOUNT_ID, fixture.tenant, "1", "3", "1");
+      when(fixture.redis.readSelectedAuthorityHeads(ACCOUNT_ID, fixture.tenant))
+          .thenReturn(new byte[][] {fixture.values[2], conflictingHead});
+
+      assertThatThrownBy(
+              () -> fixture.projection.publishSelectedCurrent(ACCOUNT_ID, fixture.tenant))
+          .isInstanceOf(
+              AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
+      org.mockito.Mockito.verify(fixture.outbox, org.mockito.Mockito.never())
+          .findEventPage(
+              org.mockito.ArgumentMatchers.anyString(),
+              org.mockito.ArgumentMatchers.anyLong(),
+              org.mockito.ArgumentMatchers.anyLong());
+      org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.never())
+          .publishSelectedAuthorityEvent(
+              any(UUID.class),
+              any(UUID.class),
+              org.mockito.ArgumentMatchers.anyBoolean(),
+              org.mockito.ArgumentMatchers.nullable(byte[].class),
+              any(byte[].class));
+    }
+
+    @Test
+    void selectedPublicationContinuesBoundedPagesAcross128RetainedEvents() {
+      SelectedOwnerFixture fixture = new SelectedOwnerFixture();
+      when(fixture.redis.publishAuthorityProjections(
+              eq(ACCOUNT_ID), any(byte[].class), any(byte[].class)))
+          .thenReturn(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      String stream = "account:auth-authority:v1:membership/" + ACCOUNT_ID + "/" + fixture.tenant;
+      java.util.List<
+              net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository
+                  .Event>
+          firstPage = new java.util.ArrayList<>();
+      java.util.List<
+              net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository
+                  .Event>
+          secondPage = new java.util.ArrayList<>();
+      net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec
+              .MembershipEvent
+          lastEvent = null;
+      for (long sequence = 1L; sequence <= 130L; sequence++) {
+        var event =
+            net.firedevops.firemud.accountservice.service.session
+                .AccountSelectedGameplayAuthorityProjectionTest.member(
+                ACCOUNT_ID,
+                fixture.tenant,
+                Long.toString(sequence),
+                Long.toString(sequence + 1L),
+                "1");
+        var row =
+            new net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository
+                .Event(
+                stream,
+                event.requestId(),
+                sequence,
+                event.eventId(),
+                event.eventDigest(),
+                event.canonicalJsonUtf8());
+        if (sequence <= 128L) firstPage.add(row);
+        else secondPage.add(row);
+        lastEvent = event;
+      }
+      when(fixture.member.getMembershipVersion()).thenReturn(131L);
+      when(fixture.outbox.readCheckpoint(stream))
+          .thenReturn(
+              Optional.of(
+                  new net.firedevops.firemud.accountservice.repository
+                      .AccountAuthorityOutboxRepository.Checkpoint(
+                      stream, 130L, lastEvent.eventId(), lastEvent.eventDigest())));
+      var lastRow = secondPage.getLast();
+      when(fixture.outbox.findEvent(stream, 130L)).thenReturn(Optional.of(lastRow));
+      when(fixture.outbox.findEventPage(stream, 0L, 130L)).thenReturn(firstPage);
+      when(fixture.outbox.findEventPage(stream, 128L, 130L)).thenReturn(secondPage);
+      var tenantEvent =
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.tenant(fixture.tenant);
+      var provenance =
+          new net.firedevops.firemud.accountservice.repository
+              .AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance(
+              null,
+              net.firedevops.firemud.accountservice.repository
+                  .AccountMembershipPairAuthorityRepository.TenantProvenanceKind.FRESH_GAME_DESIGN,
+              tenantEvent.sourceEvidence().operationId(),
+              tenantEvent.sourceEvidence().evidenceDigest());
+      when(fixture.pairs.readForUpdate(ACCOUNT_ID, fixture.tenant))
+          .thenReturn(
+              Optional.of(
+                  new net.firedevops.firemud.accountservice.repository
+                      .AccountMembershipPairAuthorityRepository.PairAuthority(
+                      ACCOUNT_ID,
+                      fixture.tenant,
+                      provenance,
+                      true,
+                      131L,
+                      1L,
+                      130L,
+                      lastEvent.eventId(),
+                      lastEvent.eventDigest(),
+                      false)));
+      byte[] currentMembership =
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.membershipBytes(
+              ACCOUNT_ID, fixture.tenant, "130", "131", "1");
+      when(fixture.redis.readSelectedAuthorityHeads(ACCOUNT_ID, fixture.tenant))
+          .thenReturn(
+              new byte[][] {null, null}, new byte[][] {fixture.values[2], currentMembership});
+
+      var result = fixture.projection.publishSelectedCurrent(ACCOUNT_ID, fixture.tenant);
+
+      assertThat(result.publicationOutcome())
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      org.mockito.Mockito.verify(fixture.outbox).findEventPage(stream, 0L, 130L);
+      org.mockito.Mockito.verify(fixture.outbox).findEventPage(stream, 128L, 130L);
+      org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(130))
+          .publishSelectedAuthorityEvent(
+              eq(ACCOUNT_ID),
+              eq(fixture.tenant),
+              eq(false),
+              org.mockito.ArgumentMatchers.nullable(byte[].class),
+              any(byte[].class));
+    }
+
+    @Test
+    void selectedPublicationRejectsTamperedOrOutOfOrderRetainedRows() {
+      for (boolean outOfOrder : List.of(false, true)) {
+        SelectedOwnerFixture fixture = new SelectedOwnerFixture();
+        when(fixture.redis.publishAuthorityProjections(
+                eq(ACCOUNT_ID), any(byte[].class), any(byte[].class)))
+            .thenReturn(
+                AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+        when(fixture.redis.readSelectedAuthorityHeads(ACCOUNT_ID, fixture.tenant))
+            .thenReturn(new byte[][] {null, null});
+        var event =
+            net.firedevops.firemud.accountservice.service.session
+                .AccountSelectedGameplayAuthorityProjectionTest.member(
+                ACCOUNT_ID, fixture.tenant, "1", "2", "1");
+        var row =
+            new net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository
+                .Event(
+                event.outboxStreamKey(),
+                event.requestId(),
+                outOfOrder ? 2L : 1L,
+                event.eventId(),
+                outOfOrder ? event.eventDigest() : event.eventDigest() + "-tampered",
+                event.canonicalJsonUtf8());
+        when(fixture.outbox.findEventPage(event.outboxStreamKey(), 0L, 1L))
+            .thenReturn(List.of(row));
+
+        assertThatThrownBy(
+                () -> fixture.projection.publishSelectedCurrent(ACCOUNT_ID, fixture.tenant))
+            .isInstanceOf(
+                AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
+        org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(1))
+            .publishSelectedAuthorityEvent(
+                any(UUID.class),
+                any(UUID.class),
+                org.mockito.ArgumentMatchers.anyBoolean(),
+                org.mockito.ArgumentMatchers.nullable(byte[].class),
+                any(byte[].class));
+      }
+    }
+
+    @Test
+    void selectedPublicationRereadsOwnerCurrentnessAfterCasReplay() {
+      SelectedOwnerFixture fixture = new SelectedOwnerFixture();
+      when(fixture.redis.publishAuthorityProjections(
+              eq(ACCOUNT_ID), any(byte[].class), any(byte[].class)))
+          .thenReturn(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      when(fixture.redis.readSelectedAuthorityHeads(ACCOUNT_ID, fixture.tenant))
+          .thenReturn(
+              new byte[][] {null, null}, new byte[][] {fixture.values[2], fixture.values[3]});
+      when(fixture.redis.publishSelectedAuthorityEvent(
+              any(UUID.class),
+              any(UUID.class),
+              org.mockito.ArgumentMatchers.anyBoolean(),
+              org.mockito.ArgumentMatchers.nullable(byte[].class),
+              any(byte[].class)))
+          .thenAnswer(
+              invocation -> {
+                String candidate =
+                    new String((byte[]) invocation.getArgument(4), StandardCharsets.UTF_8);
+                if (candidate.contains("\"accountId\"")) {
+                  when(fixture.member.getMembershipVersion()).thenReturn(3L);
+                }
+                return AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED;
+              });
+
+      assertThatThrownBy(
+              () -> fixture.projection.publishSelectedCurrent(ACCOUNT_ID, fixture.tenant))
+          .isInstanceOf(
+              AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
+      org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(2))
+          .publishSelectedAuthorityEvent(
+              any(UUID.class),
+              any(UUID.class),
+              org.mockito.ArgumentMatchers.anyBoolean(),
+              org.mockito.ArgumentMatchers.nullable(byte[].class),
+              any(byte[].class));
     }
 
     @Test
@@ -402,17 +860,39 @@ class AccountGameplayDelegationAuthorityProjectionTest {
                     new net.firedevops.firemud.accountservice.repository
                         .AccountAuthorityOutboxRepository.Checkpoint(
                         event.outboxStreamKey(), 1L, event.eventId(), event.eventDigest())));
-        when(outbox.findEvent(event.outboxStreamKey(), 1L))
+        var memberRow =
+            new net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository
+                .Event(
+                event.outboxStreamKey(),
+                event.requestId(),
+                1L,
+                event.eventId(),
+                event.eventDigest(),
+                event.canonicalJsonUtf8());
+        when(outbox.findEvent(event.outboxStreamKey(), 1L)).thenReturn(Optional.of(memberRow));
+        when(outbox.findEventPage(event.outboxStreamKey(), 0L, 1L)).thenReturn(List.of(memberRow));
+        when(outbox.readCheckpoint(tenantEvent.outboxStreamKey()))
             .thenReturn(
                 Optional.of(
                     new net.firedevops.firemud.accountservice.repository
-                        .AccountAuthorityOutboxRepository.Event(
-                        event.outboxStreamKey(),
-                        event.requestId(),
-                        1L,
-                        event.eventId(),
-                        event.eventDigest(),
-                        event.canonicalJsonUtf8())));
+                        .AccountAuthorityOutboxRepository.Checkpoint(
+                        tenantEvent.outboxStreamKey(),
+                        tenantEvent.outboxSequence(),
+                        tenantEvent.eventId().toString(),
+                        tenantEvent.eventDigest())));
+        var tenantRow =
+            new net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository
+                .Event(
+                tenantEvent.outboxStreamKey(),
+                tenantEvent.requestId().toString(),
+                tenantEvent.outboxSequence(),
+                tenantEvent.eventId().toString(),
+                tenantEvent.eventDigest(),
+                tenantEvent.payload());
+        when(outbox.findEvent(tenantEvent.outboxStreamKey(), tenantEvent.outboxSequence()))
+            .thenReturn(Optional.of(tenantRow));
+        when(outbox.findEventPage(tenantEvent.outboxStreamKey(), 0L, tenantEvent.outboxSequence()))
+            .thenReturn(List.of(tenantRow));
         values =
             net.firedevops.firemud.accountservice.service.session
                 .AccountSelectedGameplayAuthorityProjectionTest.selected(
