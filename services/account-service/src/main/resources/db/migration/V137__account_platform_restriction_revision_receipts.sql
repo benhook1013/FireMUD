@@ -622,10 +622,10 @@ BEGIN
             ELSE 'active'
         END
         WHERE account_uuid = NEW.account_uuid
-          AND lifecycle_state IS DISTINCT FROM CASE operation_row.result_state
-              WHEN 'RESTRICTED' THEN 'security_locked'
-              ELSE 'active'
-          END;
+          AND ((operation_row.result_state = 'RESTRICTED'
+                  AND lifecycle_state = 'active')
+              OR (operation_row.result_state = 'NONRESTRICTED'
+                  AND lifecycle_state = 'security_locked'));
     RETURN NULL;
 END;
 $$;
