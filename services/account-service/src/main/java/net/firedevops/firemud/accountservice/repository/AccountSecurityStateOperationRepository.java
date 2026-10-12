@@ -136,6 +136,15 @@ public class AccountSecurityStateOperationRepository {
     return findByRequestId(requestId, true);
   }
 
+  /**
+   * Reads a complete Account restriction receipt through the existing closed source-event owner.
+   */
+  public Optional<AccountPlatformRestrictionOperationRepository.Operation>
+      findRestrictionByRequestIdShared(UUID requestId) {
+    return AccountPlatformRestrictionOperationRepository.findCommittedByRequestIdShared(
+        dsl, requestId);
+  }
+
   private Optional<Operation> findByRequestId(UUID requestId, boolean sharedCommittedRead) {
     requireTransaction();
     Objects.requireNonNull(requestId);
@@ -196,6 +205,12 @@ public class AccountSecurityStateOperationRepository {
         || !checkpoint.sourceEventDigest().equals(receipt.event().eventDigest())) {
       throw new IllegalStateException("Latest security-state complete checkpoint differs");
     }
+  }
+
+  /** Confirms exact current category state for the closed Account restriction event variant. */
+  public void requireCurrentRestrictionPostState(
+      AccountPlatformRestrictionOperationRepository.Operation operation, ScopeState current) {
+    AccountPlatformRestrictionOperationRepository.requireCurrentPostState(dsl, operation, current);
   }
 
   /** Records only an existing producer-committed event and V57 completion in this transaction. */
