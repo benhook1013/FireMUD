@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
@@ -82,6 +81,22 @@ public final class VersionAssetPublicationServiceImpl implements VersionAssetPub
     return result;
   }
 
+  @Override
+  public byte[] readFrozenAssetBytes(String tenantId, int versionNumber, AssetSelection selection) {
+    requireTenantId(tenantId);
+    Objects.requireNonNull(selection, "selection");
+    if (versionNumber <= 0) {
+      throw new IllegalArgumentException("Version number must be positive");
+    }
+    byte[] result =
+        ownerRead.execute(
+            status -> repository.readFrozenAssetBytes(tenantId, versionNumber, selection));
+    if (result == null) {
+      throw new IllegalStateException("Frozen Version asset read returned no bytes");
+    }
+    return result;
+  }
+
   private static boolean sameSnapshot(ExportSnapshot left, ExportSnapshot right) {
     if (!Objects.equals(left.tenantId(), right.tenantId())
         || left.versionId() != right.versionId()
@@ -101,9 +116,9 @@ public final class VersionAssetPublicationServiceImpl implements VersionAssetPub
       AssetSelection rightItem = rightItems.get(index);
       if (!Objects.equals(leftItem.usageKey(), rightItem.usageKey())
           || leftItem.assetId() != rightItem.assetId()
+          || leftItem.byteSize() != rightItem.byteSize()
           || !Objects.equals(leftItem.contentType(), rightItem.contentType())
-          || !Objects.equals(leftItem.contentDigest(), rightItem.contentDigest())
-          || !Arrays.equals(leftItem.bytes(), rightItem.bytes())) {
+          || !Objects.equals(leftItem.contentDigest(), rightItem.contentDigest())) {
         return false;
       }
     }
