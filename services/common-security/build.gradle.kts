@@ -9,6 +9,7 @@ dependencies {
     implementation(libs.jjwt.api)
     implementation(libs.spring.aop)
     implementation(libs.spring.boot.starter)
+    implementation("org.springframework:spring-tx")
     compileOnly(libs.spring.boot.starter.web)
     implementation(libs.aspectjweaver)
     compileOnly(libs.grpc.spring.boot.starter)
@@ -17,4 +18,5 @@ dependencies {
     runtimeOnly(libs.jjwt.jackson)
 
     testImplementation(libs.spring.boot.starter.test)
+    testImplementation(testFixtures(project(":common-platform-core")))
 }

@@ -267,6 +267,7 @@ public final class DraftAuthorizationFenceRepository {
     }
     requireNoPendingPublication(sources);
     requireNoPendingGameLogicIntake(sources);
+    requireNoPendingWorldParticipation(sources);
     for (UUID operationId : affectedOperations(sources)) {
       Record row = readOperation(operationId);
       if (row == null) {
@@ -299,6 +300,16 @@ public final class DraftAuthorizationFenceRepository {
       }
     }
     lockSources(sources);
+  }
+
+  /** Narrow dispatch exclusion, including ambiguity recovery, without rerunning preparation. */
+  public void requireWorldParticipationDisclosureAdmission(List<SourceEvidence> exactSources) {
+    List<SourceEvidence> sources =
+        List.copyOf(Objects.requireNonNull(exactSources, "exact disclosure sources")).stream()
+            .sorted(Comparator.comparing(SourceEvidence::key))
+            .toList();
+    lockDisclosureSources(sources);
+    requireNoPendingWorldParticipation(sources);
   }
 
   private void requireNoAuthorizedDisclosure(List<SourceEvidence> sources) {
@@ -366,6 +377,28 @@ public final class DraftAuthorizationFenceRepository {
   private void requireNoPendingGameLogicIntake(List<SourceEvidence> sources) {
     if (hasPendingGameLogicIntake(sources)) {
       throw new IllegalStateException("Distinct Game Logic intake remains pending");
+    }
+  }
+
+  private boolean hasPendingWorldParticipation(List<SourceEvidence> sources) {
+    for (SourceEvidence source : sources) {
+      if (!dsl.fetch(
+              "SELECT 1 FROM account_start_session_world_participation_sources s "
+                  + "JOIN account_start_session_world_participations p "
+                  + "ON p.participation_id = s.participation_id "
+                  + "WHERE s.source_key = ? "
+                  + "AND NOT account_start_session_world_participation_is_settled(p.participation_id)",
+              source.key())
+          .isEmpty()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private void requireNoPendingWorldParticipation(List<SourceEvidence> sources) {
+    if (hasPendingWorldParticipation(sources)) {
+      throw new IllegalStateException("Original StartSession World participation remains pending");
     }
   }
 
@@ -820,7 +853,9 @@ public final class DraftAuthorizationFenceRepository {
    * between affected operations.
    */
   private boolean allAffectedSettled(List<SourceEvidence> sources) {
-    if (hasPendingPublication(sources) || hasPendingGameLogicIntake(sources)) {
+    if (hasPendingPublication(sources)
+        || hasPendingGameLogicIntake(sources)
+        || hasPendingWorldParticipation(sources)) {
       return false;
     }
     for (UUID operation : affectedOperations(sources)) {

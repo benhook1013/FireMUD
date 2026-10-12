@@ -18,7 +18,9 @@ import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuth
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.Snapshot;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeKeyring;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCaptureRepository;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.convert.ApplicationConversionService;
@@ -62,6 +64,8 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
               assertThat(context)
                   .doesNotHaveBean(AccountOperatorAuthorizationFingerprintKeyring.class);
               assertThat(context).doesNotHaveBean(AccountResponseEnvelopeCryptography.class);
+              assertThat(context)
+                  .doesNotHaveBean(AccountStartSessionAuthorityCaptureRepository.class);
             });
 
     contextRunner()
@@ -72,6 +76,8 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
               assertThat(context).hasNotFailed();
               assertThat(context)
                   .doesNotHaveBean(AccountStartSessionOperatorAuthorizationService.class);
+              assertThat(context)
+                  .doesNotHaveBean(AccountStartSessionAuthorityCaptureRepository.class);
             });
   }
 
@@ -97,7 +103,7 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
   }
 
   @Test
-  void explicitOptInFailsForTheMissingOwnerDependency() {
+  void explicitOptInFailsClosedWhenOwnerAndKeySourcesAreUnavailable() {
     contextRunner()
         .withUserConfiguration(
             AccountStartSessionOperatorAuthorizationConfiguration.class,
@@ -127,6 +133,9 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
               assertThat(context).hasNotFailed();
               assertThat(context)
                   .hasSingleBean(AccountStartSessionOperatorAuthorizationService.class);
+              assertThat(context).hasSingleBean(DSLContext.class);
+              assertThat(context)
+                  .hasSingleBean(AccountStartSessionAuthorityCaptureRepository.class);
               assertThat(context)
                   .hasSingleBean(AccountOperatorAuthorizationFingerprintKeyring.class);
               assertThat(context.getBeansOfType(AccountResponseEnvelopeCryptography.class))
@@ -134,6 +143,11 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
                   .containsKeys(
                       "genericAccountResponseEnvelopeCryptography",
                       OPERATOR_RESPONSE_CRYPTOGRAPHY_BEAN);
+              assertThat(
+                      ReflectionTestUtils.getField(
+                          context.getBean(AccountStartSessionAuthorityCaptureRepository.class),
+                          "dsl"))
+                  .isSameAs(context.getBean(DSLContext.class));
 
               AccountResponseEnvelopeCryptography genericCryptography =
                   context.getBean(
@@ -272,6 +286,11 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
     }
 
     @Bean
+    DSLContext accountDsl() {
+      return mock(DSLContext.class);
+    }
+
+    @Bean
     StartSessionReservationEvidenceClient reservationEvidence() {
       return mock(StartSessionReservationEvidenceClient.class);
     }
@@ -306,6 +325,11 @@ class AccountStartSessionOperatorAuthorizationConfigurationTest {
     @Bean
     AccountControlUiIssuanceRepository issuanceOperations() {
       return mock(AccountControlUiIssuanceRepository.class);
+    }
+
+    @Bean
+    DSLContext accountDsl() {
+      return mock(DSLContext.class);
     }
 
     @Bean
