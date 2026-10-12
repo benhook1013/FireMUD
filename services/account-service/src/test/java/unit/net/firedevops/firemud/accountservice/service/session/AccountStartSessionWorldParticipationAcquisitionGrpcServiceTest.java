@@ -16,6 +16,7 @@ import io.grpc.stub.StreamObserver;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -25,6 +26,7 @@ import net.firedevops.firemud.account.v1.AcquireStartSessionWorldParticipationRe
 import net.firedevops.firemud.account.v1.AcquireStartSessionWorldParticipationResponse;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidenceRepository.StoredEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.StoredParticipation;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationAcquisitionGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationAcquisitionService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationAcquisitionService.AcquiredParticipation;
@@ -46,6 +48,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -214,7 +217,52 @@ class AccountStartSessionWorldParticipationAcquisitionGrpcServiceTest {
     var result = invoke(service, identity(WORLD_URI), request);
 
     assertCode(Status.Code.FAILED_PRECONDITION, result.error);
-    assertThat(Status.fromThrowable(result.error).getDescription()).isNull();
+    assertThat(Status.fromThrowable(result.error).getDescription())
+        .isEqualTo("Current Account participation evidence is unavailable");
+  }
+
+  @Test
+  void classifiesPermanentOwnerFailuresAndDatabaseConnectionErrors() {
+    assertOwnerFailure(
+        new AccountStartSessionOperatorAuthorizationService.NotFoundException(),
+        Status.Code.NOT_FOUND);
+    assertOwnerFailure(
+        new IllegalStateException("sensitive owner detail"), Status.Code.FAILED_PRECONDITION);
+    assertOwnerFailure(
+        new DataAccessResourceFailureException(
+            "sensitive database detail", new SQLException("sensitive connection detail", "08006")),
+        Status.Code.UNAVAILABLE);
+    assertOwnerFailure(
+        new DataAccessResourceFailureException(
+            "sensitive database detail", new SQLException("sensitive database detail", "23505")),
+        Status.Code.INTERNAL);
+    assertOwnerFailure(new RuntimeException("sensitive unexpected detail"), Status.Code.INTERNAL);
+  }
+
+  @Test
+  void mapsAllowlistedUpstreamStatusesAndRedactsTheirDescriptions() {
+    assertOwnerFailure(
+        Status.NOT_FOUND.withDescription("sensitive upstream detail").asRuntimeException(),
+        Status.Code.NOT_FOUND);
+    assertOwnerFailure(
+        Status.RESOURCE_EXHAUSTED.withDescription("sensitive upstream detail").asRuntimeException(),
+        Status.Code.UNAVAILABLE);
+    assertOwnerFailure(
+        Status.UNKNOWN.withDescription("sensitive upstream detail").asRuntimeException(),
+        Status.Code.INTERNAL);
+  }
+
+  private static void assertOwnerFailure(RuntimeException failure, Status.Code expected) {
+    var owner = mock(AccountStartSessionWorldParticipationAcquisitionService.class);
+    when(owner.acquire(any())).thenThrow(failure);
+    var service = new AccountStartSessionWorldParticipationAcquisitionGrpcService(owner, NAMESPACE);
+
+    var result = invoke(service, identity(WORLD_URI), request());
+
+    assertCode(expected, result.error);
+    String description = Status.fromThrowable(result.error).getDescription();
+    assertThat(description).isNotBlank();
+    assertThat(description).doesNotContain("sensitive");
   }
 
   private static Invocation invoke(

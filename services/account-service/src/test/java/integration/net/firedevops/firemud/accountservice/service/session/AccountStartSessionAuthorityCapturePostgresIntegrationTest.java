@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.SQLException;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -19,7 +20,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-/** PostgreSQL proof of V128 allocator ownership and capture-table statement protection. */
+/** PostgreSQL proof of V158 allocator ownership and capture-table statement protection. */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountStartSessionAuthorityCapturePostgresIntegrationTest {
   @Container
@@ -65,7 +66,7 @@ class AccountStartSessionAuthorityCapturePostgresIntegrationTest {
                             + "'account_start_session_authority_capture_no_truncate', "
                             + "'account_start_session_capture_source_version_allocator_guard', "
                             + "'account_start_session_capture_source_fence_allocator_guard')"),
-                    "V128 protection trigger query must return a row")
+                    "V158 protection trigger query must return a row")
                 .get(0, Long.class))
         .isEqualTo(4L);
 
@@ -99,28 +100,68 @@ class AccountStartSessionAuthorityCapturePostgresIntegrationTest {
         Objects.requireNonNull(
                 dsl.fetchOne(
                     "SELECT pg_get_functiondef('account_start_session_authority_capture_guard()'::regprocedure)"),
-                "V128 capture guard function must exist")
+                "V158 capture guard function must exist")
             .get(0, String.class);
     assertThat(captureGuard)
         .contains("snapshot->>'mutationDigest' IS DISTINCT FROM NEW.mutation_digest")
         .doesNotContain("tuple->>'mutationDigest'");
 
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE account_start_session_capture_source_version_allocator "
-                        + "SET last_source_version = last_source_version + 1"))
-        .isInstanceOf(RuntimeException.class);
-    assertThatThrownBy(
-            () -> dsl.execute("DELETE FROM account_start_session_capture_source_fence_allocator"))
-        .isInstanceOf(RuntimeException.class);
-    assertThatThrownBy(() -> dsl.execute("TRUNCATE account_start_session_authority_captures"))
-        .isInstanceOf(RuntimeException.class);
+    assertGuardRejected(
+        () ->
+            dsl.execute(
+                "UPDATE account_start_session_capture_source_version_allocator "
+                    + "SET last_source_version = last_source_version + 1"),
+        "StartSession capture sourceVersion allocator must advance once in its owner transaction");
+    assertGuardRejected(
+        () ->
+            dsl.execute(
+                "UPDATE account_start_session_capture_source_fence_allocator "
+                    + "SET last_source_fence = last_source_fence + 1"),
+        "StartSession capture sourceFence allocator must advance once in its owner transaction");
+    assertGuardRejected(
+        () -> dsl.execute("DELETE FROM account_start_session_capture_source_version_allocator"),
+        "StartSession capture allocators cannot be deleted or truncated");
+    assertGuardRejected(
+        () -> dsl.execute("DELETE FROM account_start_session_capture_source_fence_allocator"),
+        "StartSession capture allocators cannot be deleted or truncated");
+    assertGuardRejected(
+        () -> dsl.execute("TRUNCATE account_start_session_capture_source_version_allocator"),
+        "StartSession Account source captures cannot be truncated");
+    assertGuardRejected(
+        () -> dsl.execute("TRUNCATE account_start_session_capture_source_fence_allocator"),
+        "StartSession Account source captures cannot be truncated");
+    assertGuardRejected(
+        () -> dsl.execute("TRUNCATE account_start_session_authority_captures CASCADE"),
+        "StartSession Account source captures cannot be truncated");
     assertThat(
             Objects.requireNonNull(
                     dsl.fetchOne("SELECT count(*) FROM account_start_session_authority_captures"),
-                    "V128 capture count query must return a row")
+                    "V158 capture count query must return a row")
                 .get(0, Long.class))
         .isZero();
+  }
+
+  private static void assertGuardRejected(
+      org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String expectedDiagnostic) {
+    assertThatThrownBy(action)
+        .satisfies(
+            failure -> {
+              SQLException sqlFailure = findSqlException(failure);
+              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+                throw new AssertionError(
+                    "Capture guard rejection must be a PostgreSQL exception", sqlFailure);
+              }
+              var serverError = postgresFailure.getServerErrorMessage();
+              assertThat(serverError).isNotNull();
+              assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
+            });
+  }
+
+  private static SQLException findSqlException(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException) return sqlException;
+    }
+    throw new AssertionError("Guard rejection must retain its SQL exception", failure);
   }
 }
