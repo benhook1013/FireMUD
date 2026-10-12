@@ -81,6 +81,12 @@ public final class AccountPlatformRestrictionOperationRepository {
       requireIdentity(committed, identity);
       return committed;
     }
+    if (request.category() == Category.ACCOUNT_SECURITY_LOCK
+        && request.desiredState() == RestrictionState.RESTRICTED
+        && !"active".equals(identity.lifecycleState())
+        && !"security_locked".equals(identity.lifecycleState())) {
+      throw new RestrictionProjectionUnavailableException();
+    }
 
     AuthorityScope scope = AuthorityScope.account(request.accountUuid());
     ScopeState currentAuthority = generations.read(scope);
@@ -558,7 +564,8 @@ public final class AccountPlatformRestrictionOperationRepository {
   private AccountIdentity lockAccount(UUID accountUuid) {
     Record row =
         dsl.fetchOne(
-            "SELECT id, account_uuid, account_uuid_provenance, account_uuid_source_numeric_id "
+            "SELECT id, account_uuid, account_uuid_provenance, account_uuid_source_numeric_id, "
+                + "lifecycle_state "
                 + "FROM accounts WHERE account_uuid = ? FOR UPDATE",
             accountUuid);
     if (row == null
@@ -569,7 +576,8 @@ public final class AccountPlatformRestrictionOperationRepository {
     AccountIdentityProvenance provenance =
         AccountIdentityProvenance.fromStorageValue(
             row.get("account_uuid_provenance", String.class));
-    return new AccountIdentity(requiredPositive(row, "id"), provenance);
+    return new AccountIdentity(
+        requiredPositive(row, "id"), provenance, row.get("lifecycle_state", String.class));
   }
 
   private static CategorySource birthCategory(
@@ -716,7 +724,8 @@ public final class AccountPlatformRestrictionOperationRepository {
     }
   }
 
-  private record AccountIdentity(long accountId, AccountIdentityProvenance provenance) {}
+  private record AccountIdentity(
+      long accountId, AccountIdentityProvenance provenance, String lifecycleState) {}
 
   public static final class RestrictionSourceUnavailableException extends IllegalStateException {
     public RestrictionSourceUnavailableException() {
