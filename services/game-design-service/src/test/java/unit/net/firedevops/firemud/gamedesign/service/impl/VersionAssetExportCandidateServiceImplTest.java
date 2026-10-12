@@ -429,6 +429,8 @@ class VersionAssetExportCandidateServiceImplTest {
   @Test
   void candidateOriginMustUseCanonicalHttpsAssetsPath() {
     ExportedAssetManifest manifest = exporter.exportAssets(TENANT_ID, VERSION_NUMBER);
+    FrozenAssetExportCandidate original =
+        candidateService.readExportCandidate(TENANT_ID, VERSION_NUMBER);
 
     for (String invalidOrigin :
         List.of(
@@ -436,14 +438,25 @@ class VersionAssetExportCandidateServiceImplTest {
             "https://assets.example.invalid/assets/",
             "https://user@assets.example.invalid/assets",
             "https://assets.example.invalid/assets?query=1")) {
-      assertThrows(
-          IllegalStateException.class,
-          () ->
-              candidateService.recordExportCandidate(
-                  TENANT_ID,
-                  VERSION_NUMBER,
-                  new FrozenAssetExportCandidate(manifest, invalidOrigin)));
+      IllegalStateException thrown =
+          assertThrows(
+              IllegalStateException.class,
+              () ->
+                  candidateService.recordExportCandidate(
+                      TENANT_ID,
+                      VERSION_NUMBER,
+                      new FrozenAssetExportCandidate(manifest, invalidOrigin)));
+
+      assertEquals("ASSET_EXPORT_CANDIDATE_CONFLICT", thrown.getMessage());
+      assertEquals(IllegalArgumentException.class, thrown.getCause().getClass());
+      assertEquals(
+          invalidOrigin.endsWith("/assets/")
+              ? "frozen origin must be canonical"
+              : "public base URL must be an HTTPS /assets origin",
+          thrown.getCause().getMessage());
     }
+
+    assertEquals(original, candidateService.readExportCandidate(TENANT_ID, VERSION_NUMBER));
   }
 
   private PublishedReleaseBundleDto publishedBundle(ExportedAssetManifest manifest) {
