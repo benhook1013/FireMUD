@@ -3,10 +3,16 @@ package integration.net.firedevops.firemud.accountservice.hostedterms;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.grpc.Context;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.Statement;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.Base64;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -26,6 +32,11 @@ import net.firedevops.firemud.accountservice.hostedterms.HostedTermsDisclosureHa
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsDisclosureHandoffRepository;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsDisclosureHandoffRepository.Status;
 import net.firedevops.firemud.accountservice.hostedterms.HostedTermsEncoding;
+import net.firedevops.firemud.accountservice.service.session.AccountControlUiOriginalOrderFixture;
+import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationAcquisitionService;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationAcquisitionService.AcquisitionRequest;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.OwnerReadback;
@@ -35,6 +46,10 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -42,11 +57,14 @@ import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.Network;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -57,9 +75,50 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  */
 @Testcontainers(disabledWithoutDocker = true)
 class HostedTermsDisclosureHandoffPostgresIntegrationTest {
+  private static final String NAMESPACE = "control-ui-owner-proof";
+  private static final Network REDIS_NETWORK = Network.newNetwork();
+
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static GenericContainer<?> redis =
+      new GenericContainer<>(TestContainerImages.redis())
+          .withNetwork(REDIS_NETWORK)
+          .withNetworkAliases("hosted-terms-redis-primary")
+          .withExposedPorts(6379)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always");
+
+  @Container
+  static GenericContainer<?> redisReplica =
+      new GenericContainer<>(TestContainerImages.redis())
+          .withNetwork(REDIS_NETWORK)
+          .dependsOn(redis)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always",
+              "--replicaof",
+              "hosted-terms-redis-primary",
+              "6379");
+
+  @TempDir Path temporary;
 
   @Test
   void exactRetryAmbiguityAndTerminalEvidenceAreDurableAndImmutable() throws Exception {
@@ -210,6 +269,132 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
     assertThat(noDisclosureSnapshot.handoff().effectiveAt()).isEqualTo(noDisclosure.effectiveAt());
     assertThat(noDisclosureSnapshot.result().orElseThrow().canonicalBytes())
         .containsExactly(negativeResult.canonicalBytes());
+  }
+
+  @Test
+  void exactAuthorizedReadbackSurvivesLaterPendingParticipationOnNonTermsSource()
+      throws Exception {
+    // The shared fixture writes genuine Account rows while its upstream claim and peer evidence
+    // remain test-only; this does not establish a production World authority path.
+    try (var controlUi =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary)) {
+      var proof =
+          new AccountOriginalStartSessionAuthorizationProofFixture(
+              controlUi, temporary, NAMESPACE);
+      Database database = database(proof.sourceDsl());
+      UUID reservationOwner = UUID.randomUUID();
+      long reservationFence = 31L;
+      UUID gameSessionAttempt = UUID.randomUUID();
+      UUID gameSessionMutation = UUID.randomUUID();
+      long gameSessionFence = 47L;
+      String requestId = "authorized-disclosure-" + UUID.randomUUID();
+      var action =
+          new StartSessionOperatorAction(
+              StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
+              StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+              new StartSessionOperatorAction.Scope(controlUi.tenantId(), NAMESPACE),
+              new StartSessionOperatorAction.Target(42L, proof.creatorAccountId()),
+              StartSessionOperatorAction.ExpectedVersion.ABSENT,
+              new StartSessionOperatorAction.Mutation(
+                  StartSessionOperatorAction.ClientIp.absent()),
+              "test-only exact authorized-readback regression");
+      var original =
+          proof.issueAndRedeemOriginal(
+              requestId,
+              action,
+              reservationOwner,
+              reservationFence,
+              new AccountOriginalStartSessionAuthorizationProofFixture.OwnerAttemptLifecycle() {
+                @Override
+                public AccountOriginalStartSessionAuthorizationProofFixture.OwnerClaim reserve(
+                    StartSessionPostAuthorizationExecutionTuple originalTuple) {
+                  return new AccountOriginalStartSessionAuthorizationProofFixture.OwnerClaim(
+                      gameSessionAttempt, gameSessionMutation, gameSessionFence);
+                }
+
+                @Override
+                public void attachAccountRedemptionProjection(
+                    AccountOriginalStartSessionAuthorizationProofFixture.OwnerClaim ownerClaim,
+                    StartSessionPostAuthorizationExecutionTuple originalTuple) {}
+              });
+
+      byte[] snapshotBytes =
+          Objects.requireNonNull(
+                  proof.sourceDsl()
+                      .fetchOne(
+                          "SELECT canonical_snapshot_bytes FROM account_start_session_authority_captures "
+                              + "WHERE control_plane_request_id = ?",
+                          requestId),
+                  "Expected the original Account capture")
+              .get("canonical_snapshot_bytes", byte[].class);
+      Map<?, ?> captureSnapshot =
+          tools.jackson.databind.json.JsonMapper.builder()
+              .build()
+              .readValue(snapshotBytes, Map.class);
+      SourceEvidence source =
+          ((List<?>) captureSnapshot.get("sourceVector")).stream()
+              .map(value -> SourceEvidence.fromStored(Base64.getDecoder().decode((String) value)))
+              .filter(value -> value.kind() != SourceKind.HOSTED_TERMS)
+              .findFirst()
+              .orElseThrow(() -> new IllegalStateException("Expected a non-terms source"));
+      var journal =
+          new HostedTermsDisclosureHandoffRepository(
+              database.dsl(), new DraftAuthorizationFenceRepository(database.dsl()));
+      var handoff = handoff(source("overlap"), source);
+      tx(database, () -> journal.prepare(handoff));
+      var firstPermit = tx(database, () -> journal.authorizeDispatch(handoff));
+      assertThat(firstPermit.newlyAuthorized()).isTrue();
+
+      UUID gameInstance = UUID.randomUUID();
+      String preparationInput =
+          preparationInput(NAMESPACE, controlUi.tenantId(), requestId, gameInstance, 42L);
+      AccountStartSessionWorldParticipationAcquisitionService acquisition =
+          proof.worldParticipationAcquisitionService(
+              request ->
+                  new Result(
+                      request,
+                      Instant.now().plus(Duration.ofMinutes(1)),
+                      StartSessionAccountRedemptionProjection.fromOriginalTuple(
+                          request.originalTuple())));
+      var acquisitionRequest =
+          new AcquisitionRequest(
+              original.originalTuple().canonicalBytes(),
+              gameSessionMutation,
+              gameSessionAttempt,
+              gameSessionFence,
+              gameInstance,
+              preparationInput,
+              digest(preparationInput));
+      var worldPeer =
+          GrpcPeerIdentity.parseUri(
+                  "spiffe://firemud/ns/" + NAMESPACE + "/sa/world-management-service")
+              .orElseThrow();
+      Context.current()
+          .withValue(GrpcPeerIdentity.CONTEXT_KEY, worldPeer)
+          .call(() -> acquisition.acquire(acquisitionRequest));
+      assertThat(
+              database
+                  .dsl()
+                  .fetch(
+                      "SELECT 1 FROM account_start_session_world_participation_sources s "
+                          + "JOIN account_start_session_world_participations p "
+                          + "ON p.participation_id = s.participation_id "
+                          + "WHERE s.source_key = ? "
+                          + "AND NOT account_start_session_world_participation_is_settled(p.participation_id)",
+                      source.key()))
+          .isNotEmpty();
+
+      var recovered = tx(database, () -> journal.authorizeDispatch(handoff));
+      assertThat(recovered.newlyAuthorized()).isFalse();
+      assertThat(recovered.snapshot().status()).isEqualTo(Status.DISPATCH_AUTHORIZED);
+      assertThat(recovered.snapshot().dispatchAttempts()).isEqualTo(1);
+    }
   }
 
   @Test
@@ -578,6 +763,20 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
         "test-only-authority-evidence".getBytes(StandardCharsets.UTF_8));
   }
 
+  private static HostedTermsDisclosureHandoff handoff(
+      SourceEvidence changedTermsSource, SourceEvidence participationSource) {
+    return new HostedTermsDisclosureHandoff(
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        Kind.CATALOG,
+        changedTermsSource.key(),
+        HostedTermsEncoding.digest("test-only-predecessor".getBytes(StandardCharsets.UTF_8)),
+        HostedTermsEncoding.digest("test-only-candidate".getBytes(StandardCharsets.UTF_8)),
+        Instant.parse("2026-10-08T00:00:00Z"),
+        List.of(changedTermsSource, participationSource),
+        "test-only-authority-evidence".getBytes(StandardCharsets.UTF_8));
+  }
+
   private static DraftAuthorizationFenceBinding draftBinding(SourceEvidence source) {
     UUID actor = UUID.randomUUID();
     DraftCommitBinding complete =
@@ -654,6 +853,28 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
     return database;
   }
 
+  private static Database database(DSLContext schemaSource) {
+    String schema =
+        Objects.requireNonNull(schemaSource.fetchOne("SELECT current_schema()"))
+            .get(0, String.class);
+    String jdbcUrl = postgres.getJdbcUrl();
+    DriverManagerDataSource source =
+        new DriverManagerDataSource(
+            jdbcUrl
+                + (jdbcUrl.contains("?") ? "&" : "?")
+                + "currentSchema="
+                + schema,
+            postgres.getUsername(),
+            postgres.getPassword());
+    DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(source);
+    return new Database(
+        schema,
+        source,
+        DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES),
+        transactionManager,
+        new TransactionTemplate(transactionManager));
+  }
+
   private static Database reopen(Database original) {
     DataSourceTransactionManager transactionManager =
         new DataSourceTransactionManager(original.source());
@@ -667,6 +888,73 @@ class HostedTermsDisclosureHandoffPostgresIntegrationTest {
 
   private static <T> T tx(Database database, Supplier<T> work) {
     return database.transactions().execute(status -> work.get());
+  }
+
+  private static String preparationInput(
+      String namespace, UUID tenantId, String requestId, UUID gameInstanceId, long gameTemplateId)
+      throws Exception {
+    var json = tools.jackson.databind.json.JsonMapper.builder().build();
+    String descriptorJson = json.writeValueAsString(Map.of("gameTemplateId", gameTemplateId));
+    return json.writeValueAsString(
+        Map.of(
+            "schemaVersion",
+            1,
+            "identity",
+            Map.of(
+                "targetNamespace",
+                namespace,
+                "canonicalTenantId",
+                tenantId.toString(),
+                "controlPlaneRequestId",
+                requestId,
+                "canonicalGameInstanceId",
+                gameInstanceId.toString(),
+                "worldSlug",
+                "test-world"),
+            "gameSessionReadRequest",
+            Map.of(
+                "targetNamespace",
+                namespace,
+                "canonicalTenantId",
+                tenantId.toString(),
+                "controlPlaneRequestId",
+                requestId,
+                "canonicalGameInstanceId",
+                gameInstanceId.toString(),
+                "worldSlug",
+                "test-world"),
+            "gameSessionReadEvidence",
+            Map.of(
+                "targetNamespace",
+                namespace,
+                "canonicalTenantId",
+                tenantId.toString(),
+                "controlPlaneRequestId",
+                requestId,
+                "canonicalGameInstanceId",
+                gameInstanceId.toString(),
+                "worldSlug",
+                "test-world",
+                "descriptorJson",
+                descriptorJson),
+            "launchBinding",
+            Map.of(
+                "targetNamespace",
+                namespace,
+                "canonicalTenantId",
+                tenantId.toString(),
+                "controlPlaneRequestId",
+                requestId,
+                "worldSlug",
+                "test-world")));
+  }
+
+  private static String digest(String value) throws Exception {
+    return "sha256:"
+        + HexFormat.of()
+            .formatHex(
+                MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8)));
   }
 
   private record Database(

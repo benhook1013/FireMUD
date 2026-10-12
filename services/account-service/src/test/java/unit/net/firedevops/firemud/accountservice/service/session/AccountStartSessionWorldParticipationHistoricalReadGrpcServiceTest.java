@@ -2,16 +2,34 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
+import com.google.protobuf.ByteString;
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.Instant;
+import java.util.HexFormat;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import net.firedevops.firemud.account.v1.ReadHistoricalStartSessionWorldParticipationRequest;
 import net.firedevops.firemud.account.v1.ReadHistoricalStartSessionWorldParticipationResponse;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadEvidence;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
+import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
+import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -75,8 +93,8 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcServiceTest {
             .setSchemaVersion(1)
             .setReadRequestId("d1f41bfb-265a-4f3b-8b2a-124cba20ce43")
             .setTargetNamespace("other-runtime")
-            .setAccountWorldParticipationId("a8c1e8c8-f237-41b7-918d-ec2281bcac10")
-            .setAccountWorldParticipationFence(31L)
+            .setOriginalPostAuthorizationTuple(
+                ByteString.copyFrom(originalTuple().canonicalBytes()))
             .build();
     var wrongVersion = validWire().toBuilder().setSchemaVersion(2).build();
     UnknownFieldSet unknown =
@@ -118,14 +136,123 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcServiceTest {
     verifyNoInteractions(owner);
   }
 
+  @Test
+  void returnsResolvedCoordinatesForTheExactOriginalTupleLookup() throws Exception {
+    var wire = validWire();
+    var decoded = AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromRequest(wire);
+    var evidence =
+        new AccountStartSessionWorldParticipationHistoricalReadEvidence(
+            decoded,
+            UUID.fromString("a8c1e8c8-f237-41b7-918d-ec2281bcac10"),
+            31L,
+            UUID.fromString("b9d2f9d9-0438-42c8-829e-fd3392cd9d21"),
+            37L,
+            UUID.fromString("c0e30aea-1549-43d9-93af-0e44a3deae32"),
+            "{\"retained\":true}",
+            digest("{\"retained\":true}"));
+    when(owner.read(decoded)).thenReturn(evidence);
+    var response = new AtomicReference<ReadHistoricalStartSessionWorldParticipationResponse>();
+    var completed = new AtomicBoolean();
+    StreamObserver<ReadHistoricalStartSessionWorldParticipationResponse> observer =
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ReadHistoricalStartSessionWorldParticipationResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable error) {
+            throw new AssertionError("historical tuple read unexpectedly failed", error);
+          }
+
+          @Override
+          public void onCompleted() {
+            completed.set(true);
+          }
+        };
+
+    peer(
+        NAMESPACE,
+        "world-management-service",
+        () -> {
+          invoke(wire, observer);
+          return null;
+        });
+
+    assertThat(completed).isTrue();
+    assertThat(response.get().getRequest()).isEqualTo(wire);
+    assertThat(response.get().getAccountWorldParticipationId())
+        .isEqualTo("a8c1e8c8-f237-41b7-918d-ec2281bcac10");
+    assertThat(response.get().getAccountWorldParticipationFence()).isEqualTo(31L);
+    assertThat(response.get().getGameSessionOwnerAttemptId())
+        .isEqualTo("b9d2f9d9-0438-42c8-829e-fd3392cd9d21");
+    verify(owner).read(decoded);
+  }
+
   private static ReadHistoricalStartSessionWorldParticipationRequest validWire() {
     return ReadHistoricalStartSessionWorldParticipationRequest.newBuilder()
         .setSchemaVersion(1)
         .setReadRequestId("d1f41bfb-265a-4f3b-8b2a-124cba20ce43")
         .setTargetNamespace(NAMESPACE)
-        .setAccountWorldParticipationId("a8c1e8c8-f237-41b7-918d-ec2281bcac10")
-        .setAccountWorldParticipationFence(31L)
+        .setOriginalPostAuthorizationTuple(
+            ByteString.copyFrom(originalTuple().canonicalBytes()))
         .build();
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple originalTuple() {
+    String namespace = NAMESPACE;
+    var preTuple =
+        StartSessionPreAuthorizationReservationTuple.createHuman(
+            "historical-grpc-original-request",
+            UUID.fromString("a4f5f4eb-8243-4d42-903a-33495456a622"),
+            new StartSessionOperatorAction(
+                StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
+                StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+                new StartSessionOperatorAction.Scope(
+                    UUID.fromString("9f8f06b4-36e5-4d11-9c2a-5adfd7f41531"), namespace),
+                new StartSessionOperatorAction.Target(
+                    91L, UUID.fromString("36aa9ce5-0ebc-4c14-9f6b-d160edc6059a")),
+                StartSessionOperatorAction.ExpectedVersion.ABSENT,
+                new StartSessionOperatorAction.Mutation(
+                    StartSessionOperatorAction.ClientIp.absent()),
+                "synthetic historical gRPC boundary test"));
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        preTuple,
+        "spiffe://firemud/ns/" + namespace + "/sa/logging-admin-service",
+        "arfp/v1/test-key/" + "b".repeat(64),
+        UUID.fromString("7c005b65-fcb1-4ac9-a714-f3d0f449edcf"),
+        19L,
+        StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+            preTuple,
+            new Values(
+                UUID.fromString("f5d044bd-7e5f-4e2d-9859-9025cbdcc60f"),
+                "sha256:" + "a".repeat(64),
+                "17",
+                "CURRENT",
+                Instant.parse("2020-01-01T00:00:00Z"),
+                Instant.parse("2020-01-02T00:00:00Z"),
+                1L,
+                2L,
+                3L,
+                4L,
+                5L,
+                23L,
+                UUID.fromString("a681bba7-c215-4cf1-a35b-14348912cbdc"),
+                "2",
+                "3")),
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+            "17",
+            "23",
+            "18446744073709551615"));
+  }
+
+  private static String digest(String json) throws Exception {
+    return "sha256:"
+        + HexFormat.of()
+            .formatHex(
+                MessageDigest.getInstance("SHA-256")
+                    .digest(json.getBytes(StandardCharsets.UTF_8)));
   }
 
   private void invoke(

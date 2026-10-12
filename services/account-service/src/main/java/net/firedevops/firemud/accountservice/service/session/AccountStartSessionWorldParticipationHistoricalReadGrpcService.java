@@ -11,7 +11,7 @@ import net.firedevops.firemud.common.account.startsession.AccountStartSessionWor
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 
-/** Standalone unregistered same-namespace Account historical participation receiver. */
+/** Standalone unregistered same-namespace Account historical tuple-to-participation receiver. */
 public final class AccountStartSessionWorldParticipationHistoricalReadGrpcService
     extends AccountStartSessionWorldParticipationHistoricalReadServiceGrpc
         .AccountStartSessionWorldParticipationHistoricalReadServiceImplBase {
@@ -27,6 +27,7 @@ public final class AccountStartSessionWorldParticipationHistoricalReadGrpcServic
     this.workloadNamespace = workloadNamespace;
   }
 
+  /** Resolves retained coordinates only after authenticating World without end-user context. */
   @Override
   public void readHistoricalStartSessionWorldParticipation(
       ReadHistoricalStartSessionWorldParticipationRequest request,

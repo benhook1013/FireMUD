@@ -18,7 +18,8 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientIntercepto
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
- * Explicit file-backed mTLS client for Account's unregistered historical World participation read.
+ * Explicit file-backed mTLS client for Account's unregistered historical World participation
+ * lookup by the complete unchanged original StartSession tuple.
  */
 public final class AccountStartSessionWorldParticipationHistoricalReadClient
     extends AbstractReloadingBlockingGrpcClient<
@@ -59,7 +60,10 @@ public final class AccountStartSessionWorldParticipationHistoricalReadClient
     initialized = true;
   }
 
-  /** Reads only the exact retained Account row; it does not admit or renew World execution. */
+  /**
+   * Resolves retained participation coordinates from the exact original tuple; this does not admit
+   * or renew World execution.
+   */
   public AccountStartSessionWorldParticipationHistoricalReadEvidence read(
       AccountStartSessionWorldParticipationHistoricalReadRequest request) {
     Objects.requireNonNull(request, "historical participation request is required");

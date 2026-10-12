@@ -16,6 +16,8 @@ import net.firedevops.firemud.accountservice.repository.AccountStartSessionOpera
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionRequest;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.Status;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
@@ -675,76 +677,24 @@ class AccountStartSessionOperatorAuthorizationRepositoryTest {
       Instant evaluatedAt,
       Instant expiresAt,
       BundleReference reference) {
-    String tenantId = tuple.action().scope().tenantId().toString();
-    String actorId = tuple.actor().accountId().toString();
-    Map<String, Object> authorityTuple =
-        Map.of(
-            "issuerAuthGeneration", 1L,
-            "accountAuthorityGeneration", 1L,
-            "tenantAuthorityGeneration", Map.of(tenantId, 1L),
-            "membershipAuthorityGeneration", Map.of(tenantId, 1L),
-            "privateRealmGrantVersions", List.of());
-    Map<String, Object> bundle =
-        Map.of(
-            "bundleVersion", StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-            "authorityScope",
-                Map.of(
-                    "scope",
-                    Map.of(
-                        "tenantId",
-                        tenantId,
-                        "targetNamespace",
-                        tuple.action().scope().targetNamespace()),
-                    "actionFamily",
-                    tuple.actionFamily(),
-                    "applicableAccountId",
-                    actorId,
-                    "applicableTenantId",
-                    tenantId),
-            "accountProjectionEvidence",
-                Map.of(
-                    "sourceType",
-                    "ACCOUNT",
-                    "sourceEvidenceId",
-                    "sha256:" + "a".repeat(64),
-                    "sourceEvidenceVersion",
-                    reference.sourceVersion(),
-                    "projectionStatus",
-                    "CURRENT",
-                    "evaluatedAt",
-                    evaluatedAt.toString(),
-                    "expiresAt",
-                    expiresAt.toString()),
-            "issuanceOperationIdentity",
-                Map.of(
-                    "issuanceOperationId", operationId.toString(),
-                    "controlPlaneRequestId", tuple.controlPlaneRequestId(),
-                    "actionFamilyRequestIdentity",
-                        Map.of(
-                            "requestIdentityKind",
-                            "controlPlaneRequestId",
-                            "requestId",
-                            tuple.controlPlaneRequestId()),
-                    "mutationDigest", tuple.mutationDigest()),
-            "issuanceKind", "human_operator",
-            "authorityTuple", authorityTuple,
-            "membershipVersion", Map.of(tenantId, 2L),
-            "issuanceFence", Long.toString(issuanceFence),
-            "issuanceEvidence",
-                Map.of(
-                    "evidenceType",
-                    StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
-                    "actorAccountId",
-                    actorId,
-                    "controlUiTokenJti",
-                    UUID.fromString("2e19f788-10d2-4f33-aed6-9a46db136dcc").toString(),
-                    "role",
-                    "tenantAdmin",
-                    "accountGeneration",
-                    "1",
-                    "tenantGeneration",
-                    "1"));
-    return AccountControlUiAuthority.canonical(bundle);
+    return StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+        tuple,
+        new Values(
+            operationId,
+            "sha256:" + "a".repeat(64),
+            reference.sourceVersion(),
+            "CURRENT",
+            evaluatedAt,
+            expiresAt,
+            1L,
+            1L,
+            1L,
+            1L,
+            2L,
+            issuanceFence,
+            UUID.fromString("2e19f788-10d2-4f33-aed6-9a46db136dcc"),
+            "1",
+            "1"));
   }
 
   private static <T> T inTransaction(java.util.function.Supplier<T> action) {

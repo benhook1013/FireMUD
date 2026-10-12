@@ -149,14 +149,15 @@ public final class HostedTermsDisclosureHandoffRepository {
   public DispatchPermit authorizeDispatch(HostedTermsDisclosureHandoff handoff) {
     requireWriteTransaction();
     Objects.requireNonNull(handoff);
-    fenceRepository.requireWorldParticipationDisclosureAdmission(handoff.sources());
+    fenceRepository.lockDisclosureSources(handoff.sources());
     Record row = requireExactRow(handoff);
     Status status = Status.valueOf(row.get("status", String.class));
     boolean newlyAuthorized = false;
-    if (status == Status.PREPARED) {
-      fenceRepository.requireDisclosurePreparation(handoff.sources());
-    }
     if (status == Status.PREPARED || status == Status.AMBIGUOUS) {
+      fenceRepository.requireWorldParticipationDisclosureAdmission(handoff.sources());
+      if (status == Status.PREPARED) {
+        fenceRepository.requireDisclosurePreparation(handoff.sources());
+      }
       int updated =
           dsl.execute(
               "UPDATE "
