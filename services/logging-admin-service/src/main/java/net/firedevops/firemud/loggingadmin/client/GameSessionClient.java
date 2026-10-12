@@ -2,8 +2,6 @@ package net.firedevops.firemud.loggingadmin.client;
 
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.Objects;
 import java.util.UUID;
@@ -14,12 +12,12 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.FileBackedGrpcMtlsPolicy;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
-import net.firedevops.firemud.common.grpc.ResolvedGrpcTlsMaterial;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.gamesession.v1.AuthorizeStartSessionRequest;
 import net.firedevops.firemud.gamesession.v1.AuthorizeStartSessionResponse;
@@ -141,28 +139,11 @@ public class GameSessionClient
   }
 
   private void requireFileBackedMtls() {
-    if (transportTlsProperties.isPlaintext()) {
-      throw new IllegalStateException("StartSession owner handoff requires workload mTLS");
-    }
-    ResolvedGrpcTlsMaterial material;
-    try {
-      material = new GrpcTlsMaterialResolver().resolve(transportTlsProperties);
-    } catch (IOException | RuntimeException ignored) {
-      throw new IllegalStateException(
-          "StartSession owner handoff requires readable file-backed workload mTLS");
-    }
-    if (material == null
-        || !isReadableFile(material.certChain())
-        || !isReadableFile(material.privateKey())
-        || !isReadableFile(material.caCert())) {
-      throw new IllegalStateException(
-          "StartSession owner handoff requires readable file-backed workload mTLS");
-    }
-  }
-
-  private static boolean isReadableFile(ResolvedGrpcTlsMaterial.TlsResource resource) {
-    Path path = resource == null ? null : resource.watchPath();
-    return path != null && Files.isRegularFile(path) && Files.isReadable(path);
+    FileBackedGrpcMtlsPolicy.require(
+        transportTlsProperties,
+        new GrpcTlsMaterialResolver(),
+        "StartSession owner handoff",
+        "StartSession owner handoff requires workload mTLS");
   }
 
   private static StartSessionOwnerHandoffResult validateOwnerHandoffResponse(
