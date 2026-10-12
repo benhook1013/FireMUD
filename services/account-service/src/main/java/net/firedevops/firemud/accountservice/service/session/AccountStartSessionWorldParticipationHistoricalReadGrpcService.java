@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.service.session;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.Objects;
 import net.firedevops.firemud.account.v1.AccountStartSessionWorldParticipationHistoricalReadServiceGrpc;
 import net.firedevops.firemud.account.v1.ReadHistoricalStartSessionWorldParticipationRequest;
@@ -10,6 +11,8 @@ import net.firedevops.firemud.account.v1.ReadHistoricalStartSessionWorldParticip
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import org.jooq.exception.DataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 /** Standalone unregistered same-namespace Account historical tuple-to-participation receiver. */
 public final class AccountStartSessionWorldParticipationHistoricalReadGrpcService
@@ -75,8 +78,26 @@ public final class AccountStartSessionWorldParticipationHistoricalReadGrpcServic
       observer.onError(failure);
     } catch (IllegalArgumentException | IllegalStateException mismatch) {
       observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
-    } catch (RuntimeException unavailable) {
+    } catch (CannotCreateTransactionException unavailable) {
       observer.onError(Status.UNAVAILABLE.asRuntimeException());
+    } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
+      observer.onError(
+          (hasConnectionFailureSqlState(failure) ? Status.UNAVAILABLE : Status.INTERNAL)
+              .asRuntimeException());
+    } catch (RuntimeException failure) {
+      observer.onError(Status.INTERNAL.asRuntimeException());
     }
+  }
+
+  private static boolean hasConnectionFailureSqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException exception) {
+        String sqlState = exception.getSQLState();
+        if (sqlState != null && sqlState.startsWith("08")) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 }
