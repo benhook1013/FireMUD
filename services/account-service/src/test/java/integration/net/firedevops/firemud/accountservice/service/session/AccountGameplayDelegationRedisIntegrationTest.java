@@ -749,22 +749,39 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThat(admin.get(ascii(redisKey))).isNull();
       ownedKeys.add(redisKey);
 
-      byte[] priorBytes = null;
-      byte[] beforeFinalBytes = null;
-      byte[] finalBytes = null;
-      for (AccountAuthorityOutboxRepository.Event row : concatPages(firstPage, secondPage)) {
-        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-        byte[] candidateBytes = membershipProjectionFromOutboxRow(row, accountId, tenantId);
-        var outcome =
-            redis.publishSelectedAuthorityEvent(
-                accountId, tenantId, false, priorBytes, candidateBytes);
-        assertThat(outcome)
-            .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
-        beforeFinalBytes = priorBytes;
-        priorBytes = candidateBytes;
-        finalBytes = candidateBytes;
-      }
-      assertThat(finalBytes).isNotNull();
+      List<byte[]> firstCandidates =
+          firstPage.stream()
+              .map(row -> membershipProjectionFromOutboxRow(row, accountId, tenantId))
+              .toList();
+      List<byte[]> secondCandidates =
+          secondPage.stream()
+              .map(row -> membershipProjectionFromOutboxRow(row, accountId, tenantId))
+              .toList();
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThat(
+              redis.publishSelectedAuthorityEventPage(
+                  accountId, tenantId, false, null, firstCandidates))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(writerProvider.openedConnections()).isEqualTo(1);
+      assertThat(writerProvider.trace(0).stream().filter("aclWhoami"::equals).count())
+          .isEqualTo(1L);
+      assertThat(writerProvider.trace(0).stream().filter("scriptLoad"::equals).count())
+          .isEqualTo(1L);
+      assertThat(writerProvider.trace(0).stream().filter("evalsha"::equals).count())
+          .isEqualTo(128L);
+      assertThat(writerProvider.dispatchedCommands(0)).containsExactly("WAITAOF");
+      assertThat(writerProvider.trace(0).getLast()).isEqualTo("close");
+      byte[] beforeFinalBytes = firstCandidates.getLast();
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThat(
+              redis.publishSelectedAuthorityEventPage(
+                  accountId, tenantId, false, beforeFinalBytes, secondCandidates))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(writerProvider.openedConnections()).isEqualTo(2);
+      assertThat(writerProvider.trace(1).stream().filter("evalsha"::equals).count()).isEqualTo(1L);
+      assertThat(writerProvider.dispatchedCommands(1)).containsExactly("WAITAOF");
+      assertThat(writerProvider.trace(1).getLast()).isEqualTo("close");
+      byte[] finalBytes = secondCandidates.getLast();
       assertThat(admin.get(ascii(redisKey))).containsExactly(finalBytes);
       assertThat(admin.pttl(ascii(redisKey))).isEqualTo(-1L);
       assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
@@ -899,7 +916,8 @@ class AccountGameplayDelegationRedisIntegrationTest {
       TrackedProvider writerProvider = new TrackedProvider(writer);
       AccountGameplayDelegationRedisClient redis = redisClient(writerProvider);
       AccountGameplayDelegationAuthorityProjection projection =
-          new AccountGameplayDelegationAuthorityProjection(sources, database.manager(), redis);
+          org.mockito.Mockito.spy(
+              new AccountGameplayDelegationAuthorityProjection(sources, database.manager(), redis));
       AccountGameplayDelegationTokenRegistry tokenRegistry =
           new AccountGameplayDelegationTokenRegistry(
               issuance, database.manager(), redis, Clock.systemUTC(), REGISTRY_BYTES, 30_000L);
@@ -928,6 +946,10 @@ class AccountGameplayDelegationRedisIntegrationTest {
       long originalDeadline = pendingReceipt.absoluteExpiryMillis();
       assertThat(admin.pexpiretime(ascii(tokenKey))).isEqualTo(originalDeadline);
 
+      org.mockito.Mockito.doThrow(
+              new AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException())
+          .when(projection)
+          .publishCurrent(accountId);
       assertThatThrownBy(() -> commitService.commitPendingCandidate(pending.requestId()))
           .isInstanceOf(
               AccountGameplayDelegationIssuanceCommitService.IssuanceCommitUnavailableException
@@ -948,7 +970,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThat(admin.get(ascii(issuerKey))).isNull();
       assertThat(admin.get(ascii(accountKey))).isNull();
 
-      publishAndAssertCurrentOwnerProjection(projection, admin, accountId, sourceSnapshot);
+      org.mockito.Mockito.doCallRealMethod().when(projection).publishCurrent(accountId);
 
       var committedResult = commitService.commitPendingCandidate(pending.requestId());
       assertThat(committedResult.outcome())
@@ -967,6 +989,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThat(committedOwner.registrationReplicaAofCount()).isGreaterThanOrEqualTo(1L);
       assertThat(committedOwner.registrationOutcome())
           .isEqualTo(PendingRegistrationOutcome.EXACT_RETRY);
+      assertCurrentOwnerProjection(projection, admin, accountId, sourceSnapshot);
 
       AccountGameplayDelegationCommittedIssuanceOwner committedIssuanceOwner =
           new AccountGameplayDelegationCommittedIssuanceOwner(
@@ -1185,7 +1208,8 @@ class AccountGameplayDelegationRedisIntegrationTest {
       TrackedProvider writerProvider = new TrackedProvider(writer);
       AccountGameplayDelegationRedisClient redis = redisClient(writerProvider);
       AccountGameplayDelegationAuthorityProjection projection =
-          new AccountGameplayDelegationAuthorityProjection(sources, database.manager(), redis);
+          org.mockito.Mockito.spy(
+              new AccountGameplayDelegationAuthorityProjection(sources, database.manager(), redis));
       AccountGameplayDelegationTokenRegistry tokenRegistry =
           new AccountGameplayDelegationTokenRegistry(
               issuance, database.manager(), redis, Clock.systemUTC(), REGISTRY_BYTES, 30_000L);
@@ -1208,6 +1232,10 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .isNull();
       ownedKeys.add(tokenKey);
 
+      org.mockito.Mockito.doThrow(
+              new AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException())
+          .when(projection)
+          .publishCurrent(accountId);
       assertThatThrownBy(() -> commitService.commitPendingCandidate(requestId))
           .isInstanceOf(
               AccountGameplayDelegationIssuanceCommitService.IssuanceCommitUnavailableException
@@ -1235,7 +1263,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThat(admin.get(ascii(issuerKey))).isNull();
       assertThat(admin.get(ascii(accountKey))).isNull();
 
-      publishAndAssertCurrentOwnerProjection(projection, admin, accountId, sourceSnapshot);
+      org.mockito.Mockito.doCallRealMethod().when(projection).publishCurrent(accountId);
 
       var commit = commitService.commitPendingCandidate(requestId);
       assertThat(commit.outcome())
@@ -1249,6 +1277,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThat(committed.identity().callerContextId()).isEqualTo(callerContextId);
       assertThat(committed.envelopeSha256()).isNotBlank();
       assertThat(committed.tokenSha256()).isEqualTo(pendingCandidate.tokenHash());
+      assertCurrentOwnerProjection(projection, admin, accountId, sourceSnapshot);
       assertThat(committed.registryAbsoluteExpiryMillis()).isEqualTo(originalRegistryDeadline);
       long originalRecoveryExpiry = committed.responseRecoveryExpiryEpochMillis();
       assertThat(originalRecoveryExpiry)
@@ -1625,16 +1654,6 @@ class AccountGameplayDelegationRedisIntegrationTest {
     };
   }
 
-  private static List<AccountAuthorityOutboxRepository.Event> concatPages(
-      List<AccountAuthorityOutboxRepository.Event> first,
-      List<AccountAuthorityOutboxRepository.Event> second) {
-    List<AccountAuthorityOutboxRepository.Event> events =
-        new ArrayList<>(first.size() + second.size());
-    events.addAll(first);
-    events.addAll(second);
-    return List.copyOf(events);
-  }
-
   private static net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec
           .MembershipEvent
       membershipOutboxEventFixture(UUID account, UUID tenant, long sequence) {
@@ -2005,7 +2024,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
     return context.transaction().execute(status -> operation.get());
   }
 
-  private static void publishAndAssertCurrentOwnerProjection(
+  private static void assertCurrentOwnerProjection(
       AccountGameplayDelegationAuthorityProjection projection,
       RedisCommands<byte[], byte[]> admin,
       UUID accountId,
@@ -2018,20 +2037,11 @@ class AccountGameplayDelegationRedisIntegrationTest {
     var expectedAccount =
         AccountGameplayDelegationAuthorityProjection.ProjectionValue.decode(
             expected[1], "account", accountId.toString());
-
-    var publication = projection.publishCurrent(accountId);
-    assertThat(publication.redisOutcome())
-        .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
-    assertThat(publication.issuerGeneration()).isEqualTo(ownerSnapshot.issuer().generation());
-    assertThat(publication.accountGeneration()).isEqualTo(ownerSnapshot.account().generation());
-    assertThat(publication.issuerDigest()).isEqualTo(expectedIssuer.digest());
-    assertThat(publication.accountDigest()).isEqualTo(expectedAccount.digest());
-
-    var readback = projection.observeCurrent(accountId);
-    assertThat(readback.issuerGeneration()).isEqualTo(publication.issuerGeneration());
-    assertThat(readback.accountGeneration()).isEqualTo(publication.accountGeneration());
-    assertThat(readback.issuerDigest()).isEqualTo(publication.issuerDigest());
-    assertThat(readback.accountDigest()).isEqualTo(publication.accountDigest());
+    var observation = projection.observeCurrent(accountId);
+    assertThat(observation.issuerGeneration()).isEqualTo(ownerSnapshot.issuer().generation());
+    assertThat(observation.accountGeneration()).isEqualTo(ownerSnapshot.account().generation());
+    assertThat(observation.issuerDigest()).isEqualTo(expectedIssuer.digest());
+    assertThat(observation.accountDigest()).isEqualTo(expectedAccount.digest());
     assertThat(
             admin.get(
                 ascii(
