@@ -374,7 +374,7 @@ class VersionAssetArtifactServiceImplTest {
     Version retiredVersion = new Version();
     retiredVersion.setId(7L);
     retiredVersion.setTenantId("tenant-1");
-    retiredVersion.setVersionNumber(8);
+    retiredVersion.setVersionNumber(9);
     retiredVersion.setVersionState(VersionLifecycleState.RETIRED);
     when(versionRepository.findById(7L)).thenReturn(Optional.of(retiredVersion));
     when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("tenant-1", 7L))
