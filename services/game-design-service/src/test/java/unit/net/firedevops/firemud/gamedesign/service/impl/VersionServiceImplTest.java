@@ -132,7 +132,7 @@ class VersionServiceImplTest {
   }
 
   @Test
-  void publishVersionUsesTenantScopedVersionSequence() throws Exception {
+  void publishVersionDelegatesToCommandServiceAndReturnsItsResult() throws Exception {
     when(publishCommandService.publishFullVersion(
             org.mockito.ArgumentMatchers.eq("tenant-1"),
             org.mockito.ArgumentMatchers.eq("notes"),
@@ -242,6 +242,66 @@ class VersionServiceImplTest {
     assertEquals(VersionLifecycleState.RETIRED, result.versionState());
     assertEquals(9L, result.versionStateEpoch());
     verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+  }
+
+  @Test
+  void publishVersionPropagatesFreshPublicationDenialBeforeMutation() {
+    when(publishCommandService.publishFullVersion(
+            "tenant-1",
+            "notes",
+            PUBLISH_REQUEST_ID,
+            "publish:tenant-1:publish-request:" + PUBLISH_REQUEST_ID))
+        .thenThrow(
+            new VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException());
+
+    assertThrows(
+        VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.class,
+        () -> service.publishVersion("tenant-1", "notes", PUBLISH_REQUEST_ID));
+
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+    verify(publishAttemptService, org.mockito.Mockito.never()).executeFullVersionTransaction(any());
+    verify(publishGateService, org.mockito.Mockito.never())
+        .collectFullVersionParticipantDigests(any(VersionDto.class), any(), any());
+    verify(assetExportService, org.mockito.Mockito.never())
+        .exportAssets(any(String.class), any(Integer.class));
+  }
+
+  @Test
+  void publishVersionWithTemporalConfiguredPropagatesDenialBeforeLocalMutation() {
+    VersionServiceImpl temporalService =
+        new VersionServiceImpl(
+            versionRepository,
+            gameRepository,
+            publishedPluginVersionRepository,
+            pluginVersionStatusEventRepository,
+            Mappers.getMapper(VersionMapper.class),
+            scriptingClient,
+            publishAttemptService,
+            publishGateService,
+            controlPlaneDigestService,
+            versionAssetArtifactService,
+            publishedReleaseBundleService,
+            recordedParticipantDigestService,
+            pluginBundleIntakeService,
+            pluginBundleStorageService,
+            publishCommandService,
+            Optional.of(temporalPublishOrchestrator));
+    when(temporalPublishOrchestrator.publishFullVersion("tenant-1", "notes", PUBLISH_REQUEST_ID))
+        .thenThrow(
+            new VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException());
+
+    assertThrows(
+        VersionPublishCommandServiceImpl.FullVersionPublicationUnavailableException.class,
+        () -> temporalService.publishVersion("tenant-1", "notes", PUBLISH_REQUEST_ID));
+
+    verify(temporalPublishOrchestrator).publishFullVersion("tenant-1", "notes", PUBLISH_REQUEST_ID);
+    verify(publishCommandService, org.mockito.Mockito.never())
+        .publishFullVersion(
+            any(String.class), any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+    verify(publishAttemptService, org.mockito.Mockito.never()).executeFullVersionTransaction(any());
+    verify(assetExportService, org.mockito.Mockito.never())
+        .exportAssets(any(String.class), any(Integer.class));
   }
 
   @Test
@@ -517,6 +577,8 @@ class VersionServiceImplTest {
         .thenReturn(Optional.empty(), Optional.of(pendingAttempt));
     when(versionRepository.findByTenantIdAndId("tenant-1", 11L))
         .thenReturn(Optional.of(savedDraft));
+    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-1", 11L))
+        .thenReturn(Optional.of(savedDraft));
     when(publishGateService.collectScriptPatchParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class)))
         .thenThrow(
@@ -705,8 +767,9 @@ class VersionServiceImplTest {
     Version draftAfterRollback =
         scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
     when(versionRepository.save(any(Version.class))).thenReturn(draft);
-    when(versionRepository.findByTenantIdAndId("tenant-1", 11L))
-        .thenReturn(Optional.of(draft), Optional.of(draftAfterRollback));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 11L)).thenReturn(Optional.of(draft));
+    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-1", 11L))
+        .thenReturn(Optional.of(draftAfterRollback));
     PublicationDigestRequestBinding binding =
         PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
     PublishAttempt pendingAttempt =

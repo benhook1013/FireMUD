@@ -17,5 +17,10 @@ public class VersionAssetArtifact {
   private String lastErrorCode;
   private String lastErrorMessage;
   private String exportedManifestAssetKeysJson = "[]";
+  private Integer manifestSchemaVersion;
+  private String artifactDigestsJson;
+  private String publishedObjectProofsJson;
+  private Long candidateSnapshotVersionId;
+  private String candidatePublicBaseUrl;
   private LocalDateTime updatedAt = LocalDateTime.now();
 }

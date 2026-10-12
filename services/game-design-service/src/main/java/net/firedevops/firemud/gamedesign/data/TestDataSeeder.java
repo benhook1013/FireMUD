@@ -329,18 +329,24 @@ public class TestDataSeeder implements ApplicationRunner {
     VersionAssetArtifact artifact =
         versionAssetArtifactRepository
             .findByTenantIdAndVersionId(DEMO_TENANT_ID, versionId)
-            .orElseGet(VersionAssetArtifact::new);
-    artifact.setTenantId(DEMO_TENANT_ID);
-    artifact.setVersionId(versionId);
-    artifact.setExportedVersionNumber(version.getVersionNumber());
-    artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
-    artifact.setStateEpoch(Math.max(artifact.getStateEpoch(), 1L));
-    artifact.setManifestHash(bundle.getManifestHash());
-    artifact.setLastWorkflowId(DEMO_PUBLISH_WORKFLOW_ID);
-    artifact.setLastErrorCode(null);
-    artifact.setLastErrorMessage(null);
-    artifact.setExportedManifestAssetKeysJson("[]");
-    versionAssetArtifactRepository.save(artifact);
+            .orElse(null);
+    if (artifact == null) {
+      artifact = new VersionAssetArtifact();
+      artifact.setTenantId(DEMO_TENANT_ID);
+      artifact.setVersionId(versionId);
+      artifact.setExportedVersionNumber(version.getVersionNumber());
+      artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
+      artifact.setStateEpoch(1L);
+      artifact.setManifestHash(bundle.getManifestHash());
+      artifact.setLastWorkflowId(DEMO_PUBLISH_WORKFLOW_ID);
+      artifact.setLastErrorCode(null);
+      artifact.setLastErrorMessage(null);
+      artifact.setExportedManifestAssetKeysJson("[]");
+      versionAssetArtifactRepository.save(artifact);
+    } else if (!matchesDemoArtifact(artifact, version, bundle)) {
+      throw new IllegalStateException(
+          "Existing version artifact does not exactly match the demo seed; refusing to reuse it");
+    }
   }
 
   private boolean matchesDemoVersion(Version version, Game game, GameTenantIdentity gameIdentity) {

@@ -1,240 +1,1039 @@
 package net.firedevops.firemud.gamedesign.service;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
-import net.firedevops.firemud.gamedesign.entity.GameAsset;
-import net.firedevops.firemud.gamedesign.entity.Version;
-import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
-import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
-import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
+import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.AssetSelection;
+import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.ExportSnapshot;
 import net.firedevops.firemud.gamedesign.service.impl.AssetExportServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.api.io.TempDir;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.PutObjectResponse;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @ExtendWith(MockitoExtension.class)
 class AssetExportServiceImplTest {
-  @Mock private GameAssetRepository repository;
-  @Mock private VersionRepository versionRepository;
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
+  private static final UUID CANONICAL_TENANT_ID =
+      UUID.fromString("8b0c1a0f-b8c9-4c4b-9021-381f57699001");
+  private static final UUID CANONICAL_VERSION_ID =
+      UUID.fromString("8b0c1a0f-b8c9-4c4b-9021-381f57699002");
+  private static final String TENANT_ID = "owner-tenant-key";
+  private static final int VERSION_NUMBER = 7;
+  private static final String PUBLIC_BASE_URL = "https://assets.example.invalid/assets";
+  private static final String PRIVATE_ENDPOINT = "http://minio.internal:9000";
+
+  @Mock private VersionAssetPublicationService publicationService;
+  @Mock private VersionAssetExportCandidateService candidateService;
   @Mock private S3Client s3Client;
 
+  private final AtomicReference<FrozenAssetExportCandidate> storedCandidate =
+      new AtomicReference<>();
+  private final Map<String, StoredObject> objectStore = new HashMap<>();
+  private final Map<Long, byte[]> frozenAssetBytes = new HashMap<>();
+  private final Map<String, byte[]> readbackStreamOverrides = new HashMap<>();
+  private final Map<String, Long> reportedObjectLengths = new HashMap<>();
+  private final Set<String> conditionalPutConflicts = new HashSet<>();
+  private final Set<String> failPutBeforeCommit = new HashSet<>();
+  private final Set<String> losePutAcknowledgementAfterCommit = new HashSet<>();
+  private final Set<String> failReadback = new HashSet<>();
+
   private AssetExportServiceImpl service;
+  private ExportSnapshot snapshot;
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void privateStagingCleanupFailureDoesNotEscapeOrSkipRemainingFiles(@TempDir Path tempDirectory)
+      throws Exception {
+    Path nonEmptyDirectory = Files.createDirectory(tempDirectory.resolve("non-empty"));
+    Path retainedChild = Files.writeString(nonEmptyDirectory.resolve("retained.txt"), "keep");
+    Path disposableFile = Files.createTempFile(tempDirectory, "staged-", ".bin");
+
+    Class<?> stagingType =
+        Class.forName(AssetExportServiceImpl.class.getName() + "$PrivateStaging");
+    Constructor<?> constructor = stagingType.getDeclaredConstructor();
+    constructor.setAccessible(true);
+    Object staging = constructor.newInstance();
+    Field filesField = stagingType.getDeclaredField("files");
+    filesField.setAccessible(true);
+    ((List<Path>) filesField.get(staging)).addAll(List.of(nonEmptyDirectory, disposableFile));
+
+    assertDoesNotThrow(() -> ((AutoCloseable) staging).close());
+    assertTrue(Files.exists(nonEmptyDirectory));
+    assertTrue(Files.exists(retainedChild));
+    assertFalse(Files.exists(disposableFile));
+  }
 
   @BeforeEach
   void setup() {
-    service = newService(256);
-  }
-
-  private AssetExportServiceImpl newService(int frozenSnapshotCacheMaxEntries) {
-    AssetStoreProperties props = new AssetStoreProperties();
-    props.setBucket("bucket");
-    props.setEndpoint("http://localhost:9000");
-    props.setRegion("ap-southeast-2");
-    props.setAccessKey("a");
-    props.setSecretKey("s");
-    props.setFrozenSnapshotCacheMaxEntries(frozenSnapshotCacheMaxEntries);
-    return new AssetExportServiceImpl(
-        repository, s3Client, props, new ObjectMapper(), versionRepository);
+    objectStore.clear();
+    frozenAssetBytes.clear();
+    readbackStreamOverrides.clear();
+    reportedObjectLengths.clear();
+    conditionalPutConflicts.clear();
+    failPutBeforeCommit.clear();
+    losePutAcknowledgementAfterCommit.clear();
+    failReadback.clear();
+    storedCandidate.set(null);
+    snapshot = singleAssetSnapshot();
+    lenient()
+        .when(publicationService.freezeOrReadSnapshot(TENANT_ID, VERSION_NUMBER))
+        .thenAnswer(ignored -> snapshot);
+    lenient()
+        .when(publicationService.readFrozenSnapshot(TENANT_ID, VERSION_NUMBER))
+        .thenAnswer(ignored -> copySnapshot(snapshot));
+    lenient()
+        .when(
+            publicationService.readFrozenAssetBytes(
+                any(String.class), anyInt(), any(AssetSelection.class)))
+        .thenAnswer(
+            invocation -> {
+              AssetSelection selection = invocation.getArgument(2);
+              byte[] bytes = frozenAssetBytes.get(selection.assetId());
+              if (bytes == null) {
+                throw new IllegalStateException("frozen asset bytes are unavailable");
+              }
+              return bytes.clone();
+            });
+    lenient()
+        .when(
+            candidateService.recordExportCandidate(
+                any(String.class), anyInt(), any(FrozenAssetExportCandidate.class)))
+        .thenAnswer(
+            invocation -> {
+              FrozenAssetExportCandidate requested = invocation.getArgument(2);
+              FrozenAssetExportCandidate existing = storedCandidate.get();
+              if (existing == null) {
+                storedCandidate.set(requested);
+                existing = requested;
+              }
+              if (!existing.equals(requested)) {
+                throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_CONFLICT");
+              }
+              return existing;
+            });
+    lenient()
+        .when(candidateService.readExportCandidate(any(String.class), anyInt()))
+        .thenAnswer(
+            ignored -> {
+              FrozenAssetExportCandidate existing = storedCandidate.get();
+              if (existing == null) {
+                throw new IllegalStateException("ASSET_EXPORT_CANDIDATE_NOT_FOUND");
+              }
+              return existing;
+            });
+    lenient()
+        .when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+        .thenAnswer(this::putObject);
+    lenient().when(s3Client.getObject(any(GetObjectRequest.class))).thenAnswer(this::getObject);
+    service = newService(PUBLIC_BASE_URL);
   }
 
   @Test
-  void exportUploadsAssetsAndManifest() {
-    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
-        .thenReturn(Optional.of(version(VersionLifecycleState.DRAFT)));
-    GameAsset asset = gameAsset("logo.png", "data");
-    when(repository.findByTenantId("t")).thenReturn(List.of(asset));
+  void readsAndMatchesDurableSnapshotBeforeConditionalObjectWrites() {
+    service.exportAssets(TENANT_ID, VERSION_NUMBER);
 
-    ExportedAssetManifest manifest = service.exportAssets("t", 1);
+    InOrder order = inOrder(publicationService, candidateService, s3Client);
+    order.verify(publicationService).freezeOrReadSnapshot(TENANT_ID, VERSION_NUMBER);
+    order.verify(publicationService).readFrozenSnapshot(TENANT_ID, VERSION_NUMBER);
+    order.verify(candidateService).readExportCandidate(TENANT_ID, VERSION_NUMBER);
+    order
+        .verify(candidateService)
+        .recordExportCandidate(
+            org.mockito.ArgumentMatchers.eq(TENANT_ID),
+            org.mockito.ArgumentMatchers.eq(VERSION_NUMBER),
+            any(FrozenAssetExportCandidate.class));
+    order.verify(candidateService).readExportCandidate(TENANT_ID, VERSION_NUMBER);
+    order
+        .verify(s3Client)
+        .putObject(
+            argThat(
+                (PutObjectRequest request) ->
+                    "*".equals(request.ifNoneMatch())
+                        && request.key().startsWith("artifacts/sha256/")),
+            any(RequestBody.class));
+  }
 
+  @Test
+  void unresolvedCandidateWriteBecomesOutcomePendingBeforeAnyObjectWrite() {
+    org.mockito.Mockito.doThrow(new IllegalStateException("temporary candidate store failure"))
+        .when(candidateService)
+        .recordExportCandidate(
+            org.mockito.ArgumentMatchers.eq(TENANT_ID),
+            org.mockito.ArgumentMatchers.eq(VERSION_NUMBER),
+            any(FrozenAssetExportCandidate.class));
+
+    AssetExportOutcomePendingException thrown =
+        assertThrows(
+            AssetExportOutcomePendingException.class,
+            () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    org.junit.jupiter.api.Assertions.assertTrue(
+        thrown.getMessage().startsWith("ASSET_EXPORT_OUTCOME_PENDING:"));
+    verify(candidateService).readExportCandidate(TENANT_ID, VERSION_NUMBER);
+    verifyNoInteractions(s3Client);
+    assertEquals(0, objectStore.size());
+  }
+
+  @Test
+  void unresolvedCandidateReadbackBecomesOutcomePendingBeforeAnyObjectWrite() {
+    org.mockito.Mockito.doThrow(new IllegalStateException("candidate readback unavailable"))
+        .when(candidateService)
+        .readExportCandidate(TENANT_ID, VERSION_NUMBER);
+
+    AssetExportOutcomePendingException thrown =
+        assertThrows(
+            AssetExportOutcomePendingException.class,
+            () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    org.junit.jupiter.api.Assertions.assertTrue(
+        thrown.getMessage().startsWith("ASSET_EXPORT_OUTCOME_PENDING:"));
+    verify(candidateService, never())
+        .recordExportCandidate(any(String.class), anyInt(), any(FrozenAssetExportCandidate.class));
+    verifyNoInteractions(s3Client);
+    assertEquals(0, objectStore.size());
+  }
+
+  @Test
+  void conflictingPersistedCandidateIsDeniedBeforeAnyObjectWrite() {
+    FrozenAssetExportCandidate conflict =
+        new FrozenAssetExportCandidate(conflictingCandidate(), PUBLIC_BASE_URL);
+    org.mockito.Mockito.doReturn(conflict)
+        .when(candidateService)
+        .readExportCandidate(TENANT_ID, VERSION_NUMBER);
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    assertEquals("ASSET_EXPORT_CANDIDATE_CONFLICT", thrown.getMessage());
+    verifyNoInteractions(s3Client);
+    assertEquals(0, objectStore.size());
+  }
+
+  @Test
+  void missingDurableSnapshotFailsClosedWithoutReadingCurrentAssetsOrWritingObjects() {
+    when(publicationService.freezeOrReadSnapshot(TENANT_ID, VERSION_NUMBER)).thenReturn(null);
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    assertEquals("VERSION_ASSET_SNAPSHOT_UNAVAILABLE", thrown.getMessage());
+    verify(publicationService, never()).readFrozenSnapshot(TENANT_ID, VERSION_NUMBER);
+    verifyNoInteractions(s3Client);
+  }
+
+  @Test
+  void exportsCanonicalActualByteDigestsAndManifestWithoutPrivateStorageLocation()
+      throws Exception {
+    ExportedAssetManifest exported = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+
+    assertEquals(exported, storedCandidate.get().manifest());
+    assertEquals(PUBLIC_BASE_URL, storedCandidate.get().publicBaseUrl());
+    byte[] assetBytes = "real uploaded bytes".getBytes(StandardCharsets.UTF_8);
+    String assetHex = sha256Hex(assetBytes);
+    String assetKey = "artifacts/sha256/" + assetHex;
+    assertEquals("sha256:" + assetHex, exported.artifactDigests().get(0).contentDigest());
+    assertEquals(assetKey, exported.artifactDigests().get(0).immutableObjectKey());
+    assertEquals(List.of("branding/logo"), exported.requiredManifestAssetKeys());
+    assertEquals(1, exported.manifestSchemaVersion());
+    assertEquals(
+        Set.of(
+            assetKey, "manifests/sha256/" + exported.manifestHash().substring("sha256:".length())),
+        objectStore.keySet());
+    assertEquals("sha256:" + sha256Hex(manifestBytes(exported)), exported.manifestHash());
+
+    String manifestJson = new String(manifestBytes(exported), StandardCharsets.UTF_8);
+    assertEquals(
+        "{\"schemaVersion\":1,\"assets\":{\"branding/logo\":{\"usageKey\":\"branding/logo\","
+            + "\"artifactKind\":\"BINARY\",\"immutableObjectKey\":\""
+            + assetKey
+            + "\",\"contentDigest\":\"sha256:"
+            + assetHex
+            + "\",\"contentType\":\"image/png\",\"artifactSchemaVersion\":1,"
+            + "\"producerService\":\"game-design-service\",\"versionId\":\""
+            + CANONICAL_VERSION_ID
+            + "\",\"url\":\""
+            + PUBLIC_BASE_URL
+            + "/"
+            + assetKey
+            + "\"}}}",
+        manifestJson);
+    JsonNode manifest = new ObjectMapper().readTree(manifestJson);
+    assertEquals(1, manifest.get("schemaVersion").asInt());
+    assertEquals(1, manifest.get("assets").size());
+    assertEquals("branding/logo", manifest.get("assets").propertyNames().iterator().next());
+    assertEquals(-1, manifestJson.indexOf("minio.internal"));
+    assertEquals(-1, manifestJson.indexOf("bucket"));
     verify(s3Client)
         .putObject(
-            argThat((PutObjectRequest r) -> r.key().equals("t/1/logo.png")),
+            argThat(
+                (PutObjectRequest request) ->
+                    request
+                            .key()
+                            .equals(
+                                "manifests/sha256/"
+                                    + exported.manifestHash().substring("sha256:".length()))
+                        && "application/json".equals(request.contentType())
+                        && "*".equals(request.ifNoneMatch())),
             any(RequestBody.class));
-    verify(s3Client)
-        .putObject(
-            argThat((PutObjectRequest r) -> r.key().equals("t/1/manifest.json")),
-            any(RequestBody.class));
-    assertEquals(List.of("logo.png", "manifest.json"), manifest.requiredManifestAssetKeys());
   }
 
   @Test
-  void sameVersionRetryReusesFrozenSnapshot() {
-    Version draft = version(VersionLifecycleState.DRAFT);
-    Version published = version(VersionLifecycleState.PUBLISHED);
-    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
-        .thenReturn(Optional.of(draft), Optional.of(draft), Optional.of(published));
-    GameAsset original = gameAsset("logo.png", "original");
-    GameAsset changed = gameAsset("changed.png", "changed");
-    when(repository.findByTenantId("t")).thenReturn(List.of(original), List.of(changed));
+  void emptyMappedSnapshotCreatesRealCanonicalEmptyManifest() throws Exception {
+    snapshot = snapshot(List.of());
 
-    ExportedAssetManifest first = service.exportAssets("t", 1);
-    ExportedAssetManifest retry = service.exportAssets("t", 1);
+    ExportedAssetManifest exported = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+
+    assertEquals(List.of(), exported.requiredManifestAssetKeys());
+    assertEquals(List.of(), exported.artifactDigests());
+    assertEquals(
+        "{\"schemaVersion\":1,\"assets\":{}}",
+        new String(manifestBytes(exported), StandardCharsets.UTF_8));
+    assertEquals(
+        Set.of("manifests/sha256/" + exported.manifestHash().substring("sha256:".length())),
+        objectStore.keySet());
+  }
+
+  @Test
+  void serializesAssetsInExactUtf8ByteUsageOrder() {
+    String bmpKey = "\ue000";
+    String supplementaryKey = "\ud800\udc00";
+    snapshot =
+        snapshot(
+            List.of(
+                selection(supplementaryKey, 25L, "supplementary", "image/png"),
+                selection(bmpKey, 24L, "bmp", "image/png")));
+
+    ExportedAssetManifest exported = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+    String manifestJson = new String(manifestBytes(exported), StandardCharsets.UTF_8);
+
+    assertEquals(List.of(bmpKey, supplementaryKey), exported.requiredManifestAssetKeys());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        manifestJson.indexOf('"' + bmpKey + '"')
+            < manifestJson.indexOf('"' + supplementaryKey + '"'));
+  }
+
+  @Test
+  void serviceRestartReusesExactPersistedSnapshotAndImmutableKeys() {
+    ExportedAssetManifest first = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+    AssetExportServiceImpl restarted = newService("https://replacement.example.invalid/assets");
+
+    ExportedAssetManifest retry = restarted.exportAssets(TENANT_ID, VERSION_NUMBER);
 
     assertEquals(first, retry);
-    verify(versionRepository, times(3)).findByTenantIdAndVersionNumber("t", 1);
-    verify(repository, times(1)).findByTenantId("t");
+    String manifestJson = new String(manifestBytes(retry), StandardCharsets.UTF_8);
+    org.junit.jupiter.api.Assertions.assertTrue(manifestJson.contains(PUBLIC_BASE_URL + "/"));
+    org.junit.jupiter.api.Assertions.assertFalse(
+        manifestJson.contains("replacement.example.invalid"));
+    verify(publicationService, org.mockito.Mockito.times(2))
+        .freezeOrReadSnapshot(TENANT_ID, VERSION_NUMBER);
+    verify(publicationService, org.mockito.Mockito.times(2))
+        .readFrozenSnapshot(TENANT_ID, VERSION_NUMBER);
+    assertEquals(2, objectStore.size());
   }
 
   @Test
-  void unknownVersionIsRejectedWithoutSelectingTenantAssets() {
-    when(versionRepository.findByTenantIdAndVersionNumber("t", 99)).thenReturn(Optional.empty());
+  void repairReusesFrozenManifestOriginAfterConfigurationChanges() {
+    ExportedAssetManifest published = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+    byte[] originalManifest = manifestBytes(published);
+    assertEquals(PUBLIC_BASE_URL, storedCandidate.get().publicBaseUrl());
 
-    IllegalArgumentException thrown =
-        assertThrows(IllegalArgumentException.class, () -> service.exportAssets("t", 99));
+    service = newService("https://replacement.example.invalid/assets");
+    ExportedAssetManifest repaired =
+        service.repairPublishedAssets(TENANT_ID, VERSION_NUMBER, publishedBundle(published));
 
-    assertEquals("REPAIR_VERSION_SCOPE_UNAVAILABLE", thrown.getMessage());
-    verifyNoInteractions(repository, s3Client);
+    assertEquals(published, repaired);
+    assertArrayEquals(originalManifest, manifestBytes(repaired));
+    String manifestJson = new String(manifestBytes(repaired), StandardCharsets.UTF_8);
+    org.junit.jupiter.api.Assertions.assertTrue(manifestJson.contains(PUBLIC_BASE_URL + "/"));
+    org.junit.jupiter.api.Assertions.assertFalse(
+        manifestJson.contains("replacement.example.invalid"));
   }
 
   @Test
-  void duplicateUsageKeysAreRejectedBeforeWritingAssets() {
-    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
-        .thenReturn(Optional.of(version(VersionLifecycleState.DRAFT)));
-    when(repository.findByTenantId("t"))
-        .thenReturn(List.of(gameAsset("logo.png", "one"), gameAsset("logo.png", "two")));
+  void rejectsIndependentlyReadSnapshotMismatchBeforeAnyStoreWrite() {
+    ExportSnapshot changedBytes =
+        snapshot(List.of(selection("branding/logo", 24L, "different uploaded bytes", "image/png")));
+    when(publicationService.readFrozenSnapshot(TENANT_ID, VERSION_NUMBER)).thenReturn(changedBytes);
 
     IllegalStateException thrown =
-        assertThrows(IllegalStateException.class, () -> service.exportAssets("t", 1));
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
 
-    assertEquals("ASSET_USAGE_KEY_COLLISION", thrown.getMessage());
+    assertEquals("VERSION_ASSET_SNAPSHOT_MISMATCH", thrown.getMessage());
+    assertEquals(0, objectStore.size());
     verifyNoInteractions(s3Client);
   }
 
   @Test
-  void reservedManifestUsageKeyIsRejectedBeforeWritingAssets() {
-    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
-        .thenReturn(Optional.of(version(VersionLifecycleState.DRAFT)));
-    when(repository.findByTenantId("t"))
-        .thenReturn(List.of(gameAsset("manifest.json", "asset data")));
-
-    IllegalStateException thrown =
-        assertThrows(IllegalStateException.class, () -> service.exportAssets("t", 1));
-
-    assertEquals("ASSET_USAGE_KEY_COLLISION", thrown.getMessage());
-    verifyNoInteractions(s3Client);
-  }
-
-  @ParameterizedTest
-  @EnumSource(
-      value = VersionLifecycleState.class,
-      names = {"PUBLISHED", "ACTIVE"})
-  void publishedAndActiveRetryFailsWithoutFrozenSnapshot(VersionLifecycleState state) {
-    Version version = version(state);
-    when(versionRepository.findByTenantIdAndVersionNumber("t", 1)).thenReturn(Optional.of(version));
-
-    IllegalStateException thrown =
-        assertThrows(IllegalStateException.class, () -> service.exportAssets("t", 1));
-
-    assertEquals("REPAIR_VERSION_SCOPE_UNAVAILABLE", thrown.getMessage());
-    verify(repository, never()).findByTenantId("t");
-    verifyNoInteractions(s3Client);
-  }
-
-  @Test
-  void publishedRetryReusesSnapshotFrozenBeforePublication() {
-    Version draft = version(VersionLifecycleState.DRAFT);
-    Version published = version(VersionLifecycleState.PUBLISHED);
-    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
-        .thenReturn(Optional.of(draft), Optional.of(draft), Optional.of(published));
-
-    GameAsset original = gameAsset("logo.png", "original");
-    GameAsset changed = gameAsset("changed.png", "changed");
-    when(repository.findByTenantId("t")).thenReturn(List.of(original), List.of(changed));
-
-    ExportedAssetManifest first = service.exportAssets("t", 1);
-    ExportedAssetManifest retry = service.exportAssets("t", 1);
-
-    assertEquals(first, retry);
-    verify(versionRepository, times(3)).findByTenantIdAndVersionNumber("t", 1);
-    verify(repository, times(1)).findByTenantId("t");
-  }
-
-  @Test
-  void fullSnapshotCacheFailsClosedInsteadOfEvictingRetryEvidence() {
-    service = newService(1);
-    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
-        .thenReturn(Optional.of(version(7L, 1, VersionLifecycleState.DRAFT)));
-    when(versionRepository.findByTenantIdAndVersionNumber("t", 2))
-        .thenReturn(Optional.of(version(8L, 2, VersionLifecycleState.DRAFT)));
-    when(repository.findByTenantId("t"))
+  void rejectsSnapshotSourceIdentityOrContentTypeSubstitutionBeforeAnyStoreWrite() {
+    when(publicationService.readFrozenSnapshot(TENANT_ID, VERSION_NUMBER))
         .thenReturn(
-            List.of(gameAsset("first.png", "first")), List.of(gameAsset("second.png", "second")));
+            snapshot(List.of(selection("branding/logo", 25L, "real uploaded bytes", "image/png"))));
 
-    service.exportAssets("t", 1);
-    org.mockito.Mockito.clearInvocations(s3Client);
+    IllegalStateException changedSourceId =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+    assertEquals("VERSION_ASSET_SNAPSHOT_MISMATCH", changedSourceId.getMessage());
+    verifyNoInteractions(s3Client);
 
-    IllegalStateException thrown =
-        assertThrows(IllegalStateException.class, () -> service.exportAssets("t", 2));
+    org.mockito.Mockito.clearInvocations(publicationService);
+    when(publicationService.readFrozenSnapshot(TENANT_ID, VERSION_NUMBER))
+        .thenReturn(
+            snapshot(
+                List.of(selection("branding/logo", 24L, "real uploaded bytes", "image/jpeg"))));
 
-    assertEquals("EXPORT_SNAPSHOT_CAPACITY", thrown.getMessage());
+    IllegalStateException changedContentType =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+    assertEquals("VERSION_ASSET_SNAPSHOT_MISMATCH", changedContentType.getMessage());
     verifyNoInteractions(s3Client);
   }
 
   @Test
-  void publicationRacingSnapshotCreationFailsBeforeObjectStoreWrites() {
-    Version draft = version(VersionLifecycleState.DRAFT);
-    Version published = version(VersionLifecycleState.PUBLISHED);
-    when(versionRepository.findByTenantIdAndVersionNumber("t", 1))
-        .thenReturn(Optional.of(draft), Optional.of(published));
-    when(repository.findByTenantId("t")).thenReturn(List.of(gameAsset("logo.png", "data")));
+  void rejectsOutOfScopeOrIncompleteCanonicalSnapshotBeforeAnyStoreWrite() {
+    snapshot =
+        snapshot(
+            "another-tenant",
+            VERSION_NUMBER,
+            19L,
+            1L,
+            CANONICAL_TENANT_ID,
+            CANONICAL_VERSION_ID,
+            snapshot.items());
 
     IllegalStateException thrown =
-        assertThrows(IllegalStateException.class, () -> service.exportAssets("t", 1));
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
 
-    assertEquals("REPAIR_VERSION_SCOPE_UNAVAILABLE", thrown.getMessage());
+    assertEquals(
+        "VERSION_ASSET_SNAPSHOT_INVALID: incomplete or out-of-scope snapshot", thrown.getMessage());
     verifyNoInteractions(s3Client);
   }
 
   @Test
-  void deleteExportedAssetsUsesExactManifestKeyList() {
-    service.deleteExportedAssets("t", 1, List.of("logo.png", "manifest.json"));
+  void rejectsNilCanonicalUuidBeforeAnyStoreWrite() {
+    snapshot = snapshot(List.of(), NIL_UUID, CANONICAL_VERSION_ID);
 
-    verify(s3Client)
-        .deleteObject(argThat((DeleteObjectRequest r) -> r.key().equals("t/1/logo.png")));
-    verify(s3Client)
-        .deleteObject(argThat((DeleteObjectRequest r) -> r.key().equals("t/1/manifest.json")));
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    assertEquals(
+        "VERSION_ASSET_SNAPSHOT_INVALID: incomplete or out-of-scope snapshot", thrown.getMessage());
+    verifyNoInteractions(s3Client);
   }
 
-  private static Version version(VersionLifecycleState state) {
-    return version(7L, 1, state);
+  @Test
+  void rejectsNonpositiveOwnerVersionIdentityBeforeAnyStoreWrite() {
+    snapshot =
+        snapshot(
+            TENANT_ID,
+            VERSION_NUMBER,
+            0L,
+            3L,
+            CANONICAL_TENANT_ID,
+            CANONICAL_VERSION_ID,
+            List.of());
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    assertEquals(
+        "VERSION_ASSET_SNAPSHOT_INVALID: incomplete or out-of-scope snapshot", thrown.getMessage());
+    verifyNoInteractions(s3Client);
   }
 
-  private static Version version(Long id, int versionNumber, VersionLifecycleState state) {
-    Version version = new Version();
-    version.setId(id);
-    version.setTenantId("t");
-    version.setVersionNumber(versionNumber);
-    version.setVersionState(state);
-    return version;
+  @Test
+  void rejectsMalformedUtf8UsageKeyBeforeSortingOrWriting() {
+    snapshot = snapshot(List.of(selection("\ud800", 24L, "real uploaded bytes", "image/png")));
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    assertEquals(
+        "VERSION_ASSET_SNAPSHOT_INVALID: usageKey is not valid UTF-8", thrown.getMessage());
+    verifyNoInteractions(s3Client);
   }
 
-  private static GameAsset gameAsset(String fileName, String data) {
-    GameAsset asset = new GameAsset();
-    asset.setTenantId("t");
-    asset.setFileName(fileName);
-    asset.setContentType("image/png");
-    asset.setData(data.getBytes(StandardCharsets.UTF_8));
-    return asset;
+  @Test
+  void rejectsDuplicateUsageKeysBeforeAnyStoreWrite() {
+    snapshot =
+        snapshot(
+            List.of(
+                selection("branding/logo", 24L, "first", "image/png"),
+                selection("branding/logo", 25L, "second", "image/png")));
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    assertEquals("ASSET_USAGE_KEY_COLLISION", thrown.getMessage());
+    verifyNoInteractions(s3Client);
+  }
+
+  @Test
+  void rejectsReservedManifestKeyAndDuplicateSourceIdentityBeforeAnyStoreWrite() {
+    snapshot =
+        snapshot(List.of(selection("manifest.json", 24L, "real uploaded bytes", "image/png")));
+
+    IllegalStateException reservedKey =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    assertEquals("ASSET_USAGE_KEY_COLLISION", reservedKey.getMessage());
+    verifyNoInteractions(s3Client);
+
+    org.mockito.Mockito.clearInvocations(publicationService);
+    snapshot =
+        snapshot(
+            List.of(
+                selection("branding/logo", 24L, "first", "image/png"),
+                selection("branding/icon", 24L, "second", "image/png")));
+
+    IllegalStateException duplicateSource =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    assertEquals(
+        "VERSION_ASSET_SNAPSHOT_INVALID: duplicate source asset identity",
+        duplicateSource.getMessage());
+    verifyNoInteractions(s3Client);
+  }
+
+  @Test
+  void rejectsInvalidSourceIdentityAndDigestBeforeAnyStoreWrite() {
+    snapshot =
+        snapshot(List.of(selection("branding/logo", 0L, "real uploaded bytes", "image/png")));
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    assertEquals(
+        "VERSION_ASSET_SNAPSHOT_INVALID: incomplete source asset identity", thrown.getMessage());
+    verifyNoInteractions(s3Client);
+  }
+
+  @Test
+  void rejectsSourceByteDigestMismatchBeforeAnyStoreWrite() {
+    byte[] bytes = "real uploaded bytes".getBytes(StandardCharsets.UTF_8);
+    frozenAssetBytes.put(24L, bytes.clone());
+    snapshot =
+        snapshot(
+            List.of(
+                new AssetSelection(
+                    "branding/logo", 24L, bytes.length, "image/png", "sha256:" + "f".repeat(64))));
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    assertEquals("ASSET_SOURCE_BYTES_MISMATCH", thrown.getMessage());
+    verifyNoInteractions(s3Client);
+  }
+
+  @Test
+  void lateSecondAssetMutationFailsBeforeAnyObjectWrite() {
+    snapshot =
+        snapshot(
+            List.of(
+                selection("branding/icon", 24L, "first source bytes", "image/png"),
+                selection("branding/logo", 25L, "second source bytes", "image/jpeg")));
+    frozenAssetBytes.put(25L, "changed second source bytes".getBytes(StandardCharsets.UTF_8));
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    assertEquals("ASSET_SOURCE_BYTES_MISMATCH", thrown.getMessage());
+    verifyNoInteractions(s3Client);
+    assertEquals(0, objectStore.size());
+  }
+
+  @Test
+  void rejectsInvalidPublicOriginsBeforeAnyExternalWrites() {
+    for (String invalidBaseUrl :
+        Arrays.asList(
+            null,
+            "http://assets.example.invalid/assets",
+            "https://user@assets.example.invalid/assets",
+            "https://assets.example.invalid/assets?x=1",
+            "https://assets.example.invalid/assets#fragment",
+            "https://assets.example.invalid/private",
+            "https://minio.internal:9000/assets")) {
+      storedCandidate.set(null);
+      AssetExportServiceImpl invalidService = newService(invalidBaseUrl);
+
+      assertThrows(
+          IllegalStateException.class,
+          () -> invalidService.exportAssets(TENANT_ID, VERSION_NUMBER),
+          String.valueOf(invalidBaseUrl));
+      assertNull(storedCandidate.get(), String.valueOf(invalidBaseUrl));
+    }
+    verify(candidateService, never())
+        .recordExportCandidate(any(String.class), anyInt(), any(FrozenAssetExportCandidate.class));
+    verifyNoInteractions(s3Client);
+  }
+
+  @Test
+  void identicalConditionalExistingObjectsMakeRetryIdempotent() {
+    ExportedAssetManifest first = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+    ExportedAssetManifest retry = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+
+    assertEquals(first, retry);
+    assertEquals(2, objectStore.size());
+    verify(s3Client, org.mockito.Mockito.times(4))
+        .putObject(any(PutObjectRequest.class), any(RequestBody.class));
+  }
+
+  @Test
+  void identicalBytesWithDifferentContentTypesShareOneObjectAcrossAssets() {
+    byte[] bytes = "shared asset bytes".getBytes(StandardCharsets.UTF_8);
+    snapshot =
+        snapshot(
+            List.of(
+                selection("branding/icon", 24L, "shared asset bytes", "image/png"),
+                selection("branding/logo", 25L, "shared asset bytes", "image/jpeg")));
+
+    ExportedAssetManifest exported = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+
+    String objectKey = "artifacts/sha256/" + sha256Hex(bytes);
+    assertEquals(2, objectStore.size());
+    assertEquals(objectKey, exported.artifactDigests().get(0).immutableObjectKey());
+    assertEquals(objectKey, exported.artifactDigests().get(1).immutableObjectKey());
+    org.junit.jupiter.api.Assertions.assertTrue(conditionalPutConflicts.contains(objectKey));
+    assertEquals(
+        List.of("image/png", "image/jpeg"),
+        exported.artifactDigests().stream().map(PublishedArtifactDigest::contentType).toList());
+    assertEquals("image/png", objectStore.get(objectKey).contentType());
+    String manifestJson = new String(manifestBytes(exported), StandardCharsets.UTF_8);
+    org.junit.jupiter.api.Assertions.assertTrue(
+        manifestJson.contains("\"contentType\":\"image/png\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        manifestJson.contains("\"contentType\":\"image/jpeg\""));
+    verify(s3Client, org.mockito.Mockito.times(3))
+        .putObject(any(PutObjectRequest.class), any(RequestBody.class));
+  }
+
+  @Test
+  void identicalBytesWithDifferentContentTypesShareOneObjectAcrossTenants() {
+    byte[] bytes = "shared tenant asset bytes".getBytes(StandardCharsets.UTF_8);
+    snapshot =
+        snapshot(
+            List.of(selection("branding/logo", 24L, "shared tenant asset bytes", "image/png")));
+    ExportedAssetManifest first = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+
+    lenient()
+        .when(publicationService.freezeOrReadSnapshot("another-tenant", VERSION_NUMBER + 1))
+        .thenAnswer(ignored -> snapshot);
+    lenient()
+        .when(publicationService.readFrozenSnapshot("another-tenant", VERSION_NUMBER + 1))
+        .thenAnswer(ignored -> copySnapshot(snapshot));
+    snapshot =
+        snapshot(
+            "another-tenant",
+            VERSION_NUMBER + 1,
+            20L,
+            4L,
+            UUID.fromString("8b0c1a0f-b8c9-4c4b-9021-381f57699003"),
+            UUID.fromString("8b0c1a0f-b8c9-4c4b-9021-381f57699004"),
+            List.of(selection("branding/logo", 24L, "shared tenant asset bytes", "image/jpeg")));
+    storedCandidate.set(null);
+    ExportedAssetManifest second = service.exportAssets("another-tenant", VERSION_NUMBER + 1);
+
+    String objectKey = "artifacts/sha256/" + sha256Hex(bytes);
+    assertEquals(objectKey, first.artifactDigests().get(0).immutableObjectKey());
+    assertEquals(objectKey, second.artifactDigests().get(0).immutableObjectKey());
+    org.junit.jupiter.api.Assertions.assertTrue(conditionalPutConflicts.contains(objectKey));
+    assertEquals("image/png", first.artifactDigests().get(0).contentType());
+    assertEquals("image/jpeg", second.artifactDigests().get(0).contentType());
+    assertEquals("image/png", objectStore.get(objectKey).contentType());
+    assertEquals(3, objectStore.size());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        new String(manifestBytes(second), StandardCharsets.UTF_8)
+            .contains("\"contentType\":\"image/jpeg\""));
+    verify(s3Client, org.mockito.Mockito.times(4))
+        .putObject(any(PutObjectRequest.class), any(RequestBody.class));
+  }
+
+  @Test
+  void changedPreexistingObjectIsDeniedWithoutOverwritingOrDeletingIt() {
+    byte[] original = "fake uploaded bytes".getBytes(StandardCharsets.UTF_8);
+    String key =
+        "artifacts/sha256/" + sha256Hex("real uploaded bytes".getBytes(StandardCharsets.UTF_8));
+    objectStore.put(key, new StoredObject(original, "image/png"));
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    org.junit.jupiter.api.Assertions.assertTrue(
+        thrown.getMessage().startsWith("IMMUTABLE_OBJECT_CONFLICT"));
+    assertArrayEquals(original, objectStore.get(key).bytes());
+    verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+    assertEquals(1, objectStore.size());
+  }
+
+  @Test
+  void lostPutAcknowledgementRecoversOnlyAfterExactCommittedReadback() {
+    String key =
+        "artifacts/sha256/" + sha256Hex("real uploaded bytes".getBytes(StandardCharsets.UTF_8));
+    losePutAcknowledgementAfterCommit.add(key);
+
+    ExportedAssetManifest exported = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+
+    assertEquals(
+        "sha256:" + sha256Hex("real uploaded bytes".getBytes(StandardCharsets.UTF_8)),
+        exported.artifactDigests().get(0).contentDigest());
+    assertEquals(2, objectStore.size());
+  }
+
+  @Test
+  void unavailableReadbackAfterAmbiguousPutProducesOutcomePendingAndRetainsBytes() {
+    String key =
+        "artifacts/sha256/" + sha256Hex("real uploaded bytes".getBytes(StandardCharsets.UTF_8));
+    failPutBeforeCommit.add(key);
+    failReadback.add(key);
+
+    AssetExportOutcomePendingException thrown =
+        assertThrows(
+            AssetExportOutcomePendingException.class,
+            () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    org.junit.jupiter.api.Assertions.assertTrue(
+        thrown.getMessage().startsWith("ASSET_EXPORT_OUTCOME_PENDING:"));
+    verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+    assertEquals(0, objectStore.size());
+  }
+
+  @Test
+  void unavailableReadbackAfterCommittedPutIsOutcomePendingWithoutCleanup() {
+    String key =
+        "artifacts/sha256/" + sha256Hex("real uploaded bytes".getBytes(StandardCharsets.UTF_8));
+    failReadback.add(key);
+
+    assertThrows(
+        AssetExportOutcomePendingException.class,
+        () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    assertEquals(1, objectStore.size());
+    verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+  }
+
+  @Test
+  void existingObjectMetadataDoesNotOverrideReleaseManifestContentType() {
+    byte[] bytes = "real uploaded bytes".getBytes(StandardCharsets.UTF_8);
+    String key = "artifacts/sha256/" + sha256Hex(bytes);
+    objectStore.put(key, new StoredObject(bytes, "application/octet-stream"));
+
+    ExportedAssetManifest exported = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+
+    assertEquals("image/png", exported.artifactDigests().get(0).contentType());
+    assertEquals("application/octet-stream", objectStore.get(key).contentType());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        new String(manifestBytes(exported), StandardCharsets.UTF_8)
+            .contains("\"contentType\":\"image/png\""));
+    assertEquals(2, objectStore.size());
+    verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+  }
+
+  @Test
+  void incorrectReportedObjectLengthFailsClosed() {
+    byte[] bytes = "real uploaded bytes".getBytes(StandardCharsets.UTF_8);
+    String key = "artifacts/sha256/" + sha256Hex(bytes);
+    objectStore.put(key, new StoredObject(bytes, "image/png"));
+    reportedObjectLengths.put(key, (long) bytes.length + 1);
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    org.junit.jupiter.api.Assertions.assertTrue(
+        thrown.getMessage().startsWith("IMMUTABLE_OBJECT_CONFLICT"));
+    assertEquals(1, objectStore.size());
+    verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+  }
+
+  @Test
+  void longerActualObjectStreamThanDeclaredFailsClosed() {
+    byte[] bytes = "real uploaded bytes".getBytes(StandardCharsets.UTF_8);
+    String key = "artifacts/sha256/" + sha256Hex(bytes);
+    objectStore.put(key, new StoredObject(bytes, "image/png"));
+    readbackStreamOverrides.put(key, Arrays.copyOf(bytes, bytes.length + 1));
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    org.junit.jupiter.api.Assertions.assertTrue(
+        thrown.getMessage().startsWith("IMMUTABLE_OBJECT_CONFLICT"));
+    assertEquals(1, objectStore.size());
+  }
+
+  @Test
+  void shorterActualObjectStreamThanDeclaredFailsClosed() {
+    byte[] bytes = "real uploaded bytes".getBytes(StandardCharsets.UTF_8);
+    String key = "artifacts/sha256/" + sha256Hex(bytes);
+    objectStore.put(key, new StoredObject(bytes, "image/png"));
+    readbackStreamOverrides.put(key, Arrays.copyOf(bytes, bytes.length - 1));
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class, () -> service.exportAssets(TENANT_ID, VERSION_NUMBER));
+
+    org.junit.jupiter.api.Assertions.assertTrue(
+        thrown.getMessage().startsWith("IMMUTABLE_OBJECT_CONFLICT"));
+    assertEquals(1, objectStore.size());
+  }
+
+  @Test
+  void deleteFailsClosedWithoutIssuingAnyObjectDeletion() {
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.deleteExportedAssets(TENANT_ID, VERSION_NUMBER, List.of("branding/logo")));
+
+    assertEquals(
+        "CONTENT_ADDRESSED_PURGE_PROOF_REQUIRED: version-scoped deletion cannot select shared immutable objects",
+        thrown.getMessage());
+    verifyNoInteractions(s3Client);
+  }
+
+  private AssetExportServiceImpl newService(String publicBaseUrl) {
+    AssetStoreProperties properties = new AssetStoreProperties();
+    properties.setBucket("private-bucket");
+    properties.setEndpoint(PRIVATE_ENDPOINT);
+    properties.setPublicBaseUrl(publicBaseUrl);
+    return new AssetExportServiceImpl(publicationService, candidateService, s3Client, properties);
+  }
+
+  private ExportedAssetManifest conflictingCandidate() {
+    byte[] bytes = "real uploaded bytes".getBytes(StandardCharsets.UTF_8);
+    String hex = sha256Hex(bytes);
+    return new ExportedAssetManifest(
+        "sha256:" + "0".repeat(64),
+        1,
+        List.of("branding/logo"),
+        List.of(
+            new PublishedArtifactDigest(
+                "branding/logo",
+                "BINARY",
+                "artifacts/sha256/" + hex,
+                "sha256:" + hex,
+                "image/png",
+                1)));
+  }
+
+  private PublishedReleaseBundleDto publishedBundle(ExportedAssetManifest manifest) {
+    return new PublishedReleaseBundleDto(
+        1L,
+        TENANT_ID,
+        19L,
+        VERSION_NUMBER,
+        "v1",
+        "publish-workflow",
+        manifest.manifestHash(),
+        manifest.requiredManifestAssetKeys(),
+        List.of(),
+        List.of(),
+        "revision",
+        false,
+        null,
+        LocalDateTime.now(),
+        CANONICAL_TENANT_ID,
+        CANONICAL_VERSION_ID,
+        "release-ref",
+        manifest.manifestSchemaVersion(),
+        manifest.artifactDigests());
+  }
+
+  private ExportSnapshot singleAssetSnapshot() {
+    return snapshot(List.of(selection("branding/logo", 24L, "real uploaded bytes", "image/png")));
+  }
+
+  private ExportSnapshot snapshot(List<AssetSelection> items) {
+    return snapshot(items, CANONICAL_TENANT_ID, CANONICAL_VERSION_ID);
+  }
+
+  private ExportSnapshot snapshot(
+      List<AssetSelection> items, UUID canonicalTenantId, UUID canonicalVersionId) {
+    return snapshot(
+        TENANT_ID, VERSION_NUMBER, 19L, 3L, canonicalTenantId, canonicalVersionId, items);
+  }
+
+  private ExportSnapshot snapshot(
+      String tenantId,
+      int versionNumber,
+      long versionId,
+      long versionStateEpoch,
+      UUID canonicalTenantId,
+      UUID canonicalVersionId,
+      List<AssetSelection> items) {
+    return new ExportSnapshot(
+        tenantId,
+        versionId,
+        versionNumber,
+        versionStateEpoch,
+        canonicalTenantId,
+        canonicalVersionId,
+        items);
+  }
+
+  private AssetSelection selection(
+      String usageKey, long assetId, String content, String contentType) {
+    byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+    frozenAssetBytes.put(assetId, bytes.clone());
+    return new AssetSelection(
+        usageKey, assetId, bytes.length, contentType, "sha256:" + sha256Hex(bytes));
+  }
+
+  private byte[] manifestBytes(ExportedAssetManifest exported) {
+    return objectStore
+        .get("manifests/sha256/" + exported.manifestHash().substring("sha256:".length()))
+        .bytes();
+  }
+
+  private ExportSnapshot copySnapshot(ExportSnapshot source) {
+    return new ExportSnapshot(
+        source.tenantId(),
+        source.versionId(),
+        source.versionNumber(),
+        source.capturedVersionStateEpoch(),
+        source.canonicalTenantId(),
+        source.canonicalVersionId(),
+        source.items().stream()
+            .map(
+                item ->
+                    new AssetSelection(
+                        item.usageKey(),
+                        item.assetId(),
+                        item.byteSize(),
+                        item.contentType(),
+                        item.contentDigest()))
+            .toList());
+  }
+
+  private software.amazon.awssdk.services.s3.model.PutObjectResponse putObject(
+      org.mockito.invocation.InvocationOnMock invocation) throws IOException {
+    PutObjectRequest request = invocation.getArgument(0);
+    RequestBody body = invocation.getArgument(1);
+    if (failPutBeforeCommit.remove(request.key())) {
+      throw new IllegalStateException("simulated lost put result before durable readback");
+    }
+    if (objectStore.containsKey(request.key())) {
+      conditionalPutConflicts.add(request.key());
+      throw S3Exception.builder()
+          .statusCode(412)
+          .message("conditional object already exists")
+          .build();
+    }
+    byte[] bytes;
+    try (InputStream input = body.contentStreamProvider().newStream()) {
+      bytes = input.readAllBytes();
+    }
+    objectStore.put(request.key(), new StoredObject(bytes, request.contentType()));
+    if (losePutAcknowledgementAfterCommit.remove(request.key())) {
+      throw new IllegalStateException("simulated lost put acknowledgement after commit");
+    }
+    return PutObjectResponse.builder().build();
+  }
+
+  private ResponseInputStream<GetObjectResponse> getObject(
+      org.mockito.invocation.InvocationOnMock invocation) {
+    GetObjectRequest request = invocation.getArgument(0);
+    if (failReadback.contains(request.key())) {
+      throw new IllegalStateException("simulated unavailable object readback");
+    }
+    StoredObject object = objectStore.get(request.key());
+    if (object == null) {
+      throw new IllegalStateException("simulated missing object readback");
+    }
+    byte[] streamedBytes = readbackStreamOverrides.getOrDefault(request.key(), object.bytes());
+    GetObjectResponse metadata =
+        GetObjectResponse.builder()
+            .contentType(object.contentType())
+            .contentLength(
+                reportedObjectLengths.getOrDefault(request.key(), (long) object.bytes().length))
+            .build();
+    return new ResponseInputStream<>(metadata, new ByteArrayInputStream(streamedBytes));
+  }
+
+  private static String sha256Hex(byte[] bytes) {
+    try {
+      byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+      StringBuilder result = new StringBuilder(digest.length * 2);
+      for (byte value : digest) {
+        result.append(Character.forDigit((value >>> 4) & 0xf, 16));
+        result.append(Character.forDigit(value & 0xf, 16));
+      }
+      return result.toString();
+    } catch (Exception exception) {
+      throw new IllegalStateException(exception);
+    }
+  }
+
+  private record StoredObject(byte[] bytes, String contentType) {
+    private StoredObject {
+      bytes = bytes.clone();
+    }
+
+    @Override
+    public byte[] bytes() {
+      return bytes.clone();
+    }
   }
 }

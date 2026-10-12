@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.TemplateRemapSetStatus;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.MutationOwnerProofUnavailableException;
@@ -99,6 +100,8 @@ class GameDesignGrpcServiceTest {
   private final VersionService versionService = Mockito.mock(VersionService.class);
   private final LaunchDescriptorService launchDescriptorService =
       Mockito.mock(LaunchDescriptorService.class);
+  private final CompleteLaunchBindingService completeLaunchBindingService =
+      Mockito.mock(CompleteLaunchBindingService.class);
   private final TemplateRemapSetService templateRemapSetService =
       Mockito.mock(TemplateRemapSetService.class);
   private final VersionAssetArtifactService versionAssetArtifactService =
@@ -115,6 +118,7 @@ class GameDesignGrpcServiceTest {
           revisionService,
           versionService,
           launchDescriptorService,
+          completeLaunchBindingService,
           templateRemapSetService,
           versionAssetArtifactService,
           settingsAuthorityService,
@@ -601,6 +605,30 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishVersionMapsOwnerProofRefusalToStableApplicationError() throws Exception {
+    MutationOwnerProofUnavailableException refusal =
+        new MutationOwnerProofUnavailableException(
+            "FULL_VERSION_PUBLICATION_UNAVAILABLE",
+            "fresh and pending full-version publication require a production Draft association");
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "request-1"))
+        .thenThrow(refusal);
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("FULL_VERSION_PUBLICATION_UNAVAILABLE", ref.get().getError().getCode());
+    assertEquals(refusal.getMessage(), ref.get().getError().getMessage());
+  }
+
+  @Test
   void publishScriptPatchVersionMapsPendingReconciliationToStableApplicationError()
       throws Exception {
     Mockito.when(
@@ -1065,6 +1093,28 @@ class GameDesignGrpcServiceTest {
 
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
     Mockito.verifyNoInteractions(versionService);
+  }
+
+  @Test
+  void getCompleteLaunchBindingDeniesCandidateBeforeOwnerRead() {
+    AtomicReference<net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse> ref =
+        new AtomicReference<>();
+    underLaunchPeer(
+        "game-session-service",
+        () ->
+            service.getCompleteLaunchBinding(
+                net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest.newBuilder()
+                    .setRequestId("12345678-1234-4234-8234-123456789abc")
+                    .setCanonicalTenantId(CANONICAL_TENANT_ID.toString())
+                    .setWorldSlug("world")
+                    .setControlPlaneRequestId("request-1")
+                    .setExpectedRequestDigest("request-digest")
+                    .setExpectedResultDigest("result-digest")
+                    .build(),
+                observerFor(ref)));
+
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(completeLaunchBindingService);
   }
 
   @Test

@@ -10,6 +10,16 @@ public interface VersionAssetArtifactService {
 
   Optional<VersionAssetArtifactStateDto> findState(String tenantId, long versionId);
 
+  VersionAssetArtifactStateDto stageExport(
+      String tenantId, long versionId, int versionNumber, String workflowId);
+
+  /**
+   * Returns the recorded export candidate, or {@code null} when an exact initial STAGED intent has
+   * not recorded candidate evidence yet. Missing artifacts and malformed or partial evidence are
+   * errors.
+   */
+  ExportedAssetManifest getExportCandidate(String tenantId, long versionId);
+
   VersionAssetArtifactStateDto markExportedUnattested(
       String tenantId,
       long versionId,

@@ -155,6 +155,7 @@ class PublishedReleaseBundleRepositoryTest {
             + "generation_config_revision VARCHAR(128), "
             + "required_manifest_asset_keys_json CLOB NOT NULL, "
             + "participant_digests_json CLOB NOT NULL, command_definitions_json CLOB NOT NULL, "
+            + "world_published_start_location_evidence_json TEXT, "
             + "manifest_schema_version INT, artifact_digests_json CLOB, "
             + "script_only BOOLEAN NOT NULL, script_patch_version VARCHAR(100), "
             + "published_at TIMESTAMP NOT NULL)");

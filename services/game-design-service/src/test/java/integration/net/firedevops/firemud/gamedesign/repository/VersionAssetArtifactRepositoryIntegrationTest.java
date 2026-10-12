@@ -77,6 +77,7 @@ class VersionAssetArtifactRepositoryIntegrationTest {
     LocalDateTime updatedAt = LocalDateTime.of(2026, 1, 1, 0, 0);
     reloaded.setUpdatedAt(updatedAt);
     reloaded.setManifestHash("demo-manifest-hash-2");
+    reloaded.setStateEpoch(2L);
     repository.save(reloaded);
 
     VersionAssetArtifact updated = repository.findByTenantIdAndVersionId("1", 7L).orElseThrow();

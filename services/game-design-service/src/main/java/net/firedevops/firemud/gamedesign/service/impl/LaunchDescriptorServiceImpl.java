@@ -179,7 +179,7 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
           "RELEASE_BUNDLE_NOT_FOUND", "release bundle is not owned by the resolved source version");
     }
     try {
-      PublishedReleaseBundleContract.requireSupportedSchemaForLaunch(bundle);
+      PublishedReleaseBundleContract.requireSupportedSchemaForLaunchDescriptor(bundle);
     } catch (IllegalArgumentException invalid) {
       if (invalid.getMessage() != null
           && invalid
