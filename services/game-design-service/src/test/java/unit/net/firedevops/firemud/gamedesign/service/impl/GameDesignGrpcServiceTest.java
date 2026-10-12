@@ -1100,6 +1100,28 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void getCompleteLaunchBindingDeniesCandidateBeforeOwnerRead() {
+    AtomicReference<net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse> ref =
+        new AtomicReference<>();
+    underLaunchPeer(
+        "game-session-service",
+        () ->
+            service.getCompleteLaunchBinding(
+                net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest.newBuilder()
+                    .setRequestId("12345678-1234-4234-8234-123456789abc")
+                    .setCanonicalTenantId(CANONICAL_TENANT_ID.toString())
+                    .setWorldSlug("world")
+                    .setControlPlaneRequestId("request-1")
+                    .setExpectedRequestDigest("request-digest")
+                    .setExpectedResultDigest("result-digest")
+                    .build(),
+                observerFor(ref)));
+
+    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(completeLaunchBindingService);
+  }
+
+  @Test
   void resolveLaunchDescriptorRejectsUnboundLegacyRequestBeforeOwnerRead() {
     AtomicReference<ResolveLaunchDescriptorResponse> ref = new AtomicReference<>();
     underLaunchPeer(

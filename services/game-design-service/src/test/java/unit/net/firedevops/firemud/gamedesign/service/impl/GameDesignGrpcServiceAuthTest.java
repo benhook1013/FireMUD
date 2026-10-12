@@ -187,6 +187,43 @@ class GameDesignGrpcServiceAuthTest {
     verifyNoInteractions(artifactService);
   }
 
+  @Test
+  void completeLaunchBindingReadDeniesEveryIdentityBeforeOwnerServiceAccess() {
+    CompleteLaunchBindingService bindingService = Mockito.mock(CompleteLaunchBindingService.class);
+    GameDesignGrpcService service =
+        new GameDesignGrpcService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(RevisionService.class),
+            Mockito.mock(VersionService.class),
+            Mockito.mock(LaunchDescriptorService.class),
+            bindingService,
+            Mockito.mock(TemplateRemapSetService.class),
+            Mockito.mock(VersionAssetArtifactService.class),
+            Mockito.mock(SettingsAuthorityService.class),
+            Mockito.mock(GameAuthoredHelpTopicService.class),
+            new TemporalVersionPublishWorkflowMetadataResolver(Optional.empty(), Optional.empty()),
+            new SimpleMeterRegistry());
+    ReflectionTestUtils.setField(service, "workloadNamespace", WORKLOAD_NAMESPACE);
+
+    this.<net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse>assertDeniedMatrix(
+        observer ->
+            service.getCompleteLaunchBinding(
+                net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest.newBuilder()
+                    .setRequestId("12345678-1234-4234-8234-123456789abc")
+                    .setCanonicalTenantId("22345678-1234-4234-8234-123456789abc")
+                    .setWorldSlug("world")
+                    .setControlPlaneRequestId("request-1")
+                    .setExpectedRequestDigest("request-digest")
+                    .setExpectedResultDigest("result-digest")
+                    .build(),
+                observer),
+        response -> response.getError().getCode(),
+        "game-session-service",
+        "world-management-service",
+        "entity-management-service");
+    verifyNoInteractions(bindingService);
+  }
+
   private GameDesignGrpcService newService(
       VersionService versionService, VersionAssetArtifactService artifactService) {
     return new GameDesignGrpcService(

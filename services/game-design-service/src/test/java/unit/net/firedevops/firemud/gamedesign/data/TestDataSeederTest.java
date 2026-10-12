@@ -262,6 +262,33 @@ class TestDataSeederTest {
   }
 
   @Test
+  void retainedBaselineReusesExactExistingArtifactWithoutSavingIt() {
+    VersionAssetArtifact artifact = stubRetainedBaselineSeedData();
+
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
+
+    verify(versionAssetArtifactRepository, times(2)).findByTenantIdAndVersionId("1", 7L);
+    verify(versionAssetArtifactRepository, never()).save(any(VersionAssetArtifact.class));
+    assertThat(artifact.getId()).isEqualTo(31L);
+    assertThat(artifact.getStateEpoch()).isEqualTo(1L);
+    assertThat(artifact.getArtifactState())
+        .isEqualTo(net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState.PUBLISHED);
+  }
+
+  @Test
+  void retainedBaselineRejectsMismatchedExistingArtifactWithoutSavingIt() {
+    VersionAssetArtifact artifact = stubRetainedBaselineSeedData();
+    artifact.setStateEpoch(2L);
+
+    assertThatThrownBy(() -> seeder.run(new DefaultApplicationArguments(new String[] {})))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Existing version artifact does not exactly match the demo seed");
+
+    assertThat(artifact.getStateEpoch()).isEqualTo(2L);
+    verify(versionAssetArtifactRepository, never()).save(any(VersionAssetArtifact.class));
+  }
+
+  @Test
   void acceptsExpectedWorkloadUriAlongsideGeneratedDnsSans() throws Exception {
     CertificateFixture gameSession =
         certificateFixture(
@@ -472,6 +499,25 @@ class TestDataSeederTest {
         .thenReturn(Optional.of(artifact));
 
     return bundle;
+  }
+
+  private VersionAssetArtifact stubRetainedBaselineSeedData() {
+    stubExistingSeedData();
+    Version version = versionRepository.findByTenantIdAndVersionNumber("1", 1).orElseThrow();
+    version.setCanonicalTenantId(null);
+    version.setCanonicalVersionId(null);
+    version.setIdentitySourceGameRowId(null);
+    version.setIdentitySourceGameTenantKey(null);
+    version.setIdentitySourceProvenanceKind(null);
+    version.setCreatedAt(java.time.LocalDateTime.now());
+    version.setUpdatedAt(java.time.LocalDateTime.now());
+    when(versionRepository.save(any(Version.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    VersionAssetArtifact artifact =
+        versionAssetArtifactRepository.findByTenantIdAndVersionId("1", 7L).orElseThrow();
+    artifact.setUpdatedAt(java.time.LocalDateTime.now());
+    return artifact;
   }
 
   private CertificateFixture certificateFixture(
