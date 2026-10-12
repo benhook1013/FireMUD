@@ -4,12 +4,11 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.Arrays;
 import java.util.Objects;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
-import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
-import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.StaleStartSessionOperatorAttemptClaimException;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.StartSessionOperatorAttemptConflictException;
@@ -149,19 +148,8 @@ public final class OriginalStartSessionCurrentAttemptReadGrpcService
       throw new IllegalStateException(
           "Repository returned a different or incomplete current original StartSession attempt");
     }
-    StartSessionAuthorityEvidenceBundle authority =
-        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
-    byte[] expectedProjection =
-        new AccountRedemptionProjection(
-                tuple.authorizationReferenceFingerprint(),
-                tuple.authorityEvidenceBundleBytes(),
-                authority.issuanceOperationId(),
-                Long.parseLong(tuple.issuanceFence()))
-            .canonicalBytes();
-    if (!Arrays.equals(expectedProjection, snapshot.accountRedemptionProjection())) {
-      throw new IllegalStateException(
-          "Repository returned an Account projection different from the exact original tuple");
-    }
+    StartSessionAccountRedemptionProjection.requireCurrentBinding(
+        snapshot.accountRedemptionProjection(), tuple);
   }
 
   private static void requireNoAmbientTransaction() {

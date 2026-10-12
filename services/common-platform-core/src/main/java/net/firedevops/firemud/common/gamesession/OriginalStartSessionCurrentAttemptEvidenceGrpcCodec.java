@@ -5,6 +5,7 @@ import com.google.protobuf.Timestamp;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Request;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result;
 import net.firedevops.firemud.gamesession.v1.ReadOriginalStartSessionCurrentAttemptRequest;
@@ -89,6 +90,23 @@ public final class OriginalStartSessionCurrentAttemptEvidenceGrpcCodec {
   }
 
   public static Result fromResponse(
+      Request expectedRequest, ReadOriginalStartSessionCurrentAttemptResponse response) {
+    Result result = decodeResponse(expectedRequest, response);
+    StartSessionAccountRedemptionProjection.requireCurrentBinding(
+        result.accountRedemptionProjection(), expectedRequest.originalTuple());
+    return result;
+  }
+
+  /** Decodes immutable historical response bytes only; this grants no current continuation. */
+  public static Result fromRetainedHistoricalResponse(
+      Request expectedRequest, ReadOriginalStartSessionCurrentAttemptResponse response) {
+    Result result = decodeResponse(expectedRequest, response);
+    StartSessionAccountRedemptionProjection.requireHistoricalBinding(
+        result.accountRedemptionProjection(), expectedRequest.originalTuple());
+    return result;
+  }
+
+  private static Result decodeResponse(
       Request expectedRequest, ReadOriginalStartSessionCurrentAttemptResponse response) {
     Objects.requireNonNull(expectedRequest, "expectedRequest");
     Objects.requireNonNull(response, "response");

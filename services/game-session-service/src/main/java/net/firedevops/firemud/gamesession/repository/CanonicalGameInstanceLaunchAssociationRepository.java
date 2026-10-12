@@ -8,6 +8,7 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.StartSessionLaunchDescriptorGrpcCodec.DescriptorOutcome;
@@ -20,7 +21,6 @@ import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationR
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence.LaunchAssociation;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.RuntimeTenantIdentityEvidence;
@@ -341,25 +341,7 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
           "Historical StartSession tuple differs from its exact owner or launch selector");
     }
 
-    StartSessionAuthorityEvidenceBundle authority =
-        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
-    long issuanceFence;
-    try {
-      issuanceFence = Long.parseLong(tuple.issuanceFence());
-    } catch (NumberFormatException invalid) {
-      throw new IllegalStateException("Historical Account issuance fence is malformed", invalid);
-    }
-    GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection
-        expectedProjection =
-            new GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection(
-                tuple.authorizationReferenceFingerprint(),
-                tuple.authorityEvidenceBundleBytes(),
-                authority.issuanceOperationId(),
-                issuanceFence);
-    if (!Arrays.equals(expectedProjection.canonicalBytes(), ownerProjectionBytes)) {
-      throw new IllegalStateException(
-          "Historical Account projection differs from the complete original StartSession tuple");
-    }
+    StartSessionAccountRedemptionProjection.requireHistoricalBinding(ownerProjectionBytes, tuple);
 
     byte[] associationTupleBytes = requiredBytes(row, "pin_owner_tuple");
     byte[] associationRequestWire = requiredBytes(row, "pin_association_request_wire");
@@ -688,25 +670,7 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
       throw new IllegalStateException(
           "Original StartSession owner tuple differs from its retained association");
     }
-    StartSessionAuthorityEvidenceBundle authority =
-        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
-    long issuanceFence;
-    try {
-      issuanceFence = Long.parseLong(tuple.issuanceFence());
-    } catch (NumberFormatException invalid) {
-      throw new IllegalStateException("Original StartSession issuance fence is malformed", invalid);
-    }
-    GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection
-        expectedProjection =
-            new GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection(
-                tuple.authorizationReferenceFingerprint(),
-                tuple.authorityEvidenceBundleBytes(),
-                authority.issuanceOperationId(),
-                issuanceFence);
-    if (!Arrays.equals(expectedProjection.canonicalBytes(), ownerProjectionBytes)) {
-      throw new IllegalStateException(
-          "Original StartSession Account projection differs from its canonical tuple");
-    }
+    StartSessionAccountRedemptionProjection.requireCurrentBinding(ownerProjectionBytes, tuple);
 
     byte[] associationTupleBytes = requiredBytes(row, "pin_owner_tuple");
     byte[] associationRequestWire = requiredBytes(row, "pin_association_request_wire");

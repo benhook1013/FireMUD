@@ -9,6 +9,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -18,6 +20,12 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
+import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
+import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalLaunchPreparationSnapshot;
@@ -28,6 +36,10 @@ import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSou
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchPreparationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.ReservationResult;
 import net.firedevops.firemud.gamesession.service.GameSessionCanonicalLaunchPreparationService;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -47,8 +59,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Real PostgreSQL source/catalog transactions and immutable preparation storage. Game Design's
- * descriptor response is deliberately synthetic here; this is not transport or mTLS proof.
+ * Real PostgreSQL source/catalog, retained owner-attempt, and immutable preparation storage. The
+ * canonical Account tuple and Game Design response are test fixtures, not genuine external
+ * authority or transport/mTLS proof.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -66,6 +79,12 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
   private static final UUID RETAINED_REALM_ID = uuid(108);
   private static final UUID RETAINED_PLAYABLE_NAMESPACE_ID = uuid(109);
   private static final UUID RETAINED_SHARED_NAMESPACE_ID = uuid(110);
+  private static final UUID AUTHORIZATION_ISSUANCE_ID = uuid(112);
+  private static final UUID AUTHORIZATION_JTI = uuid(113);
+  private static final UUID RESERVATION_OWNER = uuid(114);
+  private static final String AUTHORIZATION_FINGERPRINT = "arfp/v1/launch-it/" + "b".repeat(64);
+  private static final String LOGGING_WORKLOAD =
+      "spiffe://firemud/ns/" + NAMESPACE + "/sa/logging-admin-service";
   private static final String MIGRATION_LOCATION =
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
 
@@ -267,6 +286,67 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
     }
   }
 
+  @Test
+  void authorizedLaunchPreparationBindsTheRetainedAccountOwnerTupleAndRejectsSubstitutions() {
+    for (String substitution : java.util.List.of("sourceFence", "linearization")) {
+      AuthorizedFixture authorized = authorizedFixture();
+      StartSessionPostAuthorizationExecutionTuple substituted =
+          tupleWithReference(
+              authorized.ownerTuple(),
+              substitution.equals("sourceFence") ? "31" : "29",
+              substitution.equals("linearization")
+                  ? "18446744073709551614"
+                  : "18446744073709551615");
+      replaceAttachedProjectionForFixture(
+          authorized.fixture(), authorized.ownerTuple(), substituted);
+      AuthoredWorldLaunchDescriptorClient descriptorClient = syntheticGameDesignClient();
+
+      assertThatThrownBy(
+              () ->
+                  authorized
+                      .fixture()
+                      .service(descriptorClient)
+                      .prepareAuthorized(authorized.claim(), authorized.request()))
+          .isInstanceOf(
+              GameSessionCanonicalLaunchPreparationRepository
+                  .InvalidLaunchPreparationEvidenceException.class)
+          .hasMessageContaining("projection binding is invalid");
+      assertThat(
+              authorized
+                  .fixture()
+                  .dsl()
+                  .fetchCount(DSL.table(DSL.name("game_session_canonical_launch_preparation"))))
+          .isZero();
+      verify(descriptorClient, times(0)).resolve(any());
+      verify(descriptorClient, times(0)).get(any(GetRequest.class));
+    }
+
+    AuthorizedFixture authorized = authorizedFixture();
+    AuthoredWorldLaunchDescriptorClient descriptorClient = syntheticGameDesignClient();
+    CanonicalLaunchPreparationSnapshot prepared =
+        authorized
+            .fixture()
+            .service(descriptorClient)
+            .prepareAuthorized(authorized.claim(), authorized.request());
+
+    assertThat(prepared.request()).isEqualTo(authorized.request());
+    assertThat(
+            authorized
+                .fixture()
+                .preparationRepository()
+                .readByControlPlaneRequestId(
+                    NAMESPACE, authorized.request().controlPlaneRequestId()))
+        .contains(prepared);
+    assertThat(
+            authorized
+                .fixture()
+                .dsl()
+                .fetchCount(DSL.table(DSL.name("game_session_canonical_launch_preparation"))))
+        .isEqualTo(1);
+    verify(descriptorClient, times(1)).resolve(any());
+    verify(descriptorClient, times(1)).get(any(GetRequest.class));
+  }
+
   private static AuthoredWorldLaunchDescriptorClient syntheticGameDesignClient() {
     AuthoredWorldLaunchDescriptorClient client = mock(AuthoredWorldLaunchDescriptorClient.class);
     when(client.resolve(any(AuthoredWorldLaunchDescriptorEvidence.Request.class)))
@@ -363,6 +443,115 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
         false,
         null);
   }
+
+  private AuthorizedFixture authorizedFixture() {
+    Fixture fixture = fixture(false, false);
+    IntakeReceipt source = fixture.registerFreshSource();
+    CanonicalRealmCatalogSnapshot catalog = fixture.createCatalog(source);
+    CreateCanonicalLaunchPreparationRequest request = request(source, catalog);
+    StartSessionPostAuthorizationExecutionTuple ownerTuple = ownerTuple(request);
+    AttemptClaim claim = fixture.reserveAndAttach(ownerTuple);
+    return new AuthorizedFixture(fixture, request, ownerTuple, claim);
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple ownerTuple(
+      CreateCanonicalLaunchPreparationRequest request) {
+    StartSessionOperatorAction action =
+        new StartSessionOperatorAction(
+            StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
+            StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+            new StartSessionOperatorAction.Scope(request.canonicalTenantId(), NAMESPACE),
+            new StartSessionOperatorAction.Target(
+                request.gameTemplateId(), request.actingAccountUuid()),
+            StartSessionOperatorAction.ExpectedVersion.ABSENT,
+            new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
+            "physical authorized launch preparation proof");
+    StartSessionPreAuthorizationReservationTuple preTuple =
+        StartSessionPreAuthorizationReservationTuple.createHuman(
+            request.controlPlaneRequestId(), request.actingAccountUuid(), action);
+    byte[] authorityBundle = authorityBundle(preTuple);
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        preTuple,
+        LOGGING_WORKLOAD,
+        AUTHORIZATION_FINGERPRINT,
+        RESERVATION_OWNER,
+        37L,
+        authorityBundle,
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+            "17",
+            "29",
+            "18446744073709551615"));
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple tupleWithReference(
+      StartSessionPostAuthorizationExecutionTuple tuple, String sourceFence, String linearization) {
+    var reference = tuple.bundleReference();
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        tuple.preAuthorizationTuple(),
+        tuple.authenticatedWorkloadIdentity(),
+        tuple.authorizationReferenceFingerprint(),
+        tuple.reservationOwnerId(),
+        tuple.reservationClaimFence(),
+        tuple.authorityEvidenceBundleBytes(),
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            reference.bundleVersion(), reference.sourceVersion(), sourceFence, linearization));
+  }
+
+  private static byte[] authorityBundle(StartSessionPreAuthorizationReservationTuple tuple) {
+    return StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+        tuple,
+        new Values(
+            AUTHORIZATION_ISSUANCE_ID,
+            "sha256:" + "a".repeat(64),
+            "17",
+            "CURRENT",
+            Instant.parse("1999-01-01T00:00:00Z"),
+            Instant.parse("2099-01-01T00:05:00Z"),
+            1L,
+            2L,
+            3L,
+            4L,
+            5L,
+            23L,
+            AUTHORIZATION_JTI,
+            "2",
+            "3"));
+  }
+
+  private static void replaceAttachedProjectionForFixture(
+      Fixture fixture,
+      StartSessionPostAuthorizationExecutionTuple originalTuple,
+      StartSessionPostAuthorizationExecutionTuple substitutedTuple) {
+    fixture
+        .dsl()
+        .execute(
+            "ALTER TABLE game_session_start_session_operator_attempt DISABLE TRIGGER "
+                + "game_session_start_session_operator_attempt_immutable");
+    try {
+      fixture
+          .dsl()
+          .execute(
+              "UPDATE game_session_start_session_operator_attempt "
+                  + "SET account_redemption_projection = ? "
+                  + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+              substitutedTuple.canonicalBytes(),
+              NAMESPACE,
+              originalTuple.controlPlaneRequestId());
+    } finally {
+      fixture
+          .dsl()
+          .execute(
+              "ALTER TABLE game_session_start_session_operator_attempt ENABLE TRIGGER "
+                  + "game_session_start_session_operator_attempt_immutable");
+    }
+  }
+
+  private record AuthorizedFixture(
+      Fixture fixture,
+      CreateCanonicalLaunchPreparationRequest request,
+      StartSessionPostAuthorizationExecutionTuple ownerTuple,
+      AttemptClaim claim) {}
 
   private Fixture fixture(
       boolean seedRetainedNumericRows, boolean seedCanonicalOwnerEvidenceBeforeV24) {
@@ -477,11 +666,15 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
         .migrate();
     GameSessionCanonicalLaunchPreparationRepository preparationRepository =
         new GameSessionCanonicalLaunchPreparationRepository(transactionalDsl, catalogRepository);
+    GameSessionStartSessionOperatorAttemptRepository attemptRepository =
+        new GameSessionStartSessionOperatorAttemptRepository(
+            transactionalDsl, Duration.ofMinutes(5));
     return new Fixture(
         transactionalDsl,
         sourceRepository,
         catalogRepository,
         preparationRepository,
+        attemptRepository,
         transactionManager,
         transactions,
         preV24Source,
@@ -545,6 +738,7 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
       GameSessionAuthoredWorldSourceRepository sourceRepository,
       GameSessionCanonicalRealmCatalogRepository catalogRepository,
       GameSessionCanonicalLaunchPreparationRepository preparationRepository,
+      GameSessionStartSessionOperatorAttemptRepository attemptRepository,
       DataSourceTransactionManager transactionManager,
       TransactionTemplate transactions,
       IntakeReceipt preV24Source,
@@ -583,8 +777,27 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
           catalogRepository,
           sourceRepository,
           preparationRepository,
+          attemptRepository,
           transactionManager,
           NAMESPACE);
+    }
+
+    AttemptClaim reserveAndAttach(StartSessionPostAuthorizationExecutionTuple tuple) {
+      ReservationResult reservation =
+          java.util.Objects.requireNonNull(
+              transactions.execute(status -> attemptRepository.reserve(tuple)));
+      AttemptClaim claim = reservation.claim().orElseThrow();
+      AccountRedemptionProjection projection =
+          new AccountRedemptionProjection(
+              tuple.authorizationReferenceFingerprint(),
+              tuple.authorityEvidenceBundleBytes(),
+              AUTHORIZATION_ISSUANCE_ID,
+              Long.parseLong(tuple.issuanceFence()),
+              tuple.canonicalBytes());
+      java.util.Objects.requireNonNull(
+          transactions.execute(
+              status -> attemptRepository.attachAccountRedemptionProjection(claim, projection)));
+      return claim;
     }
   }
 }

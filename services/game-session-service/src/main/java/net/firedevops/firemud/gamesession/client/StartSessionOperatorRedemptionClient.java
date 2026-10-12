@@ -15,6 +15,7 @@ import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationRequest;
 import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationResponse;
 import net.firedevops.firemud.account.v1.StartSessionOperatorAuthorizationServiceGrpc;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -180,14 +181,21 @@ public class StartSessionOperatorRedemptionClient
       }
       String fingerprint = response.getAuthorizationReferenceFingerprint();
       if (fingerprint == null
-          || !AUTHORIZATION_REFERENCE_FINGERPRINT.matcher(fingerprint).matches()
-          || !tuple.authorizationReferenceFingerprint().equals(fingerprint)) {
+          || !AUTHORIZATION_REFERENCE_FINGERPRINT.matcher(fingerprint).matches()) {
         throw malformedResponse();
       }
 
+      byte[] originalAccountTuple =
+          response.getOriginalAccountPostAuthorizationTuple().toByteArray();
+      StartSessionAccountRedemptionProjection.requireCurrentBinding(originalAccountTuple, tuple);
+      StartSessionPostAuthorizationExecutionTuple accountTuple =
+          StartSessionAccountRedemptionProjection.decodeOwnerTuple(originalAccountTuple);
       byte[] responseBundle = response.getAuthorityEvidenceBundle().toByteArray();
-      byte[] originalBundle = tuple.authorityEvidenceBundleBytes();
+      byte[] originalBundle = accountTuple.authorityEvidenceBundleBytes();
       if (responseBundle.length == 0 || !Arrays.equals(responseBundle, originalBundle)) {
+        throw malformedResponse();
+      }
+      if (!accountTuple.authorizationReferenceFingerprint().equals(fingerprint)) {
         throw malformedResponse();
       }
       UUID issuanceOperationId = canonicalNonNilUuid(response.getIssuanceOperationId());
@@ -198,16 +206,16 @@ public class StartSessionOperatorRedemptionClient
 
       StartSessionAuthorityEvidenceBundle bundle =
           StartSessionAuthorityEvidenceBundle.decode(responseBundle);
-      bundle.requireTupleBinding(tuple.preAuthorizationTuple());
-      bundle.requireReferenceBinding(tuple.bundleReference());
+      bundle.requireTupleBinding(accountTuple.preAuthorizationTuple());
+      bundle.requireReferenceBinding(accountTuple.bundleReference());
       if (!bundle.issuanceOperationId().equals(issuanceOperationId)
-          || !tuple.issuanceFence().equals(Long.toString(issuanceFence))
+          || !accountTuple.issuanceFence().equals(Long.toString(issuanceFence))
           || !bundle.issuanceFence().equals(Long.toString(issuanceFence))
           || !bundle.expiresAt().isAfter(clock.instant())) {
         throw malformedResponse();
       }
       return new AccountRedemptionProjection(
-          fingerprint, responseBundle, issuanceOperationId, issuanceFence);
+          fingerprint, responseBundle, issuanceOperationId, issuanceFence, originalAccountTuple);
     } catch (IllegalStateException expected) {
       throw expected;
     } catch (RuntimeException malformed) {

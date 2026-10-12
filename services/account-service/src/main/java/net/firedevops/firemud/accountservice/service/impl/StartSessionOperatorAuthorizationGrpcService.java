@@ -25,7 +25,6 @@ import net.firedevops.firemud.account.v1.RecoverOperatorAuthorizationReferenceRe
 import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationRequest;
 import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationResponse;
 import net.firedevops.firemud.account.v1.StartSessionOperatorAuthorizationServiceGrpc;
-import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionResult;
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.KeyUnavailableException;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography.CryptographyUnavailableException;
 import net.firedevops.firemud.accountservice.service.session.AccountResponseEnvelopeCryptography.ResponseRecoveryExpiredException;
@@ -37,7 +36,10 @@ import net.firedevops.firemud.accountservice.service.session.AccountStartSession
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.RecoverRequest;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.RedeemRequest;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.RedeemedOperationProjection;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.RedemptionResult;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.jooq.exception.DataAccessException;
@@ -60,6 +62,8 @@ public final class StartSessionOperatorAuthorizationGrpcService
   private static final int MAX_CONTROL_UI_JWT_BYTES = 16 * 1024;
   private static final int MAX_AUTHORIZATION_REFERENCE_BYTES = 128;
   private static final int MAX_AUTHORITY_EVIDENCE_BUNDLE_BYTES = 128 * 1024;
+  private static final int MAX_POST_AUTHORIZATION_TUPLE_BYTES =
+      StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES;
   private static final int MAX_FINGERPRINT_BYTES = 137;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final String AUTHORIZATION_REFERENCE = "[A-Za-z0-9_-]{43}";
@@ -383,7 +387,7 @@ public final class StartSessionOperatorAuthorizationGrpcService
 
   private static IssueHumanOperatorAuthorizationReferenceResponse toIssueResponse(
       AuthorizationResponse response, String authenticatedLoggingWorkloadIdentity) {
-    requireResponse(response);
+    requireResponse(response, authenticatedLoggingWorkloadIdentity);
     return IssueHumanOperatorAuthorizationReferenceResponse.newBuilder()
         .setOperatorAuthorizationReference(response.operatorAuthorizationReference())
         .setAuthorizationReferenceFingerprint(response.authorizationReferenceFingerprint())
@@ -391,12 +395,14 @@ public final class StartSessionOperatorAuthorizationGrpcService
         .setAuthorityEvidenceBundle(ByteString.copyFrom(response.authorityEvidenceBundle()))
         .setBundleReference(toWireBundleReference(response.bundleReference()))
         .setAuthenticatedLoggingWorkloadIdentity(authenticatedLoggingWorkloadIdentity)
+        .setOriginalAccountPostAuthorizationTuple(
+            ByteString.copyFrom(response.originalAccountPostAuthorizationTuple()))
         .build();
   }
 
   private static RecoverOperatorAuthorizationReferenceResponse toRecoverResponse(
       AuthorizationResponse response, String authenticatedLoggingWorkloadIdentity) {
-    requireResponse(response);
+    requireResponse(response, authenticatedLoggingWorkloadIdentity);
     return RecoverOperatorAuthorizationReferenceResponse.newBuilder()
         .setOperatorAuthorizationReference(response.operatorAuthorizationReference())
         .setAuthorizationReferenceFingerprint(response.authorizationReferenceFingerprint())
@@ -404,10 +410,13 @@ public final class StartSessionOperatorAuthorizationGrpcService
         .setAuthorityEvidenceBundle(ByteString.copyFrom(response.authorityEvidenceBundle()))
         .setBundleReference(toWireBundleReference(response.bundleReference()))
         .setAuthenticatedLoggingWorkloadIdentity(authenticatedLoggingWorkloadIdentity)
+        .setOriginalAccountPostAuthorizationTuple(
+            ByteString.copyFrom(response.originalAccountPostAuthorizationTuple()))
         .build();
   }
 
-  private static void requireResponse(AuthorizationResponse response) {
+  private static void requireResponse(
+      AuthorizationResponse response, String authenticatedLoggingWorkloadIdentity) {
     if (response == null
         || response.operatorAuthorizationReference() == null
         || response.operatorAuthorizationReference().getBytes(StandardCharsets.UTF_8).length
@@ -424,9 +433,34 @@ public final class StartSessionOperatorAuthorizationGrpcService
         || response.authorityEvidenceBundle() == null
         || response.authorityEvidenceBundle().length == 0
         || response.authorityEvidenceBundle().length > MAX_AUTHORITY_EVIDENCE_BUNDLE_BYTES
-        || response.bundleReference() == null) {
+        || response.bundleReference() == null
+        || response.originalAccountPostAuthorizationTuple() == null
+        || response.originalAccountPostAuthorizationTuple().length == 0
+        || response.originalAccountPostAuthorizationTuple().length
+            > MAX_POST_AUTHORIZATION_TUPLE_BYTES) {
       throw new IllegalStateException(
           "Account produced an invalid StartSession authorization result");
+    }
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        StartSessionPostAuthorizationExecutionTuple.decode(
+            response.originalAccountPostAuthorizationTuple());
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(response.authorityEvidenceBundle());
+    bundle.requireTupleBinding(tuple.preAuthorizationTuple());
+    bundle.requireReferenceBinding(tuple.bundleReference());
+    var tupleReference = tuple.bundleReference();
+    BundleReference responseReference = response.bundleReference();
+    if (!tuple
+            .authorizationReferenceFingerprint()
+            .equals(response.authorizationReferenceFingerprint())
+        || !Arrays.equals(tuple.authorityEvidenceBundleBytes(), bundle.canonicalBytes())
+        || !tupleReference.bundleVersion().equals(responseReference.bundleVersion())
+        || !tupleReference.sourceVersion().equals(responseReference.sourceVersion())
+        || !tupleReference.sourceFence().equals(responseReference.sourceFence())
+        || !tupleReference.linearization().equals(responseReference.linearization())
+        || !tuple.authenticatedWorkloadIdentity().equals(authenticatedLoggingWorkloadIdentity)) {
+      throw new IllegalStateException(
+          "Account authorization result differs from its original owner tuple");
     }
   }
 
@@ -453,8 +487,25 @@ public final class StartSessionOperatorAuthorizationGrpcService
         || result.authorityEvidenceBundle().length > MAX_AUTHORITY_EVIDENCE_BUNDLE_BYTES
         || result.issuanceOperationId() == null
         || NIL_UUID.equals(result.issuanceOperationId())
-        || result.issuanceFence() <= 0L) {
+        || result.issuanceFence() <= 0L
+        || result.originalAccountPostAuthorizationTuple() == null
+        || result.originalAccountPostAuthorizationTuple().length == 0
+        || result.originalAccountPostAuthorizationTuple().length
+            > MAX_POST_AUTHORIZATION_TUPLE_BYTES) {
       throw new IllegalStateException("Account produced an invalid StartSession redemption result");
+    }
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        StartSessionPostAuthorizationExecutionTuple.decode(
+            result.originalAccountPostAuthorizationTuple());
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(result.authorityEvidenceBundle());
+    if (!tuple
+            .authorizationReferenceFingerprint()
+            .equals(result.authorizationReferenceFingerprint())
+        || !Arrays.equals(tuple.authorityEvidenceBundleBytes(), bundle.canonicalBytes())
+        || !Long.toString(result.issuanceFence()).equals(bundle.issuanceFence())
+        || !result.issuanceOperationId().equals(bundle.issuanceOperationId())) {
+      throw new IllegalStateException("Account redemption differs from its original owner tuple");
     }
     return RedeemOperatorAuthorizationResponse.newBuilder()
         .setAuthorizationReferenceFingerprint(result.authorizationReferenceFingerprint())
@@ -462,6 +513,8 @@ public final class StartSessionOperatorAuthorizationGrpcService
         .setIssuanceOperationId(result.issuanceOperationId().toString())
         .setIssuanceFence(result.issuanceFence())
         .setReplay(result.replay())
+        .setOriginalAccountPostAuthorizationTuple(
+            ByteString.copyFrom(result.originalAccountPostAuthorizationTuple()))
         .build();
   }
 
