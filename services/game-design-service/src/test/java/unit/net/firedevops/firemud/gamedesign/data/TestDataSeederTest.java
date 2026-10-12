@@ -267,7 +267,7 @@ class TestDataSeederTest {
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
-    verify(versionAssetArtifactRepository, times(2)).findByTenantIdAndVersionId("1", 7L);
+    verify(versionAssetArtifactRepository).findByTenantIdAndVersionId("1", 7L);
     verify(versionAssetArtifactRepository, never()).save(any(VersionAssetArtifact.class));
     assertThat(artifact.getId()).isEqualTo(31L);
     assertThat(artifact.getStateEpoch()).isEqualTo(1L);
@@ -517,6 +517,7 @@ class TestDataSeederTest {
     VersionAssetArtifact artifact =
         versionAssetArtifactRepository.findByTenantIdAndVersionId("1", 7L).orElseThrow();
     artifact.setUpdatedAt(java.time.LocalDateTime.now());
+    org.mockito.Mockito.clearInvocations(versionAssetArtifactRepository, versionRepository);
     return artifact;
   }
 

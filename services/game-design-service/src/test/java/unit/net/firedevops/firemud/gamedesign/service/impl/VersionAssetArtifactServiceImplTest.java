@@ -243,13 +243,17 @@ class VersionAssetArtifactServiceImplTest {
             org.mockito.ArgumentMatchers.eq("tenant-1"),
             org.mockito.ArgumentMatchers.eq(8),
             any(PublishedReleaseBundleDto.class)))
-        .thenThrow(
-            new IllegalStateException(
-                "REPAIR_ATTESTATION_MISMATCH: repair could not reproduce the attested manifest hash"));
+        .thenThrow(new IllegalStateException("REPAIR_ATTESTATION_MISMATCH"));
 
-    assertThrows(
-        IllegalStateException.class,
-        () -> service.repairPublishedVersionAssets("tenant-1", 7L, 4L, "repair-1"));
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class,
+            () -> service.repairPublishedVersionAssets("tenant-1", 7L, 4L, "repair-1"));
+
+    assertEquals("REPAIR_ATTESTATION_MISMATCH", thrown.getMessage());
+    assertEquals("REPAIR_ATTESTATION_MISMATCH", artifact.getLastErrorCode());
+    assertEquals(
+        "Published asset attestation could not be verified.", artifact.getLastErrorMessage());
   }
 
   @Test

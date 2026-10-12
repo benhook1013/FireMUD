@@ -47,6 +47,7 @@ import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.jooq.Configuration;
 import org.jooq.ExecuteContext;
 import org.jooq.ExecuteListenerProvider;
@@ -95,7 +96,8 @@ class CompleteLaunchBindingServiceIntegrationTest {
       DSL.field(DSL.name("version_state_epoch"), Long.class);
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {
