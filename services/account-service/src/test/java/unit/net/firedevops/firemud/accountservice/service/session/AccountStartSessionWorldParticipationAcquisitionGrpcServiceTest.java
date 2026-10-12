@@ -36,8 +36,9 @@ import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAtte
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
@@ -342,63 +343,24 @@ class AccountStartSessionWorldParticipationAcquisitionGrpcServiceTest {
   }
 
   private static byte[] authorityBundle(StartSessionPreAuthorizationReservationTuple tuple) {
-    String actorId = tuple.actor().accountId().toString();
-    String tenantId = tuple.action().scope().tenantId().toString();
-    Map<String, Object> value =
-        Map.of(
-            "bundleVersion", StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-            "authorityScope",
-                Map.of(
-                    "scope",
-                    Map.of("tenantId", tenantId, "targetNamespace", NAMESPACE),
-                    "actionFamily",
-                    tuple.actionFamily(),
-                    "applicableAccountId",
-                    actorId,
-                    "applicableTenantId",
-                    tenantId),
-            "accountProjectionEvidence",
-                Map.of(
-                    "sourceType", "ACCOUNT",
-                    "sourceEvidenceId", "sha256:" + "a".repeat(64),
-                    "sourceEvidenceVersion", "17",
-                    "projectionStatus", "CURRENT",
-                    "evaluatedAt", "2026-10-09T00:00:00Z",
-                    "expiresAt", "2026-10-10T00:00:00Z"),
-            "issuanceOperationIdentity",
-                Map.of(
-                    "issuanceOperationId", "f5d044bd-7e5f-4e2d-9859-9025cbdcc60f",
-                    "controlPlaneRequestId", tuple.controlPlaneRequestId(),
-                    "actionFamilyRequestIdentity",
-                        Map.of(
-                            "requestIdentityKind",
-                            "controlPlaneRequestId",
-                            "requestId",
-                            tuple.controlPlaneRequestId()),
-                    "mutationDigest", tuple.mutationDigest()),
-            "issuanceKind", "human_operator",
-            "authorityTuple",
-                Map.of(
-                    "issuerAuthGeneration", 1L,
-                    "accountAuthorityGeneration", 2L,
-                    "tenantAuthorityGeneration", Map.of(tenantId, 3L),
-                    "membershipAuthorityGeneration", Map.of(tenantId, 4L),
-                    "privateRealmGrantVersions", List.of()),
-            "membershipVersion", Map.of(tenantId, 5L),
-            "issuanceFence", "23",
-            "issuanceEvidence",
-                Map.of(
-                    "evidenceType", StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
-                    "actorAccountId", actorId,
-                    "controlUiTokenJti", "a681bba7-c215-4cf1-a35b-14348912cbdc",
-                    "role", "tenantAdmin",
-                    "accountGeneration", "2",
-                    "tenantGeneration", "3"));
-    try {
-      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value));
-    } catch (java.io.IOException impossible) {
-      throw new IllegalStateException(impossible);
-    }
+    return StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+        tuple,
+        new Values(
+            uuid("f5d044bd-7e5f-4e2d-9859-9025cbdcc60f"),
+            "sha256:" + "a".repeat(64),
+            "17",
+            "CURRENT",
+            Instant.parse("2026-10-09T00:00:00Z"),
+            Instant.parse("2026-10-10T00:00:00Z"),
+            1L,
+            2L,
+            3L,
+            4L,
+            5L,
+            23L,
+            uuid("a681bba7-c215-4cf1-a35b-14348912cbdc"),
+            "2",
+            "3"));
   }
 
   private static String digest(String value) {

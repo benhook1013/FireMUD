@@ -20,6 +20,8 @@ import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAtte
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
@@ -269,75 +271,24 @@ class AccountStartSessionWorldOriginalAttemptEvidenceRepositoryTest {
   }
 
   private static byte[] authorityBundle(StartSessionPreAuthorizationReservationTuple tuple) {
-    String tenant = tuple.action().scope().tenantId().toString();
-    String actor = tuple.actor().accountId().toString();
-    Map<String, Object> authorityTuple =
-        Map.of(
-            "issuerAuthGeneration", 1L,
-            "accountAuthorityGeneration", 1L,
-            "tenantAuthorityGeneration", Map.of(tenant, 1L),
-            "membershipAuthorityGeneration", Map.of(tenant, 1L),
-            "privateRealmGrantVersions", List.of());
-    return AccountControlUiAuthority.canonical(
-        Map.of(
-            "bundleVersion",
-            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-            "authorityScope",
-            Map.of(
-                "scope",
-                Map.of("tenantId", tenant, "targetNamespace", NAMESPACE),
-                "actionFamily",
-                "StartSession",
-                "applicableAccountId",
-                actor,
-                "applicableTenantId",
-                tenant),
-            "accountProjectionEvidence",
-            Map.of(
-                "sourceType",
-                "ACCOUNT",
-                "sourceEvidenceId",
-                "sha256:" + "c".repeat(64),
-                "sourceEvidenceVersion",
-                BUNDLE_REFERENCE.sourceVersion(),
-                "projectionStatus",
-                "CURRENT",
-                "evaluatedAt",
-                NOW.toString(),
-                "expiresAt",
-                NOW.plusSeconds(180).toString()),
-            "issuanceOperationIdentity",
-            Map.of(
-                "issuanceOperationId",
-                "44444444-4444-4444-8444-444444444444",
-                "controlPlaneRequestId",
-                REQUEST_ID,
-                "actionFamilyRequestIdentity",
-                Map.of("requestIdentityKind", "controlPlaneRequestId", "requestId", REQUEST_ID),
-                "mutationDigest",
-                tuple.mutationDigest()),
-            "issuanceKind",
-            "human_operator",
-            "authorityTuple",
-            authorityTuple,
-            "membershipVersion",
-            Map.of(tenant, 2L),
-            "issuanceFence",
-            "9",
-            "issuanceEvidence",
-            Map.of(
-                "evidenceType",
-                StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
-                "actorAccountId",
-                actor,
-                "controlUiTokenJti",
-                "55555555-5555-4555-8555-555555555555",
-                "role",
-                "tenantAdmin",
-                "accountGeneration",
-                "1",
-                "tenantGeneration",
-                "1")));
+    return StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+        tuple,
+        new Values(
+            UUID.fromString("44444444-4444-4444-8444-444444444444"),
+            "sha256:" + "c".repeat(64),
+            BUNDLE_REFERENCE.sourceVersion(),
+            "CURRENT",
+            NOW,
+            NOW.plusSeconds(180),
+            1L,
+            1L,
+            1L,
+            1L,
+            2L,
+            9L,
+            UUID.fromString("55555555-5555-4555-8555-555555555555"),
+            "1",
+            "1"));
   }
 
   private static byte[] accountProjection(StartSessionPostAuthorizationExecutionTuple tuple) {

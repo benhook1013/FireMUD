@@ -63,7 +63,7 @@ class HostedTermsDisclosureHandoffWorldParticipationTest {
   }
 
   @Test
-  void dispatchDenialChecksWorldBeforeJournalReadAndDoesNotAdvanceAmbiguousRetry()
+  void dispatchDenialLocksSourcesBeforeReadingJournalAndDoesNotAdvanceAmbiguousRetry()
       throws Exception {
     Fixture fixture = new Fixture(Status.AMBIGUOUS, true);
     fixture.begin();
@@ -81,9 +81,16 @@ class HostedTermsDisclosureHandoffWorldParticipationTest {
 
     verify(fixture.fenceRepository)
         .requireWorldParticipationDisclosureAdmission(fixture.handoff.sources());
+    verify(fixture.fenceRepository).lockDisclosureSources(fixture.handoff.sources());
     verify(fixture.fenceRepository, never())
         .requireDisclosurePreparation(fixture.handoff.sources());
-    assertThat(fixture.journalReads).isZero();
+    var order = inOrder(fixture.fenceRepository, fixture.dsl);
+    order.verify(fixture.fenceRepository).lockDisclosureSources(fixture.handoff.sources());
+    order.verify(fixture.dsl, times(2)).fetch(anyString(), any(Object[].class));
+    order
+        .verify(fixture.fenceRepository)
+        .requireWorldParticipationDisclosureAdmission(fixture.handoff.sources());
+    assertThat(fixture.journalReads).isEqualTo(1);
     assertThat(fixture.executedSql).isEmpty();
   }
 
@@ -98,10 +105,12 @@ class HostedTermsDisclosureHandoffWorldParticipationTest {
     assertThat(permit.snapshot().status()).isEqualTo(Status.DISPATCH_AUTHORIZED);
     assertThat(permit.snapshot().dispatchAttempts()).isEqualTo(3);
     var order = inOrder(fixture.fenceRepository, fixture.dsl);
+    order.verify(fixture.fenceRepository).lockDisclosureSources(fixture.handoff.sources());
+    order.verify(fixture.dsl, times(2)).fetch(anyString(), any(Object[].class));
     order
         .verify(fixture.fenceRepository)
         .requireWorldParticipationDisclosureAdmission(fixture.handoff.sources());
-    order.verify(fixture.dsl, times(4)).fetch(anyString(), any(Object[].class));
+    order.verify(fixture.dsl, times(2)).fetch(anyString(), any(Object[].class));
     verify(fixture.fenceRepository, never())
         .requireDisclosurePreparation(fixture.handoff.sources());
     assertThat(fixture.executedSql)
@@ -109,6 +118,45 @@ class HostedTermsDisclosureHandoffWorldParticipationTest {
             "UPDATE account_hosted_terms_disclosure_handoffs"
                 + " SET status = 'DISPATCH_AUTHORIZED', dispatch_attempts = dispatch_attempts + 1 "
                 + "WHERE handoff_id = ? AND status = ?");
+  }
+
+  @Test
+  void exactAuthorizedReadbackDoesNotRecheckParticipationOrAdvanceDispatch() throws Exception {
+    Fixture fixture = new Fixture(Status.DISPATCH_AUTHORIZED, true);
+    fixture.begin();
+
+    var permit = fixture.repository.authorizeDispatch(fixture.handoff);
+
+    assertThat(permit.newlyAuthorized()).isFalse();
+    assertThat(permit.snapshot().status()).isEqualTo(Status.DISPATCH_AUTHORIZED);
+    assertThat(permit.snapshot().dispatchAttempts()).isEqualTo(2);
+    var order = inOrder(fixture.fenceRepository, fixture.dsl);
+    order.verify(fixture.fenceRepository).lockDisclosureSources(fixture.handoff.sources());
+    order.verify(fixture.dsl, times(4)).fetch(anyString(), any(Object[].class));
+    verify(fixture.fenceRepository, never())
+        .requireWorldParticipationDisclosureAdmission(fixture.handoff.sources());
+    verify(fixture.fenceRepository, never())
+        .requireDisclosurePreparation(fixture.handoff.sources());
+    assertThat(fixture.journalReads).isEqualTo(2);
+    assertThat(fixture.executedSql).isEmpty();
+  }
+
+  @Test
+  void preparedDispatchRetainsPreparationGuardAfterParticipationAdmission() throws Exception {
+    Fixture fixture = new Fixture(Status.PREPARED, true);
+    fixture.begin();
+
+    var permit = fixture.repository.authorizeDispatch(fixture.handoff);
+
+    assertThat(permit.newlyAuthorized()).isTrue();
+    var order = inOrder(fixture.fenceRepository, fixture.dsl);
+    order.verify(fixture.fenceRepository).lockDisclosureSources(fixture.handoff.sources());
+    order.verify(fixture.dsl, times(2)).fetch(anyString(), any(Object[].class));
+    order
+        .verify(fixture.fenceRepository)
+        .requireWorldParticipationDisclosureAdmission(fixture.handoff.sources());
+    order.verify(fixture.fenceRepository).requireDisclosurePreparation(fixture.handoff.sources());
+    assertThat(fixture.executedSql).hasSize(1);
   }
 
   private static final class Fixture {

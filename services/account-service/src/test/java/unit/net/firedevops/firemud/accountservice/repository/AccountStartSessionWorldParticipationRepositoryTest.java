@@ -29,8 +29,9 @@ import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorld
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCapture;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
-import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
@@ -406,6 +407,41 @@ class AccountStartSessionWorldParticipationRepositoryTest {
   }
 
   @Test
+  void findHistoricalForOriginalTupleRejectsMissingOrChangedSourceChildren() throws Exception {
+    Fixture fixture = fixture();
+    SourceEvidence changedSource =
+        new SourceEvidence(
+            SourceKind.ACCOUNT,
+            ACTOR_ID.toString(),
+            "1",
+            "1",
+            "account/test",
+            "1",
+            bytes("changed retained source evidence"));
+
+    for (List<SourceEvidence> children :
+        List.of(List.<SourceEvidence>of(), List.of(changedSource))) {
+      List<String> reads = new java.util.ArrayList<>();
+      AtomicReference<Object[]> writes = new AtomicReference<>();
+      AccountStartSessionWorldParticipationRepository repository =
+          mockedRepository(fixture, reads, writes, null, false, children);
+      beginWritableTransaction();
+
+      assertThatThrownBy(
+              () ->
+                  repository.findHistoricalForOriginalTuple(
+                      fixture.candidate().originalPostAuthorizationTuple()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("evidence unavailable");
+      assertThat(reads)
+          .anyMatch(sql -> sql.contains("account_start_session_authority_captures"))
+          .anyMatch(sql -> sql.contains("account_start_session_world_participation_sources"));
+      assertThat(writes.get()).isNull();
+      TransactionSynchronizationManager.clear();
+    }
+  }
+
+  @Test
   void settleExactInsertsAndReadsBackTheSameTypedTerminalAfterHistoricalIdentityCheck()
       throws Exception {
     Fixture fixture = fixture();
@@ -545,6 +581,18 @@ class AccountStartSessionWorldParticipationRepositoryTest {
       WorldStartSessionExecutionTerminal settlement,
       boolean missingParticipation)
       throws Exception {
+    return mockedRepository(
+        fixture, sqlCalls, writes, settlement, missingParticipation, List.of(fixture.source()));
+  }
+
+  private static AccountStartSessionWorldParticipationRepository mockedRepository(
+      Fixture fixture,
+      List<String> sqlCalls,
+      AtomicReference<Object[]> writes,
+      WorldStartSessionExecutionTerminal settlement,
+      boolean missingParticipation,
+      List<SourceEvidence> sourceChildren)
+      throws Exception {
     DSLContext dsl = mock(DSLContext.class);
     Connection connection = mock(Connection.class);
     when(connection.getAutoCommit()).thenReturn(false);
@@ -582,7 +630,7 @@ class AccountStartSessionWorldParticipationRepositoryTest {
                 throw new AssertionError(
                     "Unexpected participation repository result query: " + sql);
               }
-              return sourceRows(PARTICIPATION_ID, fixture.source());
+              return sourceRows(PARTICIPATION_ID, sourceChildren);
             });
     when(dsl.execute(anyString(), any(Object[].class)))
         .thenAnswer(
@@ -723,16 +771,18 @@ class AccountStartSessionWorldParticipationRepositoryTest {
   }
 
   private static org.jooq.Result<org.jooq.Record3<UUID, String, byte[]>> sourceRows(
-      UUID participationId, SourceEvidence source) {
+      UUID participationId, List<SourceEvidence> sources) {
     var context = DSL.using(SQLDialect.POSTGRES);
     var result =
         context.newResult(SOURCE_PARTICIPATION_ID_FIELD, SOURCE_KEY_FIELD, SOURCE_EVIDENCE_FIELD);
-    var row =
-        context.newRecord(SOURCE_PARTICIPATION_ID_FIELD, SOURCE_KEY_FIELD, SOURCE_EVIDENCE_FIELD);
-    row.setValue(SOURCE_PARTICIPATION_ID_FIELD, participationId);
-    row.setValue(SOURCE_KEY_FIELD, source.key());
-    row.setValue(SOURCE_EVIDENCE_FIELD, source.canonicalBytes());
-    result.add(row);
+    for (SourceEvidence source : sources) {
+      var row =
+          context.newRecord(SOURCE_PARTICIPATION_ID_FIELD, SOURCE_KEY_FIELD, SOURCE_EVIDENCE_FIELD);
+      row.setValue(SOURCE_PARTICIPATION_ID_FIELD, participationId);
+      row.setValue(SOURCE_KEY_FIELD, source.key());
+      row.setValue(SOURCE_EVIDENCE_FIELD, source.canonicalBytes());
+      result.add(row);
+    }
     return result;
   }
 
@@ -862,64 +912,24 @@ class AccountStartSessionWorldParticipationRepositoryTest {
   }
 
   private static byte[] authorityBundle(StartSessionPreAuthorizationReservationTuple tuple) {
-    String tenant = tuple.action().scope().tenantId().toString();
-    String actor = tuple.actor().accountId().toString();
-    Map<String, Object> authorityTuple =
-        Map.of(
-            "issuerAuthGeneration", 1L,
-            "accountAuthorityGeneration", 1L,
-            "tenantAuthorityGeneration", Map.of(tenant, 1L),
-            "membershipAuthorityGeneration", Map.of(tenant, 1L),
-            "privateRealmGrantVersions", List.of());
-    return AccountControlUiAuthority.canonical(
-        Map.of(
-            "bundleVersion", StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-            "authorityScope",
-                Map.of(
-                    "scope",
-                    Map.of("tenantId", tenant, "targetNamespace", "world-runtime"),
-                    "actionFamily",
-                    "StartSession",
-                    "applicableAccountId",
-                    actor,
-                    "applicableTenantId",
-                    tenant),
-            "accountProjectionEvidence",
-                Map.of(
-                    "sourceType",
-                    "ACCOUNT",
-                    "sourceEvidenceId",
-                    "sha256:" + "c".repeat(64),
-                    "sourceEvidenceVersion",
-                    BUNDLE_REFERENCE.sourceVersion(),
-                    "projectionStatus",
-                    "CURRENT",
-                    "evaluatedAt",
-                    NOW.toString(),
-                    "expiresAt",
-                    NOW.plusSeconds(180).toString()),
-            "issuanceOperationIdentity",
-                Map.of(
-                    "issuanceOperationId",
-                    "44444444-4444-4444-8444-444444444444",
-                    "controlPlaneRequestId",
-                    REQUEST_ID,
-                    "actionFamilyRequestIdentity",
-                    Map.of("requestIdentityKind", "controlPlaneRequestId", "requestId", REQUEST_ID),
-                    "mutationDigest",
-                    tuple.mutationDigest()),
-            "issuanceKind", "human_operator",
-            "authorityTuple", authorityTuple,
-            "membershipVersion", Map.of(tenant, 2L),
-            "issuanceFence", "9",
-            "issuanceEvidence",
-                Map.of(
-                    "evidenceType", StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
-                    "actorAccountId", actor,
-                    "controlUiTokenJti", "55555555-5555-4555-8555-555555555555",
-                    "role", "tenantAdmin",
-                    "accountGeneration", "1",
-                    "tenantGeneration", "1")));
+    return StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+        tuple,
+        new Values(
+            UUID.fromString("44444444-4444-4444-8444-444444444444"),
+            "sha256:" + "c".repeat(64),
+            BUNDLE_REFERENCE.sourceVersion(),
+            "CURRENT",
+            NOW,
+            NOW.plusSeconds(180),
+            1L,
+            1L,
+            1L,
+            1L,
+            2L,
+            9L,
+            UUID.fromString("55555555-5555-4555-8555-555555555555"),
+            "1",
+            "1"));
   }
 
   private static AccountStartSessionAuthorityCapture capture(

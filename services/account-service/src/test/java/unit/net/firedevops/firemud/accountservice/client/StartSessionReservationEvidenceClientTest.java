@@ -160,7 +160,6 @@ class StartSessionReservationEvidenceClientTest {
                           .START_SESSION_RESERVATION_EVIDENCE_PURPOSE_RECOVER)
                   .build(),
               valid.toBuilder().setObservedAtEpochMillis(0L).build(),
-              valid.toBuilder().setObservedAtEpochMillis(NOW_EPOCH_MILLIS + 1L).build(),
               valid.toBuilder()
                   .setClaimExpiresAtEpochMillis(valid.getObservedAtEpochMillis())
                   .build(),
@@ -186,6 +185,35 @@ class StartSessionReservationEvidenceClientTest {
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("stale or mismatched");
       }
+    }
+  }
+
+  @Test
+  void acceptsProducerObservationAfterLocalNowWhenClaimRemainsOrderedAndUnexpired()
+      throws Exception {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple();
+    AtomicReference<ReadCurrentClaimEvidenceResponse> response = new AtomicReference<>();
+    try (InProcessFixture fixture = inProcessFixture(request -> response.get())) {
+      StartSessionReservationEvidenceClient client = client(fixture.stub());
+      ReadCurrentClaimEvidenceResponse futureObservation =
+          validResponse(
+                  request(tuple, StartSessionReservationEvidenceClient.Purpose.ISSUE),
+                  tuple.mutationDigest())
+              .toBuilder()
+              .setObservedAtEpochMillis(NOW_EPOCH_MILLIS + 1L)
+              .setClaimExpiresAtEpochMillis(NOW_EPOCH_MILLIS + 30_000L)
+              .build();
+      response.set(futureObservation);
+
+      assertThat(
+              client.readCurrentClaimEvidence(
+                  tuple,
+                  RESERVATION_OWNER_ID,
+                  1L,
+                  RESERVATION_OWNER_ID,
+                  1L,
+                  StartSessionReservationEvidenceClient.Purpose.ISSUE))
+          .isEqualTo(futureObservation);
     }
   }
 
