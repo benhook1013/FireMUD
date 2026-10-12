@@ -1057,8 +1057,18 @@ class ControllerTests(unittest.TestCase):
         for result in (
             None,
             {},
-            {(1, "hosted"): [], (1, "cli"): [{"active_review": "unknown"}]},
-            {(1, "hosted"): [{"pr": 99}], (1, "cli"): []},
+            {
+                (1, "hosted"): [],
+                (1, "cli"): [{"active_review": "unknown"}],
+                (2, "hosted"): [],
+                (2, "cli"): [],
+            },
+            {
+                (1, "hosted"): [{"pr": 99}],
+                (1, "cli"): [],
+                (2, "hosted"): [],
+                (2, "cli"): [],
+            },
             ControllerError("batch unavailable"),
         ):
             with self.subTest(result=result):
