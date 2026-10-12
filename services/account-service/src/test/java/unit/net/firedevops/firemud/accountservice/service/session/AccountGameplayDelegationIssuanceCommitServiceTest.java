@@ -5,12 +5,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
@@ -20,7 +22,11 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedIssuanceReadback;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationAuthorityProjection;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationAuthorityProjection.ProjectionObservation;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationAuthorityProjection.PublicationObservation;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationIssuanceCommitService;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisClient.PendingRegistrationReceipt;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSignerTestFixtureFactory;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSignerTestFixtureFactory.Fixture;
@@ -114,6 +120,19 @@ class AccountGameplayDelegationIssuanceCommitServiceTest {
     AccountGameplayDelegationIssuanceRepository repository = signerFixture.issuanceRepository();
     when(repository.readCommittedProof(signerFixture.requestId())).thenReturn(Optional.empty());
     when(registry.registerPending(signerFixture.requestId())).thenReturn(null);
+    when(projection.publishCurrent(signerFixture.accountId()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return new PublicationObservation(
+                  "d".repeat(64), "e".repeat(64), 11L, 12L, ProjectionPublicationOutcome.PUBLISHED);
+            });
+    when(projection.observeCurrent(signerFixture.accountId()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return new ProjectionObservation("d".repeat(64), "e".repeat(64), 11L, 12L);
+            });
 
     AccountGameplayDelegationIssuanceCommitService service =
         new AccountGameplayDelegationIssuanceCommitService(
@@ -133,9 +152,109 @@ class AccountGameplayDelegationIssuanceCommitServiceTest {
     verify(signerFixture.responseEnvelopeService())
         .sealPendingCandidate(eq(signerFixture.requestId()), any(), anyString());
     verify(registry).registerPending(signerFixture.requestId());
+    var order = inOrder(registry, projection);
+    order.verify(registry).registerPending(signerFixture.requestId());
+    order.verify(projection).publishCurrent(signerFixture.accountId());
+    order.verify(projection).observeCurrent(signerFixture.accountId());
     verify(projection).observeCurrent(signerFixture.accountId());
     verify(repository, never()).commitPendingCandidate(any(), any(), any(), any(), any());
     verify(repository).readCommittedProof(signerFixture.requestId());
+  }
+
+  @Test
+  void projectionPublicationFailureDeniesBeforeObservationOrAccountCommit() throws Exception {
+    Fixture signerFixture =
+        AccountGameplayDelegationSignerTestFixtureFactory.create(temporaryDirectory);
+    AccountGameplayDelegationTokenRegistry registry =
+        mock(AccountGameplayDelegationTokenRegistry.class);
+    AccountGameplayDelegationAuthorityProjection projection =
+        mock(AccountGameplayDelegationAuthorityProjection.class);
+    AccountGameplayDelegationIssuanceRepository repository = signerFixture.issuanceRepository();
+    when(repository.readCommittedProof(signerFixture.requestId())).thenReturn(Optional.empty());
+    when(registry.registerPending(signerFixture.requestId())).thenReturn(null);
+    when(projection.publishCurrent(signerFixture.accountId()))
+        .thenThrow(new IllegalStateException("projection publication unavailable"));
+
+    AccountGameplayDelegationIssuanceCommitService service =
+        new AccountGameplayDelegationIssuanceCommitService(
+            signerFixture.signer(),
+            registry,
+            projection,
+            repository,
+            signerFixture.transactionManager(),
+            SIGNING_CLOCK);
+
+    assertThatThrownBy(() -> service.commitPendingCandidate(signerFixture.requestId()))
+        .isInstanceOf(
+            AccountGameplayDelegationIssuanceCommitService.IssuanceCommitUnavailableException.class)
+        .hasNoCause();
+
+    verify(projection).publishCurrent(signerFixture.accountId());
+    verify(projection, never()).observeCurrent(any());
+    verify(repository, never()).commitPendingCandidate(any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void projectionObservationMustMatchPublishedDigestAndGeneration() throws Exception {
+    ProjectionObservation[] mismatches = {
+      new ProjectionObservation("c".repeat(64), "e".repeat(64), 11L, 12L),
+      new ProjectionObservation("d".repeat(64), "c".repeat(64), 11L, 12L),
+      new ProjectionObservation("d".repeat(64), "e".repeat(64), 10L, 12L),
+      new ProjectionObservation("d".repeat(64), "e".repeat(64), 11L, 13L)
+    };
+
+    for (int index = 0; index < mismatches.length; index++) {
+      ProjectionObservation mismatch = mismatches[index];
+      Path fixtureDirectory =
+          Files.createDirectory(temporaryDirectory.resolve("mismatch-" + index));
+      Fixture signerFixture =
+          AccountGameplayDelegationSignerTestFixtureFactory.create(fixtureDirectory);
+      AccountGameplayDelegationTokenRegistry registry =
+          mock(AccountGameplayDelegationTokenRegistry.class);
+      AccountGameplayDelegationAuthorityProjection projection =
+          mock(AccountGameplayDelegationAuthorityProjection.class);
+      AccountGameplayDelegationIssuanceRepository repository = signerFixture.issuanceRepository();
+      PendingRegistrationReceipt receipt = mock(PendingRegistrationReceipt.class);
+      when(repository.readCommittedProof(signerFixture.requestId())).thenReturn(Optional.empty());
+      when(registry.registerPending(signerFixture.requestId())).thenReturn(receipt);
+      when(projection.publishCurrent(signerFixture.accountId()))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                return new PublicationObservation(
+                    "d".repeat(64),
+                    "e".repeat(64),
+                    11L,
+                    12L,
+                    ProjectionPublicationOutcome.PUBLISHED);
+              });
+      when(projection.observeCurrent(signerFixture.accountId()))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                return mismatch;
+              });
+
+      AccountGameplayDelegationIssuanceCommitService service =
+          new AccountGameplayDelegationIssuanceCommitService(
+              signerFixture.signer(),
+              registry,
+              projection,
+              repository,
+              signerFixture.transactionManager(),
+              SIGNING_CLOCK);
+
+      assertThatThrownBy(() -> service.commitPendingCandidate(signerFixture.requestId()))
+          .isInstanceOf(
+              AccountGameplayDelegationIssuanceCommitService.IssuanceCommitUnavailableException
+                  .class)
+          .hasNoCause();
+
+      verify(projection).publishCurrent(signerFixture.accountId());
+      verify(projection).observeCurrent(signerFixture.accountId());
+      verifyNoInteractions(receipt);
+      verify(repository, never()).commitPendingCandidate(any(), any(), any(), any(), any());
+    }
   }
 
   private static AccountGameplayDelegationIssuanceCommitService service(

@@ -199,12 +199,12 @@ class AccountGameplayDelegationAuthorityProjectionTest {
           .isInstanceOf(
               AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
       org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(1))
-          .publishSelectedAuthorityEvent(
+          .publishSelectedAuthorityEventPage(
               any(UUID.class),
               any(UUID.class),
               org.mockito.ArgumentMatchers.anyBoolean(),
               org.mockito.ArgumentMatchers.nullable(byte[].class),
-              any(byte[].class));
+              any(List.class));
     }
 
     @Test
@@ -288,18 +288,15 @@ class AccountGameplayDelegationAuthorityProjectionTest {
       fixture.projection.publishSelectedCurrent(ACCOUNT_ID, fixture.tenant);
 
       org.mockito.ArgumentCaptor<byte[]> prior = org.mockito.ArgumentCaptor.forClass(byte[].class);
-      org.mockito.ArgumentCaptor<byte[]> candidate =
-          org.mockito.ArgumentCaptor.forClass(byte[].class);
-      org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(2))
-          .publishSelectedAuthorityEvent(
-              eq(ACCOUNT_ID), eq(fixture.tenant), eq(false), prior.capture(), candidate.capture());
-      assertThat(prior.getAllValues().get(0)).isNull();
-      assertThat(prior.getAllValues().get(1))
-          .containsExactly(
-              net.firedevops.firemud.accountservice.service.session
-                  .AccountSelectedGameplayAuthorityProjectionTest.membershipBytes(
-                  ACCOUNT_ID, fixture.tenant, "1", "2", "1"));
-      assertThat(candidate.getAllValues())
+      @SuppressWarnings("unchecked")
+      org.mockito.ArgumentCaptor<List<byte[]>> candidates =
+          (org.mockito.ArgumentCaptor<List<byte[]>>)
+              (org.mockito.ArgumentCaptor<?>) org.mockito.ArgumentCaptor.forClass(List.class);
+      org.mockito.Mockito.verify(fixture.redis)
+          .publishSelectedAuthorityEventPage(
+              eq(ACCOUNT_ID), eq(fixture.tenant), eq(false), prior.capture(), candidates.capture());
+      assertThat(prior.getValue()).isNull();
+      assertThat(candidates.getValue())
           .containsExactly(
               net.firedevops.firemud.accountservice.service.session
                   .AccountSelectedGameplayAuthorityProjectionTest.membershipBytes(
@@ -384,19 +381,19 @@ class AccountGameplayDelegationAuthorityProjectionTest {
           .isInstanceOf(
               AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
       org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(1))
-          .publishSelectedAuthorityEvent(
+          .publishSelectedAuthorityEventPage(
               eq(ACCOUNT_ID),
               eq(fixture.tenant),
               eq(true),
               org.mockito.ArgumentMatchers.nullable(byte[].class),
-              any(byte[].class));
+              any(List.class));
       org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.never())
-          .publishSelectedAuthorityEvent(
+          .publishSelectedAuthorityEventPage(
               eq(ACCOUNT_ID),
               eq(fixture.tenant),
               eq(false),
               org.mockito.ArgumentMatchers.nullable(byte[].class),
-              any(byte[].class));
+              any(List.class));
     }
 
     @Test
@@ -421,12 +418,12 @@ class AccountGameplayDelegationAuthorityProjectionTest {
               org.mockito.ArgumentMatchers.anyLong(),
               org.mockito.ArgumentMatchers.anyLong());
       org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.never())
-          .publishSelectedAuthorityEvent(
+          .publishSelectedAuthorityEventPage(
               any(UUID.class),
               any(UUID.class),
               org.mockito.ArgumentMatchers.anyBoolean(),
               org.mockito.ArgumentMatchers.nullable(byte[].class),
-              any(byte[].class));
+              any(List.class));
     }
 
     @Test
@@ -452,12 +449,12 @@ class AccountGameplayDelegationAuthorityProjectionTest {
               org.mockito.ArgumentMatchers.anyLong(),
               org.mockito.ArgumentMatchers.anyLong());
       org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.never())
-          .publishSelectedAuthorityEvent(
+          .publishSelectedAuthorityEventPage(
               any(UUID.class),
               any(UUID.class),
               org.mockito.ArgumentMatchers.anyBoolean(),
               org.mockito.ArgumentMatchers.nullable(byte[].class),
-              any(byte[].class));
+              any(List.class));
     }
 
     @Test
@@ -551,13 +548,19 @@ class AccountGameplayDelegationAuthorityProjectionTest {
           .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
       org.mockito.Mockito.verify(fixture.outbox).findEventPage(stream, 0L, 130L);
       org.mockito.Mockito.verify(fixture.outbox).findEventPage(stream, 128L, 130L);
-      org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(130))
-          .publishSelectedAuthorityEvent(
+      @SuppressWarnings("unchecked")
+      org.mockito.ArgumentCaptor<List<byte[]>> pageCaptor =
+          (org.mockito.ArgumentCaptor<List<byte[]>>)
+              (org.mockito.ArgumentCaptor<?>) org.mockito.ArgumentCaptor.forClass(List.class);
+      org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(2))
+          .publishSelectedAuthorityEventPage(
               eq(ACCOUNT_ID),
               eq(fixture.tenant),
               eq(false),
               org.mockito.ArgumentMatchers.nullable(byte[].class),
-              any(byte[].class));
+              pageCaptor.capture());
+      assertThat(pageCaptor.getAllValues().stream().map(List::size).toList())
+          .containsExactly(128, 2);
     }
 
     @Test
@@ -591,12 +594,12 @@ class AccountGameplayDelegationAuthorityProjectionTest {
             .isInstanceOf(
                 AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
         org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(1))
-            .publishSelectedAuthorityEvent(
+            .publishSelectedAuthorityEventPage(
                 any(UUID.class),
                 any(UUID.class),
                 org.mockito.ArgumentMatchers.anyBoolean(),
                 org.mockito.ArgumentMatchers.nullable(byte[].class),
-                any(byte[].class));
+                any(List.class));
       }
     }
 
@@ -609,16 +612,17 @@ class AccountGameplayDelegationAuthorityProjectionTest {
       when(fixture.redis.readSelectedAuthorityHeads(ACCOUNT_ID, fixture.tenant))
           .thenReturn(
               new byte[][] {null, null}, new byte[][] {fixture.values[2], fixture.values[3]});
-      when(fixture.redis.publishSelectedAuthorityEvent(
+      when(fixture.redis.publishSelectedAuthorityEventPage(
               any(UUID.class),
               any(UUID.class),
               org.mockito.ArgumentMatchers.anyBoolean(),
               org.mockito.ArgumentMatchers.nullable(byte[].class),
-              any(byte[].class)))
+              any(List.class)))
           .thenAnswer(
               invocation -> {
-                String candidate =
-                    new String((byte[]) invocation.getArgument(4), StandardCharsets.UTF_8);
+                @SuppressWarnings("unchecked")
+                List<byte[]> candidates = invocation.getArgument(4);
+                String candidate = new String(candidates.getLast(), StandardCharsets.UTF_8);
                 if (candidate.contains("\"accountId\"")) {
                   when(fixture.member.getMembershipVersion()).thenReturn(3L);
                 }
@@ -630,12 +634,12 @@ class AccountGameplayDelegationAuthorityProjectionTest {
           .isInstanceOf(
               AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
       org.mockito.Mockito.verify(fixture.redis, org.mockito.Mockito.times(2))
-          .publishSelectedAuthorityEvent(
+          .publishSelectedAuthorityEventPage(
               any(UUID.class),
               any(UUID.class),
               org.mockito.ArgumentMatchers.anyBoolean(),
               org.mockito.ArgumentMatchers.nullable(byte[].class),
-              any(byte[].class));
+              any(List.class));
     }
 
     @Test

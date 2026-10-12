@@ -14,6 +14,7 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedIssuanceReadback;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationAuthorityProjection.ProjectionObservation;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationAuthorityProjection.PublicationObservation;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisClient.PendingRegistrationReceipt;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.CandidateOutcome;
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner.PendingCandidateVerificationProof;
@@ -95,7 +96,16 @@ public final class AccountGameplayDelegationIssuanceCommitService {
       }
 
       PendingRegistrationReceipt registration = tokenRegistry.registerPending(requestId);
+      PublicationObservation publication = authorityProjection.publishCurrent(proof.accountId());
+      if (publication == null) throw unavailable();
       ProjectionObservation projection = authorityProjection.observeCurrent(proof.accountId());
+      if (projection == null
+          || !publication.issuerDigest().equals(projection.issuerDigest())
+          || !publication.accountDigest().equals(projection.accountDigest())
+          || publication.issuerGeneration() != projection.issuerGeneration()
+          || publication.accountGeneration() != projection.accountGeneration()) {
+        throw unavailable();
+      }
       CommitProof commitProof = CommitProof.create(proof, registration, projection);
 
       CommittedIssuanceReadback transactionReadback =
