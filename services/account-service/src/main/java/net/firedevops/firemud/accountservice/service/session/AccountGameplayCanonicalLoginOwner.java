@@ -244,8 +244,9 @@ public final class AccountGameplayCanonicalLoginOwner {
     Objects.requireNonNull(request, "Canonical gameplay LOGIN request is required");
     Objects.requireNonNull(verifier, "Account credential verifier is required");
     if (workload == null
-        || !workload.matches(
-            "^spiffe://firemud/ns/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?/sa/game-session-service$")) {
+        || !GameSessionAccountDelegationProfile.GAME_SESSION_CALLER_WORKLOAD
+            .matcher(workload)
+            .matches()) {
       throw new IllegalArgumentException("Verified Game Session workload identity is required");
     }
   }

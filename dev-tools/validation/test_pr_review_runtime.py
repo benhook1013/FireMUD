@@ -5535,11 +5535,25 @@ class RuntimeTest(unittest.TestCase):
             "updatedAt": "2026-09-24T00:00:00Z",
             "author": {"login": "maintainer"},
         }
+        valid_plain = {
+            "databaseId": 98,
+            "body": ("Review scope changed: reused PR scope was reset\n<!-- firemud-review-scope-change -->"),
+            "createdAt": "2026-09-23T00:00:00Z",
+            "updatedAt": "2026-09-24T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
         malformed = {
             "databaseId": 91,
             "body": "**Review scope changed:** missing the required hidden marker",
             "createdAt": "2026-09-25T00:00:00Z",
             "updatedAt": "2026-09-25T00:00:00Z",
+            "author": {"login": "maintainer"},
+        }
+        malformed_plain = {
+            "databaseId": 99,
+            "body": "Review scope changed: plain heading still requires the hidden marker",
+            "createdAt": "2026-09-25T12:00:00Z",
+            "updatedAt": "2026-09-25T12:00:00Z",
             "author": {"login": "maintainer"},
         }
         malformed_marker = {
@@ -5583,7 +5597,9 @@ class RuntimeTest(unittest.TestCase):
                 self._payload(
                     [
                         valid,
+                        valid_plain,
                         malformed,
+                        malformed_plain,
                         malformed_marker,
                         mid_body_marker,
                         indented_marker,
@@ -5594,13 +5610,14 @@ class RuntimeTest(unittest.TestCase):
             )
 
         markers = [item for item in history if item.get("scope_changed") is True]
-        self.assertEqual(len(markers), 3)
-        self.assertEqual([marker["comment_id"] for marker in markers], [90, 91, 95])
-        self.assertEqual(markers[0]["kind"], "scope_change")
-        self.assertFalse(markers[0]["scope_change_malformed"])
+        self.assertEqual(len(markers), 5)
+        self.assertEqual([marker["comment_id"] for marker in markers], [90, 98, 91, 99, 95])
+        self.assertEqual([marker["kind"] for marker in markers[:2]], ["scope_change"] * 2)
+        self.assertFalse(any(marker["scope_change_malformed"] for marker in markers[:2]))
+        self.assertEqual(markers[0]["description"], markers[1]["description"])
         self.assertEqual(markers[0]["observed_at"], "2026-09-24T00:00:00Z")
-        self.assertEqual([marker["kind"] for marker in markers[1:]], ["scope_change_malformed"] * 2)
-        self.assertTrue(all(marker["scope_change_malformed"] for marker in markers[1:]))
+        self.assertEqual([marker["kind"] for marker in markers[2:]], ["scope_change_malformed"] * 3)
+        self.assertTrue(all(marker["scope_change_malformed"] for marker in markers[2:]))
         for marker in markers:
             self.assertFalse(marker["completed"])
             self.assertFalse(marker["attributable"])

@@ -42,9 +42,6 @@ public class AccountAuthEvidenceBundleRepository {
   private static final Pattern V4_UUID =
       Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}");
   private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
-  private static final Pattern GAME_SESSION_WORKLOAD =
-      Pattern.compile(
-          "^spiffe://firemud/ns/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?/sa/game-session-service$");
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
   private final DSLContext dsl;
@@ -145,7 +142,9 @@ public class AccountAuthEvidenceBundleRepository {
         || !SHA256.matcher(requestDigest).matches()
         || !"PENDING".equals(operation.get("status", String.class))
         || callerWorkload == null
-        || !GAME_SESSION_WORKLOAD.matcher(callerWorkload).matches()) {
+        || !GameSessionAccountDelegationProfile.GAME_SESSION_CALLER_WORKLOAD
+            .matcher(callerWorkload)
+            .matches()) {
       throw new OwnerEvidenceUnavailableException();
     }
     requireExactPendingAuthority(operation, current, accountId);

@@ -481,6 +481,65 @@ class AccountGameplayDelegationRedisClientTest {
   }
 
   @Test
+  void authorityProjectionObservationRejectsIssuerOnlyTtl() throws Exception {
+    byte[][] pair =
+        AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(snapshot());
+    var connection = connection();
+    var commands = connection.sync();
+    when(commands.get(any(byte[].class)))
+        .thenAnswer(
+            invocation -> {
+              byte[] key = invocation.getArgument(0);
+              return Arrays.equals(key, issuerProjectionKey()) ? pair[0] : pair[1];
+            });
+    when(commands.pttl(any(byte[].class)))
+        .thenAnswer(
+            invocation ->
+                Arrays.equals(invocation.getArgument(0), issuerProjectionKey()) ? 1L : -1L);
+
+    assertThatThrownBy(() -> client(connection).readAuthorityProjections(ACCOUNT_ID))
+        .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+
+    verify(commands).pttl(argThat(key -> Arrays.equals(key, issuerProjectionKey())));
+    verify(connection).close();
+  }
+
+  @Test
+  void authorityProjectionPublicationReadbackRejectsIssuerOnlyTtl() throws Exception {
+    byte[][] values =
+        AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(snapshot());
+    StatefulRedisConnection<byte[], byte[]> connection = connection();
+    RedisCommands<byte[], byte[]> commands = connection.sync();
+    when(commands.scriptLoad(any(byte[].class)))
+        .thenAnswer(invocation -> sha1(invocation.getArgument(0)));
+    when(commands.<Long>evalsha(
+            anyString(), eq(ScriptOutputType.INTEGER), any(byte[][].class), any(byte[][].class)))
+        .thenReturn(1L, 0L);
+    doReturn(List.of(1L, 1L))
+        .when(commands)
+        .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
+    when(commands.get(any(byte[].class)))
+        .thenAnswer(
+            invocation -> {
+              byte[] key = invocation.getArgument(0);
+              if (Arrays.equals(key, issuerProjectionKey())) return values[0].clone();
+              if (Arrays.equals(key, accountProjectionKey())) return values[1].clone();
+              return null;
+            });
+    when(commands.pttl(any(byte[].class)))
+        .thenAnswer(
+            invocation ->
+                Arrays.equals(invocation.getArgument(0), issuerProjectionKey()) ? 1L : -1L);
+
+    assertThatThrownBy(
+            () -> client(connection).publishAuthorityProjections(ACCOUNT_ID, values[0], values[1]))
+        .isInstanceOf(AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+
+    verify(commands).pttl(argThat(key -> Arrays.equals(key, issuerProjectionKey())));
+    verify(connection).close();
+  }
+
+  @Test
   void acknowledgementOrReadbackUncertaintyNeverReturnsProjectionSuccess() throws Exception {
     byte[][] values =
         AccountGameplayDelegationAuthorityProjection.canonicalProjectionPair(snapshot());
@@ -1050,7 +1109,7 @@ class AccountGameplayDelegationRedisClientTest {
                 new net.firedevops.firemud.accountservice.service
                     .AccountGenerationProjectionRedisScriptContribution())),
         new AcknowledgementRequirements(1, 1, 1_000),
-        AccountGameplayDelegationAuthorityProjection.MAX_PROJECTION_BYTES,
+        GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES,
         AccountGameplayDelegationRedisClientTest.class.getClassLoader());
   }
 
@@ -1082,6 +1141,16 @@ class AccountGameplayDelegationRedisClientTest {
 
   private static byte[] ascii(String value) {
     return value.getBytes(StandardCharsets.US_ASCII);
+  }
+
+  private static byte[] issuerProjectionKey() {
+    return ascii(
+        AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
+            + GameSessionAccountDelegationProfile.ISSUER);
+  }
+
+  private static byte[] accountProjectionKey() {
+    return ascii(AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + ACCOUNT_ID);
   }
 
   private record ActivationFixture(
