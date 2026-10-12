@@ -3,9 +3,13 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -79,6 +83,7 @@ import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.slf4j.LoggerFactory;
 import tools.jackson.databind.json.JsonMapper;
 
 class GameSessionGrpcServiceTest {
@@ -3384,6 +3389,55 @@ class GameSessionGrpcServiceTest {
             operatorPeer("logging-admin-service", OPERATOR_NAMESPACE));
     assertEquals("FAILED_PRECONDITION", stale.getError().getCode());
     assertFalse(stale.getError().getMessage().contains(OPERATOR_REFERENCE));
+  }
+
+  @Test
+  void typedStartSessionUnexpectedFailureLogsOnlyExceptionClassAndKeepsInternal()
+      throws IOException {
+    String secretMessage = "synthetic owner diagnostic secret";
+    String secretReference = "secret-ref-" + "Z".repeat(32);
+    StartSessionPostAuthorizationExecutionTuple tuple = operatorTuple();
+    GameSessionStartSessionOperatorAuthorizationCoordinator coordinator =
+        Mockito.mock(GameSessionStartSessionOperatorAuthorizationCoordinator.class);
+    Mockito.when(
+            coordinator.authorize(
+                Mockito.any(StartSessionPostAuthorizationExecutionTuple.class),
+                Mockito.eq(secretReference)))
+        .thenThrow(new IllegalStateException(secretMessage + " " + secretReference));
+    GameSessionGrpcService service =
+        operatorService(Mockito.mock(GameInstanceService.class), coordinator);
+    AuthorizeStartSessionRequest request =
+        operatorRequest(tuple).toBuilder()
+            .setOperatorAuthorizationReference(secretReference)
+            .build();
+    Logger logger = (Logger) LoggerFactory.getLogger(GameSessionGrpcService.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+
+    try {
+      AuthorizeStartSessionResponse response =
+          authorizeWithPeer(
+              service, request, operatorPeer("logging-admin-service", OPERATOR_NAMESPACE));
+
+      assertEquals("INTERNAL", response.getError().getCode());
+      assertEquals("StartSession owner handoff failed", response.getError().getMessage());
+      assertFalse(response.getError().getMessage().contains(secretReference));
+      assertFalse(response.getError().getMessage().contains(secretMessage));
+      assertEquals(1, appender.list.size());
+      ILoggingEvent event = appender.list.get(0);
+      assertEquals(
+          "AuthorizeStartSession failed with exception class java.lang.IllegalStateException",
+          event.getFormattedMessage());
+      assertArrayEquals(
+          new Object[] {IllegalStateException.class.getName()}, event.getArgumentArray());
+      assertNull(event.getThrowableProxy());
+      assertFalse(event.getFormattedMessage().contains(secretReference));
+      assertFalse(event.getFormattedMessage().contains(secretMessage));
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
   }
 
   private static GameSessionGrpcService operatorService(

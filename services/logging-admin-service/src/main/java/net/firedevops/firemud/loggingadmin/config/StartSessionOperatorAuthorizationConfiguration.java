@@ -1,15 +1,12 @@
 package net.firedevops.firemud.loggingadmin.config;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.FileBackedGrpcMtlsPolicy;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
-import net.firedevops.firemud.common.grpc.ResolvedGrpcTlsMaterial;
 import net.firedevops.firemud.loggingadmin.client.StartSessionOperatorAuthorizationClient;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionAuthorizationCoordinator;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService;
@@ -48,7 +45,11 @@ public class StartSessionOperatorAuthorizationConfiguration {
       throw new IllegalArgumentException(
           "A valid configured workload namespace is required for StartSession authorization");
     }
-    requireFileBackedMtls(tlsProperties, tlsMaterialResolver);
+    FileBackedGrpcMtlsPolicy.require(
+        tlsProperties,
+        tlsMaterialResolver,
+        "StartSession authorization",
+        "StartSession authorization requires file-backed workload mTLS");
     return new StartSessionOperatorAuthorizationClient(
         endpoints, tlsProperties, channelFactory, stubCustomizer);
   }
@@ -59,32 +60,5 @@ public class StartSessionOperatorAuthorizationConfiguration {
       StartSessionPreAuthorizationReservationService reservations,
       StartSessionOperatorAuthorizationClient accountClient) {
     return new StartSessionAuthorizationCoordinator(reservations, accountClient);
-  }
-
-  private static void requireFileBackedMtls(
-      CommonGrpcClientProperties tlsProperties, GrpcTlsMaterialResolver resolver) {
-    if (tlsProperties == null || tlsProperties.isPlaintext() || resolver == null) {
-      throw new IllegalStateException(
-          "StartSession authorization requires file-backed workload mTLS");
-    }
-    ResolvedGrpcTlsMaterial material;
-    try {
-      material = resolver.resolve(tlsProperties);
-    } catch (IOException | RuntimeException ignored) {
-      throw new IllegalStateException(
-          "StartSession authorization requires readable file-backed workload mTLS");
-    }
-    if (material == null
-        || !isReadableFile(material.certChain())
-        || !isReadableFile(material.privateKey())
-        || !isReadableFile(material.caCert())) {
-      throw new IllegalStateException(
-          "StartSession authorization requires readable file-backed workload mTLS");
-    }
-  }
-
-  private static boolean isReadableFile(ResolvedGrpcTlsMaterial.TlsResource resource) {
-    Path path = resource == null ? null : resource.watchPath();
-    return path != null && Files.isRegularFile(path) && Files.isReadable(path);
   }
 }

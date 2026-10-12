@@ -76,16 +76,9 @@ class ReviewResultOutputTests(unittest.TestCase):
 
         self.assertIn("records cli-decision", result["next_step"])
         self.assertIn("records source finalize", result["next_step"])
-        self.assertIn("Post one public checkpoint", result["next_step"])
+        self.assertIn("records source finalize --run-id run.Abc123", result["next_step"])
         self.assertIn("authoritative counts", result["next_step"])
-        self.assertIn("normal evidence reader", result["next_step"])
-        self.assertEqual(
-            result["public_checkpoint_template"],
-            "CLI: <found> Found / <accepted> Accepted / <routed> Routed · "
-            f"{CANDIDATE} · 4 files · 1m 07s\n"
-            "<!-- firemud-cli-run: run.Abc123 -->\n"
-            "<!-- firemud-review-duration-seconds: 67 -->",
-        )
+        self.assertNotIn("public_checkpoint_template", result)
 
     def test_unsuccessful_cli_result_has_no_checkpoint_guidance(self):
         result = ReviewResult(
@@ -129,7 +122,7 @@ class ReviewResultOutputTests(unittest.TestCase):
         self.assertIn("capture recovery and adjudication workflow", result["next_step"])
         self.assertNotIn("records cli-decision", result["next_step"])
         self.assertNotIn("records source finalize", result["next_step"])
-        self.assertIn("public_checkpoint_template", result)
+        self.assertNotIn("public_checkpoint_template", result)
 
 
 class BoundedAllocationCliParserTests(unittest.TestCase):
