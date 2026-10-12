@@ -171,6 +171,7 @@ class LiveEvidence:
         self._payloads: dict[int, dict[str, Any]] = {}
         self._complete_payloads: set[int] = set()
         self._histories: dict[tuple[int, str], list[dict[str, Any]]] = {}
+        self._review_activity_identities: dict[tuple[int, str], dict[str, dict[str, str]]] = {}
         self._records_histories: dict[int, dict[str, Any] | None] = {}
 
     def _payload(self, pr: int) -> dict[str, Any]:
@@ -2293,6 +2294,12 @@ class LiveEvidence:
         except (ReviewRecordsError, OSError):
             return "unavailable"
 
+    def review_activity_identities(self, pr: int, channel: str) -> Mapping[str, Mapping[str, str]]:
+        """Return cached display aliases without changing policy observations or fetching evidence."""
+
+        key = (pr, channel)
+        return self._review_activity_identities.get(key, {}) if key in self._histories else {}
+
     def history(self, pr: int, channel: str, *, now: datetime | None = None) -> Sequence[dict[str, Any]]:
         key = (pr, channel)
         # A time-pinned audit must classify cooldowns at its own cutoff instead
@@ -2325,6 +2332,7 @@ class LiveEvidence:
         checkpoints.sort(key=lambda item: (item.created_at, item.comment_id or 0))
         reviews = self._reviews(payload)
         values: list[dict[str, Any]] = []
+        display_identities: dict[str, dict[str, str]] = {}
         public_cli_run_ids: set[str] = set()
         emitted_cli_sources: set[tuple[str, str]] = set()
         emitted_hosted_review_ids: set[int] = set()
@@ -2416,6 +2424,13 @@ class LiveEvidence:
             }
             if source_resolution_status is not None:
                 value["source_resolution_status"] = source_resolution_status
+            if completed:
+                display_identity = {"head": exact_head}
+                if channel == "cli" and checkpoint.run_id:
+                    display_identity["run_id"] = checkpoint.run_id
+                if channel == "hosted" and checkpoint.hosted_review_id is not None:
+                    display_identity["provider_review_id"] = str(checkpoint.hosted_review_id)
+                display_identities[value["checkpoint"]] = display_identity
             values.append(value)
         if channel == "cli" and cli_context_error is None:
             # CLI already holds its process lock and pins canonical metadata
@@ -2538,6 +2553,7 @@ class LiveEvidence:
         values.extend(global_blockers)
         if now is None:
             self._histories[key] = values
+            self._review_activity_identities[key] = display_identities
         return values
 
 
