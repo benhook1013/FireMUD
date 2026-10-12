@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -202,23 +203,23 @@ class AccountStartSessionWorldOriginalAttemptEvidencePostgresIntegrationTest {
     byte[] expiredResponse =
         OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(expiredObservation)
             .toByteArray();
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "INSERT INTO account_start_session_world_original_attempt_evidence "
-                        + "(participation_id, target_namespace, game_session_owner_attempt_id, "
-                        + "game_session_owner_mutation_id, game_session_owner_fence, "
-                        + "original_lease_expires_at, original_response_bytes, original_response_digest) "
-                        + "VALUES (?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
-                    parent.participationId(),
-                    NAMESPACE,
-                    fixture.ownerAttemptId(),
-                    OWNER_MUTATION_ID,
-                    OWNER_FENCE,
-                    OffsetDateTime.ofInstant(expiredAt, ZoneOffset.UTC),
-                    expiredResponse,
-                    "sha256:" + sha256Hex(expiredResponse)))
-        .isInstanceOf(RuntimeException.class);
+    assertGuardRejected(
+        () ->
+            dsl.execute(
+                "INSERT INTO account_start_session_world_original_attempt_evidence "
+                    + "(participation_id, target_namespace, game_session_owner_attempt_id, "
+                    + "game_session_owner_mutation_id, game_session_owner_fence, "
+                    + "original_lease_expires_at, original_response_bytes, original_response_digest) "
+                    + "VALUES (?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)",
+                parent.participationId(),
+                NAMESPACE,
+                fixture.ownerAttemptId(),
+                OWNER_MUTATION_ID,
+                OWNER_FENCE,
+                OffsetDateTime.ofInstant(expiredAt, ZoneOffset.UTC),
+                expiredResponse,
+                "sha256:" + sha256Hex(expiredResponse)),
+        "Original StartSession attempt observation lease is expired");
     Record expiredEvidenceCount =
         Objects.requireNonNull(
             dsl.fetchOne(
@@ -274,27 +275,51 @@ class AccountStartSessionWorldOriginalAttemptEvidencePostgresIntegrationTest {
 
   private static void assertAppendOnly(DSLContext dsl, UUID participationId) {
     String table = "account_start_session_world_original_attempt_evidence";
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "UPDATE "
-                        + table
-                        + " SET original_response_digest = original_response_digest "
-                        + "WHERE participation_id = ?",
-                    participationId))
-        .isInstanceOf(RuntimeException.class);
-    assertThatThrownBy(
-            () ->
-                dsl.execute(
-                    "DELETE FROM " + table + " WHERE participation_id = ?", participationId))
-        .isInstanceOf(RuntimeException.class);
-    assertThatThrownBy(() -> dsl.execute("TRUNCATE " + table)).isInstanceOf(RuntimeException.class);
+    assertGuardRejected(
+        () ->
+            dsl.execute(
+                "UPDATE "
+                    + table
+                    + " SET original_response_digest = original_response_digest "
+                    + "WHERE participation_id = ?",
+                participationId),
+        "Original StartSession attempt observation is append-only");
+    assertGuardRejected(
+        () -> dsl.execute("DELETE FROM " + table + " WHERE participation_id = ?", participationId),
+        "Original StartSession attempt observation is append-only");
+    assertGuardRejected(
+        () -> dsl.execute("TRUNCATE " + table + " CASCADE"),
+        "Original StartSession attempt observation is append-only");
     Record evidenceCount =
         Objects.requireNonNull(
             dsl.fetchOne(
                 "SELECT count(*) FROM " + table + " WHERE participation_id = ?", participationId),
             "append-only evidence count query returned no row");
     assertThat(evidenceCount.get(0, Long.class)).isEqualTo(1L);
+  }
+
+  private static void assertGuardRejected(
+      org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String expectedDiagnostic) {
+    assertThatThrownBy(action)
+        .satisfies(
+            failure -> {
+              SQLException sqlFailure = findSqlException(failure);
+              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+                throw new AssertionError(
+                    "Attempt evidence guard rejection must be a PostgreSQL exception", sqlFailure);
+              }
+              var serverError = postgresFailure.getServerErrorMessage();
+              assertThat(serverError).isNotNull();
+              assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
+            });
+  }
+
+  private static SQLException findSqlException(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException) return sqlException;
+    }
+    throw new AssertionError("Guard rejection must retain its SQL exception", failure);
   }
 
   private static void assertLeaseExpiresWhileParentLocked(

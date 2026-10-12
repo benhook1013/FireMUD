@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Map;
@@ -423,9 +424,9 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
           "account_start_session_world_participation_sources",
           "account_start_session_world_participation_settlements"
         }) {
-      assertThatThrownBy(() -> dsl.execute("TRUNCATE " + table))
-          .as("TRUNCATE must be rejected for empty append-only table %s", table)
-          .isInstanceOf(RuntimeException.class);
+      assertGuardRejected(
+          () -> dsl.execute("TRUNCATE " + table + " CASCADE"),
+          "StartSession World participation evidence is append-only");
       assertThat(
               Objects.requireNonNull(
                       dsl.fetchOne("SELECT count(*) FROM " + table),
@@ -434,6 +435,30 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
           .as("rejected TRUNCATE must leave the empty table unchanged")
           .isZero();
     }
+  }
+
+  private static void assertGuardRejected(
+      org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String expectedDiagnostic) {
+    assertThatThrownBy(action)
+        .satisfies(
+            failure -> {
+              SQLException sqlFailure = findSqlException(failure);
+              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+                throw new AssertionError(
+                    "Participation guard rejection must be a PostgreSQL exception", sqlFailure);
+              }
+              var serverError = postgresFailure.getServerErrorMessage();
+              assertThat(serverError).isNotNull();
+              assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
+            });
+  }
+
+  private static SQLException findSqlException(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException) return sqlException;
+    }
+    throw new AssertionError("Guard rejection must retain its SQL exception", failure);
   }
 
   private static String functionDefinition(DSLContext dsl, String signature) {
