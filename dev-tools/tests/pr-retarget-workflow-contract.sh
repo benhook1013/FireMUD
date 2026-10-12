@@ -525,6 +525,24 @@ if "&& 'metadata' || 'required'" not in concurrency_group:
 dispatch_condition = runtime_jobs["dispatch-pr-base-refreshes"].get("if", "")
 if "github.event_name == 'workflow_run'" not in dispatch_condition:
     raise SystemExit("runtime refresh dispatch is not isolated from pull-request metadata events")
+
+# Distinct verified PR tuples must not evict one another; pull_request and
+# typed refresh runs for the same tuple must share a group. A dispatch missing
+# any tuple field gets a unique run namespace.
+pull_request_selector = "format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha, github.sha)"
+if pull_request_selector not in concurrency_group:
+    raise SystemExit("pull_request runtime concurrency must use its exact PR, base, head, and test-merge identity")
+dispatch_fields = ("pr_number", "base_sha", "head_sha", "merge_sha")
+for field in dispatch_fields:
+    if f"github.event.client_payload.{field} != ''" not in concurrency_group:
+        raise SystemExit(f"typed refresh runtime concurrency must require its {field} identity")
+dispatch_selector = "format('pr-{0}-base-{1}-head-{2}-merge-{3}', github.event.client_payload.pr_number, github.event.client_payload.base_sha, github.event.client_payload.head_sha, github.event.client_payload.merge_sha)"
+if dispatch_selector not in concurrency_group:
+    raise SystemExit("typed refresh runtime concurrency must use its full payload tuple")
+if "format('repository-dispatch-run-{0}', github.run_id)" not in concurrency_group:
+    raise SystemExit("incomplete typed refresh identity must receive a unique run namespace")
+if "github.sha" in concurrency_group.split("github.event_name == 'repository_dispatch'", 1)[-1].split("github.event_name == 'workflow_run'", 1)[0]:
+    raise SystemExit("repository_dispatch concurrency must not use the default-branch github.sha")
 PY
 
 run_image_meta_exact_parent_fixture() {
