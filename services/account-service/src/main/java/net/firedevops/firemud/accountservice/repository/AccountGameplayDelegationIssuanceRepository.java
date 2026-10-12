@@ -2071,8 +2071,9 @@ public class AccountGameplayDelegationIssuanceRepository {
       requireUuid(tokenJti, "token jti");
       if (callerWorkload == null
           || callerWorkload.length() > 256
-          || !callerWorkload.matches(
-              "^spiffe://firemud/ns/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?/sa/game-session-service$")) {
+          || !GameSessionAccountDelegationProfile.GAME_SESSION_CALLER_WORKLOAD
+              .matcher(callerWorkload)
+              .matches()) {
         throw new IllegalArgumentException("Exact Game Session workload identity is required");
       }
       Objects.requireNonNull(authoritySnapshot, "Expected Account authority snapshot is required");

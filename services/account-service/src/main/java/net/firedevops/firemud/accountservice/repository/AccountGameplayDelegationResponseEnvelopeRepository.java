@@ -52,9 +52,6 @@ public class AccountGameplayDelegationResponseEnvelopeRepository {
   private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
   private static final Pattern V4_UUID =
       Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}");
-  private static final Pattern GAME_SESSION_WORKLOAD =
-      Pattern.compile(
-          "^spiffe://firemud/ns/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?/sa/game-session-service$");
   private static final byte[] EMPTY_OBJECT = "{}".getBytes(StandardCharsets.US_ASCII);
   private static final JsonMapper JSON =
       JsonMapper.builder().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
@@ -596,7 +593,9 @@ public class AccountGameplayDelegationResponseEnvelopeRepository {
       throw new OperationUnavailableException();
     }
     String callerWorkload = text(operation, "caller_workload");
-    if (!GAME_SESSION_WORKLOAD.matcher(callerWorkload).matches()) {
+    if (!GameSessionAccountDelegationProfile.GAME_SESSION_CALLER_WORKLOAD
+        .matcher(callerWorkload)
+        .matches()) {
       throw new OperationUnavailableException();
     }
     String requestDigest = text(operation, "request_digest");
@@ -745,7 +744,9 @@ public class AccountGameplayDelegationResponseEnvelopeRepository {
       throw new OperationUnavailableException();
     }
     String caller = text(operation, "caller_workload");
-    if (!GAME_SESSION_WORKLOAD.matcher(caller).matches()) {
+    if (!GameSessionAccountDelegationProfile.GAME_SESSION_CALLER_WORKLOAD
+        .matcher(caller)
+        .matches()) {
       throw new OperationUnavailableException();
     }
     String digest = text(operation, "request_digest");
@@ -1159,7 +1160,9 @@ public class AccountGameplayDelegationResponseEnvelopeRepository {
   public record CallerIdentity(String workload, UUID contextId) {
     public CallerIdentity {
       if (workload == null
-          || !GAME_SESSION_WORKLOAD.matcher(workload).matches()
+          || !GameSessionAccountDelegationProfile.GAME_SESSION_CALLER_WORKLOAD
+              .matcher(workload)
+              .matches()
           || contextId == null
           || contextId.version() != 4
           || contextId.variant() != 2) {

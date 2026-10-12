@@ -70,7 +70,7 @@ final class CurrentGenerationProjectionRedisSupport {
                       .scriptingCommands()
                       .evalSha(
                           loadedSha,
-                          ReturnType.VALUE,
+                          ReturnType.INTEGER,
                           1,
                           keyBytes,
                           expectedModeBytes,

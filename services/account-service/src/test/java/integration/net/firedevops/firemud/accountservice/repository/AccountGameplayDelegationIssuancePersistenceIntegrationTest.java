@@ -2475,6 +2475,12 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
                   (AccountGameplayDelegationAuthorityProjection.ACCOUNT_KEY_PREFIX + accountId)
                       .getBytes(StandardCharsets.US_ASCII))))
           .thenReturn(-1L);
+      when(commands.pttl(
+              eq(
+                  (AccountGameplayDelegationAuthorityProjection.ISSUER_KEY_PREFIX
+                          + GameSessionAccountDelegationProfile.ISSUER)
+                      .getBytes(StandardCharsets.US_ASCII))))
+          .thenReturn(-1L);
       org.mockito.Mockito.doReturn(List.of(1L, 1L))
           .when(commands)
           .dispatch(any(ProtocolKeyword.class), any(CommandOutput.class), any(CommandArgs.class));
