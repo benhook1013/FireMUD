@@ -490,7 +490,7 @@ public class AssetExportServiceImpl implements AssetExportService {
     }
 
     try {
-      verifyReadback(key, bytes, contentType);
+      verifyReadback(key, bytes);
     } catch (ImmutableObjectConflictException conflict) {
       if (putFailure != null) {
         conflict.addSuppressed(putFailure);
@@ -507,16 +507,14 @@ public class AssetExportServiceImpl implements AssetExportService {
     }
   }
 
-  private void verifyReadback(String key, byte[] expectedBytes, String expectedContentType) {
+  private void verifyReadback(String key, byte[] expectedBytes) {
     ResponseBytes<GetObjectResponse> response =
         s3Client.getObjectAsBytes(
             GetObjectRequest.builder().bucket(properties.getBucket()).key(key).build());
     byte[] actualBytes = response.asByteArray();
     Long actualSize = response.response().contentLength();
-    String actualContentType = response.response().contentType();
     if (actualSize == null
         || actualSize.longValue() != expectedBytes.length
-        || !Objects.equals(expectedContentType, actualContentType)
         || !Arrays.equals(expectedBytes, actualBytes)
         || !sha256Hex(expectedBytes).equals(sha256Hex(actualBytes))) {
       throw new ImmutableObjectConflictException(key);

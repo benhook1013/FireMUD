@@ -251,6 +251,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       builder.setError(
           GrpcAppErrors.error(
               meterRegistry, logger, "PublishVersion", ex.errorCode(), ex.getMessage()));
+    } catch (MutationOwnerProofUnavailableException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PublishVersion", ex.errorCode(), ex.getMessage()));
     } catch (IllegalStateException ex) {
       String errorCode = publishAttemptErrorCode(ex);
       builder.setError(

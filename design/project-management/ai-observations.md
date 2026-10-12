@@ -121,3 +121,9 @@ Entry format:
   - Context: Gameplay requested the next Hosted review on #3171; FireController measured 55.2 seconds of preflight before posting the command and projected 170 history entries, including later unrelated queue PRs.
   - Observation: Repeated whole-queue history work adds latency to a front review request even when its exact head and parent are already selected. The request posted successfully; this is an efficiency candidate, not evidence of incorrect admission or a provider review failure.
   - Expected pattern: Reuse validated shared history where safe and bound fresh evidence to the selected target and dependencies, while preserving identity, reservation and quota checks. Overseer received the measured trace; no tool change has been attempted.
+
+- `2026-10-12`: Review-ready channel stops can disagree with the final PR readiness projection
+  - Context: On #3171 revision `60d495b36906ff72e12f57dda5a740333853110c`, native review status reported both channels `READY` with `CAP_AUDITED_STOP`, clear accepted findings/threads, fresh LOC, all required expected-app checks successful, and GitHub `MERGEABLE`/`CLEAN`.
+  - Observation: The final verdict remained `NOT READY`; its only reasons were the affirmative channel-ready and cap-stop descriptions. This forced manual evidence adjudication at merge closeout. The precise cause is still under investigation by Overseer.
+  - Expected pattern: Preserve mandatory findings, proof and CI holds while projecting exhausted human channel caps consistently into the final readiness result; a stop does not manufacture taper or review coverage.
+  - Current status: Reported to Overseer with the exact final guard; the existing controller readiness work owns diagnosis and correction.
