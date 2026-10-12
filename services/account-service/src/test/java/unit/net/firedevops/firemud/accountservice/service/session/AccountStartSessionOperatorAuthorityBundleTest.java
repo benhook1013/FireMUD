@@ -169,17 +169,16 @@ class AccountStartSessionOperatorAuthorityBundleTest {
   @Test
   void expiredOrChangedCurrentAuthorityIsPreconditionFailureButMalformedBundleIsInvalid() {
     Fixture fixture = new Fixture(Map.of());
-    var linearization = new AccountControlUiIssuanceRepository.OwnerLinearization("123456", 99L);
+    var capture = fixture.capture();
     var bundle =
         AccountStartSessionOperatorAuthorityBundle.create(
             fixture.tuple,
-            fixture.source,
+            capture,
             fixture.issuance,
             UUID.randomUUID(),
-            linearization,
             ISSUED_AT,
             ISSUED_AT.plusSeconds(60));
-    var reference = bundle.referenceForSource(fixture.source, linearization);
+    var reference = bundle.referenceForCapture(capture);
 
     assertThatThrownBy(
             () ->
