@@ -174,7 +174,10 @@ class AccountGameplayDelegationAuthorityProjectionTest {
               });
       assertThatThrownBy(
               () -> fixture.projection.observeSelectedCurrent(ACCOUNT_ID, fixture.tenant))
-          .isInstanceOf(IllegalStateException.class);
+          .isInstanceOf(
+              AccountGameplayDelegationAuthorityProjection.ProjectionUnavailableException.class);
+      org.mockito.Mockito.verify(fixture.memberships, org.mockito.Mockito.times(2))
+          .findFreshMembershipForUpdate(ACCOUNT_ID, fixture.tenant);
     }
 
     @Test

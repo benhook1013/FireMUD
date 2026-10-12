@@ -10,7 +10,9 @@ import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegatio
 import net.firedevops.firemud.common.security.AccountJwtExactValues;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Unwired Account Coordination Redis boundary for non-authorizing Game Session delegation records.
@@ -25,6 +27,7 @@ public final class AccountGameplayDelegationTokenRegistry {
   private static final long MAX_CLEANUP_MARGIN_MILLIS = 300_000L;
 
   private final AccountGameplayDelegationIssuanceRepository issuanceRepository;
+  private final TransactionTemplate pendingCandidateReadTransaction;
   private final AccountGameplayDelegationRedisClient coordinationRedis;
   private final Clock clock;
   private final long maxEncodedBytes;
@@ -32,12 +35,16 @@ public final class AccountGameplayDelegationTokenRegistry {
 
   public AccountGameplayDelegationTokenRegistry(
       AccountGameplayDelegationIssuanceRepository issuanceRepository,
+      PlatformTransactionManager transactionManager,
       AccountGameplayDelegationRedisClient coordinationRedis,
       Clock clock,
       long maxEncodedBytes,
       long cleanupMarginMillis) {
     this.issuanceRepository =
         Objects.requireNonNull(issuanceRepository, "Account issuance repository is required");
+    this.pendingCandidateReadTransaction =
+        new TransactionTemplate(
+            Objects.requireNonNull(transactionManager, "Account transaction manager is required"));
     this.coordinationRedis =
         Objects.requireNonNull(coordinationRedis, "Account Coordination Redis client is required");
     this.clock = Objects.requireNonNull(clock, "Clock is required");
@@ -59,7 +66,15 @@ public final class AccountGameplayDelegationTokenRegistry {
   public AccountGameplayDelegationRedisClient.PendingRegistrationReceipt registerPending(
       UUID requestId) {
     Objects.requireNonNull(requestId, "Request ID is required");
-    PendingRegistryCandidate candidate = issuanceRepository.readPendingRegistryCandidate(requestId);
+    requireNoAccountTransaction(
+        "Pending registry work must not join an ambient Account transaction");
+    PendingRegistryCandidate candidate =
+        pendingCandidateReadTransaction.execute(
+            status -> issuanceRepository.readPendingRegistryCandidate(requestId));
+    requireNoAccountTransaction("Pending candidate SQL transaction must close before Redis work");
+    if (candidate == null) {
+      throw new IllegalStateException("Durable pending registry candidate is unavailable");
+    }
     var identity = candidate.identity();
     byte[] recordBytes = candidate.canonicalRecordBytes();
     if (recordBytes.length == 0 || recordBytes.length > maxEncodedBytes) {
@@ -188,6 +203,12 @@ public final class AccountGameplayDelegationTokenRegistry {
         || receipt.localAofCount() < 1L
         || receipt.replicaAofCount() < 1L) {
       throw new IllegalStateException("Account pending registration receipt is inconsistent");
+    }
+  }
+
+  private static void requireNoAccountTransaction(String message) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(message);
     }
   }
 

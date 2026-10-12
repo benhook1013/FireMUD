@@ -36,6 +36,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * The default-inactive runtime composition is outside this source intake.
  */
 public final class AccountGameplayCanonicalLoginOwner {
+  private static final UUID DECOY_ACCOUNT_ID =
+      UUID.fromString("03640e49-b334-4c03-8e4f-685bfd17ce17");
   private final AccountRepository accounts;
   private final AccountGameplayDelegationIssuanceRepository issuance;
   private final AccountGameplayCredentialRequestDigestKeySource digestKeys;
@@ -111,10 +113,16 @@ public final class AccountGameplayCanonicalLoginOwner {
           requireExactReplay(request, normalizedEmail, callerWorkload, existing.orElseThrow()));
     }
 
-    Account found =
-        accounts
-            .findByEmail(normalizedEmail)
-            .orElseThrow(AccountGameplayCanonicalLoginOwner::invalidCredentials);
+    Optional<Account> foundAccount = accounts.findByEmail(normalizedEmail);
+    if (foundAccount.isEmpty()) {
+      // The credential authority performs its equivalent-cost decoy verification without an
+      // Account or challenge write. Completion never changes the missing-Account denial.
+      AccountGameplayCredentialRequestDigester.bind(
+          currentDigestKey(), request, normalizedEmail, callerWorkload, DECOY_ACCOUNT_ID);
+      credentialVerifier.verifyAbsentAccountCredential(request.credential());
+      throw invalidCredentials();
+    }
+    Account found = foundAccount.orElseThrow();
     Account account =
         accounts
             .findByIdForUpdate(found.getId())
@@ -132,16 +140,7 @@ public final class AccountGameplayCanonicalLoginOwner {
           requireExactReplay(request, normalizedEmail, callerWorkload, existing.orElseThrow()));
     }
 
-    long now = Math.floorDiv(clock.millis(), 1_000L);
-    long requiredExpiry;
-    try {
-      requiredExpiry =
-          Math.addExact(now, GameSessionAccountDelegationProfile.MAX_TOKEN_LIFETIME_SECONDS + 2L);
-    } catch (ArithmeticException ex) {
-      throw unavailable();
-    }
-    CredentialDigestKey key = digestKeys.currentKey();
-    requireKeyRetainedThrough(key, Instant.ofEpochSecond(requiredExpiry));
+    CredentialDigestKey key = currentDigestKey();
     AccountGameplayCredentialRequestBinding binding =
         AccountGameplayCredentialRequestDigester.bind(
             key, request, normalizedEmail, callerWorkload, account.getAccountUuid());
@@ -174,6 +173,20 @@ public final class AccountGameplayCanonicalLoginOwner {
       credentialVerifier.consumeOneTimeCredential(account, credential);
     }
     return LoginPreparation.authenticated(account.getAccountUuid());
+  }
+
+  private CredentialDigestKey currentDigestKey() {
+    long now = Math.floorDiv(clock.millis(), 1_000L);
+    long requiredExpiry;
+    try {
+      requiredExpiry =
+          Math.addExact(now, GameSessionAccountDelegationProfile.MAX_TOKEN_LIFETIME_SECONDS + 2L);
+    } catch (ArithmeticException ex) {
+      throw unavailable();
+    }
+    CredentialDigestKey key = digestKeys.currentKey();
+    requireKeyRetainedThrough(key, Instant.ofEpochSecond(requiredExpiry));
+    return key;
   }
 
   private record LoginPreparation(UUID accountId, AuthenticationException authenticationFailure) {
@@ -252,6 +265,14 @@ public final class AccountGameplayCanonicalLoginOwner {
 
   /** Account's existing password/OTP authority; no credential value is retained in its result. */
   public interface CredentialVerifier {
+    /**
+     * Performs equivalent-cost credential verification against protected decoy evidence, without
+     * creating or consuming Account/challenge state. A successful return grants no authentication.
+     * The concrete password/OTP authority must supply this operation; timing parity still requires
+     * representative proof for its configured implementation.
+     */
+    void verifyAbsentAccountCredential(String presentedCredential);
+
     CredentialVerification verify(Account account, String presentedCredential);
 
     void consumeOneTimeCredential(Account account, CredentialVerification verification);

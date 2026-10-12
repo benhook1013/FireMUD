@@ -928,6 +928,15 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     assertThat(active.state()).isEqualTo(State.ACTIVE);
     assertThat(active.tokenIdentityFence()).isEqualTo(1L);
     assertThat(active.identity()).isEqualTo(identity);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    harness.context(),
+                    () -> harness.dsl().execute("TRUNCATE account_gameplay_token_identity_fences")))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasMessageContaining("Account token fence retention cannot be bypassed by truncation");
+    assertThat(inTransaction(harness.context(), () -> fences.requireActiveForUpdate(identity)))
+        .isEqualTo(active);
     assertThat(harness.issuance().readCommittedProof(identity.issuanceRequestId())).isPresent();
     assertThat(harness.service().commitPendingCandidate(identity.issuanceRequestId()).outcome())
         .isEqualTo(AccountGameplayDelegationIssuanceCommitService.Outcome.EXACT_RETRY);
@@ -1159,6 +1168,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
             harness.signer(),
             new AccountGameplayDelegationTokenRegistry(
                 harness.issuance(),
+                harness.context().manager(),
                 harness.redis().client(),
                 Clock.systemUTC(),
                 GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES,
@@ -1553,8 +1563,8 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         new RedisHarness(accountId, snapshot, mismatchRedisReadback, getClass().getClassLoader());
     AccountGameplayDelegationTokenRegistry tokenRegistry =
         new AccountGameplayDelegationTokenRegistry(
-            AccountGameplayDelegationCommitSignerFixture.transactionalPendingRegistryReads(
-                issuance, context.manager()),
+            issuance,
+            context.manager(),
             redis.client(),
             Clock.systemUTC(),
             GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES,
@@ -1959,6 +1969,12 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
           AccountEmailLoginChallengeRepository challenges, String expectedCredential) {
     return new AccountGameplayCanonicalLoginOwner.CredentialVerifier() {
       @Override
+      public void verifyAbsentAccountCredential(String presentedCredential) {
+        throw new AssertionError(
+            "Known-account integration fixture must not verify decoy credentials");
+      }
+
+      @Override
       public AccountGameplayCanonicalLoginOwner.CredentialVerification verify(
           Account account, String presentedCredential) {
         if (!expectedCredential.equals(presentedCredential)) {
@@ -1991,6 +2007,11 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
   private static AccountGameplayCanonicalLoginOwner.CredentialVerifier verifierMustNotRun(
       AtomicInteger calls) {
     return new AccountGameplayCanonicalLoginOwner.CredentialVerifier() {
+      @Override
+      public void verifyAbsentAccountCredential(String presentedCredential) {
+        throw new AssertionError("Replay integration fixture must not verify decoy credentials");
+      }
+
       @Override
       public AccountGameplayCanonicalLoginOwner.CredentialVerification verify(
           Account account, String presentedCredential) {

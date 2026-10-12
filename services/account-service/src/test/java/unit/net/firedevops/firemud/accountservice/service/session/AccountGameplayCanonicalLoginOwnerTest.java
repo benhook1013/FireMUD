@@ -3,6 +3,7 @@ package unit.net.firedevops.firemud.accountservice.service.session;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
@@ -90,6 +91,29 @@ class AccountGameplayCanonicalLoginOwnerTest {
   }
 
   @Test
+  void absentAccountRunsDecoyVerificationButNeverIssuesOrActivates() {
+    Fixture fixture = new Fixture();
+    when(fixture.issuance.readCurrentGameplayLoginReplay(REQUEST_ID)).thenReturn(Optional.empty());
+    when(fixture.accounts.findByEmail("player@example.com")).thenReturn(Optional.empty());
+    when(fixture.digestKeys.currentKey()).thenReturn(key(NOW.plusSeconds(600L)));
+    var verifier = mock(AccountGameplayCanonicalLoginOwner.CredentialVerifier.class);
+
+    assertThatThrownBy(() -> fixture.owner.authenticate(request("secret"), WORKLOAD, verifier))
+        .isInstanceOf(AuthenticationException.class)
+        .satisfies(
+            failure ->
+                assertThat(((AuthenticationException) failure).getCode())
+                    .isEqualTo(AuthenticationErrorCodes.INVALID_CREDENTIALS));
+
+    verify(verifier).verifyAbsentAccountCredential("secret");
+    verify(verifier, never()).verify(any(), anyString());
+    verify(verifier, never()).consumeOneTimeCredential(any(), any());
+    verify(fixture.accounts, never()).findByIdForUpdate(any());
+    verify(fixture.issuance, never()).beginPendingForAccount(any(), any(), any(), any(), any());
+    verifyNoInteractions(fixture.commitOwner, fixture.responseOwner);
+  }
+
+  @Test
   void privateGameplayIssuanceOwnersHaveNoComponentStereotypeRegistration() {
     List<Class<?>> owners =
         List.of(
@@ -145,6 +169,11 @@ class AccountGameplayCanonicalLoginOwnerTest {
 
     AccountGameplayCanonicalLoginOwner.CredentialVerifier verifier =
         new AccountGameplayCanonicalLoginOwner.CredentialVerifier() {
+          @Override
+          public void verifyAbsentAccountCredential(String presentedCredential) {
+            throw new AssertionError("Absent-Account verifier must not run for this fixture");
+          }
+
           @Override
           public AccountGameplayCanonicalLoginOwner.CredentialVerification verify(
               Account candidate, String credential) {
@@ -253,6 +282,11 @@ class AccountGameplayCanonicalLoginOwnerTest {
         .thenReturn(Optional.empty(), Optional.empty());
     var verifier =
         new AccountGameplayCanonicalLoginOwner.CredentialVerifier() {
+          @Override
+          public void verifyAbsentAccountCredential(String presentedCredential) {
+            throw new AssertionError("Absent-Account verifier must not run for this fixture");
+          }
+
           @Override
           public AccountGameplayCanonicalLoginOwner.CredentialVerification verify(
               Account account, String credential) {
@@ -365,6 +399,11 @@ class AccountGameplayCanonicalLoginOwnerTest {
         .thenReturn(Optional.empty(), Optional.empty());
     var verifier =
         new AccountGameplayCanonicalLoginOwner.CredentialVerifier() {
+          @Override
+          public void verifyAbsentAccountCredential(String presentedCredential) {
+            throw new AssertionError("Absent-Account verifier must not run for this fixture");
+          }
+
           @Override
           public AccountGameplayCanonicalLoginOwner.CredentialVerification verify(
               Account account, String credential) {
@@ -530,6 +569,11 @@ class AccountGameplayCanonicalLoginOwnerTest {
 
   private static AccountGameplayCanonicalLoginOwner.CredentialVerifier unusedVerifier() {
     return new AccountGameplayCanonicalLoginOwner.CredentialVerifier() {
+      @Override
+      public void verifyAbsentAccountCredential(String presentedCredential) {
+        throw new AssertionError("Absent-Account verifier must not run for this fixture");
+      }
+
       @Override
       public AccountGameplayCanonicalLoginOwner.CredentialVerification verify(
           Account account, String presentedCredential) {
