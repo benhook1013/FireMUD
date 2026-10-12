@@ -144,6 +144,7 @@ class AccountGameplayDelegationTokenRegistryTest {
             provider,
             RedisScriptCatalog.loadInstalled(getClass().getClassLoader()),
             new AcknowledgementRequirements(1, 1, 1_000),
+            Clock.fixed(Instant.ofEpochSecond(NOW).plusMillis(500L), ZoneOffset.UTC),
             16_384,
             getClass().getClassLoader());
     registry =
@@ -367,6 +368,7 @@ class AccountGameplayDelegationTokenRegistryTest {
             () -> connection,
             RedisScriptCatalog.fromContributions(List.of(contribution(alteredDigest))),
             new AcknowledgementRequirements(1, 1, 1_000),
+            Clock.fixed(Instant.ofEpochSecond(NOW).plusMillis(500L), ZoneOffset.UTC),
             16_384,
             getClass().getClassLoader());
 

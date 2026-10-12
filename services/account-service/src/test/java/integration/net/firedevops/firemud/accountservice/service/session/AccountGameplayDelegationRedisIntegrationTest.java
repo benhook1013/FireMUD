@@ -2007,6 +2007,7 @@ class AccountGameplayDelegationRedisIntegrationTest {
         RedisScriptCatalog.loadInstalled(
             AccountGameplayDelegationRedisIntegrationTest.class.getClassLoader()),
         acknowledgements,
+        Clock.systemUTC(),
         REGISTRY_BYTES,
         AccountGameplayDelegationRedisIntegrationTest.class.getClassLoader());
   }
