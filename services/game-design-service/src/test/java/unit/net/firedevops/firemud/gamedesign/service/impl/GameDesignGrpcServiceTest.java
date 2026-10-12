@@ -85,6 +85,8 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -1044,49 +1046,19 @@ class GameDesignGrpcServiceTest {
         ref.get().getEvents(0).getNewPublicationState());
   }
 
-  @Test
-  void getPublishedReleaseBundleDeniesCandidateBeforeOwnerNotFoundRead() {
-    AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
-    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      underLaunchPeer(
-          "game-session-service",
-          () ->
-              service.getPublishedReleaseBundle(
-                  GetPublishedReleaseBundleRequest.newBuilder()
-                      .setTenantId("tenant-1")
-                      .setVersionId(7L)
-                      .build(),
-                  observerFor(ref)));
-    }
-
-    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
-    Mockito.verifyNoInteractions(versionService);
-  }
-
-  @Test
-  void getPublishedReleaseBundleDeniesCandidateBeforeSchemaRead() {
-    AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
-    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
-      underLaunchPeer(
-          "game-session-service",
-          () ->
-              service.getPublishedReleaseBundle(
-                  GetPublishedReleaseBundleRequest.newBuilder()
-                      .setTenantId("tenant-1")
-                      .setVersionId(7L)
-                      .build(),
-                  observerFor(ref)));
-    }
-
-    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
-    Mockito.verifyNoInteractions(versionService);
-  }
-
-  @Test
-  void getPublishedReleaseBundleDeniesCandidateBeforeIdentityRead() {
+  @ParameterizedTest
+  @CsvSource({
+    "game-session-service, test",
+    "world-management-service, test",
+    "automation-scripting-service, test",
+    "game-session-service, wrong-namespace"
+  })
+  void getPublishedReleaseBundleDeniesCandidateBeforeOwnerRead(
+      String serviceName, String peerNamespace) {
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     underLaunchPeer(
-        "game-session-service",
+        serviceName,
+        peerNamespace,
         () ->
             service.getPublishedReleaseBundle(
                 GetPublishedReleaseBundleRequest.newBuilder()
@@ -1465,9 +1437,14 @@ class GameDesignGrpcServiceTest {
   }
 
   private void underLaunchPeer(String serviceName, Runnable operation) {
+    underLaunchPeer(serviceName, "test", operation);
+  }
+
+  private void underLaunchPeer(String serviceName, String peerNamespace, Runnable operation) {
     ReflectionTestUtils.setField(service, "workloadNamespace", "test");
     GrpcPeerIdentity peer =
-        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/" + serviceName).orElseThrow();
+        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/" + peerNamespace + "/sa/" + serviceName)
+            .orElseThrow();
     Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(operation);
   }
 
