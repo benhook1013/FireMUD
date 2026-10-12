@@ -1,8 +1,11 @@
 package net.firedevops.firemud.common.grpc;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
@@ -73,9 +76,91 @@ class FileBackedGrpcMtlsPolicyTest {
         .hasMessageNotContaining(missingPath);
   }
 
+  @Test
+  void acceptsResolvedReadableFiles(@TempDir Path directory) throws Exception {
+    CommonGrpcClientProperties properties = propertiesWithFiles(directory);
+
+    assertThatCode(
+            () ->
+                requireResolved(
+                    properties, new GrpcTlsMaterialResolver(), "test read requires workload mTLS"))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void rejectsResolvedClasspathMaterialAndDirectories(@TempDir Path directory) throws Exception {
+    CommonGrpcClientProperties properties = propertiesWithFiles(directory);
+    GrpcTlsMaterialResolver classpathResolver =
+        new GrpcTlsMaterialResolver() {
+          @Override
+          public ResolvedGrpcTlsMaterial resolve(CommonGrpcClientProperties ignored) {
+            ResolvedGrpcTlsMaterial.TlsResource classpathResource =
+                new ResolvedGrpcTlsMaterial.TlsResource(() -> InputStream.nullInputStream(), null);
+            return new ResolvedGrpcTlsMaterial(
+                classpathResource, classpathResource, classpathResource);
+          }
+        };
+    assertThatThrownBy(
+            () ->
+                requireResolved(properties, classpathResolver, "test read requires workload mTLS"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("test read requires readable file-backed workload mTLS");
+
+    CommonGrpcClientProperties directoryProperties = propertiesWithFiles(directory);
+    directoryProperties.setCaCert(directory.toString());
+    assertThatThrownBy(
+            () ->
+                requireResolved(
+                    directoryProperties,
+                    new GrpcTlsMaterialResolver(),
+                    "test read requires workload mTLS"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("test read requires readable file-backed workload mTLS");
+  }
+
+  @Test
+  void rejectsPlaintextAndResolverFailuresWithPurposeSpecificMessages(@TempDir Path directory)
+      throws Exception {
+    CommonGrpcClientProperties plaintext = propertiesWithFiles(directory);
+    plaintext.setPlaintext(true);
+    assertThatThrownBy(
+            () ->
+                requireResolved(
+                    plaintext,
+                    new GrpcTlsMaterialResolver(),
+                    "StartSession authorization requires file-backed workload mTLS"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("StartSession authorization requires file-backed workload mTLS");
+
+    GrpcTlsMaterialResolver failingResolver =
+        new GrpcTlsMaterialResolver() {
+          @Override
+          public ResolvedGrpcTlsMaterial resolve(CommonGrpcClientProperties ignored)
+              throws IOException {
+            throw new IOException("sensitive resolver detail");
+          }
+        };
+    assertThatThrownBy(
+            () ->
+                requireResolved(
+                    propertiesWithFiles(directory),
+                    failingResolver,
+                    "Account authorization requires workload mTLS"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("test read requires readable file-backed workload mTLS")
+        .hasMessageNotContaining("sensitive resolver detail");
+  }
+
   private static CommonGrpcClientProperties require(CommonGrpcClientProperties properties) {
     return FileBackedGrpcMtlsPolicy.require(
         properties, PURPOSE, NULL_CONFIGURATION_MESSAGE, PLAINTEXT_MESSAGE);
+  }
+
+  private static void requireResolved(
+      CommonGrpcClientProperties properties,
+      GrpcTlsMaterialResolver resolver,
+      String plaintextMessage) {
+    FileBackedGrpcMtlsPolicy.require(properties, resolver, "test read", plaintextMessage);
   }
 
   private static CommonGrpcClientProperties propertiesWithFiles(Path directory) throws Exception {

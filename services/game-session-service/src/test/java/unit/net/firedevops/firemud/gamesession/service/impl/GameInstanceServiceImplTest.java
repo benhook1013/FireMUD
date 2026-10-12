@@ -165,6 +165,24 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void legacyNumericLaunchFailsClosedBeforeMutation() {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-numeric-launch", 42L);
+    when(gameDesignClient.resolveLaunchDescriptor(
+            request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId()))
+        .thenReturn(
+            ResolveLaunchDescriptorResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED")
+                        .setMessage(
+                            "Canonical authored-world source binding is required to resolve a launch descriptor")
+                        .build())
+                .build());
+
+    assertNumericLaunchDeniedWithoutMutation(request);
+  }
+
+  @Test
   void runOwnedInitialLaunchExactRetryReturnsSameActiveTargetWithoutReplayingActivation() {
     StartSessionRequest request =
         new StartSessionRequest(1L, 3L, "10000000-0000-4000-8000-000000000001", 42L);
@@ -1757,6 +1775,25 @@ class GameInstanceServiceImplTest {
                         .setUpdatedAt("2026-04-15T10:00:00")
                         .build())
                 .build());
+  }
+
+  private void assertNumericLaunchDeniedWithoutMutation(StartSessionRequest request) {
+    Map<Long, GameInstance> before = new HashMap<>();
+    store.forEach((id, instance) -> before.put(id, copyOf(instance)));
+
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+
+    assertEquals(
+        "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: Canonical authored-world source binding is"
+            + " required to resolve a launch descriptor",
+        error.getMessage());
+    org.assertj.core.api.Assertions.assertThat(store).usingRecursiveComparison().isEqualTo(before);
+    verify(gameDesignClient)
+        .resolveLaunchDescriptor(
+            request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId());
+    verifyNoMoreInteractions(gameDesignClient);
+    verifyNoInteractions(repository, worldManagementClient, stateService);
   }
 
   private static AuthoredWorldSourceEvidence sourceEvidence(StartSessionRequest request) {
