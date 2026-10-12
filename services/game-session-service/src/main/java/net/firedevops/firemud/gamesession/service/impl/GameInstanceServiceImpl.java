@@ -253,7 +253,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     requireRunOwnedSourceMatchesRequest(request, launchEvidence);
     ResolvedLaunchDescriptor resolvedLaunchDescriptor =
         preflightRunOwnedLaunch(request, launchEvidence);
-    requireRunOwnedDescriptorMatchesRequest(request, resolvedLaunchDescriptor);
+    requireDescriptorMatchesRequest(request, resolvedLaunchDescriptor);
     String requestDigest = runOwnedLaunchRequestDigest(request, launchEvidence);
     GameInstance reserved =
         inTransaction(
@@ -805,28 +805,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   private void requireDescriptorMatchesRequest(
-      StartSessionRequest request, ResolvedLaunchDescriptor descriptor) {
-    if (descriptor.tenantId() != request.tenantId()
-        || descriptor.gameTemplateId() != request.gameTemplateId()
-        || !request.controlPlaneRequestId().equals(descriptor.controlPlaneRequestId())) {
-      throw new IllegalArgumentException(
-          "LAUNCH_DESCRIPTOR_REQUEST_MISMATCH: resolved descriptor is not bound to this request");
-    }
-    if (descriptor.launchDescriptorId() == null
-        || descriptor.launchDescriptorId().isBlank()
-        || descriptor.versionId() <= 0L
-        || descriptor.releaseBundleId() <= 0L
-        || descriptor.versionStateEpoch() <= 0L
-        || descriptor.generationConfigRevision() == null
-        || descriptor.generationConfigRevision().isBlank()
-        || descriptor.publishedReleaseBundleRef() == null
-        || descriptor.publishedReleaseBundleRef().isBlank()) {
-      throw new IllegalArgumentException(
-          "LAUNCH_DESCRIPTOR_INCOMPLETE: resolved descriptor is missing exact published inputs");
-    }
-  }
-
-  private void requireRunOwnedDescriptorMatchesRequest(
       StartSessionRequest request, ResolvedLaunchDescriptor descriptor) {
     if (descriptor.tenantId() != request.tenantId()
         || descriptor.gameTemplateId() != request.gameTemplateId()
