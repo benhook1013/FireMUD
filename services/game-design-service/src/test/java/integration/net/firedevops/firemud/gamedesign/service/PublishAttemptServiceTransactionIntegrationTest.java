@@ -707,18 +707,22 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(failedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.STAGED);
     assertThat(failedArtifact.getLastErrorCode()).isNull();
     assertThat(failedArtifact.getLastErrorMessage()).isNull();
+    FrozenAssetExportCandidate retainedExportCandidate =
+        exportCandidateService.readExportCandidate(tenantId, retainedCandidate.getVersionNumber());
+    assertThat(retainedExportCandidate)
+        .isEqualTo(
+            new FrozenAssetExportCandidate(exportedManifest, "https://assets.example.test/assets"));
     assertThat(
-            exportCandidateService
-                .readExportCandidate(tenantId, retainedCandidate.getVersionNumber())
-                .manifest())
-        .isEqualTo(exportedManifest);
+            exportCandidateService.recordExportCandidate(
+                tenantId, retainedCandidate.getVersionNumber(), retainedExportCandidate))
+        .isEqualTo(retainedExportCandidate);
     assertThatThrownBy(
             () ->
                 exportCandidateService.recordExportCandidate(
                     tenantId,
                     retainedCandidate.getVersionNumber(),
                     new FrozenAssetExportCandidate(
-                        exportedManifest, "https://assets.example.test/assets")))
+                        exportedManifest, "https://changed-origin.example.test/assets")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("ASSET_EXPORT_CANDIDATE_CONFLICT");
     Mockito.verify(versionAssetArtifactService, Mockito.never())
