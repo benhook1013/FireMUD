@@ -333,7 +333,7 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     source.setSchema(schema);
-    migrate(source, schema, "51");
+    migrate(source, schema, "50.7");
     var transactions = new DataSourceTransactionManager(source);
     var write = new TransactionTemplate(transactions);
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -356,7 +356,7 @@ class RealmPolicyPublicationPostgresIntegrationTest {
               return games.save(requested);
             });
     Version version = write.execute(status -> insertRetainedVersion(dsl, versions, game, 1));
-    migrate(source, schema, "54");
+    migrate(source, schema, "50.10");
     TargetProof target =
         new TargetProof(
             version.getCanonicalTenantId(),

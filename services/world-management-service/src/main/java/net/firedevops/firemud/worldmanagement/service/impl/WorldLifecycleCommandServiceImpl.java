@@ -258,10 +258,6 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
           throw fixtureEvidenceUnavailable();
         }
         requireRunOwnedFixtureBinding(existing, fixtureEvidence, request);
-        if (!STATUS_PREPARING.equals(existing.getStatus())) {
-          throw new IllegalArgumentException(
-              "INVALID_WORLD_INSTANCE_STATE: fixture prepare replay requires PREPARING state");
-        }
         return snapshot(existing);
       }
       if (fixtureEvidence != null) {
@@ -335,9 +331,9 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       if (!fixtureModeEnabled()) {
         throw fixtureEvidenceUnavailable();
       }
-      worldInstance = requireLockedWorldInstance(tenantId, gameInstanceId);
       RunOwnedWorldLaunchEvidence fixtureEvidence =
           runOwnedWorldLaunchEvidenceProvider.requireAuthenticatedEvidence();
+      worldInstance = requireLockedWorldInstance(tenantId, gameInstanceId);
       PreparedWorldInstanceRequest preparedRequest = preparedRequest(worldInstance);
       requireRunOwnedFixtureBinding(worldInstance, fixtureEvidence, preparedRequest);
       if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {

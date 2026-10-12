@@ -1,7 +1,7 @@
 # Canonical fresh/image/restart smoke profile. This deliberately overrides the
 # ordinary local plaintext profile. Account, Game Session, Entity Management,
-# and World Management receive distinct dev-namespace SPIFFE leaves; the other
-# seven local apps share the local client leaf. Each app gets only its scoped
+# World Management, and Game Design receive distinct dev-namespace SPIFFE leaves;
+# the other six local apps share the local client leaf. Each app gets only its scoped
 # read-only leaf mount and the public CA certificate under /app/certs. The CA
 # private key stays host-only and is never mounted into an app.
 x-grpc-mtls-environment: &grpc-mtls-environment

@@ -23,6 +23,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvi
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.entity.LaunchDescriptor;
@@ -35,6 +36,7 @@ import net.firedevops.firemud.gamedesign.repository.GameTemplateLaunchConfigView
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
 import net.firedevops.firemud.gamedesign.repository.LaunchDescriptorRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import org.junit.jupiter.api.BeforeEach;
@@ -99,7 +101,10 @@ class LaunchDescriptorServiceImplTest {
     when(publishedReleaseBundleService.getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L))
         .thenReturn(selectorBundle(true));
 
-    assertThrows(IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    assertEquals("World selector release lacks required participants", denied.getMessage());
     verify(launchDescriptorRepository, never()).insertImmutable(any(LaunchDescriptor.class));
   }
 
@@ -111,8 +116,138 @@ class LaunchDescriptorServiceImplTest {
     when(publishedReleaseBundleService.getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L))
         .thenReturn(selectorBundle(false, true));
 
-    assertThrows(IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    assertEquals(
+        "World selector requires all exact successful ordered release participants",
+        denied.getMessage());
     verify(launchDescriptorRepository, never()).insertImmutable(any(LaunchDescriptor.class));
+  }
+
+  @Test
+  void selectorV2RejectsUnsupportedManifestAndArtifactSchemas() throws Exception {
+    var valid = selectorBundle(false);
+    assertSelectorResolutionRejected(
+        "cp-unsupported-selector-manifest-schema",
+        withBundle(valid, 2, null, null, null),
+        "World selector differs from complete immutable release binding");
+
+    var artifact =
+        new PublishedArtifactDigest(
+            "branding/logo",
+            "IMAGE",
+            "artifacts/sha256/" + "b".repeat(64),
+            "sha256:" + "b".repeat(64),
+            "image/png",
+            2);
+    assertSelectorResolutionRejected(
+        "cp-unsupported-selector-artifact-schema",
+        withBundle(valid, 1, List.of("branding/logo"), List.of(artifact), null),
+        "World selector contains an unsupported artifact schema");
+  }
+
+  @Test
+  void selectorV2RejectsOutOfOrderParticipantsAndParticipantErrorContent() throws Exception {
+    var valid = selectorBundle(false);
+    var participants = valid.participantDigests();
+    var outOfOrder =
+        List.of(
+            participants.get(1),
+            participants.get(0),
+            participants.get(2),
+            participants.get(3),
+            participants.get(4));
+    assertSelectorResolutionRejected(
+        "cp-selector-participants-out-of-order",
+        withBundle(valid, null, null, null, outOfOrder),
+        "World selector requires all exact successful ordered release participants");
+
+    var first = participants.getFirst();
+    var errorContent =
+        new PublishParticipantDigestDto(
+            first.participantKey(),
+            first.scopeValue(),
+            first.baseVersionId(),
+            first.appliedCommitId(),
+            first.contentDigest(),
+            first.digestSchemaVersion(),
+            first.abilitySchemaDigest(),
+            first.errorCode(),
+            "participant reported unexpected error detail");
+    var withErrorContent = new java.util.ArrayList<>(participants);
+    withErrorContent.set(0, errorContent);
+    assertSelectorResolutionRejected(
+        "cp-selector-participant-error-content",
+        withBundle(valid, null, null, null, withErrorContent),
+        "World selector requires all exact successful ordered release participants");
+  }
+
+  @Test
+  void selectorV2RejectsAbilitySchemaProofOwnedByAnotherParticipant() throws Exception {
+    var valid = selectorBundle(false);
+    var participant = valid.participantDigests().get(1);
+    var wrongOwner =
+        new PublishParticipantDigestDto(
+            participant.participantKey(),
+            participant.scopeValue(),
+            participant.baseVersionId(),
+            participant.appliedCommitId(),
+            participant.contentDigest(),
+            participant.digestSchemaVersion(),
+            "sha256:" + "e".repeat(64),
+            participant.errorCode(),
+            participant.errorMessage());
+    var participants = new java.util.ArrayList<>(valid.participantDigests());
+    participants.set(1, wrongOwner);
+
+    assertSelectorResolutionRejected(
+        "cp-selector-ability-schema-wrong-owner",
+        withBundle(valid, null, null, null, participants),
+        "World selector ability schema proof must be owned by Game Logic");
+  }
+
+  private void assertSelectorResolutionRejected(
+      String requestId, PublishedReleaseBundleDto bundle, String expectedMessage) throws Exception {
+    var request = request(requestId, 9L);
+    stubSuccessfulLaunch(request, 7L, 11L);
+    when(publishedReleaseBundleService.getPublishedReleaseBundle(PRIVATE_SOURCE_TENANT_KEY, 7L))
+        .thenReturn(bundle);
+
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class, () -> service.resolveLaunchDescriptor(request));
+    assertEquals(expectedMessage, denied.getMessage());
+    verify(launchDescriptorRepository, never()).insertImmutable(any(LaunchDescriptor.class));
+  }
+
+  private static PublishedReleaseBundleDto withBundle(
+      PublishedReleaseBundleDto bundle,
+      Integer manifestSchemaVersion,
+      List<String> requiredKeys,
+      List<PublishedArtifactDigest> artifacts,
+      List<PublishParticipantDigestDto> participants) {
+    return new PublishedReleaseBundleDto(
+        bundle.id(),
+        bundle.tenantId(),
+        bundle.versionId(),
+        bundle.versionNumber(),
+        bundle.attestationSchemaVersion(),
+        bundle.publishWorkflowId(),
+        bundle.manifestHash(),
+        requiredKeys == null ? bundle.requiredManifestAssetKeys() : requiredKeys,
+        participants == null ? bundle.participantDigests() : participants,
+        bundle.commandDefinitions(),
+        bundle.generationConfigRevision(),
+        bundle.scriptOnly(),
+        bundle.scriptPatchVersion(),
+        bundle.publishedAt(),
+        bundle.canonicalTenantId(),
+        bundle.canonicalVersionId(),
+        bundle.publishedReleaseBundleRef(),
+        manifestSchemaVersion == null ? bundle.manifestSchemaVersion() : manifestSchemaVersion,
+        artifacts == null ? bundle.artifactDigests() : artifacts,
+        bundle.worldPublishedStartLocationEvidence());
   }
 
   private PublishedReleaseBundleDto selectorBundle(boolean omitParticipant) throws Exception {
@@ -950,6 +1085,7 @@ class LaunchDescriptorServiceImplTest {
             null);
     AuthoredWorldSourceEvidence source = sourceEvidence(request.worldSlug());
     LaunchDescriptor descriptor = new LaunchDescriptor();
+    descriptor.setOutcomeStatus(LaunchDescriptor.OUTCOME_SUCCESS);
     descriptor.setLaunchDescriptorId(evidence.launchDescriptorId());
     descriptor.setTenantId(PRIVATE_SOURCE_TENANT_KEY);
     descriptor.setGameTemplateId(request.gameTemplateId());

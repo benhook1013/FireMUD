@@ -31,8 +31,6 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingService {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
-  private static final int SUPPORTED_MANIFEST_SCHEMA_VERSION = 1;
-  private static final int SUPPORTED_ARTIFACT_SCHEMA_VERSION = 1;
 
   private final LaunchDescriptorService launchDescriptorService;
   private final GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
@@ -418,7 +416,8 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
       PublishedReleaseBundleDto bundle) {
     if (!isDigest(bundle.manifestHash())
         || bundle.manifestSchemaVersion() == null
-        || bundle.manifestSchemaVersion() != SUPPORTED_MANIFEST_SCHEMA_VERSION
+        || bundle.manifestSchemaVersion()
+            != PublishedReleaseBundleContract.SUPPORTED_MANIFEST_SCHEMA_VERSION
         || bundle.requiredManifestAssetKeys() == null
         || bundle.artifactDigests() == null
         || bundle.commandDefinitions() == null
@@ -448,7 +447,8 @@ public class CompleteLaunchBindingServiceImpl implements CompleteLaunchBindingSe
     String previousUsageKey = null;
     for (PublishedArtifactDigest artifact : observedArtifacts) {
       if (artifact == null
-          || artifact.artifactSchemaVersion() != SUPPORTED_ARTIFACT_SCHEMA_VERSION
+          || artifact.artifactSchemaVersion()
+              != PublishedReleaseBundleContract.SUPPORTED_ARTIFACT_SCHEMA_VERSION
           || (previousUsageKey != null
               && PublishedArtifactDigest.compareUsageKeysUtf8(previousUsageKey, artifact.usageKey())
                   >= 0)) {

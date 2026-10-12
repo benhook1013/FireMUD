@@ -68,6 +68,93 @@ file_digest() {
   sha256sum "$1" | awk '{print $1}'
 }
 
+fixture_material_digest() {
+  find "$fixture_root" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}'
+}
+
+# World authenticates this exact server identity before releasing descriptor
+# requests. Verify the generated GDS leaf and reject retained invalid identities
+# without replacing any fixture material.
+gds_dir="$workloads_dir/game-design-service"
+gds_backup_dir="$TEST_ROOT/original-gds"
+mkdir -m 700 -- "$gds_backup_dir"
+cp -p -- "$gds_dir/client.crt" "$gds_dir/client.key" "$gds_backup_dir/"
+mapfile -t gds_uri_sans < <(openssl x509 -in "$gds_dir/client.crt" -noout -ext subjectAltName \
+  | tr ',' '\n' | awk '{sub(/^[[:space:]]+/, ""); if ($0 ~ /^URI:/) print}')
+[[ "${#gds_uri_sans[@]}" -eq 1 ]]
+[[ "${gds_uri_sans[0]}" == URI:spiffe://firemud/ns/dev/sa/game-design-service ]]
+openssl x509 -in "$gds_dir/client.crt" -noout -checkhost game-design-service >/dev/null
+openssl verify -CAfile "$fixture_root/authority/ca.crt" "$gds_dir/client.crt" >/dev/null
+cmp -s "$gds_dir/ca.crt" "$fixture_root/authority/ca.crt"
+[[ "$(public_key_digest "$gds_dir/client.crt" certificate)" == "$(public_key_digest "$gds_dir/client.key" key)" ]]
+for file in client.crt client.key ca.crt; do
+  [[ "$(stat -c '%a' "$gds_dir/$file")" == 444 ]]
+done
+canonical_gds_fixture_digest="$(fixture_material_digest)"
+ensure_compose_mtls_fixture
+[[ "$(fixture_material_digest)" == "$canonical_gds_fixture_digest" ]]
+
+chmod 644 "$gds_dir/client.crt" "$gds_dir/client.key"
+cp -- "$fixture_root/authority/client.crt" "$gds_dir/client.crt"
+cp -- "$fixture_root/authority/client.key" "$gds_dir/client.key"
+chmod 444 "$gds_dir/client.crt" "$gds_dir/client.key"
+generic_gds_fixture_digest="$(fixture_material_digest)"
+if ensure_compose_mtls_fixture >"$TEST_ROOT/generic-gds-output" 2>&1; then
+  echo "Compose mTLS certificate validation accepted a generic GDS leaf." >&2
+  exit 1
+fi
+rg -Fq 'Compose mTLS workload has the wrong SPIFFE identity: game-design-service' "$TEST_ROOT/generic-gds-output"
+[[ "$(fixture_material_digest)" == "$generic_gds_fixture_digest" ]]
+
+wrong_gds_dir="$TEST_ROOT/wrong-gds"
+mkdir -m 700 -- "$wrong_gds_dir"
+"$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$fixture_root/authority/ca.crt" "$fixture_root/authority/ca.key" \
+  "$wrong_gds_dir/client.crt" "$wrong_gds_dir/client.key" test game-design-service
+openssl verify -CAfile "$fixture_root/authority/ca.crt" "$wrong_gds_dir/client.crt" >/dev/null
+[[ "$(public_key_digest "$wrong_gds_dir/client.crt" certificate)" == "$(public_key_digest "$wrong_gds_dir/client.key" key)" ]]
+chmod 644 "$gds_dir/client.crt" "$gds_dir/client.key"
+cp -- "$wrong_gds_dir/client.crt" "$gds_dir/client.crt"
+cp -- "$wrong_gds_dir/client.key" "$gds_dir/client.key"
+chmod 444 "$gds_dir/client.crt" "$gds_dir/client.key"
+wrong_gds_fixture_digest="$(fixture_material_digest)"
+if ensure_compose_mtls_fixture >"$TEST_ROOT/wrong-gds-output" 2>&1; then
+  echo "Compose mTLS certificate validation accepted the wrong GDS URI." >&2
+  exit 1
+fi
+rg -Fq 'Compose mTLS workload has the wrong SPIFFE identity: game-design-service' "$TEST_ROOT/wrong-gds-output"
+[[ "$(fixture_material_digest)" == "$wrong_gds_fixture_digest" ]]
+
+openssl req -new -key "$wrong_gds_dir/client.key" \
+  -subj "/CN=game-design-service" -out "$wrong_gds_dir/client.csr" >/dev/null 2>&1
+cat >"$wrong_gds_dir/extra-uri.cnf" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth,clientAuth
+subjectAltName=URI:spiffe://firemud/ns/dev/sa/game-design-service,URI:spiffe://firemud/ns/test/sa/game-design-service,DNS:game-design-service
+EOF
+openssl x509 -req -in "$wrong_gds_dir/client.csr" \
+  -CA "$fixture_root/authority/ca.crt" -CAkey "$fixture_root/authority/ca.key" \
+  -set_serial 2 -out "$wrong_gds_dir/extra-uri.crt" -days 2 -sha256 \
+  -extfile "$wrong_gds_dir/extra-uri.cnf" >/dev/null 2>&1
+openssl verify -CAfile "$fixture_root/authority/ca.crt" "$wrong_gds_dir/extra-uri.crt" >/dev/null
+chmod 644 "$gds_dir/client.crt"
+cp -- "$wrong_gds_dir/extra-uri.crt" "$gds_dir/client.crt"
+chmod 444 "$gds_dir/client.crt"
+extra_uri_gds_fixture_digest="$(fixture_material_digest)"
+if ensure_compose_mtls_fixture >"$TEST_ROOT/extra-uri-gds-output" 2>&1; then
+  echo "Compose mTLS certificate validation accepted an extra GDS URI." >&2
+  exit 1
+fi
+rg -Fq 'Compose mTLS workload has the wrong SPIFFE identity: game-design-service' "$TEST_ROOT/extra-uri-gds-output"
+[[ "$(fixture_material_digest)" == "$extra_uri_gds_fixture_digest" ]]
+chmod 644 "$gds_dir/client.crt" "$gds_dir/client.key"
+cp -- "$gds_backup_dir/client.crt" "$gds_dir/client.crt"
+cp -- "$gds_backup_dir/client.key" "$gds_dir/client.key"
+chmod 444 "$gds_dir/client.crt" "$gds_dir/client.key"
+ensure_compose_mtls_fixture
+[[ "$(fixture_material_digest)" == "$canonical_gds_fixture_digest" ]]
+
 # Recreate the retained fixture's exact legacy shape: only the WMS leaf is the
 # generic authority/client pair. The owner claim and all other fixture material
 # remain in place while ensure-dev-certs performs the narrow migration.
@@ -183,7 +270,7 @@ for service in "${services[@]}"; do
 done
 
 identity_services=(
-  account-service game-session-service entity-management-service world-management-service
+  account-service game-session-service entity-management-service world-management-service game-design-service
 )
 declare -A identity_fingerprints=()
 for service in "${identity_services[@]}"; do

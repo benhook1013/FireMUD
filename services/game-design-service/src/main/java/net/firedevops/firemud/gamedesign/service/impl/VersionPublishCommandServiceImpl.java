@@ -147,10 +147,10 @@ public class VersionPublishCommandServiceImpl {
   }
 
   /**
-   * Private non-ingress seam retained for mechanics proof until a production Draft source exists.
+   * Package-private non-ingress seam retained for mechanics proof until a production Draft source
+   * exists.
    */
-  private PublishWorkflowSnapshot reconcileFullVersionPublishMechanics(
-      PublishWorkflowRequest request) {
+  PublishWorkflowSnapshot reconcileFullVersionPublishMechanics(PublishWorkflowRequest request) {
     request = request.recoverMissingPublishRequestId();
     validateRequestIdentity(request);
     logger.info(
@@ -620,6 +620,18 @@ public class VersionPublishCommandServiceImpl {
       Version version,
       ExportedAssetManifest exportedManifest,
       RuntimeException failure) {
+    if (exportedManifest != null) {
+      PublicationReadback readback;
+      try {
+        readback = readPublication(request, attempt);
+      } catch (RuntimeException readFailure) {
+        throw pendingReconciliation(
+            "exported candidate readback requires exact retry/reconciliation", readFailure);
+      }
+      if (readback.isComplete()) return reconcileCommittedAttempt(request, attempt);
+      throw pendingReconciliation(
+          "exported candidate requires exact retry/reconciliation", failure);
+    }
     String failureCode = publishFailureCode(failure);
     String failureMessage = publishFailureMessage(failure);
     try {
@@ -638,32 +650,13 @@ public class VersionPublishCommandServiceImpl {
               throw pendingReconciliation("full-version attempt is no longer pending");
             }
             publishAttemptRepository.requirePublicationPending(current);
-            Version currentVersion = requireAttemptVersionForUpdate(current, request);
+            requireAttemptVersionForUpdate(current, request);
             PublicationReadback readback = readPublication(request, current);
             if (!readback.isAbsent()) {
-              if (!readback.isStagedNoRelease()) {
+              if (!readback.isStagedNoRelease() || readback.candidate() != null) {
                 throw pendingReconciliation(
                     "publication failure has committed or partial release evidence; reconciliation is required");
               }
-              if (exportedManifest == null
-                  || !Objects.equals(readback.candidate(), exportedManifest)) {
-                throw pendingReconciliation(
-                    "staged asset writes remain unresolved; exact export readback is required");
-              }
-            }
-            if (exportedManifest != null) {
-              if (!readback.isStagedNoRelease()) {
-                throw pendingReconciliation(
-                    "exported asset manifest lacks an exact staged intent readback");
-              }
-              versionAssetArtifactService.markFailed(
-                  request.tenantId(),
-                  currentVersion.getId(),
-                  currentVersion.getVersionNumber(),
-                  request.publishWorkflowId(),
-                  exportedManifest,
-                  failureCode,
-                  failureMessage);
             }
             publishAttemptService.markFullVersionFailed(
                 request.publishWorkflowId(), failureCode, failureMessage);

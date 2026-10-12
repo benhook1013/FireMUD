@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
@@ -72,6 +74,44 @@ class TestDataSeederTest {
   }
 
   @Test
+  void retainedVersionWithoutBundlePropagatesCanonicalRefusalBeforeArtifactWrites() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("1");
+    game.setCanonicalTenantId(java.util.UUID.randomUUID());
+    when(gameRepository.findByTenantId("1")).thenReturn(game);
+    when(gameRepository.save(any(Game.class))).thenReturn(game);
+    Version retainedVersion = new Version();
+    retainedVersion.setId(7L);
+    retainedVersion.setTenantId("1");
+    retainedVersion.setVersionNumber(1);
+    when(versionRepository.findByTenantIdAndVersionNumber("1", 1))
+        .thenReturn(java.util.Optional.of(retainedVersion));
+    when(versionRepository.save(any(Version.class))).thenReturn(retainedVersion);
+    when(templateRepository.findByTenantIdAndName("1", "Default Template"))
+        .thenReturn(java.util.Optional.empty());
+    when(templateRepository.save(any(GameTemplate.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKind("1", 7L, "GENERIC"))
+        .thenReturn(java.util.Optional.empty());
+    when(revisionRepository.save(any(Revision.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("1", 7L))
+        .thenReturn(java.util.Optional.empty());
+    when(publishedReleaseBundleRepository.save(any(PublishedReleaseBundle.class)))
+        .thenThrow(
+            new IllegalStateException(
+                "No exact canonical Game Design source association exists for the requested Version"));
+
+    assertThatThrownBy(() -> seeder.run(new DefaultApplicationArguments(new String[] {})))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("No exact canonical Game Design source association");
+    assertThat(retainedVersion.getCanonicalTenantId()).isNull();
+    assertThat(retainedVersion.getCanonicalVersionId()).isNull();
+    verifyNoInteractions(versionAssetArtifactRepository);
+  }
+
+  @Test
   void runSeedsAndReassertsCanonicalPublishedRuntimeData() throws Exception {
     Game game = new Game();
     game.setId(1L);
@@ -98,7 +138,12 @@ class TestDataSeederTest {
     when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("1", 7L))
         .thenReturn(java.util.Optional.empty());
     when(publishedReleaseBundleRepository.save(any(PublishedReleaseBundle.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              PublishedReleaseBundle inserted = invocation.getArgument(0);
+              inserted.setPublishedAt(java.time.LocalDateTime.now());
+              return inserted;
+            });
     when(versionAssetArtifactRepository.findByTenantIdAndVersionId("1", 7L))
         .thenReturn(java.util.Optional.empty());
     when(versionAssetArtifactRepository.save(any(VersionAssetArtifact.class)))
@@ -118,9 +163,18 @@ class TestDataSeederTest {
     assertThat(bundleCaptor.getValue().getManifestHash()).isEqualTo("demo-manifest-hash");
     assertThat(bundleCaptor.getValue().getPublishWorkflowId()).isEqualTo("demo-seed-publish");
 
+    PublishedReleaseBundle stored = bundleCaptor.getValue();
+    stored.setId(11L);
+    stored.setPublishedReleaseBundleRef("persisted-opaque-reference");
+    when(publishedReleaseBundleRepository.findByTenantIdAndVersionId("1", 7L))
+        .thenReturn(java.util.Optional.of(stored));
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
+    verify(publishedReleaseBundleRepository, times(1)).save(any(PublishedReleaseBundle.class));
+    assertThat(stored.getPublishedReleaseBundleRef()).isEqualTo("persisted-opaque-reference");
+
     ArgumentCaptor<VersionAssetArtifact> artifactCaptor =
         ArgumentCaptor.forClass(VersionAssetArtifact.class);
-    verify(versionAssetArtifactRepository).save(artifactCaptor.capture());
+    verify(versionAssetArtifactRepository, times(2)).save(artifactCaptor.capture());
     assertThat(artifactCaptor.getValue().getTenantId()).isEqualTo("1");
     assertThat(artifactCaptor.getValue().getVersionId()).isEqualTo(7L);
     assertThat(artifactCaptor.getValue().getLastWorkflowId()).isEqualTo("demo-seed-publish");
@@ -204,6 +258,33 @@ class TestDataSeederTest {
     assertThat(artifact.getStateEpoch()).isEqualTo(2L);
     verify(versionRepository, never()).save(any(Version.class));
     verify(templateRepository, never()).save(any(GameTemplate.class));
+    verify(versionAssetArtifactRepository, never()).save(any(VersionAssetArtifact.class));
+  }
+
+  @Test
+  void retainedBaselineReusesExactExistingArtifactWithoutSavingIt() {
+    VersionAssetArtifact artifact = stubRetainedBaselineSeedData();
+
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
+
+    verify(versionAssetArtifactRepository).findByTenantIdAndVersionId("1", 7L);
+    verify(versionAssetArtifactRepository, never()).save(any(VersionAssetArtifact.class));
+    assertThat(artifact.getId()).isEqualTo(31L);
+    assertThat(artifact.getStateEpoch()).isEqualTo(1L);
+    assertThat(artifact.getArtifactState())
+        .isEqualTo(net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState.PUBLISHED);
+  }
+
+  @Test
+  void retainedBaselineRejectsMismatchedExistingArtifactWithoutSavingIt() {
+    VersionAssetArtifact artifact = stubRetainedBaselineSeedData();
+    artifact.setStateEpoch(2L);
+
+    assertThatThrownBy(() -> seeder.run(new DefaultApplicationArguments(new String[] {})))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Existing version artifact does not exactly match the demo seed");
+
+    assertThat(artifact.getStateEpoch()).isEqualTo(2L);
     verify(versionAssetArtifactRepository, never()).save(any(VersionAssetArtifact.class));
   }
 
@@ -418,6 +499,26 @@ class TestDataSeederTest {
         .thenReturn(Optional.of(artifact));
 
     return bundle;
+  }
+
+  private VersionAssetArtifact stubRetainedBaselineSeedData() {
+    stubExistingSeedData();
+    Version version = versionRepository.findByTenantIdAndVersionNumber("1", 1).orElseThrow();
+    version.setCanonicalTenantId(null);
+    version.setCanonicalVersionId(null);
+    version.setIdentitySourceGameRowId(null);
+    version.setIdentitySourceGameTenantKey(null);
+    version.setIdentitySourceProvenanceKind(null);
+    version.setCreatedAt(java.time.LocalDateTime.now());
+    version.setUpdatedAt(java.time.LocalDateTime.now());
+    when(versionRepository.save(any(Version.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    VersionAssetArtifact artifact =
+        versionAssetArtifactRepository.findByTenantIdAndVersionId("1", 7L).orElseThrow();
+    artifact.setUpdatedAt(java.time.LocalDateTime.now());
+    org.mockito.Mockito.clearInvocations(versionAssetArtifactRepository, versionRepository);
+    return artifact;
   }
 
   private CertificateFixture certificateFixture(
