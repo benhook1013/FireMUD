@@ -42,18 +42,23 @@ class PublishedReleaseBundleContractTest {
     WorldPublishedStartLocationEvidence selector = selectorEvidence();
     var incompleteParticipants = selectorParticipants(selector).subList(1, 5);
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            PublishedReleaseBundleContract.requireExactRepairMatch(
-                selectorBundle(selector, incompleteParticipants), exportedManifest));
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                PublishedReleaseBundleContract.requireExactRepairMatch(
+                    selectorBundle(selector, incompleteParticipants), exportedManifest));
+    assertEquals("World selector release lacks required participants", denied.getMessage());
   }
 
   @Test
   void exactRepairRejectsUnsupportedSelectorManifestAndArtifactSchemas() throws Exception {
-    var validBundle = selectorBundle(selectorEvidence(), selectorParticipants(selectorEvidence()));
+    var selector = selectorEvidence();
+    var validBundle = selectorBundle(selector, selectorParticipants(selector));
 
-    assertSelectorRepairRejected(withBundle(validBundle, 2, null, null));
+    assertSelectorRepairRejected(
+        withBundle(validBundle, 2, null, null),
+        "World selector differs from complete immutable release binding");
     var unsupportedArtifact =
         new PublishedArtifactDigest(
             "branding/logo",
@@ -62,7 +67,9 @@ class PublishedReleaseBundleContractTest {
             ARTIFACT_DIGEST,
             "image/png",
             2);
-    assertSelectorRepairRejected(withBundle(validBundle, 1, List.of(unsupportedArtifact), null));
+    assertSelectorRepairRejected(
+        withBundle(validBundle, 1, List.of(unsupportedArtifact), null),
+        "World selector contains an unsupported artifact schema");
   }
 
   @Test
@@ -79,7 +86,8 @@ class PublishedReleaseBundleContractTest {
                 participants.get(0),
                 participants.get(2),
                 participants.get(3),
-                participants.get(4))));
+                participants.get(4))),
+        "World selector requires all exact successful ordered release participants");
   }
 
   @Test
@@ -103,7 +111,8 @@ class PublishedReleaseBundleContractTest {
             selectorBundle(selector, participants),
             null,
             null,
-            replaceParticipant(participants, 0, errorContent)));
+            replaceParticipant(participants, 0, errorContent)),
+        "World selector requires all exact successful ordered release participants");
 
     var nonGameLogic = participants.get(1);
     var wrongAbilityOwner =
@@ -122,7 +131,8 @@ class PublishedReleaseBundleContractTest {
             selectorBundle(selector, participants),
             null,
             null,
-            replaceParticipant(participants, 1, wrongAbilityOwner)));
+            replaceParticipant(participants, 1, wrongAbilityOwner)),
+        "World selector ability schema proof must be owned by Game Logic");
   }
 
   @Test
@@ -193,10 +203,13 @@ class PublishedReleaseBundleContractTest {
         expectedCode, failure.getMessage().substring(0, failure.getMessage().indexOf(':')));
   }
 
-  private void assertSelectorRepairRejected(PublishedReleaseBundleDto bundle) {
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> PublishedReleaseBundleContract.requireExactRepairMatch(bundle, exportedManifest));
+  private void assertSelectorRepairRejected(
+      PublishedReleaseBundleDto bundle, String expectedMessage) {
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> PublishedReleaseBundleContract.requireExactRepairMatch(bundle, exportedManifest));
+    assertEquals(expectedMessage, denied.getMessage());
   }
 
   private static PublishedReleaseBundleDto withBundle(
