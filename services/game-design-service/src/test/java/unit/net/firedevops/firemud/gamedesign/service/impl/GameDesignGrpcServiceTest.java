@@ -1517,6 +1517,42 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void compareAndSetVersionStateSameStateNoOpReturnsCurrentStateWithoutUpdatedFlag() {
+    Mockito.when(
+            versionService.compareAndSetVersionState(
+                "tenant-1", 7L, 17L, VersionLifecycleState.RETIRED, "retry"))
+        .thenReturn(
+            new VersionStateDto(
+                "tenant-1",
+                7L,
+                VersionLifecycleState.RETIRED,
+                17L,
+                LocalDateTime.parse("2026-10-09T12:00:00")));
+
+    AtomicReference<CompareAndSetVersionStateResponse> ref = new AtomicReference<>();
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.compareAndSetVersionState(
+          CompareAndSetVersionStateRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setVersionId(7L)
+              .setExpectedVersionStateEpoch(17L)
+              .setNewState(
+                  net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
+                      .VERSION_LIFECYCLE_STATE_RETIRED)
+              .setReason("retry")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertFalse(ref.get().hasError());
+    assertFalse(ref.get().getUpdated());
+    assertEquals(
+        net.firedevops.firemud.gamedesign.v1.VersionLifecycleState.VERSION_LIFECYCLE_STATE_RETIRED,
+        ref.get().getVersionState().getVersionState());
+    assertEquals(17L, ref.get().getVersionState().getVersionStateEpoch());
+  }
+
+  @Test
   void launchReadProjectionMapperReturnsCanonicalAttestationWithoutWorkflowMetadata() {
     PublishedReleaseBundleDto source =
         new PublishedReleaseBundleDto(
