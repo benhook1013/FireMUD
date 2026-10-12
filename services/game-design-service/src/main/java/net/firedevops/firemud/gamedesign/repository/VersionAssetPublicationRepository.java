@@ -441,7 +441,6 @@ public class VersionAssetPublicationRepository {
                 + "octet_length(ga.data)::BIGINT AS byte_size "
                 + "FROM version_asset va "
                 + "JOIN game_assets ga ON ga.tenant_id = va.tenant_id AND ga.id = va.asset_id "
-                + "AND ga.file_name = va.usage_key "
                 + "WHERE va.tenant_id = ? AND va.version_id = ? "
                 + "ORDER BY va.asset_id FOR UPDATE OF ga",
             tenantId,
