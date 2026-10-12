@@ -5237,6 +5237,7 @@ class ReviewController:
             and selected == policy.Channel.HOSTED
             and expected_pr in state.ordered_prs
             and callable(getattr(self._evidence_provider, "request_history", None))
+            and callable(getattr(self._evidence_provider, "request_history_batch", None))
         )
         selection_prs = state.ordered_prs
         selection_state = state
@@ -5304,13 +5305,21 @@ class ReviewController:
                 )
             request_batch = getattr(self._evidence_provider, "request_history_batch", None)
             merged_prs = tuple(pr for pr in selection_prs if _live(live_identities[pr], pr).merged)
-            if merged_prs and callable(request_batch):
+            request_history_prs = state.ordered_prs if scoped_expected_hosted else merged_prs
+            prepared_request_history: Mapping[tuple[int, str], list[dict[str, Any]]] = {}
+            if request_history_prs and callable(request_batch):
                 if budget is not None:
-                    budget.set_phase("target_merged_request_history", total=len(merged_prs))
-                prepared = request_batch(merged_prs, live_identities)
+                    budget.set_phase("target_current_request_history_batch", total=len(request_history_prs))
+                try:
+                    prepared = request_batch(request_history_prs, live_identities)
+                except github.HostedPreflightDeadlineExceeded:
+                    raise
+                except Exception as error:
+                    detail = "current Hosted request history" if scoped_expected_hosted else "merged current request history"
+                    raise ControllerError(f"{detail} cannot be verified") from error
                 if budget is not None:
-                    budget.set_phase("target_merged_request_history", total=len(merged_prs))
-                expected_keys = {(pr, channel) for pr in merged_prs for channel in ("hosted", "cli")}
+                    budget.set_phase("target_current_request_history_batch", total=len(request_history_prs))
+                expected_keys = {(pr, channel) for pr in request_history_prs for channel in ("hosted", "cli")}
                 if (
                     not isinstance(prepared, Mapping)
                     or set(prepared) != expected_keys
@@ -5328,8 +5337,31 @@ class ReviewController:
                         for key, values in prepared.items()
                     )
                 ):
-                    raise ControllerError("merged current request history cannot be verified")
-                history_cache.update(prepared)
+                    detail = "current Hosted request history" if scoped_expected_hosted else "merged current request history"
+                    raise ControllerError(f"{detail} cannot be verified")
+                prepared_request_history = prepared
+                # Current request evidence for later rows is an operational
+                # safety scan, not a substitute for the prefix's full policy
+                # history. Cache selected merged rows and stopped allocations,
+                # whose request-only projection is intentionally used here.
+                cached_request_keys = {
+                    (pr, channel)
+                    for pr in merged_prs
+                    for channel in ("hosted", "cli")
+                }
+                if scoped_expected_hosted:
+                    cached_request_keys.update(
+                        (allocation.pr, allocation.channel)
+                        for allocation in state.allocations.values()
+                        if allocation.pr in selection_prs and allocation.stop_basis is not None
+                    )
+                history_cache.update(
+                    {
+                        key: values
+                        for key, values in prepared.items()
+                        if key in cached_request_keys
+                    }
+                )
                 if scoped_expected_hosted:
                     for (pr, channel_name), values in prepared.items():
                         if channel_name != "hosted":
@@ -5342,7 +5374,7 @@ class ReviewController:
                             if value.get("rate_limited") is True and hosted_cooldown_pr is None:
                                 hosted_cooldown_pr = pr
                 if budget is not None:
-                    budget.set_completed(len(merged_prs))
+                    budget.set_completed(len(request_history_prs))
             cache_stopped_request_history()
             if scoped_expected_cli or scoped_expected_hosted:
                 validated_identities: dict[int, LivePullRequest] = {}
@@ -5373,44 +5405,13 @@ class ReviewController:
                     if problem:
                         raise ControllerError(f"PR #{pr} {problem}")
                 if scoped_expected_hosted:
-                    # Selection history stops at the asserted target, but the
-                    # repository-wide Hosted slot and cooldown still need fresh
-                    # current-request evidence for every configured PR.
-                    for pr in state.ordered_prs:
-                        if budget is not None:
-                            budget.set_phase(f"target_hosted_activity_pr_{pr}", total=1)
-                        try:
-                            current_hosted = self._evidence_provider.request_history(pr, "hosted")
-                        except github.HostedPreflightDeadlineExceeded:
-                            raise
-                        except Exception as error:
-                            raise ControllerError(
-                                f"current Hosted activity for PR #{pr} cannot be verified"
-                            ) from error
-                        if not isinstance(current_hosted, Sequence) or isinstance(current_hosted, (str, bytes)):
-                            raise ControllerError(f"current Hosted activity for PR #{pr} is ambiguous")
-                        for value in current_hosted:
-                            if not isinstance(value, Mapping):
-                                raise ControllerError(f"current Hosted activity for PR #{pr} is ambiguous")
-                            if value.get("pr") is not None and (
-                                type(value["pr"]) is not int or value["pr"] != pr
-                            ):
-                                raise ControllerError(f"current Hosted activity for PR #{pr} is ambiguous")
-                            for field in ("active_review", "active_reservation", "rate_limited", "held", "unstable"):
-                                flag = _field(value, field)
-                                if flag is not None and type(flag) is not bool:
-                                    raise ControllerError(f"current Hosted activity for PR #{pr} is ambiguous")
-                            if (
-                                _field(value, "active_review") is True
-                                or _field(value, "active_reservation") is True
-                            ):
-                                raise ControllerError(
-                                    f"repository-wide Hosted review activity is active or ambiguous on PR #{pr}"
-                                )
-                            if _field(value, "rate_limited") is True and hosted_cooldown_pr is None:
-                                hosted_cooldown_pr = pr
-                        if budget is not None:
-                            budget.set_completed(1)
+                    # The current Hosted activity/cooldown scan above used the
+                    # fresh all-queue identity snapshot through the production
+                    # request-history batch adapter, avoiding per-PR refetches.
+                    if set(prepared_request_history) != {
+                        (pr, channel) for pr in state.ordered_prs for channel in ("hosted", "cli")
+                    }:
+                        raise ControllerError("current Hosted request history cannot be verified")
                 active_candidates = tuple(
                     pr for pr, item in validated_identities.items() if not item.merged and item.state == "OPEN"
                 )

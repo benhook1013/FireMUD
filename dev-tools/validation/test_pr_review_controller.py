@@ -229,6 +229,7 @@ class CountingEvidence(AuditedEvidence):
         self.active_target_reads = 0
         self.active_target_scans = []
         self.request_history_reads = []
+        self.request_history_batch_reads = []
         self.cli_lock_status = "clear"
 
     def get(self, key, default=None):
@@ -258,6 +259,15 @@ class CountingEvidence(AuditedEvidence):
                 or (str(value.get("checkpoint") or "").startswith("trigger:") and value.get("terminal") is not True)
             )
         ]
+
+    def request_history_batch(self, pr_numbers, identities):
+        numbers = tuple(pr_numbers)
+        self.request_history_batch_reads.append((numbers, set(identities)))
+        return {
+            (pr, channel): list(self.request_history(pr, channel))
+            for pr in numbers
+            for channel in ("hosted", "cli")
+        }
 
 
 def _stacked_prs(count, *, merged=()):
@@ -407,10 +417,130 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(target.pr, 1)
         self.assertEqual(set(evidence.history_reads), {(1, "hosted"), (1, "cli")})
-        self.assertEqual(set(evidence.request_history_reads), {(1, "hosted"), (2, "hosted"), (3, "hosted")})
+        self.assertEqual(
+            set(evidence.request_history_reads),
+            {(number, channel) for number in (1, 2, 3) for channel in ("hosted", "cli")},
+        )
+        self.assertEqual(evidence.request_history_batch_reads[-1], ((1, 2, 3), {1, 2, 3}))
 
         with github.hosted_preflight_budget(timeout_seconds=30), self.assertRaises(WrongStackTarget):
             controller._target("hosted", expected_pr=2)
+
+    def test_expected_hosted_batch_reuses_all_queue_identity_for_saved_terminal_records(self):
+        values, heads = _stacked_prs(3)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record_paths = {}
+            identities = {}
+            for number, item in values.items():
+                trigger_id = 100 + number
+                created_at = "2026-09-23T00:00:00Z"
+                response_at = "2026-09-23T00:02:00Z"
+                trigger_url = f"https://example.test/comments/{trigger_id}"
+                record = {
+                    "schema_version": 2,
+                    "status": "posted",
+                    "repository": "owner/repo",
+                    "pr_number": number,
+                    "head_sha": item.head,
+                    "anchor": {
+                        "pr": number,
+                        "child_head": item.head,
+                        "parent_identity": item.base_ref,
+                        "parent_head": item.base_tip,
+                        "merge_base": item.base_tip,
+                        "patch_id": f"patch-{number}",
+                    },
+                    "trigger": {
+                        "id": trigger_id,
+                        "created_at": created_at,
+                        "url": trigger_url,
+                        "type": "full",
+                        "command": hosted.FULL_COMMAND,
+                    },
+                }
+                path = root / f"trigger-{number}.json"
+                path.write_text(json.dumps(record), encoding="utf-8")
+                record_paths[number] = path
+                identity = _batch_identity(item)
+                identity["comments"]["nodes"] = [
+                    {
+                        "databaseId": trigger_id,
+                        "author": {"login": "reviewer"},
+                        "body": hosted.FULL_COMMAND,
+                        "createdAt": created_at,
+                        "url": trigger_url,
+                    },
+                    {
+                        "databaseId": 200 + number,
+                        "author": {"login": "coderabbitai"},
+                        "body": "Full review finished.",
+                        "createdAt": response_at,
+                        "url": f"https://example.test/comments/{200 + number}",
+                    },
+                ]
+                identities[number] = identity
+
+            live = FakeGitHub(values)
+            identity_batches = []
+
+            def fetch_identities(numbers):
+                batch = tuple(numbers)
+                identity_batches.append(batch)
+                return {number: identities[number] for number in batch}
+
+            live.batch_pull_requests = fetch_identities
+            provider = LiveEvidence("owner/repo", live)
+            controller = ReviewController(
+                store=StateStore(root / "state.json"),
+                github=live,
+                git=FakeGit(heads),
+                evidence=provider,
+                repository="owner/repo",
+            )
+            controller.set_stack(list(values))
+
+            load_record = hosted.load_trigger_reservation
+            with (
+                patch.object(hosted, "current_trigger_record_paths", side_effect=lambda _repo, pr: [record_paths[pr]]),
+                patch.object(hosted, "load_trigger_reservation", wraps=load_record) as load_saved_record,
+                patch.object(provider, "_request_lock_is_held", return_value=False),
+                patch.object(evidence, "resolve_cli_capture_context", return_value=(root, None)),
+                patch.object(provider, "_active_cli_history", return_value=[]),
+                patch.object(provider, "history", return_value=[]),
+                patch.object(provider, "prefetch_history_payloads"),
+                patch.object(provider, "request_history_batch", wraps=provider.request_history_batch) as request_batch,
+                github.hosted_preflight_budget(timeout_seconds=30),
+            ):
+                target = controller._target("hosted", expected_pr=1)
+                request_batch.assert_called_once()
+                self.assertEqual(tuple(request_batch.call_args.args[0]), (1, 2, 3))
+                self.assertEqual(
+                    {call.args[2] for call in load_saved_record.call_args_list},
+                    set(values),
+                )
+                self.assertEqual(load_saved_record.call_count, len(values))
+
+        self.assertEqual(target.pr, 1)
+        self.assertEqual(identity_batches, [(1, 2, 3)])
+
+    def test_expected_hosted_without_snapshot_batch_keeps_full_history_fallback(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence()
+        evidence.request_history_batch = None
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+
+        with github.hosted_preflight_budget(timeout_seconds=30):
+            target = controller._target("hosted", expected_pr=1)
+
+        self.assertEqual(target.pr, 1)
+        self.assertEqual(
+            set(evidence.history_reads),
+            {(number, channel) for number in values for channel in ("hosted", "cli")},
+        )
+        self.assertEqual(evidence.request_history_batch_reads, [])
 
     def test_budgeted_hosted_prefix_still_obeys_prior_stop_frontier(self):
         values, heads = _stacked_prs(3)
@@ -476,7 +606,7 @@ class ControllerTests(unittest.TestCase):
 
         evidence.request_history = fail_later_request_history
         with github.hosted_preflight_budget(timeout_seconds=30), self.assertRaisesRegex(
-            ControllerError, "current Hosted activity for PR #3 cannot be verified"
+            ControllerError, "current Hosted request history cannot be verified"
         ):
             controller.run_hosted(expected_pr=1)
 
@@ -529,7 +659,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(read_counts_at_prefetch, [()])
         self.assertEqual(
             set(request_reads_at_prefetch[0]),
-            {(1, "hosted"), (2, "hosted"), (3, "hosted"), (4, "hosted"), (2, "cli"), (3, "cli")},
+            {(number, channel) for number in (1, 2, 3, 4) for channel in ("hosted", "cli")},
         )
         self.assertNotIn((1, "hosted"), evidence.history_reads)
         self.assertNotIn((1, "cli"), evidence.history_reads)
@@ -865,9 +995,11 @@ class ControllerTests(unittest.TestCase):
         signal = {"rate_limited": True}
 
         def prepare(numbers, identities):
-            self.assertEqual(numbers, (1,))
+            self.assertIn(numbers, ((1, 2), (1,)))
             snapshots.append(identities)
-            return {(1, "hosted"): [{"pr": 1, "checkpoint": "current", **signal}], (1, "cli"): []}
+            result = {(pr, channel): [] for pr in numbers for channel in ("hosted", "cli")}
+            result[(1, "hosted")] = [{"pr": 1, "checkpoint": "current", **signal}]
+            return result
 
         evidence.request_history_batch = prepare
         with github.hosted_preflight_budget(timeout_seconds=60):
@@ -900,7 +1032,7 @@ class ControllerTests(unittest.TestCase):
         self._enable_batch_status(controller, values)
 
         def prepare(numbers, identities):
-            self.assertEqual(numbers, (1, 2, 3))
+            self.assertEqual(numbers, (1, 2, 3, 4))
             self.assertEqual(set(identities), {1, 2, 3, 4})
             budget = github.active_hosted_preflight_budget()
             # Only one old reservation requires full attribution. The nested
@@ -915,7 +1047,10 @@ class ControllerTests(unittest.TestCase):
             target = controller._target("hosted", expected_pr=4)
             self.assertEqual(budget.deadline, deadline)
             self.assertEqual(budget.phase_progress["target_complete_history_prefetch"], {"completed": 1, "total": 1})
-            self.assertEqual(budget.phase_progress["target_merged_request_history"], {"completed": 3, "total": 3})
+            self.assertEqual(
+                budget.phase_progress["target_current_request_history_batch"],
+                {"completed": 4, "total": 4},
+            )
         self.assertEqual((target.pr, target.anchor.child_head), (4, values[4].head))
 
     def test_merged_request_batch_errors_and_ambiguous_results_fail_closed(self):
@@ -10339,7 +10474,10 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(target.pr, 1)
         self.assertEqual(set(evidence.history_reads), {(1, "hosted"), (1, "cli")})
-        self.assertEqual(set(evidence.request_history_reads), {(1, "hosted"), (2, "hosted"), (3, "hosted")})
+        self.assertEqual(
+            set(evidence.request_history_reads),
+            {(number, channel) for number in values for channel in ("hosted", "cli")},
+        )
         self.assertEqual(evidence.active_target_reads, 0)
 
     def test_allocation_anchor_reuses_reconciled_anchor(self):
