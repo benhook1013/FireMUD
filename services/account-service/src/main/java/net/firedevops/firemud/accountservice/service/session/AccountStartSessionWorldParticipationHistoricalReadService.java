@@ -40,7 +40,7 @@ public final class AccountStartSessionWorldParticipationHistoricalReadService {
   }
 
   /**
-   * Reads the exact retained row by its independent participation ID and fence, including after
+   * Resolves the exact retained participation from its complete original tuple, including after
    * original ingress expiry or prior immutable terminal settlement.
    */
   public AccountStartSessionWorldParticipationHistoricalReadEvidence read(
@@ -60,9 +60,7 @@ public final class AccountStartSessionWorldParticipationHistoricalReadService {
             ownerTransaction.execute(
                 ignored ->
                     repository
-                        .findHistoricalExact(
-                            request.accountWorldParticipationId(),
-                            request.accountWorldParticipationFence())
+                        .findHistoricalForOriginalTuple(request.originalPostAuthorizationTuple())
                         .orElseThrow(
                             () ->
                                 Status.FAILED_PRECONDITION
@@ -71,17 +69,24 @@ public final class AccountStartSessionWorldParticipationHistoricalReadService {
                                     .asRuntimeException())),
             "Account historical participation transaction returned no result");
 
-    if (!participation.participationId().equals(request.accountWorldParticipationId())
-        || participation.participationFence() != request.accountWorldParticipationFence()
+    if (!java.security.MessageDigest.isEqual(
+            participation.originalPostAuthorizationTuple(),
+            request.originalPostAuthorizationTuple())
+        || !request
+            .decodedOriginalTuple()
+            .controlPlaneRequestId()
+            .equals(participation.controlPlaneRequestId())
         || !workloadNamespace.equals(participation.targetNamespace())) {
       throw Status.FAILED_PRECONDITION
-          .withDescription("Stored World participation differs from the exact historical lookup")
+          .withDescription(
+              "Stored World participation differs from the complete original tuple lookup")
           .asRuntimeException();
     }
     try {
       return new AccountStartSessionWorldParticipationHistoricalReadEvidence(
           request,
-          participation.originalPostAuthorizationTuple(),
+          participation.participationId(),
+          participation.participationFence(),
           participation.gameSessionOwnerAttemptId(),
           participation.gameSessionOwnerFence(),
           participation.canonicalGameInstanceId(),

@@ -14,7 +14,7 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.Instant;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HexFormat;
@@ -77,6 +77,7 @@ public final class AccountGameplayDelegationRedisClient {
   private final AccountCoordinationPinnedConnectionProvider connectionProvider;
   private final RedisScriptCatalog scriptCatalog;
   private final AcknowledgementRequirements acknowledgementRequirements;
+  private final Clock clock;
   private final int maxRecordBytes;
   private final ClassLoader resourceClassLoader;
   private volatile SelectedProjectionScript selectedProjectionScript;
@@ -85,6 +86,7 @@ public final class AccountGameplayDelegationRedisClient {
       AccountCoordinationPinnedConnectionProvider connectionProvider,
       RedisScriptCatalog scriptCatalog,
       AcknowledgementRequirements acknowledgementRequirements,
+      Clock clock,
       int maxRecordBytes,
       ClassLoader resourceClassLoader) {
     this.connectionProvider =
@@ -93,6 +95,7 @@ public final class AccountGameplayDelegationRedisClient {
     this.scriptCatalog = Objects.requireNonNull(scriptCatalog, "Redis script catalog is required");
     this.acknowledgementRequirements =
         Objects.requireNonNull(acknowledgementRequirements, "WAITAOF requirements are required");
+    this.clock = Objects.requireNonNull(clock, "Account gameplay delegation clock is required");
     if (maxRecordBytes <= 0
         || maxRecordBytes > GameSessionAccountDelegationProfile.MAX_REGISTRY_RECORD_BYTES) {
       throw new IllegalArgumentException("Registry byte bound exceeds the finite profile ceiling");
@@ -883,7 +886,7 @@ public final class AccountGameplayDelegationRedisClient {
         || tokenHash == null
         || !TOKEN_HASH.matcher(tokenHash).matches()
         || !boundedRegistryRecord(expected)
-        || expectedAbsoluteExpiry <= System.currentTimeMillis()) throw unavailable();
+        || expectedAbsoluteExpiry <= clock.millis()) throw unavailable();
     try (var connection = connectionProvider.openPinnedConnection()) {
       if (connection == null) throw unavailable();
       var commands = requirePinnedCommands(connection);
@@ -899,7 +902,7 @@ public final class AccountGameplayDelegationRedisClient {
       var record = GameSessionAccountDelegationRegistryRecord.decode(actual, maxRecordBytes);
       if (!"pending".equals(record.state())
           || !tokenHash.equals(record.tokenHash())
-          || record.expiresAtEpochSecond() <= Instant.now().getEpochSecond()
+          || record.expiresAtEpochSecond() <= clock.instant().getEpochSecond()
           || !Arrays.equals(actual, commands.get(key))
           || !Long.valueOf(expectedAbsoluteExpiry).equals(commands.pexpiretime(key)))
         throw unavailable();
@@ -1054,7 +1057,7 @@ public final class AccountGameplayDelegationRedisClient {
     } catch (ArithmeticException ex) {
       throw unavailable();
     }
-    if (identity.expiresAtEpochSecond() <= Instant.now().getEpochSecond()) throw unavailable();
+    if (identity.expiresAtEpochSecond() <= clock.instant().getEpochSecond()) throw unavailable();
     PendingIntent intent =
         new PendingIntent(
             identity.operationId(),

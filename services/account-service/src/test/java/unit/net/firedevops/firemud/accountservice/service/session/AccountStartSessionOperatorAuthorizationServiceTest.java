@@ -311,13 +311,18 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
               assertThat(requestedCapture).isNotNull();
               return requestedCapture;
             });
+    AtomicInteger claimReadCount = new AtomicInteger();
     when(claims.readCurrentClaimEvidence(any(), any(), anyLong(), any(), anyLong(), any()))
         .thenAnswer(
-            invocation ->
-                claimEvidence(
-                    invocation.<StartSessionPreAuthorizationReservationTuple>getArgument(0),
-                    invocation.<UUID>getArgument(1),
-                    operationClock.instant()));
+            invocation -> {
+              Instant localNow = operationClock.instant();
+              Instant observedAt =
+                  claimReadCount.getAndIncrement() == 0 ? localNow.plusSeconds(2) : localNow;
+              return claimEvidence(
+                  invocation.<StartSessionPreAuthorizationReservationTuple>getArgument(0),
+                  invocation.<UUID>getArgument(1),
+                  observedAt);
+            });
 
     Path responseKeyringDirectory = temporaryDirectory.resolve("operator-response");
     Files.createDirectories(responseKeyringDirectory);

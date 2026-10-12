@@ -253,7 +253,14 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
         .isEqualTo(authorization.authorizationReferenceFingerprint());
     assertThat(retained.issuanceOperationId()).isNotNull();
     assertThat(retained.issuanceFence()).isPositive();
-    assertThat(retained.bundleReference()).isEqualTo(authorization.bundleReference());
+    assertThat(retained.bundleReference().bundleVersion())
+        .isEqualTo(authorization.bundleReference().bundleVersion());
+    assertThat(retained.bundleReference().sourceVersion())
+        .isEqualTo(authorization.bundleReference().sourceVersion());
+    assertThat(retained.bundleReference().sourceFence())
+        .isEqualTo(authorization.bundleReference().sourceFence());
+    assertThat(retained.bundleReference().linearization())
+        .isEqualTo(authorization.bundleReference().linearization());
     assertThat(retained.authorityEvidenceBundle())
         .containsExactly(authorization.authorityEvidenceBundle());
     assertThat(retained.authorityEvidenceBundle())

@@ -4,20 +4,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.UnknownFieldSet;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.util.List;
-import java.util.Map;
+import java.time.Instant;
 import java.util.UUID;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal;
 import org.junit.jupiter.api.Test;
-import tools.jackson.databind.json.JsonMapper;
 
 class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
   private static final String NAMESPACE = "world-runtime";
@@ -28,10 +26,9 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
   private static final UUID READ_ID = uuid("d1f41bfb-265a-4f3b-8b2a-124cba20ce43");
   private static final String PREPARATION_INPUT =
       "{ \"identity\" : \"retained original input\", \"revision\": 3 }\n";
-  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Test
-  void roundTripsOnlyTheExactHistoricalRequestAndAccountRetainedFields() {
+  void roundTripsTheCompleteOriginalTupleAndResolvedHistoricalCoordinates() {
     var request = request();
     var evidence = evidence(request);
 
@@ -43,13 +40,15 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
 
     var response =
         AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.toResponse(request, evidence);
-    assertThat(response.getAllFields()).hasSize(7);
+    assertThat(response.getAllFields()).hasSize(8);
     var decoded =
         AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromResponse(
             request, response);
     assertThat(decoded.request()).isEqualTo(request);
-    assertThat(decoded.originalPostAuthorizationTuple())
-        .containsExactly(evidence.originalPostAuthorizationTuple());
+    assertThat(decoded.request().originalPostAuthorizationTuple())
+        .containsExactly(request.originalPostAuthorizationTuple());
+    assertThat(decoded.accountWorldParticipationId()).isEqualTo(PARTICIPATION_ID);
+    assertThat(decoded.accountWorldParticipationFence()).isEqualTo(31L);
     assertThat(decoded.gameSessionOwnerAttemptId()).isEqualTo(GAME_SESSION_ATTEMPT_ID);
     assertThat(decoded.gameSessionOwnerFence()).isEqualTo(37L);
     assertThat(decoded.canonicalGameInstanceId()).isEqualTo(GAME_INSTANCE_ID);
@@ -58,7 +57,7 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
   }
 
   @Test
-  void rejectsUnknownFieldsUnsupportedVersionMalformedIdsAndNonpositiveFences() {
+  void rejectsUnknownFieldsUnsupportedVersionMalformedReadIdAndIncompleteTuple() {
     var request = request();
     UnknownFieldSet unknown = unknown();
     var wire = AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.toRequest(request);
@@ -83,16 +82,42 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
         .hasMessageContaining("canonical non-nil UUID");
     assertThatThrownBy(
             () ->
-                AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromRequest(
-                    wire.toBuilder().setAccountWorldParticipationFence(0L).build()))
+                new AccountStartSessionWorldParticipationHistoricalReadRequest(
+                    READ_ID, NAMESPACE, new byte[0]))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("positive");
+        .hasMessageContaining("empty or oversized");
+    assertThatThrownBy(
+            () ->
+                AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.fromRequest(
+                    wire.toBuilder()
+                        .setOriginalPostAuthorizationTuple(com.google.protobuf.ByteString.EMPTY)
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("empty or oversized");
+  }
+
+  @Test
+  void rejectsOnlyReservationOwnerCollisionAtRequestBoundary() {
+    var original = originalTuple(NAMESPACE);
     assertThatThrownBy(
             () ->
                 new AccountStartSessionWorldParticipationHistoricalReadRequest(
-                    READ_ID, NAMESPACE, READ_ID, 31L))
+                    original.reservationOwnerId(), NAMESPACE, original.canonicalBytes()))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("distinct");
+        .hasMessageContaining("distinct from the reservation owner");
+
+    for (UUID requestId :
+        new UUID[] {
+          original.preAuthorizationTuple().actor().accountId(),
+          TENANT,
+          uuid("f5d044bd-7e5f-4e2d-9859-9025cbdcc60f")
+        }) {
+      assertThat(
+              new AccountStartSessionWorldParticipationHistoricalReadRequest(
+                      requestId, NAMESPACE, original.canonicalBytes())
+                  .readRequestId())
+          .isEqualTo(requestId);
+    }
   }
 
   @Test
@@ -105,7 +130,9 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
     var changedEcho =
         response.toBuilder()
             .setRequest(
-                response.getRequest().toBuilder().setTargetNamespace("other-runtime").build())
+                response.getRequest().toBuilder()
+                    .setReadRequestId("0fd3d542-a9f8-4b8f-b1df-79413650126c")
+                    .build())
             .build();
     assertThatThrownBy(
             () ->
@@ -133,16 +160,11 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
             () ->
                 AccountStartSessionWorldParticipationHistoricalReadGrpcCodec.toResponse(
                     request,
-                    new AccountStartSessionWorldParticipationHistoricalReadEvidence(
-                        request,
-                        originalTuple("other-runtime").canonicalBytes(),
-                        GAME_SESSION_ATTEMPT_ID,
-                        37L,
-                        GAME_INSTANCE_ID,
-                        PREPARATION_INPUT,
-                        digest(PREPARATION_INPUT))))
+                    evidence(
+                        new AccountStartSessionWorldParticipationHistoricalReadRequest(
+                            READ_ID, NAMESPACE, originalTuple(NAMESPACE, 20L).canonicalBytes()))))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("differs from the exact original");
+        .hasMessageContaining("changed the exact");
   }
 
   @Test
@@ -153,7 +175,8 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
             () ->
                 new AccountStartSessionWorldParticipationHistoricalReadEvidence(
                     request,
-                    originalTuple(NAMESPACE).canonicalBytes(),
+                    PARTICIPATION_ID,
+                    31L,
                     GAME_SESSION_ATTEMPT_ID,
                     37L,
                     GAME_INSTANCE_ID,
@@ -163,32 +186,40 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
         .hasMessageContaining("byte limit");
     assertThatThrownBy(
             () ->
+                new AccountStartSessionWorldParticipationHistoricalReadRequest(
+                    READ_ID,
+                    NAMESPACE,
+                    new byte
+                        [StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES
+                            + 1]))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("empty or oversized");
+    assertThatThrownBy(
+            () ->
                 new AccountStartSessionWorldParticipationHistoricalReadEvidence(
                     request,
-                    new byte
-                        [net.firedevops.firemud.common.operator
-                                .StartSessionPostAuthorizationExecutionTuple
-                                .MAX_CANONICAL_TUPLE_BYTES
-                            + 1],
+                    PARTICIPATION_ID,
+                    0L,
                     GAME_SESSION_ATTEMPT_ID,
                     37L,
                     GAME_INSTANCE_ID,
                     PREPARATION_INPUT,
                     digest(PREPARATION_INPUT)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("oversized");
+        .hasMessageContaining("fence must be positive");
   }
 
   private static AccountStartSessionWorldParticipationHistoricalReadRequest request() {
     return new AccountStartSessionWorldParticipationHistoricalReadRequest(
-        READ_ID, NAMESPACE, PARTICIPATION_ID, 31L);
+        READ_ID, NAMESPACE, originalTuple(NAMESPACE).canonicalBytes());
   }
 
   private static AccountStartSessionWorldParticipationHistoricalReadEvidence evidence(
       AccountStartSessionWorldParticipationHistoricalReadRequest request) {
     return new AccountStartSessionWorldParticipationHistoricalReadEvidence(
         request,
-        originalTuple(NAMESPACE).canonicalBytes(),
+        PARTICIPATION_ID,
+        31L,
         GAME_SESSION_ATTEMPT_ID,
         37L,
         GAME_INSTANCE_ID,
@@ -197,6 +228,11 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
   }
 
   private static StartSessionPostAuthorizationExecutionTuple originalTuple(String namespace) {
+    return originalTuple(namespace, 19L);
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple originalTuple(
+      String namespace, long reservationClaimFence) {
     UUID actor = uuid("a4f5f4eb-8243-4d42-903a-33495456a622");
     UUID targetOwner = uuid("36aa9ce5-0ebc-4c14-9f6b-d160edc6059a");
     UUID reservationOwner = uuid("7c005b65-fcb1-4ac9-a714-f3d0f449edcf");
@@ -219,7 +255,7 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
         "spiffe://firemud/ns/" + namespace + "/sa/logging-admin-service",
         "arfp/v1/test-key/" + "b".repeat(64),
         reservationOwner,
-        19L,
+        reservationClaimFence,
         authorityBundle(preTuple),
         new StartSessionAuthorityEvidenceBundle.BundleReference(
             StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
@@ -229,79 +265,24 @@ class AccountStartSessionWorldParticipationHistoricalReadGrpcCodecTest {
   }
 
   private static byte[] authorityBundle(StartSessionPreAuthorizationReservationTuple tuple) {
-    String actorId = tuple.actor().accountId().toString();
-    String tenantId = tuple.action().scope().tenantId().toString();
-    Map<String, Object> projection =
-        Map.of(
-            "sourceType", "ACCOUNT",
-            "sourceEvidenceId", "sha256:" + "a".repeat(64),
-            "sourceEvidenceVersion", "17",
-            "projectionStatus", "CURRENT",
-            "evaluatedAt", "2020-01-01T00:00:00Z",
-            "expiresAt", "2020-01-02T00:00:00Z");
-    Map<String, Object> issuanceIdentity =
-        Map.of(
-            "issuanceOperationId", "f5d044bd-7e5f-4e2d-9859-9025cbdcc60f",
-            "controlPlaneRequestId", tuple.controlPlaneRequestId(),
-            "actionFamilyRequestIdentity",
-                Map.of(
-                    "requestIdentityKind",
-                    "controlPlaneRequestId",
-                    "requestId",
-                    tuple.controlPlaneRequestId()),
-            "mutationDigest", tuple.mutationDigest());
-    Map<String, Object> authority =
-        Map.of(
-            "issuerAuthGeneration", 1L,
-            "accountAuthorityGeneration", 2L,
-            "tenantAuthorityGeneration", Map.of(tenantId, 3L),
-            "membershipAuthorityGeneration", Map.of(tenantId, 4L),
-            "privateRealmGrantVersions", List.of());
-    Map<String, Object> humanEvidence =
-        Map.of(
-            "evidenceType", StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
-            "actorAccountId", actorId,
-            "controlUiTokenJti", "a681bba7-c215-4cf1-a35b-14348912cbdc",
-            "role", "tenantAdmin",
-            "accountGeneration", "2",
-            "tenantGeneration", "3");
-    Map<String, Object> bundle =
-        Map.of(
-            "bundleVersion",
-            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-            "authorityScope",
-            Map.of(
-                "scope",
-                Map.of(
-                    "tenantId",
-                    tenantId,
-                    "targetNamespace",
-                    tuple.action().scope().targetNamespace()),
-                "actionFamily",
-                tuple.actionFamily(),
-                "applicableAccountId",
-                actorId,
-                "applicableTenantId",
-                tenantId),
-            "accountProjectionEvidence",
-            projection,
-            "issuanceOperationIdentity",
-            issuanceIdentity,
-            "issuanceKind",
-            "human_operator",
-            "authorityTuple",
-            authority,
-            "membershipVersion",
-            Map.of(tenantId, 5L),
-            "issuanceFence",
-            "23",
-            "issuanceEvidence",
-            humanEvidence);
-    try {
-      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(bundle));
-    } catch (IOException impossible) {
-      throw new IllegalStateException(impossible);
-    }
+    return StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+        tuple,
+        new Values(
+            uuid("f5d044bd-7e5f-4e2d-9859-9025cbdcc60f"),
+            "sha256:" + "a".repeat(64),
+            "17",
+            "CURRENT",
+            Instant.parse("2020-01-01T00:00:00Z"),
+            Instant.parse("2020-01-02T00:00:00Z"),
+            1L,
+            2L,
+            3L,
+            4L,
+            5L,
+            23L,
+            uuid("a681bba7-c215-4cf1-a35b-14348912cbdc"),
+            "2",
+            "3"));
   }
 
   private static UnknownFieldSet unknown() {

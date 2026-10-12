@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,6 +15,8 @@ import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
@@ -541,76 +544,24 @@ class WorldStartSessionExecutionTerminalTest {
   }
 
   private static byte[] bundle(StartSessionPreAuthorizationReservationTuple tuple) {
-    String tenantId = TENANT.toString();
-    Map<String, Object> projection =
-        Map.of(
-            "sourceType", "ACCOUNT",
-            "sourceEvidenceId", "sha256:" + "a".repeat(64),
-            "sourceEvidenceVersion", "17",
-            "projectionStatus", "CURRENT",
-            "evaluatedAt", "2026-10-09T00:00:00Z",
-            "expiresAt", "2026-10-09T00:05:00Z");
-    Map<String, Object> identity =
-        Map.of(
-            "issuanceOperationId", ISSUANCE_ID.toString(),
-            "controlPlaneRequestId", tuple.controlPlaneRequestId(),
-            "actionFamilyRequestIdentity",
-                Map.of(
-                    "requestIdentityKind",
-                    "controlPlaneRequestId",
-                    "requestId",
-                    tuple.controlPlaneRequestId()),
-            "mutationDigest", tuple.mutationDigest());
-    Map<String, Object> authority =
-        Map.of(
-            "issuerAuthGeneration", 1L,
-            "accountAuthorityGeneration", 2L,
-            "tenantAuthorityGeneration", Map.of(tenantId, 3L),
-            "membershipAuthorityGeneration", Map.of(tenantId, 4L),
-            "privateRealmGrantVersions", List.of());
-    Map<String, Object> evidence =
-        Map.of(
-            "evidenceType",
-            StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
-            "actorAccountId",
-            ACTOR.toString(),
-            "controlUiTokenJti",
-            TOKEN_JTI.toString(),
-            "role",
-            "tenantAdmin",
-            "accountGeneration",
+    return StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+        tuple,
+        new Values(
+            ISSUANCE_ID,
+            "sha256:" + "a".repeat(64),
+            "17",
+            "CURRENT",
+            Instant.parse("2026-10-09T00:00:00Z"),
+            Instant.parse("2026-10-09T00:05:00Z"),
+            1L,
+            2L,
+            3L,
+            4L,
+            5L,
+            23L,
+            TOKEN_JTI,
             "2",
-            "tenantGeneration",
-            "3");
-    Map<String, Object> value =
-        Map.of(
-            "bundleVersion",
-            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-            "authorityScope",
-            Map.of(
-                "scope", Map.of("tenantId", tenantId, "targetNamespace", NAMESPACE),
-                "actionFamily", tuple.actionFamily(),
-                "applicableAccountId", ACTOR.toString(),
-                "applicableTenantId", tenantId),
-            "accountProjectionEvidence",
-            projection,
-            "issuanceOperationIdentity",
-            identity,
-            "issuanceKind",
-            "human_operator",
-            "authorityTuple",
-            authority,
-            "membershipVersion",
-            Map.of(tenantId, 5L),
-            "issuanceFence",
-            "23",
-            "issuanceEvidence",
-            evidence);
-    try {
-      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value));
-    } catch (IOException impossible) {
-      throw new IllegalStateException(impossible);
-    }
+            "3"));
   }
 
   private static StartSessionAuthorityEvidenceBundle.BundleReference reference() {
