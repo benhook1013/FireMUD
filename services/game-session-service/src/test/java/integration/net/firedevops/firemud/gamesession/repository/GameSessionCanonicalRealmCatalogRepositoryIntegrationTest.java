@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCa
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.CatalogConflictException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.PreparedInitialPublicProduction;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
@@ -51,7 +52,8 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void persistsExactFreshSelectorsAndSharedNamespaceWithoutChangingRetainedNumericEvidence() {

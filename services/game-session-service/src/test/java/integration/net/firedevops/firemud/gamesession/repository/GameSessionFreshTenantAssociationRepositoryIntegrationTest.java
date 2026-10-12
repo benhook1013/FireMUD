@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssoc
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.FreshTenantAssociationConflictException;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.InvalidFreshTenantSourceException;
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -46,7 +47,8 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void allocatesPrivateIdentityAndReturnsTheOriginalExactAssociationOnRetry() {
