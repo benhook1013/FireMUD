@@ -1942,7 +1942,7 @@ def main() -> int:
         f"postgres.image=registry.invalid/postgres:18@{fixture_digest}\n",
         f"postgres.image=publicXecrXaws/docker/library/postgres:18@{fixture_digest}\n",
         f"postgres.image=public.ecr.aws/docker/library/postgres:18@{fixture_digest}\n",
-        f"redis.image=redis:8.10-alpine\n",
+        "redis.image=redis:8.10-alpine\n",
     ):
         if any(pattern.search(invalid) for pattern in testcontainer_patterns):
             fail("Testcontainers manager must extract only pinned short official database images")
