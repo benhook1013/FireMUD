@@ -42,15 +42,16 @@ import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsServi
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.IssuanceRecord;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionRequest;
-import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionResult;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.Status;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService.Current;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.ReadRedeemedOperationProjectionRequest;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.RedeemedOperationProjection;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.RedemptionResult;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
 import org.jooq.Record;
@@ -61,6 +62,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Focused flow proof; JWT validation/source locking remain owned by the real actor service. */
 class AccountStartSessionOperatorAuthorizationServiceTest {
@@ -394,7 +397,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
                 durableRecords.put(
                     redemption.controlPlaneRequestId(), withRedemption(issuance, redemption));
               }
-              return new RedemptionResult(
+              return new AccountStartSessionOperatorAuthorizationRepository.RedemptionResult(
                   issuance.authorizationReferenceFingerprint(),
                   issuance.authorityEvidenceBundle(),
                   issuance.issuanceOperationId(),
@@ -468,6 +471,55 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     assertThat(record.encryptedResponseEnvelope().length).isLessThanOrEqualTo(160 * 1024);
     AccountStartSessionOperatorAuthorityBundle bundle =
         AccountStartSessionOperatorAuthorityBundle.decode(record.authorityEvidenceBundle());
+    StartSessionPostAuthorizationExecutionTuple issuedOwnerTuple =
+        StartSessionPostAuthorizationExecutionTuple.decode(
+            issued.get().originalAccountPostAuthorizationTuple());
+    assertThat(issuedOwnerTuple.preAuthorizationTuple().canonicalJson())
+        .isEqualTo(tuple.canonicalJson());
+    assertThat(issuedOwnerTuple.authenticatedWorkloadIdentity()).isEqualTo(LOGGING_PEER);
+    assertThat(issuedOwnerTuple.authorizationReferenceFingerprint())
+        .isEqualTo(record.authorizationReferenceFingerprint());
+    assertThat(issuedOwnerTuple.reservationOwnerId()).isEqualTo(record.reservationOwnerId());
+    assertThat(issuedOwnerTuple.reservationClaimFence()).isEqualTo(record.reservationClaimFence());
+    assertThat(issuedOwnerTuple.bundleReference().bundleVersion())
+        .isEqualTo(record.bundleReference().bundleVersion());
+    assertThat(issuedOwnerTuple.bundleReference().sourceVersion())
+        .isEqualTo(record.bundleReference().sourceVersion());
+    assertThat(issuedOwnerTuple.bundleReference().sourceFence())
+        .isEqualTo(record.bundleReference().sourceFence());
+    assertThat(issuedOwnerTuple.bundleReference().linearization())
+        .isEqualTo(record.bundleReference().linearization());
+
+    byte[] decryptedEnvelope =
+        responseCrypto.decrypt(
+            new AccountResponseEnvelopeCryptography.EncryptedResponseEnvelope(
+                record.encryptedResponseEnvelope()),
+            new AccountResponseEnvelopeCryptography.Binding(
+                "human-start-session-authorization/v1",
+                AccountStartSessionOperatorAuthorizationService.envelopeBindingRequestId(
+                    tuple.controlPlaneRequestId()),
+                MessageDigest.getInstance("SHA-256").digest(exactTuple),
+                record.issuanceWorkloadUri(),
+                record.issuanceOperationId().toString(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.empty(),
+                record.issuanceFence(),
+                AccountControlUiAuthority.canonical(bundle.authorityTuple()),
+                AccountControlUiAuthority.canonical(bundle.membershipVersion()),
+                bundle.canonicalBytes()),
+            record.responseEnvelopeExpiresAt());
+    Map<String, Object> storedResponse =
+        JsonMapper.builder().build().readValue(decryptedEnvelope, new TypeReference<>() {});
+    assertThat(storedResponse.keySet())
+        .containsExactlyInAnyOrder(
+            "operatorAuthorizationReference",
+            "authorizationReferenceFingerprint",
+            "expiresAt",
+            "authorityEvidenceBundle",
+            "bundleReference");
+    assertThat(storedResponse).doesNotContainKey("originalAccountPostAuthorizationTuple");
+    java.util.Arrays.fill(decryptedEnvelope, (byte) 0);
     assertThat(AccountStartSessionOperatorAuthorizationService.envelopeBindingRequestId(requestId))
         .isEqualTo(
             java.util.HexFormat.of()
@@ -490,6 +542,8 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         .isEqualTo(issued.get().operatorAuthorizationReference());
     assertThat(recovered.get().authorityEvidenceBundle())
         .containsExactly(issued.get().authorityEvidenceBundle());
+    assertThat(recovered.get().originalAccountPostAuthorizationTuple())
+        .containsExactly(issued.get().originalAccountPostAuthorizationTuple());
 
     UUID ownerAttemptId = UUID.randomUUID();
     long ownerFence = 18L;
@@ -506,6 +560,8 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     operationClock.setInstant(record.referenceExpiresAt().minusMillis(1));
     gameSessionContext().run(() -> firstRedemption.set(service.redeem(redeemRequest)));
     assertThat(firstRedemption.get().replay()).isFalse();
+    assertThat(firstRedemption.get().originalAccountPostAuthorizationTuple())
+        .containsExactly(issued.get().originalAccountPostAuthorizationTuple());
 
     AtomicReference<RedemptionResult> recoveredRetry = new AtomicReference<>();
     operationClock.setInstant(record.referenceExpiresAt().plusSeconds(1));
@@ -520,6 +576,8 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         .isEqualTo(firstRedemption.get().issuanceOperationId());
     assertThat(recoveredRetry.get().issuanceFence())
         .isEqualTo(firstRedemption.get().issuanceFence());
+    assertThat(recoveredRetry.get().originalAccountPostAuthorizationTuple())
+        .containsExactly(firstRedemption.get().originalAccountPostAuthorizationTuple());
 
     AtomicReference<RedemptionResult> postEnvelopeRetry = new AtomicReference<>();
     operationClock.setInstant(record.responseEnvelopeExpiresAt());
