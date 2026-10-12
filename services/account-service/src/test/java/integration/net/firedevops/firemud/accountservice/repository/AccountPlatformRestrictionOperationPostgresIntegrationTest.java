@@ -557,12 +557,10 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
                       : currentProjection.get("result_id", UUID.class);
               var sourceKind =
                   category == Category.ACCOUNT_SECURITY_LOCK
-                      ? net.firedevops.firemud.accountservice.dto
-                          .AccountPlatformRestrictionMutationRequest.SourceKind
-                          .ACCOUNT_SECURITY_RECOVERY
-                      : net.firedevops.firemud.accountservice.dto
-                          .AccountPlatformRestrictionMutationRequest.SourceKind
-                          .LOGGING_ADMIN_MODERATION;
+                      ? (state == RestrictionState.RESTRICTED
+                          ? SourceKind.ACCOUNT_SECURITY_POLICY
+                          : SourceKind.ACCOUNT_SECURITY_RECOVERY)
+                      : SourceKind.LOGGING_ADMIN_MODERATION;
               var request =
                   new AccountPlatformRestrictionMutationRequest(
                       UUID.randomUUID(),
