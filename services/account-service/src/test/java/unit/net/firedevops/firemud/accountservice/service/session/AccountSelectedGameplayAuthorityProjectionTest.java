@@ -25,10 +25,10 @@ public class AccountSelectedGameplayAuthorityProjectionTest {
   void independentMembershipVersionAndGenerationSurviveExactEventRoundTrip() {
     var value =
         AccountSelectedGameplayAuthorityProjection.membership(
-            member(ACCOUNT, TENANT, "1", "7", "2"), 9L);
+            member(ACCOUNT, TENANT, "1", "7", "2"));
     assertThat(value.generation()).isEqualTo(new BigInteger("2"));
     assertThat(value.membershipVersion()).isEqualTo(new BigInteger("7"));
-    assertThat(value.sourceVersion()).isEqualTo(new BigInteger("9"));
+    assertThat(value.sourceVersion()).isEqualTo(new BigInteger("2"));
     assertThat(
             AccountSelectedGameplayAuthorityProjection.decode(
                     value.canonicalBytes(), ACCOUNT, TENANT)
@@ -39,22 +39,27 @@ public class AccountSelectedGameplayAuthorityProjectionTest {
                 AccountSelectedGameplayAuthorityProjection.decode(
                     value.canonicalBytes(), UUID.randomUUID(), TENANT))
         .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                AccountSelectedGameplayAuthorityProjection.membership(
+                    member(ACCOUNT, TENANT, "1", "7", "2"), 9L))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test
   void noSequenceGapEqualCheckpointConflictOrRegressionIsAdopted() {
     var first =
         AccountSelectedGameplayAuthorityProjection.membership(
-            member(ACCOUNT, TENANT, "1", "7", "2"), 9L);
+            member(ACCOUNT, TENANT, "1", "7", "2"));
     first.requireSuccessorOf(null);
     first.requireSuccessorOf(first);
     var second =
         AccountSelectedGameplayAuthorityProjection.membership(
-            member(ACCOUNT, TENANT, "2", "8", "2"), 9L);
+            member(ACCOUNT, TENANT, "2", "8", "2"));
     second.requireSuccessorOf(first); // Non-revoking version advancement is independent.
     var gap =
         AccountSelectedGameplayAuthorityProjection.membership(
-            member(ACCOUNT, TENANT, "3", "9", "2"), 9L);
+            member(ACCOUNT, TENANT, "3", "9", "2"));
     assertThatThrownBy(() -> gap.requireSuccessorOf(first))
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> second.requireSuccessorOf(null))
@@ -63,7 +68,7 @@ public class AccountSelectedGameplayAuthorityProjectionTest {
         .isInstanceOf(IllegalArgumentException.class);
     var conflict =
         AccountSelectedGameplayAuthorityProjection.membership(
-            member(ACCOUNT, TENANT, "1", "8", "2"), 9L);
+            member(ACCOUNT, TENANT, "1", "8", "2"));
     assertThatThrownBy(() -> conflict.requireSuccessorOf(first))
         .isInstanceOf(IllegalArgumentException.class);
   }
@@ -72,15 +77,15 @@ public class AccountSelectedGameplayAuthorityProjectionTest {
   void duplicateExtraAliasAndMissingEventFailClosed() {
     var value =
         AccountSelectedGameplayAuthorityProjection.membership(
-            member(ACCOUNT, TENANT, "1", "7", "2"), 9L);
+            member(ACCOUNT, TENANT, "1", "7", "2"));
     String json = new String(value.canonicalBytes(), StandardCharsets.UTF_8);
     for (String malformed :
         List.of(
             json.replace(
-                "\"sourceVersion\":\"9\"", "\"sourceVersion\":\"9\",\"sourceVersion\":\"9\""),
-            json.replace("\"sourceVersion\":\"9\"", "\"generation\":\"9\""),
-            json.replace("\"sourceVersion\":\"9\"", "\"sourceVersion\":\"9\",\"extra\":true"),
-            json.replace("\"sourceVersion\":\"9\"", "\"sourceVersion\":9"))) {
+                "\"sourceVersion\":\"2\"", "\"sourceVersion\":\"2\",\"sourceVersion\":\"2\""),
+            json.replace("\"sourceVersion\":\"2\"", "\"generation\":\"2\""),
+            json.replace("\"sourceVersion\":\"2\"", "\"sourceVersion\":\"2\",\"extra\":true"),
+            json.replace("\"sourceVersion\":\"2\"", "\"sourceVersion\":2"))) {
       assertThatThrownBy(
               () ->
                   AccountSelectedGameplayAuthorityProjection.decode(

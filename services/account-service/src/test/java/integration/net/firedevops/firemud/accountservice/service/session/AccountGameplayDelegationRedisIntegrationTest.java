@@ -107,6 +107,7 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.GenericContainer;
@@ -532,13 +533,110 @@ class AccountGameplayDelegationRedisIntegrationTest {
               Arrays.deepEquals(
                   redis.readSelectedAuthorityProjections(accountId, selectedTenant), selected))
           .isTrue();
+      byte[] tenantSequenceTwo = tenantProjectionFixture(selectedTenant, 3L, 3L, 2L);
+      byte[] membershipSequenceTwo =
+          membershipProjectionFixture(accountId, selectedTenant, "2", "3", "1");
+      int beforeFirstPublicationAboveOne = writerProvider.openedConnections();
+      assertThatThrownBy(
+              () ->
+                  redis.publishSelectedAuthorityEvent(
+                      accountId, selectedTenant, false, null, membershipSequenceTwo))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThat(writerProvider.openedConnections()).isEqualTo(beforeFirstPublicationAboveOne);
+      assertThatThrownBy(
+              () ->
+                  redis.publishSelectedAuthorityEvent(
+                      accountId,
+                      selectedTenant,
+                      false,
+                      selected[3],
+                      membershipProjectionFixture(accountId, selectedTenant, "3", "4", "1")))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThat(
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, true, selected[2], tenantSequenceTwo))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, true, selected[2], tenantSequenceTwo))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY);
+      assertThat(
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, false, selected[3], membershipSequenceTwo))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, false, selected[3], membershipSequenceTwo))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY);
+      assertThatThrownBy(
+              () ->
+                  redis.publishSelectedAuthorityEvent(
+                      accountId, selectedTenant, false, null, membershipSequenceTwo))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThatThrownBy(
+              () ->
+                  redis.publishSelectedAuthorityEvent(
+                      accountId,
+                      selectedTenant,
+                      false,
+                      selected[3],
+                      membershipProjectionFixture(accountId, selectedTenant, "3", "4", "1")))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      admin.del(ascii(tenantKey));
+      admin.del(ascii(memberKey));
+      assertThatThrownBy(
+              () ->
+                  redis.publishSelectedAuthorityEvent(
+                      accountId, selectedTenant, true, selected[2], tenantSequenceTwo))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThatThrownBy(
+              () ->
+                  redis.publishSelectedAuthorityEvent(
+                      accountId, selectedTenant, false, selected[3], membershipSequenceTwo))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThat(
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, true, null, selected[2]))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, true, selected[2], tenantSequenceTwo))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, false, null, selected[3]))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(
+              redis.publishSelectedAuthorityEvent(
+                  accountId, selectedTenant, false, selected[3], membershipSequenceTwo))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(admin.get(ascii(tenantKey))).containsExactly(tenantSequenceTwo);
+      assertThat(admin.get(ascii(memberKey))).containsExactly(membershipSequenceTwo);
+      assertThatThrownBy(
+              () ->
+                  redis.publishSelectedAuthorityEvent(
+                      accountId, selectedTenant, false, null, selected[3]))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThatThrownBy(
+              () ->
+                  redis.publishSelectedAuthorityEvent(
+                      accountId, selectedTenant, true, null, selected[2]))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       byte[][] gap = selected.clone();
       gap[3] = membershipProjectionFixture(accountId, selectedTenant, "3", "4", "1");
       assertThatThrownBy(
               () -> redis.publishSelectedAuthorityProjections(accountId, selectedTenant, gap))
           .isInstanceOf(
               AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
-      assertThat(admin.get(ascii(memberKey))).containsExactly(selected[3]);
+      assertThat(admin.get(ascii(memberKey))).containsExactly(membershipSequenceTwo);
       admin.pexpire(ascii(memberKey), 60_000L);
       assertThatThrownBy(() -> redis.readSelectedAuthorityProjections(accountId, selectedTenant))
           .isInstanceOf(
@@ -564,6 +662,163 @@ class AccountGameplayDelegationRedisIntegrationTest {
   void activeTransitionRequiresRealCommittedOwnerReadbackAndPreservesExactExpiry()
       throws Exception {
     exerciseActiveTransition();
+  }
+
+  @Test
+  void retainedPostgresPagesReplayToRedisWithCapturedHeadLossAndGapRecovery() {
+    RedisClient writer = redisClient(writerUri);
+    RedisClient fixtureAdmin = redisClient(fixtureAdminUri);
+    StatefulRedisConnection<byte[], byte[]> adminConnection = null;
+    Set<String> ownedKeys = new LinkedHashSet<>();
+    try {
+      TestContext database = newPostgresContext();
+      AccountAuthorityOutboxRepository outbox =
+          new AccountAuthorityOutboxRepository(database.dsl());
+      UUID accountId = UUID.randomUUID();
+      UUID tenantId = UUID.randomUUID();
+      String stream = "account:auth-authority:v1:membership/" + accountId + "/" + tenantId;
+      String redisKey =
+          AccountSelectedGameplayAuthorityProjection.MEMBERSHIP_PREFIX + accountId + ":" + tenantId;
+      TrackedProvider writerProvider = new TrackedProvider(writer);
+      AccountGameplayDelegationRedisClient redis = redisClient(writerProvider);
+
+      for (long sequence = 1L; sequence <= 129L; sequence++) {
+        long requestedSequence = sequence;
+        String requestId = "member-request-" + requestedSequence;
+        inTransaction(
+            database,
+            () ->
+                outbox.append(
+                    stream,
+                    requestId,
+                    actualSequence -> {
+                      if (actualSequence != requestedSequence) {
+                        throw new IllegalStateException("Unexpected outbox fixture sequence");
+                      }
+                      var event = membershipOutboxEventFixture(accountId, tenantId, actualSequence);
+                      return new AccountAuthorityOutboxRepository.EventEvidence(
+                          event.eventId(), event.eventDigest(), event.canonicalJsonUtf8());
+                    }));
+      }
+      AccountAuthorityOutboxRepository.Checkpoint capturedHead =
+          inTransaction(database, () -> outbox.readCheckpoint(stream).orElseThrow());
+      assertThat(capturedHead.outboxSequence()).isEqualTo(129L);
+      inTransaction(
+          database,
+          () ->
+              outbox.append(
+                  stream,
+                  "member-request-130",
+                  actualSequence -> {
+                    var event = membershipOutboxEventFixture(accountId, tenantId, actualSequence);
+                    return new AccountAuthorityOutboxRepository.EventEvidence(
+                        event.eventId(), event.eventDigest(), event.canonicalJsonUtf8());
+                  }));
+
+      List<AccountAuthorityOutboxRepository.Event> firstPage =
+          inTransaction(
+              database, () -> outbox.findEventPage(stream, 0L, capturedHead.outboxSequence()));
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThat(firstPage).hasSize(AccountAuthorityOutboxRepository.MAX_EVENT_HISTORY_PAGE_SIZE);
+      assertThat(firstPage.getFirst().outboxSequence()).isEqualTo(1L);
+      assertThat(firstPage.getLast().outboxSequence()).isEqualTo(128L);
+      List<AccountAuthorityOutboxRepository.Event> secondPage =
+          inTransaction(
+              database,
+              () ->
+                  outbox.findEventPage(
+                      stream, firstPage.getLast().outboxSequence(), capturedHead.outboxSequence()));
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThat(secondPage).hasSize(1);
+      assertThat(secondPage.getFirst().outboxSequence()).isEqualTo(129L);
+      assertThat(
+              inTransaction(
+                  database,
+                  () ->
+                      outbox.findEventPage(
+                          stream, capturedHead.outboxSequence(), capturedHead.outboxSequence())))
+          .isEmpty();
+      assertThat(
+              inTransaction(database, () -> outbox.readCheckpoint(stream).orElseThrow())
+                  .outboxSequence())
+          .isEqualTo(130L);
+
+      adminConnection = fixtureAdmin.connect(ByteArrayCodec.INSTANCE);
+      RedisCommands<byte[], byte[]> admin = adminConnection.sync();
+      assertThat(admin.aclWhoami()).isEqualTo(FIXTURE_ADMIN_IDENTITY);
+      assertThat(admin.get(ascii(redisKey))).isNull();
+      ownedKeys.add(redisKey);
+
+      byte[] priorBytes = null;
+      byte[] beforeFinalBytes = null;
+      byte[] finalBytes = null;
+      for (AccountAuthorityOutboxRepository.Event row : concatPages(firstPage, secondPage)) {
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+        byte[] candidateBytes = membershipProjectionFromOutboxRow(row, accountId, tenantId);
+        var outcome =
+            redis.publishSelectedAuthorityEvent(
+                accountId, tenantId, false, priorBytes, candidateBytes);
+        assertThat(outcome)
+            .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+        beforeFinalBytes = priorBytes;
+        priorBytes = candidateBytes;
+        finalBytes = candidateBytes;
+      }
+      assertThat(finalBytes).isNotNull();
+      assertThat(admin.get(ascii(redisKey))).containsExactly(finalBytes);
+      assertThat(admin.pttl(ascii(redisKey))).isEqualTo(-1L);
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThat(
+              redis.publishSelectedAuthorityEvent(
+                  accountId, tenantId, false, beforeFinalBytes, finalBytes))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY);
+
+      // Redis loss is recovered from the real retained SQL prefix. Deliberately presenting the
+      // sequence-three event with sequence two as its predecessor while Redis holds sequence one
+      // exercises the server CAS gap fence; replaying two and three then repairs the lost head.
+      admin.del(ascii(redisKey));
+      assertThat(admin.get(ascii(redisKey))).isNull();
+      List<AccountAuthorityOutboxRepository.Event> recoveryPrefix =
+          inTransaction(database, () -> outbox.findEventPage(stream, 0L, 3L));
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThat(recoveryPrefix).hasSize(3);
+      byte[] sequenceOne =
+          membershipProjectionFromOutboxRow(recoveryPrefix.get(0), accountId, tenantId);
+      byte[] sequenceTwo =
+          membershipProjectionFromOutboxRow(recoveryPrefix.get(1), accountId, tenantId);
+      byte[] sequenceThree =
+          membershipProjectionFromOutboxRow(recoveryPrefix.get(2), accountId, tenantId);
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThat(redis.publishSelectedAuthorityEvent(accountId, tenantId, false, null, sequenceOne))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThatThrownBy(
+              () ->
+                  redis.publishSelectedAuthorityEvent(
+                      accountId, tenantId, false, sequenceTwo, sequenceThree))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThat(admin.get(ascii(redisKey))).containsExactly(sequenceOne);
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThat(
+              redis.publishSelectedAuthorityEvent(
+                  accountId, tenantId, false, sequenceOne, sequenceTwo))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThat(
+              redis.publishSelectedAuthorityEvent(
+                  accountId, tenantId, false, sequenceTwo, sequenceThree))
+          .isEqualTo(AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
+      assertThat(admin.get(ascii(redisKey))).containsExactly(sequenceThree);
+    } finally {
+      if (adminConnection != null) {
+        RedisCommands<byte[], byte[]> admin = adminConnection.sync();
+        for (String key : ownedKeys) admin.del(ascii(key));
+        adminConnection.close();
+      }
+      writer.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+      fixtureAdmin.shutdown(Duration.ZERO, Duration.ofSeconds(2));
+    }
   }
 
   private void exerciseActiveTransition() throws Exception {
@@ -1370,6 +1625,93 @@ class AccountGameplayDelegationRedisIntegrationTest {
     };
   }
 
+  private static List<AccountAuthorityOutboxRepository.Event> concatPages(
+      List<AccountAuthorityOutboxRepository.Event> first,
+      List<AccountAuthorityOutboxRepository.Event> second) {
+    List<AccountAuthorityOutboxRepository.Event> events =
+        new ArrayList<>(first.size() + second.size());
+    events.addAll(first);
+    events.addAll(second);
+    return List.copyOf(events);
+  }
+
+  private static net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec
+          .MembershipEvent
+      membershipOutboxEventFixture(UUID account, UUID tenant, long sequence) {
+    String sequenceText = Long.toString(sequence);
+    return net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.seal(
+        Map.ofEntries(
+            Map.entry(
+                "schemaVersion",
+                net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec
+                    .SCHEMA_VERSION),
+            Map.entry(
+                "eventType",
+                net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec
+                    .EVENT_TYPE),
+            Map.entry("eventId", "member-event-" + sequenceText),
+            Map.entry("requestId", "member-request-" + sequenceText),
+            Map.entry(
+                "outboxStreamKey",
+                "account:auth-authority:v1:membership/" + account + "/" + tenant),
+            Map.entry("outboxSequence", sequenceText),
+            Map.entry("sourceScope", "membership/" + account + "/" + tenant),
+            Map.entry("accountId", account.toString()),
+            Map.entry("tenantId", tenant.toString()),
+            Map.entry("membershipExists", true),
+            Map.entry("membershipLifecycleState", "ACTIVE"),
+            Map.entry("membershipVersion", Map.of(tenant.toString(), Long.toString(sequence + 1L))),
+            Map.entry("membershipAuthorityGeneration", "1"),
+            Map.entry(
+                "authorityTuple",
+                Map.of(
+                    "issuerAuthGeneration",
+                    "1",
+                    "accountAuthorityGeneration",
+                    "1",
+                    "tenantAuthorityGeneration",
+                    Map.of(tenant.toString(), "2"),
+                    "membershipAuthorityGeneration",
+                    Map.of(tenant.toString(), "1"),
+                    "privateRealmGrantVersions",
+                    List.of())),
+            Map.entry("issuanceFence", "1"),
+            Map.entry("roles", List.of("player")),
+            Map.entry("gameplayAdmissionAllowed", true),
+            Map.entry("callerBoundAuthorityInvalidated", false)));
+  }
+
+  private static byte[] membershipProjectionFromOutboxRow(
+      AccountAuthorityOutboxRepository.Event row, UUID account, UUID tenant) {
+    var event =
+        net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.verify(
+            new String(row.payload(), StandardCharsets.UTF_8));
+    long sequence = Long.parseLong(event.outboxSequence());
+    if (!row.outboxStreamKey().equals(event.outboxStreamKey())
+        || row.outboxSequence() != sequence
+        || !row.requestId().equals(event.requestId())
+        || !row.eventId().equals(event.eventId())
+        || !row.eventDigest().equals(event.eventDigest())
+        || !account.toString().equals(event.accountId())
+        || !tenant.toString().equals(event.tenantId())
+        || !Arrays.equals(row.payload(), event.canonicalJsonUtf8())) {
+      throw new IllegalStateException("PostgreSQL retained membership row contradicts its event");
+    }
+    return selectedProjectionBytes(
+        Map.of(
+            "schemaVersion", AccountSelectedGameplayAuthorityProjection.MEMBERSHIP_SCHEMA,
+            "accountId", event.accountId(),
+            "tenantId", event.tenantId(),
+            "membershipAuthorityGeneration", event.membershipAuthorityGeneration(),
+            "membershipVersion", event.membershipVersion().get(event.tenantId()),
+            "sourceVersion", event.membershipAuthorityGeneration(),
+            "outboxStreamKey", event.outboxStreamKey(),
+            "outboxSequence", event.outboxSequence(),
+            "sourceEvent", event.canonicalJson()),
+        account,
+        tenant);
+  }
+
   private static byte[] membershipProjectionFixture(
       UUID account, UUID tenant, String sequence, String version, String generation) {
     var event =
@@ -1425,6 +1767,67 @@ class AccountGameplayDelegationRedisIntegrationTest {
             "outboxSequence", event.outboxSequence(),
             "sourceEvent", event.canonicalJson()),
         account,
+        tenant);
+  }
+
+  private static byte[] tenantProjectionFixture(
+      UUID tenant, long generation, long sourceVersion, long outboxSequence) {
+    UUID creation = UUID.fromString("72a18e29-57c0-48be-a9e7-bd7b681d7720");
+    UUID operation = UUID.fromString("a750fb1f-3e5d-40e6-b51e-160ef64d24ec");
+    String digest = "sha256:" + "a".repeat(64);
+    var source =
+        new net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence(
+            1,
+            "account-service",
+            creation,
+            operation,
+            digest,
+            tenant,
+            91L,
+            "demo-source",
+            "NEW_GAME_ROW",
+            net.firedevops.firemud.common.tenant.GameTenantCreationDigest.evidenceDigest(
+                "account-service",
+                creation,
+                operation,
+                digest,
+                tenant,
+                91L,
+                "demo-source",
+                "NEW_GAME_ROW"));
+    UUID requestId =
+        UUID.nameUUIDFromBytes(
+            ("tenant-authority-request-" + outboxSequence).getBytes(StandardCharsets.UTF_8));
+    var request =
+        new DemoTenantEntitlementRequest(
+            requestId,
+            tenant,
+            creation,
+            digest,
+            outboxSequence == 1L ? null : outboxSequence - 1L,
+            outboxSequence == 1L ? null : generation - 1L,
+            outboxSequence == 1L ? null : sourceVersion - 1L,
+            true,
+            true,
+            true,
+            true,
+            new DemoTenantEntitlementRequest.Quotas(1L, 1L, 1L));
+    var billing =
+        DemoTenantEntitlementEventV1Codec.seal(
+            request, source, outboxSequence, generation, sourceVersion, outboxSequence);
+    var event =
+        TenantAuthorityEventV1Codec.seal(
+            request, source, generation, sourceVersion, outboxSequence, billing);
+    return selectedProjectionBytes(
+        Map.of(
+            "schemaVersion", AccountSelectedGameplayAuthorityProjection.TENANT_SCHEMA,
+            "tenantId", tenant.toString(),
+            "tenantAuthorityGeneration", Long.toString(event.tenantAuthorityGeneration()),
+            "sourceVersion", Long.toString(event.tenantAuthoritySourceVersion()),
+            "outboxStreamKey", event.outboxStreamKey(),
+            "outboxSequence", Long.toString(event.outboxSequence()),
+            "sourceEvent", new String(event.payload(), StandardCharsets.UTF_8)),
+        null,
         tenant);
   }
 
