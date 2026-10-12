@@ -193,7 +193,7 @@ class VersionAssetArtifactServiceImplTest {
   }
 
   @Test
-  void repairFailsClosedWhenManifestHashDrifts() {
+  void repairRecordsManifestMismatchErrorDetailsFromExporter() {
     VersionAssetArtifact artifact = new VersionAssetArtifact();
     artifact.setTenantId("tenant-1");
     artifact.setVersionId(7L);
@@ -257,7 +257,7 @@ class VersionAssetArtifactServiceImplTest {
   }
 
   @Test
-  void repairFailsClosedWhenAttestedArtifactDigestDrifts() {
+  void repairRecordsAttestedDigestMismatchErrorDetailsFromExporter() {
     VersionAssetArtifact artifact = new VersionAssetArtifact();
     artifact.setTenantId("tenant-1");
     artifact.setVersionId(7L);
