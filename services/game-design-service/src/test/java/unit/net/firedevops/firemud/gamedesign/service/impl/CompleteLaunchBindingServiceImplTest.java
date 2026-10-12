@@ -560,7 +560,7 @@ class CompleteLaunchBindingServiceImplTest {
             PublishParticipantKey.WORLD_MANAGEMENT.name(),
             Long.toString(VERSION_ID),
             null,
-            "commit-1",
+            "commit-12",
             CONTENT_DIGEST,
             99,
             null,
@@ -583,7 +583,7 @@ class CompleteLaunchBindingServiceImplTest {
             bundle.artifactDigests(),
             false,
             null));
-    assertDenied();
+    assertDenied("PARTICIPANT_EVIDENCE_INVALID");
 
     List<PublishParticipantDigestDto> failed =
         new java.util.ArrayList<>(bundle.participantDigests());
