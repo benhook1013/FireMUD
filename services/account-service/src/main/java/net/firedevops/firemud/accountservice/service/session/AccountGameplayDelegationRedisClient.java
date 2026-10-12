@@ -10,10 +10,12 @@ import io.lettuce.core.protocol.CommandArgs;
 import io.lettuce.core.protocol.ProtocolKeyword;
 import java.io.IOException;
 import java.io.InputStream;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -21,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.CommittedCandidateVerificationData;
 import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository.PendingIntent;
@@ -76,6 +79,7 @@ public final class AccountGameplayDelegationRedisClient {
   private final AcknowledgementRequirements acknowledgementRequirements;
   private final int maxRecordBytes;
   private final ClassLoader resourceClassLoader;
+  private volatile SelectedProjectionScript selectedProjectionScript;
 
   public AccountGameplayDelegationRedisClient(
       AccountCoordinationPinnedConnectionProvider connectionProvider,
@@ -434,42 +438,91 @@ public final class AccountGameplayDelegationRedisClient {
       boolean tenantProjection,
       byte[] priorProjectionBytes,
       byte[] candidateProjectionBytes) {
+    return publishSelectedAuthorityEventPage(
+        accountId,
+        tenantId,
+        tenantProjection,
+        priorProjectionBytes,
+        java.util.Collections.singletonList(candidateProjectionBytes));
+  }
+
+  /**
+   * Validates and applies one contiguous retained-event page on one pinned connection. Each event
+   * still executes its own predecessor CAS in order; durability and exact readback are acknowledged
+   * once for the page's final head.
+   */
+  public ProjectionPublicationOutcome publishSelectedAuthorityEventPage(
+      java.util.UUID accountId,
+      java.util.UUID tenantId,
+      boolean tenantProjection,
+      byte[] priorProjectionBytes,
+      List<byte[]> candidateProjectionBytes) {
     if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     requireCanonicalAccountUuid(accountId);
     requireCanonicalAccountUuid(tenantId);
-    final AccountSelectedGameplayAuthorityProjection candidate;
-    final AccountSelectedGameplayAuthorityProjection prior;
+    if (candidateProjectionBytes == null) throw unavailable();
+    int candidateCount = candidateProjectionBytes.size();
+    if (candidateCount <= 0
+        || candidateCount > AccountAuthorityOutboxRepository.MAX_EVENT_HISTORY_PAGE_SIZE
+        || (priorProjectionBytes != null
+            && (priorProjectionBytes.length == 0
+                || priorProjectionBytes.length
+                    > AccountGameplayDelegationAuthorityProjection.MAX_PROJECTION_BYTES))) {
+      throw unavailable();
+    }
+    final List<byte[]> candidates = new ArrayList<>(candidateCount);
+    final List<AccountSelectedGameplayAuthorityProjection> decodedCandidates =
+        new ArrayList<>(candidateCount);
+    AccountSelectedGameplayAuthorityProjection prior;
+    byte[] priorBytes = priorProjectionBytes == null ? null : priorProjectionBytes.clone();
     try {
-      candidate =
-          AccountSelectedGameplayAuthorityProjection.decode(
-              candidateProjectionBytes, tenantProjection ? null : accountId, tenantId);
       prior =
-          priorProjectionBytes == null
+          priorBytes == null
               ? null
               : AccountSelectedGameplayAuthorityProjection.decode(
-                  priorProjectionBytes, tenantProjection ? null : accountId, tenantId);
-    } catch (IllegalArgumentException invalidProjection) {
+                  priorBytes, tenantProjection ? null : accountId, tenantId);
+      String expectedKey =
+          tenantProjection
+              ? AccountSelectedGameplayAuthorityProjection.TENANT_PREFIX + tenantId
+              : AccountSelectedGameplayAuthorityProjection.MEMBERSHIP_PREFIX
+                  + accountId
+                  + ":"
+                  + tenantId;
+      if (prior != null && !expectedKey.equals(prior.key())) throw unavailable();
+      for (int index = 0; index < candidateCount; index++) {
+        if (candidates.size() >= AccountAuthorityOutboxRepository.MAX_EVENT_HISTORY_PAGE_SIZE)
+          throw unavailable();
+        byte[] suppliedCandidate = candidateProjectionBytes.get(index);
+        if (suppliedCandidate == null
+            || suppliedCandidate.length == 0
+            || suppliedCandidate.length
+                > AccountGameplayDelegationAuthorityProjection.MAX_PROJECTION_BYTES) {
+          throw unavailable();
+        }
+        byte[] candidateBytes = suppliedCandidate.clone();
+        AccountSelectedGameplayAuthorityProjection candidate =
+            AccountSelectedGameplayAuthorityProjection.decode(
+                candidateBytes, tenantProjection ? null : accountId, tenantId);
+        if (!expectedKey.equals(candidate.key())) throw unavailable();
+        boolean exactSingleRetry =
+            candidateCount == 1 && prior != null && Arrays.equals(candidateBytes, priorBytes);
+        if (prior != null
+            && !exactSingleRetry
+            && !candidate.sequence().equals(prior.sequence().add(BigInteger.ONE))) {
+          throw unavailable();
+        }
+        candidate.requireSuccessorOf(prior);
+        candidates.add(candidateBytes);
+        decodedCandidates.add(candidate);
+        prior = candidate;
+      }
+      if (candidates.size() != candidateCount || candidateProjectionBytes.size() != candidateCount)
+        throw unavailable();
+    } catch (RuntimeException invalidProjectionOrHistory) {
       throw unavailable();
     }
-    try {
-      candidate.requireSuccessorOf(prior);
-    } catch (IllegalArgumentException invalidHistory) {
-      throw unavailable();
-    }
-    String expectedKey =
-        tenantProjection
-            ? AccountSelectedGameplayAuthorityProjection.TENANT_PREFIX + tenantId
-            : AccountSelectedGameplayAuthorityProjection.MEMBERSHIP_PREFIX
-                + accountId
-                + ":"
-                + tenantId;
-    if (!expectedKey.equals(candidate.key())) throw unavailable();
-    if (prior != null
-        && prior.key().startsWith(AccountSelectedGameplayAuthorityProjection.TENANT_PREFIX)
-            != tenantProjection) throw unavailable();
-    RedisScriptDescriptor descriptor = requireSelectedProjectionDescriptor(tenantProjection);
-    byte[] scriptSource = readScriptSource(descriptor);
-    if (!descriptor.sha256().equals(sha256(scriptSource))) throw unavailable();
+    SelectedProjectionScript selectedScript = selectedProjectionScript(tenantProjection);
+    byte[] scriptSource = selectedScript.source().clone();
     final StatefulRedisConnection<byte[], byte[]> connection;
     try {
       connection = connectionProvider.openPinnedConnection();
@@ -483,24 +536,40 @@ public final class AccountGameplayDelegationRedisClient {
       String loadedSha = commands.scriptLoad(scriptSource);
       if (loadedSha == null
           || !SHA1.matcher(loadedSha).matches()
-          || !sha1(scriptSource).equals(loadedSha)) throw unavailable();
-      byte[] key = ascii(candidate.key());
-      Long result =
-          commands.evalsha(
-              loadedSha,
-              ScriptOutputType.INTEGER,
-              new byte[][] {key},
-              ascii(prior == null ? "ABSENT" : "PRESENT"),
-              prior == null ? new byte[0] : priorProjectionBytes,
-              candidateProjectionBytes);
-      requireProjectionResult(result);
+          || !selectedScript.redisSha1().equals(loadedSha)) throw unavailable();
+      boolean exactRetry = true;
+      AccountSelectedGameplayAuthorityProjection predecessor =
+          priorBytes == null
+              ? null
+              : AccountSelectedGameplayAuthorityProjection.decode(
+                  priorBytes, tenantProjection ? null : accountId, tenantId);
+      byte[] predecessorBytes = priorBytes;
+      for (int index = 0; index < decodedCandidates.size(); index++) {
+        AccountSelectedGameplayAuthorityProjection candidate = decodedCandidates.get(index);
+        byte[] key = ascii(candidate.key());
+        Long result =
+            commands.evalsha(
+                loadedSha,
+                ScriptOutputType.INTEGER,
+                new byte[][] {key},
+                ascii(predecessor == null ? "ABSENT" : "PRESENT"),
+                predecessorBytes == null ? new byte[0] : predecessorBytes,
+                candidates.get(index));
+        requireProjectionResult(result);
+        exactRetry &= result == 0L;
+        predecessor = candidate;
+        predecessorBytes = candidates.get(index);
+      }
       requireDurabilityAcknowledgement(commands);
+      AccountSelectedGameplayAuthorityProjection finalCandidate = decodedCandidates.getLast();
+      byte[] finalCandidateBytes = candidates.getLast();
+      byte[] key = ascii(finalCandidate.key());
       byte[] readback = commands.get(key);
-      if (!Arrays.equals(candidateProjectionBytes, readback)
+      if (!Arrays.equals(finalCandidateBytes, readback)
           || !Long.valueOf(-1L).equals(commands.pttl(key))) throw unavailable();
       AccountSelectedGameplayAuthorityProjection.decode(
           readback, tenantProjection ? null : accountId, tenantId);
-      return result == 0L
+      return exactRetry
           ? ProjectionPublicationOutcome.EXACT_RETRY
           : ProjectionPublicationOutcome.PUBLISHED;
     } catch (RuntimeException ex) {
@@ -1182,6 +1251,34 @@ public final class AccountGameplayDelegationRedisClient {
     return descriptor;
   }
 
+  private SelectedProjectionScript selectedProjectionScript(boolean tenant) {
+    RedisScriptDescriptor descriptor = requireSelectedProjectionDescriptor(tenant);
+    SelectedProjectionScript cached = selectedProjectionScript;
+    if (cached == null) {
+      synchronized (this) {
+        cached = selectedProjectionScript;
+        if (cached == null) {
+          RedisScriptDescriptor tenantDescriptor = requireSelectedProjectionDescriptor(true);
+          RedisScriptDescriptor membershipDescriptor = requireSelectedProjectionDescriptor(false);
+          byte[] source = readScriptSource(tenantDescriptor);
+          String sourceHash = sha256(source);
+          if (!sourceHash.equals(tenantDescriptor.sha256())
+              || !sourceHash.equals(membershipDescriptor.sha256())
+              || !tenantDescriptor.resourcePath().equals(membershipDescriptor.resourcePath())) {
+            throw unavailable();
+          }
+          cached =
+              new SelectedProjectionScript(
+                  tenantDescriptor.resourcePath(), sourceHash, sha1(source), source.clone());
+          selectedProjectionScript = cached;
+        }
+      }
+    }
+    if (!descriptor.resourcePath().equals(cached.resourcePath())
+        || !descriptor.sha256().equals(cached.sha256())) throw unavailable();
+    return cached;
+  }
+
   private static RedisCommands<byte[], byte[]> requirePinnedCommands(
       StatefulRedisConnection<byte[], byte[]> connection) {
     if (!connection.isOpen()) throw unavailable();
@@ -1571,6 +1668,13 @@ public final class AccountGameplayDelegationRedisClient {
   }
 
   private record Acknowledgement(long localAofCount, long replicaAofCount) {}
+
+  private record SelectedProjectionScript(
+      String resourcePath, String sha256, String redisSha1, byte[] source) {
+    private SelectedProjectionScript {
+      source = source.clone();
+    }
+  }
 
   public enum ProjectionPublicationOutcome {
     PUBLISHED,
