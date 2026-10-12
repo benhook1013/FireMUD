@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -902,6 +903,12 @@ class WorldLifecycleCommandServiceImplTest {
     verify(worldInstanceRepository, org.mockito.Mockito.times(1)).save(any(WorldInstance.class));
     verify(provider, org.mockito.Mockito.times(2)).requireAuthenticatedEvidence();
     verify(gameDesignClient, never()).getPublishedReleaseBundle(42L, 11L);
+
+    var inOrder = inOrder(provider, worldInstanceRepository);
+    inOrder.verify(provider).requireAuthenticatedEvidence();
+    inOrder.verify(worldInstanceRepository).findByTenantIdAndGameInstanceIdForUpdate(42L, 101L);
+    inOrder.verify(provider).requireAuthenticatedEvidence();
+    inOrder.verify(worldInstanceRepository).findByTenantIdAndGameInstanceIdForUpdate(42L, 101L);
   }
 
   @Test
