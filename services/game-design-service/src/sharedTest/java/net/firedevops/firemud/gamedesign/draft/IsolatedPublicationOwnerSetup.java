@@ -298,6 +298,7 @@ public final class IsolatedPublicationOwnerSetup {
             + manifestDigest
             + "\"}]");
     artifact.setCandidateSnapshotVersionId(snapshot.versionId());
+    artifact.setCandidatePublicBaseUrl("https://assets.example.invalid/assets");
     new VersionAssetArtifactRepository(dsl).save(artifact);
     attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
     attempts.save(attempt);

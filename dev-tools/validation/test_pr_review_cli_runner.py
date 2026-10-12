@@ -76,16 +76,9 @@ class ReviewResultOutputTests(unittest.TestCase):
 
         self.assertIn("records cli-decision", result["next_step"])
         self.assertIn("records source finalize", result["next_step"])
-        self.assertIn("Post one public checkpoint", result["next_step"])
+        self.assertIn("records source finalize --run-id run.Abc123", result["next_step"])
         self.assertIn("authoritative counts", result["next_step"])
-        self.assertIn("normal evidence reader", result["next_step"])
-        self.assertEqual(
-            result["public_checkpoint_template"],
-            "CLI: <found> Found / <accepted> Accepted / <routed> Routed · "
-            f"{CANDIDATE} · 4 files · 1m 07s\n"
-            "<!-- firemud-cli-run: run.Abc123 -->\n"
-            "<!-- firemud-review-duration-seconds: 67 -->",
-        )
+        self.assertNotIn("public_checkpoint_template", result)
 
     def test_unsuccessful_cli_result_has_no_checkpoint_guidance(self):
         result = ReviewResult(
@@ -129,7 +122,7 @@ class ReviewResultOutputTests(unittest.TestCase):
         self.assertIn("capture recovery and adjudication workflow", result["next_step"])
         self.assertNotIn("records cli-decision", result["next_step"])
         self.assertNotIn("records source finalize", result["next_step"])
-        self.assertIn("public_checkpoint_template", result)
+        self.assertNotIn("public_checkpoint_template", result)
 
 
 class BoundedAllocationCliParserTests(unittest.TestCase):
@@ -3422,6 +3415,39 @@ class CliReviewRunnerTests(unittest.TestCase):
                 run_cli_review(selected, github=FakeGitHub(), source_root=root, runner=commands)
             self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
             self.assertEqual(json.loads(record_path.read_text()), original_record)
+
+    def test_forced_cli_overlap_uses_actual_base_instead_of_configured_parent(self):
+        anchor = {**cli_anchor(), "actual_base_ref": "develop", "actual_base_sha": PARENT}
+        changes = (
+            {}, {"child_head": ADVANCED}, {"actual_base_ref": "other-base"},
+            {"actual_base_sha": ADVANCED}, {"parent_head": ADVANCED},
+            {"parent_identity": None},
+            {"merge_base": ADVANCED}, {"patch_id": "different-patch"},
+        )
+        for changed in changes:
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / ".git").mkdir()
+                selected = target(
+                    parent_ref="configured-parent", parent_head=ADVANCED,
+                    merge_base=PARENT, patch_identity="queue-patch", reconciled=False,
+                )
+                record_path = write_hosted_trigger(root / ".git", anchor={**anchor, **changed})
+                original_record = json.loads(record_path.read_text())
+                commands = FakeCommands(root)
+                with patch(
+                    "pr_review.cli_runner.github_api.fetch_pull_request", return_value=hosted_payload(),
+                ):
+                    if changed:
+                        with self.assertRaisesRegex(ReviewRunnerError, "reservation_state=active_unverified"):
+                            run_cli_review(selected, github=FakeGitHub(), source_root=root, runner=commands, force=True)
+                    else:
+                        result = run_cli_review(
+                            selected, github=FakeGitHub(), source_root=root, runner=commands, force=True,
+                        )
+                        self.assertEqual(result.parent_sha, PARENT)
+                self.assertEqual(any(call[0][0] == "coderabbit" for call in commands.calls), not bool(changed))
+                self.assertEqual(json.loads(record_path.read_text()), original_record)
 
     def test_active_hosted_review_selects_published_head_for_local_ahead_candidate(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -32,6 +32,7 @@ from .cli_runner import (
     PullRequestSnapshot,
     ReviewTarget,
     StaleReviewTargetError,
+    _hosted_actual_anchor_matches,
 )
 from .git_merge import TestMergeError, test_merge_tree
 from .hosted import parse_timestamp, prepare_full_trigger
@@ -854,10 +855,20 @@ class ReviewController:
         expected_pr: int,
         current_head: str,
         current_anchor: AnchorFacts | None,
+        actual_anchor: Mapping[str, Any] | None = None,
     ) -> list[Any]:
         """Apply the runner's exact-anchor Hosted overlap fence to CLI policy."""
 
         projected = list(cli_history)
+        active_count = sum(
+            isinstance(value, Mapping)
+            and _field(value, "held") is True
+            and isinstance(_field(value, "checkpoint", "checkpoint_id"), str)
+            and _field(value, "checkpoint", "checkpoint_id").startswith("trigger:")
+            and _field(value, "terminal") is not True
+            and _field(value, "rate_limited") is not True
+            for value in hosted_history
+        )
         for value in hosted_history:
             if not isinstance(value, Mapping):
                 continue
@@ -898,6 +909,25 @@ class ReviewController:
                 current_head,
                 current_anchor,
             )
+            observed_anchor = _field(value, "anchor")
+            if isinstance(observed_anchor, Mapping) and (
+                "actual_base_ref" in observed_anchor or "actual_base_sha" in observed_anchor
+            ):
+                # Modern forced requests retain the actual provider base and
+                # configured queue anchor separately. Queue movement alone
+                # does not change the provider's exact published candidate.
+                active_response = (
+                    _hosted_actual_anchor_matches(observed_anchor, actual_anchor)
+                    and ReviewController._hosted_active_response_overlaps_cli(
+                        value,
+                        expected_pr,
+                        current_head,
+                        current_anchor,
+                        require_response_identity=True,
+                        actual_anchor=actual_anchor,
+                    )
+                )
+            active_response = active_response and active_count == 1
             if active_response:
                 # LiveEvidence emits this exact reason only after trigger_state
                 # verifies an active response and its immutable numeric ID.
@@ -917,6 +947,42 @@ class ReviewController:
                 }
             )
         return projected
+
+    def _actual_hosted_overlap_anchor(
+        self,
+        live: LivePullRequest,
+        hosted_history: Sequence[Any],
+        remote_heads: Mapping[str, str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Prove the live provider base only when a modern active request needs it."""
+        if not any(
+            isinstance(value, Mapping)
+            and _field(value, "state") == "active"
+            and isinstance(_field(value, "anchor"), Mapping)
+            and "actual_base_ref" in _field(value, "anchor")
+            for value in hosted_history
+        ):
+            return None
+        try:
+            base_tip = (
+                remote_heads.get(live.base_ref) if remote_heads is not None else self.git.branch_head(live.base_ref)
+            )
+            base_tip = _sha(base_tip, "actual Hosted overlap base tip")
+            merge_base = _sha(self.git.merge_base(base_tip, live.head), "actual Hosted overlap merge base")
+            patch_id = self.git.patch_identity(merge_base, live.head)
+            if not isinstance(live.base_ref, str) or not live.base_ref or not isinstance(patch_id, str) or not patch_id:
+                return None
+            return {
+                "pr": live.number,
+                "child_head": live.head,
+                "parent_head": base_tip,
+                "merge_base": merge_base,
+                "patch_id": patch_id,
+                "actual_base_ref": live.base_ref,
+                "actual_base_sha": base_tip,
+            }
+        except (ControllerError, OSError, RuntimeError, ValueError, KeyError, subprocess.SubprocessError):
+            return None
 
     @staticmethod
     def _cli_streak_review(value: Any, expected_pr: int) -> tuple[str | None, AnchorFacts | None] | None:
@@ -1138,6 +1204,7 @@ class ReviewController:
         current_anchor: AnchorFacts | None,
         *,
         require_response_identity: bool = False,
+        actual_anchor: Mapping[str, Any] | None = None,
     ) -> bool:
         checkpoint = _field(observation, "checkpoint", "checkpoint_id")
         observed_head = _field(observation, "head", "reviewed_head")
@@ -1155,7 +1222,11 @@ class ReviewController:
             and re.fullmatch(r"[0-9a-fA-F]{40}", observed_head) is not None
             and observed_head.casefold() == current_head.casefold()
             and exact_trigger
-            and ReviewController._hosted_anchor_matches(observation, expected_pr, current_anchor)
+            and (
+                ReviewController._hosted_anchor_matches(observation, expected_pr, current_anchor)
+                if actual_anchor is None
+                else _hosted_actual_anchor_matches(_field(observation, "anchor"), actual_anchor)
+            )
         ):
             return False
         if not require_response_identity:
@@ -4963,6 +5034,7 @@ class ReviewController:
                     pr,
                     live[pr].head,
                     self._reconciled_anchor(pr, live[pr], reconciliation),
+                    self._actual_hosted_overlap_anchor(live[pr], current_histories[policy.Channel.HOSTED][pr]),
                 ),
                 pr,
                 state,
@@ -5547,6 +5619,7 @@ class ReviewController:
                     pr,
                     live[pr].head,
                     self._reconciled_anchor(pr, live[pr], reconciliation),
+                    self._actual_hosted_overlap_anchor(live[pr], hosted_history[pr], selection_remote_heads),
                 ),
                 pr,
                 selection_state,
@@ -5809,11 +5882,14 @@ class ReviewController:
         reason: str | None = None,
         proof: str | None = None,
         target_pr: int | None = None,
+        unassigned: bool = False,
     ) -> dict[str, Any]:
         """Disposition one target-owned route while preserving its stable identity."""
 
         if not re.fullmatch(r"[0-9a-f]{24}", route_id):
             raise ControllerError("route ID must be a 24-character stable route identity")
+        if not isinstance(unassigned, bool) or (unassigned and (decision != "retargeted" or target_pr is not None)):
+            raise ControllerError("--unassigned requires retargeted without --target-pr")
         if decision == "accepted-fixed":
             if not isinstance(proof, str) or not proof.strip() or reason is not None or target_pr is not None:
                 raise ControllerError("accepted-fixed route disposition requires only --proof")
@@ -5830,14 +5906,12 @@ class ReviewController:
                 raise ControllerError("rejected route reason must not contain control characters")
         elif decision == "retargeted":
             if (
-                isinstance(target_pr, bool)
-                or not isinstance(target_pr, int)
-                or target_pr <= 0
+                (not unassigned and (type(target_pr) is not int or target_pr <= 0))
                 or not isinstance(reason, str)
                 or not reason.strip()
                 or proof is not None
             ):
-                raise ControllerError("retargeted route disposition requires --target-pr and --reason")
+                raise ControllerError("retargeted route disposition requires --target-pr or --unassigned and --reason")
             if len(f"Retargeted: {reason}") > 500 or any(ord(character) < 0x20 for character in reason):
                 raise ControllerError("retarget reason must fit within a 500-character route observation")
         else:
@@ -5863,7 +5937,7 @@ class ReviewController:
                 selected = dataclasses.replace(
                     existing,
                     target_pr=target_pr,
-                    observations=(*existing.observations, f"Retargeted: {reason}"),
+                    observations=(*existing.observations, f"{'Unassigned' if unassigned else 'Retargeted'}: {reason}"),
                     target_history=(*existing.target_history, existing.target_pr),
                 )
             return dataclasses.replace(
@@ -6236,6 +6310,7 @@ class ReviewController:
                     pr,
                     live[pr].head,
                     self._reconciled_anchor(pr, live[pr], reconciliation),
+                    self._actual_hosted_overlap_anchor(live[pr], histories[policy.Channel.HOSTED][pr]),
                 ),
                 pr,
                 state,

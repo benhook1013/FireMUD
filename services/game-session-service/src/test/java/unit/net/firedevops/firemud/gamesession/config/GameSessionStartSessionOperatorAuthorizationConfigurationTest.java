@@ -22,7 +22,9 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.core.env.Environment;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 class GameSessionStartSessionOperatorAuthorizationConfigurationTest {
   private static final String OWNER_OPT_IN = "firemud.start-session-operator-authorization.enabled";
@@ -160,6 +162,37 @@ class GameSessionStartSessionOperatorAuthorizationConfigurationTest {
                     }));
   }
 
+  @Test
+  void enabledCompositionUsesCanonicalTransactionManagerWhenMultipleArePresent() {
+    withTlsReloadDisabled(
+        () ->
+            new ApplicationContextRunner()
+                .withUserConfiguration(
+                    GameSessionStartSessionOperatorAuthorizationConfiguration.class,
+                    Dependencies.class,
+                    AdditionalTransactionManager.class)
+                .withPropertyValues(completeOwnerProperties())
+                .run(
+                    context -> {
+                      assertThat(context).hasNotFailed();
+                      var coordinator =
+                          context.getBean(
+                              GameSessionStartSessionOperatorAuthorizationCoordinator.class);
+                      var ownerTransaction =
+                          (TransactionTemplate)
+                              ReflectionTestUtils.getField(coordinator, "ownerTransaction");
+                      var canonicalTransactionManager =
+                          context.getBean("transactionManager", PlatformTransactionManager.class);
+                      var otherTransactionManager =
+                          context.getBean(
+                              "otherTransactionManager", PlatformTransactionManager.class);
+
+                      assertThat(ownerTransaction.getTransactionManager())
+                          .isSameAs(canonicalTransactionManager)
+                          .isNotSameAs(otherTransactionManager);
+                    }));
+  }
+
   private static String[] completeOwnerProperties() {
     return new String[] {
       OWNER_OPT_IN + "=true",
@@ -197,7 +230,7 @@ class GameSessionStartSessionOperatorAuthorizationConfigurationTest {
       return mock(DSLContext.class);
     }
 
-    @Bean
+    @Bean(name = "transactionManager")
     @ConditionalOnProperty(
         name = "test.start-session.transaction-manager-enabled",
         havingValue = "true",
@@ -228,6 +261,14 @@ class GameSessionStartSessionOperatorAuthorizationConfigurationTest {
     @Bean
     BlockingGrpcStubCustomizer startSessionGrpcStubCustomizer() {
       return BlockingGrpcStubCustomizer.noop();
+    }
+  }
+
+  @TestConfiguration(proxyBeanMethods = false)
+  static class AdditionalTransactionManager {
+    @Bean(name = "otherTransactionManager")
+    PlatformTransactionManager otherTransactionManager() {
+      return mock(PlatformTransactionManager.class);
     }
   }
 

@@ -17,6 +17,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -51,6 +52,34 @@ HOSTED_ACTIVE_RESPONSE_REASON = "CodeRabbit acknowledged that the full review is
 HOSTED_CLI_OVERLAP_HOLD_REASON = (
     "CLI can overlap Hosted only when the active Hosted request is attributable to the exact published head"
 )
+
+
+def _hosted_actual_anchor_matches(value: Any, expected: Mapping[str, Any] | None) -> bool:
+    """Match the provider's actual candidate without substituting queue context."""
+    if not isinstance(value, Mapping) or expected is None:
+        return False
+    if type(value.get("pr")) is not int or value["pr"] != expected.get("pr"):
+        return False
+    for name in ("child_head", "parent_head", "merge_base", "actual_base_sha"):
+        actual, wanted = value.get(name), expected.get(name)
+        if (
+            not isinstance(actual, str)
+            or re.fullmatch(r"[0-9a-fA-F]{40}", actual) is None
+            or not isinstance(wanted, str)
+            or actual.casefold() != wanted.casefold()
+        ):
+            return False
+    return (
+        isinstance(value.get("parent_identity"), str)
+        and bool(value["parent_identity"].strip())
+        and isinstance(value.get("actual_base_ref"), str)
+        and bool(value["actual_base_ref"])
+        and value["actual_base_ref"] == expected.get("actual_base_ref")
+        and isinstance(value.get("patch_id"), str)
+        and bool(value["patch_id"])
+        and value["patch_id"] == expected.get("patch_id")
+        and value["parent_head"].casefold() == value["actual_base_sha"].casefold()
+    )
 
 
 class WrongTargetError(ReviewRunnerError):
@@ -256,8 +285,9 @@ class ReviewResult:
             if self.source_recorded and self.warning is None:
                 result["next_step"] = (
                     "Adjudicate every finding with records cli-decision, then finalize with records source finalize "
-                    "to establish authoritative counts. Post one public checkpoint using the template below; the "
-                    "normal evidence reader binds it to this capture through the run marker. See PR Lifecycle for "
+                    f"--run-id {self.run_id} to establish authoritative counts and publish the checkpoint; "
+                    "the normal evidence reader "
+                    "binds it to this capture through the run marker. See PR Lifecycle for "
                     "the complete CLI workflow."
                 )
             else:
@@ -266,12 +296,6 @@ class ReviewResult:
                     "Follow PR Lifecycle's CLI capture recovery and adjudication workflow before finalizing counts "
                     "or posting a checkpoint."
                 )
-            result["public_checkpoint_template"] = (
-                f"CLI: <found> Found / <accepted> Accepted / <routed> Routed · {self.candidate_sha} · "
-                f"{self.candidate_files} files · {evidence.format_duration_seconds(self.duration_seconds)}\n"
-                f"{result['checkpoint_marker']}\n"
-                f"{result['duration_marker']}"
-            )
         if self.warning:
             result["warning"] = self.warning
         return result
@@ -679,6 +703,8 @@ def _select_candidate_for_hosted_overlap(
     def same_anchor(value: Any) -> bool:
         if not isinstance(value, Mapping) or expected_anchor is None:
             return False
+        if "actual_base_ref" in value or "actual_base_sha" in value:
+            return _hosted_actual_anchor_matches(value, expected_anchor)
         if type(value.get("pr")) is not int or value["pr"] != pr_number:
             return False
         for name in ("child_head", "parent_head", "merge_base"):
@@ -1148,14 +1174,16 @@ def run_cli_review(
                 _sha(target.merge_base, "selected merge base") == published_merge_base
             )
             expected_anchor = None
-            if selected_patch_matches and selected_merge_base_matches:
+            if force or (selected_patch_matches and selected_merge_base_matches):
                 expected_anchor = {
                     "pr": target.snapshot.number,
                     "child_head": child_head,
                     "parent_identity": str(target.parent.pr_number or target.parent.ref_name),
-                    "parent_head": target.parent.head_sha,
+                    "parent_head": review_base_tip if force else target.parent.head_sha,
                     "merge_base": published_merge_base,
                     "patch_id": published_patch_identity,
+                    "actual_base_ref": review_base_ref,
+                    "actual_base_sha": review_base_tip,
                 }
             if budget is not None:
                 budget.set_phase("hosted_overlap_preflight", total=1)

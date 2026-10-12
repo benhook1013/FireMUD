@@ -35,7 +35,7 @@ from .controller import (
     ReviewController,
     StaleReviewTarget,
 )
-from .sqlite_review_records import RecordsNotBootstrapped, ReviewRecordsError, SqliteReviewRecords
+from .sqlite_review_records import RecordsNotBootstrapped, ReviewRecordsError, SqliteReviewRecords, _redact_archive_text
 from .state import (
     ControllerStateStore,
     StateError,
@@ -2604,7 +2604,46 @@ class HostedRunner:
                 raise
             # This history write is secondary to the terminal observation
             # already used for admission and must not block the next request.
-            return f"SQLite Hosted terminal capture failed ({type(exc).__name__})."
+            # Keep the failure with the predecessor reservation that will be
+            # archived before the next POST. Never attach it to the new request.
+            message, _ = _redact_archive_text(str(exc))
+            message = " ".join(re.sub(r"[\x00-\x1f\x7f]", " ", message).split())[:1000]
+            cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
+            cause_message, _ = _redact_archive_text(str(cause)) if cause is not None else ("", 0)
+            diagnostic = {
+                "phase": "predecessor_terminal_capture",
+                "pr": pr,
+                "attempt_id": attempt_id if re.fullmatch(r"[A-Za-z0-9._-]{1,100}", attempt_id) else "unknown",
+                "trigger_id": (
+                    record.get("trigger", {}).get("id")
+                    if isinstance(record.get("trigger"), Mapping)
+                    and type(record["trigger"].get("id")) is int
+                    and record["trigger"]["id"] > 0
+                    else None
+                ),
+                "error_type": type(exc).__name__,
+                "message": message,
+                "cause_type": type(cause).__name__ if cause is not None else None,
+                "cause_message": (
+                    " ".join(re.sub(r"[\x00-\x1f\x7f]", " ", cause_message).split())[:1000]
+                    if cause is not None else None
+                ),
+            }
+            retained = False
+            try:
+                current = hosted.load_trigger_reservation(record_path, self.repo, pr)
+                if current == record:
+                    hosted.atomic_write_json(record_path, {**current, "sqlite_capture_diagnostic": diagnostic})
+                    retained = True
+            except (OSError, ValueError, TypeError):
+                pass
+            return (
+                f"SQLite Hosted terminal capture failed ({type(exc).__name__}); "
+                f"phase=predecessor_terminal_capture attempt_id={diagnostic['attempt_id']} "
+                f"trigger_id={diagnostic['trigger_id']} detail={message} "
+                f"cause={diagnostic['cause_type']}: {diagnostic['cause_message']} "
+                f"diagnostic_retained={str(retained).lower()}."
+            )
         return None
 
     def _finish_unposted_attempt(self, attempt_id: str) -> None:
@@ -3726,6 +3765,7 @@ class HostedRunner:
                         metadata={
                             "repository": self.repo,
                             "anchor": anchor,
+                            "reviewed_file_count": before.changed_files,
                             **({"configured_queue_anchor": configured_queue_anchor} if force else {}),
                             "actual_base_ref": review_base_ref,
                             "actual_base_sha": actual_review_base_sha,

@@ -1416,6 +1416,27 @@ class ControllerTests(unittest.TestCase):
             )
         self.assertEqual(controller.store.load(), dispositioned_state)
 
+    def test_legacy_route_can_be_unassigned_without_dispositioning(self):
+        controller = self.make({})
+        route = controller.record_route(source_pr=2828, source_channel="hosted", source_review="901",
+                                        source_finding="thread-77", observation="retained obligation",
+                                        target_pr=2879)["route"]
+        before = controller.store.load()
+        for arguments in ({"unassigned": True, "target_pr": 2880},
+                          {"unassigned": True, "reason": ""},
+                          {"unassigned": True, "proof": "claimed proof"}):
+            with self.assertRaises(ControllerError):
+                controller.decide_route(route_id=route["route_id"], decision="retargeted",
+                                        **{"reason": "new owner pending", **arguments})
+            self.assertEqual(controller.store.load(), before)
+        result = controller.decide_route(route_id=route["route_id"], decision="retargeted",
+                                         unassigned=True, reason="new owner pending")["route"]
+        self.assertEqual(result["status"], "open")
+        self.assertIsNone(result["target_pr"])
+        self.assertEqual(result["target_history"], [2879])
+        self.assertEqual(result["observations"][-1], "Unassigned: new owner pending")
+        self.assertEqual(controller.list_routes(unassigned=True)["count"], 1)
+
     def test_retarget_reason_limit_includes_prefix_and_fails_before_state_update(self):
         controller = self.make({})
         route = controller.record_route(
@@ -11792,6 +11813,92 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(report["prs"][0]["channels"]["cli"], "MISSING_EVIDENCE")
         self.assertEqual(report["review_targets"]["cli"]["status"], "MISSING_EVIDENCE")
         self.assertEqual(controller.resolve_cli_target().snapshot.head_sha, HEAD_1)
+
+    def test_actual_hosted_candidate_survives_configured_parent_merge_for_cli_selection(self):
+        anchor = {
+            **hosted_anchor(parent_identity="former-parent", parent_head=PARENT),
+            "actual_base_ref": "former-parent",
+            "actual_base_sha": PARENT,
+        }
+        active = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:123",
+            "held": True,
+            "reason": HOSTED_ACTIVE_RESPONSE_REASON,
+            "anchor": anchor,
+            "state": "active",
+            "active_reservation": True,
+            "attributable": True,
+            "terminal": False,
+            "trigger_id": 123,
+            "response_id": 124,
+        }
+        changes = (
+            {},
+            {"child_head": HEAD_2},
+            {"actual_base_ref": "different-base"},
+            {"actual_base_sha": HEAD_2},
+            {"parent_identity": None},
+            {"parent_head": HEAD_2},
+            {"merge_base": HEAD_2},
+            {"patch_id": "different-patch"},
+        )
+        for changed in changes:
+            with self.subTest(changed=changed):
+                observation = {**active, "anchor": {**anchor, **changed}}
+                controller = self.make(
+                    {1: pr(1, HEAD_1, "former-parent", PARENT)},
+                    {(1, "hosted"): [observation]},
+                    heads={"develop": HEAD_2, "former-parent": PARENT, "feature-1": HEAD_1},
+                )
+                controller.set_stack([1])
+
+                def adapter(candidate, **kwargs):
+                    self.assertTrue(kwargs["force"])
+                    kwargs["admit"](lambda: None)
+                    return candidate
+
+                controller.cli_adapter = adapter
+                if changed:
+                    with self.assertRaisesRegex(ControllerError, HOSTED_CLI_OVERLAP_HOLD_REASON):
+                        controller.run_cli(expected_pr=1, force=True)
+                else:
+                    selected = controller.run_cli(expected_pr=1, force=True)
+                    self.assertEqual(selected.snapshot.head_sha, HEAD_1)
+                    self.assertEqual(selected.parent.ref_name, "develop")
+                    self.assertEqual(selected.parent.head_sha, HEAD_2)
+                    self.assertEqual(selected.selected_base_ref_tip, PARENT)
+
+    def test_actual_hosted_overlap_still_refuses_duplicate_or_unverified_requests(self):
+        anchor = {
+            **hosted_anchor(parent_identity="former-parent", parent_head=PARENT),
+            "actual_base_ref": "former-parent",
+            "actual_base_sha": PARENT,
+        }
+        active = {
+            "pr": 1, "head": HEAD_1, "checkpoint": "trigger:123", "held": True,
+            "reason": HOSTED_ACTIVE_RESPONSE_REASON, "anchor": anchor, "state": "active",
+            "active_reservation": True, "attributable": True, "terminal": False,
+            "trigger_id": 123, "response_id": 124,
+        }
+        histories = (
+            [active, {**active, "checkpoint": "trigger:125", "trigger_id": 125}],
+            [{**active, "attributable": False}],
+            [{**active, "response_id": None}],
+            [{**active, "trigger_id": None}],
+            [{**active, "unstable": True}],
+            [{**active, "state": "awaiting_response", "response_id": None}],
+        )
+        for history in histories:
+            with self.subTest(history=history):
+                controller = self.make(
+                    {1: pr(1, HEAD_1, "former-parent", PARENT)}, {(1, "hosted"): history},
+                    heads={"develop": HEAD_2, "former-parent": PARENT, "feature-1": HEAD_1},
+                )
+                controller.set_stack([1])
+                with self.assertRaisesRegex(ControllerError, HOSTED_CLI_OVERLAP_HOLD_REASON):
+                    controller.resolve_cli_target()
 
     def test_active_review_target_hold_is_channel_specific(self):
         controller = self.make({1: pr(1, HEAD_1)})

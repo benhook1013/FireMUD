@@ -9,6 +9,7 @@ import net.firedevops.firemud.gamesession.client.StartSessionOperatorRedemptionC
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
 import net.firedevops.firemud.gamesession.service.GameSessionStartSessionOperatorAuthorizationCoordinator;
 import org.jooq.DSLContext;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -46,7 +47,7 @@ public class GameSessionStartSessionOperatorAuthorizationConfiguration {
       gameSessionStartSessionOperatorAuthorizationCoordinator(
           GameSessionStartSessionOperatorAttemptRepository attemptRepository,
           StartSessionOperatorRedemptionClient redemptionClient,
-          PlatformTransactionManager transactionManager,
+          @Qualifier("transactionManager") PlatformTransactionManager transactionManager,
           @Value("${firemud.grpc.workload-namespace}") String workloadNamespace) {
     return new GameSessionStartSessionOperatorAuthorizationCoordinator(
         attemptRepository, redemptionClient, transactionManager, workloadNamespace);
