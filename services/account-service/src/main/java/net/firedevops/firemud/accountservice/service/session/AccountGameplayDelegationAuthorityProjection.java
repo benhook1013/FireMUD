@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
@@ -104,15 +105,44 @@ public final class AccountGameplayDelegationAuthorityProjection {
     accountTransaction.setReadOnly(false);
   }
 
-  /** Four separate canonical keys on one pinned Redis connection; never an admission decision. */
+  /** Replays captured owner heads through pinned Redis CAS; never an admission decision. */
   public SelectedProjectionObservation publishSelectedCurrent(UUID accountId, UUID tenantId) {
     requireOutsideOwnerTransaction();
     SelectedSnapshot before = readSelectedSnapshot(accountId, tenantId);
     var outcome =
-        coordinationRedis.publishSelectedAuthorityProjections(accountId, tenantId, before.values());
+        coordinationRedis.publishAuthorityProjections(
+            accountId, before.values()[0], before.values()[1]);
+    byte[][] redisHeads = coordinationRedis.readSelectedAuthorityHeads(accountId, tenantId);
+    boolean exactRetry =
+        outcome == AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY;
+    exactRetry &=
+        replayRetainedHistory(
+            before.tenantCheckpoint(),
+            redisHeads[0],
+            before.values()[2],
+            accountId,
+            tenantId,
+            true);
+    exactRetry &=
+        replayRetainedHistory(
+            before.membershipCheckpoint(),
+            redisHeads[1],
+            before.values()[3],
+            accountId,
+            tenantId,
+            false);
+    byte[][] selectedReadback = coordinationRedis.readSelectedAuthorityHeads(accountId, tenantId);
+    if (!Arrays.equals(selectedReadback[0], before.values()[2])
+        || !Arrays.equals(selectedReadback[1], before.values()[3])) {
+      throw new ProjectionUnavailableException();
+    }
     SelectedSnapshot after = readSelectedSnapshot(accountId, tenantId);
     requireSameSelectedSnapshot(before, after);
-    return new SelectedProjectionObservation(after, outcome);
+    return new SelectedProjectionObservation(
+        after,
+        exactRetry
+            ? AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY
+            : AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.PUBLISHED);
   }
 
   /**
@@ -161,16 +191,28 @@ public final class AccountGameplayDelegationAuthorityProjection {
                       .orElseThrow(ProjectionUnavailableException::new);
               String memberStream =
                   "account:auth-authority:v1:membership/" + accountId + "/" + tenantId;
-              var checkpoint =
+              var memberCheckpoint =
                   selectedOwner
                       .outbox()
                       .readCheckpoint(memberStream)
                       .orElseThrow(ProjectionUnavailableException::new);
-              var event =
+              String tenantStream = "account:auth-authority:v1:tenant/" + tenantId;
+              var tenantCheckpoint =
                   selectedOwner
                       .outbox()
-                      .findEvent(memberStream, checkpoint.outboxSequence())
+                      .readCheckpoint(tenantStream)
                       .orElseThrow(ProjectionUnavailableException::new);
+              var memberEvent =
+                  selectedOwner
+                      .outbox()
+                      .findEvent(memberStream, memberCheckpoint.outboxSequence())
+                      .orElseThrow(ProjectionUnavailableException::new);
+              var tenantEvent =
+                  selectedOwner
+                      .outbox()
+                      .findEvent(tenantStream, tenantCheckpoint.outboxSequence())
+                      .orElseThrow(ProjectionUnavailableException::new);
+              var event = memberEvent;
               var verified =
                   MembershipAuthorityEventV1Codec.verify(
                       new String(event.payload(), StandardCharsets.UTF_8));
@@ -196,13 +238,23 @@ public final class AccountGameplayDelegationAuthorityProjection {
                   || member.getMembershipAuthorityGeneration()
                       != pair.membershipAuthorityGeneration()
                   || memberState.generation() != pair.membershipAuthorityGeneration()
-                  || checkpoint.outboxSequence() != pair.eventSequence()
-                  || !checkpoint.sourceEventId().equals(pair.eventId())
-                  || !checkpoint.sourceEventDigest().equals(pair.eventDigest())
+                  || memberState.sourceVersion() != memberState.generation()
+                  || !Long.toString(memberState.sourceVersion())
+                      .equals(verified.membershipAuthorityGeneration())
+                  || memberCheckpoint.outboxSequence() != pair.eventSequence()
+                  || !memberCheckpoint.sourceEventId().equals(pair.eventId())
+                  || !memberCheckpoint.sourceEventDigest().equals(pair.eventDigest())
                   || !event.eventId().equals(pair.eventId())
                   || !event.eventDigest().equals(pair.eventDigest())
-                  || !Long.toString(checkpoint.outboxSequence()).equals(verified.outboxSequence())
-                  || !checkpoint.outboxStreamKey().equals(verified.outboxStreamKey())
+                  || !Long.toString(memberCheckpoint.outboxSequence())
+                      .equals(verified.outboxSequence())
+                  || !memberCheckpoint.outboxStreamKey().equals(verified.outboxStreamKey())
+                  || tenantCheckpoint.outboxSequence() != tenant.outboxSequence()
+                  || !tenantCheckpoint.sourceEventId().equals(tenant.eventId().toString())
+                  || !tenantCheckpoint.sourceEventDigest().equals(tenant.eventDigest())
+                  || !tenantEvent.eventId().equals(tenant.eventId().toString())
+                  || !tenantEvent.eventDigest().equals(tenant.eventDigest())
+                  || !Arrays.equals(tenantEvent.payload(), tenant.payload())
                   || !Arrays.equals(event.payload(), verified.canonicalJsonUtf8())
                   || !accountId.toString().equals(verified.accountId())
                   || !tenantId.toString().equals(verified.tenantId())
@@ -256,6 +308,10 @@ public final class AccountGameplayDelegationAuthorityProjection {
                           "outboxStreamKey", tenant.tenantBillingStreamKey(),
                           "outboxSequence", Long.toString(tenant.tenantBillingSequence()))));
               byte[][] initial = canonicalProjectionPair(source);
+              byte[] tenantProjectionBytes =
+                  tenantProjection(tenantEvent, tenantId).canonicalBytes();
+              byte[] membershipProjection =
+                  membershipProjection(memberEvent, accountId, tenantId).canonicalBytes();
               return new SelectedSnapshot(
                   source,
                   composite,
@@ -264,16 +320,176 @@ public final class AccountGameplayDelegationAuthorityProjection {
                   new String(tenant.payload(), StandardCharsets.UTF_8),
                   canonical(tuple),
                   new byte[][] {
-                    initial[0],
-                    initial[1],
-                    AccountSelectedGameplayAuthorityProjection.tenant(tenant).canonicalBytes(),
-                    AccountSelectedGameplayAuthorityProjection.membership(
-                            verified, memberState.sourceVersion())
-                        .canonicalBytes()
-                  });
+                    initial[0], initial[1], tenantProjectionBytes, membershipProjection
+                  },
+                  tenantCheckpoint,
+                  memberCheckpoint);
             });
     if (result == null) throw new ProjectionUnavailableException();
     return result;
+  }
+
+  private boolean replayRetainedHistory(
+      AccountAuthorityOutboxRepository.Checkpoint checkpoint,
+      byte[] redisHead,
+      byte[] expectedHead,
+      UUID accountId,
+      UUID tenantId,
+      boolean tenant) {
+    String streamKey = checkpoint.outboxStreamKey();
+    if (checkpoint.outboxSequence() <= 0L || expectedHead == null || expectedHead.length == 0) {
+      throw new ProjectionUnavailableException();
+    }
+    long cursor = 0L;
+    AccountSelectedGameplayAuthorityProjection prior = null;
+    AccountAuthorityOutboxRepository.Event last = null;
+    if (redisHead != null) {
+      long redisSequence;
+      try {
+        var decoded =
+            AccountSelectedGameplayAuthorityProjection.decode(
+                redisHead, tenant ? null : accountId, tenantId);
+        redisSequence = decoded.sequence().longValueExact();
+      } catch (ArithmeticException | IllegalArgumentException invalidRedisHead) {
+        throw new ProjectionUnavailableException();
+      }
+      if (redisSequence > checkpoint.outboxSequence()) throw new ProjectionUnavailableException();
+      AccountAuthorityOutboxRepository.Event retainedHead =
+          accountTransaction.execute(
+              status ->
+                  selectedOwner
+                      .outbox()
+                      .findEvent(streamKey, redisSequence)
+                      .orElseThrow(ProjectionUnavailableException::new));
+      if (!streamKey.equals(retainedHead.outboxStreamKey())
+          || retainedHead.outboxSequence() != redisSequence) {
+        throw new ProjectionUnavailableException();
+      }
+      AccountSelectedGameplayAuthorityProjection retainedProjection =
+          tenant
+              ? tenantProjection(retainedHead, tenantId)
+              : membershipProjection(retainedHead, accountId, tenantId);
+      if (!Arrays.equals(redisHead, retainedProjection.canonicalBytes())) {
+        throw new ProjectionUnavailableException();
+      }
+      // A retained immutable event proves the cached prefix through this exact sequence. Resume
+      // after it instead of rereading the already-published prefix on every retry.
+      cursor = redisSequence;
+      prior = retainedProjection;
+      last = retainedHead;
+    }
+    boolean exactRetry = true;
+    while (cursor < checkpoint.outboxSequence()) {
+      long afterSequence = cursor;
+      List<AccountAuthorityOutboxRepository.Event> page =
+          accountTransaction.execute(
+              status ->
+                  selectedOwner
+                      .outbox()
+                      .findEventPage(streamKey, afterSequence, checkpoint.outboxSequence()));
+      if (page == null
+          || page.isEmpty()
+          || page.size() > AccountAuthorityOutboxRepository.MAX_EVENT_HISTORY_PAGE_SIZE) {
+        throw new ProjectionUnavailableException();
+      }
+      List<AccountSelectedGameplayAuthorityProjection> projections =
+          new java.util.ArrayList<>(page.size());
+      long pageCursor = cursor;
+      AccountSelectedGameplayAuthorityProjection pagePrior = prior;
+      for (AccountAuthorityOutboxRepository.Event event : page) {
+        long expectedSequence;
+        try {
+          expectedSequence = Math.addExact(pageCursor, 1L);
+        } catch (ArithmeticException overflow) {
+          throw new ProjectionUnavailableException();
+        }
+        if (!streamKey.equals(event.outboxStreamKey())
+            || event.outboxSequence() != expectedSequence
+            || event.outboxSequence() > checkpoint.outboxSequence()) {
+          throw new ProjectionUnavailableException();
+        }
+        AccountSelectedGameplayAuthorityProjection projection =
+            tenant
+                ? tenantProjection(event, tenantId)
+                : membershipProjection(event, accountId, tenantId);
+        try {
+          projection.requireSuccessorOf(pagePrior);
+        } catch (IllegalArgumentException invalidHistory) {
+          throw new ProjectionUnavailableException();
+        }
+        projections.add(projection);
+        pagePrior = projection;
+        pageCursor = event.outboxSequence();
+        last = event;
+      }
+      for (AccountSelectedGameplayAuthorityProjection projection : projections) {
+        var outcome =
+            coordinationRedis.publishSelectedAuthorityEvent(
+                accountId,
+                tenantId,
+                tenant,
+                prior == null ? null : prior.canonicalBytes(),
+                projection.canonicalBytes());
+        exactRetry &=
+            outcome
+                == AccountGameplayDelegationRedisClient.ProjectionPublicationOutcome.EXACT_RETRY;
+        prior = projection;
+      }
+      cursor = pageCursor;
+    }
+    if (last == null
+        || last.outboxSequence() != checkpoint.outboxSequence()
+        || !last.eventId().equals(checkpoint.sourceEventId())
+        || !last.eventDigest().equals(checkpoint.sourceEventDigest())
+        || prior == null
+        || !Arrays.equals(prior.canonicalBytes(), expectedHead)) {
+      throw new ProjectionUnavailableException();
+    }
+    return exactRetry;
+  }
+
+  private static AccountSelectedGameplayAuthorityProjection membershipProjection(
+      AccountAuthorityOutboxRepository.Event row, UUID accountId, UUID tenantId) {
+    try {
+      var event =
+          MembershipAuthorityEventV1Codec.verify(
+              StandardCharsets.UTF_8
+                  .newDecoder()
+                  .decode(ByteBuffer.wrap(row.payload()))
+                  .toString());
+      if (!row.requestId().equals(event.requestId())
+          || !row.eventId().equals(event.eventId())
+          || !row.eventDigest().equals(event.eventDigest())
+          || !row.outboxStreamKey().equals(event.outboxStreamKey())
+          || !Long.toString(row.outboxSequence()).equals(event.outboxSequence())
+          || !accountId.toString().equals(event.accountId())
+          || !tenantId.toString().equals(event.tenantId())
+          || !Arrays.equals(row.payload(), event.canonicalJsonUtf8())) {
+        throw new ProjectionUnavailableException();
+      }
+      return AccountSelectedGameplayAuthorityProjection.membership(event);
+    } catch (java.nio.charset.CharacterCodingException | IllegalArgumentException malformed) {
+      throw new ProjectionUnavailableException();
+    }
+  }
+
+  private static AccountSelectedGameplayAuthorityProjection tenantProjection(
+      AccountAuthorityOutboxRepository.Event row, UUID tenantId) {
+    try {
+      var event = TenantAuthorityEventV1Codec.verify(row.payload());
+      if (!row.requestId().equals(event.requestId().toString())
+          || !row.eventId().equals(event.eventId().toString())
+          || !row.eventDigest().equals(event.eventDigest())
+          || !row.outboxStreamKey().equals(event.outboxStreamKey())
+          || row.outboxSequence() != event.outboxSequence()
+          || !tenantId.equals(event.tenantId())
+          || !Arrays.equals(row.payload(), event.payload())) {
+        throw new ProjectionUnavailableException();
+      }
+      return AccountSelectedGameplayAuthorityProjection.tenant(event);
+    } catch (IllegalArgumentException malformed) {
+      throw new ProjectionUnavailableException();
+    }
   }
 
   private static void requireSameSelectedSnapshot(SelectedSnapshot before, SelectedSnapshot after) {
@@ -282,6 +498,8 @@ public final class AccountGameplayDelegationAuthorityProjection {
         || !before.pair().equals(after.pair())
         || !before.membershipEvent().equals(after.membershipEvent())
         || !before.tenantEvent().equals(after.tenantEvent())
+        || !before.tenantCheckpoint().equals(after.tenantCheckpoint())
+        || !before.membershipCheckpoint().equals(after.membershipCheckpoint())
         || !Arrays.equals(before.currentTuple(), after.currentTuple())
         || !Arrays.deepEquals(before.values(), after.values()))
       throw new StaleProjectionException();
@@ -308,7 +526,9 @@ public final class AccountGameplayDelegationAuthorityProjection {
       String membershipEvent,
       String tenantEvent,
       byte[] currentTuple,
-      byte[][] values) {}
+      byte[][] values,
+      AccountAuthorityOutboxRepository.Checkpoint tenantCheckpoint,
+      AccountAuthorityOutboxRepository.Checkpoint membershipCheckpoint) {}
 
   /** Owner-generated informational evidence. It cannot be fabricated as a positive caller proof. */
   public static final class SelectedProjectionObservation {
