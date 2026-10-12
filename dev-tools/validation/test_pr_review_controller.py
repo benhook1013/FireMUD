@@ -1416,6 +1416,27 @@ class ControllerTests(unittest.TestCase):
             )
         self.assertEqual(controller.store.load(), dispositioned_state)
 
+    def test_legacy_route_can_be_unassigned_without_dispositioning(self):
+        controller = self.make({})
+        route = controller.record_route(source_pr=2828, source_channel="hosted", source_review="901",
+                                        source_finding="thread-77", observation="retained obligation",
+                                        target_pr=2879)["route"]
+        before = controller.store.load()
+        for arguments in ({"unassigned": True, "target_pr": 2880},
+                          {"unassigned": True, "reason": ""},
+                          {"unassigned": True, "proof": "claimed proof"}):
+            with self.assertRaises(ControllerError):
+                controller.decide_route(route_id=route["route_id"], decision="retargeted",
+                                        **{"reason": "new owner pending", **arguments})
+            self.assertEqual(controller.store.load(), before)
+        result = controller.decide_route(route_id=route["route_id"], decision="retargeted",
+                                         unassigned=True, reason="new owner pending")["route"]
+        self.assertEqual(result["status"], "open")
+        self.assertIsNone(result["target_pr"])
+        self.assertEqual(result["target_history"], [2879])
+        self.assertEqual(result["observations"][-1], "Unassigned: new owner pending")
+        self.assertEqual(controller.list_routes(unassigned=True)["count"], 1)
+
     def test_retarget_reason_limit_includes_prefix_and_fails_before_state_update(self):
         controller = self.make({})
         route = controller.record_route(

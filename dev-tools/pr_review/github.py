@@ -1013,6 +1013,18 @@ query($owner:String!, $repo:String!, $number:Int!) {
     return pull_request
 
 
+def post_issue_comment(repo: str, pr: int, body: str) -> dict[str, Any]:
+    """Explicit publication only; callers own durable intent and retry recovery."""
+    completed = subprocess.run(
+        ["gh", "api", f"repos/{repo}/issues/{pr}/comments", "--method", "POST", "-f", f"body={body}"],
+        check=True, capture_output=True, text=True, timeout=GH_API_TIMEOUT_SECONDS,
+    )
+    value = json.loads(completed.stdout)
+    if not isinstance(value, dict):
+        raise TypeError("GitHub comment POST returned no comment object")
+    return value
+
+
 def fetch_authenticated_user() -> dict[str, Any]:
     """Read the current gh identity under the active Hosted preflight budget."""
 

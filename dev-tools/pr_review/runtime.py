@@ -3726,6 +3726,7 @@ class HostedRunner:
                         metadata={
                             "repository": self.repo,
                             "anchor": anchor,
+                            "reviewed_file_count": before.changed_files,
                             **({"configured_queue_anchor": configured_queue_anchor} if force else {}),
                             "actual_base_ref": review_base_ref,
                             "actual_base_sha": actual_review_base_sha,
