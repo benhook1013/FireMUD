@@ -386,9 +386,103 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ControllerError, "target_complete_history_prefetch"):
             controller.run_hosted(expected_pr=1)
 
-        self.assertEqual(prefetch_calls, [(1, 2)])
+        self.assertEqual(prefetch_calls, [(1,)])
         self.assertEqual(evidence.history_reads, [])
         adapter.assert_not_called()
+
+    def test_budgeted_hosted_expected_target_pages_only_the_required_history_prefix(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence(
+            {
+                (3, "hosted"): [{"pr": 3, "checkpoint": "later-completed", "completed": True}],
+                (3, "cli"): [{"pr": 3, "checkpoint": "later-cli-history", "completed": True}],
+            }
+        )
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+
+        with github.hosted_preflight_budget(timeout_seconds=30):
+            target = controller._target("hosted", expected_pr=1)
+
+        self.assertEqual(target.pr, 1)
+        self.assertEqual(set(evidence.history_reads), {(1, "hosted"), (1, "cli")})
+        self.assertEqual(set(evidence.request_history_reads), {(1, "hosted"), (2, "hosted"), (3, "hosted")})
+
+        with github.hosted_preflight_budget(timeout_seconds=30), self.assertRaises(WrongStackTarget):
+            controller._target("hosted", expected_pr=2)
+
+    def test_budgeted_hosted_prefix_still_obeys_prior_stop_frontier(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads, sqlite=True)
+        controller.set_stack(list(values))
+        controller.decide_stop(pr=1, channel="hosted", reason="no further discovery")
+        evidence.history_reads.clear()
+        self._enable_batch_status(controller, values)
+
+        with github.hosted_preflight_budget(timeout_seconds=30):
+            target = controller._target("hosted", expected_pr=2)
+
+        self.assertEqual(target.pr, 2)
+        self.assertIn((1, "hosted"), evidence.request_history_reads)
+        self.assertNotIn((1, "hosted"), evidence.history_reads)
+        self.assertEqual(set(evidence.history_reads), {(1, "cli"), (2, "hosted"), (2, "cli")})
+
+    def test_budgeted_hosted_expected_prefix_keeps_later_current_request_safety(self):
+        for signal, expected_status in (
+            ({"active_reservation": True}, None),
+            ({"rate_limited": True}, ReviewStatus.RATE_LIMITED),
+        ):
+            with self.subTest(signal=signal):
+                values, heads = _stacked_prs(3)
+                evidence = CountingEvidence({(3, "hosted"): [{"pr": 3, **signal}]})
+                controller = self.make(values, evidence, heads=heads)
+                controller.set_stack(list(values))
+                self._enable_batch_status(controller, values)
+                adapter = Mock()
+                controller.hosted_adapter = adapter
+
+                if expected_status is None:
+                    with github.hosted_preflight_budget(timeout_seconds=30), self.assertRaisesRegex(
+                        ControllerError, "repository-wide Hosted review activity"
+                    ):
+                        controller.run_hosted(expected_pr=1)
+                else:
+                    with github.hosted_preflight_budget(timeout_seconds=30), self.assertRaisesRegex(
+                        ControllerError, "cannot run: RATE_LIMITED"
+                    ):
+                        controller.run_hosted(expected_pr=1)
+                    self.assertEqual(expected_status, ReviewStatus.RATE_LIMITED)
+
+                adapter.assert_not_called()
+                expected_history = set() if expected_status is None else {(1, "hosted"), (1, "cli")}
+                self.assertEqual(set(evidence.history_reads), expected_history)
+
+    def test_budgeted_hosted_expected_prefix_fails_closed_on_request_history_errors(self):
+        values, heads = _stacked_prs(3)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads)
+        controller.set_stack(list(values))
+        self._enable_batch_status(controller, values)
+        adapter = Mock()
+        controller.hosted_adapter = adapter
+
+        def fail_later_request_history(pr, channel):
+            evidence.request_history_reads.append((pr, channel))
+            if pr == 3 and channel == "hosted":
+                raise ControllerError("current request evidence unavailable")
+            return []
+
+        evidence.request_history = fail_later_request_history
+        with github.hosted_preflight_budget(timeout_seconds=30), self.assertRaisesRegex(
+            ControllerError, "current Hosted activity for PR #3 cannot be verified"
+        ):
+            controller.run_hosted(expected_pr=1)
+
+        adapter.assert_not_called()
+        self.assertEqual(set(evidence.history_reads), set())
+        self.assertIn((3, "hosted"), evidence.request_history_reads)
 
     def test_hosted_history_prefetch_skips_request_only_histories_and_keeps_reconciliation_exception(self):
         values, heads = _stacked_prs(4, merged=(1,))
@@ -435,7 +529,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(read_counts_at_prefetch, [()])
         self.assertEqual(
             set(request_reads_at_prefetch[0]),
-            {(2, "hosted"), (2, "cli"), (3, "hosted"), (3, "cli")},
+            {(1, "hosted"), (2, "hosted"), (3, "hosted"), (4, "hosted"), (2, "cli"), (3, "cli")},
         )
         self.assertNotIn((1, "hosted"), evidence.history_reads)
         self.assertNotIn((1, "cli"), evidence.history_reads)
@@ -792,8 +886,9 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(select.call_args.args[4][Channel.HOSTED][1][0]["active_review"])
         self.assertEqual(calls, [(1, 2), (1, 2)])
         self.assertIsNot(snapshots[0], snapshots[1])
-        self.assertFalse(any(pr == 1 for pr, _ in evidence.history_reads + evidence.request_history_reads))
+        self.assertFalse(any(pr == 1 for pr, _ in evidence.history_reads))
         # A caller's expected target remains an assertion, never a selection override.
+        signal.clear()
         with github.hosted_preflight_budget(timeout_seconds=60), self.assertRaises(WrongStackTarget):
             controller._target("hosted", expected_pr=1)
 
@@ -10232,7 +10327,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(set(evidence.history_reads), {(1, "hosted"), (1, "cli")})
         self.assertIn("1:cli", controller.store.load().allocations)
 
-    def test_budgeted_hosted_expected_target_keeps_full_history_path(self):
+    def test_budgeted_hosted_expected_target_scopes_history_after_full_current_safety_scan(self):
         values, heads = _stacked_prs(3)
         evidence = CountingEvidence()
         controller = self.make(values, evidence, heads=heads)
@@ -10243,10 +10338,8 @@ class ControllerTests(unittest.TestCase):
             target = controller._target("hosted", expected_pr=1)
 
         self.assertEqual(target.pr, 1)
-        self.assertEqual(
-            set(evidence.history_reads),
-            {(number, channel) for number in values for channel in ("hosted", "cli")},
-        )
+        self.assertEqual(set(evidence.history_reads), {(1, "hosted"), (1, "cli")})
+        self.assertEqual(set(evidence.request_history_reads), {(1, "hosted"), (2, "hosted"), (3, "hosted")})
         self.assertEqual(evidence.active_target_reads, 0)
 
     def test_allocation_anchor_reuses_reconciled_anchor(self):
