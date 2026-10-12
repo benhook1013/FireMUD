@@ -170,5 +170,6 @@ Entry format:
 - `2026-10-13`: Local PostgreSQL availability can fail after container startup
   - Context: Gameplay’s #3120 final-parent full gate at `42c524c` selected 105 PostgreSQL cases but 13 errors in three suites reported connection refusal on ephemeral localhost ports, after the preceding complete gate at `d0362dd` passed all 105 cases.
   - Observation: Docker daemon availability and a started-container event do not prove a fixture’s JDBC endpoint remains reachable; the failure cause and responsible lifecycle are unknown. These connection errors do not establish failed product assertions.
-  - Current status: preserve the failed proof and diagnose the endpoint/container lifecycle; the separately running composed #3125 gate remains owned.
+  - Expected pattern: classify connection-refused fixture failures separately from product assertions; capture the container and endpoint state at failure and qualify the exact suites before crediting physical proof.
+  - Current status: the three affected suites passed all 13 cases in the composed #3125 run and fresh exact-parent #3120 CI (all 105 PostgreSQL cases passed). The local connection-refused cause remains unknown; no fixture weakening or environment mutation was needed.
   - Reconsideration trigger: revisit after the affected cases execute physically against the final parent and the endpoint failure is explained or shown to be transient; retain until the cause and proof limits are recorded.
