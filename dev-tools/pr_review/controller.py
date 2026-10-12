@@ -509,7 +509,9 @@ def _latest_review(history: Sequence[Any]) -> Any | None:
     return None
 
 
-def _review_activity(history: Sequence[Any], current_head: str) -> dict[str, Any]:
+def _review_activity(
+    history: Sequence[Any], current_head: str, identities: Mapping[str, Mapping[str, Any]] | None = None
+) -> dict[str, Any]:
     """Summarize observed review rounds for display, never for policy decisions."""
 
     results: list[dict[str, Any]] = []
@@ -533,6 +535,10 @@ def _review_activity(history: Sequence[Any], current_head: str) -> dict[str, Any
         ):
             continue
         reviewed_head = _field(item, "head", "reviewed_head")
+        checkpoint = _field(item, "checkpoint", "checkpoint_id")
+        identity = (identities or {}).get(checkpoint, {}) if isinstance(checkpoint, str) else {}
+        if identity.get("head") != reviewed_head:
+            identity = {}
         observed_at = parse_timestamp(_field(item, "observed_at"))
         results.append(
             {
@@ -543,6 +549,12 @@ def _review_activity(history: Sequence[Any], current_head: str) -> dict[str, Any
                 "attributable": _field(item, "attributable") is True,
                 "current_head": isinstance(reviewed_head, str) and reviewed_head == current_head,
                 "non_counting": _field(item, "non_counting") is True,
+                **({"checkpoint": checkpoint} if isinstance(checkpoint, str) and checkpoint.strip() else {}),
+                **{
+                    name: alias
+                    for name in ("run_id", "provider_review_id")
+                    if isinstance(alias := identity.get(name), str) and alias.strip()
+                },
             }
         )
     active = [
@@ -6504,7 +6516,13 @@ class ReviewController:
                         for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
                     },
                     "review_activity": {
-                        channel.value: _review_activity(histories[channel][pr], item.head)
+                        channel.value: _review_activity(
+                            histories[channel][pr],
+                            item.head,
+                            self._evidence_provider.review_activity_identities(pr, channel.value)
+                            if hasattr(self._evidence_provider, "review_activity_identities")
+                            else None,
+                        )
                         for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
                     },
                     "channel_reasons": {
