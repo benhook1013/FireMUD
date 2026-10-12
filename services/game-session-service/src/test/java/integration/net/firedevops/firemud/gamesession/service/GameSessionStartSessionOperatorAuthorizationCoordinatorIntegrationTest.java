@@ -310,7 +310,8 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorIntegrationTest {
         tuple.authorizationReferenceFingerprint(),
         tuple.authorityEvidenceBundleBytes(),
         bundle.issuanceOperationId(),
-        Long.parseLong(tuple.issuanceFence()));
+        Long.parseLong(tuple.issuanceFence()),
+        tuple.canonicalBytes());
   }
 
   private static GrpcPeerIdentity peer() {

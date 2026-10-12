@@ -387,7 +387,8 @@ class GameSessionStartSessionOperatorAuthorizationCoordinatorTest {
         tuple.authorizationReferenceFingerprint(),
         tuple.authorityEvidenceBundleBytes(),
         bundle.issuanceOperationId(),
-        Long.parseLong(tuple.issuanceFence()));
+        Long.parseLong(tuple.issuanceFence()),
+        tuple.canonicalBytes());
   }
 
   private static StartSessionPostAuthorizationExecutionTuple tuple(String requestId)

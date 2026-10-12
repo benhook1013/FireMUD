@@ -98,7 +98,57 @@ class StartSessionOperatorRedemptionClientTest {
         .containsExactly(tuple.authorityEvidenceBundleBytes());
     assertThat(projection.issuanceOperationId()).isEqualTo(ISSUANCE_ID);
     assertThat(projection.issuanceFence()).isEqualTo(23L);
+    assertThat(projection.originalAccountPostAuthorizationTuple())
+        .containsExactly(tuple.canonicalBytes());
+    assertThat(projection.canonicalBytes()).containsExactly(tuple.canonicalBytes());
     verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+  }
+
+  @Test
+  void rejectsIndependentAccountTupleWithChangedFenceOrLinearization() throws Exception {
+    StartSessionPostAuthorizationExecutionTuple tuple = tuple(REQUEST_ID);
+    assertRejected(
+        tuple, validResponse(tuple, tupleWithReference(tuple, "24", "18446744073709551615")));
+    assertRejected(
+        tuple, validResponse(tuple, tupleWithReference(tuple, "23", "18446744073709551614")));
+  }
+
+  @Test
+  void rejectsIndependentAccountTupleWithChangedBundleVersionOrSourceVersion() throws Exception {
+    StartSessionPostAuthorizationExecutionTuple tuple = tuple(REQUEST_ID);
+    String sourceVersionSubstitution =
+        tuple.canonicalJson().replace("\"sourceVersion\":\"17\"", "\"sourceVersion\":\"18\"");
+    assertRejected(
+        tuple, validResponse(tuple, sourceVersionSubstitution.getBytes(StandardCharsets.UTF_8)));
+
+    String bundleVersionSubstitution =
+        tuple
+            .canonicalJson()
+            .replace(
+                "\"bundleVersion\":\"" + StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION + "\"",
+                "\"bundleVersion\":\"unsupported\"");
+    assertRejected(
+        tuple, validResponse(tuple, bundleVersionSubstitution.getBytes(StandardCharsets.UTF_8)));
+  }
+
+  @Test
+  void acceptsCanonicalIndependentOwnerTupleOnAccountReplay() throws Exception {
+    StartSessionPostAuthorizationExecutionTuple tuple = tuple(REQUEST_ID);
+    var stub =
+        mock(
+            StartSessionOperatorAuthorizationServiceGrpc
+                .StartSessionOperatorAuthorizationServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.redeemOperatorAuthorization(any(RedeemOperatorAuthorizationRequest.class)))
+        .thenReturn(validResponse(tuple).toBuilder().setReplay(true).build());
+    StartSessionOperatorRedemptionClient client = newClient(stub, CURRENT_CLOCK);
+
+    var result = client.redeem(tuple, OPAQUE_REFERENCE, claim(REQUEST_ID));
+
+    assertThat(result.accountReplay()).isTrue();
+    assertThat(result.projection().canonicalBytes()).containsExactly(tuple.canonicalBytes());
+    verify(stub, times(1))
+        .redeemOperatorAuthorization(any(RedeemOperatorAuthorizationRequest.class));
   }
 
   @Test
@@ -365,13 +415,41 @@ class StartSessionOperatorRedemptionClientTest {
 
   private static RedeemOperatorAuthorizationResponse validResponse(
       StartSessionPostAuthorizationExecutionTuple tuple) {
+    return validResponse(tuple, tuple.canonicalBytes());
+  }
+
+  private static RedeemOperatorAuthorizationResponse validResponse(
+      StartSessionPostAuthorizationExecutionTuple tuple,
+      StartSessionPostAuthorizationExecutionTuple accountTuple) {
+    return validResponse(tuple, accountTuple.canonicalBytes());
+  }
+
+  private static RedeemOperatorAuthorizationResponse validResponse(
+      StartSessionPostAuthorizationExecutionTuple tuple, byte[] accountTupleBytes) {
     return RedeemOperatorAuthorizationResponse.newBuilder()
         .setAuthorizationReferenceFingerprint(FINGERPRINT)
         .setAuthorityEvidenceBundle(ByteString.copyFrom(tuple.authorityEvidenceBundleBytes()))
         .setIssuanceOperationId(ISSUANCE_ID.toString())
         .setIssuanceFence(23L)
+        .setOriginalAccountPostAuthorizationTuple(ByteString.copyFrom(accountTupleBytes))
         .setReplay(false)
         .build();
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple tupleWithReference(
+      StartSessionPostAuthorizationExecutionTuple original,
+      String sourceFence,
+      String linearization) {
+    var reference = original.bundleReference();
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        original.preAuthorizationTuple(),
+        original.authenticatedWorkloadIdentity(),
+        original.authorizationReferenceFingerprint(),
+        original.reservationOwnerId(),
+        original.reservationClaimFence(),
+        original.authorityEvidenceBundleBytes(),
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            reference.bundleVersion(), reference.sourceVersion(), sourceFence, linearization));
   }
 
   private static byte[] bundle(

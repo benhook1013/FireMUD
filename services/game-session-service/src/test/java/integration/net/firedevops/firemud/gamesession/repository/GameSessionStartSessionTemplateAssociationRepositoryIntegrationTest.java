@@ -284,6 +284,32 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
   }
 
   @Test
+  void physicalAssociationPinRejectsSourceFenceAndLinearizationSubstitutions() {
+    for (String[] referenceChange :
+        List.of(
+            new String[] {"24", "18446744073709551615"},
+            new String[] {"23", "18446744073709551614"})) {
+      Fixture fixture = fixture();
+      StartSessionPostAuthorizationExecutionTuple tuple =
+          tuple(
+              "association-owner-reference-substitution-"
+                  + referenceChange[0]
+                  + referenceChange[1]);
+      AttemptClaim claim = fixture.reserveAndAttach(tuple);
+      StartSessionPostAuthorizationExecutionTuple substituted =
+          tupleWithReference(tuple, referenceChange[0], referenceChange[1]);
+      replaceOwnerProjection(fixture, tuple, substituted.canonicalBytes());
+
+      assertThatThrownBy(
+              () ->
+                  fixture.pin(
+                      claim, result(tuple, claim, new InitialConfigured(), UUID.randomUUID())))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThat(fixture.pinCount()).isZero();
+    }
+  }
+
+  @Test
   void historicalPinReadRejectsCorruptedStoredSelection() {
     Fixture fixture = fixture();
     StartSessionPostAuthorizationExecutionTuple tuple = tuple("association-pin-historical-corrupt");
@@ -1232,7 +1258,42 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
         tuple.authorizationReferenceFingerprint(),
         tuple.authorityEvidenceBundleBytes(),
         ISSUANCE_ID,
-        23L);
+        23L,
+        tuple.canonicalBytes());
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple tupleWithReference(
+      StartSessionPostAuthorizationExecutionTuple tuple, String sourceFence, String linearization) {
+    var reference = tuple.bundleReference();
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        tuple.preAuthorizationTuple(),
+        tuple.authenticatedWorkloadIdentity(),
+        tuple.authorizationReferenceFingerprint(),
+        tuple.reservationOwnerId(),
+        tuple.reservationClaimFence(),
+        tuple.authorityEvidenceBundleBytes(),
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            reference.bundleVersion(), reference.sourceVersion(), sourceFence, linearization));
+  }
+
+  private static void replaceOwnerProjection(
+      Fixture fixture, StartSessionPostAuthorizationExecutionTuple tuple, byte[] projection) {
+    fixture.dsl.execute(
+        "ALTER TABLE game_session_start_session_operator_attempt "
+            + "DISABLE TRIGGER game_session_start_session_operator_attempt_immutable");
+    try {
+      fixture.dsl.execute(
+          "UPDATE game_session_start_session_operator_attempt "
+              + "SET account_redemption_projection = ? "
+              + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+          projection,
+          NAMESPACE,
+          tuple.controlPlaneRequestId());
+    } finally {
+      fixture.dsl.execute(
+          "ALTER TABLE game_session_start_session_operator_attempt "
+              + "ENABLE TRIGGER game_session_start_session_operator_attempt_immutable");
+    }
   }
 
   private static Map<String, Object> orderedMap(Object... entries) {

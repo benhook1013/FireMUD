@@ -252,6 +252,7 @@ class StartSessionOperatorRedemptionClientMtlsTest {
         .setAuthorityEvidenceBundle(ByteString.copyFrom(tuple.authorityEvidenceBundleBytes()))
         .setIssuanceOperationId(ISSUANCE_OPERATION_ID.toString())
         .setIssuanceFence(ISSUANCE_FENCE)
+        .setOriginalAccountPostAuthorizationTuple(ByteString.copyFrom(tuple.canonicalBytes()))
         .setReplay(false)
         .build();
   }

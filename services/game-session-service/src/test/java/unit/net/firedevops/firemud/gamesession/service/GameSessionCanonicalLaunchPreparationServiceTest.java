@@ -432,18 +432,28 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     CreateCanonicalLaunchPreparationRequest request = request();
     StartSessionPostAuthorizationExecutionTuple tuple = authorizedTuple(request);
     AttemptClaim claim = attemptClaim(request);
+    StartSessionPostAuthorizationExecutionTuple substitutedOwnerTuple =
+        StartSessionPostAuthorizationExecutionTuple.createHuman(
+            tuple.preAuthorizationTuple(),
+            tuple.authenticatedWorkloadIdentity(),
+            "arfp/v1/other-key/" + "c".repeat(64),
+            tuple.reservationOwnerId(),
+            tuple.reservationClaimFence(),
+            tuple.authorityEvidenceBundleBytes(),
+            tuple.bundleReference());
     AccountRedemptionProjection substitutedProjection =
         new AccountRedemptionProjection(
-            "arfp/v1/other-key/" + "c".repeat(64),
-            tuple.authorityEvidenceBundleBytes(),
+            substitutedOwnerTuple.authorizationReferenceFingerprint(),
+            substitutedOwnerTuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
-            23L);
+            23L,
+            substitutedOwnerTuple.canonicalBytes());
     AttemptSnapshot substitutedAttempt = attemptSnapshot(tuple, substitutedProjection);
     when(attemptRepository.validateCurrentClaim(claim)).thenReturn(substitutedAttempt);
 
     assertThatThrownBy(() -> authorizedService().prepareAuthorized(claim, request))
         .isInstanceOf(InvalidLaunchPreparationEvidenceException.class)
-        .hasMessageContaining("differs from the original post-authorization tuple");
+        .hasMessageContaining("projection binding is invalid");
     verifyNoInteractions(
         descriptorClient, catalogRepository, sourceRepository, preparationRepository);
     int commitsAfterRejectedProjection = transactionManager.commitCount;
@@ -467,6 +477,30 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
     verify(attemptRepository, times(2)).validateCurrentClaim(claim);
     assertThat(transactionManager.commitCount).isEqualTo(commitsAfterRejectedProjection + 2);
     verify(preparationRepository).persistPrepared(request, catalog, intake, descriptor);
+  }
+
+  @Test
+  void launchPreparationRejectsSourceFenceAndLinearizationSubstitutionsIndependently()
+      throws Exception {
+    for (String[] referenceChange :
+        List.of(
+            new String[] {"24", "18446744073709551615"},
+            new String[] {"23", "18446744073709551614"})) {
+      CreateCanonicalLaunchPreparationRequest request = request();
+      StartSessionPostAuthorizationExecutionTuple tuple = authorizedTuple(request);
+      StartSessionPostAuthorizationExecutionTuple returnedOwnerTuple =
+          tupleWithReference(tuple, referenceChange[0], referenceChange[1]);
+      AttemptClaim claim = attemptClaim(request);
+      AttemptSnapshot returnedAttemptSnapshot =
+          attemptSnapshot(tuple, accountProjection(returnedOwnerTuple));
+      when(attemptRepository.validateCurrentClaim(claim)).thenReturn(returnedAttemptSnapshot);
+
+      assertThatThrownBy(() -> authorizedService().prepareAuthorized(claim, request))
+          .isInstanceOf(InvalidLaunchPreparationEvidenceException.class);
+      verifyNoInteractions(
+          descriptorClient, catalogRepository, sourceRepository, preparationRepository);
+      resetRepositories();
+    }
   }
 
   @Test
@@ -849,7 +883,22 @@ class GameSessionCanonicalLaunchPreparationServiceTest {
         tuple.authorizationReferenceFingerprint(),
         tuple.authorityEvidenceBundleBytes(),
         bundle.issuanceOperationId(),
-        Long.parseLong(tuple.issuanceFence()));
+        Long.parseLong(tuple.issuanceFence()),
+        tuple.canonicalBytes());
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple tupleWithReference(
+      StartSessionPostAuthorizationExecutionTuple tuple, String sourceFence, String linearization) {
+    var reference = tuple.bundleReference();
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        tuple.preAuthorizationTuple(),
+        tuple.authenticatedWorkloadIdentity(),
+        tuple.authorizationReferenceFingerprint(),
+        tuple.reservationOwnerId(),
+        tuple.reservationClaimFence(),
+        tuple.authorityEvidenceBundleBytes(),
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            reference.bundleVersion(), reference.sourceVersion(), sourceFence, linearization));
   }
 
   private static StartSessionPostAuthorizationExecutionTuple authorizedTuple(
