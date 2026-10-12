@@ -5384,7 +5384,9 @@ class RuntimeTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(record), encoding="utf-8")
 
-    def _history(self, common: Path, payload, channel="hosted", *, changed_files=1, current_head=HEAD, now=None):
+    def _history(
+        self, common: Path, payload, channel="hosted", *, changed_files=1, current_head=HEAD, now=None, identities=None
+    ):
         pull = payload["data"]["repository"]["pullRequest"]
         snapshot = PullRequestSnapshot(
             42,
@@ -5401,7 +5403,13 @@ class RuntimeTest(unittest.TestCase):
             patch.object(live, "pull_request", return_value=snapshot),
             patch.object(evidence, "git_common_dir", return_value=common),
         ):
-            return list(LiveEvidence("owner/repo", live).history(42, channel, now=now))
+            provider = LiveEvidence("owner/repo", live)
+            history = list(provider.history(42, channel, now=now))
+            if identities is not None:
+                identities.update(provider.review_activity_identities(42, channel))
+                provider._histories.clear()
+                self.assertEqual(provider.review_activity_identities(42, channel), {})
+            return history
 
     def test_history_uses_complete_review_snapshot_head_without_extra_metadata_read(self):
         live = LiveGitHub("owner/repo")
@@ -6218,7 +6226,8 @@ class RuntimeTest(unittest.TestCase):
             record["anchor"]["actual_base_ref"] = "develop"
             record["anchor"]["actual_base_sha"] = BASE
             record_path.write_text(json.dumps(record), encoding="utf-8")
-            history = self._history(common, payload)
+            identities = {}
+            history = self._history(common, payload, identities=identities)
             completed_rows = [item for item in history if item.get("checkpoint") == "12"]
             self.assertEqual(len(completed_rows), 1)
             self.assertTrue(completed_rows[0]["completed"])
@@ -6227,6 +6236,12 @@ class RuntimeTest(unittest.TestCase):
             self.assertFalse(completed_rows[0]["provisional"])
             self.assertTrue(taper_satisfied(Channel.HOSTED, completed_rows, required=1))
             self.assertEqual(_review_activity(history, HEAD)["recent"][0]["routed"], 1)
+            activity = _review_activity(history, HEAD, identities)
+            self.assertEqual(activity["recent"][0]["checkpoint"], "12")
+            self.assertEqual(activity["recent"][0]["provider_review_id"], "55")
+            self.assertNotIn("run_id", activity["recent"][0])
+            self.assertNotIn("provider_review_id", completed_rows[0])
+            self.assertNotIn("run_id", completed_rows[0])
 
             mismatched = {**review, "databaseId": 56}
             history = self._history(common, self._payload([trigger, checkpoint], [mismatched]))
@@ -7831,8 +7846,15 @@ class RuntimeTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (run / "exit-status").write_text("0\n", encoding="utf-8")
-            history = self._history(common, payload, "cli")
+            identities = {}
+            history = self._history(common, payload, "cli", identities=identities)
             self.assertEqual(sum(item.get("completed", False) for item in history), 1)
+            self.assertTrue(all("run_id" not in item and "provider_review_id" not in item for item in history))
+            activity = _review_activity(history, HEAD, identities)
+            self.assertEqual(activity["total"], 1)
+            self.assertEqual(activity["recent"][0]["checkpoint"], "1")
+            self.assertEqual(activity["recent"][0]["run_id"], run_id)
+            self.assertNotIn("provider_review_id", activity["recent"][0])
 
     def test_successful_cli_capture_without_checkpoint_is_held(self) -> None:
         run_id = "run.Orphan"

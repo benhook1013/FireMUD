@@ -239,8 +239,8 @@ public class AccountGameplayDelegationIssuanceRepository {
     requireWritableAccountTransaction();
     requireRequestId(requestId);
     Objects.requireNonNull(accountId, "Account UUID is required");
-    if (accountId.equals(new UUID(0L, 0L))) {
-      throw new IllegalArgumentException("A non-nil Account UUID is required");
+    if (accountId.version() != 4 || accountId.variant() != 2) {
+      throw new IllegalArgumentException("A canonical version-4 Account UUID is required");
     }
     requireRequestId(callerContextId);
     Objects.requireNonNull(callerWorkload, "Caller workload is required");

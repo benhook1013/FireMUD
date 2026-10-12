@@ -40,6 +40,7 @@ from pr_review.controller import (
     ReviewController,
     StaleReviewTarget,
     WrongStackTarget,
+    _review_activity,
     _SelectionChanged,
     compact_result,
     json_result,
@@ -10977,7 +10978,14 @@ class ControllerTests(unittest.TestCase):
                 "observed_at": "2026-09-07T14:30:00+12:00",
             }
         ]
-        controller = self.make({1: pr(1, HEAD_1)}, {(1, "hosted"): hosted, (1, "cli"): cli})
+        class DisplayEvidence(AuditedEvidence):
+            def review_activity_identities(self, source_pr, channel):
+                return {
+                    "h3": {"head": PARENT, "provider_review_id": "55"},
+                    "c1": {"head": HEAD_1, "run_id": "run.Completed"},
+                }
+
+        controller = self.make({1: pr(1, HEAD_1)}, DisplayEvidence({(1, "hosted"): hosted, (1, "cli"): cli}))
         controller.set_stack([1])
 
         result = controller.status()["prs"][0]
@@ -10989,15 +10997,45 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(
             set(result["review_activity"]["hosted"]["recent"][0]),
-            {"raw", "accepted", "routed", "completed_at", "attributable", "current_head", "non_counting"},
+            {
+                "raw",
+                "accepted",
+                "routed",
+                "completed_at",
+                "attributable",
+                "current_head",
+                "non_counting",
+                "checkpoint",
+                "provider_review_id",
+            },
         )
+        self.assertEqual(result["review_activity"]["hosted"]["recent"][0]["checkpoint"], "h3")
+        self.assertEqual(result["review_activity"]["hosted"]["recent"][0]["provider_review_id"], "55")
+        self.assertNotIn("run_id", result["review_activity"]["hosted"]["recent"][0])
+        self.assertNotIn("provider_review_id", result["review_activity"]["hosted"]["recent"][1])
         self.assertIsNone(result["review_activity"]["hosted"]["recent"][0]["routed"])
         self.assertFalse(result["review_activity"]["hosted"]["recent"][0]["current_head"])
         self.assertFalse(result["review_activity"]["hosted"]["recent"][-1]["attributable"])
         self.assertTrue(result["review_activity"]["hosted"]["recent"][-1]["current_head"])
         self.assertEqual(result["review_activity"]["cli"]["total"], 1)
         self.assertEqual(result["review_activity"]["cli"]["recent"][0]["completed_at"], "2026-09-07T02:30:00Z")
+        self.assertEqual(result["review_activity"]["cli"]["recent"][0]["checkpoint"], "c1")
+        self.assertEqual(result["review_activity"]["cli"]["recent"][0]["run_id"], "run.Completed")
         self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
+
+    def test_review_activity_does_not_invent_missing_legacy_identity(self):
+        legacy = {"head": HEAD_1, "completed": True, "raw": 2, "accepted": 0}
+        for unavailable in ({}, {"checkpoint": None, "run_id": "", "provider_review_id": " "}):
+            with self.subTest(unavailable=unavailable):
+                activity = _review_activity([{**legacy, **unavailable}], HEAD_1)
+                self.assertEqual(activity["total"], 1)
+                self.assertEqual(activity["recent"][0]["raw"], 2)
+                for name in ("checkpoint", "run_id", "provider_review_id"):
+                    self.assertNotIn(name, activity["recent"][0])
+        mismatched = _review_activity(
+            [{**legacy, "checkpoint": "12"}], HEAD_1, {"12": {"head": HEAD_2, "run_id": "run.Other"}}
+        )
+        self.assertNotIn("run_id", mismatched["recent"][0])
 
     def test_status_exposes_current_head_over_ceiling_reason_and_checkpoint_source(self):
         evidence = {
