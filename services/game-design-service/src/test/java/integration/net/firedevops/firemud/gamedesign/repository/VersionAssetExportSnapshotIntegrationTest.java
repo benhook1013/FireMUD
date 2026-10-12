@@ -153,10 +153,10 @@ class VersionAssetExportSnapshotIntegrationTest {
         Objects.requireNonNull(
                 dsl.fetchOne(
                     "INSERT INTO version "
-                        + "(tenant_id, canonical_version_id, canonical_tenant_id, "
+                        + "(tenant_id, version_number, canonical_version_id, canonical_tenant_id, "
                         + "identity_source_game_row_id, identity_source_game_tenant_key, "
                         + "identity_source_provenance_kind) "
-                        + "SELECT ?, ?, ?, id, tenant_id, tenant_identity_provenance_kind "
+                        + "SELECT ?, 1, ?, ?, id, tenant_id, tenant_identity_provenance_kind "
                         + "FROM game WHERE id = ? RETURNING id",
                     tenantId,
                     canonicalVersionId,
