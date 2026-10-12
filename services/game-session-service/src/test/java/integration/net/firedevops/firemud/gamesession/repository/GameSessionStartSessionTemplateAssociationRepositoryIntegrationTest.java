@@ -304,7 +304,10 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
               () ->
                   fixture.pin(
                       claim, result(tuple, claim, new InitialConfigured(), UUID.randomUUID())))
-          .isInstanceOf(IllegalArgumentException.class);
+          .isInstanceOf(
+              GameSessionStartSessionOperatorAttemptRepository
+                  .StaleStartSessionOperatorAttemptClaimException.class)
+          .hasMessageContaining("exact current Account owner tuple");
       assertThat(fixture.pinCount()).isZero();
     }
   }
