@@ -116,3 +116,8 @@ Entry format:
   - Context: CLI review completion produced captured evidence, but the next channel launch remained held until Gameplay posted and imported the established minimal public checkpoint.
   - Observation: Gameplay had to locate the exact checkpoint marker format in the current canonical implementation; the next publication command was not obvious from the returned help or output. Checkpoint publication then completed normally, so this is an improvement candidate rather than an established controller defect.
   - Expected pattern: Make the required next action discoverable while preserving the counts, head, file, duration line, attribution markers, and captured evidence. Do not issue a duplicate provider request.
+
+- `2026-10-12`: Bound review admission history work to its selected dependency
+  - Context: Gameplay requested the next Hosted review on #3171; FireController measured 55.2 seconds of preflight before posting the command and projected 170 history entries, including later unrelated queue PRs.
+  - Observation: Repeated whole-queue history work adds latency to a front review request even when its exact head and parent are already selected. The request posted successfully; this is an efficiency candidate, not evidence of incorrect admission or a provider review failure.
+  - Expected pattern: Reuse validated shared history where safe and bound fresh evidence to the selected target and dependencies, while preserving identity, reservation and quota checks. Overseer received the measured trace; no tool change has been attempted.

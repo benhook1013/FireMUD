@@ -203,6 +203,24 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
   }
 
   @Test
+  void rejectsLaunchDescriptorThatDoesNotMatchOwnerReadSnapshots() {
+    var source = sourceEvidence();
+    var bundle = launchBundle();
+    var artifactState = launchArtifactState();
+    var versionState = launchVersionState();
+    var mismatchedDescriptor =
+        launchDescriptor(
+            source,
+            bundle,
+            versionState.toBuilder()
+                .setVersionStateEpoch(versionState.getVersionStateEpoch() + 1L)
+                .build());
+
+    assertInvalidSourceReceipt(
+        validSourceReceiptJson(source, bundle, artifactState, versionState, mismatchedDescriptor));
+  }
+
+  @Test
   void rejectsOwnerReadProjectionScopeAndStateMismatches() {
     var unknownField = com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1L).build();
     var unknownFields =
@@ -253,11 +271,6 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
                 launchVersionState().toBuilder().setVersionId(12L).build()),
             validSourceReceiptJson(
                 sourceEvidence(),
-                launchBundle(),
-                launchArtifactState(),
-                launchVersionState().toBuilder().setVersionStateEpoch(0L).build()),
-            validSourceReceiptJson(
-                sourceEvidence(),
                 launchBundle().toBuilder().setCanonicalVersionId("not-a-canonical-uuid").build()),
             validSourceReceiptJson(
                 sourceEvidence(),
@@ -272,6 +285,22 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
 
     invalidReceipts.forEach(
         RunOwnedInitialAdmissionFixtureCapabilityTest::assertInvalidSourceReceipt);
+  }
+
+  @Test
+  void rejectsNonpositiveVersionStateSnapshotEpochFromRawMalformedReceiptEvidence() {
+    var source = sourceEvidence();
+    var bundle = launchBundle();
+    var artifactState = launchArtifactState();
+    var versionState = launchVersionState().toBuilder().setVersionStateEpoch(0L).build();
+
+    assertInvalidSourceReceipt(
+        validSourceReceiptJson(
+            source,
+            bundle,
+            artifactState,
+            versionState,
+            rawLaunchDescriptorForMalformedVersionStateSnapshot(source, bundle, versionState)));
   }
 
   @Test
@@ -483,7 +512,20 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
       net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle,
       net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState artifactState,
       net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState) {
-    LaunchDescriptor descriptor = launchDescriptor(source, launchBundle(), launchVersionState());
+    return validSourceReceiptJson(
+        source,
+        bundle,
+        artifactState,
+        versionState,
+        launchDescriptor(source, bundle, versionState));
+  }
+
+  private static String validSourceReceiptJson(
+      AuthoredWorldSourceEvidence source,
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle,
+      net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState artifactState,
+      net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState,
+      LaunchDescriptor descriptor) {
     String sourceJson =
         """
         {%n\
@@ -618,6 +660,19 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
             false,
             null);
     return AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(evidence);
+  }
+
+  private static LaunchDescriptor rawLaunchDescriptorForMalformedVersionStateSnapshot(
+      AuthoredWorldSourceEvidence source,
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle,
+      net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState) {
+    LaunchDescriptor canonicalDescriptor = launchDescriptor(source, bundle, launchVersionState());
+    return canonicalDescriptor.toBuilder()
+        .setAuthoredWorldBinding(
+            canonicalDescriptor.getAuthoredWorldBinding().toBuilder()
+                .setVersionStateEpoch(versionState.getVersionStateEpoch())
+                .build())
+        .build();
   }
 
   private static net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle launchBundle() {
