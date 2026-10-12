@@ -63,6 +63,41 @@ class VersionAssetExportSnapshotIntegrationTest {
   }
 
   @Test
+  void rejectsRenamedMappedSourceBeforePersistingSnapshot() {
+    Fixture fixture = fixture();
+    // V37 normally prevents this drift with its source-name foreign key. Drop that one guard in
+    // this isolated schema to prove the repository still rejects a stale/legacy mapping itself.
+    fixture.dsl.execute("ALTER TABLE version_asset DROP CONSTRAINT fk_version_asset_asset_name");
+    fixture.dsl.execute(
+        "UPDATE game_assets SET file_name = ? WHERE tenant_id = ? AND id = ?",
+        "renamed-logo.bin",
+        fixture.tenantId,
+        fixture.assetId);
+
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.transaction(
+                    configuration -> {
+                      new VersionAssetPublicationRepository(DSL.using(configuration))
+                          .freezeOrReadSnapshot(fixture.tenantId, 1);
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Version asset usage key no longer matches its source file name");
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table("version_asset_export_snapshot"),
+                DSL.field("tenant_id").eq(fixture.tenantId),
+                DSL.field("version_id").eq(fixture.versionId)))
+        .isZero();
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table("version_asset_export_item"),
+                DSL.field("tenant_id").eq(fixture.tenantId),
+                DSL.field("version_id").eq(fixture.versionId)))
+        .isZero();
+  }
+
+  @Test
   void retainsSourceTypeSizeAndExactMappingChecks() {
     Fixture wrongType = fixture();
     assertThatThrownBy(
