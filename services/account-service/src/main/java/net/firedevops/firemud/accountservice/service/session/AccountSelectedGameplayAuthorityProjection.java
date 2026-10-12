@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
@@ -49,6 +50,18 @@ public final class AccountSelectedGameplayAuthorityProjection {
             new String(event.payload(), StandardCharsets.UTF_8));
     value.put("tenantAuthorityGeneration", Long.toString(event.tenantAuthorityGeneration()));
     return decode(canonical(value), null, event.tenantId());
+  }
+
+  static AccountSelectedGameplayAuthorityProjection membership(
+      MembershipAuthorityEventV1Codec.MembershipEvent event) {
+    Objects.requireNonNull(event, "Canonical membership event is required");
+    final long historicalSourceVersion;
+    try {
+      historicalSourceVersion = Long.parseLong(event.membershipAuthorityGeneration());
+    } catch (NumberFormatException malformed) {
+      throw invalid();
+    }
+    return membership(event, historicalSourceVersion);
   }
 
   static AccountSelectedGameplayAuthorityProjection membership(
@@ -121,6 +134,10 @@ public final class AccountSelectedGameplayAuthorityProjection {
                 .membershipVersion()
                 .get(event.tenantId())
                 .equals(fields.get("membershipVersion"))
+            // Account initializes these paired counters to 1 and the owning database guard
+            // requires them to advance together. The retained canonical event carries the
+            // historical generation, so it is the only source for this historical sourceVersion.
+            || !event.membershipAuthorityGeneration().equals(fields.get("sourceVersion"))
             || !event.outboxStreamKey().equals(fields.get("outboxStreamKey"))
             || !event.outboxSequence().equals(fields.get("outboxSequence"))) throw invalid();
       } else {
@@ -181,11 +198,18 @@ public final class AccountSelectedGameplayAuthorityProjection {
     }
     if (!key().equals(prior.key())) throw invalid();
     if (Arrays.equals(bytes, prior.bytes)) return;
-    if (!sequence().equals(prior.sequence().add(BigInteger.ONE))
-        || generation().compareTo(prior.generation()) < 0
-        || sourceVersion().compareTo(prior.sourceVersion()) < 0
-        || (fields.containsKey("accountId")
-            && membershipVersion().compareTo(prior.membershipVersion()) <= 0)) throw invalid();
+    if (!sequence().equals(prior.sequence().add(BigInteger.ONE))) throw invalid();
+    if (fields.containsKey("accountId")) {
+      BigInteger generationAdvance = generation().subtract(prior.generation());
+      if (generationAdvance.signum() < 0
+          || generationAdvance.compareTo(BigInteger.ONE) > 0
+          || !sourceVersion().equals(generation())
+          || !membershipVersion().equals(prior.membershipVersion().add(BigInteger.ONE)))
+        throw invalid();
+    } else if (!generation().equals(prior.generation().add(BigInteger.ONE))
+        || !sourceVersion().equals(prior.sourceVersion().add(BigInteger.ONE))) {
+      throw invalid();
+    }
   }
 
   private static Map<String, Object> base(

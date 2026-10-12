@@ -1,7 +1,9 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.LongFunction;
@@ -33,6 +35,7 @@ public class AccountAuthorityOutboxRepository {
   private static final int MAX_REQUEST_ID_LENGTH = 512;
   private static final int MAX_EVENT_ID_LENGTH = 512;
   private static final int MAX_EVENT_DIGEST_LENGTH = 512;
+  public static final int MAX_EVENT_HISTORY_PAGE_SIZE = 128;
 
   private final DSLContext dsl;
 
@@ -207,6 +210,38 @@ public class AccountAuthorityOutboxRepository {
     return row == null
         ? Optional.empty()
         : Optional.of(toEvent(outboxStreamKey, row.get("request_id", String.class), row));
+  }
+
+  /**
+   * Reads a bounded page from one immutable retained authority-event prefix.
+   *
+   * <p>The caller owns the captured positive checkpoint and must verify that every sequence from
+   * one through that checkpoint is present and ordered. This method never widens the requested head
+   * when later events are appended.
+   */
+  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  public List<Event> findEventPage(
+      String outboxStreamKey, long afterSequence, long throughSequence) {
+    validateStreamKey(outboxStreamKey);
+    if (afterSequence < 0L || throughSequence <= 0L || afterSequence > throughSequence) {
+      throw new IllegalArgumentException(
+          "A bounded positive Account authority event range is required");
+    }
+    List<Record> rows =
+        dsl.fetch(
+            "SELECT outbox_sequence, request_id, event_id, event_digest, payload "
+                + "FROM account_authority_outbox_events "
+                + "WHERE outbox_stream_key = ? AND outbox_sequence > ? "
+                + "AND outbox_sequence <= ? ORDER BY outbox_sequence LIMIT ?",
+            outboxStreamKey,
+            afterSequence,
+            throughSequence,
+            MAX_EVENT_HISTORY_PAGE_SIZE);
+    List<Event> events = new ArrayList<>(rows.size());
+    for (Record row : rows) {
+      events.add(toEvent(outboxStreamKey, row.get("request_id", String.class), row));
+    }
+    return List.copyOf(events);
   }
 
   /**

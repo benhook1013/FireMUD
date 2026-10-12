@@ -427,6 +427,94 @@ public final class AccountGameplayDelegationRedisClient {
         accountId, values[0], values[1], tenantId, new byte[][] {values[2], values[3]});
   }
 
+  /** CASes exactly one retained selected-source event against its actual predecessor. */
+  public ProjectionPublicationOutcome publishSelectedAuthorityEvent(
+      java.util.UUID accountId,
+      java.util.UUID tenantId,
+      boolean tenantProjection,
+      byte[] priorProjectionBytes,
+      byte[] candidateProjectionBytes) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+    requireCanonicalAccountUuid(accountId);
+    requireCanonicalAccountUuid(tenantId);
+    final AccountSelectedGameplayAuthorityProjection candidate;
+    final AccountSelectedGameplayAuthorityProjection prior;
+    try {
+      candidate =
+          AccountSelectedGameplayAuthorityProjection.decode(
+              candidateProjectionBytes, tenantProjection ? null : accountId, tenantId);
+      prior =
+          priorProjectionBytes == null
+              ? null
+              : AccountSelectedGameplayAuthorityProjection.decode(
+                  priorProjectionBytes, tenantProjection ? null : accountId, tenantId);
+    } catch (IllegalArgumentException invalidProjection) {
+      throw unavailable();
+    }
+    try {
+      candidate.requireSuccessorOf(prior);
+    } catch (IllegalArgumentException invalidHistory) {
+      throw unavailable();
+    }
+    String expectedKey =
+        tenantProjection
+            ? AccountSelectedGameplayAuthorityProjection.TENANT_PREFIX + tenantId
+            : AccountSelectedGameplayAuthorityProjection.MEMBERSHIP_PREFIX
+                + accountId
+                + ":"
+                + tenantId;
+    if (!expectedKey.equals(candidate.key())) throw unavailable();
+    if (prior != null
+        && prior.key().startsWith(AccountSelectedGameplayAuthorityProjection.TENANT_PREFIX)
+            != tenantProjection) throw unavailable();
+    RedisScriptDescriptor descriptor = requireSelectedProjectionDescriptor(tenantProjection);
+    byte[] scriptSource = readScriptSource(descriptor);
+    if (!descriptor.sha256().equals(sha256(scriptSource))) throw unavailable();
+    final StatefulRedisConnection<byte[], byte[]> connection;
+    try {
+      connection = connectionProvider.openPinnedConnection();
+    } catch (RuntimeException ex) {
+      throw unavailable();
+    }
+    if (connection == null) throw unavailable();
+    try {
+      RedisCommands<byte[], byte[]> commands = requirePinnedCommands(connection);
+      requireAccountAclIdentity(commands);
+      String loadedSha = commands.scriptLoad(scriptSource);
+      if (loadedSha == null
+          || !SHA1.matcher(loadedSha).matches()
+          || !sha1(scriptSource).equals(loadedSha)) throw unavailable();
+      byte[] key = ascii(candidate.key());
+      Long result =
+          commands.evalsha(
+              loadedSha,
+              ScriptOutputType.INTEGER,
+              new byte[][] {key},
+              ascii(prior == null ? "ABSENT" : "PRESENT"),
+              prior == null ? new byte[0] : priorProjectionBytes,
+              candidateProjectionBytes);
+      requireProjectionResult(result);
+      requireDurabilityAcknowledgement(commands);
+      byte[] readback = commands.get(key);
+      if (!Arrays.equals(candidateProjectionBytes, readback)
+          || !Long.valueOf(-1L).equals(commands.pttl(key))) throw unavailable();
+      AccountSelectedGameplayAuthorityProjection.decode(
+          readback, tenantProjection ? null : accountId, tenantId);
+      return result == 0L
+          ? ProjectionPublicationOutcome.EXACT_RETRY
+          : ProjectionPublicationOutcome.PUBLISHED;
+    } catch (RuntimeException ex) {
+      if (ex instanceof AccountCoordinationRedisException) throw ex;
+      throw unavailable();
+    } finally {
+      try {
+        connection.close();
+      } catch (RuntimeException ex) {
+        throw unavailable();
+      }
+    }
+  }
+
   private ProjectionPublicationOutcome publishProjections(
       java.util.UUID accountId,
       byte[] issuerProjectionBytes,
@@ -597,6 +685,62 @@ public final class AccountGameplayDelegationRedisClient {
     if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
     Objects.requireNonNull(tenantId, "Selected tenant UUID is required");
     return readProjections(accountId, tenantId);
+  }
+
+  /**
+   * Reads the exact current selected heads; absence is permitted only for replay from sequence 1.
+   */
+  public byte[][] readSelectedAuthorityHeads(java.util.UUID accountId, java.util.UUID tenantId) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
+    requireCanonicalAccountUuid(accountId);
+    requireCanonicalAccountUuid(tenantId);
+    final StatefulRedisConnection<byte[], byte[]> connection;
+    try {
+      connection = connectionProvider.openPinnedConnection();
+    } catch (RuntimeException ex) {
+      throw unavailable();
+    }
+    if (connection == null) throw unavailable();
+    try {
+      RedisCommands<byte[], byte[]> commands = requirePinnedCommands(connection);
+      requireAccountAclIdentity(commands);
+      byte[] tenantKey = ascii(AccountSelectedGameplayAuthorityProjection.TENANT_PREFIX + tenantId);
+      byte[] membershipKey =
+          ascii(
+              AccountSelectedGameplayAuthorityProjection.MEMBERSHIP_PREFIX
+                  + accountId
+                  + ":"
+                  + tenantId);
+      byte[] tenant = commands.get(tenantKey);
+      byte[] membership = commands.get(membershipKey);
+      validateSelectedHead(tenant, tenantKey, null, tenantId, commands);
+      validateSelectedHead(membership, membershipKey, accountId, tenantId, commands);
+      return new byte[][] {tenant, membership};
+    } catch (RuntimeException ex) {
+      if (ex instanceof AccountCoordinationRedisException) throw ex;
+      throw unavailable();
+    } finally {
+      try {
+        connection.close();
+      } catch (RuntimeException ex) {
+        throw unavailable();
+      }
+    }
+  }
+
+  private static void validateSelectedHead(
+      byte[] value,
+      byte[] key,
+      java.util.UUID accountId,
+      java.util.UUID tenantId,
+      RedisCommands<byte[], byte[]> commands) {
+    if (value == null) return;
+    if (value.length == 0
+        || value.length > AccountGameplayDelegationAuthorityProjection.MAX_PROJECTION_BYTES
+        || !Long.valueOf(-1L).equals(commands.pttl(key))) throw unavailable();
+    AccountSelectedGameplayAuthorityProjection projection =
+        AccountSelectedGameplayAuthorityProjection.decode(value, accountId, tenantId);
+    if (!Arrays.equals(ascii(projection.key()), key)) throw unavailable();
   }
 
   private byte[][] readProjections(java.util.UUID accountId, java.util.UUID tenantId) {
@@ -1112,6 +1256,13 @@ public final class AccountGameplayDelegationRedisClient {
 
   private static byte[] ascii(String value) {
     return value.getBytes(StandardCharsets.US_ASCII);
+  }
+
+  private static void requireCanonicalAccountUuid(java.util.UUID value) {
+    if (value == null
+        || value.equals(new java.util.UUID(0L, 0L))
+        || value.version() != 4
+        || value.variant() != 2) throw unavailable();
   }
 
   private static String sha256(byte[] bytes) {
