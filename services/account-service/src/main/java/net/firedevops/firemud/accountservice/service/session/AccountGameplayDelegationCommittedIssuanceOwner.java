@@ -17,9 +17,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  * <p>The activation operation surrounds one pinned Redis CAS/readback with independent fresh
  * Account/source/envelope and current signer-owner transactions. Its returned metadata is not a
  * credential, player-admission decision, response-recovery proof, or globally atomic cross-store
- * snapshot. Recovery may use an older committed signing generation only when its exact original
- * public-key fingerprint remains in the current trusted JWKS; current signer/trust and the exact
- * original committed issuance are reread on both sides of the Redis postcondition.
+ * snapshot. Recovery and caller currentness may use an older committed signing generation only when
+ * its exact original public-key fingerprint remains in the current trusted JWKS; current
+ * signer/trust and the exact original committed issuance are reread around recovery activation.
  */
 public final class AccountGameplayDelegationCommittedIssuanceOwner {
   private final AccountGameplayDelegationIssuanceRepository issuanceRepository;
@@ -92,7 +92,7 @@ public final class AccountGameplayDelegationCommittedIssuanceOwner {
                     issuanceRepository
                         .readCurrentCommittedCandidateByJti(tokenJti)
                         .orElseThrow(AccountGameplayDelegationCommittedIssuanceOwner::unavailable);
-                signer.requireCurrentCommittedSigner(current);
+                signer.requireCurrentCommittedRecoverySigner(current);
                 return current;
               });
       if (evidence == null
@@ -100,6 +100,7 @@ public final class AccountGameplayDelegationCommittedIssuanceOwner {
           || Math.floorDiv(clock.millis(), 1_000L) >= evidence.identity().expiresAtEpochSecond()) {
         throw unavailable();
       }
+      signer.requireRetainedCommittedPublicKey(evidence);
       tokenRegistry.requireExactActiveRecord(evidence);
       if (Math.floorDiv(clock.millis(), 1_000L) >= evidence.identity().expiresAtEpochSecond()) {
         throw unavailable();

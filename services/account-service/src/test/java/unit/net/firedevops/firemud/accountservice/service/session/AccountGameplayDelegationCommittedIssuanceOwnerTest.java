@@ -144,6 +144,78 @@ class AccountGameplayDelegationCommittedIssuanceOwnerTest {
   }
 
   @Test
+  void currentnessAllowsHistoricalSignerGenerationWhenOriginalKeyIsRetained() {
+    AccountGameplayDelegationIssuanceRepository repository =
+        mock(AccountGameplayDelegationIssuanceRepository.class);
+    AccountGameplayDelegationSigner signer = mock(AccountGameplayDelegationSigner.class);
+    AccountGameplayDelegationTokenRegistry registry =
+        mock(AccountGameplayDelegationTokenRegistry.class);
+    TestTransactionManager transactionManager = new TestTransactionManager();
+    CommittedCandidateVerificationData committed = committedCandidate();
+    UUID tokenJti = committed.identity().tokenJti();
+    when(repository.readCurrentCommittedCandidateByJti(tokenJti))
+        .thenReturn(Optional.of(committed));
+    doAnswer(
+            invocation -> {
+              org.assertj.core.api.Assertions.assertThat(
+                      TransactionSynchronizationManager.isActualTransactionActive())
+                  .isTrue();
+              return null;
+            })
+        .when(signer)
+        .requireCurrentCommittedRecoverySigner(committed);
+    doAnswer(
+            invocation -> {
+              org.assertj.core.api.Assertions.assertThat(
+                      TransactionSynchronizationManager.isActualTransactionActive())
+                  .isFalse();
+              return null;
+            })
+        .when(signer)
+        .requireRetainedCommittedPublicKey(committed);
+    AccountGameplayDelegationCommittedIssuanceOwner owner =
+        owner(repository, signer, registry, transactionManager);
+
+    var current = owner.requireCurrentActiveCommittedCandidateByJti(tokenJti);
+
+    org.assertj.core.api.Assertions.assertThat(current).isSameAs(committed);
+    var sequence = inOrder(repository, signer, registry);
+    sequence.verify(repository).readCurrentCommittedCandidateByJti(tokenJti);
+    sequence.verify(signer).requireCurrentCommittedRecoverySigner(committed);
+    sequence.verify(signer).requireRetainedCommittedPublicKey(committed);
+    sequence.verify(registry).requireExactActiveRecord(committed);
+    verify(signer, never()).requireCurrentCommittedSigner(committed);
+  }
+
+  @Test
+  void missingRetainedKeyDeniesCurrentnessBeforeRedisRead() {
+    AccountGameplayDelegationIssuanceRepository repository =
+        mock(AccountGameplayDelegationIssuanceRepository.class);
+    AccountGameplayDelegationSigner signer = mock(AccountGameplayDelegationSigner.class);
+    AccountGameplayDelegationTokenRegistry registry =
+        mock(AccountGameplayDelegationTokenRegistry.class);
+    CommittedCandidateVerificationData committed = committedCandidate();
+    UUID tokenJti = committed.identity().tokenJti();
+    when(repository.readCurrentCommittedCandidateByJti(tokenJti))
+        .thenReturn(Optional.of(committed));
+    doAnswer(invocation -> null).when(signer).requireCurrentCommittedRecoverySigner(committed);
+    doAnswer(
+            invocation -> {
+              throw new IllegalStateException("retained signing key is unavailable");
+            })
+        .when(signer)
+        .requireRetainedCommittedPublicKey(committed);
+    AccountGameplayDelegationCommittedIssuanceOwner owner =
+        owner(repository, signer, registry, new TestTransactionManager());
+
+    assertThatThrownBy(() -> owner.requireCurrentActiveCommittedCandidateByJti(tokenJti))
+        .isInstanceOf(OwnerUnavailableException.class)
+        .hasNoCause();
+
+    verify(registry, never()).requireExactActiveRecord(committed);
+  }
+
+  @Test
   void missingRetainedKeyDeniesBeforeRegistryActivation() {
     AccountGameplayDelegationIssuanceRepository repository =
         mock(AccountGameplayDelegationIssuanceRepository.class);
