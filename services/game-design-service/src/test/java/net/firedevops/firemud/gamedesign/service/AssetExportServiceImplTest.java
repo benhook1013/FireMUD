@@ -1,8 +1,12 @@
 package net.firedevops.firemud.gamedesign.service;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -16,7 +20,11 @@ import static org.mockito.Mockito.when;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.Arrays;
@@ -35,6 +43,7 @@ import net.firedevops.firemud.gamedesign.service.impl.AssetExportServiceImpl;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -79,6 +88,29 @@ class AssetExportServiceImplTest {
 
   private AssetExportServiceImpl service;
   private ExportSnapshot snapshot;
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void privateStagingCleanupFailureDoesNotEscapeOrSkipRemainingFiles(@TempDir Path tempDirectory)
+      throws Exception {
+    Path nonEmptyDirectory = Files.createDirectory(tempDirectory.resolve("non-empty"));
+    Path retainedChild = Files.writeString(nonEmptyDirectory.resolve("retained.txt"), "keep");
+    Path disposableFile = Files.createTempFile(tempDirectory, "staged-", ".bin");
+
+    Class<?> stagingType =
+        Class.forName(AssetExportServiceImpl.class.getName() + "$PrivateStaging");
+    Constructor<?> constructor = stagingType.getDeclaredConstructor();
+    constructor.setAccessible(true);
+    Object staging = constructor.newInstance();
+    Field filesField = stagingType.getDeclaredField("files");
+    filesField.setAccessible(true);
+    ((List<Path>) filesField.get(staging)).addAll(List.of(nonEmptyDirectory, disposableFile));
+
+    assertDoesNotThrow(() -> ((AutoCloseable) staging).close());
+    assertTrue(Files.exists(nonEmptyDirectory));
+    assertTrue(Files.exists(retainedChild));
+    assertFalse(Files.exists(disposableFile));
+  }
 
   @BeforeEach
   void setup() {
@@ -582,13 +614,17 @@ class AssetExportServiceImplTest {
             "https://assets.example.invalid/assets#fragment",
             "https://assets.example.invalid/private",
             "https://minio.internal:9000/assets")) {
+      storedCandidate.set(null);
       AssetExportServiceImpl invalidService = newService(invalidBaseUrl);
 
       assertThrows(
           IllegalStateException.class,
           () -> invalidService.exportAssets(TENANT_ID, VERSION_NUMBER),
           String.valueOf(invalidBaseUrl));
+      assertNull(storedCandidate.get(), String.valueOf(invalidBaseUrl));
     }
+    verify(candidateService, never())
+        .recordExportCandidate(any(String.class), anyInt(), any(FrozenAssetExportCandidate.class));
     verifyNoInteractions(s3Client);
   }
 

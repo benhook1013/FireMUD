@@ -37,6 +37,8 @@ import tools.jackson.databind.ObjectMapper;
     value = "EI_EXPOSE_REP2",
     justification = "Injected collaborators remain internal service dependencies")
 public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactService {
+  private static final String REPAIR_ATTESTATION_FAILURE_DETAIL =
+      "Published asset attestation could not be verified.";
   private final VersionAssetArtifactRepository repository;
   private final VersionAssetPurgeWorkflowRepository purgeWorkflowRepository;
   private final VersionRepository versionRepository;
@@ -467,9 +469,15 @@ public class VersionAssetArtifactServiceImpl implements VersionAssetArtifactServ
       if (!isRepairAttestationFailure(ex)) {
         throw ex;
       }
+      String failureMessage = ex.getMessage();
+      int detailSeparator = failureMessage.indexOf(':');
       artifact.setLastWorkflowId(repairWorkflowId);
-      artifact.setLastErrorCode(ex.getMessage().split(":", 2)[0]);
-      artifact.setLastErrorMessage(ex.getMessage().split(":", 2)[1].trim());
+      artifact.setLastErrorCode(
+          detailSeparator < 0 ? failureMessage : failureMessage.substring(0, detailSeparator));
+      String failureDetail =
+          detailSeparator < 0 ? "" : failureMessage.substring(detailSeparator + 1).trim();
+      artifact.setLastErrorMessage(
+          failureDetail.isEmpty() ? REPAIR_ATTESTATION_FAILURE_DETAIL : failureDetail);
       artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
       artifact.setUpdatedAt(LocalDateTime.now());
       repository.save(artifact);

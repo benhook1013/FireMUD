@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.gamedesign.config.AssetStoreProperties;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.AssetSelection;
@@ -33,6 +34,7 @@ import net.firedevops.firemud.gamedesign.service.FrozenAssetExportCandidate;
 import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.VersionAssetExportCandidateService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetPublicationService;
+import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.sync.RequestBody;
@@ -47,6 +49,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
     justification =
         "Spring rejects missing collaborators before publication; this bean has no finalizer")
 public class AssetExportServiceImpl implements AssetExportService {
+  private static final Logger logger = LoggingUtil.getLogger(AssetExportServiceImpl.class);
   private static final String ASSET_USAGE_KEY_COLLISION = "ASSET_USAGE_KEY_COLLISION";
   private static final String SNAPSHOT_UNAVAILABLE = "VERSION_ASSET_SNAPSHOT_UNAVAILABLE";
   private static final String SNAPSHOT_MISMATCH = "VERSION_ASSET_SNAPSHOT_MISMATCH";
@@ -623,21 +626,13 @@ public class AssetExportServiceImpl implements AssetExportService {
     }
 
     @Override
-    public void close() throws IOException {
-      IOException failure = null;
+    public void close() {
       for (Path path : files) {
         try {
           Files.deleteIfExists(path);
         } catch (IOException exception) {
-          if (failure == null) {
-            failure = exception;
-          } else {
-            failure.addSuppressed(exception);
-          }
+          logger.warn("Failed to clean up private asset staging file {}", path, exception);
         }
-      }
-      if (failure != null) {
-        throw failure;
       }
     }
   }

@@ -32,6 +32,7 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.AssetSelection;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.ExportSnapshot;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -72,6 +73,8 @@ class VersionAssetExportCandidateServiceImplTest {
   private final PublishAttemptRepository attemptRepository = mock(PublishAttemptRepository.class);
   private final VersionAssetArtifactRepository artifactRepository =
       mock(VersionAssetArtifactRepository.class);
+  private final VersionAssetPublicationRepository publicationRepository =
+      mock(VersionAssetPublicationRepository.class);
   private final VersionAssetPublicationService publicationService =
       mock(VersionAssetPublicationService.class);
   private final PlatformTransactionManager transactionManager = new NoOpTransactionManager();
@@ -143,6 +146,7 @@ class VersionAssetExportCandidateServiceImplTest {
         .thenReturn(Optional.of(artifact));
     when(artifactRepository.save(any(VersionAssetArtifact.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(publicationRepository.readFrozenSnapshot(TENANT_ID, VERSION_NUMBER)).thenReturn(snapshot);
     when(publicationService.freezeOrReadSnapshot(TENANT_ID, VERSION_NUMBER)).thenReturn(snapshot);
     when(publicationService.readFrozenSnapshot(TENANT_ID, VERSION_NUMBER)).thenReturn(snapshot);
     when(publicationService.readFrozenAssetBytes(
@@ -182,7 +186,7 @@ class VersionAssetExportCandidateServiceImplTest {
             gameRepository,
             attemptRepository,
             artifactRepository,
-            publicationService,
+            publicationRepository,
             transactionManager,
             new ObjectMapper());
     AssetStoreProperties properties = new AssetStoreProperties();
