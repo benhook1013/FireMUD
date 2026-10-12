@@ -7,21 +7,14 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.time.Duration;
-import java.util.Objects;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import org.springframework.core.io.ClassPathResource;
-import org.springframework.data.redis.connection.RedisPassword;
-import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.ReturnType;
-import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 /** Package-private Redis mechanics shared only by Account's typed generation-projection stores. */
 final class CurrentGenerationProjectionRedisSupport {
-  private static final Duration COMMAND_TIMEOUT = Duration.ofSeconds(3);
   private static final String RESOURCE_PATH =
       AccountGenerationProjectionRedisContract.RESOURCE_PATH;
   private static final byte[] CAS_SCRIPT_BYTES = scriptBytes();
@@ -29,25 +22,6 @@ final class CurrentGenerationProjectionRedisSupport {
   private static final String CAS_SCRIPT_SHA256 = digest("SHA-256", CAS_SCRIPT_BYTES);
 
   private CurrentGenerationProjectionRedisSupport() {}
-
-  static InitializedClient initialize(String host, int port, String principal, String password) {
-    if (!"account_coord_app".equals(principal)) {
-      throw new IllegalArgumentException(
-          "Account current-generation Redis principal must be account_coord_app");
-    }
-    RedisStandaloneConfiguration redisConfiguration = new RedisStandaloneConfiguration(host, port);
-    redisConfiguration.setUsername(principal);
-    redisConfiguration.setPassword(RedisPassword.of(password));
-    LettuceClientConfiguration clientConfiguration =
-        LettuceClientConfiguration.builder().commandTimeout(COMMAND_TIMEOUT).build();
-
-    LettuceConnectionFactory connectionFactory =
-        new LettuceConnectionFactory(redisConfiguration, clientConfiguration);
-    connectionFactory.afterPropertiesSet();
-    StringRedisTemplate template = new StringRedisTemplate(connectionFactory);
-    template.afterPropertiesSet();
-    return new InitializedClient(connectionFactory, template);
-  }
 
   static void verifyScriptDigest(RedisScriptDescriptor descriptor) {
     requireSupportedDescriptor(descriptor);
@@ -168,14 +142,6 @@ final class CurrentGenerationProjectionRedisSupport {
       return java.util.HexFormat.of().formatHex(MessageDigest.getInstance(algorithm).digest(bytes));
     } catch (NoSuchAlgorithmException exception) {
       throw new ExceptionInInitializerError(exception);
-    }
-  }
-
-  record InitializedClient(
-      LettuceConnectionFactory connectionFactory, StringRedisTemplate template) {
-    InitializedClient {
-      Objects.requireNonNull(connectionFactory, "connection factory is required");
-      Objects.requireNonNull(template, "Redis template is required");
     }
   }
 
