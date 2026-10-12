@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.AssetSelection;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository.ExportSnapshot;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -25,7 +26,6 @@ import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.FrozenAssetExportCandidate;
 import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.VersionAssetExportCandidateService;
-import net.firedevops.firemud.gamedesign.service.VersionAssetPublicationService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -48,7 +48,7 @@ public final class VersionAssetExportCandidateServiceImpl
   private final GameRepository gameRepository;
   private final PublishAttemptRepository attemptRepository;
   private final VersionAssetArtifactRepository artifactRepository;
-  private final VersionAssetPublicationService publicationService;
+  private final VersionAssetPublicationRepository publicationRepository;
   private final ObjectMapper objectMapper;
   private final TransactionTemplate ownerWrite;
   private final TransactionTemplate ownerRead;
@@ -58,14 +58,15 @@ public final class VersionAssetExportCandidateServiceImpl
       GameRepository gameRepository,
       PublishAttemptRepository attemptRepository,
       VersionAssetArtifactRepository artifactRepository,
-      VersionAssetPublicationService publicationService,
+      VersionAssetPublicationRepository publicationRepository,
       PlatformTransactionManager transactionManager,
       ObjectMapper objectMapper) {
     this.versionRepository = Objects.requireNonNull(versionRepository, "versionRepository");
     this.gameRepository = Objects.requireNonNull(gameRepository, "gameRepository");
     this.attemptRepository = Objects.requireNonNull(attemptRepository, "attemptRepository");
     this.artifactRepository = Objects.requireNonNull(artifactRepository, "artifactRepository");
-    this.publicationService = Objects.requireNonNull(publicationService, "publicationService");
+    this.publicationRepository =
+        Objects.requireNonNull(publicationRepository, "publicationRepository");
     this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper");
     PlatformTransactionManager requiredTransactionManager =
         Objects.requireNonNull(transactionManager, "transactionManager");
@@ -218,7 +219,7 @@ public final class VersionAssetExportCandidateServiceImpl
 
   private ExportSnapshot readAndValidateSnapshot(
       String tenantId, int versionNumber, Version version) {
-    ExportSnapshot snapshot = publicationService.readFrozenSnapshot(tenantId, versionNumber);
+    ExportSnapshot snapshot = publicationRepository.readFrozenSnapshot(tenantId, versionNumber);
     if (snapshot == null
         || !Objects.equals(snapshot.tenantId(), tenantId)
         || snapshot.versionId() != version.getId()
