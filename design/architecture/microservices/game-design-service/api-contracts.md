@@ -30,7 +30,7 @@ The receipt belongs to the existing claimed run/project lifecycle, carries the a
 
 For launch preflight, the owner receipt also carries actual committed release, artifact-state, and version-state read projections through the same atomic file handoff. Game Design captures and independently verifies those projections outside the writer transaction; the fixture does not invoke the three production read RPCs. Their exact-peer authentication followed by default denial remains the production contract until operation-specific authority exists. The canonical bounded evidence and proof contract is in [System Architecture: Testing Strategy](../../system-architecture-testing.md#run-owned-v1-launch-read-evidence).
 
-The separate `GetCompleteLaunchBinding` read returns the launch descriptor with its release attestation for the complete-binding contract; it does not replace or derive the run-owned receipt's independently captured release, artifact-state, and version-state projections.
+The separate `GetCompleteLaunchBinding` production RPC retains its exact candidate peer check and then defaults to `PERMISSION_DENIED` before owner reads pending operation-specific tenant/scope authority. The owner-local complete-binding service still returns the descriptor with its release attestation for fixture proof; it does not replace or derive the run-owned receipt's independently captured release, artifact-state, and version-state projections.
 
 ## Official Hosted Creator Mutation Gate
 
