@@ -48,7 +48,8 @@ expected_fields = {
     "gameTemplateId", "ownerAccountId", "worldSlug", "worldDisplayName",
     "realmSlug", "realmDisplayName", "visible", "publicProductionRealm",
     "requiresCharacterSelection", "stateScope", "characterCreationPolicy",
-    "gameSessionLeafSha256", "gameSessionUriSan", "caCertificateSha256",
+    "gameSessionLeafSha256", "gameSessionUriSan", "worldManagementLeafSha256",
+    "worldManagementUriSan", "caCertificateSha256",
 }
 assert set(value) == expected_fields, set(value)
 assert value["schema"] == "firemud.run-owned-initial-admission-fixture.v1"
@@ -65,6 +66,8 @@ assert value["requiresCharacterSelection"] is False
 assert value["stateScope"] == "SHARED"
 assert value["characterCreationPolicy"] == "ALLOW_NEW"
 assert value["gameSessionUriSan"] == "spiffe://firemud/ns/dev/sa/game-session-service"
+assert value["worldManagementUriSan"] == "spiffe://firemud/ns/dev/sa/world-management-service"
+assert len(value["worldManagementLeafSha256"]) == 64
 print(value["operationId"])
 PY
 }
@@ -106,6 +109,10 @@ reject_missing_restart_capability() {
   ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
 }
 
+reject_missing_restart_receipt_directory() {
+  ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
+}
+
 reject_wrong_github_job() {
   GITHUB_JOB=other-job ensure_run_owned_initial_admission_capability \
     "$base_certificate_root" create-or-verify
@@ -134,6 +141,8 @@ base_project="$COMPOSE_PROJECT_NAME"
 base_token="$FIREMUD_SMOKE_OWNERSHIP_TOKEN"
 base_certificate_root="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
 base_capability="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.initial-admission-capability.json"
+base_receipt_directory="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.authored-world-source"
+world_management_dir="$base_certificate_root/workloads/world-management-service"
 
 expect_failure missing_tls ensure_run_owned_initial_admission_capability \
   "$base_certificate_root" create-or-verify
@@ -146,17 +155,63 @@ ensure_run_owned_initial_admission_capability "$base_certificate_root" create-or
 [[ "$FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH" == /app/run-owned-initial-admission-capability.json ]]
 [[ "$FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH" == "$base_capability" ]]
 [[ "$FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH" != "$FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH" ]]
+[[ "$FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH" == "$base_receipt_directory" ]]
+[[ "$FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_PATH" == /app/run-owned-authored-world-source/source-receipt.json ]]
 [[ "$(stat -c '%a' "$(dirname "$base_capability")")" == 700 ]]
 [[ "$(stat -c '%u %a %F' "$base_capability")" == "$(id -u) 444 regular file" ]]
+[[ "$(stat -c '%u %a %F' "$base_receipt_directory")" == "$(id -u) 777 directory" ]]
+[[ ! -e "$base_receipt_directory/source-receipt.json" ]]
 base_operation_id="$(load_operation_id "$base_capability")"
 ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
 ensure_run_owned_initial_admission_capability "$base_certificate_root" create-or-verify
+[[ "$(load_operation_id "$base_capability")" == "$base_operation_id" ]]
+
+receipt_directory_backup="$TEST_ROOT/receipt-dir-before-missing-restart"
+mv -- "$base_receipt_directory" "$receipt_directory_backup"
+expect_failure missing_restart_receipt_directory reject_missing_restart_receipt_directory
+[[ ! -e "$base_receipt_directory" ]]
+mv -- "$receipt_directory_backup" "$base_receipt_directory"
+ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
 [[ "$(load_operation_id "$base_capability")" == "$base_operation_id" ]]
 
 expect_failure wrong_claim reject_wrong_claim
 expect_failure wrong_run reject_wrong_run
 expect_failure wrong_project reject_wrong_project
 expect_failure symlinked_capability reject_symlinked_capability
+[[ "$(load_operation_id "$base_capability")" == "$base_operation_id" ]]
+
+world_management_certificate_backup="$TEST_ROOT/world-management-original.crt"
+cp -p -- "$world_management_dir/client.crt" "$world_management_certificate_backup"
+mv -- "$world_management_dir/client.crt" "$TEST_ROOT/world-management-missing.crt"
+expect_failure missing_world_management_certificate ensure_run_owned_initial_admission_capability \
+  "$base_certificate_root" create-or-verify
+[[ ! -e "$world_management_dir/client.crt" ]]
+mv -- "$TEST_ROOT/world-management-missing.crt" "$world_management_dir/client.crt"
+ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
+
+mv -- "$world_management_dir/client.crt" "$TEST_ROOT/world-management-non-symlink.crt"
+ln -s -- "$TEST_ROOT/world-management-non-symlink.crt" "$world_management_dir/client.crt"
+expect_failure symlinked_world_management_certificate ensure_run_owned_initial_admission_capability \
+  "$base_certificate_root" create-or-verify
+rm -- "$world_management_dir/client.crt"
+mv -- "$TEST_ROOT/world-management-non-symlink.crt" "$world_management_dir/client.crt"
+ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
+
+capability_backup="$TEST_ROOT/capability-before-world-pin-change.json"
+cp -p -- "$base_capability" "$capability_backup"
+python3 - "$TEST_ROOT/changed-world-pin.json" "$base_capability" <<'PY'
+import json
+import pathlib
+import sys
+
+value = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+value["worldManagementLeafSha256"] = "f" * 64
+pathlib.Path(sys.argv[1]).write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+PY
+chmod 444 "$TEST_ROOT/changed-world-pin.json"
+mv -- "$TEST_ROOT/changed-world-pin.json" "$base_capability"
+expect_failure changed_world_capability_pin reject_replaced_capability
+mv -- "$capability_backup" "$base_capability"
 [[ "$(load_operation_id "$base_capability")" == "$base_operation_id" ]]
 
 capability_backup="$TEST_ROOT/capability-original.json"
@@ -194,6 +249,116 @@ export FIREMUD_SMOKE_RUN_ID="$base_run_id"
 export COMPOSE_PROJECT_NAME="$base_project"
 export FIREMUD_SMOKE_OWNERSHIP_TOKEN="$base_token"
 claim_run_owned_compose_project
+chmod 600 "$world_management_dir/client.crt" "$world_management_dir/ca.crt"
+cp -- "$source_certificate_root/workloads/world-management-service/client.crt" \
+  "$world_management_dir/client.crt"
+cp -- "$source_certificate_root/workloads/world-management-service/ca.crt" \
+  "$world_management_dir/ca.crt"
+chmod 444 "$world_management_dir/client.crt" "$world_management_dir/ca.crt"
+expect_failure changed_world_management_certificate ensure_run_owned_initial_admission_capability \
+  "$base_certificate_root" create-or-verify
+chmod 600 "$world_management_dir/client.crt" "$world_management_dir/ca.crt"
+cp -- "$TEST_ROOT/world-management-original.crt" "$world_management_dir/client.crt"
+cp -- "$base_certificate_root/workloads/game-session-service/ca.crt" "$world_management_dir/ca.crt"
+chmod 444 "$world_management_dir/client.crt" "$world_management_dir/ca.crt"
+ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
+
+chmod 600 "$world_management_dir/ca.crt"
+cp -- "$source_certificate_root/workloads/world-management-service/ca.crt" \
+  "$world_management_dir/ca.crt"
+chmod 444 "$world_management_dir/ca.crt"
+expect_failure changed_world_management_ca ensure_run_owned_initial_admission_capability \
+  "$base_certificate_root" create-or-verify
+chmod 600 "$world_management_dir/ca.crt"
+cp -- "$base_certificate_root/workloads/game-session-service/ca.crt" \
+  "$world_management_dir/ca.crt"
+chmod 444 "$world_management_dir/ca.crt"
+ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
+
+wrong_identity_world_certificate="$TEST_ROOT/wrong-world-identity.crt"
+cp -- "$base_certificate_root/workloads/game-design-service/client.crt" \
+  "$wrong_identity_world_certificate"
+chmod 600 "$world_management_dir/client.crt"
+cp -- "$wrong_identity_world_certificate" "$world_management_dir/client.crt"
+chmod 444 "$world_management_dir/client.crt"
+expect_failure wrong_world_management_uri ensure_run_owned_initial_admission_capability \
+  "$base_certificate_root" create-or-verify
+chmod 600 "$world_management_dir/client.crt"
+cp -- "$TEST_ROOT/world-management-original.crt" "$world_management_dir/client.crt"
+chmod 444 "$world_management_dir/client.crt"
+
+invalid_world_certificate="$TEST_ROOT/invalid-world-certificate.crt"
+printf 'not-a-certificate\n' >"$invalid_world_certificate"
+chmod 600 "$world_management_dir/client.crt"
+cp -- "$invalid_world_certificate" "$world_management_dir/client.crt"
+chmod 444 "$world_management_dir/client.crt"
+expect_failure invalid_world_management_certificate ensure_run_owned_initial_admission_capability \
+  "$base_certificate_root" create-or-verify
+chmod 600 "$world_management_dir/client.crt"
+cp -- "$TEST_ROOT/world-management-original.crt" "$world_management_dir/client.crt"
+chmod 444 "$world_management_dir/client.crt"
+ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
+
+multiple_world_directory="$TEST_ROOT/multiple-world-uri"
+mkdir -m 700 -- "$multiple_world_directory"
+cp -- "$base_certificate_root/authority/ca.crt" "$multiple_world_directory/ca.crt"
+cp -- "$base_certificate_root/authority/ca.key" "$multiple_world_directory/ca.key"
+chmod 600 "$multiple_world_directory/ca.key"
+openssl req -new -newkey rsa:2048 -nodes -sha256 \
+  -keyout "$multiple_world_directory/client.key" \
+  -out "$multiple_world_directory/client.csr" \
+  -subj "/CN=world-management-service" >/dev/null 2>&1
+cat >"$multiple_world_directory/extensions.cnf" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=clientAuth
+subjectAltName=URI:spiffe://firemud/ns/dev/sa/world-management-service,URI:spiffe://firemud/ns/dev/sa/other
+EOF
+openssl x509 -req -in "$multiple_world_directory/client.csr" \
+  -CA "$multiple_world_directory/ca.crt" -CAkey "$multiple_world_directory/ca.key" \
+  -CAcreateserial -out "$multiple_world_directory/client.crt" -days 2 -sha256 \
+  -extfile "$multiple_world_directory/extensions.cnf" >/dev/null 2>&1
+chmod 444 "$multiple_world_directory/client.crt"
+chmod 600 "$world_management_dir/client.crt"
+cp -- "$multiple_world_directory/client.crt" "$world_management_dir/client.crt"
+chmod 444 "$world_management_dir/client.crt"
+expect_failure multiple_world_management_uris ensure_run_owned_initial_admission_capability \
+  "$base_certificate_root" create-or-verify
+chmod 600 "$world_management_dir/client.crt"
+cp -- "$world_management_certificate_backup" "$world_management_dir/client.crt"
+chmod 444 "$world_management_dir/client.crt"
+ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
+
+changed_world_directory="$TEST_ROOT/changed-world-same-ca"
+mkdir -m 700 -- "$changed_world_directory"
+cp -- "$base_certificate_root/authority/ca.crt" "$changed_world_directory/ca.crt"
+cp -- "$base_certificate_root/authority/ca.key" "$changed_world_directory/ca.key"
+chmod 600 "$changed_world_directory/ca.key"
+openssl req -new -newkey rsa:2048 -nodes -sha256 \
+  -keyout "$changed_world_directory/client.key" \
+  -out "$changed_world_directory/client.csr" \
+  -subj "/CN=world-management-service" >/dev/null 2>&1
+cat >"$changed_world_directory/extensions.cnf" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=clientAuth
+subjectAltName=URI:spiffe://firemud/ns/dev/sa/world-management-service,DNS:world-management-service
+EOF
+openssl x509 -req -in "$changed_world_directory/client.csr" \
+  -CA "$changed_world_directory/ca.crt" -CAkey "$changed_world_directory/ca.key" \
+  -CAcreateserial -out "$changed_world_directory/client.crt" -days 2 -sha256 \
+  -extfile "$changed_world_directory/extensions.cnf" >/dev/null 2>&1
+chmod 444 "$changed_world_directory/client.crt"
+chmod 600 "$world_management_dir/client.crt"
+cp -- "$changed_world_directory/client.crt" "$world_management_dir/client.crt"
+chmod 444 "$world_management_dir/client.crt"
+expect_failure changed_world_management_leaf ensure_run_owned_initial_admission_capability \
+  "$base_certificate_root" create-or-verify
+chmod 600 "$world_management_dir/client.crt"
+cp -- "$world_management_certificate_backup" "$world_management_dir/client.crt"
+chmod 444 "$world_management_dir/client.crt"
+ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-only
+
 cp -p -- "$base_certificate_root/workloads/game-session-service/client.crt" "$TEST_ROOT/original-client.crt"
 cp -p -- "$base_certificate_root/workloads/game-session-service/ca.crt" "$TEST_ROOT/original-ca.crt"
 chmod 600 "$base_certificate_root/workloads/game-session-service/client.crt" \
@@ -289,7 +454,9 @@ for wrapper in verify-fresh-bootstrap.sh verify-smoke-images.sh verify-restart-s
   [[ -n "$disabled_line" && -n "$capability_line" ]]
   if [[ -n "$config_line" ]]; then
     ((disabled_line < config_line))
-    if [[ "$wrapper" != verify-restart-state.sh ]]; then
+    if [[ "$wrapper" == verify-smoke-images.sh ]]; then
+      ((capability_line < config_line))
+    elif [[ "$wrapper" != verify-restart-state.sh ]]; then
       ((config_line < capability_line))
     fi
   fi

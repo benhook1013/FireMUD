@@ -71,6 +71,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
   GameInstanceServiceLifecycleIntegrationTest.Config.class
 })
 class GameInstanceServiceLifecycleIntegrationTest {
+  private static final String FIRST_OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF =
+      "6bf9e6d0-7f6b-4c85-b75e-d65949694f13";
+  private static final String SECOND_OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF =
+      "2b7e1516-28ae-4be3-9d31-6b5f441c9b77";
+
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
@@ -147,7 +152,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                         .setGenerationConfigRevision("genrev-11")
                         .setVersionStateEpoch(77L)
                         .setReleaseBundleId(77L)
-                        .setPublishedReleaseBundleRef("prb:42:11:77")
+                        .setPublishedReleaseBundleRef(FIRST_OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                         .build())
                 .build());
     when(gameDesignClient.resolveLaunchDescriptor(42L, 7L, "cp-2"))
@@ -165,7 +170,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                         .setGenerationConfigRevision("genrev-12")
                         .setVersionStateEpoch(78L)
                         .setReleaseBundleId(78L)
-                        .setPublishedReleaseBundleRef("prb:42:12:78")
+                        .setPublishedReleaseBundleRef(SECOND_OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                         .build())
                 .build());
     when(gameDesignClient.getPublishedReleaseBundle(42L, 11L))
@@ -179,6 +184,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                         .setManifestHash("manifest-11")
                         .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-11")
+                        .setPublishedReleaseBundleRef(FIRST_OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                         .build())
                 .build());
     when(gameDesignClient.getVersionAssetArtifactState(42L, 11L))
@@ -221,6 +227,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
                         .setManifestHash("manifest-12")
                         .addRequiredManifestAssetKeys("manifest.json")
                         .setGenerationConfigRevision("genrev-12")
+                        .setPublishedReleaseBundleRef(SECOND_OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                         .build())
                 .build());
     when(gameDesignClient.getVersionAssetArtifactState(42L, 12L))
@@ -483,6 +490,24 @@ class GameInstanceServiceLifecycleIntegrationTest {
     assertThat(started.status()).isEqualTo("RUNNING");
     assertThat(repository.findById(existingId)).isPresent();
     assertThat(repository.findById(existingId).orElseThrow().getStatus()).isEqualTo("STOPPED");
+    ArgumentCaptor<String> publishedReleaseBundleRef = ArgumentCaptor.forClass(String.class);
+    verify(worldManagementClient)
+        .prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            publishedReleaseBundleRef.capture(),
+            anyLong(),
+            any());
+    assertThat(publishedReleaseBundleRef.getValue())
+        .isEqualTo(SECOND_OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF);
     verify(worldManagementClient).getWorldInstanceLifecycle(42L, existingId);
     verify(worldManagementClient)
         .terminateWorldInstance(anyLong(), eq(existingId), anyLong(), any(), any());

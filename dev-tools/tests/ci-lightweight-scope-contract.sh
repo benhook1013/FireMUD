@@ -312,8 +312,18 @@ require_equal(
     module_checks_step,
     ("run",),
     "echo \"::group::Run Module Validation\"\n"
-    "./gradlew --refresh-dependencies :${{ matrix.module }}:check -PfullCheck\n"
+    "./gradlew --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:check -PfullCheck\n"
     "echo \"::endgroup::\"\n",
+    "ci workflow",
+)
+
+runtime_jar_step = find_step(
+    ci, "build-and-test", "Build Runtime JAR", "ci workflow"
+)
+require_equal(
+    runtime_jar_step,
+    ("run",),
+    "./gradlew --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:bootJar -PfullCheck",
     "ci workflow",
 )
 
