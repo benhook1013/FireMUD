@@ -605,6 +605,30 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishVersionMapsOwnerProofRefusalToStableApplicationError() throws Exception {
+    MutationOwnerProofUnavailableException refusal =
+        new MutationOwnerProofUnavailableException(
+            "FULL_VERSION_PUBLICATION_UNAVAILABLE",
+            "fresh and pending full-version publication require a production Draft association");
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "request-1"))
+        .thenThrow(refusal);
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("FULL_VERSION_PUBLICATION_UNAVAILABLE", ref.get().getError().getCode());
+    assertEquals(refusal.getMessage(), ref.get().getError().getMessage());
+  }
+
+  @Test
   void publishScriptPatchVersionMapsPendingReconciliationToStableApplicationError()
       throws Exception {
     Mockito.when(

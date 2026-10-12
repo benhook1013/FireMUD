@@ -108,10 +108,10 @@ public class VersionPublishCommandServiceImpl {
   }
 
   /**
-   * Private non-ingress seam retained for mechanics proof until a production Draft source exists.
+   * Package-private non-ingress seam retained for mechanics proof until a production Draft source
+   * exists.
    */
-  private PublishWorkflowSnapshot reconcileFullVersionPublishMechanics(
-      PublishWorkflowRequest request) {
+  PublishWorkflowSnapshot reconcileFullVersionPublishMechanics(PublishWorkflowRequest request) {
     request = request.recoverMissingPublishRequestId();
     validateRequestIdentity(request);
     logger.info(
