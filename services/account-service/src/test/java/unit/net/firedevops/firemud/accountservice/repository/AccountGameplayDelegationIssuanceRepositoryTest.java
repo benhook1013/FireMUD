@@ -62,6 +62,36 @@ import tools.jackson.databind.json.JsonMapper;
 
 class AccountGameplayDelegationIssuanceRepositoryTest {
   @Test
+  void invalidAccountUuidDeniesBeforeOwnerReadOrPendingWrite() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountAuthoritySourceEvidenceRepository sources =
+        mock(AccountAuthoritySourceEvidenceRepository.class);
+    AccountGameplayDelegationIssuanceRepository repository =
+        new AccountGameplayDelegationIssuanceRepository(dsl, sources);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+
+    for (UUID accountId :
+        new UUID[] {
+          new UUID(0L, 0L),
+          UUID.fromString("4cae05e8-7a6b-3b14-9d44-665e3eec450b"),
+          UUID.fromString("4cae05e8-7a6b-4b14-7d44-665e3eec450b")
+        }) {
+      assertThatThrownBy(
+              () ->
+                  repository.beginPendingForAccount(
+                      UUID.randomUUID(),
+                      accountId,
+                      "spiffe://firemud/ns/test/sa/game-session-service",
+                      UUID.randomUUID(),
+                      AccountGameplayCredentialRequestBindingFixture.binding()))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("A canonical version-4 Account UUID is required");
+    }
+    verifyNoInteractions(dsl, sources);
+  }
+
+  @Test
   void committedProjectionProofRequiresCanonicalAccountBytesNotRecipientFenceSchema()
       throws Exception {
     var account =

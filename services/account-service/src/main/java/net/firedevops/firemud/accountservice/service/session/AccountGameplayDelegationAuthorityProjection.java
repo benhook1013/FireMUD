@@ -48,9 +48,7 @@ public final class AccountGameplayDelegationAuthorityProjection {
   public static final String ACCOUNT_KEY_PREFIX = "session:auth:generation:account:";
   public static final int MAX_PROJECTION_BYTES = 8 * 1024;
 
-  private static final Pattern POSITIVE_DECIMAL = Pattern.compile("[1-9][0-9]{0,18}");
   private static final Pattern SHA256 = Pattern.compile("[0-9a-f]{64}");
-  private static final Pattern EVENT_DIGEST = Pattern.compile("sha256:[0-9a-f]{64}");
   private static final JsonMapper JSON =
       JsonMapper.builder()
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -465,7 +463,6 @@ public final class AccountGameplayDelegationAuthorityProjection {
     }
   }
 
-  /** Strict canonical non-authorizing value stored at one canonical authority key. */
   /** Encodes exact source DTOs for the two projection keys; these bytes are not authority proof. */
   public static byte[][] canonicalProjectionPair(IssuerAccountSourceSnapshot source) {
     Objects.requireNonNull(source, "Account authority source snapshot is required");
@@ -519,7 +516,6 @@ public final class AccountGameplayDelegationAuthorityProjection {
     return new byte[][] {issuer.canonicalBytes(), account.canonicalBytes()};
   }
 
-  /** Strict canonical non-authorizing value stored at one canonical authority key. */
   public static final class ProjectionValue {
     private static final String ISSUER = "issuer";
     private static final String ACCOUNT = "account";
@@ -652,68 +648,6 @@ public final class AccountGameplayDelegationAuthorityProjection {
     }
   }
 
-  private static String key(String scope, String scopeId) {
-    return (ProjectionValue.ISSUER.equals(scope) ? ISSUER_KEY_PREFIX : ACCOUNT_KEY_PREFIX)
-        + scopeId;
-  }
-
-  private static UUID parseCanonicalUuid(String value) {
-    try {
-      UUID parsed = UUID.fromString(value);
-      if (!parsed.toString().equals(value)) throw new IllegalArgumentException();
-      return parsed;
-    } catch (RuntimeException ex) {
-      throw new ProjectionUnavailableException();
-    }
-  }
-
-  private static Map<String, Object> object(Object value) {
-    if (!(value instanceof Map<?, ?> input)) throw new ProjectionUnavailableException();
-    Map<String, Object> result = new LinkedHashMap<>();
-    for (Map.Entry<?, ?> entry : input.entrySet()) {
-      if (!(entry.getKey() instanceof String key) || entry.getValue() == null) {
-        throw new ProjectionUnavailableException();
-      }
-      result.put(key, entry.getValue());
-    }
-    return result;
-  }
-
-  private static String text(Object value) {
-    if (!(value instanceof String text) || text.isEmpty() || text.length() > 2048) {
-      throw new ProjectionUnavailableException();
-    }
-    return text;
-  }
-
-  private static String requireBoundedText(Object value, int maxLength) {
-    String text = text(value);
-    if (text.length() > maxLength || text.isBlank() || !text.equals(text.strip())) {
-      throw new ProjectionUnavailableException();
-    }
-    return text;
-  }
-
-  private static long parsePositive(Object value) {
-    String text = text(value);
-    if (!POSITIVE_DECIMAL.matcher(text).matches()) throw new ProjectionUnavailableException();
-    try {
-      return Long.parseLong(text);
-    } catch (NumberFormatException ex) {
-      throw new ProjectionUnavailableException();
-    }
-  }
-
-  private static long parseNonnegative(Object value) {
-    String text = text(value);
-    if (!text.matches("0|[1-9][0-9]{0,18}")) throw new ProjectionUnavailableException();
-    try {
-      return Long.parseLong(text);
-    } catch (NumberFormatException ex) {
-      throw new ProjectionUnavailableException();
-    }
-  }
-
   private static void requireDigest(String digest) {
     if (digest == null || !SHA256.matcher(digest).matches()) {
       throw new IllegalArgumentException("Projection digest is malformed");
@@ -731,10 +665,6 @@ public final class AccountGameplayDelegationAuthorityProjection {
       if (ex instanceof ProjectionUnavailableException unavailable) throw unavailable;
       throw new ProjectionUnavailableException();
     }
-  }
-
-  private static byte[] canonicalize(String text) throws IOException {
-    return Rfc8785CanonicalJson.canonicalizeUtf8(text);
   }
 
   private static String sha256(byte[] bytes) {
