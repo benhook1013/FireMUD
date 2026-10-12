@@ -7,6 +7,7 @@ import io.grpc.stub.StreamObserver;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.SQLException;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.HexFormat;
@@ -31,6 +32,8 @@ import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecu
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal;
 import net.firedevops.firemud.gamesession.v1.ReadOriginalStartSessionCurrentAttemptResponse;
+import org.jooq.exception.DataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Standalone unregistered receiver authenticating the exact World peer before request parsing. */
@@ -101,20 +104,57 @@ public final class AccountStartSessionWorldParticipationAcquisitionGrpcService
           toResponse(request, namespace, acquired);
       observer.onNext(response);
       observer.onCompleted();
-    } catch (StatusRuntimeException failure) {
-      Status.Code code = Status.fromThrowable(failure).getCode();
-      if (code != Status.Code.UNAUTHENTICATED
-          && code != Status.Code.PERMISSION_DENIED
-          && code != Status.Code.INVALID_ARGUMENT
-          && code != Status.Code.FAILED_PRECONDITION) {
-        code = Status.Code.UNAVAILABLE;
-      }
-      observer.onError(Status.fromCode(code).asRuntimeException());
+    } catch (AccountStartSessionOperatorAuthorizationService.NotFoundException missing) {
+      fail(observer, Status.NOT_FOUND);
+    } catch (CannotCreateTransactionException unavailable) {
+      fail(observer, Status.UNAVAILABLE);
+    } catch (DataAccessException | org.springframework.dao.DataAccessException failure) {
+      fail(observer, hasConnectionFailureSqlState(failure) ? Status.UNAVAILABLE : Status.INTERNAL);
+    } catch (StatusRuntimeException upstream) {
+      fail(observer, mapUpstreamStatus(Status.fromThrowable(upstream).getCode()));
     } catch (IllegalArgumentException invalidEvidence) {
-      observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
-    } catch (RuntimeException unavailable) {
-      observer.onError(Status.UNAVAILABLE.asRuntimeException());
+      fail(observer, Status.FAILED_PRECONDITION);
+    } catch (IllegalStateException rejected) {
+      fail(observer, Status.FAILED_PRECONDITION);
+    } catch (RuntimeException failure) {
+      fail(observer, Status.INTERNAL);
     }
+  }
+
+  private static boolean hasConnectionFailureSqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException exception) {
+        String sqlState = exception.getSQLState();
+        if (sqlState != null && sqlState.startsWith("08")) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private static Status mapUpstreamStatus(Status.Code code) {
+    return switch (code) {
+      case INVALID_ARGUMENT -> Status.INVALID_ARGUMENT;
+      case NOT_FOUND -> Status.NOT_FOUND;
+      case PERMISSION_DENIED -> Status.PERMISSION_DENIED;
+      case FAILED_PRECONDITION, ABORTED -> Status.FAILED_PRECONDITION;
+      case UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED -> Status.UNAVAILABLE;
+      default -> Status.INTERNAL;
+    };
+  }
+
+  private static void fail(StreamObserver<?> observer, Status status) {
+    String description =
+        switch (status.getCode()) {
+          case NOT_FOUND -> "Original StartSession participation source is unavailable";
+          case PERMISSION_DENIED -> "Account rejected the authenticated World caller";
+          case INVALID_ARGUMENT -> "World participation acquisition input is invalid";
+          case FAILED_PRECONDITION -> "Current Account participation evidence is unavailable";
+          case UNAVAILABLE -> "Account World participation acquisition is temporarily unavailable";
+          default -> "Account World participation acquisition could not be completed";
+        };
+    observer.onError(status.withDescription(description).asRuntimeException());
   }
 
   private static AcquisitionRequest decodeRequest(

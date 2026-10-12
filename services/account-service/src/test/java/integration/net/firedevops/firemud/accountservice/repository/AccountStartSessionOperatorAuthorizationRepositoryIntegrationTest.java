@@ -10,6 +10,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -232,9 +233,103 @@ class AccountStartSessionOperatorAuthorizationRepositoryIntegrationTest {
               () -> insertCandidateWithSourceFence(context, candidate, invalidSourceFence))
           .isInstanceOf(IntegrityConstraintViolationException.class)
           .satisfies(
-              failure -> assertThat(findSqlException(failure).getSQLState()).isEqualTo("23514"));
+              failure -> {
+                SQLException sqlFailure = findSqlException(failure);
+                assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+                if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+                  throw new AssertionError(
+                      "Source-fence rejection must be a PostgreSQL exception", sqlFailure);
+                }
+                var serverError = postgresFailure.getServerErrorMessage();
+                assertThat(serverError).isNotNull();
+                assertThat(serverError.getConstraint())
+                    .isEqualTo("account_ss_operator_bundle_source_fence_canonical_check");
+              });
       assertThat(context.countRows()).isEqualTo(beforeInvalidFence);
     }
+  }
+
+  @Test
+  void v1601ReplacesOnlyTheExactLegacyBundleSourceFenceGuard() {
+    Context context = contextAt("160");
+    Map<String, String> checksBeforeMigration = checkConstraintDefinitions(context);
+    String legacyConstraintName = "account_start_session_operator_authorizations_check";
+    String canonicalConstraintName = "account_ss_operator_bundle_source_fence_canonical_check";
+
+    assertThat(checksBeforeMigration)
+        .containsKey(legacyConstraintName)
+        .doesNotContainKey(canonicalConstraintName);
+    var legacyConstraint =
+        Objects.requireNonNull(
+            context.adminDsl.fetchOne(
+                "SELECT pg_get_expr(c.conbin, c.conrelid) AS expression, "
+                    + "c.convalidated, "
+                    + "array_to_string(ARRAY(SELECT a.attname "
+                    + "FROM unnest(c.conkey) AS key(attnum) "
+                    + "JOIN pg_attribute a ON a.attrelid = c.conrelid "
+                    + "AND a.attnum = key.attnum ORDER BY a.attname), ',') AS columns "
+                    + "FROM pg_constraint c "
+                    + "WHERE c.conrelid = ?::regclass AND c.contype = 'c' "
+                    + "AND c.conname = ?",
+                context.schema + ".account_start_session_operator_authorizations",
+                legacyConstraintName),
+            "Expected the legacy source-fence check on the schema-qualified authorization table");
+    assertThat(legacyConstraint.get("convalidated", Boolean.class)).isTrue();
+    assertThat(legacyConstraint.get("columns", String.class))
+        .isEqualTo("bundle_source_fence,issuance_fence");
+    assertThat(normalizeCheckExpression(legacyConstraint.get("expression", String.class)))
+        .isEqualTo("bundle_source_fence~'^[1-9][0-9]{0,18}$'andbundle_source_fence=issuance_fence");
+
+    Flyway.configure()
+        .dataSource(context.dataSource)
+        .schemas(context.schema)
+        .defaultSchema(context.schema)
+        .placeholders(Map.of("serviceSchema", context.schema))
+        .locations("classpath:db/migration")
+        .target(org.flywaydb.core.api.MigrationVersion.fromVersion("160.1"))
+        .load()
+        .migrate();
+
+    Map<String, String> checksAfterMigration = checkConstraintDefinitions(context);
+    assertThat(checksAfterMigration)
+        .doesNotContainKey(legacyConstraintName)
+        .containsKey(canonicalConstraintName);
+    var canonicalConstraint =
+        Objects.requireNonNull(
+            context.adminDsl.fetchOne(
+                "SELECT pg_get_expr(c.conbin, c.conrelid) AS expression "
+                    + "FROM pg_constraint c "
+                    + "WHERE c.conrelid = ?::regclass AND c.contype = 'c' "
+                    + "AND c.conname = ?",
+                context.schema + ".account_start_session_operator_authorizations",
+                canonicalConstraintName),
+            "Expected the canonical source-fence check after V160.1");
+    assertThat(normalizeCheckExpression(canonicalConstraint.get("expression", String.class)))
+        .contains("bundle_source_fence~'^[1-9][0-9]{0,18}$'")
+        .contains("bundle_source_fence::numeric<=");
+
+    Map<String, String> expectedChecksAfterMigration = new HashMap<>(checksBeforeMigration);
+    expectedChecksAfterMigration.remove(legacyConstraintName);
+    expectedChecksAfterMigration.put(
+        canonicalConstraintName, checksAfterMigration.get(canonicalConstraintName));
+    assertThat(checksAfterMigration).isEqualTo(expectedChecksAfterMigration);
+  }
+
+  private Map<String, String> checkConstraintDefinitions(Context context) {
+    return context
+        .adminDsl
+        .fetch(
+            "SELECT c.conname, pg_get_constraintdef(c.oid) AS definition "
+                + "FROM pg_constraint c "
+                + "WHERE c.conrelid = ?::regclass AND c.contype = 'c'",
+            context.schema + ".account_start_session_operator_authorizations")
+        .intoMap(
+            record -> record.get("conname", String.class),
+            record -> record.get("definition", String.class));
+  }
+
+  private String normalizeCheckExpression(String expression) {
+    return expression.toLowerCase().replaceAll("[\\s()\\\"]", "").replace("::text", "");
   }
 
   @Test

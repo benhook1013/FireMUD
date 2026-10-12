@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -445,13 +446,13 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
       assertThatThrownBy(() -> account.tx(() -> repository.settleExact(conflictingTerminal)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("StartSession World participation conflicts with its immutable binding");
-      assertThatThrownBy(
-              () ->
-                  account.dsl.execute(
-                      "UPDATE account_start_session_world_participation_settlements "
-                          + "SET outcome = 'ABORTED' WHERE participation_id = ?",
-                      first.participationId()))
-          .isInstanceOf(RuntimeException.class);
+      assertGuardRejected(
+          () ->
+              account.dsl.execute(
+                  "UPDATE account_start_session_world_participation_settlements "
+                      + "SET outcome = 'ABORTED' WHERE participation_id = ?",
+                  first.participationId()),
+          "StartSession World participation evidence is append-only");
       assertThat(
               account.tx(
                   () ->
@@ -500,6 +501,31 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
                   DSL.table("account_start_session_world_participation_settlements")))
           .isEqualTo(1);
     }
+  }
+
+  private static void assertGuardRejected(
+      org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String expectedDiagnostic) {
+    assertThatThrownBy(action)
+        .satisfies(
+            failure -> {
+              SQLException sqlFailure = findSqlException(failure);
+              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+                throw new AssertionError(
+                    "Participation settlement guard rejection must be a PostgreSQL exception",
+                    sqlFailure);
+              }
+              var serverError = postgresFailure.getServerErrorMessage();
+              assertThat(serverError).isNotNull();
+              assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
+            });
+  }
+
+  private static SQLException findSqlException(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException) return sqlException;
+    }
+    throw new AssertionError("Guard rejection must retain its SQL exception", failure);
   }
 
   private static Candidate candidate(
