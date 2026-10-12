@@ -56,6 +56,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 
 class AccountGameplayDelegationTokenRegistryTest {
@@ -67,6 +72,7 @@ class AccountGameplayDelegationTokenRegistryTest {
   private static final long EXPIRY_MILLIS = (NOW + 120L) * 1000L + 30_000L;
   private static final JsonMapper JSON = JsonMapper.builder().build();
   private AccountGameplayDelegationIssuanceRepository repository;
+  private final TestTransactionManager transactionManager = new TestTransactionManager();
   private StatefulRedisConnection<byte[], byte[]> connection;
   private RedisCommands<byte[], byte[]> commands;
   private AccountGameplayDelegationTokenRegistry registry;
@@ -82,7 +88,11 @@ class AccountGameplayDelegationTokenRegistryTest {
     when(connection.getOptions()).thenReturn(ClientOptions.builder().autoReconnect(false).build());
     when(connection.isOpen()).thenReturn(true);
     when(connection.sync()).thenReturn(commands);
-    AccountCoordinationPinnedConnectionProvider provider = () -> connection;
+    AccountCoordinationPinnedConnectionProvider provider =
+        () -> {
+          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+          return connection;
+        };
     GameSessionAccountDelegationRegistryRecord record =
         GameSessionAccountDelegationRegistryRecord.fromAccountSignedCompactJwt(
             token(claims()), "5", binding(), snapshot(), evidenceBundleReference(), NOW, 16_384L);
@@ -112,7 +122,11 @@ class AccountGameplayDelegationTokenRegistryTest {
             snapshot(),
             evidenceBundleReference());
     when(repository.readPendingRegistryCandidate(UUID.fromString(REQUEST_ID)))
-        .thenReturn(candidate);
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              return candidate;
+            });
     when(commands.aclWhoami())
         .thenReturn(AccountGameplayDelegationRedisClient.REQUIRED_ACL_IDENTITY);
     when(commands.scriptLoad(any(byte[].class)))
@@ -135,10 +149,38 @@ class AccountGameplayDelegationTokenRegistryTest {
     registry =
         new AccountGameplayDelegationTokenRegistry(
             repository,
+            transactionManager,
             redisClient,
             Clock.fixed(Instant.ofEpochSecond(NOW).plusMillis(500L), ZoneOffset.UTC),
             16_384L,
             30_000L);
+  }
+
+  @Test
+  void rejectsAmbientAccountTransactionBeforeReadingCandidateOrOpeningRedis() {
+    TransactionTemplate ambientTransaction = new TransactionTemplate(transactionManager);
+
+    assertThatThrownBy(
+            () ->
+                ambientTransaction.execute(
+                    status -> registry.registerPending(UUID.fromString(REQUEST_ID))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ambient Account transaction");
+
+    verify(repository, org.mockito.Mockito.never())
+        .readPendingRegistryCandidate(UUID.fromString(REQUEST_ID));
+    verify(connection, org.mockito.Mockito.never()).isOpen();
+  }
+
+  @Test
+  void rejectsMissingCandidateBeforeOpeningRedis() {
+    doReturn(null).when(repository).readPendingRegistryCandidate(UUID.fromString(REQUEST_ID));
+
+    assertThatThrownBy(() -> registry.registerPending(UUID.fromString(REQUEST_ID)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("candidate is unavailable");
+
+    verify(connection, org.mockito.Mockito.never()).isOpen();
   }
 
   @Test
@@ -295,7 +337,13 @@ class AccountGameplayDelegationTokenRegistryTest {
   @Test
   void rejectsScriptBytesThatDoNotMatchTheImmutableOwnerDescriptorDigest() {
     RedisScriptDescriptor descriptor =
-        new AccountGameplayDelegationRedisScriptContribution().descriptors().iterator().next();
+        new AccountGameplayDelegationRedisScriptContribution()
+            .descriptors().stream()
+                .filter(
+                    item -> AccountGameplayDelegationRedisClient.SCRIPT_ID.equals(item.scriptId()))
+                .findFirst()
+                .orElseThrow(
+                    () -> new AssertionError("Pending registry script descriptor is missing"));
     RedisScriptDescriptor alteredDigest =
         new RedisScriptDescriptor(
             descriptor.scriptId(),
@@ -380,8 +428,7 @@ class AccountGameplayDelegationTokenRegistryTest {
             mismatchedBytes,
             snapshot(),
             evidenceBundleReference());
-    when(repository.readPendingRegistryCandidate(UUID.fromString(REQUEST_ID)))
-        .thenReturn(mismatched);
+    doReturn(mismatched).when(repository).readPendingRegistryCandidate(UUID.fromString(REQUEST_ID));
 
     assertThatThrownBy(() -> registry.registerPending(UUID.fromString(REQUEST_ID)))
         .isInstanceOf(IllegalArgumentException.class);
@@ -471,5 +518,26 @@ class AccountGameplayDelegationTokenRegistryTest {
 
   private static String sha256(byte[] bytes) throws Exception {
     return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+  }
+
+  private static final class TestTransactionManager extends AbstractPlatformTransactionManager {
+    @Override
+    protected Object doGetTransaction() {
+      return new Object();
+    }
+
+    @Override
+    protected boolean isExistingTransaction(Object transaction) {
+      return false;
+    }
+
+    @Override
+    protected void doBegin(Object transaction, TransactionDefinition definition) {}
+
+    @Override
+    protected void doCommit(DefaultTransactionStatus status) {}
+
+    @Override
+    protected void doRollback(DefaultTransactionStatus status) {}
   }
 }

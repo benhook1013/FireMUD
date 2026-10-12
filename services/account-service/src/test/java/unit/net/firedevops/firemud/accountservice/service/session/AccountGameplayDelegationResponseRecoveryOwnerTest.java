@@ -167,8 +167,7 @@ class AccountGameplayDelegationResponseRecoveryOwnerTest {
         mock(AccountGameplayDelegationResponseEnvelopeRepository.class);
     AccountGameplayDelegationCommittedIssuanceOwner committedOwner =
         mock(AccountGameplayDelegationCommittedIssuanceOwner.class);
-    when(responseEnvelopes.preflightCommittedRecovery(REQUEST_ID, ACCOUNT_ID, CALLER))
-        .thenReturn(preflight());
+    when(responseEnvelopes.preflightCommittedRecovery(any(), any(), any())).thenReturn(preflight());
     AccountGameplayDelegationResponseRecoveryOwner owner =
         new AccountGameplayDelegationResponseRecoveryOwner(
             responseEnvelopes, committedOwner, new TestTransactionManager(0));
