@@ -81,8 +81,12 @@ class PublishedReleaseBundleServiceImplTest {
     retained.setWorldPublishedStartLocationEvidenceJson("{}");
     when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
 
-    assertThrows(
-        IllegalArgumentException.class, () -> service.getPublishedReleaseBundle("tenant-1", 7L));
+    IllegalArgumentException denied =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.getPublishedReleaseBundle("tenant-1", 7L));
+    assertEquals(
+        "published World selector evidence has missing or unsupported fields", denied.getMessage());
   }
 
   @Test
