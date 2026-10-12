@@ -805,7 +805,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               request.getExpectedVersionStateEpoch(),
               fromProtoVersionState(request.getNewState()),
               request.getReason());
-      builder.setVersionState(toProtoVersionState(state)).setUpdated(true);
+      builder.setVersionState(toProtoVersionState(state)).setUpdated(false);
     } catch (AdminAuthorizationException ex) {
       builder.setError(
           GrpcAppErrors.error(
