@@ -48,6 +48,8 @@ public class VersionAssetArtifactRepository {
       DSL.field(DSL.name("published_object_proofs_json"), String.class);
   private static final Field<Long> CANDIDATE_SNAPSHOT_VERSION_ID =
       DSL.field(DSL.name("candidate_snapshot_version_id"), Long.class);
+  private static final Field<String> CANDIDATE_PUBLIC_BASE_URL =
+      DSL.field(DSL.name("candidate_public_base_url"), String.class);
 
   private final DSLContext dsl;
 
@@ -93,6 +95,7 @@ public class VersionAssetArtifactRepository {
               .set(ARTIFACT_DIGESTS_JSON, artifact.getArtifactDigestsJson())
               .set(PUBLISHED_OBJECT_PROOFS_JSON, artifact.getPublishedObjectProofsJson())
               .set(CANDIDATE_SNAPSHOT_VERSION_ID, artifact.getCandidateSnapshotVersionId())
+              .set(CANDIDATE_PUBLIC_BASE_URL, artifact.getCandidatePublicBaseUrl())
               .set(UPDATED_AT, JooqPersistenceSupport.toTimestamp(updatedAt))
               .returning(ID)
               .fetchOne();
@@ -124,6 +127,7 @@ public class VersionAssetArtifactRepository {
             .set(ARTIFACT_DIGESTS_JSON, artifact.getArtifactDigestsJson())
             .set(PUBLISHED_OBJECT_PROOFS_JSON, artifact.getPublishedObjectProofsJson())
             .set(CANDIDATE_SNAPSHOT_VERSION_ID, artifact.getCandidateSnapshotVersionId())
+            .set(CANDIDATE_PUBLIC_BASE_URL, artifact.getCandidatePublicBaseUrl())
             .set(UPDATED_AT, JooqPersistenceSupport.toTimestamp(updatedAt))
             .where(
                 ID.eq(artifact.getId())
@@ -160,6 +164,7 @@ public class VersionAssetArtifactRepository {
     artifact.setArtifactDigestsJson(record.get(ARTIFACT_DIGESTS_JSON));
     artifact.setPublishedObjectProofsJson(record.get(PUBLISHED_OBJECT_PROOFS_JSON));
     artifact.setCandidateSnapshotVersionId(record.get(CANDIDATE_SNAPSHOT_VERSION_ID));
+    artifact.setCandidatePublicBaseUrl(record.get(CANDIDATE_PUBLIC_BASE_URL));
     artifact.setUpdatedAt(JooqPersistenceSupport.toLocalDateTime(record.get(UPDATED_AT)));
     return artifact;
   }

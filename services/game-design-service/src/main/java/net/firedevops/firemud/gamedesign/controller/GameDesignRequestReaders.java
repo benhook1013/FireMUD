@@ -23,7 +23,7 @@ final class GameDesignRequestReaders {
     try {
       return action.get();
     } catch (MutationOwnerProofUnavailableException ex) {
-      return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+      return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
           .body(ApiResponse.error(new ErrorDetail(ex.errorCode(), ex.getMessage())));
     } catch (IllegalArgumentException ex) {
       return ResponseEntity.status(HttpStatus.BAD_REQUEST)
