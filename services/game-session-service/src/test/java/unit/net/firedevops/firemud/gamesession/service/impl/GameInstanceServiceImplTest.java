@@ -191,9 +191,9 @@ class GameInstanceServiceImplTest {
     verify(gameDesignClient)
         .resolveLaunchDescriptor(
             request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId());
-    verify(gameDesignClient).getPublishedReleaseBundle(request.tenantId(), 11L);
-    verify(gameDesignClient).getVersionAssetArtifactState(request.tenantId(), 11L);
-    verify(gameDesignClient).getVersionState(request.tenantId(), 11L);
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(anyLong(), anyLong());
+    verify(gameDesignClient, never()).getVersionAssetArtifactState(anyLong(), anyLong());
+    verify(gameDesignClient, never()).getVersionState(anyLong(), anyLong());
     verifyNoMoreInteractions(gameDesignClient);
     verifyNoInteractions(repository, worldManagementClient, stateService);
   }
@@ -671,7 +671,7 @@ class GameInstanceServiceImplTest {
                 .setLaunchDescriptor(
                     net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                         .setLaunchDescriptorId("ld-pinned")
-                        .setCanonicalTenantId("1")
+                        .setTenantId("1")
                         .setGameTemplateId(3L)
                         .setControlPlaneRequestId("cp-pinned")
                         .setVersionId(11L)
@@ -1709,8 +1709,7 @@ class GameInstanceServiceImplTest {
                     .setLaunchDescriptor(
                         net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                             .setLaunchDescriptorId("ld-" + invocation.getArgument(2, String.class))
-                            .setCanonicalTenantId(
-                                Long.toString(invocation.getArgument(0, Long.class)))
+                            .setTenantId(Long.toString(invocation.getArgument(0, Long.class)))
                             .setGameTemplateId(invocation.getArgument(1, Long.class))
                             .setControlPlaneRequestId(invocation.getArgument(2, String.class))
                             .setVersionId(11L)
@@ -1941,7 +1940,7 @@ class GameInstanceServiceImplTest {
                 .setLaunchDescriptor(
                     net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                         .setLaunchDescriptorId("ld-cp-launch-tenant")
-                        .setCanonicalTenantId("0")
+                        .setTenantId("0")
                         .setGameTemplateId(3L)
                         .setControlPlaneRequestId("cp-launch-tenant")
                         .setVersionId(11L)

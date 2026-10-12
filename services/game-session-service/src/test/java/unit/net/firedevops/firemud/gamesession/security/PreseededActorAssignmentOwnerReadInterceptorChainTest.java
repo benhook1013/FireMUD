@@ -100,9 +100,9 @@ class PreseededActorAssignmentOwnerReadInterceptorChainTest {
     invokeThroughConfiguredChain(entityIdentity("other"), adapter, request(), otherNamespace);
     assertPermissionDenied(otherNamespace);
 
-    SessionContext.setContext(ACCOUNT.toString(), List.of("player"), java.util.Map.of());
     var callerContext = new CapturingObserver();
-    invokeThroughConfiguredChain(entityIdentity(NAMESPACE), adapter, request(), callerContext);
+    invokeThroughConfiguredChain(
+        entityIdentity(NAMESPACE), adapter, request(), callerContext, true);
     assertPermissionDenied(callerContext);
 
     verifyNoInteractions(provider);
@@ -125,7 +125,8 @@ class PreseededActorAssignmentOwnerReadInterceptorChainTest {
         .containsExactly(
             "game_session.v1.GameSessionService/Ping",
             "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetCanonicalGameplayRosterOwnerRead",
-            METHOD)
+            METHOD,
+            "game_session.v1.GameSessionService/AuthorizeStartSession")
         .doesNotContain("game_session.v1.*");
     Set<String> publicMethods = Set.copyOf(configured);
     return new AuthTokenInterceptor(
@@ -160,6 +161,15 @@ class PreseededActorAssignmentOwnerReadInterceptorChainTest {
       CanonicalGameplayRosterOwnerReadGrpcAdapter adapter,
       GetPreseededActorAssignmentOwnerReadRequest request,
       CapturingObserver response) {
+    invokeThroughConfiguredChain(peerUri, adapter, request, response, false);
+  }
+
+  private static void invokeThroughConfiguredChain(
+      String peerUri,
+      CanonicalGameplayRosterOwnerReadGrpcAdapter adapter,
+      GetPreseededActorAssignmentOwnerReadRequest request,
+      CapturingObserver response,
+      boolean authenticatedCallerContext) {
     ServerCall<Object, Object> call = new TestServerCall(METHOD, sslSession(peerUri));
     Metadata headers = new Metadata();
     ServerInterceptor peer = new GrpcPeerIdentityInterceptor();
@@ -172,7 +182,13 @@ class PreseededActorAssignmentOwnerReadInterceptorChainTest {
         .interceptCall(
             call,
             headers,
-            (authCall, authHeaders) -> peer.interceptCall(authCall, authHeaders, handler));
+            (authCall, authHeaders) -> {
+              if (authenticatedCallerContext) {
+                SessionContext.setContext(
+                    ACCOUNT.toString(), List.of("player"), java.util.Map.of());
+              }
+              return peer.interceptCall(authCall, authHeaders, handler);
+            });
   }
 
   private static GetPreseededActorAssignmentOwnerReadRequest request() {
