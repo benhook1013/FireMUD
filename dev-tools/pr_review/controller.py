@@ -5404,14 +5404,13 @@ class ReviewController:
                     problem = self._head_repository_problem(item)
                     if problem:
                         raise ControllerError(f"PR #{pr} {problem}")
-                if scoped_expected_hosted:
-                    # The current Hosted activity/cooldown scan above used the
-                    # fresh all-queue identity snapshot through the production
-                    # request-history batch adapter, avoiding per-PR refetches.
-                    if set(prepared_request_history) != {
-                        (pr, channel) for pr in state.ordered_prs for channel in ("hosted", "cli")
-                    }:
-                        raise ControllerError("current Hosted request history cannot be verified")
+                # The current Hosted activity/cooldown scan above used the
+                # fresh all-queue identity snapshot through the production
+                # request-history batch adapter, avoiding per-PR refetches.
+                if scoped_expected_hosted and set(prepared_request_history) != {
+                    (pr, channel) for pr in state.ordered_prs for channel in ("hosted", "cli")
+                }:
+                    raise ControllerError("current Hosted request history cannot be verified")
                 active_candidates = tuple(
                     pr for pr, item in validated_identities.items() if not item.merged and item.state == "OPEN"
                 )
