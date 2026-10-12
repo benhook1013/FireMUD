@@ -11,7 +11,8 @@ import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal;
 
 /** Closed protobuf adapter for Account's historical World participation read. */
 public final class AccountStartSessionWorldParticipationHistoricalReadGrpcCodec {
-  public static final int MAX_REQUEST_WIRE_BYTES = 1024;
+  public static final int MAX_REQUEST_WIRE_BYTES =
+      StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES + 1024;
   public static final int MAX_RESPONSE_WIRE_BYTES =
       WorldStartSessionExecutionTerminal.MAX_CANONICAL_BYTES
           + StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES
@@ -30,8 +31,8 @@ public final class AccountStartSessionWorldParticipationHistoricalReadGrpcCodec 
                 AccountStartSessionWorldParticipationHistoricalReadRequest.SCHEMA_VERSION)
             .setReadRequestId(request.readRequestId().toString())
             .setTargetNamespace(request.targetNamespace())
-            .setAccountWorldParticipationId(request.accountWorldParticipationId().toString())
-            .setAccountWorldParticipationFence(request.accountWorldParticipationFence())
+            .setOriginalPostAuthorizationTuple(
+                ByteString.copyFrom(request.originalPostAuthorizationTuple()))
             .build();
     if (result.getSerializedSize() > MAX_REQUEST_WIRE_BYTES) {
       throw new IllegalArgumentException("Historical participation request exceeds its wire limit");
@@ -52,8 +53,7 @@ public final class AccountStartSessionWorldParticipationHistoricalReadGrpcCodec 
     return new AccountStartSessionWorldParticipationHistoricalReadRequest(
         canonicalUuid(request.getReadRequestId(), "readRequestId"),
         request.getTargetNamespace(),
-        canonicalUuid(request.getAccountWorldParticipationId(), "accountWorldParticipationId"),
-        request.getAccountWorldParticipationFence());
+        request.getOriginalPostAuthorizationTuple().toByteArray());
   }
 
   public static ReadHistoricalStartSessionWorldParticipationResponse toResponse(
@@ -64,13 +64,13 @@ public final class AccountStartSessionWorldParticipationHistoricalReadGrpcCodec 
     var response =
         ReadHistoricalStartSessionWorldParticipationResponse.newBuilder()
             .setRequest(toRequest(request))
-            .setOriginalPostAuthorizationTuple(
-                ByteString.copyFrom(evidence.originalPostAuthorizationTuple()))
             .setGameSessionOwnerAttemptId(evidence.gameSessionOwnerAttemptId().toString())
             .setGameSessionOwnerFence(evidence.gameSessionOwnerFence())
             .setCanonicalGameInstanceId(evidence.canonicalGameInstanceId().toString())
             .setPreparationInputJson(evidence.preparationInputJson())
             .setPreparationInputDigest(evidence.preparationInputDigest())
+            .setAccountWorldParticipationId(evidence.accountWorldParticipationId().toString())
+            .setAccountWorldParticipationFence(evidence.accountWorldParticipationFence())
             .build();
     if (response.getSerializedSize() > MAX_RESPONSE_WIRE_BYTES) {
       throw new IllegalArgumentException(
@@ -91,19 +91,14 @@ public final class AccountStartSessionWorldParticipationHistoricalReadGrpcCodec 
     AccountStartSessionWorldParticipationHistoricalReadRequest echoedRequest =
         fromRequest(response.getRequest());
     requireSameRequest(request, echoedRequest);
-    byte[] originalTuple = response.getOriginalPostAuthorizationTuple().toByteArray();
-    if (originalTuple.length == 0
-        || originalTuple.length
-            > StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES) {
-      throw new IllegalArgumentException("Original StartSession tuple is missing or oversized");
-    }
     if (response.getPreparationInputJson().getBytes(java.nio.charset.StandardCharsets.UTF_8).length
         > WorldStartSessionExecutionTerminal.MAX_CANONICAL_BYTES) {
       throw new IllegalArgumentException("Historical preparation input exceeds its byte limit");
     }
     return new AccountStartSessionWorldParticipationHistoricalReadEvidence(
         echoedRequest,
-        originalTuple,
+        canonicalUuid(response.getAccountWorldParticipationId(), "accountWorldParticipationId"),
+        response.getAccountWorldParticipationFence(),
         canonicalUuid(response.getGameSessionOwnerAttemptId(), "gameSessionOwnerAttemptId"),
         response.getGameSessionOwnerFence(),
         canonicalUuid(response.getCanonicalGameInstanceId(), "canonicalGameInstanceId"),

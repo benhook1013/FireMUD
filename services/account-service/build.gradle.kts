@@ -82,6 +82,7 @@ dependencies {
     testImplementation(libs.grpc.inprocess)
     testImplementation(project(":logging-admin-service"))
     testImplementation(testFixtures(project(":account-service")))
+    testImplementation(testFixtures(project(":common-platform-core")))
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
     integrationTestImplementation(testFixtures(project(":account-service")))

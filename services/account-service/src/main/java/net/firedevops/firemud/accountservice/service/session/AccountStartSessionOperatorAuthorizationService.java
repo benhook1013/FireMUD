@@ -1161,7 +1161,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
     long observedAt = evidence.getObservedAtEpochMillis();
     long expiresAt = evidence.getClaimExpiresAtEpochMillis();
     long now = clock.millis();
-    if (observedAt <= 0L || expiresAt <= observedAt || now < observedAt || now >= expiresAt) {
+    if (observedAt <= 0L || expiresAt <= observedAt || now >= expiresAt) {
       throw denied("Logging/Admin StartSession claim evidence is stale or contradictory");
     }
   }
