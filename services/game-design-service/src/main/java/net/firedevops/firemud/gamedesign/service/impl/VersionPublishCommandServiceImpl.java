@@ -766,14 +766,10 @@ public class VersionPublishCommandServiceImpl {
       ExportedAssetManifest candidate =
           versionAssetArtifactService.getExportCandidate(
               request.tenantId(), attempt.getVersionId());
-      if (candidate == null) {
-        return artifact.manifestHash() == null
-            && artifact.exportedManifestAssetKeys() != null
-            && artifact.exportedManifestAssetKeys().isEmpty();
-      }
-      return Objects.equals(artifact.manifestHash(), candidate.manifestHash())
-          && Objects.equals(
-              artifact.exportedManifestAssetKeys(), candidate.requiredManifestAssetKeys());
+      return candidate == null
+          && artifact.manifestHash() == null
+          && artifact.exportedManifestAssetKeys() != null
+          && artifact.exportedManifestAssetKeys().isEmpty();
     } catch (RuntimeException malformedOrAmbiguousCandidate) {
       // Candidate evidence is not a committed release. Any unreadable or contradictory candidate
       // remains reconciliation-required rather than being treated as an empty staged intent.
