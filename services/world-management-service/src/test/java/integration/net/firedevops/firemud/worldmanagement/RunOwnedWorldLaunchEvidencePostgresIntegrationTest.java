@@ -142,6 +142,14 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
                   .orElseThrow()
                   .getRowVersion())
           .isEqualTo(activeRowVersion);
+      var prepareReplay = restartedService.prepareWorldInstance(request);
+      assertThat(prepareReplay).isEqualTo(active);
+      assertThat(
+              repository
+                  .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+                  .orElseThrow()
+                  .getRowVersion())
+          .isEqualTo(activeRowVersion);
       verify(restartedProvider).requireAuthenticatedEvidence();
 
       RunOwnedWorldLaunchEvidenceProvider changedProvider =

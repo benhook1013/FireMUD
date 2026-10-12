@@ -109,21 +109,39 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
   }
 
   @Test
-  void enabledFixtureRequiresAbsoluteBoundedReadOnlyRegularWireFilesBeforeOwnerReads()
+  void enabledFixtureRejectsRelativeCapabilityPathAtFileReadStage(CapturedOutput output) {
+    GameDesignClient gameDesignClient = mock(GameDesignClient.class);
+    RunOwnedWorldLaunchEvidenceProvider provider =
+        new RunOwnedWorldLaunchEvidenceProvider(
+            true,
+            Path.of("capability.json").toString(),
+            temporaryDirectory.resolve("receipt.json").toString(),
+            "fixture-run",
+            "firemud-fixture-run",
+            new CommonGrpcClientProperties(),
+            gameDesignClient);
+
+    assertThatThrownBy(provider::requireAuthenticatedEvidence)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Run-owned World launch evidence is invalid");
+    verifyNoInteractions(gameDesignClient);
+    assertFileRejectionStoppedBeforeWireParse(output);
+  }
+
+  @Test
+  void enabledFixtureRejectsWritableCapabilityAtFileReadStage(CapturedOutput output)
       throws Exception {
     GameDesignClient gameDesignClient = mock(GameDesignClient.class);
-    Path relativeCapability = temporaryDirectory.resolve("capability.json");
+    Path capability = temporaryDirectory.resolve("writable-capability.json");
+    Files.writeString(capability, "{}", StandardCharsets.UTF_8);
     Path receipt = temporaryDirectory.resolve("receipt.json");
-    Files.writeString(relativeCapability, "{}", StandardCharsets.UTF_8);
     Files.writeString(receipt, "{}", StandardCharsets.UTF_8);
-    Files.setPosixFilePermissions(
-        relativeCapability, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.GROUP_READ));
     Files.setPosixFilePermissions(
         receipt, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.GROUP_READ));
     RunOwnedWorldLaunchEvidenceProvider provider =
         new RunOwnedWorldLaunchEvidenceProvider(
             true,
-            relativeCapability.toString(),
+            capability.toString(),
             receipt.toString(),
             "fixture-run",
             "firemud-fixture-run",
@@ -131,28 +149,15 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
             gameDesignClient);
 
     assertThatThrownBy(provider::requireAuthenticatedEvidence)
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Run-owned World launch evidence is invalid");
     verifyNoInteractions(gameDesignClient);
-
-    Files.setPosixFilePermissions(
-        relativeCapability,
-        Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
-    RunOwnedWorldLaunchEvidenceProvider writable =
-        new RunOwnedWorldLaunchEvidenceProvider(
-            true,
-            relativeCapability.toString(),
-            receipt.toString(),
-            "fixture-run",
-            "firemud-fixture-run",
-            new CommonGrpcClientProperties(),
-            gameDesignClient);
-    assertThatThrownBy(writable::requireAuthenticatedEvidence)
-        .isInstanceOf(IllegalArgumentException.class);
-    verifyNoInteractions(gameDesignClient);
+    assertFileRejectionStoppedBeforeWireParse(output);
   }
 
   @Test
-  void aSymlinkIsNotAcceptedAsAnImmutableCapabilityFile() throws Exception {
+  void enabledFixtureRejectsCapabilitySymlinkAtFileReadStage(CapturedOutput output)
+      throws Exception {
     GameDesignClient gameDesignClient = mock(GameDesignClient.class);
     Path target = temporaryDirectory.resolve("target.json");
     Path capability = temporaryDirectory.resolve("capability.json");
@@ -175,8 +180,16 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
             gameDesignClient);
 
     assertThatThrownBy(provider::requireAuthenticatedEvidence)
-        .isInstanceOf(IllegalArgumentException.class);
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Run-owned World launch evidence is invalid");
     verifyNoInteractions(gameDesignClient);
+    assertFileRejectionStoppedBeforeWireParse(output);
+  }
+
+  private static void assertFileRejectionStoppedBeforeWireParse(CapturedOutput output) {
+    assertThat(output)
+        .contains("Run-owned World launch evidence verification rejected; stage=CAPABILITY_FILE")
+        .doesNotContain("stage=WIRE_PARSE");
   }
 
   private static PreparedWorldInstanceRequest request(String patch, String remap) {
