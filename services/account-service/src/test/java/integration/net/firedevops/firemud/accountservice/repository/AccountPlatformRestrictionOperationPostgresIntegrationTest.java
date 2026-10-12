@@ -32,13 +32,14 @@ import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.TransactionSystemException;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /** PostgreSQL proof that historical birth never becomes current restriction absence. */
@@ -364,8 +365,11 @@ class AccountPlatformRestrictionOperationPostgresIntegrationTest {
             () ->
                 transitionLifecycleWithLegacyAuthorityReceipt(
                     context, account, AccountLifecycleState.DEACTIVATED_PENDING_DELETE))
-        .isInstanceOf(DataAccessException.class)
-        .hasMessageContaining("Current Account security-lock projection and lifecycle disagree");
+        .isInstanceOf(TransactionSystemException.class)
+        .rootCause()
+        .isInstanceOf(org.postgresql.util.PSQLException.class)
+        .hasMessageContaining(
+            "ERROR: Current Account security-lock projection and lifecycle disagree");
 
     assertThat(lifecycle(context, account)).isEqualTo("security_locked");
     assertThat(restrictionWriteSnapshot(context.dsl()))
