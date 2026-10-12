@@ -224,3 +224,17 @@ and the most recent failure time. It never contains database contents, key
 material, or remote command output. A failed invocation exits nonzero. Console failures include only trusted static phase and failure labels (such as `phase=readback failure=timeout`) and numeric nonzero exit codes; remote output, exception messages, paths and payloads remain suppressed. A failed best-effort cleanup is reported separately while the original failure remains authoritative. The local report format and 120-second per-command deadline are unchanged. The
 report path must be on durable local storage if it is expected to survive host
 loss.
+
+### Finalize and publish a native checkpoint
+
+After adjudicating all source findings, freeze counts and publish/reuse the canonical checkpoint with one explicit command:
+
+```sh
+dev-tools/pr-review records source finalize --run-id <run ID>
+```
+
+The CLI finalization command publishes completed native Hosted/CLI runs after freezing their counts; manual/subagent runs remain local. The underlying store operation stays SQL-only for imports, captures, repairs and subagent completion. SQL finalization and GitHub publication are not atomic: counts can already be frozen when publication fails. The command then reports failure; repeat the same finalization to recover/reuse publication safely. This command derives the canonical counts, full reviewed SHA, file count, duration and provider markers from completed immutable native evidence. It supports CLI captures and new Hosted captures with verified request-time candidate file count and retained exact trigger attribution. Older Hosted captures missing either field fail closed and retain the historical manual workflow; no current diff or agent-supplied count substitutes for them. Advancing the live PR head does not invalidate its older reviewed checkpoint. Candidate file count describes the captured review scope; provider completion and coverage still require adjudication and do not imply physical inspection of every file. Publication adds no fix proof, allocation override, CI result, or merge permission.
+
+The structured result includes `publication` with `status: published|reused`, `comment_id`, `comment_url`, and the canonical `body`. Publishers share the existing lock primitive and retain a pre-POST intent in the existing attempt metadata. Complete paginated GitHub history and verified repository/publisher identity permit reuse of semantically matching canonical comments, including verified commit links and harmless whitespace, and reject conflicting identities or counts. An uncertain POST is recovered by reading history; if the exact comment is not visible, retries refuse another POST and retain the intent. Retry the command later for read recovery; do not manually repost or overwrite historical comments.
+
+For legacy controller routes, `decide route retargeted --route-id <identity> --unassigned --reason "<reason>"` preserves the open obligation and prior target history. Use it only when an assigned target has ceased to own the work; it is mutually exclusive with `--target-pr` and cannot mark a finding fixed or rejected.
