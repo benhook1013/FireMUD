@@ -101,7 +101,11 @@ final class PublishedReleaseBundleContract {
 
   static void requireExactRepairMatch(
       PublishedReleaseBundleDto bundle, ExportedAssetManifest exportedManifest) {
-    requireSupportedSchemaForRead(bundle);
+    if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
+      requireSelectorBinding(bundle);
+    } else {
+      requireSupportedSchemaForRead(bundle);
+    }
     if (!Objects.equals(bundle.manifestSchemaVersion(), exportedManifest.manifestSchemaVersion())
         || !Objects.equals(bundle.artifactDigests(), exportedManifest.artifactDigests())) {
       throw new IllegalStateException(
