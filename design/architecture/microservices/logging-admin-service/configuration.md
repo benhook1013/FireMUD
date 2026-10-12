@@ -23,11 +23,10 @@ The Logging & Admin Service does **not** connect to Redis at runtime. It consume
 | `FIREMUD_AUTH_JWT_SECRET` | Legacy HMAC JWT validation secret (transitional only; not for player-facing environments) | *(none)* |
 | `FIREMUD_AUTH_JWT_SECRET_PATH` | Legacy file path for HMAC JWT validation secret (transitional only; not for player-facing environments) | *(none)* |
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
-| `FIREMUD_GRPC_WORKLOAD_NAMESPACE` | Namespace required for the exact Account workload identity on the StartSession reservation evidence RPC; blank configuration denies that method | *(none)* |
+| `FIREMUD_GRPC_WORKLOAD_NAMESPACE` | Canonical namespace for internal gRPC workload identity checks, including the exact Account identity on the StartSession reservation evidence RPC and enabled StartSession coordinator composition; blank configuration denies that method | *(none)* |
 | `FIREMUD_GRPC_ACCOUNT_RESERVATION_EVIDENCE_APPROVED_LEAF_FILE` | Absolute path to the protected, method-scoped Account leaf-approval file for `ReadCurrentClaimEvidence`; blank, unreadable, or invalid policy denies the method | *(none)* |
 | `FIREMUD_SERVICES_ACCOUNT_SERVICE` | gRPC endpoint (host:port) for the Account Service | *(none)* |
 | `FIREMUD_SERVICES_GAME_SESSION_SERVICE` | gRPC endpoint (host:port) for the Game Session Service | *(none)* |
-| `FIREMUD_GRPC_WORKLOAD_NAMESPACE` | Canonical workload namespace for internal gRPC identity checks | *(none)* |
 | `FIREMUD_LOGGING_ADMIN_START_SESSION_OPERATOR_AUTHORIZATION_ENABLED` | Explicitly enables the local StartSession authorization coordinator composition | `false` |
 
 ## Conditional StartSession Coordinator Composition
