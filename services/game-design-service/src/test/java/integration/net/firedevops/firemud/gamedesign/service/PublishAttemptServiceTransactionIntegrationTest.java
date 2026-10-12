@@ -488,8 +488,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(storedAttempt.getRequestDigest()).isEqualTo("exact-identity-digest");
   }
 
-  // Selection refusal occurs before bundle commit or artifact finalization; this is not a success
-  // or finalization proof.
+  // An exact candidate without its bundle is partial evidence and must remain pending.
   @Test
   void privateMechanicsFailsClosedWhenPublicationSelectionIsUnavailable() {
     String tenantId = "9002";
@@ -527,23 +526,28 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Mockito.when(assetExportService.exportAssets(tenantId, 1))
         .thenAnswer(invocation -> recordFixtureCandidate(tenantId, invocation.getArgument(1)));
 
-    Object snapshot =
-        reconcileFullVersionPublishMechanics(
-            tenantId, "successful transaction proof", publishRequestId, publishWorkflowId);
+    Throwable reconciliationFailure =
+        catchThrowable(
+            () ->
+                reconcileFullVersionPublishMechanics(
+                    tenantId, "successful transaction proof", publishRequestId, publishWorkflowId));
     assertNoControlPlaneDigestFailure(controlPlaneDigestFailure.get());
-    assertMechanicsSnapshot(
-        snapshot,
-        "FAILED",
-        "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation");
+    assertThat(reconciliationFailure)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "published release evidence is incomplete; readback/reconciliation is required");
+    assertThat(reconciliationFailure.getClass().getName())
+        .isEqualTo(
+            "net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl"
+                + "$PendingReconciliationException");
 
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
     Version storedVersion =
         versionRepository.findByTenantIdAndId(tenantId, attempt.getVersionId()).orElseThrow();
-    assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
-    assertThat(attempt.getFailureMessage())
-        .isEqualTo(
-            "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation");
+    assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+    assertThat(attempt.getFailureCode()).isNull();
+    assertThat(attempt.getFailureMessage()).isNull();
     assertThat(attempt.getVersionId()).isEqualTo(storedVersion.getId());
     assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
     assertThat(
@@ -554,7 +558,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
         versionAssetArtifactRepository
             .findByTenantIdAndVersionId(tenantId, attempt.getVersionId())
             .orElseThrow();
-    assertThat(artifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.FAILED);
+    assertThat(artifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.STAGED);
+    assertThat(artifact.getLastErrorCode()).isNull();
+    assertThat(artifact.getLastErrorMessage()).isNull();
     assertThat(
             exportCandidateService
                 .readExportCandidate(tenantId, storedVersion.getVersionNumber())
@@ -660,48 +666,33 @@ class PublishAttemptServiceTransactionIntegrationTest {
                 throw failure;
               }
             });
-    Object snapshot =
-        reconcileFullVersionPublishMechanics(
-            tenantId, "failed remap proof", publishRequestId, publishWorkflowId);
+    Throwable reconciliationFailure =
+        catchThrowable(
+            () ->
+                reconcileFullVersionPublishMechanics(
+                    tenantId, "failed remap proof", publishRequestId, publishWorkflowId));
     assertNoControlPlaneDigestFailure(controlPlaneDigestFailure.get());
-    assertMechanicsSnapshot(
-        snapshot,
-        "FAILED",
-        "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation");
+    assertThat(recordedDigestFailure.get()).isNull();
+    assertThat(exportCallbackFailure.get()).isNull();
+    assertThat(reconciliationFailure)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage(
+            "published release evidence is incomplete; readback/reconciliation is required");
+    assertThat(reconciliationFailure.getClass().getName())
+        .isEqualTo(
+            "net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl"
+                + "$PendingReconciliationException");
     PublishAttempt attempt =
         publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
-    String failureContext =
-        "mechanics snapshot context (candidateVersionId="
-            + candidateVersionId.get()
-            + ", candidateVersionNumber="
-            + candidateVersionNumber.get()
-            + ", exportedVersionNumber="
-            + exportedVersionNumber.get()
-            + ", attemptStatus="
-            + attempt.getStatus()
-            + ", attemptFailureCode="
-            + attempt.getFailureCode()
-            + ", attemptFailureMessage="
-            + attempt.getFailureMessage()
-            + ", recordedDigestFailure="
-            + recordedDigestFailure.get()
-            + ", exportCallbackFailure="
-            + exportCallbackFailure.get()
-            + ", exportCallbackFailureFrame="
-            + firstStackFrame(exportCallbackFailure.get())
-            + ", selectedFailureMessage="
-            + snapshotValue(snapshot, "failureMessage")
-            + ", snapshotStatus="
-            + snapshotValue(snapshot, "status")
-            + ")";
-    assertThat(exportCompleted.get()).as(failureContext).isTrue();
+    assertThat(exportCompleted.get())
+        .as("asset export candidate capture completes before finalization readback")
+        .isTrue();
     assertThat(exportedVersionNumber.get())
         .as("asset export uses the candidate's persisted version number")
         .isEqualTo(candidateVersionNumber.get());
-    assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
-    assertThat(attempt.getFailureMessage())
-        .isEqualTo(
-            "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation");
+    assertThat(attempt.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+    assertThat(attempt.getFailureCode()).isNull();
+    assertThat(attempt.getFailureMessage()).isNull();
     Version retainedCandidate =
         versionRepository.findByTenantIdAndId(tenantId, candidateVersionId.get()).orElseThrow();
     assertThat(retainedCandidate.getVersionState()).isEqualTo(VersionLifecycleState.DRAFT);
@@ -713,7 +704,9 @@ class PublishAttemptServiceTransactionIntegrationTest {
         versionAssetArtifactRepository
             .findByTenantIdAndVersionId(tenantId, candidateVersionId.get())
             .orElseThrow();
-    assertThat(failedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.FAILED);
+    assertThat(failedArtifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.STAGED);
+    assertThat(failedArtifact.getLastErrorCode()).isNull();
+    assertThat(failedArtifact.getLastErrorMessage()).isNull();
     assertThat(
             exportCandidateService
                 .readExportCandidate(tenantId, retainedCandidate.getVersionNumber())
@@ -858,12 +851,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
     }
   }
 
-  private static void assertMechanicsSnapshot(
-      Object snapshot, String expectedStatus, String expectedFailureMessage) {
-    assertThat(snapshotValue(snapshot, "status")).isEqualTo(expectedStatus);
-    assertThat(snapshotValue(snapshot, "failureMessage")).isEqualTo(expectedFailureMessage);
-  }
-
   private AtomicReference<Throwable> captureControlPlaneDigestFailure() {
     AtomicReference<Throwable> failure = new AtomicReference<>();
     Mockito.doAnswer(
@@ -887,25 +874,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
     StringWriter stackTrace = new StringWriter();
     failure.printStackTrace(new PrintWriter(stackTrace));
     assertThat(failure).as("real control-plane digest computation failed:\n" + stackTrace).isNull();
-  }
-
-  private static String snapshotValue(Object snapshot, String accessorName) {
-    try {
-      Method accessor = snapshot.getClass().getDeclaredMethod(accessorName);
-      accessor.setAccessible(true);
-      return (String) accessor.invoke(snapshot);
-    } catch (InvocationTargetException exception) {
-      throw new AssertionError("publication snapshot accessor failed", exception.getCause());
-    } catch (ReflectiveOperationException exception) {
-      throw new AssertionError("publication snapshot accessor is unavailable", exception);
-    }
-  }
-
-  private static String firstStackFrame(Throwable failure) {
-    if (failure == null || failure.getStackTrace().length == 0) {
-      return "none";
-    }
-    return failure.getStackTrace()[0].toString();
   }
 
   private static ExportedAssetManifest exportedManifest() {
