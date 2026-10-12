@@ -65,6 +65,8 @@ class AssetExportServiceImplTest {
 
   private final AtomicReference<ExportedAssetManifest> storedCandidate = new AtomicReference<>();
   private final Map<String, StoredObject> objectStore = new HashMap<>();
+  private final Map<String, Long> reportedObjectLengths = new HashMap<>();
+  private final Set<String> conditionalPutConflicts = new HashSet<>();
   private final Set<String> failPutBeforeCommit = new HashSet<>();
   private final Set<String> losePutAcknowledgementAfterCommit = new HashSet<>();
   private final Set<String> failReadback = new HashSet<>();
@@ -75,6 +77,8 @@ class AssetExportServiceImplTest {
   @BeforeEach
   void setup() {
     objectStore.clear();
+    reportedObjectLengths.clear();
+    conditionalPutConflicts.clear();
     failPutBeforeCommit.clear();
     losePutAcknowledgementAfterCommit.clear();
     failReadback.clear();
@@ -535,8 +539,78 @@ class AssetExportServiceImplTest {
   }
 
   @Test
+  void identicalBytesWithDifferentContentTypesShareOneObjectAcrossAssets() {
+    byte[] bytes = "shared asset bytes".getBytes(StandardCharsets.UTF_8);
+    snapshot =
+        snapshot(
+            List.of(
+                selection("branding/icon", 24L, "shared asset bytes", "image/png"),
+                selection("branding/logo", 25L, "shared asset bytes", "image/jpeg")));
+
+    ExportedAssetManifest exported = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+
+    String objectKey = "artifacts/sha256/" + sha256Hex(bytes);
+    assertEquals(2, objectStore.size());
+    assertEquals(objectKey, exported.artifactDigests().get(0).immutableObjectKey());
+    assertEquals(objectKey, exported.artifactDigests().get(1).immutableObjectKey());
+    org.junit.jupiter.api.Assertions.assertTrue(conditionalPutConflicts.contains(objectKey));
+    assertEquals(
+        List.of("image/png", "image/jpeg"),
+        exported.artifactDigests().stream().map(PublishedArtifactDigest::contentType).toList());
+    assertEquals("image/png", objectStore.get(objectKey).contentType());
+    String manifestJson = new String(manifestBytes(exported), StandardCharsets.UTF_8);
+    org.junit.jupiter.api.Assertions.assertTrue(
+        manifestJson.contains("\"contentType\":\"image/png\""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        manifestJson.contains("\"contentType\":\"image/jpeg\""));
+    verify(s3Client, org.mockito.Mockito.times(3))
+        .putObject(any(PutObjectRequest.class), any(RequestBody.class));
+  }
+
+  @Test
+  void identicalBytesWithDifferentContentTypesShareOneObjectAcrossTenants() {
+    byte[] bytes = "shared tenant asset bytes".getBytes(StandardCharsets.UTF_8);
+    snapshot =
+        snapshot(
+            List.of(selection("branding/logo", 24L, "shared tenant asset bytes", "image/png")));
+    ExportedAssetManifest first = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+
+    lenient()
+        .when(publicationService.freezeOrReadSnapshot("another-tenant", VERSION_NUMBER + 1))
+        .thenAnswer(ignored -> snapshot);
+    lenient()
+        .when(publicationService.readFrozenSnapshot("another-tenant", VERSION_NUMBER + 1))
+        .thenAnswer(ignored -> copySnapshot(snapshot));
+    snapshot =
+        snapshot(
+            "another-tenant",
+            VERSION_NUMBER + 1,
+            20L,
+            4L,
+            UUID.fromString("8b0c1a0f-b8c9-4c4b-9021-381f57699003"),
+            UUID.fromString("8b0c1a0f-b8c9-4c4b-9021-381f57699004"),
+            List.of(selection("branding/logo", 24L, "shared tenant asset bytes", "image/jpeg")));
+    storedCandidate.set(null);
+    ExportedAssetManifest second = service.exportAssets("another-tenant", VERSION_NUMBER + 1);
+
+    String objectKey = "artifacts/sha256/" + sha256Hex(bytes);
+    assertEquals(objectKey, first.artifactDigests().get(0).immutableObjectKey());
+    assertEquals(objectKey, second.artifactDigests().get(0).immutableObjectKey());
+    org.junit.jupiter.api.Assertions.assertTrue(conditionalPutConflicts.contains(objectKey));
+    assertEquals("image/png", first.artifactDigests().get(0).contentType());
+    assertEquals("image/jpeg", second.artifactDigests().get(0).contentType());
+    assertEquals("image/png", objectStore.get(objectKey).contentType());
+    assertEquals(3, objectStore.size());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        new String(manifestBytes(second), StandardCharsets.UTF_8)
+            .contains("\"contentType\":\"image/jpeg\""));
+    verify(s3Client, org.mockito.Mockito.times(4))
+        .putObject(any(PutObjectRequest.class), any(RequestBody.class));
+  }
+
+  @Test
   void changedPreexistingObjectIsDeniedWithoutOverwritingOrDeletingIt() {
-    byte[] original = "original immutable bytes".getBytes(StandardCharsets.UTF_8);
+    byte[] original = "fake uploaded bytes".getBytes(StandardCharsets.UTF_8);
     String key =
         "artifacts/sha256/" + sha256Hex("real uploaded bytes".getBytes(StandardCharsets.UTF_8));
     objectStore.put(key, new StoredObject(original, "image/png"));
@@ -599,10 +673,28 @@ class AssetExportServiceImplTest {
   }
 
   @Test
-  void contentTypeMismatchOnReadbackDeniesObjectProof() {
+  void existingObjectMetadataDoesNotOverrideReleaseManifestContentType() {
     byte[] bytes = "real uploaded bytes".getBytes(StandardCharsets.UTF_8);
     String key = "artifacts/sha256/" + sha256Hex(bytes);
     objectStore.put(key, new StoredObject(bytes, "application/octet-stream"));
+
+    ExportedAssetManifest exported = service.exportAssets(TENANT_ID, VERSION_NUMBER);
+
+    assertEquals("image/png", exported.artifactDigests().get(0).contentType());
+    assertEquals("application/octet-stream", objectStore.get(key).contentType());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        new String(manifestBytes(exported), StandardCharsets.UTF_8)
+            .contains("\"contentType\":\"image/png\""));
+    assertEquals(2, objectStore.size());
+    verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+  }
+
+  @Test
+  void incorrectReportedObjectLengthFailsClosed() {
+    byte[] bytes = "real uploaded bytes".getBytes(StandardCharsets.UTF_8);
+    String key = "artifacts/sha256/" + sha256Hex(bytes);
+    objectStore.put(key, new StoredObject(bytes, "image/png"));
+    reportedObjectLengths.put(key, (long) bytes.length + 1);
 
     IllegalStateException thrown =
         assertThrows(
@@ -725,6 +817,7 @@ class AssetExportServiceImplTest {
       throw new IllegalStateException("simulated lost put result before durable readback");
     }
     if (objectStore.containsKey(request.key())) {
+      conditionalPutConflicts.add(request.key());
       throw S3Exception.builder()
           .statusCode(412)
           .message("conditional object already exists")
@@ -754,7 +847,8 @@ class AssetExportServiceImplTest {
     GetObjectResponse metadata =
         GetObjectResponse.builder()
             .contentType(object.contentType())
-            .contentLength((long) object.bytes().length)
+            .contentLength(
+                reportedObjectLengths.getOrDefault(request.key(), (long) object.bytes().length))
             .build();
     return ResponseBytes.fromByteArray(metadata, object.bytes());
   }
