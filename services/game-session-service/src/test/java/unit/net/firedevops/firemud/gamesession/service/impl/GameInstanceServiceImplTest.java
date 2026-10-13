@@ -182,8 +182,9 @@ class GameInstanceServiceImplTest {
     assertNumericLaunchDeniedWithoutMutation(request);
   }
 
-  @Test
-  void canonicalTenantUuidCannotBeCoercedIntoLegacyNumericLaunchAuthority() {
+  @ParameterizedTest
+  @ValueSource(strings = {"", "123e4567-e89b-12d3-a456-426614174000"})
+  void canonicalTenantUuidCannotBeCoercedIntoLegacyNumericLaunchAuthority(String legacyTenantId) {
     StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-canonical-tenant", 42L);
     doReturn(
             ResolveLaunchDescriptorResponse.newBuilder()
@@ -191,6 +192,7 @@ class GameInstanceServiceImplTest {
                     net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
                         .setLaunchDescriptorId("ld-cp-canonical-tenant")
                         .setCanonicalTenantId("123e4567-e89b-12d3-a456-426614174000")
+                        .setTenantId(legacyTenantId)
                         .setGameTemplateId(request.gameTemplateId())
                         .setControlPlaneRequestId(request.controlPlaneRequestId())
                         .setVersionId(11L)
@@ -216,9 +218,6 @@ class GameInstanceServiceImplTest {
     verify(gameDesignClient)
         .resolveLaunchDescriptor(
             request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId());
-    verify(gameDesignClient, never()).getPublishedReleaseBundle(anyLong(), anyLong());
-    verify(gameDesignClient, never()).getVersionAssetArtifactState(anyLong(), anyLong());
-    verify(gameDesignClient, never()).getVersionState(anyLong(), anyLong());
     verifyNoMoreInteractions(gameDesignClient);
     verifyNoInteractions(repository, worldManagementClient, stateService);
   }
