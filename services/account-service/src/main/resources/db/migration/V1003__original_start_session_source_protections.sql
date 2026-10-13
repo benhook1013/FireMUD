@@ -79,6 +79,133 @@ BEGIN
 END;
 $$;
 
+-- Acquisition and settlement require the same exact World hold before a source
+-- protection can become pending. Return the only valid committed next pointer.
+CREATE FUNCTION account_ss_admission_canonical_hold_next_pointer(
+    original account_start_session_admission_protections
+) RETURNS NUMERIC LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+DECLARE
+    hold_json JSONB;
+    hold_request_json JSONB;
+    canonical_hold TEXT;
+    canonical_hold_request TEXT;
+    prior_pointer NUMERIC;
+BEGIN
+    hold_json := convert_from(original.world_admission_hold_identity_bytes, 'UTF8')::JSONB;
+    IF jsonb_typeof(hold_json) IS DISTINCT FROM 'object'
+        OR (SELECT count(*) FROM jsonb_object_keys(hold_json)) <> 5
+        OR NOT (hold_json ?& ARRAY['schema', 'holdId', 'holdFence', 'holdBindingDigest', 'requestBytesBase64'])
+        OR EXISTS (SELECT 1 FROM jsonb_each(hold_json) field
+            WHERE jsonb_typeof(field.value) IS DISTINCT FROM 'string')
+        OR hold_json->>'schema' IS DISTINCT FROM 'world-canonical-initial-admission-hold-identity/v1' THEN
+        RAISE EXCEPTION 'Original StartSession admission hold identity is malformed'
+            USING ERRCODE = '23514';
+    END IF;
+    IF (hold_json->>'holdId')::UUID = '00000000-0000-0000-0000-000000000000'::UUID
+        OR (hold_json->>'holdFence')::UUID = '00000000-0000-0000-0000-000000000000'::UUID
+        OR hold_json->>'holdId' IS DISTINCT FROM (hold_json->>'holdId')::UUID::TEXT
+        OR hold_json->>'holdFence' IS DISTINCT FROM (hold_json->>'holdFence')::UUID::TEXT THEN
+        RAISE EXCEPTION 'Original StartSession admission hold identity is nil'
+            USING ERRCODE = '23514';
+    END IF;
+    hold_request_json := convert_from(decode(hold_json->>'requestBytesBase64', 'base64'), 'UTF8')::JSONB;
+    IF regexp_replace(encode(decode(hold_json->>'requestBytesBase64', 'base64'), 'base64'), E'[\n\r]', '', 'g')
+            IS DISTINCT FROM hold_json->>'requestBytesBase64'
+        OR hold_json->>'holdBindingDigest' IS DISTINCT FROM
+            'sha256:' || encode(sha256(decode(hold_json->>'requestBytesBase64', 'base64')), 'hex')
+        OR jsonb_typeof(hold_request_json) IS DISTINCT FROM 'object'
+        OR (SELECT count(*) FROM jsonb_object_keys(hold_request_json)) <> 2
+        OR NOT (hold_request_json ?& ARRAY['schema', 'request'])
+        OR hold_request_json->>'schema' IS DISTINCT FROM 'world-canonical-initial-admission-hold-request/v1'
+        OR jsonb_typeof(hold_request_json->'request') IS DISTINCT FROM 'object'
+        OR (SELECT count(*) FROM jsonb_object_keys(hold_request_json->'request')) <> 14
+        OR NOT (hold_request_json->'request' ?& ARRAY[
+            'activeLifecycleEpoch', 'canonicalGameInstanceId', 'canonicalTenantId',
+            'canonicalVersionId', 'expectedCatalogRevision', 'expectedPriorPointerVersion',
+            'initialAdmissionOrigin', 'initialAdmissionRequestDigest',
+            'initialAdmissionRequestId', 'playableStateNamespaceId', 'playableStateScope',
+            'realmId', 'targetNamespace', 'worldSlug'])
+        OR hold_request_json->'request'->>'targetNamespace' IS DISTINCT FROM original.target_namespace
+        OR hold_request_json->'request'->>'canonicalTenantId' IS DISTINCT FROM original.canonical_tenant_id::TEXT
+        OR hold_request_json->'request'->>'canonicalGameInstanceId' IS DISTINCT FROM original.canonical_game_instance_id::TEXT THEN
+        RAISE EXCEPTION 'Original StartSession admission hold request differs from retained protection'
+            USING ERRCODE = '23514';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM jsonb_each(hold_request_json->'request') field
+        WHERE field.key <> 'expectedPriorPointerVersion'
+            AND jsonb_typeof(field.value) IS DISTINCT FROM 'string')
+        OR jsonb_typeof(hold_request_json->'request'->'expectedPriorPointerVersion') NOT IN ('string', 'null') THEN
+        RAISE EXCEPTION 'Original StartSession hold request fields have invalid JSON types'
+            USING ERRCODE = '23514';
+    END IF;
+    canonical_hold_request := '{"request":{"activeLifecycleEpoch":'
+        || to_json(hold_request_json->'request'->>'activeLifecycleEpoch')::TEXT
+        || ',"canonicalGameInstanceId":'
+        || to_json(hold_request_json->'request'->>'canonicalGameInstanceId')::TEXT
+        || ',"canonicalTenantId":'
+        || to_json(hold_request_json->'request'->>'canonicalTenantId')::TEXT
+        || ',"canonicalVersionId":'
+        || to_json(hold_request_json->'request'->>'canonicalVersionId')::TEXT
+        || ',"expectedCatalogRevision":'
+        || to_json(hold_request_json->'request'->>'expectedCatalogRevision')::TEXT
+        || ',"expectedPriorPointerVersion":'
+        || CASE
+            WHEN jsonb_typeof(hold_request_json->'request'->'expectedPriorPointerVersion') = 'null'
+                THEN 'null'
+            ELSE to_json(hold_request_json->'request'->>'expectedPriorPointerVersion')::TEXT
+           END
+        || ',"initialAdmissionOrigin":'
+        || to_json(hold_request_json->'request'->>'initialAdmissionOrigin')::TEXT
+        || ',"initialAdmissionRequestDigest":'
+        || to_json(hold_request_json->'request'->>'initialAdmissionRequestDigest')::TEXT
+        || ',"initialAdmissionRequestId":'
+        || to_json(hold_request_json->'request'->>'initialAdmissionRequestId')::TEXT
+        || ',"playableStateNamespaceId":'
+        || to_json(hold_request_json->'request'->>'playableStateNamespaceId')::TEXT
+        || ',"playableStateScope":'
+        || to_json(hold_request_json->'request'->>'playableStateScope')::TEXT
+        || ',"realmId":'
+        || to_json(hold_request_json->'request'->>'realmId')::TEXT
+        || ',"targetNamespace":'
+        || to_json(hold_request_json->'request'->>'targetNamespace')::TEXT
+        || ',"worldSlug":'
+        || to_json(hold_request_json->'request'->>'worldSlug')::TEXT
+        || '},"schema":"world-canonical-initial-admission-hold-request/v1"}';
+    IF convert_to(canonical_hold_request, 'UTF8') IS DISTINCT FROM
+        decode(hold_json->>'requestBytesBase64', 'base64') THEN
+        RAISE EXCEPTION 'Original StartSession hold request is not canonical JSON'
+            USING ERRCODE = '23514';
+    END IF;
+    canonical_hold := '{"holdBindingDigest":"' || (hold_json->>'holdBindingDigest')
+        || '","holdFence":"' || (hold_json->>'holdFence')
+        || '","holdId":"' || (hold_json->>'holdId')
+        || '","requestBytesBase64":"' || (hold_json->>'requestBytesBase64')
+        || '","schema":"world-canonical-initial-admission-hold-identity/v1"}';
+    IF convert_to(canonical_hold, 'UTF8') IS DISTINCT FROM original.world_admission_hold_identity_bytes THEN
+        RAISE EXCEPTION 'Original StartSession admission hold identity is not canonical'
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF hold_request_json->'request'->>'initialAdmissionOrigin' = 'NO_PRIOR_POINTER'
+        AND hold_request_json->'request'->'expectedPriorPointerVersion' = 'null'::JSONB THEN
+        RETURN 1;
+    ELSIF hold_request_json->'request'->>'initialAdmissionOrigin' = 'EXPECT_CLOSED'
+        AND jsonb_typeof(hold_request_json->'request'->'expectedPriorPointerVersion') = 'string'
+        AND hold_request_json->'request'->>'expectedPriorPointerVersion' ~ '^[1-9][0-9]{0,18}$' THEN
+        prior_pointer := (hold_request_json->'request'->>'expectedPriorPointerVersion')::NUMERIC;
+        IF prior_pointer >= 9223372036854775807 THEN
+            RAISE EXCEPTION 'Original StartSession pointer version cannot advance without overflow'
+                USING ERRCODE = '23514';
+        END IF;
+        RETURN prior_pointer + 1;
+    ELSE
+        RAISE EXCEPTION 'Original StartSession hold has an invalid pointer precondition'
+            USING ERRCODE = '23514';
+    END IF;
+END;
+$$;
+
 -- Account currentness must independently reconstruct the exact live original actor,
 -- registry, signer and source capture before invoking this integrity boundary. SQL
 -- validates retained bindings; neither a capture nor a historical observation grants
@@ -95,8 +222,6 @@ DECLARE
     snapshot_value JSONB;
     tuple_value JSONB;
     request_value JSONB;
-    hold_value JSONB;
-    hold_request JSONB;
     projection_value JSONB;
     source_value JSONB;
     source_bytes BYTEA;
@@ -245,22 +370,7 @@ BEGIN
             USING ERRCODE = '23514';
     END IF;
 
-    hold_value := convert_from(original.world_admission_hold_identity_bytes, 'UTF8')::JSONB;
-    hold_request := convert_from(decode(hold_value->>'requestBytesBase64', 'base64'), 'UTF8')::JSONB;
-    IF hold_value->>'schema' IS DISTINCT FROM 'world-canonical-initial-admission-hold-identity/v1'
-        OR (SELECT count(*) FROM jsonb_object_keys(hold_value)) <> 5
-        OR NOT (hold_value ?& ARRAY['schema', 'holdId', 'holdFence', 'holdBindingDigest', 'requestBytesBase64'])
-        OR EXISTS (SELECT 1 FROM jsonb_each(hold_value) field WHERE jsonb_typeof(field.value) <> 'string')
-        OR (hold_value->>'holdId')::UUID = '00000000-0000-0000-0000-000000000000'::UUID
-        OR (hold_value->>'holdFence')::UUID = '00000000-0000-0000-0000-000000000000'::UUID
-        OR hold_value->>'requestBytesBase64' IS DISTINCT FROM regexp_replace(encode(decode(hold_value->>'requestBytesBase64', 'base64'), 'base64'), E'[\n\r]', '', 'g')
-        OR hold_value->>'holdBindingDigest' IS DISTINCT FROM 'sha256:' || encode(sha256(decode(hold_value->>'requestBytesBase64', 'base64')), 'hex')
-        OR hold_request->>'schema' IS DISTINCT FROM 'world-canonical-initial-admission-hold-request/v1'
-        OR hold_request->'request'->>'targetNamespace' IS DISTINCT FROM original.target_namespace
-        OR hold_request->'request'->>'canonicalTenantId' IS DISTINCT FROM original.canonical_tenant_id::TEXT
-        OR hold_request->'request'->>'canonicalGameInstanceId' IS DISTINCT FROM original.canonical_game_instance_id::TEXT THEN
-        RAISE EXCEPTION 'Admission hold identity differs from original instance and request' USING ERRCODE = '23514';
-    END IF;
+    PERFORM account_ss_admission_canonical_hold_next_pointer(original);
     -- Original World source children remain immutable even when World has settled.
     PERFORM account_start_session_world_participation_assert_sources(world_parent.participation_id, snapshot_value);
     IF require_complete THEN
@@ -433,16 +543,12 @@ DECLARE
     existing account_start_session_admission_protection_settlements%ROWTYPE;
     terminal_json JSONB;
     evidence_json JSONB;
-    hold_json JSONB;
-    hold_request_json JSONB;
     snapshot_json JSONB;
     evidence_bytes BYTEA;
     owner_proof_bytes BYTEA;
     canonical_outer TEXT;
     canonical_evidence TEXT;
     canonical_request TEXT;
-    canonical_hold TEXT;
-    canonical_hold_request TEXT;
     source_vector TEXT;
     source_count BIGINT;
     source_bytes_total BIGINT;
@@ -469,8 +575,6 @@ DECLARE
     terminal_at_text TEXT;
     terminal_stem TEXT;
     expected_pointer NUMERIC;
-    prior_pointer NUMERIC;
-    original_request JSONB;
 BEGIN
     SELECT * INTO STRICT original
         FROM account_start_session_admission_protections
@@ -636,103 +740,7 @@ BEGIN
             USING ERRCODE = '23514';
     END IF;
 
-    -- Validate the exact retained World hold identity and request, including the original
-    -- target and the pointer precondition used to derive a committed next pointer.
-    hold_json := convert_from(original.world_admission_hold_identity_bytes, 'UTF8')::JSONB;
-    IF jsonb_typeof(hold_json) IS DISTINCT FROM 'object'
-        OR (SELECT count(*) FROM jsonb_object_keys(hold_json)) <> 5
-        OR NOT (hold_json ?& ARRAY['schema', 'holdId', 'holdFence', 'holdBindingDigest', 'requestBytesBase64'])
-        OR EXISTS (SELECT 1 FROM jsonb_each(hold_json) field
-            WHERE jsonb_typeof(field.value) IS DISTINCT FROM 'string')
-        OR hold_json->>'schema' IS DISTINCT FROM 'world-canonical-initial-admission-hold-identity/v1' THEN
-        RAISE EXCEPTION 'Original StartSession admission hold identity is malformed'
-            USING ERRCODE = '23514';
-    END IF;
-    IF (hold_json->>'holdId')::UUID = '00000000-0000-0000-0000-000000000000'::UUID
-        OR (hold_json->>'holdFence')::UUID = '00000000-0000-0000-0000-000000000000'::UUID
-        OR hold_json->>'holdId' IS DISTINCT FROM (hold_json->>'holdId')::UUID::TEXT
-        OR hold_json->>'holdFence' IS DISTINCT FROM (hold_json->>'holdFence')::UUID::TEXT THEN
-        RAISE EXCEPTION 'Original StartSession admission hold identity is nil'
-            USING ERRCODE = '23514';
-    END IF;
-    hold_request_json := convert_from(decode(hold_json->>'requestBytesBase64', 'base64'), 'UTF8')::JSONB;
-    IF regexp_replace(encode(decode(hold_json->>'requestBytesBase64', 'base64'), 'base64'), E'[\n\r]', '', 'g')
-            IS DISTINCT FROM hold_json->>'requestBytesBase64'
-        OR hold_json->>'holdBindingDigest' IS DISTINCT FROM
-            'sha256:' || encode(sha256(decode(hold_json->>'requestBytesBase64', 'base64')), 'hex')
-        OR jsonb_typeof(hold_request_json) IS DISTINCT FROM 'object'
-        OR (SELECT count(*) FROM jsonb_object_keys(hold_request_json)) <> 2
-        OR NOT (hold_request_json ?& ARRAY['schema', 'request'])
-        OR hold_request_json->>'schema' IS DISTINCT FROM 'world-canonical-initial-admission-hold-request/v1'
-        OR jsonb_typeof(hold_request_json->'request') IS DISTINCT FROM 'object'
-        OR (SELECT count(*) FROM jsonb_object_keys(hold_request_json->'request')) <> 14
-        OR NOT (hold_request_json->'request' ?& ARRAY[
-            'activeLifecycleEpoch', 'canonicalGameInstanceId', 'canonicalTenantId',
-            'canonicalVersionId', 'expectedCatalogRevision', 'expectedPriorPointerVersion',
-            'initialAdmissionOrigin', 'initialAdmissionRequestDigest',
-            'initialAdmissionRequestId', 'playableStateNamespaceId', 'playableStateScope',
-            'realmId', 'targetNamespace', 'worldSlug'])
-        OR hold_request_json->'request'->>'targetNamespace' IS DISTINCT FROM original.target_namespace
-        OR hold_request_json->'request'->>'canonicalTenantId' IS DISTINCT FROM original.canonical_tenant_id::TEXT
-        OR hold_request_json->'request'->>'canonicalGameInstanceId' IS DISTINCT FROM original.canonical_game_instance_id::TEXT THEN
-        RAISE EXCEPTION 'Original StartSession admission hold request differs from retained protection'
-            USING ERRCODE = '23514';
-    END IF;
-    IF EXISTS (
-        SELECT 1 FROM jsonb_each(hold_request_json->'request') field
-        WHERE field.key <> 'expectedPriorPointerVersion'
-            AND jsonb_typeof(field.value) IS DISTINCT FROM 'string')
-        OR jsonb_typeof(hold_request_json->'request'->'expectedPriorPointerVersion') NOT IN ('string', 'null') THEN
-        RAISE EXCEPTION 'Original StartSession hold request fields have invalid JSON types'
-            USING ERRCODE = '23514';
-    END IF;
-    canonical_hold_request := '{"request":{"activeLifecycleEpoch":'
-        || to_json(hold_request_json->'request'->>'activeLifecycleEpoch')::TEXT
-        || ',"canonicalGameInstanceId":'
-        || to_json(hold_request_json->'request'->>'canonicalGameInstanceId')::TEXT
-        || ',"canonicalTenantId":'
-        || to_json(hold_request_json->'request'->>'canonicalTenantId')::TEXT
-        || ',"canonicalVersionId":'
-        || to_json(hold_request_json->'request'->>'canonicalVersionId')::TEXT
-        || ',"expectedCatalogRevision":'
-        || to_json(hold_request_json->'request'->>'expectedCatalogRevision')::TEXT
-        || ',"expectedPriorPointerVersion":'
-        || CASE
-            WHEN jsonb_typeof(hold_request_json->'request'->'expectedPriorPointerVersion') = 'null'
-                THEN 'null'
-            ELSE to_json(hold_request_json->'request'->>'expectedPriorPointerVersion')::TEXT
-           END
-        || ',"initialAdmissionOrigin":'
-        || to_json(hold_request_json->'request'->>'initialAdmissionOrigin')::TEXT
-        || ',"initialAdmissionRequestDigest":'
-        || to_json(hold_request_json->'request'->>'initialAdmissionRequestDigest')::TEXT
-        || ',"initialAdmissionRequestId":'
-        || to_json(hold_request_json->'request'->>'initialAdmissionRequestId')::TEXT
-        || ',"playableStateNamespaceId":'
-        || to_json(hold_request_json->'request'->>'playableStateNamespaceId')::TEXT
-        || ',"playableStateScope":'
-        || to_json(hold_request_json->'request'->>'playableStateScope')::TEXT
-        || ',"realmId":'
-        || to_json(hold_request_json->'request'->>'realmId')::TEXT
-        || ',"targetNamespace":'
-        || to_json(hold_request_json->'request'->>'targetNamespace')::TEXT
-        || ',"worldSlug":'
-        || to_json(hold_request_json->'request'->>'worldSlug')::TEXT
-        || '},"schema":"world-canonical-initial-admission-hold-request/v1"}';
-    IF convert_to(canonical_hold_request, 'UTF8') IS DISTINCT FROM
-        decode(hold_json->>'requestBytesBase64', 'base64') THEN
-        RAISE EXCEPTION 'Original StartSession hold request is not canonical JSON'
-            USING ERRCODE = '23514';
-    END IF;
-    canonical_hold := '{"holdBindingDigest":"' || (hold_json->>'holdBindingDigest')
-        || '","holdFence":"' || (hold_json->>'holdFence')
-        || '","holdId":"' || (hold_json->>'holdId')
-        || '","requestBytesBase64":"' || (hold_json->>'requestBytesBase64')
-        || '","schema":"world-canonical-initial-admission-hold-identity/v1"}';
-    IF convert_to(canonical_hold, 'UTF8') IS DISTINCT FROM original.world_admission_hold_identity_bytes THEN
-        RAISE EXCEPTION 'Original StartSession admission hold identity is not canonical'
-            USING ERRCODE = '23514';
-    END IF;
+    expected_pointer := account_ss_admission_canonical_hold_next_pointer(original);
 
     -- The actual Game Session codec frames the hold and seven terminal fields. Do not treat
     -- its opaque terminal proof digest as permission; only the exact COMMITTED/ABORTED shape
@@ -824,7 +832,6 @@ BEGIN
         RAISE EXCEPTION 'Original StartSession owner proof timestamp stem is not normalized'
             USING ERRCODE = '23514';
     END IF;
-    original_request := hold_request_json->'request';
     IF proof_outcome = 'COMMITTED' THEN
         IF pointer_marker IS DISTINCT FROM 'PRESENT'
             OR pointer_text IS NULL OR pointer_text !~ '^[1-9][0-9]{0,18}$'
@@ -832,22 +839,6 @@ BEGIN
             OR audit_text IS NULL OR audit_text !~ '^[1-9][0-9]{0,18}$'
             OR abort_value IS DISTINCT FROM 'false' THEN
             RAISE EXCEPTION 'Committed Game Session terminal proof has invalid outcome fields'
-                USING ERRCODE = '23514';
-        END IF;
-        IF original_request->>'initialAdmissionOrigin' = 'NO_PRIOR_POINTER'
-            AND original_request->'expectedPriorPointerVersion' = 'null'::JSONB THEN
-            expected_pointer := 1;
-        ELSIF original_request->>'initialAdmissionOrigin' = 'EXPECT_CLOSED'
-            AND jsonb_typeof(original_request->'expectedPriorPointerVersion') = 'string'
-            AND original_request->>'expectedPriorPointerVersion' ~ '^[1-9][0-9]{0,18}$' THEN
-            prior_pointer := (original_request->>'expectedPriorPointerVersion')::NUMERIC;
-            IF prior_pointer >= 9223372036854775807 THEN
-                RAISE EXCEPTION 'Original StartSession pointer version cannot advance without overflow'
-                    USING ERRCODE = '23514';
-            END IF;
-            expected_pointer := prior_pointer + 1;
-        ELSE
-            RAISE EXCEPTION 'Original StartSession hold has an invalid pointer precondition'
                 USING ERRCODE = '23514';
         END IF;
         IF pointer_text::NUMERIC IS DISTINCT FROM expected_pointer THEN

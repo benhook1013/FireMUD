@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -27,6 +28,8 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
+import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProof;
+import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionOwnerProofCodec;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -507,6 +510,17 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
             "account_selected_publication_sources",
             "account_game_logic_intake_sources",
             "account_game_logic_intake_source_read_sources");
+    for (String guard :
+        List.of(
+            "account_ss_admission_assert_current(account_start_session_admission_protections,boolean)",
+            "account_ss_admission_settlement_insert_guard()")) {
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle("SELECT pg_get_functiondef(?::regprocedure)", guard)
+                  .get(0, String.class))
+          .contains("account_ss_admission_canonical_hold_next_pointer(original)");
+    }
   }
 
   @Test
@@ -633,7 +647,8 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
                     .transaction()
                     .executeWithoutResult(
                         status -> insertProtection(fixture, 11L, forgedHold, forgedRequest)))
-        .hasMessageContaining("Admission hold identity differs from original instance and request");
+        .hasMessageContaining(
+            "Original StartSession admission hold request differs from retained protection");
     assertThat(
             fixture
                 .dsl()
@@ -788,6 +803,84 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
                 .fetchSingle("SELECT account_ss_admission_is_settled(?)", fixture.protectionId())
                 .get(0, Boolean.class))
         .isFalse();
+  }
+
+  @Test
+  void genuineFramedTerminalReceiptsReleaseRequiredSource() {
+    for (GameSessionCanonicalInitialAdmissionOwnerProof.Outcome outcome :
+        List.of(
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
+            GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED)) {
+      Fixture fixture = fixture();
+      acquire(fixture);
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .dsl()
+                      .execute(
+                          "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                          fixture.source().key()))
+          .hasMessageContaining("Original StartSession admission protection remains pending");
+      var proof =
+          new GameSessionCanonicalInitialAdmissionOwnerProof(
+              WorldCanonicalInitialAdmissionHold.HoldIdentity.fromStored(fixture.hold()),
+              outcome,
+              outcome == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED
+                  ? 1L
+                  : null,
+              outcome == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED
+                  ? 1L
+                  : null,
+              "sha256:" + "a".repeat(64),
+              outcome == GameSessionCanonicalInitialAdmissionOwnerProof.Outcome.ABORTED,
+              Instant.now());
+      byte[] ownerProof = GameSessionCanonicalInitialAdmissionOwnerProofCodec.canonicalBytes(proof);
+      long fence =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT protection_fence FROM account_start_session_admission_protections WHERE protection_id = ?",
+                  fixture.protectionId())
+              .get(0, Long.class);
+      byte[] evidence =
+          json(
+              Map.of(
+                  "schema", "account-start-session-admission-protection-evidence/v1",
+                  "accountProtectionId", fixture.protectionId().toString(),
+                  "accountProtectionFence", Long.toString(fence),
+                  "originalSourceCaptureReferenceBytesBase64", base64(bytes("{}")),
+                  "originalSourceCaptureReferenceSha256", hash(bytes("{}")),
+                  "requestBytesBase64", base64(fixture.request()),
+                  "sourceEvidenceVector", List.of(base64(fixture.source().canonicalBytes()))));
+      byte[] terminal =
+          json(
+              Map.of(
+                  "schema", "account-start-session-admission-protection-settlement/v1",
+                  "canonicalAccountProtectionEvidenceBytesBase64", base64(evidence),
+                  "canonicalGameSessionOwnerProofBytesBase64", base64(ownerProof)));
+      insert(
+          fixture.dsl(),
+          "account_start_session_admission_protection_settlements",
+          "protection_id",
+          fixture.protectionId(),
+          "outcome",
+          outcome.name(),
+          "terminal_bytes",
+          terminal,
+          "terminal_digest",
+          "sha256:" + hash(terminal));
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle("SELECT account_ss_admission_is_settled(?)", fixture.protectionId())
+                  .get(0, Boolean.class))
+          .isTrue();
+      fixture
+          .dsl()
+          .execute(
+              "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+              fixture.source().key());
+    }
   }
 
   @Test
@@ -968,6 +1061,86 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
                                     List.of(base64(fixture.source().canonicalBytes())))),
                             StandardCharsets.UTF_8)
                         + " ".repeat(245761))),
+        "23514");
+  }
+
+  @Test
+  void acquisitionRejectsEveryHoldShapeThatSettlementCannotAccept() throws Exception {
+    Fixture fixture = fixture();
+    var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+    Map<String, Object> originalHold =
+        mapper.readValue(fixture.hold(), new tools.jackson.core.type.TypeReference<>() {});
+    byte[] originalHoldRequest =
+        Base64.getDecoder().decode((String) originalHold.get("requestBytesBase64"));
+    Map<String, Object> requestEnvelope =
+        mapper.readValue(originalHoldRequest, new tools.jackson.core.type.TypeReference<>() {});
+    @SuppressWarnings("unchecked")
+    Map<String, Object> requestFields = (Map<String, Object>) requestEnvelope.get("request");
+
+    Map<String, Object> uppercaseId = new LinkedHashMap<>(originalHold);
+    uppercaseId.put(
+        "holdId", ((String) uppercaseId.get("holdId")).toUpperCase(java.util.Locale.ROOT));
+    assertMalformedHoldRejected(fixture, json(uppercaseId));
+
+    Map<String, Object> extraEnvelope = new LinkedHashMap<>(requestEnvelope);
+    extraEnvelope.put("extra", "unsettleable");
+    assertMalformedHoldRejected(fixture, holdWithRequest(originalHold, json(extraEnvelope)));
+
+    Map<String, Object> extraFields = new LinkedHashMap<>(requestFields);
+    extraFields.put("extra", "unsettleable");
+    assertMalformedHoldRejected(fixture, holdWithRequest(originalHold, holdRequest(extraFields)));
+
+    Map<String, Object> wrongType = new LinkedHashMap<>(requestFields);
+    wrongType.put("activeLifecycleEpoch", 1);
+    assertMalformedHoldRejected(fixture, holdWithRequest(originalHold, holdRequest(wrongType)));
+
+    assertMalformedHoldRejected(
+        fixture,
+        holdWithRequest(
+            originalHold, bytes(new String(originalHoldRequest, StandardCharsets.UTF_8) + " ")));
+    assertMalformedHoldRejected(
+        fixture, bytes(new String(fixture.hold(), StandardCharsets.UTF_8) + " "));
+
+    Map<String, Object> wrongOrigin = new LinkedHashMap<>(requestFields);
+    wrongOrigin.put("initialAdmissionOrigin", "EXPECT_CLOSED");
+    assertMalformedHoldRejected(fixture, holdWithRequest(originalHold, holdRequest(wrongOrigin)));
+
+    Map<String, Object> wrongPointer = new LinkedHashMap<>(requestFields);
+    wrongPointer.put("expectedPriorPointerVersion", "1");
+    assertMalformedHoldRejected(fixture, holdWithRequest(originalHold, holdRequest(wrongPointer)));
+
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT count(*) FROM account_start_session_admission_protections")
+                .get(0, Long.class))
+        .isZero();
+  }
+
+  private static byte[] holdRequest(Map<String, Object> fields) {
+    return json(
+        Map.of("schema", "world-canonical-initial-admission-hold-request/v1", "request", fields));
+  }
+
+  private static byte[] holdWithRequest(Map<String, Object> originalHold, byte[] requestBytes) {
+    Map<String, Object> hold = new LinkedHashMap<>(originalHold);
+    hold.put("requestBytesBase64", base64(requestBytes));
+    hold.put("holdBindingDigest", "sha256:" + hash(requestBytes));
+    return json(hold);
+  }
+
+  private static void assertMalformedHoldRejected(Fixture fixture, byte[] hold) throws Exception {
+    Map<String, Object> request =
+        tools.jackson.databind.json.JsonMapper.builder()
+            .build()
+            .readValue(fixture.request(), new tools.jackson.core.type.TypeReference<>() {});
+    request.put("worldAdmissionHoldIdentityBytesBase64", base64(hold));
+    assertDatabaseGuardFailure(
+        () ->
+            fixture
+                .transaction()
+                .executeWithoutResult(
+                    status -> insertProtection(fixture, 11L, hold, json(request))),
         "23514");
   }
 

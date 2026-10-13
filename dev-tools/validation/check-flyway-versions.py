@@ -164,6 +164,15 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
                 issues.append(f"services/{project}: new migration {item.path} (V{item.version_text}) "
                               f"must exceed effective parent frontier V{version_label(frontier)}")
 
+    # A shared migration remains in the raw repository even if a project stops
+    # loading it. Compare each project's effective history so removing either
+    # the runtime dependency or a Flyway location cannot silently drop it.
+    for project, previous in sorted(parent_grouped.items()):
+        current_paths = {item.path for item in grouped.get(project, [])}
+        for item in previous:
+            if item.path not in current_paths:
+                issues.append(f"services/{project}: historical effective migration no longer applied: {item.path}")
+
     # Treat parent histories conservatively as applied; never rewrite their names/checksums.
     for item in parent_migrations:
         if item.path not in current:
@@ -217,11 +226,25 @@ def run_self_test() -> None:
     check("composed runtime convention", {**composed, local + "V2__new.sql": b"-- new"}, composed, "frontier V1002")
     test_only = {**history, "services/example-service/build.gradle.kts": b'testImplementation(project(":common-saga"))'}
     check("test-only dependency", {**test_only, local + "V2__new.sql": b"-- new"}, test_only, None)
+    dependency_removed = {**history, "services/example-service/build.gradle.kts": b"dependencies {}"}
+    check("removed runtime dependency", dependency_removed, history, "historical effective migration no longer applied")
+    explicit_saga_location = {**history, "services/example-service/src/main/resources/application.yml":
+                              b"spring:\n  flyway:\n    locations: classpath:db/migration/saga\n"}
+    location_removed = {**explicit_saga_location, "services/example-service/src/main/resources/application.yml":
+                        b"spring:\n  flyway:\n    locations: classpath:db/migration/other\n"}
+    check("removed Flyway location", location_removed, explicit_saga_location,
+          "historical effective migration no longer applied")
     second_local = "services/second-service/src/main/resources/db/migration/"
     multiple = {**history, "services/second-service/build.gradle.kts": wiring["services/example-service/build.gradle.kts"],
                 "services/second-service/src/main/resources/application.yml": wiring["services/example-service/src/main/resources/application.yml"],
                 second_local + "V2000__later.sql": b"-- later"}
     check("every adopter frontier", {**multiple, shared + "V1003__new.sql": b"-- new"}, multiple, "frontier V2000")
+    one_adopter_removed = {**multiple, "services/example-service/build.gradle.kts": b"dependencies {}"}
+    membership_issues, _, _ = collect_issues(one_adopter_removed, multiple)
+    if (not any("services/example-service: historical effective migration no longer applied" in issue
+                for issue in membership_issues)
+            or any("services/second-service:" in issue for issue in membership_issues)):
+        raise AssertionError(f"one adopter removal affected the wrong project histories: {membership_issues}")
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
