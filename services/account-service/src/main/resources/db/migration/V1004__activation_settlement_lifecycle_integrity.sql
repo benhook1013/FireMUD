@@ -42,6 +42,12 @@ BEGIN
         RAISE EXCEPTION 'Committed activation lifecycle requires unique closed JSON object keys'
             USING ERRCODE = '23514';
     END IF;
+    -- JSON preserves the number spelling that JSONB may normalize (for example 1e0).
+    IF (convert_from(lifecycle_bytes, 'UTF8')::JSON->'request'->'schemaVersion')::TEXT
+        IS DISTINCT FROM '1' THEN
+        RAISE EXCEPTION 'Committed activation lifecycle schemaVersion must be the integral JSON number 1'
+            USING ERRCODE = '23514';
+    END IF;
     lifecycle := convert_from(lifecycle_bytes, 'UTF8')::JSONB;
     preparing := convert_from(original.world_preparing_evidence, 'UTF8')::JSONB;
     IF jsonb_typeof(lifecycle) IS DISTINCT FROM 'object' THEN

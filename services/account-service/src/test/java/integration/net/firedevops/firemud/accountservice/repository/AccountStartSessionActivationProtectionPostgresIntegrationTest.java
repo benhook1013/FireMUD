@@ -203,13 +203,14 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     invalidLifecycleCarriers.add(
         Base64.getEncoder().encodeToString(new byte[] {(byte) 0xc3, 0x28}));
     invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(bytes("null")));
-    invalidLifecycleCarriers.add(
-        Base64.getEncoder()
-            .encodeToString(
-                bytes(
-                    new String(activeBytes, StandardCharsets.UTF_8)
-                        .replace("\"schemaVersion\":1", "\"schemaVersion\":1.0"))));
     String activeJson = new String(activeBytes, StandardCharsets.UTF_8);
+    for (String schemaVersion : new String[] {"1.0", "1e0", "1e+0"}) {
+      byte[] invalidVersion =
+          bytes(activeJson.replace("\"schemaVersion\":1", "\"schemaVersion\":" + schemaVersion));
+      assertThatThrownBy(() -> WorldCanonicalInstanceLifecycleEvidence.fromStored(invalidVersion))
+          .isInstanceOf(IllegalArgumentException.class);
+      invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(invalidVersion));
+    }
     for (String duplicate :
         new String[] {
           activeJson.replace("\"schema\":", "\"schema\":\"wrong/v1\",\"schema\":"),
