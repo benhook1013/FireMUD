@@ -628,6 +628,40 @@ def _parser() -> argparse.ArgumentParser:
     )
     allocation.add_argument("--reason", required=True)
     allocation.add_argument("--json", action="store_true", dest="as_json")
+    period = decide_commands.add_parser(
+        "period",
+        help="record an explicit new default review-budget/taper period",
+        description=(
+            "Reset one PR/channel from a stable attributable checkpoint and exact current candidate head. "
+            "Prior review and finding history remains intact. An existing User stop requires --replace-stop."
+        ),
+    )
+    period_commands = period.add_subparsers(dest="period_command", required=True)
+    period_reset = period_commands.add_parser(
+        "reset",
+        help="start a new default Hosted (2 rounds) or CLI (6 rounds) review period",
+    )
+    period_reset.add_argument("--pr", required=True, type=_positive_int)
+    period_reset.add_argument("--channel", required=True, choices=("hosted", "cli"))
+    period_reset.add_argument(
+        "--checkpoint",
+        required=True,
+        help="exact stable completed attributable checkpoint to use as the new period baseline",
+    )
+    period_reset.add_argument(
+        "--head",
+        required=True,
+        type=_exact_sha,
+        help="exact current candidate head; it may differ from the reviewed checkpoint head",
+    )
+    period_reset.add_argument("--reason", required=True)
+    period_reset.add_argument("--actor", required=True, help="identity recording this reset decision")
+    period_reset.add_argument(
+        "--replace-stop",
+        action="store_true",
+        help="explicitly replace this PR/channel's exact existing User stop; this flag grants no authority",
+    )
+    period_reset.add_argument("--json", action="store_true", dest="as_json")
     stop = decide_commands.add_parser(
         "stop", help="record a human decision to stop new review discovery on one channel"
     )
@@ -2197,6 +2231,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 decision=args.decision,
                 head=args.head,
                 checkpoint=args.checkpoint,
+                actor=args.actor,
                 reason=args.reason,
             ), 0
         if args.decide_command == "allocation":
@@ -2211,6 +2246,16 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 max_additional_completed=args.max_additional_completed,
                 exact_additional_completed=args.exact_additional_completed,
                 fresh_taper=args.fresh_taper,
+            ), 0
+        if args.decide_command == "period" and args.period_command == "reset":
+            return controller.decide_period_reset(
+                pr=args.pr,
+                channel=args.channel,
+                head=args.head,
+                checkpoint=args.checkpoint,
+                actor=args.actor,
+                reason=args.reason,
+                replace_stop=args.replace_stop,
             ), 0
         if args.decide_command == "stop":
             return controller.decide_stop(
