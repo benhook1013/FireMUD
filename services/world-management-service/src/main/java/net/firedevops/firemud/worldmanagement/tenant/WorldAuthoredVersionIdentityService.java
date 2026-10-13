@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
+import io.grpc.StatusRuntimeException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -116,6 +117,8 @@ public final class WorldAuthoredVersionIdentityService {
     AuthoredWorldVersionStateEvidence current;
     try {
       current = versionStateClient.read(currentRequest);
+    } catch (StatusRuntimeException transportFailure) {
+      throw transportFailure;
     } catch (RuntimeException exception) {
       throw new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
           "Game Design source-qualified Version identity evidence is unavailable or invalid",

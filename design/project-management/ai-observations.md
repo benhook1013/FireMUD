@@ -209,6 +209,8 @@ Entry format:
   - Current status: reported to Overseer for controller improvement; no controller implementation change was made in this lane.
 
 - `2026-10-13`: Follow-up to compact selected-PR output
+  - Context: the 2026-10-13 compact selected-PR output entry requested a smaller routine status projection after printing large detailed captures.
+  - Observation: that entry confused the roles of the existing summary and compact options; the detailed capture size did not establish a missing controller projection.
   - Outcome: Overseer identified the existing `reviews status --pr N --summary --json` projection, which retains the same safety result without ancestor rows or check inventories. `--compact` intentionally keeps the selected PR's detailed evidence; the earlier expectation conflated the two options.
   - Expected pattern: use `--summary --json` for routine identity and readiness; use full status, history, and routes for needed finding/provenance drilldown. No missing projection or controller implementation defect is established by the earlier large capture.
 
@@ -217,3 +219,13 @@ Entry format:
   - Observation: that field reflected the new PR base, while the completed checkout log proved the run had merged the same head into the previous base. The initial exact-base claim was withdrawn.
   - Expected pattern: attribute execution to immutable event/proof metadata or the actual checkout/merge log; qualify unchanged-source reuse separately. A current associated PR tuple does not rewrite historical execution provenance.
   - Current status: the observer corrected its report; the front was reconciled and published on the merged develop parent for replacement CI. The post-retarget runtime/preview guards correctly refused stale test-merge parents.
+
+- `2026-10-13`: Clarification of the summary status projection
+  - Context: the compact-output follow-up describes the existing `--summary --json` option for routine PR identity and readiness.
+  - Observation: the summary omits ancestor rows and detailed check inventories while retaining verdict and readiness fields, pending and failed check names, the observed-check count, optional-check counts, and inventory availability/status. Omitting detailed inventories does not mean omitting all check information.
+  - Expected pattern: use the summary for routine identity and readiness, then read detailed status, history, or routes when check inventory or finding/provenance evidence is needed.
+
+- `2026-10-13`: CI matrix failure discovery requires every jobs page
+  - Context: the shared Gameplay observer monitored a large Validation matrix through `gh run view --json jobs`.
+  - Observation: the returned jobs view omitted failed Buf and Game Logic rows. Their completion timestamps were 01:04:25 and 01:08:08 UTC, but the observer first discovered them around 01:16 UTC through the fully paginated Jobs API; the exact time the API exposed each failure was not recorded. This delayed front-PR failure reporting by roughly 12 and 8 minutes; no GitHub API or FireController failure was established.
+  - Expected pattern: inspect the complete paginated source-run jobs inventory before metadata callbacks and report failed jobs while other jobs remain active. Do not wait for the whole workflow to finish or treat a partial jobs view as exhaustive.
