@@ -20,6 +20,8 @@ V26's participant-scope and V27's effective-identity migrations are deliberately
 
 Current cross-seam security status is also blocked: Account's runtime membership and entitlement gRPC methods are configured as public-method bypasses and their handlers accept caller-supplied account/tenant identifiers without the target exact Game Session or World Management workload policy. Participant digest authorization and tenant-identity gaps are recorded below and remain unproved.
 
+The current passive authored-publication prerequisite retains the first exact selection and does not release its reservation after definitive `FAILED`/`NO_PUBLICATION`. Fresh/PENDING registered ingress is denied before reservation; this containment does not establish failed-selection recovery. The authorized Game Design fresh-attempt or source-bound successor contract and proof remain an OPEN [production-readiness follow-up](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#current-status) before selected-publication enablement or genuine protected proof requiring recovery. Preserve immutable original evidence and fresh reviewed bindings; World’s ABORTED reopening after reconciled No Publication is a separate owner boundary.
+
 ## Approach
 
 - Each asset revision already stores author and timestamp metadata.
