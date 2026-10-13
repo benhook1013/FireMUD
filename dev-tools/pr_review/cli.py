@@ -956,7 +956,7 @@ def _load_records_import(
         if not isinstance(item, dict):
             raise CliError("each finding must be an object")
         required_finding = {"source_finding_key", "title"}
-        optional_finding = {"detail", "disposition", "target_pr", *decision_fields}
+        optional_finding = {"detail", "disposition", "display_severity", "target_pr", *decision_fields}
         if not required_finding <= set(item) or set(item) - required_finding - optional_finding:
             raise CliError("finding entry has missing or unsupported fields (arbitrary payload is not accepted)")
         observation_target_pr = item.get("target_pr")
@@ -971,6 +971,7 @@ def _load_records_import(
                 title=item["title"],
                 detail=item.get("detail", ""),
                 disposition=item.get("disposition", "unresolved"),
+                display_severity=item.get("display_severity"),
                 target_pr=observation_target_pr,
             )
         )
