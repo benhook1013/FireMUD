@@ -832,7 +832,15 @@ if [[ "${1:-}" == buildx && "${2:-}" == imagetools && "${3:-}" == inspect ]]; th
   if [[ "${RUNTIME_TARGET_MODE:-}" == different && "$tag" == "$HEAD_SHA" ]]; then
     digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
   fi
-  printf 'Digest: %s\n' "$digest"
+  python3 - "$digest" <<'PY'
+import sys
+
+print(f"Digest: {sys.argv[1]}")
+print("manifest detail " * 8192)
+PY
+  if [[ "${RUNTIME_TARGET_MODE:-}" == inspect-failure ]]; then
+    exit 42
+  fi
   exit 0
 fi
 if [[ "${1:-}" == buildx && "${2:-}" == imagetools && "${3:-}" == create ]]; then
@@ -880,6 +888,24 @@ if run_runtime different; then
 fi
 if [[ -e "$fixture_dir/runtime-registry-marker" ]]; then
   echo "runtime publisher overwrote a differing immutable SHA tag" >&2
+  exit 1
+fi
+
+rm -f "$fixture_dir/runtime-registry-marker"
+inspect_status=0
+if run_runtime inspect-failure >"$fixture_dir/inspect-failure-output" 2>"$fixture_dir/inspect-failure-error"; then
+  echo "runtime publisher accepted an imagetools inspection with a nonzero exit" >&2
+  exit 1
+else
+  inspect_status=$?
+fi
+if [[ "$inspect_status" -ne 42 ]]; then
+  echo "runtime publisher changed the imagetools inspection exit status (expected 42, got $inspect_status)" >&2
+  exit 1
+fi
+grep -Fq 'imagetools exit 42' "$fixture_dir/inspect-failure-error"
+if [[ -e "$fixture_dir/runtime-registry-marker" ]]; then
+  echo "runtime publisher created an alias after imagetools inspection failed" >&2
   exit 1
 fi
 
