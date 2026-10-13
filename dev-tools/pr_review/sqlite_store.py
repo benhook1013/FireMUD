@@ -26,10 +26,16 @@ from typing import Any
 from .state import ReviewState, StateError, StateLockTimeout, _locked, sqlite_state_path
 
 SQLITE_SCHEMA_VERSION = 1
-WRITER_BUILD = 9
+WRITER_BUILD = 10
 PREVIOUS_DATA_MODEL_VERSION = 1
+INTERMEDIATE_DATA_MODEL_VERSION = 2
 STATUS_VERSION = 1
 CUTOVER_VERSION = 1
+_DATA_MODEL_MIN_WRITER_BUILDS = {
+    PREVIOUS_DATA_MODEL_VERSION: 1,
+    INTERMEDIATE_DATA_MODEL_VERSION: 9,
+    3: WRITER_BUILD,
+}
 _METADATA_TABLE = "controller_metadata"
 _STATE_TABLE = "review_state"
 
@@ -52,7 +58,11 @@ def validate_controller_compatibility(
     if row is None:
         raise StateError("SQLite review-state metadata is missing")
     data_model_version, min_writer_build = row
-    supported_versions = {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+    supported_versions = {
+        PREVIOUS_DATA_MODEL_VERSION,
+        INTERMEDIATE_DATA_MODEL_VERSION,
+        ReviewState().schema_version,
+    }
     if (
         isinstance(data_model_version, bool)
         or not isinstance(data_model_version, int)
@@ -61,11 +71,14 @@ def validate_controller_compatibility(
         raise StateError(f"unsupported review-state data model version: {data_model_version}")
     if isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0:
         raise StateError("SQLite review-state minimum writer build is invalid")
-    if data_model_version >= 2 and min_writer_build < WRITER_BUILD:
-        raise StateError(f"model-2 SQLite review state requires a minimum writer build of {WRITER_BUILD}")
+    required_model_build = _DATA_MODEL_MIN_WRITER_BUILDS[data_model_version]
+    if min_writer_build < required_model_build:
+        raise StateError(
+            f"model-{data_model_version} SQLite review state requires a minimum writer build of {required_model_build}"
+        )
     if isinstance(writer_build, bool) or not isinstance(writer_build, int) or writer_build <= 0:
         raise StateError("SQLite review-state writer build is invalid")
-    required_build = max(min_writer_build, WRITER_BUILD if data_model_version >= 2 else 1)
+    required_build = max(min_writer_build, required_model_build)
     if writer_build < required_build:
         raise StateError(f"SQLite review state requires writer build {required_build}")
     state_table = execute(
@@ -363,21 +376,29 @@ class SqliteStateStore:
                 elif (
                     isinstance(data_model_version, bool)
                     or not isinstance(data_model_version, int)
-                    or data_model_version not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+                    or data_model_version
+                    not in {
+                        PREVIOUS_DATA_MODEL_VERSION,
+                        INTERMEDIATE_DATA_MODEL_VERSION,
+                        ReviewState().schema_version,
+                    }
                 ):
                     base["reason"] = f"unsupported review-state data model version {data_model_version}"
                 elif (
                     isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0
                 ):
                     base["reason"] = "minimum writer build metadata is invalid"
-                elif data_model_version >= 2 and min_writer_build < WRITER_BUILD:
+                elif min_writer_build < _DATA_MODEL_MIN_WRITER_BUILDS[data_model_version]:
                     base["reason"] = (
-                        f"model-2 SQLite review state requires a minimum writer build of {WRITER_BUILD}"
+                        f"model-{data_model_version} SQLite review state requires a minimum writer build of "
+                        f"{_DATA_MODEL_MIN_WRITER_BUILDS[data_model_version]}"
                     )
-                elif self.writer_build < max(min_writer_build, WRITER_BUILD if data_model_version >= 2 else 1):
+                elif self.writer_build < max(
+                    min_writer_build, _DATA_MODEL_MIN_WRITER_BUILDS[data_model_version]
+                ):
                     base["reason"] = (
                         f"database requires writer build "
-                        f"{max(min_writer_build, WRITER_BUILD if data_model_version >= 2 else 1)}"
+                        f"{max(min_writer_build, _DATA_MODEL_MIN_WRITER_BUILDS[data_model_version])}"
                     )
                 else:
                     base["compatible"] = True

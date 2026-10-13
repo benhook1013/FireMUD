@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .sqlite_store import (
+    INTERMEDIATE_DATA_MODEL_VERSION,
     PREVIOUS_DATA_MODEL_VERSION,
     SQLITE_SCHEMA_VERSION,
     WRITER_BUILD,
@@ -5208,7 +5209,12 @@ class SqliteReviewRecords:
             raise RecordsSchemaIncompatible(f"review records require controller schema {controller_version}")
         if (
             isinstance(data_model_version, bool)
-            or data_model_version not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+            or data_model_version
+            not in {
+                PREVIOUS_DATA_MODEL_VERSION,
+                INTERMEDIATE_DATA_MODEL_VERSION,
+                ReviewState().schema_version,
+            }
             or data_model_version > controller_data_model
         ):
             raise RecordsSchemaIncompatible(f"review records require controller data model {data_model_version}")

@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Any
 
 from .stack import ReconciliationStatus
-from .state import Judgment, PolicyOverride, ReviewState
+from .state import Judgment, PolicyOverride, ReviewState, StateError, observation_fingerprint
 
 
 class Channel(str, Enum):
@@ -65,6 +65,7 @@ class Evidence:
     active_reservation: bool = False
     finding_only_hold: bool = False
     source_run_id: str | None = None
+    period_source_fingerprint: str | None = None
 
     @classmethod
     def from_value(cls, value: Evidence | Mapping[str, Any]) -> Evidence:
@@ -78,6 +79,11 @@ class Evidence:
             "run_id": "source_run_id",
         }
         data = {aliases.get(key, key): item for key, item in value.items()}
+        if "period_source_fingerprint" not in data:
+            try:
+                data["period_source_fingerprint"] = observation_fingerprint(value)
+            except StateError:
+                data["period_source_fingerprint"] = None
         return cls(**{field.name: data[field.name] for field in dataclasses.fields(cls) if field.name in data})
 
 
@@ -209,6 +215,7 @@ def fresh_taper_history(
     *,
     baseline_checkpoints: Iterable[str] = (),
     baseline_source_run_ids: Iterable[str] = (),
+    baseline_observation_fingerprints: Iterable[str] = (),
 ) -> list[Evidence]:
     """Return only review evidence eligible for the current fresh taper.
 
@@ -256,6 +263,9 @@ def fresh_taper_history(
     source_runs = set(baseline_source_run_ids)
     if source_runs:
         relevant = [item for item in relevant if item.source_run_id not in source_runs]
+    observation_fingerprints = set(baseline_observation_fingerprints)
+    if observation_fingerprints:
+        relevant = [item for item in relevant if item.period_source_fingerprint not in observation_fingerprints]
     return relevant
 
 
@@ -266,6 +276,7 @@ def taper_satisfied_for_state(
     *,
     baseline_checkpoints: Iterable[str] = (),
     baseline_source_run_ids: Iterable[str] = (),
+    baseline_observation_fingerprints: Iterable[str] = (),
 ) -> bool:
     """Evaluate taper after any exact human-reopen or allocation baseline."""
 
@@ -276,6 +287,7 @@ def taper_satisfied_for_state(
         history,
         baseline_checkpoints=baseline_checkpoints,
         baseline_source_run_ids=baseline_source_run_ids,
+        baseline_observation_fingerprints=baseline_observation_fingerprints,
     )
     return taper_satisfied(selected, values, required_taper(state, selected, values))
 
