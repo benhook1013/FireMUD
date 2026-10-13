@@ -93,7 +93,7 @@ class GameDesignPublishedRealmPolicyClientTest {
     var channelFactory = mock(GrpcChannelFactory.class);
     var uninitialized = newClientWithoutStub(channelFactory);
     assertThatThrownBy(() -> uninitialized.listPublishedRealmEntryPolicies(TENANT_ID, VERSION_ID))
-        .isInstanceOf(IllegalStateException.class)
+        .isInstanceOf(GameDesignPublishedRealmPolicyClient.UninitializedClientException.class)
         .hasMessageContaining("not initialized");
     verifyNoInteractions(channelFactory);
 
@@ -122,7 +122,7 @@ class GameDesignPublishedRealmPolicyClientTest {
                   .build();
             });
     assertThatThrownBy(() -> newClient(stub).listPublishedRealmEntryPolicies(TENANT_ID, VERSION_ID))
-        .isInstanceOf(IllegalStateException.class)
+        .isInstanceOf(GameDesignPublishedRealmPolicyClient.InvalidResponseException.class)
         .hasMessageContaining("response is invalid");
 
     doAnswer(
@@ -136,7 +136,7 @@ class GameDesignPublishedRealmPolicyClientTest {
         .when(stub)
         .listPublishedRealmEntryPolicies(any());
     assertThatThrownBy(() -> newClient(stub).listPublishedRealmEntryPolicies(TENANT_ID, VERSION_ID))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(GameDesignPublishedRealmPolicyClient.InvalidResponseException.class);
 
     doAnswer(
             invocation -> {
@@ -153,7 +153,7 @@ class GameDesignPublishedRealmPolicyClientTest {
         .when(stub)
         .listPublishedRealmEntryPolicies(any());
     assertThatThrownBy(() -> newClient(stub).listPublishedRealmEntryPolicies(TENANT_ID, VERSION_ID))
-        .isInstanceOf(IllegalStateException.class);
+        .isInstanceOf(GameDesignPublishedRealmPolicyClient.InvalidResponseException.class);
   }
 
   @Test

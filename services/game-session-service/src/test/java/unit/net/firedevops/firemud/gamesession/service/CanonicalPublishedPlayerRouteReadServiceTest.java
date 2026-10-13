@@ -120,6 +120,56 @@ class CanonicalPublishedPlayerRouteReadServiceTest {
   }
 
   @Test
+  void classifiesGameDesignPolicyFailuresWithoutTreatingRejectedEvidenceAsUnavailable() {
+    for (io.grpc.Status.Code code :
+        java.util.List.of(
+            io.grpc.Status.Code.UNAVAILABLE,
+            io.grpc.Status.Code.DEADLINE_EXCEEDED,
+            io.grpc.Status.Code.RESOURCE_EXHAUSTED,
+            io.grpc.Status.Code.ABORTED)) {
+      var f = fixture();
+      when(f.policyClient().listPublishedRealmEntryPolicies(TENANT, VERSION))
+          .thenThrow(io.grpc.Status.fromCode(code).asRuntimeException());
+      assertThatThrownBy(() -> f.service().readCurrent(f.route()))
+          .isInstanceOf(
+              CanonicalPublishedPlayerRouteReadService.GameDesignUnavailableException.class);
+    }
+
+    var stale = fixture();
+    when(stale.policyClient().listPublishedRealmEntryPolicies(TENANT, VERSION))
+        .thenThrow(io.grpc.Status.FAILED_PRECONDITION.asRuntimeException());
+    assertThatThrownBy(() -> stale.service().readCurrent(stale.route()))
+        .isInstanceOf(CanonicalPublishedPlayerRouteReadService.StaleAuthorityException.class);
+
+    for (io.grpc.Status.Code code :
+        java.util.List.of(
+            io.grpc.Status.Code.PERMISSION_DENIED, io.grpc.Status.Code.INVALID_ARGUMENT)) {
+      var rejected = fixture();
+      when(rejected.policyClient().listPublishedRealmEntryPolicies(TENANT, VERSION))
+          .thenThrow(io.grpc.Status.fromCode(code).asRuntimeException());
+      assertThatThrownBy(() -> rejected.service().readCurrent(rejected.route()))
+          .isInstanceOf(CanonicalPublishedPlayerRouteReadService.InvalidAuthorityException.class);
+    }
+
+    var uninitialized = fixture();
+    when(uninitialized.policyClient().listPublishedRealmEntryPolicies(TENANT, VERSION))
+        .thenThrow(
+            new GameDesignPublishedRealmPolicyClient.UninitializedClientException(
+                "not initialized"));
+    assertThatThrownBy(() -> uninitialized.service().readCurrent(uninitialized.route()))
+        .isInstanceOf(
+            CanonicalPublishedPlayerRouteReadService.GameDesignUnavailableException.class);
+
+    var invalidResponse = fixture();
+    when(invalidResponse.policyClient().listPublishedRealmEntryPolicies(TENANT, VERSION))
+        .thenThrow(
+            new GameDesignPublishedRealmPolicyClient.InvalidResponseException(
+                "malformed response", new IllegalArgumentException("invalid evidence")));
+    assertThatThrownBy(() -> invalidResponse.service().readCurrent(invalidResponse.route()))
+        .isInstanceOf(CanonicalPublishedPlayerRouteReadService.InvalidAuthorityException.class);
+  }
+
+  @Test
   void missingCompleteGameDesignPolicySetFailsClosed() {
     var f = fixture();
 

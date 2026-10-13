@@ -30,6 +30,27 @@ class CanonicalInitialAdmissionRequestTest {
   }
 
   @Test
+  void requestIdentityAccepts121And128CodePointsAndRejects129() {
+    assertThat(requestWithId("r".repeat(121)).initialAdmissionRequestId()).hasSize(121);
+    assertThat(requestWithId("r".repeat(128)).initialAdmissionRequestId()).hasSize(128);
+
+    assertThatThrownBy(() -> requestWithId("r".repeat(129)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("1..128 characters");
+  }
+
+  @Test
+  void requestIdentityLimitCountsUnicodeCodePoints() {
+    String requestId = "😀".repeat(128);
+
+    assertThat(requestId).hasSize(256);
+    assertThat(requestWithId(requestId).initialAdmissionRequestId()).isEqualTo(requestId);
+    assertThatThrownBy(() -> requestWithId("😀".repeat(129)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("1..128 characters");
+  }
+
+  @Test
   void bothOriginsRequireTheirExactPriorPointerShape() {
     assertThatThrownBy(
             () ->
@@ -139,7 +160,10 @@ class CanonicalInitialAdmissionRequestTest {
   }
 
   private static CanonicalInitialAdmissionRequest noPriorRequest() {
-    String requestId = "gs-initial-admission-17";
+    return requestWithId("gs-initial-admission-17");
+  }
+
+  private static CanonicalInitialAdmissionRequest requestWithId(String requestId) {
     String digest =
         CanonicalInitialAdmissionRequest.computeRequestDigest(
             "prod",

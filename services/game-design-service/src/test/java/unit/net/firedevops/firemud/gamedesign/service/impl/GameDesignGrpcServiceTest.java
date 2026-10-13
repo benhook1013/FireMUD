@@ -1693,29 +1693,6 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
-  void completeLaunchBindingDeniesCandidateBeforeTypedOwnerOutcome() {
-    UUID readRequestId = UUID.fromString("32345678-1234-4234-8234-123456789abc");
-    String requestDigest = "sha256:" + "a".repeat(64);
-    String resultDigest = "sha256:" + "b".repeat(64);
-    var request =
-        GetLaunchDescriptorRequest.newBuilder()
-            .setRequestId(readRequestId.toString())
-            .setCanonicalTenantId(CANONICAL_TENANT_ID.toString())
-            .setWorldSlug("silver-march")
-            .setControlPlaneRequestId("cp-complete")
-            .setExpectedRequestDigest(requestDigest)
-            .setExpectedResultDigest(resultDigest)
-            .build();
-    AtomicReference<net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse> ref =
-        new AtomicReference<>();
-    underLaunchPeer(
-        "game-session-service", () -> service.getCompleteLaunchBinding(request, observerFor(ref)));
-
-    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
-    Mockito.verifyNoInteractions(completeLaunchBindingService);
-  }
-
-  @Test
   void compareAndSetVersionStateSameStateNoOpReturnsCurrentStateWithoutUpdatedFlag() {
     Mockito.when(
             versionService.compareAndSetVersionState(

@@ -254,7 +254,13 @@ class RealmPolicySourcePostgresIntegrationTest {
             "1",
             UUID.randomUUID(),
             Owner.GAME_DESIGN_CONTROL_PLANE,
-            CommandSource.deletePayload("ISOLATED-command"));
+            CommandSource.upsertPayload(
+                "{\"schemaVersion\":1,\"commandId\":\"ISOLATED-command\","
+                    + "\"semanticOwner\":\"WORLD\",\"executionDiscipline\":\"DURABLE_GAMEPLAY\","
+                    + "\"stageRequirement\":\"GAMEPLAY\",\"promptPolicy\":\"NEVER\","
+                    + "\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,"
+                    + "\"aliases\":[\"isolated\"],\"actionTags\":[\"WORLD_BROWSE\"],"
+                    + "\"effects\":[],\"legacyExtension\":{\"kept\":true}}"));
     var commandScope =
         new DraftCommitBinding.AffectedUnit(
             Owner.GAME_DESIGN_CONTROL_PLANE,
@@ -985,8 +991,13 @@ class RealmPolicySourcePostgresIntegrationTest {
                 "0",
                 UUID.randomUUID(),
                 Owner.GAME_DESIGN_CONTROL_PLANE,
-                "{\"revisionKind\":\"COMMAND_DEFINITION\",\"schemaVersion\":1,"
-                    + "\"operation\":\"DELETE\",\"commandId\":\"ISOLATED-command\"}")),
+                CommandSource.upsertPayload(
+                    "{\"schemaVersion\":1,\"commandId\":\"ISOLATED-command\","
+                        + "\"semanticOwner\":\"WORLD\",\"executionDiscipline\":\"DURABLE_GAMEPLAY\","
+                        + "\"stageRequirement\":\"GAMEPLAY\",\"promptPolicy\":\"NEVER\","
+                        + "\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,"
+                        + "\"aliases\":[\"isolated\"],\"actionTags\":[\"WORLD_BROWSE\"],"
+                        + "\"effects\":[],\"legacyExtension\":{\"kept\":true}}"))),
         List.of(
             new DraftCommitBinding.AffectedUnit(
                 Owner.GAME_DESIGN_CONTROL_PLANE,

@@ -396,7 +396,7 @@ explicitRealmEntry(discoveredEntry, discoveredEntryDigest):
       Entity.AutoProvisionCharacter(discoveredEntry, discoveredEntryDigest, autoProvisionRequestId, mutationDigest, canonicalCreationInput)
     PRESEEDED_ONLY:
       require creation input is absent
-      if retrying selection step:
+      if retrying after assignment reference was bound:
         selectionReadback = Entity.CanonicalGameplayRosterService.ReadSelectedPreseededAssignment(discoveredEntry, boundRosterSnapshot.reference, selectedCharacterId)
         require selectionReadback.request_uuid == boundRequest.request_uuid
         require selectionReadback.canonical_account_uuid == boundRequest.canonical_account_uuid
@@ -409,7 +409,12 @@ explicitRealmEntry(discoveredEntry, discoveredEntryDigest):
         rosterSnapshot = boundRosterSnapshot
       else:
         rosterSnapshot = Entity.CanonicalGameplayRosterService.ListPreseededRoster(discoveredEntry, discoveredEntryDigest)
-        bind rosterSnapshot.identity and rosterSnapshot.digest to sagaStep
+        if retrying selection step:
+          require rosterSnapshot.identity == boundRosterSnapshot.identity
+          require rosterSnapshot.digest == boundRosterSnapshot.digest
+          rosterSnapshot = boundRosterSnapshot  # preserve the original selection evidence
+        else:
+          bind rosterSnapshot.identity and rosterSnapshot.digest to sagaStep
       roster = rosterSnapshot.roster
       if roster is zero:
         return pre-seeded-only denial
@@ -421,7 +426,7 @@ explicitRealmEntry(discoveredEntry, discoveredEntryDigest):
         resolvedSelectedCharacter = require actor matching selectedCharacterId in unchanged roster/snapshot
         bind resolvedSelectedCharacter.characterId to sagaStep
         select resolvedSelectedCharacter  # lookup/selection only; no actor mutation
-      if not retrying selection step:
+      if assignment reference is not yet bound:
         selectionReadback = Entity.CanonicalGameplayRosterService.ReadSelectedPreseededAssignment(discoveredEntry, rosterSnapshot.reference, selectedCharacterId)
         require selectionReadback.request_uuid == boundRequest.request_uuid
         require selectionReadback.canonical_account_uuid == boundRequest.canonical_account_uuid
@@ -429,7 +434,7 @@ explicitRealmEntry(discoveredEntry, discoveredEntryDigest):
         require selectionReadback.target == boundRequest.expected_target
         require selectionReadback.snapshot == rosterSnapshot.reference
         bind selectionReadback.assignment_uuid and selectionReadback.intent_digest to sagaStep
-  retries reuse the same discoveredEntry, discoveredEntryDigest, branch, applicable roster snapshot identity/digest, and resolved selectedCharacterId; an entered PLAYER_CREATED create step replays Entity before any fresh roster rejection, and each actor mutation reuses its operation request identity, mutationDigest, and canonicalCreationInput, while a changed input or roster snapshot fails closed
+  retries reuse the same discoveredEntry, discoveredEntryDigest, branch, applicable roster snapshot identity/digest, and resolved selectedCharacterId; a PRESEEDED_ONLY retry before assignment-reference binding rereads and validates the original roster snapshot, then resumes the original selected-assignment read without requiring an absent assignment UUID or intent digest, while an assignment-bound retry retains the exact original tuple assertions. An entered PLAYER_CREATED create step replays Entity before any fresh roster rejection, and each actor mutation reuses its operation request identity, mutationDigest, and canonicalCreationInput, while a changed input or roster snapshot fails closed
 ```
 
 This is a target-state branch illustration, not current implementation or proof. Compensation applies only to the selected mutating branch; the `PRESEEDED_ONLY` lookup has no actor mutation to compensate.

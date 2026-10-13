@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service;
 
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.util.List;
 import java.util.Objects;
@@ -72,8 +73,8 @@ public final class CanonicalGameplayRosterSelectionService {
     CanonicalGameplayRosterClient.PreseededRosterSnapshot snapshot;
     try {
       snapshot = rosterClient.listPreseededRoster(current, authenticatedContext);
-    } catch (StatusRuntimeException unavailable) {
-      return new Denied(Denial.ROSTER_UNAVAILABLE);
+    } catch (StatusRuntimeException failure) {
+      return new Denied(rosterFailure(failure));
     } catch (RuntimeException invalidOrUnavailable) {
       return new Denied(Denial.INVALID_ROSTER_PROOF);
     }
@@ -88,6 +89,15 @@ public final class CanonicalGameplayRosterSelectionService {
       return new Denied(Denial.INVALID_ROSTER_PROOF);
     }
 
+    if (selector != null && !selector.isBlank()) {
+      if (expectedMenuIdentity == null) {
+        return new Denied(Denial.MISSING_MENU_IDENTITY);
+      }
+      if (!expectedMenuIdentity.matches(snapshot)) {
+        return new Denied(Denial.STALE_MENU_IDENTITY);
+      }
+    }
+
     CanonicalGameplayActorSelection.SelectionResult selection =
         CanonicalGameplayActorSelection.select(validated.orElseThrow(), selector);
     if (selection instanceof CanonicalGameplayActorSelection.SelectionRequired required) {
@@ -97,15 +107,6 @@ public final class CanonicalGameplayRosterSelectionService {
     }
     if (selection instanceof CanonicalGameplayActorSelection.Denied denied) {
       return new Denied(mapSelectionDenial(denied.reason()));
-    }
-
-    if (selector != null && !selector.isBlank()) {
-      if (expectedMenuIdentity == null) {
-        return new Denied(Denial.MISSING_MENU_IDENTITY);
-      }
-      if (!expectedMenuIdentity.matches(snapshot)) {
-        return new Denied(Denial.STALE_MENU_IDENTITY);
-      }
     }
 
     CanonicalGameplayActorSelection.Selected selected =
@@ -119,8 +120,8 @@ public final class CanonicalGameplayRosterSelectionService {
     CanonicalGameplayRosterClient.VerifiedPreseededAssignment ownerReference;
     try {
       ownerReference = rosterClient.readSelectedPreseededAssignment(snapshot, selectedContext);
-    } catch (StatusRuntimeException unavailable) {
-      return new Denied(Denial.ASSIGNMENT_UNAVAILABLE);
+    } catch (StatusRuntimeException failure) {
+      return new Denied(assignmentFailure(failure));
     } catch (RuntimeException invalidOrUnavailable) {
       return new Denied(Denial.INVALID_ASSIGNMENT_PROOF);
     }
@@ -152,10 +153,38 @@ public final class CanonicalGameplayRosterSelectionService {
         || failure instanceof CanonicalPublishedPlayerRouteReadService.StorageUnavailableException
         || failure
             instanceof CanonicalPublishedPlayerRouteReadService.GameDesignUnavailableException
-        || failure instanceof StatusRuntimeException) {
+        || failure instanceof StatusRuntimeException status && isTransient(status.getStatus())) {
       return Denial.ROUTE_UNAVAILABLE;
     }
+    if (failure instanceof StatusRuntimeException status
+        && status.getStatus().getCode() == Status.Code.FAILED_PRECONDITION) {
+      return Denial.ROUTE_CHANGED;
+    }
     return Denial.INVALID_ROUTE_PROOF;
+  }
+
+  private static Denial rosterFailure(StatusRuntimeException failure) {
+    Status status = failure.getStatus();
+    if (isTransient(status)) {
+      return Denial.ROSTER_UNAVAILABLE;
+    }
+    if (status.getCode() == Status.Code.FAILED_PRECONDITION) {
+      return Denial.STALE_MENU_IDENTITY;
+    }
+    return Denial.INVALID_ROSTER_PROOF;
+  }
+
+  private static Denial assignmentFailure(StatusRuntimeException failure) {
+    return isTransient(failure.getStatus())
+        ? Denial.ASSIGNMENT_UNAVAILABLE
+        : Denial.INVALID_ASSIGNMENT_PROOF;
+  }
+
+  private static boolean isTransient(Status status) {
+    return switch (status.getCode()) {
+      case UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED, ABORTED -> true;
+      default -> false;
+    };
   }
 
   private static Optional<UUID> validateContext(PlayerExecutionContext context) {
