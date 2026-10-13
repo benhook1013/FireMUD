@@ -35,7 +35,8 @@ public class CharacterEquipmentRepository {
                     CHARACTER_EQUIPMENT
                         .CHARACTER_ID
                         .eq(characterId)
-                        .and(CHARACTERS.TENANT_ID.eq(tenantId))));
+                        .and(CHARACTERS.TENANT_ID.eq(tenantId))
+                        .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED"))));
     var content =
         dsl.select(
                 CHARACTER_EQUIPMENT.CHARACTER_ID,
@@ -68,7 +69,8 @@ public class CharacterEquipmentRepository {
                 CHARACTER_EQUIPMENT
                     .CHARACTER_ID
                     .eq(characterId)
-                    .and(CHARACTERS.TENANT_ID.eq(tenantId)))
+                    .and(CHARACTERS.TENANT_ID.eq(tenantId))
+                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
             .orderBy(CHARACTER_EQUIPMENT.SLOT.asc())
             .limit(
                 JooqEntityManagementRepositorySupport.limitOrDefault(pageable, Integer.MAX_VALUE))

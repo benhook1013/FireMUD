@@ -22,6 +22,8 @@ import net.firedevops.firemud.entitymanagement.repository.EquipmentSlotDefinitio
 import net.firedevops.firemud.entitymanagement.repository.ItemInstanceRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.service.EquipmentSlotIncompatibleException;
+import net.firedevops.firemud.entitymanagement.service.PlayableStateKeyResolver;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -47,7 +49,7 @@ class EquipmentServiceImplTest {
         new EquipmentServiceImpl(
             itemInstanceRepo,
             containerInstanceRepo,
-            charRepo,
+            mockedScopedCharacterResolver(charRepo),
             itemRepo,
             new ItemTransferSupport(),
             Mockito.mock(ItemTransferAuditWriter.class),
@@ -95,7 +97,7 @@ class EquipmentServiceImplTest {
         new EquipmentServiceImpl(
             itemInstanceRepo,
             containerInstanceRepo,
-            charRepo,
+            mockedScopedCharacterResolver(charRepo),
             itemRepo,
             new ItemTransferSupport(),
             itemTransferAuditWriter,
@@ -156,7 +158,7 @@ class EquipmentServiceImplTest {
         new EquipmentServiceImpl(
             itemInstanceRepo,
             containerInstanceRepo,
-            charRepo,
+            mockedScopedCharacterResolver(charRepo),
             itemRepo,
             new ItemTransferSupport(),
             itemTransferAuditWriter,
@@ -203,7 +205,7 @@ class EquipmentServiceImplTest {
         new EquipmentServiceImpl(
             itemInstanceRepo,
             containerInstanceRepo,
-            charRepo,
+            mockedScopedCharacterResolver(charRepo),
             itemRepo,
             new ItemTransferSupport(),
             itemTransferAuditWriter,
@@ -259,7 +261,7 @@ class EquipmentServiceImplTest {
         new EquipmentServiceImpl(
             itemInstanceRepo,
             containerInstanceRepo,
-            charRepo,
+            mockedScopedCharacterResolver(charRepo),
             itemRepo,
             new ItemTransferSupport(),
             Mockito.mock(ItemTransferAuditWriter.class),
@@ -298,7 +300,7 @@ class EquipmentServiceImplTest {
         new EquipmentServiceImpl(
             itemInstanceRepo,
             containerInstanceRepo,
-            charRepo,
+            mockedScopedCharacterResolver(charRepo),
             itemRepo,
             new ItemTransferSupport(),
             Mockito.mock(ItemTransferAuditWriter.class),
@@ -339,7 +341,7 @@ class EquipmentServiceImplTest {
         new EquipmentServiceImpl(
             itemInstanceRepo,
             containerInstanceRepo,
-            charRepo,
+            mockedScopedCharacterResolver(charRepo),
             itemRepo,
             new ItemTransferSupport(),
             Mockito.mock(ItemTransferAuditWriter.class),
@@ -387,7 +389,7 @@ class EquipmentServiceImplTest {
         new EquipmentServiceImpl(
             itemInstanceRepo,
             containerInstanceRepo,
-            charRepo,
+            mockedScopedCharacterResolver(charRepo),
             itemRepo,
             new ItemTransferSupport(),
             Mockito.mock(ItemTransferAuditWriter.class),
@@ -419,6 +421,37 @@ class EquipmentServiceImplTest {
     character.setTenantId(tenantId);
     character.setPlayableStateKey("shared-live");
     return character;
+  }
+
+  // These business-logic tests isolate equipment behavior after the scope guard. The mock only
+  // accepts a matching legacy playable-state key and is not owner-provenance proof.
+  private static ScopedCharacterResolver mockedScopedCharacterResolver(
+      CharacterRepository characterRepo) {
+    ScopedCharacterResolver resolver = Mockito.mock(ScopedCharacterResolver.class);
+    Mockito.when(
+            resolver.requireScopedCharacter(
+                Mockito.anyLong(),
+                Mockito.anyLong(),
+                Mockito.nullable(String.class),
+                Mockito.any(PlayableStateScope.class)))
+        .thenAnswer(
+            invocation -> {
+              Long tenantId = invocation.getArgument(0);
+              Long characterId = invocation.getArgument(1);
+              String gameInstanceId = invocation.getArgument(2);
+              PlayableStateScope scope = invocation.getArgument(3);
+              String playableStateKey =
+                  new PlayableStateKeyResolver().resolve(gameInstanceId, scope);
+              Character character =
+                  characterRepo
+                      .findByIdAndTenantId(characterId, tenantId)
+                      .orElseThrow(() -> new IllegalArgumentException("Character not found"));
+              if (!playableStateKey.equals(character.getPlayableStateKey())) {
+                throw new IllegalArgumentException("Test fixture playable-state scope mismatch");
+              }
+              return character;
+            });
+    return resolver;
   }
 
   private static Item item(

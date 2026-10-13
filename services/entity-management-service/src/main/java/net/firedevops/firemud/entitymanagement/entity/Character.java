@@ -11,6 +11,7 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 public class Character {
   @EqualsAndHashCode.Include private Long id;
+  private ActorIdentity actorIdentity;
   private Long tenantId;
   private Long accountId;
   private String playableStateKey;

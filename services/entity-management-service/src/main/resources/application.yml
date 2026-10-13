@@ -7,6 +7,8 @@ spring:
     locations: classpath:db/migration,classpath:db/migration/saga
     defaultSchema: ${SERVICE_SCHEMA:public}
     table: ${SPRING_FLYWAY_TABLE:flyway_schema_history_${SERVICE_SCHEMA:public}}
+    postgresql:
+      transactional-lock: false
     placeholders:
       serviceSchema: ${SERVICE_SCHEMA:public}
   ssl:
