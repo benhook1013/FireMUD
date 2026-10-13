@@ -12,7 +12,6 @@ import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
-import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
@@ -27,7 +26,6 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperat
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationService;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublishedEvidence;
-import net.firedevops.firemud.gamedesign.publication.RealmPolicySnapshot;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
@@ -56,7 +54,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.ObjectMapper;
 
-/** Actual Game Design terminal and release rows; the retained policy baseline is ISOLATED. */
+/** Actual Game Design terminal and release rows; the policy author's source input is ISOLATED. */
 @Testcontainers(disabledWithoutDocker = true)
 class RealmPolicyPublicationPostgresIntegrationTest {
   private static final String MANIFEST_HASH = "sha256:" + "a".repeat(64);
@@ -175,7 +173,14 @@ class RealmPolicyPublicationPostgresIntegrationTest {
     // A second stipulated ISOLATED owner baseline replaces the main policy. The genuine
     // publication selection then inherits it through the ordinary frozen-source path.
     var replacementBinding =
-        fixture.tx(() -> baseline(fixture.target(), fixture.dsl(), "1", "Replacement World"));
+        fixture.tx(
+            () ->
+                baseline(
+                    fixture.target(),
+                    fixture.dsl(),
+                    fixture.policySource(),
+                    "1",
+                    "Replacement World"));
     GameDesignPublicationOperation operation = fixture.prepare(true);
     var selected = fixture.policySource().readCapture(operation).orElseThrow().snapshot();
     var replacement = selected.policies().getFirst();
@@ -331,7 +336,7 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     source.setSchema(schema);
-    migrate(source, schema, "50.7");
+    migrate(source, schema, "50.12");
     var transactions = new DataSourceTransactionManager(source);
     var write = new TransactionTemplate(transactions);
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -342,8 +347,6 @@ class RealmPolicyPublicationPostgresIntegrationTest {
     configuration.set(new SpringTransactionProvider(transactions));
     var dsl = DSL.using(configuration);
     var games = new GameRepository(dsl);
-    var properties = new PostgresProperties();
-    properties.setSchema(schema);
     var versions = new VersionRepository(dsl);
     Game game =
         write.execute(
@@ -353,8 +356,14 @@ class RealmPolicyPublicationPostgresIntegrationTest {
               requested.setName("ISOLATED realm policy publication");
               return games.save(requested);
             });
-    Version version = write.execute(status -> insertRetainedVersion(dsl, versions, game, 1));
-    migrate(source, schema, "50.10");
+    Version version =
+        write.execute(
+            status -> {
+              var requested = new Version();
+              requested.setTenantId(game.getTenantId());
+              requested.setVersionNumber(1);
+              return versions.save(requested);
+            });
     TargetProof target =
         new TargetProof(
             version.getCanonicalTenantId(),
@@ -365,7 +374,10 @@ class RealmPolicyPublicationPostgresIntegrationTest {
             version.getIdentitySourceGameTenantKey(),
             version.getIdentitySourceProvenanceKind());
     var policySource = new RealmPolicySourceRepository(dsl);
-    var baseline = isolatedPolicyBaseline ? write.execute(status -> baseline(target, dsl)) : null;
+    var baseline =
+        isolatedPolicyBaseline
+            ? write.execute(status -> baseline(target, dsl, policySource, "0", "World"))
+            : null;
     var publicationWrites = new RealmPolicyPublicationRepository(dsl);
     var publicationReads = new RealmPolicyPublicationService(publicationWrites, transactions);
     return new Fixture(
@@ -396,87 +408,22 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         .migrate();
   }
 
-  private static Version insertRetainedVersion(
-      DSLContext dsl, VersionRepository versions, Game game, int versionNumber) {
-    var inserted =
-        dsl.fetchOne(
-            "INSERT INTO version (tenant_id, canonical_version_id, canonical_tenant_id, "
-                + "identity_source_game_row_id, identity_source_game_tenant_key, "
-                + "identity_source_provenance_kind, version_number, version_state, version_state_epoch, "
-                + "script_patch_version, base_version_id, is_script_only, notes, created_at, updated_at) "
-                + "SELECT g.tenant_id, ?, g.canonical_tenant_id, g.id, g.tenant_id, "
-                + "g.tenant_identity_provenance_kind, ?, 'DRAFT', 1, NULL, NULL, FALSE, "
-                + "'ISOLATED retained policy publication fixture', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP "
-                + "FROM game g WHERE g.id = ? RETURNING id",
-            UUID.randomUUID(),
-            versionNumber,
-            game.getId());
-    if (inserted == null) {
-      throw new IllegalStateException("ISOLATED retained Game Design owner row is absent");
-    }
-    return versions.findById(inserted.get("id", Long.class)).orElseThrow();
-  }
-
-  private static DraftCommitBinding baseline(TargetProof target, DSLContext dsl) {
-    return baseline(target, dsl, "0", "World");
-  }
-
   private static DraftCommitBinding baseline(
-      TargetProof target, DSLContext dsl, String expectedEpoch, String worldDisplayName) {
+      TargetProof target,
+      DSLContext dsl,
+      RealmPolicySourceRepository policySource,
+      String expectedEpoch,
+      String worldDisplayName) {
     DraftCommitBinding binding = policyBinding(target, expectedEpoch, worldDisplayName);
-    String sourceEpoch = Long.toString(Long.parseLong(expectedEpoch) + 1);
     var coordinator = new DraftCommitCoordinatorRepository(dsl);
     coordinator.claim(binding);
     coordinator.claimApplicationSlot(binding);
     coordinator.markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
-    var outcome =
-        new DraftCommitCoordinatorRepository.OwnerOutcome(
-            Owner.GAME_DESIGN_CONTROL_PLANE,
-            DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
-            binding.commitId(),
-            binding.digest(),
-            "ISOLATED-initial-policy-baseline",
-            "ISOLATED-test-owner-baseline".getBytes(StandardCharsets.UTF_8),
-            List.of(
-                new DraftCommitCoordinatorRepository.AppliedEpoch(
-                    RealmPolicySource.SCOPE,
-                    target.canonicalVersionId().toString(),
-                    RealmPolicySource.SCOPE,
-                    "effective",
-                    expectedEpoch,
-                    sourceEpoch)));
-    coordinator.recordOwnerOutcome(binding, outcome);
-    IsolatedPublicationOwnerSetup.advanceIsolatedVisibility(dsl, binding, List.of(outcome));
+    var applied = policySource.apply(binding);
+    IsolatedPublicationOwnerSetup.advanceIsolatedVisibility(
+        dsl, binding, List.of(applied.ownerOutcome()));
+    policySource.captureSynchronized(binding);
     coordinator.releaseApplicationSlot(binding);
-    var policy = RealmPolicySource.revision(binding, binding.revisions().getFirst());
-    var snapshot = new RealmPolicySnapshot(binding, sourceEpoch, List.of(policy));
-    dsl.execute(
-        "INSERT INTO game_design_realm_policy_snapshot "
-            + "(canonical_tenant_id, canonical_version_id, commit_id, request_id, snapshot_json) "
-            + "VALUES (?, ?, ?, ?, ?)",
-        target.canonicalTenantId(),
-        target.canonicalVersionId(),
-        binding.commitId(),
-        binding.requestId(),
-        snapshot.canonicalJson());
-    if ("0".equals(expectedEpoch)) {
-      dsl.execute(
-          "INSERT INTO game_design_realm_policy_source "
-              + "(canonical_tenant_id, canonical_version_id, source_epoch, visible_commit_id) "
-              + "VALUES (?, ?, ?, ?)",
-          target.canonicalTenantId(),
-          target.canonicalVersionId(),
-          sourceEpoch,
-          binding.commitId());
-    } else {
-      dsl.execute(
-          "UPDATE game_design_realm_policy_source SET source_epoch = ?, visible_commit_id = ? "
-              + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
-          sourceEpoch,
-          binding.commitId(),
-          target.canonicalTenantId(),
-          target.canonicalVersionId());
-    }
     return binding;
   }
 
