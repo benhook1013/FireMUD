@@ -224,6 +224,18 @@ class WorldAuthoredSourceIntakeIntegrationTest {
                 .get(0, Long.class))
         .isEqualTo(existingLegacyTenantKey);
 
+    UUID nextCanonicalTenantId = UUID.randomUUID();
+    WorldAuthoredSourceIntakeReceipt nextCanonicalTenant =
+        accept(
+            UUID.randomUUID(),
+            source(
+                nextCanonicalTenantId,
+                tenantSlug(nextCanonicalTenantId),
+                "next-canonical-tenant-world",
+                sourceRowId(nextCanonicalTenantId),
+                "Next Canonical Tenant"));
+    assertThat(nextCanonicalTenant.localTenantKey()).isGreaterThan(first.localTenantKey());
+
     AuthoredWorldSourceEvidence secondSource =
         source(canonicalTenantId, tenantSlug, "amber-coast", sourceRowId, "Amber Coast");
     WorldAuthoredSourceIntakeReceipt second = accept(UUID.randomUUID(), secondSource);

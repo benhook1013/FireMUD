@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 class WorldDesignPublicationFenceEvidenceTest {
   private static final UUID TENANT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
+  private static final UUID NIL_TENANT_ID = new UUID(0L, 0L);
   private static final UUID INTAKE_REQUEST_ID =
       UUID.fromString("22222222-2222-4222-8222-222222222222");
   private static final UUID INTAKE_OPERATION_ID =
@@ -57,13 +58,13 @@ class WorldDesignPublicationFenceEvidenceTest {
             TENANT_ID.toString(), Long.toString(GAME_DESIGN_VERSION_ID), "request-7");
 
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> evidence("request-7", binding.requestDigest(), "publish:wrong"));
+        .isThrownBy(() -> evidence("request-7", FULL_REQUEST_DIGEST, "publish:wrong"));
     assertThatIllegalArgumentException()
         .isThrownBy(() -> evidence("request-7", null, binding.derivedWorkflowIdentity()));
     assertThatIllegalArgumentException()
         .isThrownBy(() -> evidence("request-7", "F".repeat(64), binding.derivedWorkflowIdentity()));
     assertThatIllegalArgumentException()
-        .isThrownBy(() -> evidence("request-7", binding.requestDigest(), null));
+        .isThrownBy(() -> evidence("request-7", FULL_REQUEST_DIGEST, null));
   }
 
   @Test
@@ -115,10 +116,10 @@ class WorldDesignPublicationFenceEvidenceTest {
             () ->
                 new WorldDesignPublicationFenceEvidence(
                     "firemud",
-                    new UUID(0L, 0L),
+                    NIL_TENANT_ID,
                     CANONICAL_VERSION_ID,
                     VERSION_IDENTITY_OPERATION_ID,
-                    42,
+                    GAME_DESIGN_VERSION_ID,
                     INTAKE_REQUEST_ID,
                     INTAKE_OPERATION_ID,
                     INTAKE_REQUEST_DIGEST,
@@ -128,7 +129,7 @@ class WorldDesignPublicationFenceEvidenceTest {
                     "request-7",
                     validDigest(),
                     9,
-                    validWorkflow()));
+                    validWorkflow(NIL_TENANT_ID)));
     assertThatIllegalArgumentException()
         .isThrownBy(
             () ->
@@ -225,8 +226,12 @@ class WorldDesignPublicationFenceEvidenceTest {
   }
 
   private static String validWorkflow() {
+    return validWorkflow(TENANT_ID);
+  }
+
+  private static String validWorkflow(UUID tenantId) {
     return PublicationDigestRequestBinding.full(
-            TENANT_ID.toString(), Long.toString(GAME_DESIGN_VERSION_ID), "request-7")
+            tenantId.toString(), Long.toString(GAME_DESIGN_VERSION_ID), "request-7")
         .derivedWorkflowIdentity();
   }
 }

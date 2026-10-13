@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.Objects;
 import net.firedevops.firemud.common.authoring.WorldAuthoredVersionIdentityEvidence;
@@ -92,6 +93,18 @@ public final class WorldAuthoredVersionIdentityGrpcService
     } catch (org.springframework.dao.DataAccessException
         | org.jooq.exception.DataAccessException unavailable) {
       deny(observer, Status.UNAVAILABLE, "World Version association storage unavailable");
+    } catch (StatusRuntimeException transportFailure) {
+      Status.Code code = transportFailure.getStatus().getCode();
+      if (code == Status.Code.UNAVAILABLE) {
+        deny(observer, Status.UNAVAILABLE, "Game Design Version state is temporarily unavailable");
+      } else if (code == Status.Code.DEADLINE_EXCEEDED) {
+        deny(observer, Status.DEADLINE_EXCEEDED, "Game Design Version state read timed out");
+      } else {
+        deny(
+            observer,
+            Status.FAILED_PRECONDITION,
+            "World Version association has no exact committed proof");
+      }
     } catch (RuntimeException failure) {
       deny(
           observer,
