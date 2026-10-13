@@ -18,6 +18,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
@@ -77,10 +78,7 @@ public final class PublishedWorldSelectorFixtures {
   public static List<net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto>
       participants(long versionId, WorldPublishedStartLocationEvidence evidence) {
     return participants(
-        versionId,
-        evidence,
-        net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
-            .SCHEMA_VERSION);
+        versionId, evidence, AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION);
   }
 
   public static List<net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto>
@@ -106,8 +104,8 @@ public final class PublishedWorldSelectorFixtures {
                     "WORLD_MANAGEMENT".equals(owner)
                         ? evidence.request().contentDigest()
                         : "c".repeat(64),
-                    net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence
-                        .supportedParticipantDigestSchema(owner, attestationSchemaVersion),
+                    AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
+                        owner, attestationSchemaVersion),
                     "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
                     null,
                     null))

@@ -26,4 +26,7 @@ testing {
 dependencies {
     compileOnly(libs.spotbugs.annotations)
     implementation(libs.aws.sdk.s3)
+    testCompileOnly(libs.spotbugs.annotations)
+    add("integrationTestCompileOnly", libs.spotbugs.annotations)
+    testImplementation(libs.bouncycastle.pkix)
 }

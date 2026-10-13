@@ -1,7 +1,18 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
+
 record PublishWorkflowRequest(
-    String tenantId, String notes, String publishRequestId, String publishWorkflowId) {
+    String tenantId,
+    String notes,
+    String publishRequestId,
+    String publishWorkflowId,
+    PublishIntent intent) {
+
+  PublishWorkflowRequest(
+      String tenantId, String notes, String publishRequestId, String publishWorkflowId) {
+    this(tenantId, notes, publishRequestId, publishWorkflowId, null);
+  }
 
   /**
    * Recovers the request id for the legacy command shape that carried only the workflow id.
@@ -11,7 +22,10 @@ record PublishWorkflowRequest(
    * value, and explicit (including blank) request ids are never rewritten.
    */
   PublishWorkflowRequest recoverMissingPublishRequestId() {
-    if (publishRequestId != null || tenantId == null || publishWorkflowId == null) {
+    if (intent != null
+        || publishRequestId != null
+        || tenantId == null
+        || publishWorkflowId == null) {
       return this;
     }
     String canonicalPrefix = "publish:" + tenantId + ":publish-request:";
@@ -26,6 +40,7 @@ record PublishWorkflowRequest(
         TemporalVersionPublishOrchestrator.workflowId(tenantId, recoveredRequestId))) {
       return this;
     }
-    return new PublishWorkflowRequest(tenantId, notes, recoveredRequestId, publishWorkflowId);
+    return new PublishWorkflowRequest(
+        tenantId, notes, recoveredRequestId, publishWorkflowId, intent);
   }
 }
