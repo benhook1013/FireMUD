@@ -113,15 +113,15 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
     UUID playableStateNamespaceId =
         parseCanonicalNonNilUuid(
             response.getPlayableStateNamespaceId(), "playableStateNamespaceId");
-    RealmEntryPolicy.StateScope scope;
-    try {
-      scope = RealmEntryPolicy.StateScope.valueOf(response.getPlayableStateScope());
-    } catch (RuntimeException invalid) {
-      throw new IllegalArgumentException("Unknown playable state scope", invalid);
-    }
-    if (scope != RealmEntryPolicy.StateScope.SHARED) {
-      throw new IllegalArgumentException("Canonical launch association requires SHARED scope");
-    }
+    RealmEntryPolicy.StateScope scope =
+        switch (response.getPlayableStateScope()) {
+          case PLAYABLE_STATE_SCOPE_SHARED -> RealmEntryPolicy.StateScope.SHARED;
+          case PLAYABLE_STATE_SCOPE_ISOLATED ->
+              throw new IllegalArgumentException(
+                  "Canonical launch association requires SHARED scope");
+          case PLAYABLE_STATE_SCOPE_UNSPECIFIED, UNRECOGNIZED ->
+              throw new IllegalArgumentException("Unknown playable state scope");
+        };
     if (!response.getPublicProduction()) {
       throw new IllegalArgumentException("Canonical launch association requires public production");
     }
