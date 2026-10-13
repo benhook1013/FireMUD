@@ -195,3 +195,43 @@ Entry format:
   - Context: The #3155 second Hosted request reported a predecessor terminal-capture warning after the earlier Hosted run had already been captured and finalized.
   - Observation: `HostedCaptureError` reported unmarked content after a finding comment's final `cr-comment:v1` marker. The warning retained a diagnostic and did not prevent the new request from being posted; the exact content or actor responsible remains unverified.
   - Expected pattern: Preserve the completed checkpoint and frozen counts, distinguish a recapture warning from a failed new provider request, and report the diagnostic to controller maintenance. Do not invent replacement findings or spend another review to repair historical capture metadata.
+
+- `2026-10-13`: Certificate fixture validity can mask the intended negative assertion
+  - Context: the #3156 local Game Design PostgreSQL gate failed the descriptor-readback mismatch fixture before reaching that boundary because its newly issued certificate raised `CertificateNotYetValidException`.
+  - Observation: certificate readiness and live validation time disagreed transiently; the exact operating-system clock cause remains unproven. Successful certificate generation alone did not establish that the fixture was valid for the next consumer check.
+  - Expected pattern: verify generated fixture certificates with the same actual validity check before exercising a later boundary, use a short monotonic readiness budget, and propagate expired or malformed certificates immediately. Preserve production certificate validation and the intended negative assertion.
+  - Current status: the test-only readiness correction passed the 75-case local Game Design PostgreSQL suite, including the intended descriptor-readback negative case. No production validity check, certificate lifetime, or required proof has been relaxed.
+
+- `2026-10-13`: Compact selected-PR JSON still includes large inventories
+  - Context: Gameplay closeout used controller `reviews status --pr 3183 --compact --json` and the equivalent #3156 request.
+  - Observation: their JSON captures were approximately 251 KB and 172 KB, including check inventories and historical transition details; printing the complete selected response consumed substantial context despite requesting compact output.
+  - Expected pattern: a compact selected-PR projection should retain identity, review obligations, required-check outcomes, routes and readiness reasons, with detailed inventories available separately. Until then, capture JSON and print only the fields needed for the current decision.
+  - Current status: reported to Overseer for controller improvement; no controller implementation change was made in this lane.
+
+- `2026-10-13`: Follow-up to compact selected-PR output
+  - Context: the 2026-10-13 compact selected-PR output entry requested a smaller routine status projection after printing large detailed captures.
+  - Observation: that entry confused the roles of the existing summary and compact options; the detailed capture size did not establish a missing controller projection.
+  - Outcome: Overseer identified the existing `reviews status --pr N --summary --json` projection, which retains the same safety result without ancestor rows or check inventories. `--compact` intentionally keeps the selected PR's detailed evidence; the earlier expectation conflated the two options.
+  - Expected pattern: use `--summary --json` for routine identity and readiness; use full status, history, and routes for needed finding/provenance drilldown. No missing projection or controller implementation defect is established by the earlier large capture.
+
+- `2026-10-13`: Workflow-run PR metadata is not frozen base provenance
+  - Context: after #3183 merged and #3156 was retargeted, an observer initially treated the associated `pull_requests[].base.sha` on an older workflow run as its original event base.
+  - Observation: that field reflected the new PR base, while the completed checkout log proved the run had merged the same head into the previous base. The initial exact-base claim was withdrawn.
+  - Expected pattern: attribute execution to immutable event/proof metadata or the actual checkout/merge log; qualify unchanged-source reuse separately. A current associated PR tuple does not rewrite historical execution provenance.
+  - Current status: the observer corrected its report; the front was reconciled and published on the merged develop parent for replacement CI. The post-retarget runtime/preview guards correctly refused stale test-merge parents.
+
+- `2026-10-13`: Clarification of the summary status projection
+  - Context: the compact-output follow-up describes the existing `--summary --json` option for routine PR identity and readiness.
+  - Observation: the summary omits ancestor rows and detailed check inventories while retaining verdict and readiness fields, pending and failed check names, the observed-check count, optional-check counts, and inventory availability/status. Omitting detailed inventories does not mean omitting all check information.
+  - Expected pattern: use the summary for routine identity and readiness, then read detailed status, history, or routes when check inventory or finding/provenance evidence is needed.
+
+- `2026-10-13`: CI matrix failure discovery requires every jobs page
+  - Context: the shared Gameplay observer monitored a large Validation matrix through `gh run view --json jobs`.
+  - Observation: the returned jobs view omitted failed Buf and Game Logic rows. Their completion timestamps were 01:04:25 and 01:08:08 UTC, but the observer first discovered them around 01:16 UTC through the fully paginated Jobs API; the exact time the API exposed each failure was not recorded. This delayed front-PR failure reporting by roughly 12 and 8 minutes; no GitHub API or FireController failure was established.
+  - Expected pattern: inspect the complete paginated source-run jobs inventory before metadata callbacks and report failed jobs while other jobs remain active. Do not wait for the whole workflow to finish or treat a partial jobs view as exhaustive.
+
+- `2026-10-13`: Focused validation must use declared test packages and enabled task flags
+  - Context: Gameplay’s #3120 review-fix prompts assumed that the `unit/` directory prefix was part of every Java package and omitted `-PfullCheck` from static-check tasks.
+  - Observation: the wrong class filter executed no tests and failed explicitly; the static tasks were reported `SKIPPED` despite a successful focused unit build. Neither result qualified the missing proof.
+  - Expected pattern: read the class’s declared package before specifying a test filter, and verify task execution rather than equating build success with every requested check passing. Enable the repository’s canonical full-check property when selecting static tasks.
+  - Current status: corrected package selection passed 50 focused unit cases; the subsequent runtime fix passed 58 selected unit cases. A separate canonical `-PfullCheck` run executed the required static checks successfully. No validation requirement was waived.

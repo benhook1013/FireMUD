@@ -70,6 +70,12 @@ service GameDesignService {
   rpc DeleteHelpTopic(DeleteHelpTopicRequest) returns (DeleteHelpTopicResponse);
 }
 
+// Standalone, unregistered exact version-state read for an already-intaken authored-world source.
+service AuthoredWorldVersionStateService {
+  rpc GetAuthoredWorldVersionState(GetAuthoredWorldVersionStateRequest)
+      returns (GetAuthoredWorldVersionStateResponse);
+}
+
 message SaveRevisionRequest {
   string data = 1;
   string tenant_id = 2;
@@ -118,6 +124,16 @@ message PublishVersionRequest {
   string tenant_id = 1;
   string notes = 2;
   string publish_request_id = 3;
+  // Complete together for new publication: the exact existing Draft selection. When set,
+  // tenant_id, version_id, selected_commit_request_id, and selected_commit_id must be
+  // canonical lower-case non-nil UUIDs (tenant_id is the canonical tenant UUID, not the key).
+  // When all selection fields are empty, tenant_id is the legacy tenant key and only a
+  // retained terminal legacy retry is eligible.
+  string version_id = 4;
+  string expected_version_state_epoch = 5;
+  string selected_commit_request_id = 6;
+  string selected_commit_id = 7;
+  string selected_commit_digest = 8;
 }
 
 message PublishVersionResponse {
@@ -323,6 +339,54 @@ message GetVersionStateRequest {
 message GetVersionStateResponse {
   VersionStateSnapshot version_state = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message GetAuthoredWorldVersionStateRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string source_operation_id = 6;
+  string expected_source_evidence_digest = 7;
+  int64 version_id = 8;
+}
+
+message GetAuthoredWorldVersionStateResponse {
+  AuthoredWorldVersionStateEvidence evidence = 1;
+}
+
+message AuthoredWorldVersionStateEvidence {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string source_operation_id = 6;
+  string expected_source_evidence_digest = 7;
+  int64 version_id = 8;
+  AuthoredWorldSourceReceipt source_evidence = 9;
+  VersionLifecycleState version_state = 10;
+  int64 version_state_epoch = 11;
+  string evidence_digest = 12;
+  string canonical_version_id = 13;
+}
+
+// Complete immutable registration receipt, without another RPC's transient read request ID.
+message AuthoredWorldSourceReceipt {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string registration_request_id = 3;
+  string operation_id = 4;
+  string request_digest = 5;
+  string canonical_tenant_id = 6;
+  string tenant_slug = 7;
+  string world_slug = 8;
+  string world_display_name = 9;
+  int64 source_game_row_id = 10;
+  string source_game_tenant_key = 11;
+  string provenance_kind = 12;
+  string evidence_digest = 13;
 }
 
 message CompareAndSetVersionStateRequest {

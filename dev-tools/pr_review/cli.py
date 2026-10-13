@@ -628,6 +628,40 @@ def _parser() -> argparse.ArgumentParser:
     )
     allocation.add_argument("--reason", required=True)
     allocation.add_argument("--json", action="store_true", dest="as_json")
+    period = decide_commands.add_parser(
+        "period",
+        help="record an explicit new default review-budget/taper period",
+        description=(
+            "Reset one PR/channel from a stable attributable checkpoint and exact current candidate head. "
+            "Prior review and finding history remains intact. An existing User stop requires --replace-stop."
+        ),
+    )
+    period_commands = period.add_subparsers(dest="period_command", required=True)
+    period_reset = period_commands.add_parser(
+        "reset",
+        help="start a new default Hosted (2 rounds) or CLI (6 rounds) review period",
+    )
+    period_reset.add_argument("--pr", required=True, type=_positive_int)
+    period_reset.add_argument("--channel", required=True, choices=("hosted", "cli"))
+    period_reset.add_argument(
+        "--checkpoint",
+        required=True,
+        help="exact stable completed attributable checkpoint to use as the new period baseline",
+    )
+    period_reset.add_argument(
+        "--head",
+        required=True,
+        type=_exact_sha,
+        help="exact current candidate head; it may differ from the reviewed checkpoint head",
+    )
+    period_reset.add_argument("--reason", required=True)
+    period_reset.add_argument("--actor", required=True, help="identity recording this reset decision")
+    period_reset.add_argument(
+        "--replace-stop",
+        action="store_true",
+        help="explicitly replace this PR/channel's exact existing User stop; this flag grants no authority",
+    )
+    period_reset.add_argument("--json", action="store_true", dest="as_json")
     stop = decide_commands.add_parser(
         "stop", help="record a human decision to stop new review discovery on one channel"
     )
@@ -956,7 +990,7 @@ def _load_records_import(
         if not isinstance(item, dict):
             raise CliError("each finding must be an object")
         required_finding = {"source_finding_key", "title"}
-        optional_finding = {"detail", "disposition", "target_pr", *decision_fields}
+        optional_finding = {"detail", "disposition", "display_severity", "target_pr", *decision_fields}
         if not required_finding <= set(item) or set(item) - required_finding - optional_finding:
             raise CliError("finding entry has missing or unsupported fields (arbitrary payload is not accepted)")
         observation_target_pr = item.get("target_pr")
@@ -971,6 +1005,7 @@ def _load_records_import(
                 title=item["title"],
                 detail=item.get("detail", ""),
                 disposition=item.get("disposition", "unresolved"),
+                display_severity=item.get("display_severity"),
                 target_pr=observation_target_pr,
             )
         )
@@ -1875,13 +1910,24 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 review_reasons.append("PR base/head changed between status snapshots")
             if stack_item["reconciliation"] != "COHERENT":
                 review_reasons.append(f"review stack is {stack_item['reconciliation']}")
+            allocations = stack_item.get("allocations", {})
+            review_progress = stack_item.get("review_progress", {})
+            closed_cap_allocations = {"CAP_AUDITED_STOP", "CAP_TAPERED"}
             for channel, state in stack_item["channels"].items():
-                if state not in {"COMPLETE", "HUMAN_STOPPED"}:
+                allocation = allocations.get(channel, {})
+                progress = review_progress.get(channel, {})
+                allocation_status = allocation.get("status")
+                audited_cap_complete = (
+                    allocation_status in closed_cap_allocations
+                    and progress.get("status") == "COMPLETE"
+                    and state in {"READY", allocation_status}
+                )
+                if state not in {"COMPLETE", "HUMAN_STOPPED"} and not audited_cap_complete:
                     review_reasons.append(f"{channel} review policy is {state}")
             for channel, obligations in stack_item.get("review_obligations", {}).items():
                 review_reasons.extend(f"{channel}: {reason}" for reason in obligations)
             for channel, allocation in stack_item.get("allocations", {}).items():
-                if allocation["status"] not in {"HANDED_OFF", "STOPPED"}:
+                if allocation["status"] not in {"HANDED_OFF", "STOPPED", *closed_cap_allocations}:
                     review_reasons.append(
                         f"{channel} review allocation is {allocation['status']}: {allocation['reason']}"
                     )
@@ -2210,6 +2256,16 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 max_additional_completed=args.max_additional_completed,
                 exact_additional_completed=args.exact_additional_completed,
                 fresh_taper=args.fresh_taper,
+            ), 0
+        if args.decide_command == "period" and args.period_command == "reset":
+            return controller.decide_period_reset(
+                pr=args.pr,
+                channel=args.channel,
+                head=args.head,
+                checkpoint=args.checkpoint,
+                actor=args.actor,
+                reason=args.reason,
+                replace_stop=args.replace_stop,
             ), 0
         if args.decide_command == "stop":
             return controller.decide_stop(

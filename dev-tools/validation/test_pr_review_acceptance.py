@@ -200,6 +200,22 @@ class AcceptanceCliTest(unittest.TestCase):
                         "parent_head": BASE,
                         "merge_base": BASE,
                         "patch_id": "patch-1",
+                    },
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "child_head": HEAD_1,
+                        "checkpoint": "hosted-complete-second",
+                        "completed": True,
+                        "attributable": True,
+                        "anchored": True,
+                        "corrected_state": True,
+                        "accepted": 0,
+                        "raw": 0,
+                        "parent_identity": "develop",
+                        "parent_head": BASE,
+                        "merge_base": BASE,
+                        "patch_id": "patch-1",
                     }
                 ]
                 payload["pull_requests"][1]["base_ref"] = actual_base_ref
@@ -352,6 +368,96 @@ class AcceptanceCliTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(result["ready"])
         self.assertIn("hosted review allocation is EXHAUSTED_PENDING", result["reasons"][0])
+
+        def capped_status(channels, allocation_statuses, obligations=None):
+            obligations = obligations or {"hosted": [], "cli": []}
+            controller.status = lambda: {
+                "prs": [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "base": "develop",
+                        "parent_head": BASE,
+                        "pr_base_oid": BASE,
+                        "reconciliation": "COHERENT",
+                        "channels": channels,
+                        "allocations": {
+                            channel: {"status": status, "reason": "closed discovery allocation"}
+                            for channel, status in allocation_statuses.items()
+                        },
+                        "review_progress": {
+                            channel: {
+                                "status": "PENDING_FIXES" if obligations[channel] else "COMPLETE"
+                            }
+                            for channel in ("hosted", "cli")
+                        },
+                        "review_obligations": obligations,
+                    }
+                ]
+            }
+            controller.status_for_pr = lambda _pr: controller.status()
+            with (
+                patch("pr_review.cli._controller", return_value=(controller, None)),
+                patch("pr_review.cli._read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})),
+            ):
+                return cli._dispatch(args)
+
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))):
+            capped, code = capped_status(
+                {"hosted": "READY", "cli": "READY"},
+                {"hosted": "CAP_AUDITED_STOP", "cli": "CAP_AUDITED_STOP"},
+            )
+        self.assertEqual(code, 0)
+        self.assertTrue(capped["ready"], capped)
+        self.assertEqual(capped["reasons"], [])
+
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))):
+            tapered, code = capped_status(
+                {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                {"hosted": "CAP_TAPERED", "cli": "CAP_TAPERED"},
+            )
+        self.assertEqual(code, 0)
+        self.assertTrue(tapered["ready"], tapered)
+
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))):
+            budget_capped, code = capped_status(
+                {"hosted": "BUDGET_EXHAUSTED", "cli": "BUDGET_EXHAUSTED"},
+                {"hosted": "DEFAULT_BUDGET_EXHAUSTED", "cli": "DEFAULT_BUDGET_EXHAUSTED"},
+            )
+        self.assertEqual(code, 0)
+        self.assertFalse(budget_capped["ready"])
+        self.assertTrue(any("review policy is BUDGET_EXHAUSTED" in reason for reason in budget_capped["reasons"]))
+
+        obligations = {
+            "hosted": ["accepted finding remains unresolved"],
+            "cli": ["unresolved review thread remains"],
+        }
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))):
+            capped_with_obligations, code = capped_status(
+                {"hosted": "READY", "cli": "READY"},
+                {"hosted": "CAP_AUDITED_STOP", "cli": "CAP_AUDITED_STOP"},
+                obligations,
+            )
+        self.assertEqual(code, 0)
+        self.assertFalse(capped_with_obligations["ready"])
+        self.assertIn("hosted: accepted finding remains unresolved", capped_with_obligations["reasons"])
+        self.assertIn("cli: unresolved review thread remains", capped_with_obligations["reasons"])
+
+        ci_failure_report = {
+            **report,
+            "reasons": ["required CI check is pending"],
+            "ready": False,
+            "verdict": "NOT READY",
+            "mergeability": {"clean": False, "diagnosis": "NOT READY"},
+        }
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(ci_failure_report))):
+            capped_with_ci_failure, code = capped_status(
+                {"hosted": "READY", "cli": "READY"},
+                {"hosted": "CAP_AUDITED_STOP", "cli": "CAP_AUDITED_STOP"},
+            )
+        self.assertEqual(code, 0)
+        self.assertFalse(capped_with_ci_failure["ready"])
+        self.assertEqual(capped_with_ci_failure["reasons"], ["required CI check is pending"])
 
         def stopped_status(obligations=()):
             controller.status = lambda: {

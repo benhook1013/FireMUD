@@ -2,15 +2,22 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
@@ -25,11 +32,16 @@ import tools.jackson.databind.ObjectMapper;
 public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundleService {
 
   private final PublishedReleaseBundleRepository repository;
+  private final VersionRepository versionRepository;
   private final ObjectMapper objectMapper;
 
   public PublishedReleaseBundleServiceImpl(
-      PublishedReleaseBundleRepository repository, ObjectMapper objectMapper) {
+      PublishedReleaseBundleRepository repository,
+      VersionRepository versionRepository,
+      ObjectMapper objectMapper) {
     this.repository = Objects.requireNonNull(repository, "repository must not be null");
+    this.versionRepository =
+        Objects.requireNonNull(versionRepository, "versionRepository must not be null");
     this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
   }
 
@@ -43,6 +55,105 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
       List<PublishParticipantDigestDto> participantDigests) {
     throw new IllegalStateException(
         "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation");
+  }
+
+  @Override
+  @Transactional
+  public PublishedReleaseBundleDto createFullVersionBundle(
+      VersionDto version,
+      String publishWorkflowId,
+      ExportedAssetManifest exportedManifest,
+      String generationConfigRevision,
+      List<PublishParticipantDigestDto> participantDigests,
+      WorldPublishedStartLocationEvidence worldEvidence) {
+    Objects.requireNonNull(worldEvidence, "Authenticated World evidence is required");
+    return createBundle(
+        version,
+        publishWorkflowId,
+        exportedManifest,
+        generationConfigRevision,
+        participantDigests,
+        worldEvidence);
+  }
+
+  private PublishedReleaseBundleDto createBundle(
+      VersionDto version,
+      String publishWorkflowId,
+      ExportedAssetManifest exportedManifest,
+      String generationConfigRevision,
+      List<PublishParticipantDigestDto> participantDigests,
+      WorldPublishedStartLocationEvidence worldEvidence) {
+    Objects.requireNonNull(worldEvidence, "Authenticated World evidence is required");
+    Objects.requireNonNull(version, "version must not be null");
+    Objects.requireNonNull(exportedManifest, "exportedManifest must not be null");
+    Objects.requireNonNull(participantDigests, "participantDigests must not be null");
+    Optional<PublishedReleaseBundle> existing =
+        repository.findByTenantIdAndVersionId(version.tenantId(), version.id());
+    if (existing.isPresent()) {
+      PublishedReleaseBundleDto stored = toDto(existing.orElseThrow());
+      PublishedReleaseBundleContract.requireExactSelectorRetry(
+          stored,
+          version,
+          publishWorkflowId,
+          exportedManifest,
+          generationConfigRevision,
+          participantDigests,
+          worldEvidence);
+      List<String> originalCommandDefinitions =
+          repository.requireSelectedCommandDefinitions(
+              stored.tenantId(),
+              stored.versionId(),
+              stored.publishWorkflowId(),
+              stored.worldPublishedStartLocationEvidence());
+      if (!stored.commandDefinitions().equals(originalCommandDefinitions)) {
+        throw new IllegalStateException(
+            "IDEMPOTENCY_CONFLICT: stored command definitions differ from the original source capture");
+      }
+      return stored;
+    }
+    var identitySource =
+        versionRepository
+            .findByTenantIdAndId(version.tenantId(), version.id())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "published release canonical identity source missing"));
+    UUID canonicalTenantId = identitySource.getCanonicalTenantId();
+    UUID canonicalVersionId = identitySource.getCanonicalVersionId();
+    if (!version.id().equals(identitySource.getId())
+        || !version.tenantId().equals(identitySource.getTenantId())
+        || !isCanonicalNonNilUuid(canonicalTenantId)
+        || !isCanonicalNonNilUuid(canonicalVersionId)) {
+      throw new IllegalStateException("published release canonical identity source is invalid");
+    }
+    PublishedReleaseBundle entity = new PublishedReleaseBundle();
+    entity.setTenantId(version.tenantId());
+    entity.setVersionId(version.id());
+    entity.setCanonicalTenantId(canonicalTenantId);
+    entity.setCanonicalVersionId(canonicalVersionId);
+    entity.setVersionNumber(version.versionNumber());
+    entity.setAttestationSchemaVersion(
+        PublishedReleaseBundleContract.SELECTOR_ATTESTATION_SCHEMA_VERSION);
+    entity.setWorldPublishedStartLocationEvidenceJson(
+        new String(worldEvidence.canonicalBytes(), StandardCharsets.UTF_8));
+    entity.setPublishWorkflowId(publishWorkflowId);
+    entity.setManifestHash(exportedManifest.manifestHash());
+    entity.setManifestSchemaVersion(exportedManifest.manifestSchemaVersion());
+    entity.setArtifactDigestsJson(
+        objectMapper.writeValueAsString(exportedManifest.artifactDigests()));
+    entity.setGenerationConfigRevision(generationConfigRevision);
+    entity.setRequiredManifestAssetKeysJson(
+        serializeKeys(exportedManifest.requiredManifestAssetKeys()));
+    entity.setParticipantDigestsJson(serializeParticipantDigests(participantDigests));
+    List<String> commandDefinitions =
+        repository.requireSelectedCommandDefinitions(
+            version.tenantId(), version.id(), publishWorkflowId, worldEvidence);
+    validateDistinctCommandDefinitions(commandDefinitions);
+    entity.setCommandDefinitionsJson(serializeCommandDefinitions(commandDefinitions));
+    entity.setScriptOnly(version.scriptOnly());
+    entity.setScriptPatchVersion(version.scriptPatchVersion());
+    toDto(entity);
+    return toDto(repository.save(entity));
   }
 
   @Override
@@ -130,5 +241,56 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         objectMapper
             .getTypeFactory()
             .constructCollectionType(List.class, PublishParticipantDigestDto.class));
+  }
+
+  private boolean isCanonicalNonNilUuid(UUID value) {
+    return value != null && !value.equals(new UUID(0L, 0L));
+  }
+
+  private String serializeKeys(List<String> keys) {
+    return objectMapper.writeValueAsString(keys == null ? List.of() : List.copyOf(keys));
+  }
+
+  private String serializeParticipantDigests(List<PublishParticipantDigestDto> participantDigests) {
+    return objectMapper.writeValueAsString(
+        participantDigests == null ? List.of() : List.copyOf(participantDigests));
+  }
+
+  private String serializeCommandDefinitions(List<String> commandDefinitions) {
+    return objectMapper.writeValueAsString(
+        commandDefinitions == null ? List.of() : commandDefinitions);
+  }
+
+  private void validateDistinctCommandDefinitions(List<String> commandDefinitions) {
+    Map<String, String> tokenOwners = new HashMap<>();
+    Set<String> commandIds = new HashSet<>();
+    for (String commandDefinition : commandDefinitions) {
+      var definition = objectMapper.readTree(commandDefinition);
+      CommandEffectDeclarationValidator.validateAll(definition.path("effects"));
+      String commandId = normalizeCommandToken(definition.path("commandId").asText());
+      if (!commandIds.add(commandId)) {
+        throw new IllegalStateException("duplicate published commandDefinition id " + commandId);
+      }
+      ensureSingleTokenOwner(tokenOwners, commandId, commandId);
+      for (var alias : definition.path("aliases")) {
+        String normalizedAlias = normalizeCommandToken(alias.asText());
+        ensureSingleTokenOwner(tokenOwners, normalizedAlias, commandId);
+      }
+    }
+  }
+
+  private void ensureSingleTokenOwner(
+      Map<String, String> tokenOwners, String token, String commandId) {
+    String existingOwner = tokenOwners.putIfAbsent(token, commandId);
+    if (existingOwner != null && !existingOwner.equals(commandId)) {
+      throw new IllegalStateException("ambiguous published commandDefinition token " + token);
+    }
+  }
+
+  private String normalizeCommandToken(String value) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalStateException("published commandDefinition token must not be blank");
+    }
+    return value.trim().toLowerCase(Locale.ROOT);
   }
 }

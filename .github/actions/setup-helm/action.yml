@@ -39,6 +39,7 @@ runs:
 
         mkdir -p -- "$helm_root" "$install_dir"
         curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+          --connect-timeout 10 --max-time 60 \
           "https://get.helm.sh/${expected_archive_name}.sha256sum" \
           -o "$checksum_path"
         if [[ ! -f "$archive_path" ]] || ! dev-tools/maintenance/verify-publisher-checksum.sh \
@@ -46,6 +47,7 @@ runs:
           temporary_archive="$(mktemp -- "${helm_root}/helm.tar.gz.XXXXXX")"
           trap 'rm -f -- "$temporary_archive"' EXIT
           curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+            --connect-timeout 10 --max-time 60 \
             "https://get.helm.sh/${expected_archive_name}" \
             -o "$temporary_archive"
           dev-tools/maintenance/verify-publisher-checksum.sh \

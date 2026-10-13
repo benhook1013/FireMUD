@@ -88,6 +88,8 @@ The exact source-run publication handoff is implemented locally in the runtime p
 
 ## Operator Write Boundary Status
 
+The StartSession prerequisite now includes the shared action/digest and pre-authorization tuple, Logging & Admin's durable reservation/claim/recovery seams, and Account's read-only current tenant-scoped control-ui actor verification. It does not issue or redeem operator references, forward owner mutations, or provide canonical Game Session execution. The [StartSession schema owner](../../architecture/microservices/game-session-service/start-session-action-schema.md#implementation-status) records this partial boundary; physical reservation/authority integration, owner handoff, and live launch proof remain open.
+
 The tracker separates implemented fail-closed ingress stubs from supported durable operator workflows and the target external ingress contract. Game Session `/sessions*` routes remain internal/owner-local. Logging & Admin feature-flag and scoped tick ingress stubs remain externally unavailable because they do not currently forward and the complete [ADR 0048](../../architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md) owner-write gate is not implemented or proved. Moderation and appeal implementation status remains owned by the [Logging & Admin moderation policies](../../architecture/microservices/logging-admin-service/moderation-policies.md) contract; quota overrides, broader remediation, external session-lifecycle forwarding, and other unproved owner mutations remain gated or target-only.
 
 ## Canonical Design Sources

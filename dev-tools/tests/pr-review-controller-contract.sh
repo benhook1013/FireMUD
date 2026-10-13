@@ -135,10 +135,16 @@ grep -Fq 'Hosted taper is one completed, attributable zero-useful result' design
   || fail 'lifecycle guidance does not define Hosted taper'
 grep -Fq 'three consecutive zero-useful' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define CLI taper'
-grep -Fq 'Results count across reviewed heads' design/developer-workflows/pr-lifecycle.md \
+grep -Fq 'Default-period results count across reviewed heads' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define cross-head CLI taper'
-grep -Fq 'Once reached, taper is durable' design/developer-workflows/pr-lifecycle.md \
+grep -Fq 'Once taper is reached' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not preserve completed taper across head changes'
+grep -Fq 'default Hosted review period requires at least two' design/developer-workflows/pr-lifecycle.md \
+  || fail 'lifecycle guidance does not define the default Hosted minimum and cap'
+grep -Fq 'default CLI period allows at most six' design/developer-workflows/pr-lifecycle.md \
+  || fail 'lifecycle guidance does not define the default CLI cap'
+grep -Fq 'decide period reset' design/developer-workflows/pr-lifecycle.md \
+  || fail 'lifecycle guidance does not define the audited period-reset command'
 grep -Fq -- '--force' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define forced warning acknowledgment'
 
@@ -163,6 +169,15 @@ grep -Eq -- '--max-additional-completed' <<<"$allocation_help" \
   || fail 'allocation help does not expose a bounded completed-review cap'
 grep -Eq -- '--fresh-taper' <<<"$allocation_help" \
   || fail 'allocation help does not expose explicit fresh-taper selection'
+period_help="$(python3 dev-tools/pr-review decide period reset --help)"
+grep -Eq -- '--checkpoint' <<<"$period_help" \
+  || fail 'period-reset help does not expose a stable checkpoint baseline'
+grep -Eq -- '--head' <<<"$period_help" \
+  || fail 'period-reset help does not guard the current candidate head'
+grep -Eq -- '--actor' <<<"$period_help" \
+  || fail 'period-reset help does not attribute the decision'
+grep -Eq -- '--replace-stop' <<<"$period_help" \
+  || fail 'period-reset help does not expose the explicit-stop replacement guard'
 grep -Fq 'cap exhausted; findings pending' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not explain pending work at cap exhaustion'
 

@@ -224,6 +224,71 @@ class BoundedAllocationCliParserTests(unittest.TestCase):
                     cli_module.main([*common, "--exact-additional-completed", "3", bound, "2"])
                 dispatch.assert_not_called()
 
+
+class ReviewPeriodCliParserTests(unittest.TestCase):
+    def test_period_reset_requires_actor_checkpoint_and_current_head(self):
+        common = [
+            "decide",
+            "period",
+            "reset",
+            "--pr",
+            "2827",
+            "--channel",
+            "hosted",
+            "--checkpoint",
+            "hosted-checkpoint-1",
+            "--head",
+            HEAD,
+            "--reason",
+            "begin a new default period",
+        ]
+        with self.assertRaises(SystemExit):
+            _parser().parse_args(common)
+
+        args = _parser().parse_args([*common, "--actor", "operator@example.invalid", "--replace-stop"])
+
+        self.assertEqual(args.decide_command, "period")
+        self.assertEqual(args.period_command, "reset")
+        self.assertEqual(args.actor, "operator@example.invalid")
+        self.assertTrue(args.replace_stop)
+
+    def test_period_reset_dispatch_passes_audited_actor_and_stop_choice(self):
+        args = _parser().parse_args(
+            [
+                "decide",
+                "period",
+                "reset",
+                "--pr",
+                "2827",
+                "--channel",
+                "hosted",
+                "--checkpoint",
+                "hosted-checkpoint-1",
+                "--head",
+                HEAD,
+                "--actor",
+                "operator@example.invalid",
+                "--reason",
+                "begin a new default period",
+                "--replace-stop",
+            ]
+        )
+        controller = Mock()
+        with patch.object(cli_module, "_controller", return_value=(controller, None)):
+            result, exit_code = cli_module._dispatch(args)
+
+        self.assertEqual(result, controller.decide_period_reset.return_value)
+        self.assertEqual(exit_code, 0)
+        controller.decide_period_reset.assert_called_once_with(
+            pr=2827,
+            channel="hosted",
+            head=HEAD,
+            checkpoint="hosted-checkpoint-1",
+            actor="operator@example.invalid",
+            reason="begin a new default period",
+            replace_stop=True,
+        )
+
     def test_legacy_cancel_shape_needs_no_cap_replacement(self):
         args = _parser().parse_args(
             [

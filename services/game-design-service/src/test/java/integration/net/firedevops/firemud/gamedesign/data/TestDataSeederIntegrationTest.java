@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
+import java.security.cert.CertificateNotYetValidException;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
 import java.util.HashSet;
@@ -22,6 +23,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
@@ -858,6 +860,8 @@ class TestDataSeederIntegrationTest {
             PosixFilePermission.GROUP_READ,
             PosixFilePermission.OTHERS_READ));
 
+    awaitFixtureCertificatesValid(sessionCertificate, worldManagementCertificate, caCertificate);
+
     Path receiptDirectory =
         Files.createDirectory(testDirectory.resolve("run-owned-authored-world-source"));
     Files.setPosixFilePermissions(
@@ -907,6 +911,30 @@ class TestDataSeederIntegrationTest {
           (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
       return HexFormat.of()
           .formatHex(MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded()));
+    }
+  }
+
+  private void awaitFixtureCertificatesValid(Path... certificatePaths) throws Exception {
+    long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (true) {
+      try {
+        for (Path path : certificatePaths) {
+          try (var input = Files.newInputStream(path)) {
+            X509Certificate certificate =
+                (X509Certificate)
+                    CertificateFactory.getInstance("X.509").generateCertificate(input);
+            certificate.checkValidity();
+          }
+        }
+        return;
+      } catch (CertificateNotYetValidException exception) {
+        long remainingNanos = deadlineNanos - System.nanoTime();
+        if (remainingNanos <= 0L) {
+          throw new IllegalStateException(
+              "Run-owned fixture certificates did not become valid within 5 seconds", exception);
+        }
+        TimeUnit.NANOSECONDS.sleep(Math.min(TimeUnit.MILLISECONDS.toNanos(10), remainingNanos));
+      }
     }
   }
 
