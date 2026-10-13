@@ -111,7 +111,7 @@ public final class CanonicalGameplayRosterClient
   public PreseededRosterSnapshot listPreseededRoster(
       CanonicalPublishedPlayerRoute publishedRoute, PlayerExecutionContext playerExecutionContext) {
     Objects.requireNonNull(publishedRoute, "publishedRoute");
-    CanonicalGameplayRosterTarget expectedTarget = toExpectedTarget(publishedRoute);
+    CanonicalGameplayRosterTarget expectedTarget = expectedTarget(publishedRoute);
     UUID canonicalAccountUuid =
         validatePlayerExecutionContext(playerExecutionContext, expectedTarget, false);
     UUID requestUuid = parseContextUuid(playerExecutionContext.getRequestId(), "request_id");
@@ -423,7 +423,11 @@ public final class CanonicalGameplayRosterClient
         expectedAccountUuid, snapshotUuid, snapshotDigest, expectedTarget, actors);
   }
 
-  private static CanonicalGameplayRosterTarget toExpectedTarget(
+  /**
+   * Builds the exact Entity source target for a validated current SHARED PRESEEDED_ONLY route.
+   * Policy and digest evidence are validated before the target is returned.
+   */
+  public static CanonicalGameplayRosterTarget expectedTarget(
       CanonicalPublishedPlayerRoute publishedRoute) {
     CanonicalPlayableTarget route = publishedRoute.route();
     RealmEntryPolicy policy = publishedRoute.entryPolicy();
