@@ -40,17 +40,19 @@ public class InventoryEntryRepository {
             .from(INVENTORY)
             .join(CHARACTERS)
             .on(INVENTORY.CHARACTER_ID.eq(CHARACTERS.ID))
-            .where(CHARACTERS.TENANT_ID.eq(tenantId)));
+            .where(
+                CHARACTERS.TENANT_ID.eq(tenantId).and(CharacterRepository.legacyCharacterRow())));
   }
 
   private Page<InventoryEntry> fetchPage(Condition condition, Pageable pageable) {
+    Condition legacyCondition = condition.and(CharacterRepository.legacyCharacterRow());
     long total =
         dsl.fetchCount(
             dsl.selectOne()
                 .from(INVENTORY)
                 .join(CHARACTERS)
                 .on(INVENTORY.CHARACTER_ID.eq(CHARACTERS.ID))
-                .where(condition));
+                .where(legacyCondition));
     var content =
         dsl.select(
                 INVENTORY.CHARACTER_ID,
@@ -79,7 +81,7 @@ public class InventoryEntryRepository {
             .on(INVENTORY.CHARACTER_ID.eq(CHARACTERS.ID))
             .join(ITEMS)
             .on(INVENTORY.ITEM_ID.eq(ITEMS.ID))
-            .where(condition)
+            .where(legacyCondition)
             .orderBy(INVENTORY.ITEM_ID.asc())
             .limit(
                 JooqEntityManagementRepositorySupport.limitOrDefault(pageable, Integer.MAX_VALUE))

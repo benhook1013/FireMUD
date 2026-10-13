@@ -149,9 +149,15 @@ public class CharacterRepository {
     this.dsl = dsl;
   }
 
+  static Condition legacyCharacterRow() {
+    return CHARACTERS.ACTOR_IDENTITY_STATUS.ne(ActorIdentityStatus.OWNER_RESOLVED.name());
+  }
+
   public Optional<Character> findWithInventoryById(Long id) {
     Character character =
-        dsl.selectFrom(CHARACTERS).where(CHARACTERS.ID.eq(id)).fetchOne(this::toEntity);
+        dsl.selectFrom(CHARACTERS)
+            .where(CHARACTERS.ID.eq(id).and(legacyCharacterRow()))
+            .fetchOne(this::toEntity);
     if (character == null) {
       return Optional.empty();
     }
@@ -161,6 +167,7 @@ public class CharacterRepository {
                     INVENTORY.CHARACTER_ID,
                     INVENTORY.ITEM_ID,
                     INVENTORY.QUANTITY,
+                    INVENTORY.VERSION,
                     ITEMS.ID,
                     ITEMS.TENANT_ID,
                     ITEMS.VERSION_ID,
@@ -184,13 +191,20 @@ public class CharacterRepository {
 
   public Optional<Character> findById(Long id) {
     return Optional.ofNullable(
-        dsl.selectFrom(CHARACTERS).where(CHARACTERS.ID.eq(id)).fetchOne(this::toEntity));
+        dsl.selectFrom(CHARACTERS)
+            .where(CHARACTERS.ID.eq(id).and(legacyCharacterRow()))
+            .fetchOne(this::toEntity));
   }
 
   public Optional<Character> findByIdAndTenantId(Long id, Long tenantId) {
     return Optional.ofNullable(
         dsl.selectFrom(CHARACTERS)
-            .where(CHARACTERS.ID.eq(id).and(CHARACTERS.TENANT_ID.eq(tenantId)))
+            .where(
+                CHARACTERS
+                    .ID
+                    .eq(id)
+                    .and(CHARACTERS.TENANT_ID.eq(tenantId))
+                    .and(legacyCharacterRow()))
             .fetchOne(this::toEntity));
   }
 
@@ -203,7 +217,8 @@ public class CharacterRepository {
                     .ID
                     .eq(id)
                     .and(CHARACTERS.TENANT_ID.eq(tenantId))
-                    .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey)))
+                    .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
+                    .and(legacyCharacterRow()))
             .fetchOne(this::toEntity));
   }
 
@@ -214,7 +229,8 @@ public class CharacterRepository {
             .TENANT_ID
             .eq(tenantId)
             .and(CHARACTERS.ACCOUNT_ID.eq(accountId))
-            .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey));
+            .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
+            .and(legacyCharacterRow());
     long total = dsl.fetchCount(CHARACTERS, condition);
     var content =
         dsl.selectFrom(CHARACTERS)
@@ -237,13 +253,14 @@ public class CharacterRepository {
                     .TENANT_ID
                     .eq(tenantId)
                     .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
-                    .and(DSL.lower(CHARACTERS.NAME).eq(name.toLowerCase())))
+                    .and(DSL.lower(CHARACTERS.NAME).eq(name.toLowerCase()))
+                    .and(legacyCharacterRow()))
             .limit(1)
             .fetchOne(this::toEntity));
   }
 
   public long countByTenantId(Long tenantId) {
-    return dsl.fetchCount(CHARACTERS, CHARACTERS.TENANT_ID.eq(tenantId));
+    return dsl.fetchCount(CHARACTERS, CHARACTERS.TENANT_ID.eq(tenantId).and(legacyCharacterRow()));
   }
 
   public long countQuarantinedByTenantId(Long tenantId) {
@@ -1307,7 +1324,7 @@ public class CharacterRepository {
         .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())
         .set(CHARACTERS.LAST_LOGIN_AT, toLocalDateTime(entity.getLastLoginAt()))
         .set(CHARACTERS.VERSION, entity.getVersion() + 1)
-        .where(CHARACTERS.ID.eq(entity.getId()))
+        .where(CHARACTERS.ID.eq(entity.getId()).and(legacyCharacterRow()))
         .execute();
     return findById(entity.getId()).orElseThrow();
   }

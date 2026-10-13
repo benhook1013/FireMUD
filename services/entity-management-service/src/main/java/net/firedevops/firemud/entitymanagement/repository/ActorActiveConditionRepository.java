@@ -2,14 +2,18 @@ package net.firedevops.firemud.entitymanagement.repository;
 
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.*;
 import static net.firedevops.firemud.entitymanagement.jooq.Tables.ACTOR_ACTIVE_CONDITIONS;
+import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTERS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -32,6 +36,7 @@ public class ActorActiveConditionRepository {
                 .eq(tenantId)
                 .and(ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY.eq(playableStateKey))
                 .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(characterId))
+                .and(legacyCharacter(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID))
                 .and(
                     ACTOR_ACTIVE_CONDITIONS
                         .EXPIRES_AT
@@ -60,7 +65,8 @@ public class ActorActiveConditionRepository {
                     .and(ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY.eq(playableStateKey))
                     .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(characterId))
                     .and(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE.eq(sourceType))
-                    .and(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID.eq(sourceId)))
+                    .and(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID.eq(sourceId))
+                    .and(legacyCharacter(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)))
             .orderBy(ACTOR_ACTIVE_CONDITIONS.ID.asc())
             .limit(1)
             .fetchOne(this::toEntity));
@@ -69,36 +75,63 @@ public class ActorActiveConditionRepository {
   public ActorActiveCondition save(ActorActiveCondition entity) {
     if (entity.getId() == null) {
       Long id =
-          dsl.insertInto(ACTOR_ACTIVE_CONDITIONS)
-              .set(ACTOR_ACTIVE_CONDITIONS.TENANT_ID, entity.getTenantId())
-              .set(ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY, entity.getPlayableStateKey())
-              .set(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID, entity.getCharacterId())
-              .set(ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY, entity.getConditionKey())
-              .set(ACTOR_ACTIVE_CONDITIONS.STACK_COUNT, entity.getStackCount())
-              .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE, entity.getSourceType())
-              .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID, entity.getSourceId())
-              .set(ACTOR_ACTIVE_CONDITIONS.STARTED_AT, toOffsetDateTime(entity.getStartedAt()))
-              .set(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT, toOffsetDateTime(entity.getExpiresAt()))
-              .set(ACTOR_ACTIVE_CONDITIONS.EFFECT_PAYLOAD_JSON, entity.getEffectPayloadJson())
-              .set(ACTOR_ACTIVE_CONDITIONS.CREATED_AT, toOffsetDateTime(entity.getCreatedAt()))
-              .set(ACTOR_ACTIVE_CONDITIONS.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
+          dsl.insertInto(
+                  ACTOR_ACTIVE_CONDITIONS,
+                  ACTOR_ACTIVE_CONDITIONS.TENANT_ID,
+                  ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY,
+                  ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID,
+                  ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY,
+                  ACTOR_ACTIVE_CONDITIONS.STACK_COUNT,
+                  ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE,
+                  ACTOR_ACTIVE_CONDITIONS.SOURCE_ID,
+                  ACTOR_ACTIVE_CONDITIONS.STARTED_AT,
+                  ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT,
+                  ACTOR_ACTIVE_CONDITIONS.EFFECT_PAYLOAD_JSON,
+                  ACTOR_ACTIVE_CONDITIONS.CREATED_AT,
+                  ACTOR_ACTIVE_CONDITIONS.UPDATED_AT)
+              .select(
+                  dsl.select(
+                          DSL.val(entity.getTenantId()),
+                          DSL.val(entity.getPlayableStateKey()),
+                          DSL.val(entity.getCharacterId()),
+                          DSL.val(entity.getConditionKey()),
+                          DSL.val(entity.getStackCount()),
+                          DSL.val(entity.getSourceType()),
+                          DSL.val(entity.getSourceId()),
+                          DSL.val(toOffsetDateTime(entity.getStartedAt())),
+                          DSL.val(toOffsetDateTime(entity.getExpiresAt())),
+                          DSL.val(entity.getEffectPayloadJson()),
+                          DSL.val(toOffsetDateTime(entity.getCreatedAt())),
+                          DSL.val(toOffsetDateTime(entity.getUpdatedAt())))
+                      .where(legacyCharacter(DSL.val(entity.getCharacterId()))))
               .returningResult(ACTOR_ACTIVE_CONDITIONS.ID)
               .fetchOne(ACTOR_ACTIVE_CONDITIONS.ID);
+      if (id == null) {
+        throw new IllegalStateException("Legacy condition character is unavailable");
+      }
       entity.setId(id);
       return entity;
     }
-    dsl.update(ACTOR_ACTIVE_CONDITIONS)
-        .set(ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY, entity.getConditionKey())
-        .set(ACTOR_ACTIVE_CONDITIONS.STACK_COUNT, entity.getStackCount())
-        .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE, entity.getSourceType())
-        .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID, entity.getSourceId())
-        .set(ACTOR_ACTIVE_CONDITIONS.STARTED_AT, toOffsetDateTime(entity.getStartedAt()))
-        .set(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT, toOffsetDateTime(entity.getExpiresAt()))
-        .set(ACTOR_ACTIVE_CONDITIONS.EFFECT_PAYLOAD_JSON, entity.getEffectPayloadJson())
-        .set(ACTOR_ACTIVE_CONDITIONS.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
-        .set(ACTOR_ACTIVE_CONDITIONS.VERSION, entity.getVersion() + 1)
-        .where(ACTOR_ACTIVE_CONDITIONS.ID.eq(entity.getId()))
-        .execute();
+    int updated =
+        dsl.update(ACTOR_ACTIVE_CONDITIONS)
+            .set(ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY, entity.getConditionKey())
+            .set(ACTOR_ACTIVE_CONDITIONS.STACK_COUNT, entity.getStackCount())
+            .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE, entity.getSourceType())
+            .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID, entity.getSourceId())
+            .set(ACTOR_ACTIVE_CONDITIONS.STARTED_AT, toOffsetDateTime(entity.getStartedAt()))
+            .set(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT, toOffsetDateTime(entity.getExpiresAt()))
+            .set(ACTOR_ACTIVE_CONDITIONS.EFFECT_PAYLOAD_JSON, entity.getEffectPayloadJson())
+            .set(ACTOR_ACTIVE_CONDITIONS.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
+            .set(ACTOR_ACTIVE_CONDITIONS.VERSION, entity.getVersion() + 1)
+            .where(
+                ACTOR_ACTIVE_CONDITIONS
+                    .ID
+                    .eq(entity.getId())
+                    .and(legacyCharacter(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)))
+            .execute();
+    if (updated != 1) {
+      throw new IllegalStateException("Legacy condition row is unavailable");
+    }
     entity.setVersion(entity.getVersion() + 1);
     return entity;
   }
@@ -109,8 +142,16 @@ public class ActorActiveConditionRepository {
             ACTOR_ACTIVE_CONDITIONS
                 .EXPIRES_AT
                 .isNotNull()
-                .and(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT.le(toOffsetDateTime(now))))
+                .and(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT.le(toOffsetDateTime(now)))
+                .and(legacyCharacter(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)))
         .execute();
+  }
+
+  private static Condition legacyCharacter(Field<Long> characterId) {
+    return DSL.exists(
+        DSL.selectOne()
+            .from(CHARACTERS)
+            .where(CHARACTERS.ID.eq(characterId).and(CharacterRepository.legacyCharacterRow())));
   }
 
   private ActorActiveCondition toEntity(Record record) {
