@@ -1910,13 +1910,24 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 review_reasons.append("PR base/head changed between status snapshots")
             if stack_item["reconciliation"] != "COHERENT":
                 review_reasons.append(f"review stack is {stack_item['reconciliation']}")
+            allocations = stack_item.get("allocations", {})
+            review_progress = stack_item.get("review_progress", {})
+            closed_cap_allocations = {"CAP_AUDITED_STOP", "CAP_TAPERED"}
             for channel, state in stack_item["channels"].items():
-                if state not in {"COMPLETE", "HUMAN_STOPPED"}:
+                allocation = allocations.get(channel, {})
+                progress = review_progress.get(channel, {})
+                allocation_status = allocation.get("status")
+                audited_cap_complete = (
+                    allocation_status in closed_cap_allocations
+                    and progress.get("status") == "COMPLETE"
+                    and state in {"READY", allocation_status}
+                )
+                if state not in {"COMPLETE", "HUMAN_STOPPED"} and not audited_cap_complete:
                     review_reasons.append(f"{channel} review policy is {state}")
             for channel, obligations in stack_item.get("review_obligations", {}).items():
                 review_reasons.extend(f"{channel}: {reason}" for reason in obligations)
             for channel, allocation in stack_item.get("allocations", {}).items():
-                if allocation["status"] not in {"HANDED_OFF", "STOPPED"}:
+                if allocation["status"] not in {"HANDED_OFF", "STOPPED", *closed_cap_allocations}:
                     review_reasons.append(
                         f"{channel} review allocation is {allocation['status']}: {allocation['reason']}"
                     )
