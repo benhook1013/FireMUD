@@ -13,7 +13,7 @@ public record CanonicalGameplayRosterActor(UUID characterUuid, String displayNam
     if (displayName == null
         || displayName.isBlank()
         || !displayName.equals(displayName.trim())
-        || displayName.length() > 100
+        || displayName.codePointCount(0, displayName.length()) > 100
         || displayName.codePoints().anyMatch(Character::isISOControl)) {
       throw new IllegalArgumentException("displayName is incomplete");
     }

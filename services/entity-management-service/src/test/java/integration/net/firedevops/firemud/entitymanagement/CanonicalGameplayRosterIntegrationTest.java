@@ -119,6 +119,18 @@ class CanonicalGameplayRosterIntegrationTest {
   }
 
   @Test
+  void snapshotsPersistedPreseededDisplayNameAtOneHundredUnicodeCodePoints() {
+    CanonicalGameplayRosterTarget exactTarget = target(namespaceUuid, UUID.randomUUID());
+    String displayName = "\uD83D\uDE00".repeat(100);
+    UUID characterUuid = createPersistedActor(accountUuid, exactTarget, 43L, displayName);
+
+    CanonicalGameplayRosterSnapshot roster = readRoster(accountUuid, exactTarget);
+
+    assertThat(roster.actors())
+        .containsExactly(new CanonicalGameplayRosterActor(characterUuid, displayName));
+  }
+
+  @Test
   void reusesExactSnapshotAndChangesIdentityForRosterOrTargetChanges() {
     CanonicalGameplayRosterTarget exactTarget = target(namespaceUuid, UUID.randomUUID());
     UUID actor = createPersistedActor(accountUuid, exactTarget, 51L, "Before Rename");
