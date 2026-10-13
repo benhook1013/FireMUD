@@ -123,6 +123,8 @@ class GitHubProvider(Protocol):
 
     def pull_request(self, number: int) -> Any: ...
 
+    def period_reset_ref_identity(self, number: int) -> Mapping[str, Any]: ...
+
 
 class EvidenceProvider(Protocol):
     """Historical channel evidence, optionally including review anchors."""
@@ -8296,11 +8298,12 @@ class ReviewController:
         # not require reconciled ancestry or a merge-ready status. Baseline
         # evidence and ordinary request/readiness holds remain separate.
         if selected == policy.Channel.HOSTED:
+            actual_base_tip = self._period_reset_actual_base_tip(item)
             try:
                 remote_heads = self.git.remote_heads()
             except (ControllerError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
                 raise ControllerError("Hosted review-period head/base fences cannot be verified") from error
-            if not self._period_reset_branches_match(item, remote_heads):
+            if not self._period_reset_branches_match(item, remote_heads, actual_base_tip):
                 raise ControllerError("Hosted review-period reset requires exact current head and base refs")
 
         history = self._policy_history(state, pr, selected, reconciliation, history_cache=history_cache)
@@ -8457,6 +8460,19 @@ class ReviewController:
         ):
             raise ControllerError("current candidate head or base changed during review-period reset")
 
+        if selected == policy.Channel.HOSTED:
+            if latest_item.head_ref != item.head_ref or latest_item.head_repository != item.head_repository:
+                raise ControllerError("current candidate refs changed during review-period reset")
+            latest_actual_base_tip = self._period_reset_actual_base_tip(item)
+            try:
+                latest_remote_heads = self.git.remote_heads()
+            except (ControllerError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                raise ControllerError("Hosted review-period head/base fences cannot be rechecked") from error
+            if latest_actual_base_tip != actual_base_tip or not self._period_reset_branches_match(
+                item, latest_remote_heads, latest_actual_base_tip
+            ):
+                raise ControllerError("actual current head or base refs changed during review-period reset")
+
         minimum_completed = 2 if selected == policy.Channel.HOSTED else 3
         maximum_completed = 3 if selected == policy.Channel.HOSTED else 6
         zero_useful_required = 1 if selected == policy.Channel.HOSTED else 3
@@ -8569,10 +8585,46 @@ class ReviewController:
             "superseded_allocation_identity": recorded.superseded_allocation_identity,
         }
 
+    def _period_reset_actual_base_tip(self, item: LivePullRequest) -> str:
+        """Keep the live base-ref tip separate from the retained PR base OID."""
+
+        read_identity = getattr(self._require_github(), "period_reset_ref_identity", None)
+        if not callable(read_identity):
+            raise ControllerError("Hosted review-period actual base ref identity cannot be verified")
+        try:
+            value = read_identity(item.number)
+            if (
+                not isinstance(value, Mapping)
+                or type(value.get("number")) is not int
+                or value["number"] != item.number
+                or value.get("state") != "OPEN"
+                or "mergedAt" not in value
+                or value["mergedAt"] is not None
+            ):
+                raise ControllerError("actual ref identity is incomplete or does not identify an open unmerged PR")
+            current = _live(value, item.number)
+            if (
+                current.head != item.head
+                or current.head_ref != item.head_ref
+                or current.head_repository != item.head_repository
+                or current.base_ref != item.base_ref
+                or current.base_tip != item.base_tip
+                or current.state != item.state
+                or current.merged != item.merged
+            ):
+                raise ControllerError("current candidate identity changed while reading its actual base ref")
+            base_ref = _field(value, "baseRef")
+            if _field(base_ref, "name") != item.base_ref:
+                raise ControllerError("actual base ref is missing or does not match the current candidate")
+            return _sha(_field(_field(base_ref, "target"), "oid"), "actual period-reset base ref tip")
+        except (ControllerError, OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError) as error:
+            raise ControllerError("Hosted review-period actual base ref identity cannot be verified") from error
+
     def _period_reset_branches_match(
         self,
         item: LivePullRequest,
         remote_heads: Mapping[str, str],
+        actual_base_tip: str,
     ) -> bool:
         """Fence only the reset target's actual refs, without granting request readiness."""
 
@@ -8588,7 +8640,7 @@ class ReviewController:
         ):
             return False
         return (
-            _sha(remote_heads[item.base_ref], f"PR #{item.number} base branch") == item.base_tip
+            _sha(remote_heads[item.base_ref], f"PR #{item.number} base branch") == actual_base_tip
             and _sha(remote_heads[item.head_ref], f"PR #{item.number} head branch") == item.head
         )
 
