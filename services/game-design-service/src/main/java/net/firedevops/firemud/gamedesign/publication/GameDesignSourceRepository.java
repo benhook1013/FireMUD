@@ -17,6 +17,8 @@ import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.OwnerStatus;
 import net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBaseEvidence;
 import net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBaseRepository;
+import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
+import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import org.jooq.DSLContext;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -150,7 +152,14 @@ public final class GameDesignSourceRepository {
     Objects.requireNonNull(operation, "operation");
     requireGenesis(operation.account().input().selection().target());
     requireReviewed(operation.account().input().selection().selectedCommit());
-    RealmPolicySnapshot.Capture policy = policies.freeze(operation);
+    RealmPolicySnapshot.Capture policy;
+    try {
+      policy = policies.freeze(operation);
+    } catch (RealmPolicySource.InvalidPublicationPolicySetException failure) {
+      throw new PublishGateFailureException(
+          PublishGateFailureCode.INVALID_REALM_ENTRY_POLICY_SET,
+          "A full Version requires 1 through 128 realm policies with exactly one visible public-production realm");
+    }
     CommandSnapshot.Capture command = commands.freeze(operation);
     Capture result = new Capture(command, policy);
     Capture retained =

@@ -21,11 +21,9 @@ import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
-import net.firedevops.firemud.gamedesign.entity.Revision;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
-import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishedArtifactDigest;
@@ -40,7 +38,6 @@ class PublishedReleaseBundleServiceImplTest {
   private static final String LOGO_DIGEST = "sha256:" + "b".repeat(64);
 
   @Mock private PublishedReleaseBundleRepository repository;
-  @Mock private RevisionRepository revisionRepository;
   @Mock private VersionRepository versionRepository;
 
   private PublishedReleaseBundleServiceImpl service;
@@ -77,8 +74,7 @@ class PublishedReleaseBundleServiceImplTest {
     assertThat(first.worldPublishedStartLocationEvidence().canonicalBytes())
         .containsExactly(evidence.canonicalBytes());
     assertThat(first.commandDefinitions()).containsExactly(validCommandDefinition());
-    org.mockito.Mockito.verifyNoInteractions(revisionRepository);
-    org.mockito.Mockito.clearInvocations(versionRepository, revisionRepository, repository);
+    org.mockito.Mockito.clearInvocations(versionRepository, repository);
     when(versionRepository.findByTenantIdAndId("tenant-1", 7L)).thenReturn(Optional.empty());
     var retry =
         service.createFullVersionBundle(
@@ -91,7 +87,7 @@ class PublishedReleaseBundleServiceImplTest {
     assertEquals(first.id(), retry.id());
     assertThat(retry.worldPublishedStartLocationEvidence().canonicalBytes())
         .containsExactly(first.worldPublishedStartLocationEvidence().canonicalBytes());
-    org.mockito.Mockito.verifyNoInteractions(versionRepository, revisionRepository);
+    org.mockito.Mockito.verifyNoInteractions(versionRepository);
     org.mockito.Mockito.verify(repository)
         .requireSelectedCommandDefinitions(any(), any(), any(), any());
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
@@ -201,7 +197,6 @@ class PublishedReleaseBundleServiceImplTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("SELECTED_SOURCE_CAPTURE_UNAVAILABLE");
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
-    org.mockito.Mockito.verifyNoInteractions(revisionRepository);
   }
 
   @Test
@@ -287,35 +282,7 @@ class PublishedReleaseBundleServiceImplTest {
                     version(), "workflow-1", logoManifest(), "genrev-1", List.of()))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageStartingWith("PUBLISH_SELECTION_REQUIRED");
-    org.mockito.Mockito.verifyNoInteractions(repository, revisionRepository, versionRepository);
-  }
-
-  @Test
-  void legacyFullVersionBundleFailsClosedBeforeReadingMutableSources() {
-    var refusal =
-        assertThrows(
-            IllegalStateException.class,
-            () ->
-                service.createFullVersionBundle(
-                    version(), "workflow-1", logoManifest(), "genrev-1", List.of()));
-    assertEquals(
-        "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation",
-        refusal.getMessage());
-    org.mockito.Mockito.verifyNoInteractions(repository);
-  }
-
-  @Test
-  void legacyFullVersionBundleRefusesEmptyManifestBeforeRepositoryAccess() {
-    var refusal =
-        assertThrows(
-            IllegalStateException.class,
-            () ->
-                service.createFullVersionBundle(
-                    version(), "workflow-1", emptyManifest(), "genrev-1", List.of()));
-    assertEquals(
-        "PUBLISH_SELECTION_REQUIRED: full-version bundles require the captured publication operation",
-        refusal.getMessage());
-    org.mockito.Mockito.verifyNoInteractions(repository);
+    org.mockito.Mockito.verifyNoInteractions(repository, versionRepository);
   }
 
   @Test
@@ -362,30 +329,6 @@ class PublishedReleaseBundleServiceImplTest {
     version.setCanonicalTenantId(UUID.fromString("67d7b75b-42d1-4ac6-9572-684c5e633cda"));
     version.setCanonicalVersionId(UUID.fromString("c472ebd1-56d8-49df-b8fa-85963dd940f8"));
     return version;
-  }
-
-  @Test
-  void legacyBundleEntryPointRejectsWithoutSelectedPublicationEvidence() {
-    VersionDto version =
-        new VersionDto(
-            7L,
-            "tenant-1",
-            8,
-            VersionLifecycleState.PUBLISHED,
-            2L,
-            null,
-            null,
-            false,
-            "notes",
-            LocalDateTime.now(),
-            LocalDateTime.now());
-    assertThatThrownBy(
-            () ->
-                service.createFullVersionBundle(
-                    version, "workflow-1", emptyManifest(), "genrev-1", List.of()))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageStartingWith("PUBLISH_SELECTION_REQUIRED");
-    org.mockito.Mockito.verifyNoInteractions(repository, revisionRepository, versionRepository);
   }
 
   @Test
@@ -459,39 +402,6 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
-  void legacyBundleEntryPointDoesNotReadMutableCommandRevisionRows() {
-    VersionDto version =
-        new VersionDto(
-            7L,
-            "tenant-1",
-            8,
-            VersionLifecycleState.PUBLISHED,
-            2L,
-            null,
-            null,
-            false,
-            "notes",
-            LocalDateTime.now(),
-            LocalDateTime.now());
-    Revision first = new Revision();
-    first.setData(commandDefinition("salute", "hail"));
-    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
-            "tenant-1", 7L, "COMMAND_DEFINITION"))
-        .thenReturn(List.of(first));
-
-    assertThatThrownBy(
-            () ->
-                service.createFullVersionBundle(
-                    version, "workflow-1", emptyManifest(), "genrev-1", List.of()))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageStartingWith("PUBLISH_SELECTION_REQUIRED");
-    org.mockito.Mockito.verifyNoInteractions(repository, versionRepository);
-    org.mockito.Mockito.verify(revisionRepository, org.mockito.Mockito.never())
-        .findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
-            "tenant-1", 7L, "COMMAND_DEFINITION");
-  }
-
-  @Test
   void selectedBundleEntryPointRequiresCapturedCommandAndPolicySources() throws Exception {
     var evidence = selectorEvidence();
     var participants =
@@ -515,42 +425,6 @@ class PublishedReleaseBundleServiceImplTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("SELECTED_SOURCE_CAPTURE_UNAVAILABLE");
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
-    org.mockito.Mockito.verifyNoInteractions(revisionRepository);
-  }
-
-  @Test
-  void createFullVersionBundleRejectsCanonicalIdAndAliasCollisions() {
-    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
-    Revision first = new Revision();
-    first.setData(commandDefinition("salute", "greet"));
-    Revision second = new Revision();
-    second.setData(commandDefinition("hail", "SALUTE"));
-    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
-            "tenant-1", 7L, "COMMAND_DEFINITION"))
-        .thenReturn(List.of(first, second));
-
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            service.createFullVersionBundle(
-                version(), "workflow-1", emptyManifest(), "genrev-1", List.of()));
-  }
-
-  @Test
-  void legacyFullVersionBundleDoesNotReachMutableCommandValidation() {
-    VersionDto version = version();
-    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.empty());
-    Revision commandDefinition = new Revision();
-    commandDefinition.setData(validCommandDefinition().replace("\"value\":1", "\"value\":\"one\""));
-    when(revisionRepository.findByTenantIdAndVersionIdAndRevisionKindOrderByIdAsc(
-            "tenant-1", 7L, "COMMAND_DEFINITION"))
-        .thenReturn(List.of(commandDefinition));
-
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            service.createFullVersionBundle(
-                version, "workflow-1", emptyManifest(), "genrev-1", List.of()));
   }
 
   private VersionDto version() {
@@ -611,7 +485,6 @@ class PublishedReleaseBundleServiceImplTest {
     assertEquals(sourceIdentity().getCanonicalVersionId(), dto.canonicalVersionId());
     assertThat(dto.worldPublishedStartLocationEvidence().canonicalBytes())
         .containsExactly(evidence.canonicalBytes());
-    org.mockito.Mockito.verifyNoInteractions(revisionRepository);
   }
 
   @Test
@@ -661,7 +534,6 @@ class PublishedReleaseBundleServiceImplTest {
                     7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                 evidence));
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
-    org.mockito.Mockito.verifyNoInteractions(revisionRepository);
   }
 
   private static ExportedAssetManifest emptyManifest() {

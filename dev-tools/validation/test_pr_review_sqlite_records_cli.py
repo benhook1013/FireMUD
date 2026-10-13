@@ -2254,6 +2254,92 @@ class ReviewRecordsCliTest(unittest.TestCase):
         _, history = self.invoke("history", "--pr", "2828", "--database", str(self.database))
         self.assertEqual(len(history["result"]["runs"]), 1)
         self.assertEqual(len(history["result"]["decisions"]), 2)
+        self.assertIsNone(history["result"]["findings"][0].get("display_severity"))
+
+    def test_batch_import_preserves_explicit_severity_and_rejects_invalid_severity_without_writes(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        document = {
+            "api_version": 1,
+            "run": {
+                "run_id": "retro-minor-finding",
+                "source_pr": 3156,
+                "channel": "subagent",
+                "reviewer": "gpt-6.1-sol (medium)",
+                "scope": "narrow",
+                "coverage_limits": ["Retrospective evidence; review clocks are unknown."],
+                "outcome": "completed",
+                "source_head": "a2e36e5f66ad0ab776b500ef5ff808a051cbf7c8",
+                "started_at": None,
+                "finished_at": None,
+            },
+            "findings": [
+                {
+                    "source_finding_key": "helm-import-severity",
+                    "title": "Preserve the reviewed severity label",
+                    "display_severity": "Minor",
+                    "decision": "accepted",
+                    "actor": "Overseer",
+                    "reason": "The bounded importer now retains the explicit reviewed label.",
+                }
+            ],
+        }
+
+        document["findings"][0]["display_severity"] = "minor"
+        self.import_file.write_text(json.dumps(document), encoding="utf-8")
+        before_invalid_import = self.database.read_bytes()
+        code, invalid = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
+        self.assertEqual(code, 2)
+        self.assertIn("finding display severity is invalid", invalid["error"])
+        self.assertEqual(self.database.read_bytes(), before_invalid_import)
+
+        document["findings"][0]["display_severity"] = "Minor"
+        self.import_file.write_text(json.dumps(document), encoding="utf-8")
+        code, imported = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
+        self.assertEqual(code, 0, imported)
+        self.assertTrue(imported["result"]["finalized"])
+
+        code, history = self.invoke("history", "--pr", "3156", "--database", str(self.database))
+        self.assertEqual(code, 0, history)
+        finding = history["result"]["findings"][0]
+        self.assertEqual(finding["display_severity"], "Minor")
+        run = history["result"]["runs"][0]
+        self.assertIsNone(run["started_at"])
+        self.assertIsNone(run["finished_at"])
+        self.assertEqual(run["storage_timestamps"]["started_at"]["source"], "generated")
+        self.assertEqual(run["storage_timestamps"]["finished_at"]["source"], "generated")
+        self.assertIsNotNone(run["finalized_at"])
+
+        fix_sha = "b" * 40
+        code, resolution = self.invoke(
+            "source",
+            "resolve",
+            "--source-pr",
+            "3156",
+            "--run-id",
+            "retro-minor-finding",
+            "--finding-key",
+            "helm-import-severity",
+            "--resolution-id",
+            "helm-import-severity-fixed",
+            "--fix-sha",
+            fix_sha,
+            "--actor",
+            "Overseer",
+            "--proof-note",
+            "Verified against the exact fixing commit.",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(code, 0, resolution)
+        self.assertEqual(resolution["result"]["outcome"], "accepted_fixed")
+        _, resolved_history = self.invoke("history", "--pr", "3156", "--database", str(self.database))
+        self.assertEqual(
+            resolved_history["result"]["runs"][0]["counts"],
+            {"found": 1, "accepted": 1, "routed": 0},
+        )
+        self.assertEqual(
+            resolved_history["result"]["source_resolutions"][0]["fix_sha"], fix_sha
+        )
 
     def test_batch_import_validate_only_reuses_validators_without_touching_database(self) -> None:
         missing_database = self.database.parent / "uncreated" / "controller.sqlite3"

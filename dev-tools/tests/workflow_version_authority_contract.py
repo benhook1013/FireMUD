@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import tempfile
 from collections import Counter
@@ -2231,7 +2232,80 @@ def main() -> int:
         data = (actions / action / "action.yml").read_text()
         if "sha256sum --check --status" not in data:
             fail(f"{action} must verify its archive")
-    setup_helm_text = (actions / "setup-helm/action.yml").read_text()
+    setup_helm_path = actions / "setup-helm/action.yml"
+    setup_helm_text = setup_helm_path.read_text()
+    setup_helm_action = load(setup_helm_path)
+    helm_run_scripts = [
+        step["run"]
+        for step in setup_helm_action.get("runs", {}).get("steps", [])
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+    ]
+    helm_run_script = re.sub(r"\\\r?\n[ \t]*", " ", "\n".join(helm_run_scripts))
+    setup_helm_curl_commands = []
+    for line in helm_run_script.splitlines():
+        if re.match(r"^\s*curl(?:\s|$)", line):
+            try:
+                setup_helm_curl_commands.append(shlex.split(line.strip()))
+            except ValueError as error:
+                fail(f"setup-helm contains an invalid curl command: {error}")
+    if len(setup_helm_curl_commands) != 2:
+        fail("setup-helm run steps must define exactly the checksum-sidecar and archive requests")
+    helm_requests = (
+        (
+            "checksum sidecar",
+            "https://get.helm.sh/${expected_archive_name}.sha256sum",
+            "$checksum_path",
+        ),
+        (
+            "archive",
+            "https://get.helm.sh/${expected_archive_name}",
+            "$temporary_archive",
+        ),
+    )
+    for request_name, request_url, request_destination in helm_requests:
+        matching_commands = [
+            command for command in setup_helm_curl_commands if command.count(request_url) == 1
+        ]
+        if len(matching_commands) != 1:
+            fail(f"setup-helm must associate the {request_name} URL with exactly one curl request")
+        command = matching_commands[0]
+        expected_options = {
+            "--retry": "3",
+            "--retry-delay": "2",
+            "--retry-max-time": "30",
+            "--connect-timeout": "10",
+            "--max-time": "60",
+            "-o": request_destination,
+        }
+        for option, expected_value in expected_options.items():
+            values = []
+            index = 1
+            while index < len(command):
+                token = command[index]
+                if token == option:
+                    values.append(command[index + 1] if index + 1 < len(command) else None)
+                    index += 2
+                elif option.startswith("--") and token.startswith(f"{option}="):
+                    values.append(token.partition("=")[2])
+                    index += 1
+                else:
+                    index += 1
+            if values != [expected_value]:
+                fail(
+                    f"setup-helm {request_name} request must use {option} {expected_value} exactly once"
+                )
+        retry_flags = [token.partition("=")[0] for token in command if token.startswith("--retry")]
+        if Counter(retry_flags) != Counter(("--retry", "--retry-delay", "--retry-max-time")):
+            fail(f"setup-helm {request_name} request must preserve the canonical retry options")
+    for required_helm_fragment in (
+        "HELM_VERSION: v${{ steps.versions.outputs.helm-version }}",
+        "firemud-helm-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.helm-version }}",
+        "verify-publisher-checksum.sh",
+        'mv -fT -- "$temporary_archive" "$archive_path"',
+        'if [[ "$reported_version" != "$helm_version" ]]; then',
+    ):
+        if required_helm_fragment not in setup_helm_text:
+            fail(f"setup-helm must preserve its pinned install guard: {required_helm_fragment}")
     if not (
         setup_helm_text.index(".sha256sum")
         < setup_helm_text.index("verify-publisher-checksum.sh")

@@ -255,6 +255,118 @@ class RealmPolicySourcePostgresIntegrationTest {
   }
 
   @Test
+  void sourceHeadRejectsUnprovenTransitionsAndDisjointCaptureInheritsExactPredecessor() {
+    var fixture = freshFixture();
+    var first = policyBinding(fixture.target(), "0", "main", true);
+    start(fixture, first);
+    var firstApplication = fixture.tx(() -> fixture.policies().apply(first));
+    synchronize(fixture, first, firstApplication);
+
+    var second = policyBinding(fixture.target(), "1", "private", false);
+    start(fixture, second);
+    var secondApplication = fixture.tx(() -> fixture.policies().apply(second));
+    synchronize(fixture, second, secondApplication);
+    var current = fixture.reads().readSnapshot(fixture.target(), second.commitId()).orElseThrow();
+    assertThat(current.policies()).hasSize(2);
+
+    assertThatThrownBy(
+            () ->
+                fixture.tx(
+                    () ->
+                        fixture
+                            .dsl()
+                            .execute(
+                                "UPDATE game_design_realm_policy_source SET source_epoch = '1', visible_commit_id = ? WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                                first.commitId(),
+                                fixture.target().canonicalTenantId(),
+                                fixture.target().canonicalVersionId())))
+        .hasMessageContaining(
+            "realm policy source epoch must advance through its exact owner application");
+    assertThatThrownBy(
+            () ->
+                fixture.tx(
+                    () ->
+                        fixture
+                            .dsl()
+                            .execute(
+                                "UPDATE game_design_realm_policy_source SET source_epoch = '1' WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                                fixture.target().canonicalTenantId(),
+                                fixture.target().canonicalVersionId())))
+        .hasMessageContaining(
+            "realm policy source epoch must advance through its exact owner application");
+    assertThatThrownBy(
+            () ->
+                fixture.tx(
+                    () ->
+                        fixture
+                            .dsl()
+                            .execute(
+                                "UPDATE game_design_realm_policy_source SET source_epoch = '4' WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                                fixture.target().canonicalTenantId(),
+                                fixture.target().canonicalVersionId())))
+        .hasMessageContaining(
+            "realm policy source epoch must advance through its exact owner application");
+    assertThatThrownBy(
+            () ->
+                fixture.tx(
+                    () ->
+                        fixture
+                            .dsl()
+                            .execute(
+                                "UPDATE game_design_realm_policy_source SET visible_commit_id = ? WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                                first.commitId(),
+                                fixture.target().canonicalTenantId(),
+                                fixture.target().canonicalVersionId())))
+        .hasMessageContaining(
+            "realm policy source pointer must advance to its exact current synchronized snapshot");
+
+    var disjoint = commandOnlyBinding(fixture.target(), second.commitId());
+    start(fixture, disjoint);
+    fixture.tx(
+        () -> {
+          var outcome =
+              new DraftCommitCoordinatorRepository.OwnerOutcome(
+                  Owner.GAME_DESIGN_CONTROL_PLANE,
+                  DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
+                  disjoint.commitId(),
+                  disjoint.digest(),
+                  "ISOLATED-disjoint-command-result",
+                  "ISOLATED command owner readback".getBytes(StandardCharsets.UTF_8),
+                  List.of(
+                      new DraftCommitCoordinatorRepository.AppliedEpoch(
+                          "COMMAND_DEFINITION_SET",
+                          fixture.target().canonicalVersionId().toString(),
+                          "COMMAND_DEFINITION_SET",
+                          "effective",
+                          "0",
+                          "1")));
+          fixture.coordinator().recordOwnerOutcome(disjoint, outcome);
+          fixture
+              .coordinator()
+              .advanceVisibilityFence(
+                  disjoint,
+                  new DraftCommitCoordinatorRepository.CoordinatorProof(
+                      disjoint, List.of(outcome)));
+          var inherited = fixture.policies().captureSynchronized(disjoint);
+          assertThat(inherited.sourceEpoch()).isEqualTo(current.sourceEpoch());
+          assertThat(inherited.policies()).containsExactlyElementsOf(current.policies());
+          var snapshotRow =
+              fixture
+                  .dsl()
+                  .fetchOne(
+                      "SELECT inherited_commit_id FROM game_design_realm_policy_snapshot WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                      fixture.target().canonicalTenantId(),
+                      fixture.target().canonicalVersionId(),
+                      disjoint.commitId());
+          assertThat(snapshotRow).isNotNull();
+          assertThat(snapshotRow.get("inherited_commit_id", UUID.class))
+              .isEqualTo(second.commitId());
+          fixture.coordinator().releaseApplicationSlot(disjoint);
+          return null;
+        });
+  }
+
+  @Test
   void absentBaselineDeniesAndApplicationReplayAndMismatchBindActualCoordinatorResult() {
     var fixture = retainedFixture(false);
     var binding = policyBinding(fixture.target(), "0", "main", true);
@@ -544,6 +656,29 @@ class RealmPolicySourcePostgresIntegrationTest {
                 epoch)));
   }
 
+  private static DraftCommitBinding commandOnlyBinding(TargetProof target, UUID baseCommitId) {
+    return DraftCommitBinding.create(
+        target,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        baseCommitId.toString(),
+        List.of(
+            new DraftCommitBinding.RevisionPayload(
+                "0",
+                UUID.randomUUID(),
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                "{\"revisionKind\":\"COMMAND_DEFINITION\",\"schemaVersion\":1,"
+                    + "\"operation\":\"DELETE\",\"commandId\":\"ISOLATED-command\"}")),
+        List.of(
+            new DraftCommitBinding.AffectedUnit(
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                "COMMAND_DEFINITION_SET",
+                target.canonicalVersionId().toString(),
+                "COMMAND_DEFINITION_SET",
+                "effective",
+                "0")));
+  }
+
   private static Fixture freshFixture() {
     String schema = "gd_policy_" + UUID.randomUUID().toString().replace("-", "");
     var dataSource =
@@ -557,7 +692,7 @@ class RealmPolicySourcePostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .table("flyway_schema_history_game_design_service")
-        .target("50.10")
+        .target("50.12")
         .load()
         .migrate();
     var transactions = new DataSourceTransactionManager(dataSource);
@@ -614,7 +749,7 @@ class RealmPolicySourcePostgresIntegrationTest {
               return new GameRepository(dsl).save(created);
             });
     var version = write.execute(status -> insertRetainedVersion(dsl, properties, game, 1));
-    migrate(dataSource, schema, "50.10");
+    migrate(dataSource, schema, "50.12");
     var target = target(version);
     var baseline = policyBinding(target, "0", "main", true);
     var policies = new RealmPolicySourceRepository(dsl);
