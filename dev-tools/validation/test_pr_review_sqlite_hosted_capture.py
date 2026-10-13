@@ -1502,6 +1502,12 @@ class SqliteHostedCaptureTest(unittest.TestCase):
     def test_final_fingerprint_accepts_only_empty_or_known_auxiliary_tail(self) -> None:
         fingerprint = "a1e39b83f15845dc073e0b8b"
         prefix = f"**One finding.**\nDetails.\n<!-- cr-comment:v1:{fingerprint} -->"
+        addressed_tail = (
+            "\n\n_Source: Path instructions_\n\n"
+            "<!-- This is an auto-generated reply by CodeRabbit -->\n\n"
+            "✅ Confirmed as addressed by @benhook1013\n\n"
+            "<!-- This is an auto-generated comment by CodeRabbit -->"
+        )
         valid_tails = (
             "",
             " \n\n",
@@ -1514,6 +1520,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "\n\n_Source: Linters/SAST tools_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Sources: Coding guidelines, Path instructions_\n\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Sources: Coding guidelines, Path instructions, Learnings_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            addressed_tail,
             "\n\n_Source: Linters/SAST tools_\n<!-- This is an auto-generated reply by CodeRabbit -->\n",
             "\n\n_Sources: Coding guidelines_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Sources: Coding guidelines, Path instructions_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
@@ -1537,6 +1544,40 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "\n_Source: Linters/SAST tools_\n<!-- This is an auto-generated reply by another bot -->",
             "\n_Sources: Coding guidelines, Unknown source_\n<!-- This is an auto-generated comment by CodeRabbit -->",
             "\n_Sources: Coding guidelines, Path instructions_\nunmarked content\n<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Source: Coding guidelines_\n<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "✅ Confirmed as addressed by @benhook1013\n<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Source: Path instructions_\nUnmarked text.\n"
+            "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "✅ Confirmed as addressed by @benhook1013\n<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Source: Path instructions_\n<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "Arbitrary text.\n✅ Confirmed as addressed by @benhook1013\n"
+            "<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Source: Path instructions_\n<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "✅ Confirmed as addressed by @benhook1013 with extra text\n"
+            "<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Source: Path instructions_\n<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "✅ Confirmed as addressed by @-benhook1013\n"
+            "<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Source: Path instructions_\n<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "✅ Confirmed as addressed by @ben--hook1013\n"
+            "<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Source: Path instructions_\n<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "✅ Confirmed as addressed by @" + "a" * 40 + "\n"
+            "<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Source: Path instructions_\n<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "✅ Confirmed as addressed by @benhook1013\n"
+            "<!-- This is an auto-generated comment by CodeRabbit -->\nTrailing substantive text.",
+            "\n_Source: Path instructions_\n<!-- This is an auto-generated comment by CodeRabbit -->\n"
+            "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "✅ Confirmed as addressed by @benhook1013",
+            "\n_Source: Path instructions_\n<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "✅ Confirmed as addressed by @benhook1013\n"
+            "<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Source: Path instructions_\n<!-- This is an auto-generated reply by CodeRabbit -->\n"
+            "✅ Confirmed as addressed by @benhook1013\n"
+            "<!-- This is an auto-generated comment by CodeRabbit -->\n"
+            "<!-- This is an auto-generated comment by CodeRabbit -->",
         )
         for tail in invalid_tails:
             with (
