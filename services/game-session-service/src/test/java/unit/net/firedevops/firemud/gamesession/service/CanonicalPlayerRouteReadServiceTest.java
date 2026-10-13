@@ -196,10 +196,16 @@ class CanonicalPlayerRouteReadServiceTest {
     var catalogRepository = mock(GameSessionCanonicalRealmCatalogRepository.class);
     var admissionRepository = mock(CanonicalInitialAdmissionRepository.class);
     var launchRepository = mock(CanonicalGameInstanceLaunchAssociationRepository.class);
+    CanonicalInitialAdmissionOwnerProof proof = abortedProof();
+    assertThat(proof.provesAbort()).isTrue();
+    assertThat(proof.committedPointerVersion()).isNull();
+    assertThat(proof.auditEventId()).isNull();
     when(catalogRepository.readVisiblePublicProductionSnapshots(NAMESPACE))
         .thenReturn(List.of(catalogSnapshot()));
     when(admissionRepository.readCurrentOpenSnapshotForRealm(NAMESPACE, TENANT, REALM))
-        .thenThrow(new IllegalStateException("Current OPEN pointer has no committed proof"));
+        .thenAnswer(
+            invocation ->
+                new CanonicalInitialAdmissionRepository.CurrentOpenSnapshot(proof, "d".repeat(64)));
     var service = routeReadService(catalogRepository, admissionRepository, launchRepository);
 
     assertThatThrownBy(service::readVisiblePublicProductionTargets)
@@ -377,6 +383,33 @@ class CanonicalPlayerRouteReadServiceTest {
         Instant.parse("2026-10-07T00:00:00Z"));
   }
 
+  private static CanonicalInitialAdmissionOwnerProof abortedProof() {
+    return new CanonicalInitialAdmissionOwnerProof(
+        CanonicalInitialAdmissionOwnerProof.Outcome.ABORTED,
+        REQUEST_ID,
+        "a".repeat(64),
+        NAMESPACE,
+        TENANT,
+        "demo-world",
+        REALM,
+        PLAYABLE_NAMESPACE,
+        "SHARED",
+        INSTANCE,
+        VERSION,
+        82L,
+        1L,
+        OriginKind.NO_PRIOR_POINTER,
+        null,
+        uuid("77777777-7777-4777-8777-777777777777"),
+        uuid("88888888-8888-4888-8888-888888888888"),
+        "sha256:" + "c".repeat(64),
+        null,
+        null,
+        "sha256:" + "f".repeat(64),
+        true,
+        Instant.parse("2026-10-07T00:00:00Z"));
+  }
+
   private static CanonicalInitialAdmissionRepository.CurrentOpenSnapshot currentOpenSnapshot(
       CanonicalInitialAdmissionOwnerProof proof) {
     return currentOpenSnapshot(proof, "d".repeat(64));
@@ -425,21 +458,27 @@ class CanonicalPlayerRouteReadServiceTest {
   }
 
   private static IntakeReceipt sourceReceipt(String targetNamespace) {
-    UUID intakeOperationId = uuid("99999999-9999-4999-8999-999999999999");
+    UUID intakeOperationId = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
     UUID intakeRequestId = uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
-    UUID sourceOperationId = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    UUID sourceRegistrationRequestId = uuid("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+    UUID sourceOperationId = uuid("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
     String tenantSlug = "demo-tenant";
     String worldSlug = "demo-world";
     String worldDisplayName = "Demo World";
     String sourceTenantKey = "game-design-tenant-42";
     String sourceRequestDigest =
         AuthoredWorldSourceDigest.requestDigest(
-            targetNamespace, sourceOperationId, TENANT, tenantSlug, worldSlug, worldDisplayName);
+            targetNamespace,
+            sourceRegistrationRequestId,
+            TENANT,
+            tenantSlug,
+            worldSlug,
+            worldDisplayName);
     String sourceEvidenceDigest =
         AuthoredWorldSourceDigest.evidenceDigest(
             targetNamespace,
+            sourceRegistrationRequestId,
             sourceOperationId,
-            intakeOperationId,
             sourceRequestDigest,
             TENANT,
             tenantSlug,
@@ -452,8 +491,8 @@ class CanonicalPlayerRouteReadServiceTest {
         new AuthoredWorldSourceEvidence(
             1,
             targetNamespace,
+            sourceRegistrationRequestId,
             sourceOperationId,
-            intakeOperationId,
             sourceRequestDigest,
             TENANT,
             tenantSlug,

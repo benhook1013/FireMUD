@@ -245,9 +245,9 @@ These target-only fields do not replace or relax the current authored-world sour
 
 Before computing the request idempotency digest, normalization rejects `EMPTY` with a non-empty list, `EXPLICIT` with an empty list, and `REUSE_ROLLBACK_TARGET` without a named rollback target or with any entries; accepted presence forms must first derive the modes and effective selections defined above consistently.
 
-Normative examples:
+Target-only conceptual extension illustrations (not the current wire contract or executable RPC examples):
 
-The examples below intentionally use numeric `versionId` values because the current Game Design launch and published-bundle protobuf contracts expose `int64 version_id`. UUID-shaped version identifiers elsewhere in the target architecture must not be substituted into these current-contract examples until those transport fields are migrated together.
+The current authored-world binding wire contract is defined by the [Game Design API contract](./api-contracts.md#authored-world-launch-binding) and [Game Design proto](../../../../protos/game-design/v1/game_design_service.proto). The current launch and published-bundle protobuf contracts expose numeric `int64 version_id`, so these illustrations retain numeric `versionId` values. The plugin-selection and rollback fields shown below are conceptual target extensions and are not current transport fields or executable requests.
 
 - Fresh launch from a template with no script patch pinned:
 
