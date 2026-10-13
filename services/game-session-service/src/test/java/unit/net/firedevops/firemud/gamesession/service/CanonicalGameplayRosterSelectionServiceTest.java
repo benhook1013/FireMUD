@@ -498,19 +498,27 @@ class CanonicalGameplayRosterSelectionServiceTest {
           CanonicalGameplayRosterSelectionService.Denial.ASSIGNMENT_UNAVAILABLE);
     }
 
-    var staleRoster = harness(oneActor());
-    doThrow(Status.FAILED_PRECONDITION.withDescription("menu changed").asRuntimeException())
-        .when(staleRoster.stub())
+    var staleRouteOrPolicy = harness(oneActor());
+    doThrow(
+            Status.FAILED_PRECONDITION
+                .withDescription("route changed or policy is no longer PRESEEDED_ONLY")
+                .asRuntimeException())
+        .when(staleRouteOrPolicy.stub())
         .listPreseededRoster(any());
     assertDenied(
-        staleRoster
+        staleRouteOrPolicy
             .service()
             .select(
-                context(staleRoster.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null),
-        CanonicalGameplayRosterSelectionService.Denial.STALE_MENU_IDENTITY);
+                context(staleRouteOrPolicy.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                null,
+                null),
+        CanonicalGameplayRosterSelectionService.Denial.ROUTE_CHANGED);
 
     var changedAssignment = harness(oneActor());
-    doThrow(Status.FAILED_PRECONDITION.withDescription("assignment changed").asRuntimeException())
+    doThrow(
+            Status.FAILED_PRECONDITION
+                .withDescription("snapshot changed or selected actor is absent")
+                .asRuntimeException())
         .when(changedAssignment.stub())
         .readSelectedPreseededAssignment(any());
     assertDenied(
@@ -520,20 +528,7 @@ class CanonicalGameplayRosterSelectionServiceTest {
                 context(changedAssignment.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
                 null,
                 null),
-        CanonicalGameplayRosterSelectionService.Denial.INVALID_ASSIGNMENT_PROOF);
-
-    var rejectedRoster = harness(oneActor());
-    doThrow(Status.PERMISSION_DENIED.withDescription("caller rejected").asRuntimeException())
-        .when(rejectedRoster.stub())
-        .listPreseededRoster(any());
-    assertDenied(
-        rejectedRoster
-            .service()
-            .select(
-                context(rejectedRoster.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
-                null,
-                null),
-        CanonicalGameplayRosterSelectionService.Denial.INVALID_ROSTER_PROOF);
+        CanonicalGameplayRosterSelectionService.Denial.STALE_MENU_IDENTITY);
 
     for (Status.Code code : List.of(Status.Code.PERMISSION_DENIED, Status.Code.INVALID_ARGUMENT)) {
       var invalidRoster = harness(oneActor());
