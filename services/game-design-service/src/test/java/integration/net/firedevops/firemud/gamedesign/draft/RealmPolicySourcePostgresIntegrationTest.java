@@ -32,6 +32,7 @@ import net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySourceService;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -51,7 +52,8 @@ import tools.jackson.databind.ObjectMapper;
 @Testcontainers(disabledWithoutDocker = true)
 class RealmPolicySourcePostgresIntegrationTest {
   @Container
-  static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+  static final PostgreSQLContainer<?> POSTGRES =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void freshGenesisCreatesNoFakeCommitAndFirstActualPolicyCommitReplaysExactly() {

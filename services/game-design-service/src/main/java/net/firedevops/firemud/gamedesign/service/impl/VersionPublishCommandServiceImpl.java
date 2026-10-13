@@ -413,12 +413,12 @@ public class VersionPublishCommandServiceImpl {
     validateFullVersionAttempt(attempt, request);
     if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
       publishAttemptRepository.requirePublishedOperation(attempt);
-      PublicationReadback readback = readPublication(request, attempt);
+      PublicationReadback readback = readPublication(request, attempt, true);
       if (!readback.isComplete()) {
         throw pendingReconciliation(
             "succeeded full-version attempt lacks exact committed release evidence");
       }
-      assertCommittedBundleMayMarkSuccess(request, readback);
+      assertCommittedBundleEvidence(request, readback);
       return succeededSnapshot(attempt);
     }
     if (attempt.getStatus() != PublishAttemptStatus.PENDING) {
@@ -430,7 +430,7 @@ public class VersionPublishCommandServiceImpl {
     Version version = requireAttemptVersionForUpdate(attempt, request);
     PublicationReadback existingPublication = readPublication(request, attempt);
     if (existingPublication.isComplete()) {
-      assertCommittedBundleMayMarkSuccess(request, existingPublication);
+      assertCommittedBundleEvidence(request, existingPublication);
       recordedParticipantDigestService.recordVerifiedDigests(
           request.tenantId(),
           PublishType.FULL_VERSION,
@@ -518,7 +518,7 @@ public class VersionPublishCommandServiceImpl {
     try {
       requireExactCommittedBundleIdentity(request, attempt, bundle);
       if (request.intent() != null) {
-        assertCommittedBundleMayMarkSuccess(request, readPublication(request, attempt));
+        assertCommittedBundleEvidence(request, readPublication(request, attempt, true));
       }
     } catch (RuntimeException ex) {
       throw pendingReconciliation(
@@ -559,7 +559,7 @@ public class VersionPublishCommandServiceImpl {
             if (!Objects.equals(bundle, currentReadback.bundle())) {
               throw pendingReconciliation("published release bundle changed during reconciliation");
             }
-            assertCommittedBundleMayMarkSuccess(request, currentReadback);
+            assertCommittedBundleEvidence(request, currentReadback);
             recordedParticipantDigestService.recordVerifiedDigests(
                 request.tenantId(),
                 PublishType.FULL_VERSION,
@@ -580,15 +580,14 @@ public class VersionPublishCommandServiceImpl {
   }
 
   /**
-   * Revalidates durable publication evidence before it can bless an attempt as successful.
+   * Revalidates retained publication evidence against the same gate used before first success.
    *
    * <p>Readback proves that the bundle and artifact are structurally tied to this attempt, but it
    * does not by itself prove that the participant matrix, typed scope, digest schema/content, and
-   * recorded baseline still satisfy the canonical publication gate. Reconciliation must apply the
-   * same local contracts as the initial publication path and fail closed for malformed or legacy
-   * evidence.
+   * recorded baseline still satisfy the canonical publication gate. Malformed or legacy evidence
+   * still fails closed. This read does not renew publication authority or mutate lifecycle state.
    */
-  private void assertCommittedBundleMayMarkSuccess(
+  private void assertCommittedBundleEvidence(
       PublishWorkflowRequest request, PublicationReadback readback) {
     if (!readback.isComplete() || readback.version() == null || readback.bundle() == null) {
       throw pendingReconciliation(
@@ -778,6 +777,11 @@ public class VersionPublishCommandServiceImpl {
 
   private PublicationReadback readPublication(
       PublishWorkflowRequest request, PublishAttempt attempt) {
+    return readPublication(request, attempt, false);
+  }
+
+  private PublicationReadback readPublication(
+      PublishWorkflowRequest request, PublishAttempt attempt, boolean terminalReplay) {
     Optional<Version> version =
         versionRepository.findByTenantIdAndId(request.tenantId(), attempt.getVersionId());
     if (version.isEmpty()) {
@@ -813,7 +817,11 @@ public class VersionPublishCommandServiceImpl {
     } catch (RuntimeException ex) {
       return PublicationReadback.partial();
     }
-    if (version.get().getVersionState() != VersionLifecycleState.PUBLISHED) {
+    VersionLifecycleState state = version.get().getVersionState();
+    boolean retainedTerminalState =
+        terminalReplay
+            && (state == VersionLifecycleState.ACTIVE || state == VersionLifecycleState.RETIRED);
+    if (state != VersionLifecycleState.PUBLISHED && !retainedTerminalState) {
       return PublicationReadback.partial();
     }
     return PublicationReadback.complete(version.get(), bundle, artifact);
