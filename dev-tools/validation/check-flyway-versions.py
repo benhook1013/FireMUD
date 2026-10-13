@@ -260,7 +260,7 @@ def run_self_test() -> None:
             command = [sys.executable, str(Path(__file__).resolve()), "--root", tmp]
             if explicit:
                 command.extend(["--base-ref", "0" * 40])
-            result = subprocess.run(command, env=environment, capture_output=True, text=True)
+            result = subprocess.run(command, check=False, env=environment, capture_output=True, text=True)
             if result.returncode or "Parent frontier comparison" not in result.stdout:
                 raise AssertionError(f"unborn explicit={explicit}: {result.stdout} {result.stderr}")
 
