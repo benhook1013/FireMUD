@@ -28,8 +28,8 @@ CREATE TABLE account_start_session_admission_protections (
     capture_source_version BIGINT NOT NULL CHECK (capture_source_version > 0),
     capture_source_fence BIGINT NOT NULL CHECK (capture_source_fence > 0),
     capture_sha256 VARCHAR(64) NOT NULL CHECK (capture_sha256 ~ '^[0-9a-f]{64}$'),
-    world_admission_hold_identity_bytes BYTEA NOT NULL CHECK (octet_length(world_admission_hold_identity_bytes) BETWEEN 1 AND 262144),
-    request_binding_bytes BYTEA NOT NULL CHECK (octet_length(request_binding_bytes) BETWEEN 1 AND 1048576),
+    world_admission_hold_identity_bytes BYTEA NOT NULL CHECK (octet_length(world_admission_hold_identity_bytes) BETWEEN 1 AND 65536),
+    request_binding_bytes BYTEA NOT NULL CHECK (octet_length(request_binding_bytes) BETWEEN 1 AND 786432),
     request_binding_digest VARCHAR(71) NOT NULL
         CHECK (request_binding_digest = 'sha256:' || encode(sha256(request_binding_bytes), 'hex')),
     producer_xid BIGINT NOT NULL DEFAULT txid_current(),
@@ -102,6 +102,10 @@ DECLARE
     source_bytes BYTEA;
     source_key_value TEXT;
     keys TEXT[];
+    previous_sort_key INTEGER[];
+    current_sort_key INTEGER[];
+    source_bytes_total BIGINT := 0;
+    canonical_request TEXT;
 BEGIN
     SELECT * INTO STRICT capture FROM account_start_session_authority_captures
         WHERE control_plane_request_id = original.control_plane_request_id;
@@ -110,6 +114,31 @@ BEGIN
         OR snapshot_value->>'controlPlaneRequestId' IS DISTINCT FROM original.control_plane_request_id THEN
         RAISE EXCEPTION 'Admission protection requires the exact original source snapshot' USING ERRCODE = '23514';
     END IF;
+    IF octet_length(capture.canonical_capture_bytes) NOT BETWEEN 1 AND 262144
+        OR octet_length(capture.canonical_snapshot_bytes) NOT BETWEEN 1 AND 245760
+        OR jsonb_typeof(snapshot_value->'sourceVector') IS DISTINCT FROM 'array'
+        OR jsonb_array_length(snapshot_value->'sourceVector') NOT BETWEEN 1 AND 256 THEN
+        RAISE EXCEPTION 'Admission protection source capture exceeds settlement bounds' USING ERRCODE = '23514';
+    END IF;
+    FOR source_value IN SELECT value FROM jsonb_array_elements(snapshot_value->'sourceVector') LOOP
+        IF jsonb_typeof(source_value) IS DISTINCT FROM 'string' THEN
+            RAISE EXCEPTION 'Admission protection source vector has a non-string member' USING ERRCODE = '23514';
+        END IF;
+        source_bytes := decode(source_value #>> '{}', 'base64');
+        source_bytes_total := source_bytes_total + octet_length(source_bytes);
+        IF octet_length(source_bytes) NOT BETWEEN 1 AND 131072
+            OR source_bytes_total > 4194304
+            OR regexp_replace(encode(source_bytes, 'base64'), E'[\n\r]', '', 'g')
+                IS DISTINCT FROM source_value #>> '{}' THEN
+            RAISE EXCEPTION 'Admission protection source vector exceeds canonical settlement bounds' USING ERRCODE = '23514';
+        END IF;
+        current_sort_key := account_publication_authorization_source_sort_key(
+            account_start_session_world_participation_source_key(source_bytes));
+        IF previous_sort_key IS NOT NULL AND current_sort_key <= previous_sort_key THEN
+            RAISE EXCEPTION 'Admission protection source vector is duplicated or out of order' USING ERRCODE = '23514';
+        END IF;
+        previous_sort_key := current_sort_key;
+    END LOOP;
     keys := account_start_session_world_participation_lock_sources(snapshot_value);
     PERFORM account_start_session_world_participation_assert_exclusive(keys, snapshot_value);
     SELECT * INTO STRICT capture FROM account_start_session_authority_captures
@@ -187,6 +216,35 @@ BEGIN
         OR request_value->>'worldAdmissionHoldIdentityBytesBase64' IS DISTINCT FROM regexp_replace(encode(original.world_admission_hold_identity_bytes, 'base64'), E'[\n\r]', '', 'g') THEN
         RAISE EXCEPTION 'Admission request binding differs from exact immutable selectors' USING ERRCODE = '23514';
     END IF;
+    canonical_request := '{"accountRedemptionProjectionBytesBase64":"'
+        || regexp_replace(encode(original.account_redemption_projection, 'base64'), E'[\n\r]', '', 'g')
+        || '","accountWorldParticipationFence":"'
+        || original.account_world_participation_fence::TEXT
+        || '","accountWorldParticipationId":"'
+        || original.account_world_participation_id::TEXT
+        || '","gameSessionOwnerAttemptId":"'
+        || original.game_session_owner_attempt_id::TEXT
+        || '","gameSessionOwnerFence":"'
+        || original.game_session_owner_fence::TEXT
+        || '","gameSessionOwnerMutationId":"'
+        || original.game_session_owner_mutation_id::TEXT
+        || '","originalLeaseExpiresAt":"'
+        || to_char(original.original_lease_expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+        || '","originalPostAuthorizationTupleBytesBase64":"'
+        || regexp_replace(encode(original.original_post_authorization_tuple, 'base64'), E'[\n\r]', '', 'g')
+        || '","schema":"account-start-session-admission-protection-request/v1"'
+        || ',"worldAdmissionHoldIdentityBytesBase64":"'
+        || regexp_replace(encode(original.world_admission_hold_identity_bytes, 'base64'), E'[\n\r]', '', 'g')
+        || '"}';
+    IF octet_length(original.request_binding_bytes) NOT BETWEEN 1 AND 786432
+        OR octet_length(original.world_admission_hold_identity_bytes) NOT BETWEEN 1 AND 65536
+        OR convert_to(canonical_request, 'UTF8') IS DISTINCT FROM original.request_binding_bytes
+        OR original.request_binding_digest IS DISTINCT FROM
+            'sha256:' || encode(sha256(original.request_binding_bytes), 'hex') THEN
+        RAISE EXCEPTION 'Original StartSession admission request is not its exact canonical binding'
+            USING ERRCODE = '23514';
+    END IF;
+
     hold_value := convert_from(original.world_admission_hold_identity_bytes, 'UTF8')::JSONB;
     hold_request := convert_from(decode(hold_value->>'requestBytesBase64', 'base64'), 'UTF8')::JSONB;
     IF hold_value->>'schema' IS DISTINCT FROM 'world-canonical-initial-admission-hold-identity/v1'
@@ -195,6 +253,7 @@ BEGIN
         OR EXISTS (SELECT 1 FROM jsonb_each(hold_value) field WHERE jsonb_typeof(field.value) <> 'string')
         OR (hold_value->>'holdId')::UUID = '00000000-0000-0000-0000-000000000000'::UUID
         OR (hold_value->>'holdFence')::UUID = '00000000-0000-0000-0000-000000000000'::UUID
+        OR hold_value->>'requestBytesBase64' IS DISTINCT FROM regexp_replace(encode(decode(hold_value->>'requestBytesBase64', 'base64'), 'base64'), E'[\n\r]', '', 'g')
         OR hold_value->>'holdBindingDigest' IS DISTINCT FROM 'sha256:' || encode(sha256(decode(hold_value->>'requestBytesBase64', 'base64')), 'hex')
         OR hold_request->>'schema' IS DISTINCT FROM 'world-canonical-initial-admission-hold-request/v1'
         OR hold_request->'request'->>'targetNamespace' IS DISTINCT FROM original.target_namespace
@@ -850,7 +909,7 @@ CREATE TABLE account_start_session_activation_protections (
     original_post_authorization_tuple BYTEA NOT NULL
         CHECK (octet_length(original_post_authorization_tuple) BETWEEN 1 AND 262144),
     account_redemption_projection BYTEA NOT NULL
-        CHECK (octet_length(account_redemption_projection) BETWEEN 1 AND 135168),
+        CHECK (octet_length(account_redemption_projection) BETWEEN 1 AND 262144),
     game_session_owner_mutation_id UUID NOT NULL UNIQUE
         CHECK (game_session_owner_mutation_id <> '00000000-0000-0000-0000-000000000000'::UUID),
     game_session_owner_attempt_id UUID NOT NULL
@@ -1290,7 +1349,7 @@ BEGIN
     SELECT COALESCE(
             jsonb_agg(
                 to_jsonb(replace(replace(encode(source.source_evidence, 'base64'), E'\n', ''), E'\r', ''))
-                ORDER BY source.source_key),
+                ORDER BY account_publication_authorization_source_sort_key(source.source_key)),
             '[]'::JSONB)
         INTO expected_source_vector
         FROM account_start_session_activation_protection_sources source

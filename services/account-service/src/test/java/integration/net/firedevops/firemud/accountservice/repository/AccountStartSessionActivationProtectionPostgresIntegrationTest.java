@@ -37,9 +37,10 @@ import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Runs V1003 against the actual Account PostgreSQL schema and assembled source-writer guard. The
- * integrity and currentness fixtures seed related owner rows with producer triggers disabled; they
- * prove SQL currentness/exclusion/immutability only, not authenticated activation-protection
- * production.
+ * integrity and currentness fixtures seed related owner rows with upstream producer triggers
+ * disabled. Protection acquisition, child completeness, settlement and source-writer guards remain
+ * enabled; they prove SQL currentness/exclusion/immutability only, not authenticated
+ * activation-protection production.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountStartSessionActivationProtectionPostgresIntegrationTest {
@@ -52,159 +53,33 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
   @Test
   void databaseOwnsProtectionIdentityAndPendingProtectionBlocksSourceWriters() throws Exception {
     Fixture fixture = fixture();
-    UUID participationId = UUID.randomUUID();
-    UUID ownerMutationId = UUID.randomUUID();
-    UUID ownerAttemptId = UUID.randomUUID();
-    UUID tenantId = UUID.randomUUID();
-    UUID gameInstanceId = UUID.randomUUID();
-    UUID activationRequestId = UUID.randomUUID();
-    byte[] captureReference = bytes("capture-reference");
-    byte[] operationIdentity = bytes("{\"schema\":\"activation-operation-test/v1\"}");
-    String captureDigest = hash(captureReference);
-    String operationDigest = "sha256:" + hash(operationIdentity);
-    OffsetDateTime expiry =
+    CurrentnessCase current = currentnessCase(fixture, Instant.now().plusSeconds(10), 135500);
+    byte[] requestBinding = current.requestBytes();
+    Map<String, Object> request = readJson(requestBinding);
+    UUID activationRequestId = UUID.fromString((String) request.get("worldActivationRequestId"));
+    byte[] preparingEvidence =
+        Base64.getDecoder().decode((String) request.get("preparingEvidenceBytesBase64"));
+    byte[] captureReference = bytes("{}");
+    String operationDigest = current.operationIdentityDigest();
+    assertThat(
+            Base64.getDecoder()
+                .decode((String) request.get("accountRedemptionProjectionBytesBase64"))
+                .length)
+        .isGreaterThan(135168)
+        .isLessThanOrEqualTo(262144);
+    acquireProtection(fixture, current);
+    var sources =
         fixture
             .dsl()
-            .fetchSingle("SELECT clock_timestamp() - INTERVAL '1 minute'")
-            .get(0, OffsetDateTime.class);
-    OffsetDateTime acquiredAt = expiry.minusMinutes(1);
-    String expiryText = timestamp(expiry);
-    SourceEvidence sourceEvidence =
-        new SourceEvidence(
-            SourceKind.ACCOUNT,
-            tenantId.toString(),
-            "2",
-            "17",
-            null,
-            null,
-            bytes("captured activation source"));
-    String sourceKey = sourceEvidence.key();
-    byte[] sourceEvidenceBytes = sourceEvidence.canonicalBytes();
-    byte[] tuple = bytes("synthetic original tuple");
-    byte[] projection = bytes("synthetic Account redemption projection");
-    byte[] launchRead = bytes("synthetic authenticated STARTING launch read");
-    byte[] preparingEvidence =
-        jsonBytes(
-            Map.of(
-                "schema",
-                "world-canonical-instance-lifecycle-evidence/v1",
-                "request",
-                Map.of(
-                    "readRequestId",
-                    UUID.randomUUID().toString(),
-                    "controlPlaneRequestId",
-                    fixture.requestId(),
-                    "targetNamespace",
-                    "test",
-                    "canonicalTenantId",
-                    tenantId.toString(),
-                    "canonicalGameInstanceId",
-                    gameInstanceId.toString()),
-                "lifecycleStatus",
-                "PREPARING",
-                "lifecycleEpoch",
-                12,
-                "rowVersion",
-                19));
-    byte[] requestBinding =
-        activationRequest(
-            tuple,
-            projection,
-            ownerMutationId,
-            ownerAttemptId,
-            11L,
-            expiryText,
-            participationId,
-            7L,
-            launchRead,
-            activationRequestId,
-            preparingEvidence);
-    String requestDigest = "sha256:" + hash(requestBinding);
-
-    fixture
-        .transaction()
-        .executeWithoutResult(
-            status -> {
-              fixture
-                  .dsl()
-                  .execute(
-                      "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
-                      sourceKey);
-              fixture.dsl().execute("SET LOCAL session_replication_role = replica");
-              insert(
-                  fixture.dsl(),
-                  "account_start_session_activation_protections",
-                  "control_plane_request_id",
-                  fixture.requestId(),
-                  "account_world_participation_id",
-                  participationId,
-                  "account_world_participation_fence",
-                  7L,
-                  "original_post_authorization_tuple",
-                  tuple,
-                  "account_redemption_projection",
-                  projection,
-                  "game_session_owner_mutation_id",
-                  ownerMutationId,
-                  "game_session_owner_attempt_id",
-                  ownerAttemptId,
-                  "game_session_owner_fence",
-                  11L,
-                  "original_lease_expires_at",
-                  expiry,
-                  "acquired_at",
-                  acquiredAt,
-                  "target_namespace",
-                  "test",
-                  "canonical_tenant_id",
-                  tenantId,
-                  "canonical_game_instance_id",
-                  gameInstanceId,
-                  "world_activation_request_id",
-                  activationRequestId,
-                  "game_session_launch_read_evidence",
-                  launchRead,
-                  "world_preparing_evidence",
-                  preparingEvidence,
-                  "capture_source_version",
-                  13L,
-                  "capture_source_fence",
-                  17L,
-                  "capture_sha256",
-                  captureDigest,
-                  "capture_reference_bytes",
-                  captureReference,
-                  "capture_reference_sha256",
-                  captureDigest,
-                  "operation_identity_bytes",
-                  operationIdentity,
-                  "operation_identity_digest",
-                  operationDigest,
-                  "request_binding_bytes",
-                  requestBinding,
-                  "request_binding_digest",
-                  requestDigest);
-              var parent =
-                  fixture
-                      .dsl()
-                      .fetchSingle(
-                          "SELECT activation_protection_id, activation_protection_fence, "
-                              + "acquired_at "
-                              + "FROM account_start_session_activation_protections "
-                              + "WHERE control_plane_request_id = ?",
-                          fixture.requestId());
-              UUID id = parent.get("activation_protection_id", UUID.class);
-              insert(
-                  fixture.dsl(),
-                  "account_start_session_activation_protection_sources",
-                  "activation_protection_id",
-                  id,
-                  "source_key",
-                  sourceKey,
-                  "source_evidence",
-                  sourceEvidenceBytes);
-              fixture.dsl().execute("SET LOCAL session_replication_role = origin");
-            });
+            .fetch(
+                "SELECT source_key, source_evidence FROM account_start_session_activation_protection_sources "
+                    + "ORDER BY account_publication_authorization_source_sort_key(source_key)");
+    assertThat(sources).hasSize(2);
+    String sourceKey = sources.get(0).get("source_key", String.class);
+    byte[][] sourceEvidenceBytes =
+        sources.stream()
+            .map(row -> row.get("source_evidence", byte[].class))
+            .toArray(byte[][]::new);
 
     var stored =
         fixture
@@ -248,9 +123,15 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                                     sourceKey)))
         .hasMessageContaining("Original StartSession activation protection remains pending");
 
+    fixture
+        .dsl()
+        .fetch(
+            "SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM (?::timestamptz - clock_timestamp()))))",
+            current.expiryText());
+
     // This synthetic SQL receipt proves only that V1003 permits a source writer after an immutable
     // terminal-shaped row is committed. It is not a typed receipt or authenticated World producer
-    // proof. The original Account lease is deliberately expired before this settlement insert.
+    // proof. The original lease has expired before settlement insertion.
     OffsetDateTime retainedAcquiredAt = stored.get("acquired_at", OffsetDateTime.class);
     long protectionFence = stored.get("activation_protection_fence", Long.class);
     byte[] accountEvidenceBytes =
@@ -520,7 +401,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
       OffsetDateTime acquiredAt,
       byte[] requestBytes,
       byte[] captureReference,
-      byte[] sourceEvidence)
+      byte[]... sourceEvidence)
       throws Exception {
     Map<String, Object> value = new LinkedHashMap<>();
     value.put("schema", "account-start-session-activation-protection-evidence/v1");
@@ -534,7 +415,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     value.put("originalSourceCaptureReferenceSha256", hash(captureReference));
     value.put(
         "sourceEvidenceVector",
-        java.util.List.of(Base64.getEncoder().encodeToString(sourceEvidence)));
+        java.util.Arrays.stream(sourceEvidence).map(Base64.getEncoder()::encodeToString).toList());
     return jsonBytes(value);
   }
 
@@ -636,6 +517,11 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
 
   private static CurrentnessCase currentnessCase(Fixture fixture, Instant originalLease)
       throws Exception {
+    return currentnessCase(fixture, originalLease, 0);
+  }
+
+  private static CurrentnessCase currentnessCase(
+      Fixture fixture, Instant originalLease, int padding) throws Exception {
     UUID tenantId = UUID.randomUUID();
     UUID gameInstanceId = UUID.randomUUID();
     UUID participationId = UUID.randomUUID();
@@ -663,11 +549,19 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
             .withZone(ZoneOffset.UTC)
             .format(normalizedLease);
 
-    byte[] preAuthorization = bytes("{}");
+    Map<String, Object> preAuthorizationValue =
+        Map.of(
+            "scope",
+            Map.of("targetNamespace", "test", "tenantId", tenantId.toString()),
+            "fixturePadding",
+            "x".repeat(Math.min(6000, padding)));
+    byte[] preAuthorization = jsonBytes(preAuthorizationValue);
     Map<String, Object> bundleValue =
         Map.of(
             "issuanceOperationIdentity",
-            Map.of("issuanceOperationId", issuanceOperationId.toString()));
+            Map.of("issuanceOperationId", issuanceOperationId.toString()),
+            "fixturePadding",
+            "x".repeat(padding - Math.min(6000, padding)));
     byte[] authorityBundle = jsonBytes(bundleValue);
     byte[] tuple =
         jsonBytes(
@@ -675,7 +569,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                 "controlPlaneRequestId",
                 requestId,
                 "preAuthorizationReservationTuple",
-                Map.of(),
+                preAuthorizationValue,
                 "authorizationReferenceFingerprint",
                 fingerprint,
                 "issuanceFence",
@@ -685,16 +579,25 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     // Current-use integrity preserves the complete stipulated original tuple without scalarizing
     // it.
     byte[] projection = tuple.clone();
-    SourceEvidence sourceEvidence =
-        new SourceEvidence(
-            SourceKind.ACCOUNT,
-            tenantId.toString(),
-            "2",
-            "17",
-            null,
-            null,
-            bytes("activation-source"));
-    String sourceKey = sourceEvidence.key();
+    // Java String ordering is UTF-16: the supplementary key precedes the BMP private-use key.
+    var sourceEvidence =
+        java.util.List.of(
+            new SourceEvidence(
+                SourceKind.HOSTED_TERMS,
+                tenantId + "-terms-\uD800\uDC00",
+                "2",
+                "17",
+                null,
+                null,
+                bytes("supplementary source")),
+            new SourceEvidence(
+                SourceKind.HOSTED_TERMS,
+                tenantId + "-terms-\uE000",
+                "2",
+                "17",
+                null,
+                null,
+                bytes("BMP source")));
     byte[] snapshot =
         jsonBytes(
             Map.of(
@@ -703,8 +606,9 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                 "controlPlaneRequestId",
                 requestId,
                 "sourceVector",
-                java.util.List.of(
-                    Base64.getEncoder().encodeToString(sourceEvidence.canonicalBytes()))));
+                sourceEvidence.stream()
+                    .map(source -> Base64.getEncoder().encodeToString(source.canonicalBytes()))
+                    .toList()));
     byte[] captureReference = bytes("{}");
     String captureDigest = hash(captureReference);
     String snapshotDigest = hash(snapshot);
@@ -740,8 +644,30 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                   .dsl()
                   .execute(
                       "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
-                      sourceKey);
+                      sourceEvidence.get(0).key());
+              fixture
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
+                      sourceEvidence.get(1).key());
               fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+              insert(
+                  fixture.dsl(),
+                  "account_canonical_tenant_identity_claims",
+                  "canonical_tenant_id",
+                  tenantId,
+                  "identity_kind",
+                  "APPROVED_RETAINED",
+                  "source_operation_id",
+                  UUID.randomUUID(),
+                  "source_account_legacy_tenant_id",
+                  1L,
+                  "source_target_namespace",
+                  "test",
+                  "source_game_row_id",
+                  1L,
+                  "source_game_tenant_key",
+                  tenantId.toString());
               insert(
                   fixture.dsl(),
                   "account_start_session_authority_captures",
@@ -868,15 +794,17 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                   preparationInput,
                   "preparation_input_digest",
                   preparationDigest);
-              insert(
-                  fixture.dsl(),
-                  "account_start_session_world_participation_sources",
-                  "participation_id",
-                  participationId,
-                  "source_key",
-                  sourceKey,
-                  "source_evidence",
-                  sourceEvidence.canonicalBytes());
+              for (SourceEvidence source : sourceEvidence) {
+                insert(
+                    fixture.dsl(),
+                    "account_start_session_world_participation_sources",
+                    "participation_id",
+                    participationId,
+                    "source_key",
+                    source.key(),
+                    "source_evidence",
+                    source.canonicalBytes());
+              }
               insert(
                   fixture.dsl(),
                   "account_start_session_world_original_attempt_evidence",
@@ -932,6 +860,60 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
             worldPreparing);
     return new CurrentnessCase(
         requestBytes, operationIdentity, operationDigest, ownerAttemptId, expiryText);
+  }
+
+  private static void acquireProtection(Fixture fixture, CurrentnessCase current) {
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              fixture
+                  .dsl()
+                  .execute(
+                      """
+          INSERT INTO account_start_session_activation_protections(
+              control_plane_request_id, account_world_participation_id, account_world_participation_fence,
+              original_post_authorization_tuple, account_redemption_projection,
+              game_session_owner_mutation_id, game_session_owner_attempt_id, game_session_owner_fence,
+              original_lease_expires_at, target_namespace, canonical_tenant_id, canonical_game_instance_id,
+              world_activation_request_id, game_session_launch_read_evidence, world_preparing_evidence,
+              capture_source_version, capture_source_fence, capture_sha256,
+              capture_reference_bytes, capture_reference_sha256, operation_identity_bytes,
+              operation_identity_digest, request_binding_bytes, request_binding_digest)
+          SELECT w.control_plane_request_id, w.participation_id, w.participation_fence,
+              w.original_post_authorization_tuple, w.original_post_authorization_tuple,
+              o.game_session_owner_mutation_id, o.game_session_owner_attempt_id, o.game_session_owner_fence,
+              o.original_lease_expires_at, w.target_namespace, w.canonical_tenant_id, w.canonical_game_instance_id,
+              (r.value->>'worldActivationRequestId')::uuid,
+              decode(r.value->>'gameSessionLaunchReadEvidenceBytesBase64', 'base64'),
+              decode(r.value->>'preparingEvidenceBytesBase64', 'base64'),
+              c.source_version, c.source_fence, c.canonical_sha256,
+              c.canonical_capture_bytes, c.canonical_sha256, ?, ?, ?, ?
+          FROM account_start_session_world_participations w
+          JOIN account_start_session_world_original_attempt_evidence o USING(participation_id)
+          JOIN account_start_session_authority_captures c USING(control_plane_request_id)
+          CROSS JOIN (SELECT convert_from(?::bytea, 'UTF8')::jsonb AS value) r
+          WHERE w.participation_id = (r.value->>'accountWorldParticipationId')::uuid
+          """,
+                      current.operationIdentityBytes(),
+                      current.operationIdentityDigest(),
+                      current.requestBytes(),
+                      "sha256:" + hash(current.requestBytes()),
+                      current.requestBytes());
+              fixture
+                  .dsl()
+                  .execute(
+                      """
+          INSERT INTO account_start_session_activation_protection_sources(
+              activation_protection_id, source_key, source_evidence)
+          SELECT p.activation_protection_id, s.source_key, s.source_evidence
+          FROM account_start_session_activation_protections p
+          JOIN account_start_session_world_participation_sources s
+              ON s.participation_id = p.account_world_participation_id
+          WHERE p.operation_identity_digest = ?
+          """,
+                      current.operationIdentityDigest());
+            });
   }
 
   private static byte[] activationRequest(

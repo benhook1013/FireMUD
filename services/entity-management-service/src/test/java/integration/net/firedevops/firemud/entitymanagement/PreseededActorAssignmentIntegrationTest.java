@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -23,6 +24,7 @@ import net.firedevops.firemud.common.account.RuntimeAccountIdentityEvidence;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentExpectedTarget;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidence;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentReceipt;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentReceiptRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult;
@@ -45,6 +47,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -82,6 +87,7 @@ class PreseededActorAssignmentIntegrationTest {
 
   @Autowired private CharacterRepository characterRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
@@ -94,6 +100,35 @@ class PreseededActorAssignmentIntegrationTest {
     tenantUuid = UUID.randomUUID();
     realmUuid = UUID.randomUUID();
     namespaceUuid = UUID.randomUUID();
+  }
+
+  @Test
+  void receiptLockRequiresCallerOwnedWritableTransactionThroughRepositoryProxy() {
+    UUID absentActor = UUID.randomUUID();
+    assertThatThrownBy(
+            () ->
+                characterRepository.lockCurrentPreseededActorAssignmentReceipt(
+                    assignmentUuid, accountUuid, absentActor, "a".repeat(64)))
+        .isInstanceOf(IllegalTransactionStateException.class);
+
+    TransactionTemplate writable = new TransactionTemplate(transactionManager);
+    Optional<PreseededActorAssignmentReceipt> absentReceipt =
+        writable.execute(
+            ignored ->
+                characterRepository.lockCurrentPreseededActorAssignmentReceipt(
+                    assignmentUuid, accountUuid, absentActor, "a".repeat(64)));
+    assertThat(absentReceipt).isEmpty();
+
+    TransactionTemplate readOnly = new TransactionTemplate(transactionManager);
+    readOnly.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                readOnly.execute(
+                    ignored ->
+                        characterRepository.lockCurrentPreseededActorAssignmentReceipt(
+                            assignmentUuid, accountUuid, absentActor, "a".repeat(64))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("writable hold transaction");
   }
 
   @Test

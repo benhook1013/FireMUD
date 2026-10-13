@@ -45,6 +45,34 @@ class RunOwnedPreseededActorAssignmentCapabilityTest {
   }
 
   @Test
+  void grantDigestUsesCanonicalShortScopeTextForBothScopes() {
+    assertThat(PreseededActorAssignmentGrantIntentDigest.compute(request()))
+        .isEqualTo("59f2041020ab6231ec26fe838bb70b25df509bfd0fa7f4bc78fe85575a1286b8");
+    PreseededActorAssignmentRequest isolated =
+        request("release-bundle/test", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED);
+    assertThat(PreseededActorAssignmentGrantIntentDigest.compute(isolated))
+        .isEqualTo("89b56ed7c981e381017285ef4916928e2e357413f11cf909fb6e07f848f86b5c");
+    assertThat(parse(validJson(isolated)).matchesRequest(isolated)).isTrue();
+  }
+
+  @Test
+  void permitsFullReleaseReferenceBoundWithoutRelaxingTargetValidation() {
+    for (int length : new int[] {257, 1024}) {
+      PreseededActorAssignmentRequest longReleaseRef =
+          request("r".repeat(length), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+      assertThat(parse(validJson(longReleaseRef)).matchesRequest(longReleaseRef)).isTrue();
+    }
+    assertThatThrownBy(
+            () -> request("r".repeat(1025), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertInvalid(
+        validJson()
+            .replace(
+                "\"publishedReleaseBundleRef\": \"release-bundle/test\"",
+                "\"publishedReleaseBundleRef\": \"" + "r".repeat(1025) + "\""));
+  }
+
+  @Test
   void rejectsUnknownDuplicateAndChangedIntentFields() {
     assertInvalid(
         validJson()
@@ -247,6 +275,11 @@ class RunOwnedPreseededActorAssignmentCapabilityTest {
   }
 
   private static PreseededActorAssignmentRequest request() {
+    return request("release-bundle/test", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+  }
+
+  private static PreseededActorAssignmentRequest request(
+      String releaseRef, PlayableStateScope scope) {
     return new PreseededActorAssignmentRequest(
         ASSIGNMENT_UUID,
         ACCOUNT_UUID,
@@ -261,8 +294,8 @@ class RunOwnedPreseededActorAssignmentCapabilityTest {
             UUID.fromString("17000000-0000-4000-8000-000000000017"),
             "2".repeat(64),
             NAMESPACE_UUID,
-            "release-bundle/test",
-            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+            releaseRef,
+            scope));
   }
 
   private static PreseededActorAssignmentOwnerEvidence ownerEvidence() {
@@ -292,7 +325,10 @@ class RunOwnedPreseededActorAssignmentCapabilityTest {
   }
 
   private static String validJson() {
-    PreseededActorAssignmentRequest request = request();
+    return validJson(request());
+  }
+
+  private static String validJson(PreseededActorAssignmentRequest request) {
     PreseededActorAssignmentExpectedTarget target = request.expectedTarget();
     return String.join(
             "%n",

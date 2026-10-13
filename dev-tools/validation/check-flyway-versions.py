@@ -251,6 +251,19 @@ def run_self_test() -> None:
             if event_base_ref(str(event_path)) != expected:
                 raise AssertionError(f"unexpected event base for {event}")
 
+        # CI passes push metadata through the environment; the explicit option
+        # must handle the same unborn-branch sentinel without reading Git history.
+        for explicit in (False, True):
+            environment = dict(os.environ)
+            environment.pop("GITHUB_EVENT_PATH", None)
+            environment["FIREMUD_FLYWAY_BASE_REF"] = "0" * 40
+            command = [sys.executable, str(Path(__file__).resolve()), "--root", tmp]
+            if explicit:
+                command.extend(["--base-ref", "0" * 40])
+            result = subprocess.run(command, env=environment, capture_output=True, text=True)
+            if result.returncode or "Parent frontier comparison" not in result.stdout:
+                raise AssertionError(f"unborn explicit={explicit}: {result.stdout} {result.stderr}")
+
     print("Flyway migration sanity checker self-test passed.")
 
 
@@ -285,6 +298,9 @@ def main() -> int:
     root = args.root.resolve()
     try:
         base_ref = args.base_ref or event_base_ref(os.environ.get("GITHUB_EVENT_PATH"))
+        # All input paths use GitHub's all-zero sentinel for a new branch.
+        if base_ref == "0" * 40:
+            base_ref = None
         parent = parent_snapshot(root, base_ref) if base_ref else None
         issues, project_count, file_count = collect_issues(current_snapshot(root), parent)
     except (ValueError, OSError, TypeError) as error:

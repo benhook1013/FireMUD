@@ -38,6 +38,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -67,6 +69,7 @@ class CanonicalGameplayRosterIntegrationTest {
 
   @Autowired private CharacterRepository characterRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private PlatformTransactionManager transactionManager;
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   private UUID accountUuid;
@@ -297,6 +300,51 @@ class CanonicalGameplayRosterIntegrationTest {
           .isEqualTo(1);
     } finally {
       start.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void differentAccountRosterCaptureCanFinishWhileAnotherReaderHoldsItsTransaction()
+      throws Exception {
+    CanonicalGameplayRosterTarget exactTarget = target(namespaceUuid, UUID.randomUUID());
+    UUID otherAccountUuid = UUID.randomUUID();
+    createPersistedActor(accountUuid, exactTarget, 71L, "First Actor");
+    createPersistedActor(otherAccountUuid, exactTarget, 72L, "Second Actor");
+    CountDownLatch firstRead = new CountDownLatch(1);
+    CountDownLatch releaseFirst = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<CanonicalGameplayRosterSnapshot> first =
+          executor.submit(
+              () ->
+                  new TransactionTemplate(transactionManager)
+                      .execute(
+                          ignored -> {
+                            CanonicalGameplayRosterSnapshot snapshot =
+                                readRoster(accountUuid, exactTarget);
+                            firstRead.countDown();
+                            try {
+                              if (!releaseFirst.await(10, TimeUnit.SECONDS)) {
+                                throw new IllegalStateException(
+                                    "First roster transaction was not released");
+                              }
+                            } catch (InterruptedException interrupted) {
+                              Thread.currentThread().interrupt();
+                              throw new IllegalStateException(interrupted);
+                            }
+                            return snapshot;
+                          }));
+      assertThat(firstRead.await(10, TimeUnit.SECONDS)).isTrue();
+
+      Future<CanonicalGameplayRosterSnapshot> second =
+          executor.submit(() -> readRoster(otherAccountUuid, exactTarget));
+      CanonicalGameplayRosterSnapshot secondResult = second.get(5, TimeUnit.SECONDS);
+      assertThat(secondResult.actors()).hasSize(1);
+      releaseFirst.countDown();
+      assertThat(first.get(10, TimeUnit.SECONDS).actors()).hasSize(1);
+    } finally {
+      releaseFirst.countDown();
       executor.shutdownNow();
     }
   }

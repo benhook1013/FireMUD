@@ -901,21 +901,255 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
         .isFalse();
   }
 
+  @Test
+  void acquisitionRejectsUnsettleableHoldRequestAndSourceSnapshotBounds() throws Exception {
+    Fixture fixture = fixture();
+    byte[] oversizedHold =
+        bytes(new String(fixture.hold(), StandardCharsets.UTF_8) + " ".repeat(65537));
+    Map<String, Object> oversizedHoldRequest =
+        tools.jackson.databind.json.JsonMapper.builder()
+            .build()
+            .readValue(fixture.request(), new tools.jackson.core.type.TypeReference<>() {});
+    oversizedHoldRequest.put("worldAdmissionHoldIdentityBytesBase64", base64(oversizedHold));
+    assertDatabaseGuardFailure(
+        () ->
+            fixture
+                .transaction()
+                .executeWithoutResult(
+                    status ->
+                        insertProtection(fixture, 11L, oversizedHold, json(oversizedHoldRequest))),
+        "23514");
+    assertDatabaseGuardFailure(
+        () ->
+            fixture
+                .transaction()
+                .executeWithoutResult(
+                    status ->
+                        insertProtection(
+                            fixture,
+                            11L,
+                            fixture.hold(),
+                            bytes(
+                                new String(fixture.request(), StandardCharsets.UTF_8)
+                                    + " ".repeat(786433)))),
+        "23514");
+
+    for (List<String> vector :
+        List.of(
+            List.<String>of(),
+            java.util.Collections.nCopies(257, base64(fixture.source().canonicalBytes())),
+            List.of(base64(new byte[131073])),
+            List.of(base64(fixture.source().canonicalBytes()) + "\n"))) {
+      replaceSnapshot(
+          fixture,
+          json(
+              Map.of(
+                  "schema",
+                  "account-start-session-authority-snapshot/v1",
+                  "controlPlaneRequestId",
+                  fixture.requestId(),
+                  "sourceVector",
+                  vector)));
+      assertDatabaseGuardFailure(() -> acquire(fixture), "23514");
+    }
+    assertDatabaseGuardFailure(
+        () ->
+            replaceSnapshot(
+                fixture,
+                bytes(
+                    new String(
+                            json(
+                                Map.of(
+                                    "schema",
+                                    "account-start-session-authority-snapshot/v1",
+                                    "controlPlaneRequestId",
+                                    fixture.requestId(),
+                                    "sourceVector",
+                                    List.of(base64(fixture.source().canonicalBytes())))),
+                            StandardCharsets.UTF_8)
+                        + " ".repeat(245761))),
+        "23514");
+  }
+
+  @Test
+  void acquisitionAccepts256CompleteSourcesAndRejects257CompleteSources() {
+    for (int sourceCount : List.of(256, 257)) {
+      Fixture fixture = fixture();
+      var sources = new java.util.ArrayList<SourceEvidence>();
+      sources.add(fixture.source());
+      for (int index = 1; index < sourceCount; index++) {
+        sources.add(
+            new SourceEvidence(
+                SourceKind.HOSTED_TERMS,
+                "bounded-source-" + index,
+                "1",
+                "1",
+                null,
+                null,
+                bytes("captured source")));
+      }
+      sources.sort(java.util.Comparator.comparing(SourceEvidence::key));
+      fixture
+          .transaction()
+          .executeWithoutResult(
+              status -> {
+                fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+                for (SourceEvidence source : sources) {
+                  if (source.key().equals(fixture.source().key())) continue;
+                  fixture
+                      .dsl()
+                      .execute(
+                          "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
+                          source.key());
+                  insert(
+                      fixture.dsl(),
+                      "account_start_session_world_participation_sources",
+                      "participation_id",
+                      fixture.worldId(),
+                      "source_key",
+                      source.key(),
+                      "source_evidence",
+                      source.canonicalBytes());
+                }
+                fixture.dsl().execute("SET LOCAL session_replication_role = origin");
+              });
+      replaceSnapshot(
+          fixture,
+          json(
+              Map.of(
+                  "schema",
+                  "account-start-session-authority-snapshot/v1",
+                  "controlPlaneRequestId",
+                  fixture.requestId(),
+                  "sourceVector",
+                  sources.stream().map(source -> base64(source.canonicalBytes())).toList())));
+      if (sourceCount == 256) {
+        acquire(fixture);
+        assertThat(
+                fixture
+                    .dsl()
+                    .fetchSingle(
+                        "SELECT count(*) FROM account_start_session_admission_protection_sources WHERE protection_id = ?",
+                        fixture.protectionId())
+                    .get(0, Long.class))
+            .isEqualTo(256L);
+      } else {
+        assertDatabaseGuardFailure(() -> acquire(fixture), "23514");
+      }
+    }
+  }
+
+  @Test
+  void acquisitionRequiresCanonicalUtf16OrderForMultipleUnicodeSources() {
+    Fixture fixture = fixture();
+    var supplementary =
+        new SourceEvidence(
+            SourceKind.HOSTED_TERMS,
+            "terms-\uD800\uDC00",
+            "1",
+            "1",
+            null,
+            null,
+            bytes("supplementary"));
+    var bmp =
+        new SourceEvidence(
+            SourceKind.HOSTED_TERMS, "terms-\uE000", "1", "1", null, null, bytes("BMP"));
+    var sources =
+        java.util.stream.Stream.of(fixture.source(), supplementary, bmp)
+            .sorted(java.util.Comparator.comparing(SourceEvidence::key))
+            .toList();
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+              for (SourceEvidence source : List.of(supplementary, bmp)) {
+                fixture
+                    .dsl()
+                    .execute(
+                        "INSERT INTO account_draft_authorization_source_locks(source_key) VALUES (?)",
+                        source.key());
+                insert(
+                    fixture.dsl(),
+                    "account_start_session_world_participation_sources",
+                    "participation_id",
+                    fixture.worldId(),
+                    "source_key",
+                    source.key(),
+                    "source_evidence",
+                    source.canonicalBytes());
+              }
+              fixture.dsl().execute("SET LOCAL session_replication_role = origin");
+            });
+    var reversed = new java.util.ArrayList<>(sources);
+    java.util.Collections.reverse(reversed);
+    replaceSnapshot(
+        fixture,
+        json(
+            Map.of(
+                "schema",
+                "account-start-session-authority-snapshot/v1",
+                "controlPlaneRequestId",
+                fixture.requestId(),
+                "sourceVector",
+                reversed.stream().map(source -> base64(source.canonicalBytes())).toList())));
+    assertDatabaseGuardFailure(() -> acquire(fixture), "23514");
+    replaceSnapshot(
+        fixture,
+        json(
+            Map.of(
+                "schema",
+                "account-start-session-authority-snapshot/v1",
+                "controlPlaneRequestId",
+                fixture.requestId(),
+                "sourceVector",
+                sources.stream().map(source -> base64(source.canonicalBytes())).toList())));
+    acquire(fixture);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT count(*) FROM account_start_session_admission_protection_sources WHERE protection_id = ?",
+                    fixture.protectionId())
+                .get(0, Long.class))
+        .isEqualTo(3L);
+  }
+
+  private static void assertDatabaseGuardFailure(Runnable operation, String expectedSqlState) {
+    assertThatThrownBy(operation::run)
+        .isInstanceOf(RuntimeException.class)
+        .satisfies(failure -> assertDatabaseGuardFailure(failure, "", expectedSqlState));
+  }
+
+  private static void replaceSnapshot(Fixture fixture, byte[] snapshot) {
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+              fixture
+                  .dsl()
+                  .execute(
+                      "UPDATE account_start_session_authority_captures SET canonical_snapshot_bytes = ?, snapshot_sha256 = ? WHERE control_plane_request_id = ?",
+                      snapshot,
+                      hash(snapshot),
+                      fixture.requestId());
+              fixture.dsl().execute("SET LOCAL session_replication_role = origin");
+            });
+  }
+
   private static void acquire(Fixture fixture) {
     fixture
         .transaction()
         .executeWithoutResult(
             status -> {
               insertProtection(fixture, 11L);
-              insert(
-                  fixture.dsl(),
-                  "account_start_session_admission_protection_sources",
-                  "protection_id",
-                  fixture.protectionId(),
-                  "source_key",
-                  fixture.source().key(),
-                  "source_evidence",
-                  fixture.source().canonicalBytes());
+              fixture
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_start_session_admission_protection_sources(protection_id, source_key, source_evidence) SELECT ?, source_key, source_evidence FROM account_start_session_world_participation_sources WHERE participation_id = ?",
+                      fixture.protectionId(),
+                      fixture.worldId());
             });
   }
 

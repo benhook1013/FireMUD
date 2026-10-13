@@ -44,6 +44,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
@@ -705,7 +706,7 @@ public class CharacterRepository {
    * Callers use this only inside the same writable transaction that records an applicability hold,
    * so actor changes either win first and invalidate the receipt or observe the durable hold.
    */
-  @Transactional
+  @Transactional(propagation = Propagation.MANDATORY)
   public Optional<PreseededActorAssignmentReceipt> lockCurrentPreseededActorAssignmentReceipt(
       UUID assignmentUuid, UUID canonicalAccountUuid, UUID characterUuid, String intentDigest) {
     if (!org.springframework.transaction.support.TransactionSynchronizationManager
@@ -806,11 +807,7 @@ public class CharacterRepository {
   }
 
   private long requireEntityTenantRow(UUID tenantUuid) {
-    dsl.insertInto(TENANT_IDENTITIES)
-        .set(CANONICAL_TENANT_UUID, tenantUuid)
-        .onConflict(CANONICAL_TENANT_UUID)
-        .doNothing()
-        .execute();
+    ensureEntityTenantRow(tenantUuid);
     Long rowId =
         dsl.select(ENTITY_TENANT_ROW_ID)
             .from(TENANT_IDENTITIES)
@@ -821,6 +818,30 @@ public class CharacterRepository {
       throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ENTITY_TENANT_MAPPING_UNAVAILABLE");
     }
     return rowId;
+  }
+
+  private long requireEntityTenantRowForRoster(UUID tenantUuid) {
+    ensureEntityTenantRow(tenantUuid);
+    // Assignment's FOR UPDATE still excludes this reader while the immutable mapping stays stable.
+    Long rowId =
+        dsl.select(ENTITY_TENANT_ROW_ID)
+            .from(TENANT_IDENTITIES)
+            .where(CANONICAL_TENANT_UUID.eq(tenantUuid))
+            .forKeyShare()
+            .fetchOne(ENTITY_TENANT_ROW_ID);
+    if (rowId == null || rowId <= 0L) {
+      throw new IllegalStateException(
+          "CANONICAL_GAMEPLAY_ROSTER_ENTITY_TENANT_MAPPING_UNAVAILABLE");
+    }
+    return rowId;
+  }
+
+  private void ensureEntityTenantRow(UUID tenantUuid) {
+    dsl.insertInto(TENANT_IDENTITIES)
+        .set(CANONICAL_TENANT_UUID, tenantUuid)
+        .onConflict(CANONICAL_TENANT_UUID)
+        .doNothing()
+        .execute();
   }
 
   private boolean hasOwnerResolvedAccountNamespace(PreseededActorAssignmentOwnerEvidence evidence) {
@@ -945,7 +966,7 @@ public class CharacterRepository {
 
     CanonicalGameplayRosterTarget target = ownerEvidence.target();
     lockCanonicalRosterNamespace(target);
-    requireEntityTenantRow(target.tenantUuid());
+    requireEntityTenantRowForRoster(target.tenantUuid());
 
     List<CanonicalGameplayRosterActor> currentActors =
         readCurrentCanonicalRoster(request.canonicalAccountUuid(), target);
@@ -1075,6 +1096,7 @@ public class CharacterRepository {
         .doNothing()
         .execute();
 
+    // Assignment takes FOR UPDATE on this row before actor insertion.
     String enrolledScope =
         dsl.select(ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_SCOPE)
             .from(ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES)
@@ -1085,7 +1107,7 @@ public class CharacterRepository {
                     .and(
                         ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_NAMESPACE_ID.eq(
                             target.playableStateNamespaceId())))
-            .forUpdate()
+            .forShare()
             .fetchOne(ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_SCOPE);
     if (!target.playableStateScope().name().equals(enrolledScope)) {
       throw new IllegalStateException("CANONICAL_GAMEPLAY_ROSTER_NAMESPACE_SCOPE_MISMATCH");
