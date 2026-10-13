@@ -252,7 +252,7 @@ public final class GameDesignSourceRepository {
       new GameDesignReviewedBaseRepository(dsl)
           .requireRetained(operation.account().input().selection().selectedCommit());
     }
-    if (command.isEmpty() || policy.isEmpty() || asset.isEmpty() && !historical) {
+    if (command.isEmpty() || policy.isEmpty() || (asset.isEmpty() && !historical)) {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
     }
     return Optional.of(new Capture(command.orElseThrow(), policy.orElseThrow(), asset));

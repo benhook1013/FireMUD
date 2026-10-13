@@ -147,6 +147,7 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     source.setSchema(schema);
+    var expectedMigrations = migrationExpectations(source, schema);
     flyway(source, schema, null).migrate();
     flyway(source, schema, null).validate();
     var dsl = DSL.using(source, SQLDialect.POSTGRES);
@@ -154,12 +155,12 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
             dsl.fetchSingle(
                     "SELECT count(*) FROM flyway_schema_history_game_design_service WHERE version IS NOT NULL AND success")
                 .get(0, Long.class))
-        .isEqualTo(85L);
+        .isEqualTo((long) expectedMigrations.versionedCount());
     assertThat(
             dsl.fetchSingle(
                     "SELECT max(version::int) FROM flyway_schema_history_game_design_service WHERE version ~ '^[0-9]+$'")
                 .get(0, Integer.class))
-        .isEqualTo(1025);
+        .isEqualTo(expectedMigrations.highestIntegerVersion());
     assertEnabledGuards(dsl, schema);
   }
 
@@ -188,6 +189,7 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
             .getValues(0, String.class);
     assertThat(history).hasSize(62);
     var rows = retainedRows(fixture);
+    var expectedMigrations = migrationExpectations(fixture.source(), fixture.schema());
 
     // The service's actual startup locations and default ordering must upgrade this parent.
     flyway(fixture.source(), fixture.schema(), null).migrate();
@@ -206,7 +208,7 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
                 .fetchSingle(
                     "SELECT count(*) FROM flyway_schema_history_game_design_service WHERE version IS NOT NULL AND success")
                 .get(0, Long.class))
-        .isEqualTo(85L);
+        .isEqualTo((long) expectedMigrations.versionedCount());
     assertThat(retainedRows(fixture)).isEqualTo(rows);
     assertEnabledGuards(fixture);
   }
@@ -222,6 +224,7 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
     var migrationHistory = predecessorChecksums(fixture);
     assertThat(migrationHistory).hasSize(59);
     var beforeRead = fixture.operations().read(operation.workflowId()).orElseThrow();
+    var expectedMigrations = migrationExpectations(fixture.source(), fixture.schema());
     assertThatThrownBy(operation::inventory)
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("HISTORICAL_PUBLICATION_INVENTORY_UNAVAILABLE");
@@ -235,7 +238,7 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
                 .fetchSingle(
                     "SELECT count(*) FROM flyway_schema_history_game_design_service WHERE version IS NOT NULL AND success")
                 .get(0, Long.class))
-        .isEqualTo(85L);
+        .isEqualTo((long) expectedMigrations.versionedCount());
     assertThat(retainedRows(fixture)).isEqualTo(rows);
     assertThat(GameDesignPublicationOperation.fromStored(original).canonicalBytes())
         .containsExactly(original);
@@ -325,6 +328,7 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
     assertThat(beforeRead.canonicalBytes()).containsExactly(originalBytes);
     assertThat(beforeRead.digest()).isEqualTo(originalDigest);
     var parentChecksums = predecessorChecksums(fixture);
+    var expectedMigrations = migrationExpectations(fixture.source(), fixture.schema());
 
     upgrade(fixture);
 
@@ -334,14 +338,14 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
                 .fetchSingle(
                     "SELECT max(version::int) FROM flyway_schema_history_game_design_service WHERE version ~ '^[0-9]+$'")
                 .get(0, Integer.class))
-        .isEqualTo(1025);
+        .isEqualTo(expectedMigrations.highestIntegerVersion());
     assertThat(
             fixture
                 .dsl()
                 .fetchSingle(
                     "SELECT count(*) FROM flyway_schema_history_game_design_service WHERE version IS NOT NULL AND success")
                 .get(0, Long.class))
-        .isEqualTo(85L);
+        .isEqualTo((long) expectedMigrations.versionedCount());
     assertThat(predecessorChecksums(fixture)).isEqualTo(parentChecksums);
     assertThat(reviewedBaseRow(fixture, binding)).isEqualTo(beforeRow);
     var retained = new GameDesignReviewedBaseRepository(fixture.dsl()).read(binding).orElseThrow();
@@ -957,6 +961,22 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
     return builder.load();
   }
 
+  private MigrationExpectations migrationExpectations(
+      DriverManagerDataSource source, String schema) {
+    var versionedMigrations =
+        Arrays.stream(flyway(source, schema, null).info().all())
+            .filter(migration -> migration.getVersion() != null)
+            .toList();
+    int highestIntegerVersion =
+        versionedMigrations.stream()
+            .map(migration -> migration.getVersion().getVersion())
+            .filter(version -> version.matches("[0-9]+"))
+            .mapToInt(Integer::parseInt)
+            .max()
+            .orElseThrow();
+    return new MigrationExpectations(versionedMigrations.size(), highestIntegerVersion);
+  }
+
   private void upgrade(Fixture fixture) {
     flyway(fixture.source(), fixture.schema(), null).migrate();
     flyway(fixture.source(), fixture.schema(), null).validate();
@@ -1376,4 +1396,6 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
       TransactionTemplate write,
       GameDesignPublicationOperation operation,
       GameDesignPublicationOperationRepository operations) {}
+
+  private record MigrationExpectations(int versionedCount, int highestIntegerVersion) {}
 }

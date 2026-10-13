@@ -217,6 +217,9 @@ public final class GameDesignReviewedBaseRepository {
       schema = Objects.requireNonNull(schema, "schema");
       if (!isSupportedSchema(schema))
         throw new IllegalArgumentException("Unsupported reviewed-base evidence schema");
+      if (!schema.equals(new DraftAuthorizationFenceBinding.FrameReader(canonicalBytes).text())) {
+        throw new IllegalArgumentException("REVIEWED_BASE_STORED_SCHEMA_CONFLICT");
+      }
       if (!DraftAuthorizationFenceBinding.digest(canonicalBytes).equals(digest)) {
         throw new IllegalArgumentException("REVIEWED_BASE_STORED_DIGEST_CONFLICT");
       }

@@ -51,11 +51,13 @@ class GameDesignPublicationOperationBindingTest {
     assertThatThrownBy(
             () -> GameDesignPublicationOperationBinding.fromStored(trailing.toByteArray()))
         .isInstanceOf(IllegalArgumentException.class);
+    var oversize = prefix(operation, GameDesignPublicationOperationBinding.SCHEMA);
+    oversize.write(
+        new byte[GameDesignPublicationOperationBinding.MAX_OPERATION_BYTES + 1 - oversize.size()]);
     assertThatThrownBy(
-            () ->
-                GameDesignPublicationOperationBinding.fromStored(
-                    new byte[GameDesignPublicationOperationBinding.MAX_OPERATION_BYTES + 1]))
-        .isInstanceOf(IllegalArgumentException.class);
+            () -> GameDesignPublicationOperationBinding.fromStored(oversize.toByteArray()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Complete bounded v2");
   }
 
   @Test

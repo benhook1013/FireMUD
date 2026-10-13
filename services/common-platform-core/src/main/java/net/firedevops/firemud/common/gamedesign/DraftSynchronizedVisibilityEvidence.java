@@ -290,8 +290,10 @@ public final class DraftSynchronizedVisibilityEvidence {
           || !unit.scopeType().equals(epoch.scopeType())
           || !unit.scopeId().equals(epoch.scopeId())
           || !unit.expectedEpoch().equals(epoch.expectedEpoch())
-          || new BigInteger(epoch.resultingEpoch()).compareTo(new BigInteger(epoch.expectedEpoch()))
-              <= 0) {
+          || !new BigInteger(epoch.expectedEpoch())
+              .add(BigInteger.ONE)
+              .toString()
+              .equals(epoch.resultingEpoch())) {
         throw new IllegalArgumentException(
             "Applied owner tuple differs from the complete bound epoch declaration");
       }
