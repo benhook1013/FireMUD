@@ -19,12 +19,18 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 class CanonicalGameplayRosterSelectedAssignmentServiceTest {
   @Test
   void resolvesCurrentTargetThenReturnsOnlyTheExactHistoricalAssignmentReference() {
+    assertResolvesCurrentTarget(target());
+    assertResolvesCurrentTarget(
+        withScope(target(), PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED));
+  }
+
+  private static void assertResolvesCurrentTarget(CanonicalGameplayRosterTarget target) {
     CanonicalGameplayRosterOwnerEvidencePort ownerPort =
         mock(CanonicalGameplayRosterOwnerEvidencePort.class);
     CharacterRepository repository = mock(CharacterRepository.class);
     CanonicalGameplayRosterSelectedAssignmentService service =
         new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);
-    CanonicalGameplayRosterSelectedAssignmentReadRequest request = request(target());
+    CanonicalGameplayRosterSelectedAssignmentReadRequest request = request(target);
     CanonicalGameplayRosterReadRequest ownerRequest =
         new CanonicalGameplayRosterReadRequest(
             request.requestUuid(),
@@ -120,8 +126,24 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
         evidence(
             ownerRequest,
             withScope(request.expectedTarget(), PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)),
-        UnsupportedOperationException.class,
-        "SELECTED_PRESEEDED_ASSIGNMENT_TARGET_UNSUPPORTED");
+        IllegalStateException.class,
+        "SELECTED_PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH");
+    CanonicalGameplayRosterSelectedAssignmentReadRequest isolatedRequest =
+        request(withScope(target(), PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED));
+    CanonicalGameplayRosterReadRequest isolatedOwnerRequest =
+        new CanonicalGameplayRosterReadRequest(
+            isolatedRequest.requestUuid(),
+            isolatedRequest.canonicalAccountUuid(),
+            isolatedRequest.expectedTarget(),
+            isolatedRequest.playerExecutionContext());
+    assertOwnerMismatchBeforeRepository(
+        isolatedRequest,
+        evidence(
+            isolatedOwnerRequest,
+            withScope(
+                isolatedRequest.expectedTarget(), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)),
+        IllegalStateException.class,
+        "SELECTED_PRESEEDED_ASSIGNMENT_OWNER_TARGET_MISMATCH");
     assertOwnerMismatchBeforeRepository(
         request,
         evidence(ownerRequest, withCatalogRevision(request.expectedTarget(), 4L)),
@@ -130,7 +152,7 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
   }
 
   @Test
-  void unsupportedCallerPolicyAndScopeFailBeforeOwnerResolution() {
+  void unsupportedCallerPolicyFailsBeforeOwnerResolution() {
     CanonicalGameplayRosterOwnerEvidencePort ownerPort =
         mock(CanonicalGameplayRosterOwnerEvidencePort.class);
     CharacterRepository repository = mock(CharacterRepository.class);
@@ -143,12 +165,6 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
                     request(
                         withPolicy(target(), CanonicalGameplayRosterEntryPolicy.AUTO_PROVISIONED))))
         .isInstanceOf(UnsupportedOperationException.class);
-    assertThatThrownBy(
-            () ->
-                service.read(
-                    request(withScope(target(), PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))))
-        .isInstanceOf(UnsupportedOperationException.class);
-
     verifyNoInteractions(ownerPort, repository);
   }
 
@@ -211,6 +227,43 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
     assertThatThrownBy(() -> service.read(request))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("SELECTED_PRESEEDED_ASSIGNMENT_UNAVAILABLE");
+  }
+
+  @Test
+  void isolatedSelectionRejectsSharedAssignmentReceipt() {
+    CanonicalGameplayRosterOwnerEvidencePort ownerPort =
+        mock(CanonicalGameplayRosterOwnerEvidencePort.class);
+    CharacterRepository repository = mock(CharacterRepository.class);
+    CanonicalGameplayRosterSelectedAssignmentService service =
+        new CanonicalGameplayRosterSelectedAssignmentService(ownerPort, repository);
+    CanonicalGameplayRosterSelectedAssignmentReadRequest request =
+        request(withScope(target(), PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED));
+    CanonicalGameplayRosterReadRequest ownerRequest =
+        new CanonicalGameplayRosterReadRequest(
+            request.requestUuid(),
+            request.canonicalAccountUuid(),
+            request.expectedTarget(),
+            request.playerExecutionContext());
+    PreseededActorAssignmentExpectedTarget isolatedTarget =
+        assignmentTarget(request.expectedTarget());
+    PreseededActorAssignmentExpectedTarget sharedTarget =
+        assignmentTarget(
+            withScope(request.expectedTarget(), PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+    when(ownerPort.resolveCurrentTarget(ownerRequest))
+        .thenReturn(evidence(ownerRequest, request.expectedTarget()));
+    when(repository.readCurrentCanonicalGameplayRosterSnapshot(
+            request.canonicalAccountUuid(), request.expectedTarget(), request.expectedSnapshot()))
+        .thenReturn(snapshot(request));
+    when(repository.readSelectedPreseededActorAssignmentReceipt(
+            request.canonicalAccountUuid(),
+            request.selectedCharacterUuid(),
+            isolatedTarget,
+            request.expectedTarget().publishedOwnerProofDigest()))
+        .thenReturn(Optional.of(receipt(request, sharedTarget)));
+
+    assertThatThrownBy(() -> service.read(request))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("SELECTED_PRESEEDED_ASSIGNMENT_RECEIPT_MISMATCH");
   }
 
   @Test

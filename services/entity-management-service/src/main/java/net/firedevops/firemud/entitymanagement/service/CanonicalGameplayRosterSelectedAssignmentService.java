@@ -2,7 +2,6 @@ package net.firedevops.firemud.entitymanagement.service;
 
 import java.util.Objects;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Non-admitting read of the exact committed assignment for a selected PRESEEDED actor. */
@@ -93,8 +92,7 @@ public final class CanonicalGameplayRosterSelectedAssignmentService {
   }
 
   private static void requireSupportedTarget(CanonicalGameplayRosterTarget target) {
-    if (target.entryPolicy() != CanonicalGameplayRosterEntryPolicy.PRESEEDED_ONLY
-        || target.playableStateScope() != PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED) {
+    if (target.entryPolicy() != CanonicalGameplayRosterEntryPolicy.PRESEEDED_ONLY) {
       throw new UnsupportedOperationException("SELECTED_PRESEEDED_ASSIGNMENT_TARGET_UNSUPPORTED");
     }
   }
