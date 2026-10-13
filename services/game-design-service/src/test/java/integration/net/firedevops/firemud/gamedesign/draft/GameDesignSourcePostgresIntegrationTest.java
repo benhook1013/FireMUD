@@ -33,6 +33,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -139,6 +140,84 @@ class GameDesignSourcePostgresIntegrationTest {
                 .items())
         .isEmpty();
     assertThat(fixture.dsl().fetchCount(DSL.table("version_asset"))).isZero();
+  }
+
+  @Test
+  void ordinaryAssetSourceRowsRejectChangesAndPreserveTheSynchronizedSnapshot() throws Exception {
+    Fixture fixture = fixture();
+    var genesis = fixture.sources().readGenesis(fixture.target()).orElseThrow();
+    byte[] originalBytes = {0, 1, (byte) 0xff};
+    long assetId =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "INSERT INTO game_assets (tenant_id, file_name, content_type, data) "
+                    + "VALUES (?, 'logo.bin', 'application/octet-stream', ?) RETURNING id",
+                fixture.target().gameDesignVersionTenantKey(),
+                originalBytes)
+            .get(0, Long.class);
+    DraftCommitBinding upsert =
+        assetBinding(
+            fixture.target(),
+            "genesis:" + genesis.policy().receiptId(),
+            "0",
+            AssetSource.upsertPayload(
+                Long.toString(assetId), "logo.bin", AssetSource.Requiredness.REQUIRED));
+    synchronize(fixture, upsert, apply(fixture, upsert));
+    var snapshot =
+        fixture.sources().readSynchronized(fixture.target(), upsert.commitId()).orElseThrow();
+
+    assertAssetMutationDenied(
+        fixture,
+        upsert,
+        snapshot,
+        () ->
+            fixture
+                .dsl()
+                .execute("UPDATE game_assets SET data = ? WHERE id = ?", new byte[] {3}, assetId));
+    assertAssetMutationDenied(
+        fixture,
+        upsert,
+        snapshot,
+        () ->
+            fixture
+                .dsl()
+                .execute(
+                    "UPDATE game_assets SET content_type = ? WHERE id = ?", "image/png", assetId));
+    assertAssetMutationDenied(
+        fixture,
+        upsert,
+        snapshot,
+        () ->
+            fixture
+                .dsl()
+                .execute(
+                    "UPDATE game_assets SET file_name = ? WHERE id = ?", "renamed.bin", assetId));
+    assertAssetMutationDenied(
+        fixture,
+        upsert,
+        snapshot,
+        () -> fixture.dsl().execute("UPDATE game_assets SET data = NULL WHERE id = ?", assetId));
+  }
+
+  private static void assertAssetMutationDenied(
+      Fixture fixture,
+      DraftCommitBinding binding,
+      GameDesignSourceRepository.SynchronizedSources snapshot,
+      Runnable mutation) {
+    assertThatThrownBy(mutation::run)
+        .rootCause()
+        .isInstanceOf(PSQLException.class)
+        .satisfies(
+            cause -> {
+              PSQLException postgresException = (PSQLException) cause;
+              assertThat(postgresException.getSQLState()).isEqualTo("23514");
+              assertThat(postgresException.getServerErrorMessage().getMessage())
+                  .isEqualTo("ordinary asset source bytes are immutable from source history");
+            });
+    assertThat(
+            fixture.sources().readSynchronized(fixture.target(), binding.commitId()).orElseThrow())
+        .isEqualTo(snapshot);
   }
 
   @Test
