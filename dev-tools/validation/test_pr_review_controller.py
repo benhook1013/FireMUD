@@ -1279,55 +1279,183 @@ class ControllerTests(unittest.TestCase):
                         controller.status()["prs"][0]["review_obligations"]["hosted"], before_obligations
                     )
 
-    def test_hosted_period_reset_still_refuses_uncertain_target_refs_and_target_unreconciled(self):
+    def test_hosted_period_reset_allows_mergeability_or_ancestry_holds_with_exact_refs(self):
         for baseline_mode in ("checkpoint", "current_history"):
-            for problem in (
-                "missing-head-ref", "missing-head-branch", "moved-head", "missing-base", "moved-base",
-                "wrong-repository", "unknown-repository", "target-conflicting", "target-unknown-mergeability",
-            ):
-                with self.subTest(baseline_mode=baseline_mode, problem=problem):
-                    controller, provider, retained = self.parent_moved_period_reset_controller("hosted")
-                    provider.backing[(2, "hosted")].append(self.scope_timeline_evidence(2, head=HEAD_3))
-                    item = controller.github.values[2]
-                    if problem == "missing-head-ref":
-                        controller.github.values[2] = dataclasses.replace(item, head_ref="")
-                    elif problem == "missing-head-branch":
-                        controller.git.heads.pop("feature-2")
-                    elif problem == "moved-head":
-                        controller.git.heads["feature-2"] = HEAD_1
-                    elif problem == "missing-base":
-                        controller.git.heads.pop("feature-1")
-                    elif problem == "moved-base":
-                        controller.git.heads["feature-1"] = HEAD_1
-                    elif problem in {"wrong-repository", "unknown-repository"}:
-                        controller.github.values[2] = dataclasses.replace(
-                            item, head_repository="other/repo" if problem == "wrong-repository" else None
-                        )
-                    else:
-                        controller.github.values[2] = dataclasses.replace(
-                            item, mergeable="CONFLICTING" if problem == "target-conflicting" else "UNKNOWN"
-                        )
-                        provider.backing[(2, "hosted")][0] = dict(retained, parent_head=HEAD_1)
+            for hold in ("CONFLICTING", "UNKNOWN", "ancestry"):
+                with self.subTest(baseline_mode=baseline_mode, hold=hold):
+                    target, head = (2, HEAD_2) if hold == "ancestry" else (1, HEAD_1)
+                    retained = self.allocation_evidence(
+                        number=target, head=head, accepted=1,
+                        checkpoint="held-target-checkpoint", source_run_id="held-target-result", channel="hosted",
+                        parent_identity="1" if hold == "ancestry" else "develop",
+                        parent_head=HEAD_1 if hold == "ancestry" else BASE,
+                    )
+                    provider = AuditedEvidence({
+                        (target, "hosted"): [retained, self.scope_timeline_evidence(target, head=head)]
+                    })
+                    values = (
+                        {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
+                        if hold == "ancestry" else {1: pr(1, HEAD_1, mergeable=hold)}
+                    )
+                    controller = self.make(
+                        values, provider, heads={"feature-1": HEAD_1, "feature-2": HEAD_2, "develop": BASE},
+                    )
+                    controller.set_stack(list(values))
+                    if hold == "ancestry":
+                        controller.git.is_ancestor = lambda ancestor, descendant: (ancestor, descendant) != (HEAD_1, HEAD_2)
                     baseline = (
                         {"checkpoint": retained["checkpoint"]}
                         if baseline_mode == "checkpoint"
-                        else {"current_history_baseline": True, "baseline_id": "uncertain-target-reset"}
+                        else {"current_history_baseline": True, "baseline_id": "held-target-reset"}
+                    )
+                    before_state = controller._state()
+                    before_history = copy.deepcopy(provider.backing)
+                    before = controller.status()
+                    live, reconciliation = controller._reconciliation(before_state, evidence_prs={target})
+                    self.assertEqual(reconciliation.status_for(target, "hosted"), stack.ReconciliationStatus.UNRECONCILED)
+                    self.assertEqual(live[target].head, controller.git.heads[live[target].head_ref])
+                    self.assertEqual(live[target].base_tip, controller.git.heads[live[target].base_ref])
+
+                    result = controller.decide_period_reset(
+                        pr=target, channel="hosted", head=head, **baseline,
+                        actor="operator@example.invalid", reason="reset counters while target readiness remains held",
+                    )
+
+                    self.assertEqual(result["status"], "recorded")
+                    after_state = controller._state()
+                    self.assertEqual(
+                        dataclasses.replace(after_state, review_period_decisions=before_state.review_period_decisions),
+                        before_state,
+                    )
+                    self.assertEqual(provider.backing, before_history)
+                    after = controller.status()
+                    self.assertEqual(after["review_targets"]["hosted"], before["review_targets"]["hosted"])
+                    self.assertEqual(after["prs"][target - 1]["reconciliation"], "UNRECONCILED")
+                    self.assertEqual(
+                        after["prs"][target - 1]["review_obligations"]["hosted"],
+                        before["prs"][target - 1]["review_obligations"]["hosted"],
+                    )
+
+    def test_hosted_period_reset_with_mergeability_hold_still_refuses_uncertain_baselines(self):
+        for mergeable in ("CONFLICTING", "UNKNOWN"):
+            for problem in ("missing-checkpoint", "ambiguous-checkpoint", "malformed-anchor", "unattributable",
+                            "incomplete-history", "conflicting-source"):
+                with self.subTest(mergeable=mergeable, problem=problem):
+                    retained = self.allocation_evidence(
+                        checkpoint="held-target-checkpoint", source_run_id="held-target-result", channel="hosted",
+                    )
+                    history = [retained, self.scope_timeline_evidence()]
+                    if problem == "missing-checkpoint":
+                        history.pop(0)
+                    elif problem == "ambiguous-checkpoint":
+                        history.append(dict(retained, source_run_id="another-result"))
+                    elif problem == "malformed-anchor":
+                        retained["parent_head"] = "malformed-sha"
+                    elif problem == "unattributable":
+                        retained["attributable"] = False
+                    elif problem == "incomplete-history":
+                        history[-1]["scope_timeline_complete"] = False
+                    else:
+                        history.append(dict(retained, checkpoint="other-checkpoint", accepted=1))
+                    controller = self.make(
+                        {1: pr(1, HEAD_1, mergeable=mergeable)}, AuditedEvidence({(1, "hosted"): history}),
+                        heads={"feature-1": HEAD_1, "develop": BASE},
+                    )
+                    controller.set_stack([1])
+                    baseline = (
+                        {"current_history_baseline": True, "baseline_id": "uncertain-held-target"}
+                        if problem in {"incomplete-history", "conflicting-source"}
+                        else {"checkpoint": "held-target-checkpoint"}
                     )
                     original = controller._state()
-                    target_mergeability_problem = problem in {"target-conflicting", "target-unknown-mergeability"}
-                    if target_mergeability_problem:
-                        live, reconciliation = controller._reconciliation(original, evidence_prs={2})
-                        self.assertEqual(reconciliation.status_for(2, "hosted"), stack.ReconciliationStatus.PARENT_MOVED)
-                        self.assertEqual(live[2].head, controller.git.heads[live[2].head_ref])
-                        self.assertEqual(live[2].base_tip, controller.git.heads[live[2].base_ref])
-                    with self.assertRaises(ControllerError) as refusal:
+                    with self.assertRaises(ControllerError):
                         controller.decide_period_reset(
-                            pr=2, channel="hosted", head=HEAD_3, **baseline,
-                            actor="operator@example.invalid", reason="uncertain target must remain fenced",
+                            pr=1, channel="hosted", head=HEAD_1, **baseline,
+                            actor="operator@example.invalid", reason="uncertain baseline must remain fenced",
                         )
-                    if target_mergeability_problem:
-                        self.assertIn("exact current head and base refs", str(refusal.exception))
                     self.assertEqual(controller._state(), original)
+
+    def test_hosted_period_reset_still_refuses_uncertain_target_refs(self):
+        for baseline_mode in ("checkpoint", "current_history"):
+            for mergeable in ("MERGEABLE", "CONFLICTING", "UNKNOWN"):
+                for problem in (
+                    "missing-head-ref", "missing-head-branch", "moved-head", "missing-base", "moved-base",
+                    "wrong-repository", "unknown-repository", "unavailable-refs", "malformed-head-tip",
+                    "malformed-base-tip",
+                ):
+                    with self.subTest(baseline_mode=baseline_mode, mergeable=mergeable, problem=problem):
+                        controller, provider, retained = self.parent_moved_period_reset_controller("hosted")
+                        provider.backing[(2, "hosted")].append(self.scope_timeline_evidence(2, head=HEAD_3))
+                        item = dataclasses.replace(controller.github.values[2], mergeable=mergeable)
+                        controller.github.values[2] = item
+                        if problem == "missing-head-ref":
+                            controller.github.values[2] = dataclasses.replace(item, head_ref="")
+                        elif problem == "missing-head-branch":
+                            controller.git.heads.pop("feature-2")
+                        elif problem == "moved-head":
+                            controller.git.heads["feature-2"] = HEAD_1
+                        elif problem == "missing-base":
+                            controller.git.heads.pop("feature-1")
+                        elif problem == "moved-base":
+                            controller.git.heads["feature-1"] = HEAD_1
+                        elif problem in {"wrong-repository", "unknown-repository"}:
+                            controller.github.values[2] = dataclasses.replace(
+                                item, head_repository="other/repo" if problem == "wrong-repository" else None
+                            )
+                        elif problem == "unavailable-refs":
+                            controller.git.remote_heads = lambda: (_ for _ in ()).throw(
+                                ControllerError("remote refs unavailable")
+                            )
+                        else:
+                            ref = "feature-2" if problem == "malformed-head-tip" else "feature-1"
+                            controller.git.heads[ref] = "ambiguous-tip"
+                        baseline = (
+                            {"checkpoint": retained["checkpoint"]}
+                            if baseline_mode == "checkpoint"
+                            else {"current_history_baseline": True, "baseline_id": "uncertain-target-reset"}
+                        )
+                        original = controller._state()
+                        with self.assertRaises(ControllerError):
+                            controller.decide_period_reset(
+                                pr=2, channel="hosted", head=HEAD_3, **baseline,
+                                actor="operator@example.invalid", reason="uncertain target must remain fenced",
+                            )
+                        self.assertEqual(controller._state(), original)
+
+    def test_cli_period_reset_still_refuses_source_tip_drift_or_absent_actual_base(self):
+        for baseline_mode in ("checkpoint", "current_history"):
+            for problem in ("source-tip-drift", "absent-actual-base"):
+                with self.subTest(baseline_mode=baseline_mode, problem=problem):
+                    retained = self.allocation_evidence(
+                        checkpoint="cli-certain-baseline", source_run_id="cli-baseline-result", channel="cli",
+                    )
+                    provider = AuditedEvidence({
+                        (1, "cli"): [retained, self.scope_timeline_evidence(channel="cli")]
+                    })
+                    item = pr(1, HEAD_1)
+                    heads = {"feature-1": HEAD_1, "develop": BASE}
+                    if problem == "source-tip-drift":
+                        heads["feature-1"] = HEAD_2
+                    else:
+                        item = dataclasses.replace(item, base_ref="absent-base")
+                    controller = self.make({1: item}, provider, heads=heads)
+                    controller.set_stack([1])
+                    baseline = (
+                        {"checkpoint": retained["checkpoint"]}
+                        if baseline_mode == "checkpoint"
+                        else {"current_history_baseline": True, "baseline_id": "cli-uncertain-target"}
+                    )
+                    original = controller._state()
+                    original_history = copy.deepcopy(provider.backing)
+                    _, reconciliation = controller._reconciliation(original, evidence_prs={1})
+                    self.assertEqual(reconciliation.status_for(1, "cli"), stack.ReconciliationStatus.UNRECONCILED)
+                    with self.assertRaisesRegex(ControllerError, "current cli review anchor is UNRECONCILED"):
+                        controller.decide_period_reset(
+                            pr=1, channel="cli", head=HEAD_1, **baseline,
+                            actor="operator@example.invalid", reason="CLI ref uncertainty must remain fenced",
+                        )
+                    self.assertEqual(controller._state(), original)
+                    self.assertEqual(provider.backing, original_history)
 
     def test_hosted_period_reset_rechecks_target_identity_after_snapshot_even_with_held_ancestor(self):
         for baseline_mode in ("checkpoint", "current_history"):

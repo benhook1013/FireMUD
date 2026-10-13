@@ -18,6 +18,8 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.testing.AuthoringFixtures;
+import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -36,8 +38,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Runs V1003 against the actual Account PostgreSQL schema and assembled source-writer guard. The
- * integrity and currentness fixtures seed related owner rows with upstream producer triggers
+ * Runs V1003/V1004 against the actual Account PostgreSQL schema and assembled source-writer guard.
+ * The integrity and currentness fixtures seed related owner rows with upstream producer triggers
  * disabled. Protection acquisition, child completeness, settlement and source-writer guards remain
  * enabled; they prove SQL currentness/exclusion/immutability only, not authenticated
  * activation-protection production.
@@ -51,8 +53,8 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Test
-  void databaseOwnsProtectionIdentityAndPendingProtectionBlocksSourceWriters() throws Exception {
-    Fixture fixture = fixture();
+  void lifecycleUpgradePreservesPendingProtectionAndBlocksInvalidSettlement() throws Exception {
+    Fixture fixture = fixture("1003");
     CurrentnessCase current = currentnessCase(fixture, Instant.now().plusSeconds(10), 135500);
     byte[] requestBinding = current.requestBytes();
     Map<String, Object> request = readJson(requestBinding);
@@ -123,15 +125,62 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                                     sourceKey)))
         .hasMessageContaining("Original StartSession activation protection remains pending");
 
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT to_regprocedure('account_ss_activation_settlement_lifecycle_guard()')::TEXT")
+                .get(0, String.class))
+        .isNull();
+    String retainedHistoryQuery =
+        "SELECT installed_rank || ':' || version || ':' || script || ':' "
+            + "|| checksum || ':' || success FROM flyway_schema_history "
+            + "WHERE version IS NOT NULL AND version <> '1004' ORDER BY installed_rank";
+    var installedHistory = fixture.dsl().fetch(retainedHistoryQuery).getValues(0, String.class);
+    String protectionRowsQuery =
+        "SELECT row_to_json(p)::TEXT FROM "
+            + "account_start_session_activation_protections p ORDER BY activation_protection_id";
+    String sourceRowsQuery =
+        "SELECT row_to_json(s)::TEXT FROM "
+            + "account_start_session_activation_protection_sources s ORDER BY activation_protection_id, source_key";
+    var pendingRows = fixture.dsl().fetch(protectionRowsQuery).getValues(0, String.class);
+    var retainedSources = fixture.dsl().fetch(sourceRowsQuery).getValues(0, String.class);
+    assertThat(pendingRows).hasSize(1);
+    assertThat(retainedSources).hasSize(2);
+
+    Flyway upgrade = activationFlyway(fixture.dataSource(), "latest");
+    assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
+    upgrade.validate();
+    assertThat(fixture.dsl().fetch(retainedHistoryQuery).getValues(0, String.class))
+        .isEqualTo(installedHistory);
+    assertThat(fixture.dsl().fetch(protectionRowsQuery).getValues(0, String.class))
+        .isEqualTo(pendingRows);
+    assertThat(fixture.dsl().fetch(sourceRowsQuery).getValues(0, String.class))
+        .isEqualTo(retainedSources);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT max(version::int) FROM flyway_schema_history WHERE version ~ '^[0-9]+$'")
+                .get(0, Integer.class))
+        .isEqualTo(1004);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT to_regprocedure('account_ss_activation_settlement_lifecycle_guard()')::TEXT")
+                .get(0, String.class))
+        .isNotNull();
+
     fixture
         .dsl()
         .fetch(
             "SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM (?::timestamptz - clock_timestamp()))))",
             current.expiryText());
 
-    // This synthetic SQL receipt proves only that V1003 permits a source writer after an immutable
-    // terminal-shaped row is committed. It is not a typed receipt or authenticated World producer
-    // proof. The original lease has expired before settlement insertion.
+    // This SQL receipt retains a typed closed ACTIVE lifecycle fixture. Upstream owner rows remain
+    // stipulated; this is storage integrity proof, not authenticated World production.
+    // The original lease has expired before settlement insertion.
     OffsetDateTime retainedAcquiredAt = stored.get("acquired_at", OffsetDateTime.class);
     long protectionFence = stored.get("activation_protection_fence", Long.class);
     byte[] accountEvidenceBytes =
@@ -144,6 +193,150 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
             sourceEvidenceBytes);
     byte[] activationResultBytes =
         activationResult(activationRequestId, preparingEvidence, "COMMITTED");
+
+    Map<String, Object> validResult = readJson(activationResultBytes);
+    byte[] activeBytes =
+        Base64.getDecoder().decode((String) validResult.get("lifecycleEvidenceBytesBase64"));
+    java.util.List<String> invalidLifecycleCarriers = new java.util.ArrayList<>();
+    invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(bytes("synthetic ACTIVE")));
+    invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(bytes("{")));
+    invalidLifecycleCarriers.add(
+        Base64.getEncoder().encodeToString(new byte[] {(byte) 0xc3, 0x28}));
+    invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(bytes("null")));
+    String activeJson = new String(activeBytes, StandardCharsets.UTF_8);
+    for (String schemaVersion : new String[] {"1.0", "1e0", "1e+0"}) {
+      byte[] invalidVersion =
+          bytes(activeJson.replace("\"schemaVersion\":1", "\"schemaVersion\":" + schemaVersion));
+      assertThatThrownBy(() -> WorldCanonicalInstanceLifecycleEvidence.fromStored(invalidVersion))
+          .isInstanceOf(IllegalArgumentException.class);
+      invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(invalidVersion));
+    }
+    for (String duplicate :
+        new String[] {
+          activeJson.replace("\"schema\":", "\"schema\":\"wrong/v1\",\"schema\":"),
+          activeJson.replace(
+              "\"lifecycleStatus\":", "\"lifecycleStatus\":\"PREPARING\",\"lifecycleStatus\":"),
+          activeJson.replace("\"schemaVersion\":1", "\"schemaVersion\":0,\"schemaVersion\":1")
+        }) {
+      byte[] duplicateBytes = bytes(duplicate);
+      assertThatThrownBy(() -> WorldCanonicalInstanceLifecycleEvidence.fromStored(duplicateBytes))
+          .isInstanceOf(IllegalArgumentException.class);
+      invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(duplicateBytes));
+    }
+    invalidLifecycleCarriers.add("%%%");
+    invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(activeBytes) + "\n");
+    invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(bytes("[]")));
+    for (String field :
+        new String[] {
+          "schema",
+          "lifecycleStatus",
+          "lifecycleEpoch",
+          "rowVersion",
+          "runtimeRoomInstanceId",
+          "captureId",
+          "graphSha256",
+          "preparationInputDigest",
+          "launchBindingBytesBase64",
+          "startLocation",
+          "operationalRegionAssignments",
+          "request"
+        }) {
+      Map<String, Object> missing = readJson(activeBytes);
+      missing.remove(field);
+      invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(jsonBytes(missing)));
+      Map<String, Object> wrongType = readJson(activeBytes);
+      wrongType.put(field, 1);
+      invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(jsonBytes(wrongType)));
+    }
+    for (Map.Entry<String, Object> change :
+        Map.<String, Object>ofEntries(
+                Map.entry("schema", "wrong/v1"),
+                Map.entry("lifecycleStatus", "PREPARING"),
+                Map.entry("lifecycleEpoch", "0"),
+                Map.entry("rowVersion", "01"),
+                Map.entry("runtimeRoomInstanceId", "9223372036854775808"),
+                Map.entry("captureId", UUID.randomUUID().toString()),
+                Map.entry("graphSha256", "a".repeat(64)),
+                Map.entry("preparationInputDigest", "sha256:" + "a".repeat(64)),
+                Map.entry("launchBindingBytesBase64", "e30="),
+                Map.entry("startLocation", Map.of()),
+                Map.entry("operationalRegionAssignments", Map.of()),
+                Map.entry("extra", true))
+            .entrySet()) {
+      Map<String, Object> changed = readJson(activeBytes);
+      changed.put(change.getKey(), change.getValue());
+      invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(jsonBytes(changed)));
+    }
+    for (String field :
+        new String[] {
+          "canonicalGameInstanceId",
+          "controlPlaneRequestId",
+          "readRequestId",
+          "schemaVersion",
+          "publicProduction",
+          "extra"
+        }) {
+      Map<String, Object> changed = readJson(activeBytes);
+      @SuppressWarnings("unchecked")
+      Map<String, Object> changedLifecycleRequest = (Map<String, Object>) changed.get("request");
+      changedLifecycleRequest.put(
+          field,
+          "canonicalGameInstanceId".equals(field) ? UUID.randomUUID().toString() : "changed");
+      invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(jsonBytes(changed)));
+    }
+    for (String status : new String[] {"FAILED_PRE_ACTIVATION", "TERMINATING", "TERMINATED"}) {
+      Map<String, Object> changed = readJson(activeBytes);
+      changed.put("lifecycleStatus", status);
+      invalidLifecycleCarriers.add(Base64.getEncoder().encodeToString(jsonBytes(changed)));
+    }
+    for (String carrier : invalidLifecycleCarriers) {
+      Map<String, Object> invalidResult = readJson(activationResultBytes);
+      invalidResult.put("lifecycleEvidenceBytesBase64", carrier);
+      assertSettlementInsertRejected(
+          fixture,
+          id,
+          protectionFence,
+          activationRequestId,
+          accountEvidenceBytes,
+          jsonBytes(invalidResult));
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchCount(DSL.table("account_start_session_activation_protection_settlements")))
+          .isZero();
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .transaction()
+                      .executeWithoutResult(
+                          status ->
+                              fixture
+                                  .dsl()
+                                  .execute(
+                                      "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                                      sourceKey)))
+          .hasMessageContaining("Original StartSession activation protection remains pending");
+    }
+
+    Map<String, Object> invalidTerminalCode = readJson(activationResultBytes);
+    invalidTerminalCode.put("terminalCode", "FENCED_ABORT");
+    assertSettlementInsertRejected(
+        fixture,
+        id,
+        protectionFence,
+        activationRequestId,
+        accountEvidenceBytes,
+        jsonBytes(invalidTerminalCode));
+    Map<String, Object> invalidOutcome = readJson(activationResultBytes);
+    invalidOutcome.put("outcome", "ABORTED");
+    invalidOutcome.put("terminalCode", "FENCED_ABORT");
+    assertSettlementInsertRejected(
+        fixture,
+        id,
+        protectionFence,
+        activationRequestId,
+        accountEvidenceBytes,
+        jsonBytes(invalidOutcome));
 
     Map<String, Object> changedCapture = readJson(accountEvidenceBytes);
     byte[] wrongCapture = bytes("substituted capture reference");
@@ -342,6 +535,88 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
         expiredFixture, expired.requestBytes(), expired.operationIdentityBytes());
   }
 
+  @Test
+  void abortedSettlementPreservesTerminalCodeFenceWithoutRequiringActiveLifecycle()
+      throws Exception {
+    Fixture fixture = fixture();
+    CurrentnessCase current = currentnessCase(fixture, Instant.now().plusSeconds(60));
+    acquireProtection(fixture, current);
+    var stored =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT activation_protection_id, activation_protection_fence, acquired_at "
+                    + "FROM account_start_session_activation_protections");
+    UUID id = stored.get("activation_protection_id", UUID.class);
+    long fence = stored.get("activation_protection_fence", Long.class);
+    Map<String, Object> request = readJson(current.requestBytes());
+    UUID activationId = UUID.fromString((String) request.get("worldActivationRequestId"));
+    var sources =
+        fixture
+            .dsl()
+            .fetch(
+                "SELECT source_key, source_evidence FROM "
+                    + "account_start_session_activation_protection_sources "
+                    + "ORDER BY account_publication_authorization_source_sort_key(source_key)");
+    byte[] evidence =
+        accountEvidence(
+            id,
+            fence,
+            stored.get("acquired_at", OffsetDateTime.class),
+            current.requestBytes(),
+            bytes("{}"),
+            sources.stream()
+                .map(row -> row.get("source_evidence", byte[].class))
+                .toArray(byte[][]::new));
+    Map<String, Object> result =
+        readJson(
+            activationResult(
+                activationId,
+                Base64.getDecoder().decode((String) request.get("preparingEvidenceBytesBase64")),
+                "ABORTED"));
+    result.put("lifecycleEvidenceBytesBase64", null);
+    result.put("terminalCode", "");
+    assertSettlementInsertRejected(
+        fixture, id, fence, activationId, evidence, jsonBytes(result), "ABORTED");
+    result.put("terminalCode", null);
+    assertSettlementInsertRejected(
+        fixture, id, fence, activationId, evidence, jsonBytes(result), "ABORTED");
+    result.put("terminalCode", "FENCED_ABORT");
+    byte[] terminal = terminalBytes(id, fence, activationId, evidence, jsonBytes(result));
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status ->
+                insert(
+                    fixture.dsl(),
+                    "account_start_session_activation_protection_settlements",
+                    "activation_protection_id",
+                    id,
+                    "activation_protection_fence",
+                    fence,
+                    "world_activation_request_id",
+                    activationId,
+                    "world_activation_fence",
+                    29L,
+                    "outcome",
+                    "ABORTED",
+                    "account_protection_evidence_bytes",
+                    evidence,
+                    "terminal_bytes",
+                    terminal,
+                    "terminal_digest",
+                    "sha256:" + hash(terminal)));
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                        sources.get(0).get("source_key", String.class)));
+  }
+
   private static void assertSettlementInsertRejected(
       Fixture fixture,
       UUID protectionId,
@@ -349,6 +624,24 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
       UUID activationRequestId,
       byte[] protectionEvidenceBytes,
       byte[] activationResultBytes) {
+    assertSettlementInsertRejected(
+        fixture,
+        protectionId,
+        protectionFence,
+        activationRequestId,
+        protectionEvidenceBytes,
+        activationResultBytes,
+        "COMMITTED");
+  }
+
+  private static void assertSettlementInsertRejected(
+      Fixture fixture,
+      UUID protectionId,
+      long protectionFence,
+      UUID activationRequestId,
+      byte[] protectionEvidenceBytes,
+      byte[] activationResultBytes,
+      String outcome) {
     byte[] terminalBytes =
         terminalBytes(
             protectionId,
@@ -374,7 +667,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                                 "world_activation_fence",
                                 29L,
                                 "outcome",
-                                "COMMITTED",
+                                outcome,
                                 "account_protection_evidence_bytes",
                                 protectionEvidenceBytes,
                                 "terminal_bytes",
@@ -391,7 +684,10 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
               assertThat(postgresFailure)
                   .isInstanceOfSatisfying(
                       org.postgresql.util.PSQLException.class,
-                      sqlFailure -> assertThat(sqlFailure.getSQLState()).isEqualTo("23514"));
+                      sqlFailure ->
+                          assertThat(sqlFailure.getSQLState())
+                              .as(sqlFailure.getMessage())
+                              .isEqualTo("23514"));
             });
   }
 
@@ -425,6 +721,16 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
 
   private static byte[] activationResult(
       UUID activationRequestId, byte[] preparingEvidence, String outcome) throws Exception {
+    Map<String, Object> active = readJson(preparingEvidence);
+    active.put("lifecycleStatus", "ACTIVE");
+    active.put("lifecycleEpoch", "4");
+    active.put("rowVersion", "1");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> activeRequest = (Map<String, Object>) active.get("request");
+    activeRequest.put("readRequestId", UUID.randomUUID().toString());
+    byte[] activeBytes = jsonBytes(active);
+    assertThat(WorldCanonicalInstanceLifecycleEvidence.fromStored(activeBytes).lifecycleStatus())
+        .isEqualTo("ACTIVE");
     Map<String, Object> preparing = readJson(preparingEvidence);
     @SuppressWarnings("unchecked")
     Map<String, Object> lifecycleRequest = (Map<String, Object>) preparing.get("request");
@@ -444,9 +750,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
         "preparingEvidenceBytesBase64", Base64.getEncoder().encodeToString(preparingEvidence));
     result.put("outcome", outcome);
     result.put("terminalCode", "COMMITTED".equals(outcome) ? null : "FENCED_ABORT");
-    result.put(
-        "lifecycleEvidenceBytesBase64",
-        Base64.getEncoder().encodeToString(bytes("synthetic ACTIVE")));
+    result.put("lifecycleEvidenceBytesBase64", Base64.getEncoder().encodeToString(activeBytes));
     return jsonBytes(result);
   }
 
@@ -511,7 +815,10 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
               assertThat(postgresFailure)
                   .isInstanceOfSatisfying(
                       org.postgresql.util.PSQLException.class,
-                      sqlFailure -> assertThat(sqlFailure.getSQLState()).isEqualTo("23514"));
+                      sqlFailure ->
+                          assertThat(sqlFailure.getSQLState())
+                              .as(sqlFailure.getMessage())
+                              .isEqualTo("23514"));
             });
   }
 
@@ -522,8 +829,10 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
 
   private static CurrentnessCase currentnessCase(
       Fixture fixture, Instant originalLease, int padding) throws Exception {
-    UUID tenantId = UUID.randomUUID();
-    UUID gameInstanceId = UUID.randomUUID();
+    WorldCanonicalInstanceLifecycleEvidence lifecycle =
+        AuthoringFixtures.lifecycleEvidence("PREPARING", 3L);
+    UUID tenantId = lifecycle.request().canonicalTenantId();
+    UUID gameInstanceId = lifecycle.request().canonicalGameInstanceId();
     UUID participationId = UUID.randomUUID();
     UUID ownerMutationId = UUID.randomUUID();
     UUID ownerAttemptId = UUID.randomUUID();
@@ -534,7 +843,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     long issuanceFence = 9L;
     long sourceVersion = 13L;
     long sourceFence = 17L;
-    String requestId = "original-activation/" + UUID.randomUUID();
+    String requestId = lifecycle.request().controlPlaneRequestId();
     String fingerprint = "arfp/v1/activation-test/" + "a".repeat(64);
     OffsetDateTime dbNow =
         fixture.dsl().fetchSingle("SELECT clock_timestamp()").get(0, OffsetDateTime.class);
@@ -617,22 +926,19 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     String preparationDigest = "sha256:" + hash(bytes(preparationInput));
 
     byte[] worldPreparing =
-        jsonBytes(
-            Map.of(
-                "schema",
-                "world-canonical-instance-lifecycle-evidence/v1",
-                "request",
-                Map.of(
-                    "controlPlaneRequestId",
-                    requestId,
-                    "targetNamespace",
-                    "test",
-                    "canonicalTenantId",
-                    tenantId.toString(),
-                    "canonicalGameInstanceId",
-                    gameInstanceId.toString()),
-                "lifecycleStatus",
-                "PREPARING"));
+        new WorldCanonicalInstanceLifecycleEvidence(
+                lifecycle.request(),
+                lifecycle.launchBinding(),
+                lifecycle.startLocation(),
+                lifecycle.runtimeRoomInstanceId(),
+                "PREPARING",
+                lifecycle.lifecycleEpoch(),
+                lifecycle.rowVersion(),
+                lifecycle.captureId(),
+                lifecycle.graphSha256(),
+                preparationDigest,
+                lifecycle.operationalRegionAssignments())
+            .canonicalBytes();
     byte[] launchRead = bytes("synthetic exact STARTING read");
     byte[] operationIdentity = bytes("activation operation identity");
     String operationDigest = "sha256:" + hash(operationIdentity);
@@ -971,25 +1277,33 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
   }
 
   private static Fixture fixture() {
+    return fixture("latest");
+  }
+
+  private static Fixture fixture(String target) {
     String schema = "ss_activation_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource source =
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     source.setSchema(schema);
-    Flyway.configure()
-        .dataSource(source)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    activationFlyway(source, target).migrate();
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
     TransactionTemplate transaction =
         new TransactionTemplate(new DataSourceTransactionManager(source));
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     String requestId = "activation-test/" + UUID.randomUUID();
-    return new Fixture(dsl, transaction, requestId);
+    return new Fixture(dsl, transaction, requestId, source);
+  }
+
+  private static Flyway activationFlyway(DriverManagerDataSource source, String target) {
+    return Flyway.configure()
+        .dataSource(source)
+        .schemas(source.getSchema())
+        .defaultSchema(source.getSchema())
+        .placeholders(Map.of("serviceSchema", source.getSchema()))
+        .locations("classpath:db/migration")
+        .target(target)
+        .load();
   }
 
   private static void insert(DSLContext dsl, String table, Object... fields) {
@@ -1012,7 +1326,11 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     }
   }
 
-  private record Fixture(DSLContext dsl, TransactionTemplate transaction, String requestId) {}
+  private record Fixture(
+      DSLContext dsl,
+      TransactionTemplate transaction,
+      String requestId,
+      DriverManagerDataSource dataSource) {}
 
   private record CurrentnessCase(
       byte[] requestBytes,
