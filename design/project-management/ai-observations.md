@@ -229,3 +229,9 @@ Entry format:
   - Context: the shared Gameplay observer monitored a large Validation matrix through `gh run view --json jobs`.
   - Observation: the returned jobs view omitted failed Buf and Game Logic rows. Their completion timestamps were 01:04:25 and 01:08:08 UTC, but the observer first discovered them around 01:16 UTC through the fully paginated Jobs API; the exact time the API exposed each failure was not recorded. This delayed front-PR failure reporting by roughly 12 and 8 minutes; no GitHub API or FireController failure was established.
   - Expected pattern: inspect the complete paginated source-run jobs inventory before metadata callbacks and report failed jobs while other jobs remain active. Do not wait for the whole workflow to finish or treat a partial jobs view as exhaustive.
+
+- `2026-10-13`: Focused validation must use declared test packages and enabled task flags
+  - Context: Gameplay’s #3120 review-fix prompts assumed that the `unit/` directory prefix was part of every Java package and omitted `-PfullCheck` from static-check tasks.
+  - Observation: the wrong class filter executed no tests and failed explicitly; the static tasks were reported `SKIPPED` despite a successful focused unit build. Neither result qualified the missing proof.
+  - Expected pattern: read the class’s declared package before specifying a test filter, and verify task execution rather than equating build success with every requested check passing. Enable the repository’s canonical full-check property when selecting static tasks.
+  - Current status: corrected package selection passed 50 focused unit cases; the subsequent runtime fix passed 58 selected unit cases. A separate canonical `-PfullCheck` run executed the required static checks successfully. No validation requirement was waived.

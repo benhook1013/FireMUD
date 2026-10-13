@@ -12,6 +12,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection.PublishIntent;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
@@ -121,19 +122,23 @@ public class VersionServiceImpl implements VersionService {
 
   @Override
   @Timed(value = "gamedesign.version.publish")
-  public VersionDto publishVersion(String tenantId, String notes, String publishRequestId) {
-    logger.info("Publishing version for tenant {}", tenantId);
-    PublicationDigestRequestBinding.validatePublicationIdentity(tenantId, publishRequestId);
-    if (temporalPublishOrchestrator.isPresent()) {
-      return temporalPublishOrchestrator
-          .get()
-          .publishFullVersion(tenantId, notes, publishRequestId);
-    }
-    return publishCommandService.publishFullVersion(
-        tenantId,
-        notes,
-        publishRequestId,
-        TemporalVersionPublishOrchestrator.workflowId(tenantId, publishRequestId));
+  public VersionDto publishVersion(PublishIntent intent) {
+    Objects.requireNonNull(intent, "intent");
+    // Admin role and caller-selected commit identifiers do not prove current creator authority or
+    // the authenticated owner freeze required by full-version publication.
+    throw new IllegalStateException(
+        "PUBLICATION_AUTHORIZATION_UNAVAILABLE: exact current Account authorization and owner freeze are required");
+  }
+
+  @Override
+  @Timed(value = "gamedesign.version.replayLegacyFullVersion")
+  public VersionDto replayLegacyFullVersion(
+      String tenantId, String notes, String publishRequestId) {
+    String workflowId = TemporalVersionPublishOrchestrator.workflowId(tenantId, publishRequestId);
+    // The command permits this old request shape only when the exact workflow already has a
+    // terminal attempt. A fresh or pending legacy request has no selected immutable source and
+    // is rejected before export, finalization, or attempt creation.
+    return publishCommandService.publishFullVersion(tenantId, notes, publishRequestId, workflowId);
   }
 
   @Override

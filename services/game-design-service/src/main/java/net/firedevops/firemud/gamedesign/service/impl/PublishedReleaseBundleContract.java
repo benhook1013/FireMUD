@@ -1,9 +1,13 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
+import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
+import net.firedevops.firemud.gamedesign.dto.VersionDto;
 import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 
 final class PublishedReleaseBundleContract {
@@ -88,6 +92,37 @@ final class PublishedReleaseBundleContract {
     }
   }
 
+  static void requireExactSelectorRetry(
+      PublishedReleaseBundleDto stored,
+      VersionDto version,
+      String workflow,
+      ExportedAssetManifest manifest,
+      String generationRevision,
+      List<PublishParticipantDigestDto> participants,
+      WorldPublishedStartLocationEvidence evidence) {
+    if (!SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(stored.attestationSchemaVersion())) {
+      throw new IllegalStateException(
+          "IDEMPOTENCY_CONFLICT: historical release is selector-ineligible");
+    }
+    requireSelectorBinding(stored);
+    if (stored.versionNumber() != version.versionNumber()
+        || version.scriptOnly()
+        || version.scriptPatchVersion() != null
+        || !Objects.equals(stored.publishWorkflowId(), workflow)
+        || !Objects.equals(stored.manifestHash(), manifest.manifestHash())
+        || !Objects.equals(stored.manifestSchemaVersion(), manifest.manifestSchemaVersion())
+        || !Objects.equals(stored.artifactDigests(), manifest.artifactDigests())
+        || !stored.requiredManifestAssetKeys().equals(manifest.requiredManifestAssetKeys())
+        || !Objects.equals(stored.generationConfigRevision(), generationRevision)
+        || !stored.participantDigests().equals(participants)
+        || !Arrays.equals(
+            stored.worldPublishedStartLocationEvidence().canonicalBytes(),
+            evidence.canonicalBytes())) {
+      throw new IllegalStateException(
+          "IDEMPOTENCY_CONFLICT: changed immutable selector release input");
+    }
+  }
+
   static void requireSupportedSchemaForRead(PublishedReleaseBundleDto bundle) {
     if (!SUPPORTED_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
       throw new IllegalStateException(
@@ -95,6 +130,17 @@ final class PublishedReleaseBundleContract {
               + ": unsupported published release bundle attestation schema "
               + bundle.attestationSchemaVersion());
     }
+  }
+
+  /**
+   * Publication reconciliation only; does not widen launch or repair authorization/schema support.
+   */
+  static void requireSupportedSchemaForPublicationRead(PublishedReleaseBundleDto bundle) {
+    if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
+      requireSelectorBinding(bundle);
+      return;
+    }
+    requireSupportedSchemaForRead(bundle);
   }
 
   static void requireSupportedSchemaForLaunch(PublishedReleaseBundleDto bundle) {
@@ -106,6 +152,9 @@ final class PublishedReleaseBundleContract {
     }
   }
 
+  /**
+   * Descriptor resolution only; descriptor/v1 remains separate from the complete release carrier.
+   */
   static void requireSupportedSchemaForLaunchDescriptor(PublishedReleaseBundleDto bundle) {
     if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(bundle.attestationSchemaVersion())) {
       requireSelectorBinding(bundle);

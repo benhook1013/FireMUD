@@ -51,6 +51,8 @@ firemud:
     grpc:
       public-methods:
         - gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation
+        - game_design.v1.PublishedRealmEntryPolicyService/ResolvePublishedRealmEntryPolicy
+        - game_design.v1.PublishedRealmEntryPolicyService/ListPublishedRealmEntryPolicies
   grpc:
     workload-namespace: ${FIREMUD_GRPC_WORKLOAD_NAMESPACE:}
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
