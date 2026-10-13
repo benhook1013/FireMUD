@@ -83,6 +83,10 @@ public class WorldAuthoredSourceIntakeRepository {
           + "world_design_revision_ledger, world_design_scope_epoch, "
           + "world_entity_spawn_binding, world_event, world_instance, zone, zone_instance "
           + "IN SHARE MODE";
+  private static final String SET_FRESH_INTAKE_LOCK_TIMEOUT =
+      "SELECT set_config('lock_timeout', "
+          + "LEAST(COALESCE(NULLIF(setting::integer, 0), 1000), 1000)::text || 'ms', true) "
+          + "FROM pg_settings WHERE name = 'lock_timeout'";
   private static final String MAX_OCCUPIED_TENANT_KEY =
       "SELECT COALESCE(MAX(occupied_key), 0) FROM ("
           + "SELECT tenant_id AS occupied_key FROM generation_rule UNION ALL "
@@ -267,6 +271,7 @@ public class WorldAuthoredSourceIntakeRepository {
     // Serialize allocator owners, then keep every current tenant-bearing table stable while the
     // candidate is checked. Legacy writers do not take this association lock; their database
     // reservation trigger rejects selectors already claimed by a canonical source.
+    dsl.fetchOne(SET_FRESH_INTAKE_LOCK_TIMEOUT);
     dsl.execute("LOCK TABLE world_authored_source_tenant_association IN SHARE ROW EXCLUSIVE MODE");
     dsl.execute(LOCK_LEGACY_TENANT_TABLES);
   }

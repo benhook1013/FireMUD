@@ -698,6 +698,116 @@ class WorldAuthoredSourceIntakeIntegrationTest {
   }
 
   @Test
+  void freshIntakeLockTimeoutRollsBackAndExactRequestRetriesAfterWriterCommits() throws Exception {
+    long legacyTenantKey = 9_000_000_000L + ThreadLocalRandom.current().nextLong(1_000_000L);
+    UUID tenant = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    AuthoredWorldSourceEvidence source =
+        source(
+            tenant,
+            tenantSlug(tenant),
+            "lock-timeout-world",
+            sourceRowId(tenant),
+            "Lock Timeout World");
+    TransactionTemplate legacyTransaction = new TransactionTemplate(transactionManager);
+    TransactionTemplate intakeTransaction = new TransactionTemplate(transactionManager);
+    CountDownLatch legacyInserted = new CountDownLatch(1);
+    CountDownLatch allowLegacyCommit = new CountDownLatch(1);
+
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      Future<?> legacyWrite =
+          executor.submit(
+              () ->
+                  legacyTransaction.execute(
+                      status -> {
+                        dsl.execute(
+                            "INSERT INTO region (tenant_id, name) VALUES (?, ?)",
+                            legacyTenantKey,
+                            "lock-timeout-writer");
+                        legacyInserted.countDown();
+                        await(allowLegacyCommit, 20);
+                        return null;
+                      }));
+
+      try {
+        assertThat(legacyInserted.await(5, TimeUnit.SECONDS)).isTrue();
+        long attemptStartedNanos = System.nanoTime();
+        Future<RuntimeException> failedIntake =
+            executor.submit(
+                () -> {
+                  try {
+                    intakeTransaction.execute(
+                        status -> repository.acceptFresh(NAMESPACE, requestId, source));
+                    return null;
+                  } catch (RuntimeException exception) {
+                    return exception;
+                  }
+                });
+        RuntimeException lockTimeout = failedIntake.get(5, TimeUnit.SECONDS);
+        long attemptDurationNanos = System.nanoTime() - attemptStartedNanos;
+
+        assertThat(lockTimeout)
+            .isInstanceOf(org.springframework.dao.CannotAcquireLockException.class);
+        assertThat(sqlStateFrom(lockTimeout)).isEqualTo("55P03");
+        assertThat(attemptDurationNanos).isLessThan(TimeUnit.SECONDS.toNanos(5));
+        assertThat(countForCanonicalTenant(tenant)).isZero();
+        assertThat(countReservationsForCanonicalTenant(tenant)).isZero();
+        assertThat(read(requestId)).isEmpty();
+      } finally {
+        allowLegacyCommit.countDown();
+      }
+
+      legacyWrite.get(20, TimeUnit.SECONDS);
+    }
+
+    WorldAuthoredSourceIntakeReceipt receipt =
+        intakeTransaction.execute(status -> repository.acceptFresh(NAMESPACE, requestId, source));
+    assertThat(receipt).isNotNull();
+    assertThat(receipt.localTenantKey()).isGreaterThan(legacyTenantKey);
+    assertThat(countForCanonicalTenant(tenant)).isEqualTo(1L);
+    assertThat(countReservationsForCanonicalTenant(tenant)).isEqualTo(1L);
+    assertThat(read(requestId)).contains(receipt);
+  }
+
+  @Test
+  void preservesTighterCallerLockTimeoutAndResetsItAfterCommit() {
+    UUID tenant = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    AuthoredWorldSourceEvidence source =
+        source(
+            tenant,
+            tenantSlug(tenant),
+            "tighter-lock-timeout-world",
+            sourceRowId(tenant),
+            "Tighter Lock Timeout World");
+    TransactionTemplate intakeTransaction = new TransactionTemplate(transactionManager);
+
+    WorldAuthoredSourceIntakeReceipt receipt =
+        intakeTransaction.execute(
+            status -> {
+              dsl.fetchOne("SELECT set_config('lock_timeout', '250ms', true)");
+              WorldAuthoredSourceIntakeReceipt accepted =
+                  repository.acceptFresh(NAMESPACE, requestId, source);
+              Integer activeTimeoutMillis =
+                  Objects.requireNonNull(
+                          dsl.fetchOne(
+                              "SELECT setting::integer FROM pg_settings WHERE name = 'lock_timeout'"),
+                          "PostgreSQL lock_timeout setting query returned no row")
+                      .get(0, Integer.class);
+              assertThat(activeTimeoutMillis).isEqualTo(250);
+              return accepted;
+            });
+
+    assertThat(receipt).isNotNull();
+    var lockTimeoutSettings =
+        Objects.requireNonNull(
+            dsl.fetchOne("SELECT setting, reset_val FROM pg_settings WHERE name = 'lock_timeout'"),
+            "PostgreSQL lock_timeout setting query returned no row");
+    assertThat(lockTimeoutSettings.get("setting", String.class))
+        .isEqualTo(lockTimeoutSettings.get("reset_val", String.class));
+  }
+
+  @Test
   void rejectsReadOnlyAndNonReadCommittedOwnerTransactionsWithoutClaims() {
     UUID tenant = UUID.randomUUID();
     UUID requestId = UUID.randomUUID();
@@ -1256,6 +1366,15 @@ class WorldAuthoredSourceIntakeIntegrationTest {
     }
     assertThat(cause).isInstanceOf(SQLException.class);
     assertThat(((SQLException) cause).getSQLState()).isEqualTo("23514");
+  }
+
+  private static String sqlStateFrom(Throwable throwable) {
+    for (Throwable cause = throwable; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException exception) {
+        return exception.getSQLState();
+      }
+    }
+    throw new AssertionError("Expected a PostgreSQL SQLState in the failure cause chain");
   }
 
   private long countReservationsForCanonicalTenant(UUID tenantId) {
