@@ -2,6 +2,10 @@
 
 This document defines the Logging & Admin Service REST and gRPC surfaces, authentication classes, and endpoint availability expectations.
 
+## Original StartSession Authorization Evidence
+
+Before completing an original StartSession reservation, Logging & Admin compares the complete Account-returned tuple to its exact reserved operation and validated response, then persists and hands off those unchanged Account bytes. ISSUE, recovery and ambiguous outcomes retain the same durable reservation/readback rules; no response permits a caller-derived replacement tuple. The [Account authorization-reference contract](../account-service/api-contracts.md#operator-authorization-references) owns the complete tuple and capture-reference binding. This receiver remains subject to its existing authentication, finite expiry, transport and unavailable-runtime boundaries.
+
 ## Account Audit Ingress and Receipt
 
 The canonical Account-to-Logging & Admin audit ingress is the existing `logging_admin.v1.LoggingAdminService/CreateLogEvent` RPC, converged in place rather than duplicated as a parallel ingress. It is a non-destructive internal service RPC, not an operator/admin mutation. Account is the producer and source authority for account state; Logging & Admin owns the receiver-side audit envelope, durable receipt/readback, deduplication, and audit projection. The audit ingress follows only shared envelope fundamentals (stable identity, event type/schema, producer occurrence time, and at-least-once/idempotent delivery) from [Session Behavior](../../system-architecture-session-behavior.md); it does **not** inherit that document's membership-specific field set or `eventDigest` grammar. Internal workload identity and method authorization follow [Authentication](../../system-architecture-authentication.md) and [gRPC](../../system-architecture-grpc.md#tls-requirements).

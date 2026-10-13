@@ -21,6 +21,7 @@ firemudJooq {
 dependencies {
     integrationTestImplementation(project(mapOf("path" to ":account-service", "configuration" to "accountOriginalOrderProof")))
     implementation(project(":common-security"))
+    testImplementation(testFixtures(project(":common-platform-core")))
     testImplementation(libs.bouncycastle.pkix)
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)

@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Map;
@@ -239,7 +240,7 @@ public final class StartSessionAuthorizationCoordinator {
           accountResponse.authenticatedLoggingWorkloadIdentity())) {
         return Result.outcomeUnknown(lastKnownSnapshot, PendingReason.ACCOUNT_RESPONSE_INVALID);
       }
-      postAuthorizationTuple =
+      StartSessionPostAuthorizationExecutionTuple expectedTuple =
           StartSessionPostAuthorizationExecutionTuple.createHuman(
               sharedTuple(tuple),
               accountResponse.authenticatedLoggingWorkloadIdentity(),
@@ -248,7 +249,11 @@ public final class StartSessionAuthorizationCoordinator {
               claimEvidence.reservationClaimFence(),
               accountResponse.authorityEvidenceBundle(),
               accountResponse.bundleReference());
-      if (!isExactAccountResult(tuple, claimEvidence, accountResponse, postAuthorizationTuple)) {
+      postAuthorizationTuple = accountResponse.postAuthorizationTuple();
+      if (postAuthorizationTuple == null
+          || !MessageDigest.isEqual(
+              expectedTuple.canonicalBytes(), postAuthorizationTuple.canonicalBytes())
+          || !isExactAccountResult(tuple, claimEvidence, accountResponse, postAuthorizationTuple)) {
         return Result.outcomeUnknown(lastKnownSnapshot, PendingReason.ACCOUNT_RESPONSE_INVALID);
       }
     } catch (RuntimeException invalidResponse) {

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -26,7 +27,12 @@ import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationR
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence.LaunchAssociation;
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidenceReadClient;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
+import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
+import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
@@ -58,8 +64,12 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
   private static final long ACCOUNT_FENCE = 31L;
   private static final long GAME_SESSION_FENCE = 37L;
   private static final long GAME_TEMPLATE_ID = 91L;
-  private static final byte[] ORIGINAL_TUPLE =
-      "synthetic-original-start-session-tuple".getBytes(StandardCharsets.UTF_8);
+  private static final UUID RESERVATION_OWNER = uuid("7c005b65-fcb1-4ac9-a714-f3d0f449edcf");
+  private static final StartSessionPostAuthorizationExecutionTuple ORIGINAL_OPERATION =
+      originalOperation("start-session-control-request");
+  private static final byte[] ORIGINAL_TUPLE = ORIGINAL_OPERATION.canonicalBytes();
+  private static final byte[] CHANGED_TUPLE =
+      originalOperation("start-session-changed-request").canonicalBytes();
 
   @AfterEach
   void clearAmbientTransactionState() {
@@ -127,12 +137,13 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
             AccountStartSessionWorldParticipationHistoricalReadRequest.class);
     verify(account).read(accountRequest.capture());
     assertThat(accountRequest.getValue().targetNamespace()).isEqualTo(NAMESPACE);
-    assertThat(accountRequest.getValue().accountWorldParticipationId()).isEqualTo(PARTICIPATION_ID);
-    assertThat(accountRequest.getValue().accountWorldParticipationFence()).isEqualTo(ACCOUNT_FENCE);
+    assertThat(accountRequest.getValue().originalPostAuthorizationTuple())
+        .containsExactly(ORIGINAL_TUPLE);
     assertThat(accountRequest.getValue().readRequestId())
         .isNotEqualTo(PARTICIPATION_ID)
         .isNotEqualTo(ATTEMPT_ID)
-        .isNotEqualTo(GAME_INSTANCE);
+        .isNotEqualTo(GAME_INSTANCE)
+        .isNotEqualTo(RESERVATION_OWNER);
 
     var gameSessionRequest =
         org.mockito.ArgumentCaptor.forClass(
@@ -153,8 +164,7 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
       Fixture fixture = fixture(false);
       var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
       var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
-      byte[] tuple =
-          substitution == 0 ? "changed tuple".getBytes(StandardCharsets.UTF_8) : ORIGINAL_TUPLE;
+      byte[] tuple = substitution == 0 ? CHANGED_TUPLE : ORIGINAL_TUPLE;
       UUID attempt = substitution == 1 ? uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") : ATTEMPT_ID;
       long fence = substitution == 2 ? GAME_SESSION_FENCE + 1L : GAME_SESSION_FENCE;
       when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
@@ -173,13 +183,42 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
   }
 
   @Test
+  void rejectsAccountResolvedParticipationIdOrFenceBeforeGameSessionRead() {
+    for (boolean substituteId : new boolean[] {true, false}) {
+      Fixture fixture = fixture(false);
+      var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
+      var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
+      when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
+          .thenAnswer(
+              invocation -> {
+                var evidence =
+                    accountEvidence(
+                        invocation.getArgument(0),
+                        ORIGINAL_TUPLE,
+                        ATTEMPT_ID,
+                        GAME_SESSION_FENCE,
+                        fixture.preparationInputJson());
+                if (substituteId) {
+                  when(evidence.accountWorldParticipationId())
+                      .thenReturn(uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+                } else {
+                  when(evidence.accountWorldParticipationFence()).thenReturn(ACCOUNT_FENCE + 1L);
+                }
+                return evidence;
+              });
+
+      assertDenied(verifier(account, gameSession), fixture.identity());
+      verifyNoInteractions(gameSession);
+    }
+  }
+
+  @Test
   void rejectsGameSessionTupleAttemptOrFenceSubstitution() {
     for (int substitution = 0; substitution < 3; substitution++) {
       Fixture fixture = fixture(false);
       var account = exactAccountClient(fixture);
       var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
-      byte[] tuple =
-          substitution == 0 ? "changed tuple".getBytes(StandardCharsets.UTF_8) : ORIGINAL_TUPLE;
+      byte[] tuple = substitution == 0 ? CHANGED_TUPLE : ORIGINAL_TUPLE;
       UUID attempt = substitution == 1 ? uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") : ATTEMPT_ID;
       long fence = substitution == 2 ? GAME_SESSION_FENCE + 1L : GAME_SESSION_FENCE;
       when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
@@ -195,6 +234,80 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
 
       assertDenied(verifier(account, gameSession), fixture.identity());
     }
+  }
+
+  @Test
+  void rejectsAccountCaptureFenceOrLinearizationSubstitutionBeforeGameSessionRead() {
+    for (byte[] substituted : changedCaptureReferences()) {
+      Fixture fixture = fixture(false);
+      var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
+      var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
+      when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
+          .thenAnswer(
+              invocation ->
+                  accountEvidence(
+                      invocation.getArgument(0),
+                      substituted,
+                      ATTEMPT_ID,
+                      GAME_SESSION_FENCE,
+                      fixture.preparationInputJson()));
+
+      assertDenied(verifier(account, gameSession), fixture.identity());
+      verifyNoInteractions(gameSession);
+    }
+  }
+
+  @Test
+  void rejectsGameSessionCaptureFenceOrLinearizationSubstitution() {
+    for (byte[] substituted : changedCaptureReferences()) {
+      Fixture fixture = fixture(false);
+      var account = exactAccountClient(fixture);
+      var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
+      when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
+          .thenAnswer(
+              invocation ->
+                  gameSessionEvidence(
+                      invocation.getArgument(0),
+                      fixture,
+                      substituted,
+                      ATTEMPT_ID,
+                      GAME_SESSION_FENCE,
+                      fixture.launchAssociation()));
+
+      assertDenied(verifier(account, gameSession), fixture.identity());
+    }
+  }
+
+  private static List<byte[]> changedCaptureReferences() {
+    var originalReference = ORIGINAL_OPERATION.bundleReference();
+    return List.of(
+        withReference(
+            new StartSessionAuthorityEvidenceBundle.BundleReference(
+                originalReference.bundleVersion(),
+                originalReference.sourceVersion(),
+                "24",
+                originalReference.linearization())),
+        withReference(
+            new StartSessionAuthorityEvidenceBundle.BundleReference(
+                originalReference.bundleVersion(),
+                originalReference.sourceVersion(),
+                originalReference.sourceFence(),
+                "18446744073709551614")));
+  }
+
+  // Structurally canonical substitutions exercise World comparison of the complete original
+  // bytes. Mocked owner responses do not establish independent Account capture authentication.
+  private static byte[] withReference(
+      StartSessionAuthorityEvidenceBundle.BundleReference reference) {
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+            ORIGINAL_OPERATION.preAuthorizationTuple(),
+            ORIGINAL_OPERATION.authenticatedWorkloadIdentity(),
+            ORIGINAL_OPERATION.authorizationReferenceFingerprint(),
+            ORIGINAL_OPERATION.reservationOwnerId(),
+            ORIGINAL_OPERATION.reservationClaimFence(),
+            ORIGINAL_OPERATION.authorityEvidenceBundleBytes(),
+            reference)
+        .canonicalBytes();
   }
 
   @Test
@@ -374,6 +487,7 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
     WorldCanonicalInstanceExecutionIdentity identity =
         mock(WorldCanonicalInstanceExecutionIdentity.class);
     when(identity.originalPostAuthorizationTuple()).thenReturn(ORIGINAL_TUPLE.clone());
+    when(identity.decodedTuple()).thenReturn(ORIGINAL_OPERATION);
     when(identity.accountWorldParticipationId()).thenReturn(PARTICIPATION_ID);
     when(identity.accountWorldParticipationFence()).thenReturn(ACCOUNT_FENCE);
     when(identity.gameSessionOwnerAttemptId()).thenReturn(ATTEMPT_ID);
@@ -772,6 +886,54 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
     return json(root);
   }
 
+  private static StartSessionPostAuthorizationExecutionTuple originalOperation(String requestId) {
+    var preTuple =
+        StartSessionPreAuthorizationReservationTuple.createHuman(
+            requestId,
+            uuid("a4f5f4eb-8243-4d42-903a-33495456a622"),
+            new StartSessionOperatorAction(
+                StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
+                StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+                new StartSessionOperatorAction.Scope(TENANT, NAMESPACE),
+                new StartSessionOperatorAction.Target(
+                    GAME_TEMPLATE_ID, uuid("36aa9ce5-0ebc-4c14-9f6b-d160edc6059a")),
+                StartSessionOperatorAction.ExpectedVersion.ABSENT,
+                new StartSessionOperatorAction.Mutation(
+                    StartSessionOperatorAction.ClientIp.absent()),
+                "synthetic historical World recovery carrier test"));
+    byte[] bundle =
+        StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+            preTuple,
+            new Values(
+                uuid("f5d044bd-7e5f-4e2d-9859-9025cbdcc60f"),
+                "sha256:" + "a".repeat(64),
+                "17",
+                "CURRENT",
+                Instant.parse("2020-01-01T00:00:00Z"),
+                Instant.parse("2020-01-02T00:00:00Z"),
+                1L,
+                2L,
+                3L,
+                4L,
+                5L,
+                23L,
+                uuid("a681bba7-c215-4cf1-a35b-14348912cbdc"),
+                "2",
+                "3"));
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        preTuple,
+        "spiffe://firemud/ns/" + NAMESPACE + "/sa/logging-admin-service",
+        "arfp/v1/test-key/" + "b".repeat(64),
+        RESERVATION_OWNER,
+        19L,
+        bundle,
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+            "17",
+            "23",
+            "18446744073709551615"));
+  }
+
   private static AccountStartSessionWorldParticipationHistoricalReadClient exactAccountClient(
       Fixture fixture) {
     var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
@@ -794,8 +956,12 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
       long fence,
       String preparationInput) {
     var evidence = mock(AccountStartSessionWorldParticipationHistoricalReadEvidence.class);
-    when(evidence.request()).thenReturn(request);
-    when(evidence.originalPostAuthorizationTuple()).thenReturn(tuple.clone());
+    var echoedRequest =
+        new AccountStartSessionWorldParticipationHistoricalReadRequest(
+            request.readRequestId(), request.targetNamespace(), tuple);
+    when(evidence.request()).thenReturn(echoedRequest);
+    when(evidence.accountWorldParticipationId()).thenReturn(PARTICIPATION_ID);
+    when(evidence.accountWorldParticipationFence()).thenReturn(ACCOUNT_FENCE);
     when(evidence.gameSessionOwnerAttemptId()).thenReturn(attempt);
     when(evidence.gameSessionOwnerFence()).thenReturn(fence);
     when(evidence.canonicalGameInstanceId()).thenReturn(GAME_INSTANCE);

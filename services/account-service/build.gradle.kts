@@ -19,6 +19,7 @@ configurations.named("testFixturesImplementation") {
 }
 
 dependencies {
+    testImplementation(testFixtures(project(":common-platform-core")))
     testFixturesImplementation(platform(libs.spring.boot.dependencies))
     testFixturesImplementation(project(":common-platform-core"))
     testFixturesImplementation(project(":common-security"))

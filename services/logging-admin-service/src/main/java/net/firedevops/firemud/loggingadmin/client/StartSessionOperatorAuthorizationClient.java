@@ -32,6 +32,7 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientIntercepto
 import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
 import net.firedevops.firemud.common.grpc.ResolvedGrpcTlsMaterial;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -48,7 +49,9 @@ public class StartSessionOperatorAuthorizationClient
   private static final int MAX_TUPLE_BYTES = 8 * 1_024;
   private static final int MAX_REQUEST_BYTES = MAX_TUPLE_BYTES + 16 * 1_024 + 1_024;
   private static final int MAX_RESPONSE_BYTES =
-      StartSessionAuthorityEvidenceBundle.MAX_BUNDLE_BYTES + 2_048;
+      StartSessionAuthorityEvidenceBundle.MAX_BUNDLE_BYTES
+          + StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES
+          + 2_048;
   private static final int MAX_CONTROL_UI_TOKEN_BYTES = 16 * 1_024;
   private static final int MAX_REFERENCE_BYTES = 128;
   private static final long RPC_DEADLINE_SECONDS = 5L;
@@ -165,6 +168,9 @@ public class StartSessionOperatorAuthorizationClient
         response.getBundleReference(),
         response.getUnknownFields().asMap().isEmpty(),
         response.getAuthenticatedLoggingWorkloadIdentity(),
+        response.getOriginalAccountPostAuthorizationTuple().toByteArray(),
+        reservationOwnerId,
+        reservationClaimFence,
         tuple);
   }
 
@@ -208,6 +214,9 @@ public class StartSessionOperatorAuthorizationClient
         response.getBundleReference(),
         response.getUnknownFields().asMap().isEmpty(),
         response.getAuthenticatedLoggingWorkloadIdentity(),
+        response.getOriginalAccountPostAuthorizationTuple().toByteArray(),
+        reservationOwnerId,
+        reservationClaimFence,
         tuple);
   }
 
@@ -273,6 +282,9 @@ public class StartSessionOperatorAuthorizationClient
       AuthorityEvidenceBundleReference wireReference,
       boolean hasNoUnknownFields,
       String authenticatedLoggingWorkloadIdentity,
+      byte[] originalAccountPostAuthorizationTuple,
+      UUID reservationOwnerId,
+      long reservationClaimFence,
       StartSessionPreAuthorizationReservationTuple tuple) {
     try {
       if (!hasNoUnknownFields || !hasExpiry || !hasBundleReference) {
@@ -312,6 +324,21 @@ public class StartSessionOperatorAuthorizationClient
       if (!wireReference.getUnknownFields().asMap().isEmpty()) {
         throw malformedResponse();
       }
+      StartSessionPostAuthorizationExecutionTuple expectedTuple =
+          StartSessionPostAuthorizationExecutionTuple.createHuman(
+              tuple,
+              authenticatedLoggingWorkloadIdentity,
+              fingerprint,
+              reservationOwnerId,
+              reservationClaimFence,
+              authorityEvidenceBundle,
+              reference);
+      StartSessionPostAuthorizationExecutionTuple accountTuple =
+          StartSessionPostAuthorizationExecutionTuple.decode(originalAccountPostAuthorizationTuple);
+      if (!java.security.MessageDigest.isEqual(
+          expectedTuple.canonicalBytes(), accountTuple.canonicalBytes())) {
+        throw malformedResponse();
+      }
       return new AuthorizationReference(
           opaqueReference,
           fingerprint,
@@ -319,7 +346,8 @@ public class StartSessionOperatorAuthorizationClient
           authorityEvidenceBundle,
           reference,
           authenticatedLoggingWorkloadIdentity,
-          bundle);
+          bundle,
+          accountTuple);
     } catch (IllegalStateException expected) {
       throw expected;
     } catch (RuntimeException malformed) {
@@ -398,6 +426,7 @@ public class StartSessionOperatorAuthorizationClient
     private final StartSessionAuthorityEvidenceBundle.BundleReference bundleReference;
     private final String authenticatedLoggingWorkloadIdentity;
     private final StartSessionAuthorityEvidenceBundle decodedBundle;
+    private final StartSessionPostAuthorizationExecutionTuple postAuthorizationTuple;
 
     private AuthorizationReference(
         String operatorAuthorizationReference,
@@ -406,7 +435,8 @@ public class StartSessionOperatorAuthorizationClient
         byte[] authorityEvidenceBundle,
         StartSessionAuthorityEvidenceBundle.BundleReference bundleReference,
         String authenticatedLoggingWorkloadIdentity,
-        StartSessionAuthorityEvidenceBundle decodedBundle) {
+        StartSessionAuthorityEvidenceBundle decodedBundle,
+        StartSessionPostAuthorizationExecutionTuple postAuthorizationTuple) {
       this.operatorAuthorizationReference = operatorAuthorizationReference;
       this.authorizationReferenceFingerprint = authorizationReferenceFingerprint;
       this.expiresAt = expiresAt;
@@ -414,6 +444,7 @@ public class StartSessionOperatorAuthorizationClient
       this.bundleReference = bundleReference;
       this.authenticatedLoggingWorkloadIdentity = authenticatedLoggingWorkloadIdentity;
       this.decodedBundle = decodedBundle;
+      this.postAuthorizationTuple = postAuthorizationTuple;
     }
 
     public String operatorAuthorizationReference() {
@@ -445,6 +476,11 @@ public class StartSessionOperatorAuthorizationClient
       return decodedBundle;
     }
 
+    /** Exact canonical tuple authored by Account from its retained original issuance evidence. */
+    public StartSessionPostAuthorizationExecutionTuple postAuthorizationTuple() {
+      return postAuthorizationTuple;
+    }
+
     @Override
     public String toString() {
       return "AuthorizationReference[operatorAuthorizationReference=<redacted>, "
@@ -454,6 +490,7 @@ public class StartSessionOperatorAuthorizationClient
           + bundleReference
           + ", authenticatedLoggingWorkloadIdentity="
           + authenticatedLoggingWorkloadIdentity
+          + ", postAuthorizationTuple=<redacted>"
           + "]";
     }
   }

@@ -2,18 +2,16 @@ package net.firedevops.firemud.common.account.startsession;
 
 import java.util.Objects;
 import java.util.UUID;
-import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal;
 import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminalReadRequest;
 
-/**
- * Account-derived immutable historical participation fields for exact World reconciliation.
- *
- * <p>This carrier is not currentness, admission, producer authentication, or renewed permission.
- */
+/** Account-derived immutable historical participation fields for exact World reconciliation. */
 public final class AccountStartSessionWorldParticipationHistoricalReadEvidence {
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
+
   private final AccountStartSessionWorldParticipationHistoricalReadRequest request;
-  private final byte[] originalPostAuthorizationTuple;
+  private final UUID accountWorldParticipationId;
+  private final long accountWorldParticipationFence;
   private final UUID gameSessionOwnerAttemptId;
   private final long gameSessionOwnerFence;
   private final UUID canonicalGameInstanceId;
@@ -22,28 +20,28 @@ public final class AccountStartSessionWorldParticipationHistoricalReadEvidence {
 
   public AccountStartSessionWorldParticipationHistoricalReadEvidence(
       AccountStartSessionWorldParticipationHistoricalReadRequest request,
-      byte[] originalPostAuthorizationTuple,
+      UUID accountWorldParticipationId,
+      long accountWorldParticipationFence,
       UUID gameSessionOwnerAttemptId,
       long gameSessionOwnerFence,
       UUID canonicalGameInstanceId,
       String preparationInputJson,
       String preparationInputDigest) {
     this.request = Objects.requireNonNull(request, "historical participation request is required");
-    Objects.requireNonNull(originalPostAuthorizationTuple, "original tuple is required");
-    if (originalPostAuthorizationTuple.length == 0
-        || originalPostAuthorizationTuple.length
-            > StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES) {
-      throw new IllegalArgumentException("Original StartSession tuple is missing or oversized");
+    this.accountWorldParticipationId =
+        requireNonNil(accountWorldParticipationId, "accountWorldParticipationId");
+    if (accountWorldParticipationFence <= 0L) {
+      throw new IllegalArgumentException("Account World participation fence must be positive");
     }
-    this.originalPostAuthorizationTuple = originalPostAuthorizationTuple.clone();
+    this.accountWorldParticipationFence = accountWorldParticipationFence;
     this.gameSessionOwnerAttemptId =
-        Objects.requireNonNull(gameSessionOwnerAttemptId, "Game Session attempt is required");
+        requireNonNil(gameSessionOwnerAttemptId, "gameSessionOwnerAttemptId");
     if (gameSessionOwnerFence <= 0L) {
       throw new IllegalArgumentException("Game Session owner fence must be positive");
     }
     this.gameSessionOwnerFence = gameSessionOwnerFence;
     this.canonicalGameInstanceId =
-        Objects.requireNonNull(canonicalGameInstanceId, "canonical Game Instance ID is required");
+        requireNonNil(canonicalGameInstanceId, "canonicalGameInstanceId");
     this.preparationInputJson =
         Objects.requireNonNull(preparationInputJson, "exact preparation input is required");
     this.preparationInputDigest =
@@ -55,9 +53,9 @@ public final class AccountStartSessionWorldParticipationHistoricalReadEvidence {
         new WorldStartSessionExecutionTerminalReadRequest(
             request.readRequestId(),
             request.targetNamespace(),
-            this.originalPostAuthorizationTuple,
-            request.accountWorldParticipationId(),
-            request.accountWorldParticipationFence(),
+            request.originalPostAuthorizationTuple(),
+            this.accountWorldParticipationId,
+            this.accountWorldParticipationFence,
             this.gameSessionOwnerAttemptId,
             this.gameSessionOwnerFence,
             this.canonicalGameInstanceId,
@@ -77,8 +75,12 @@ public final class AccountStartSessionWorldParticipationHistoricalReadEvidence {
     return request;
   }
 
-  public byte[] originalPostAuthorizationTuple() {
-    return originalPostAuthorizationTuple.clone();
+  public UUID accountWorldParticipationId() {
+    return accountWorldParticipationId;
+  }
+
+  public long accountWorldParticipationFence() {
+    return accountWorldParticipationFence;
   }
 
   public UUID gameSessionOwnerAttemptId() {
@@ -106,6 +108,16 @@ public final class AccountStartSessionWorldParticipationHistoricalReadEvidence {
   public String toString() {
     return "AccountStartSessionWorldParticipationHistoricalReadEvidence[request="
         + request
+        + ", accountWorldParticipationId="
+        + accountWorldParticipationId
         + ", preparationInput=<redacted>]";
+  }
+
+  private static UUID requireNonNil(UUID value, String field) {
+    Objects.requireNonNull(value, field);
+    if (NIL_UUID.equals(value)) {
+      throw new IllegalArgumentException(field + " must be a canonical non-nil UUID");
+    }
+    return value;
   }
 }

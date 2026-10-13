@@ -25,7 +25,6 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -44,7 +43,10 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -99,12 +101,18 @@ class StartSessionOperatorAuthorizationClientTest {
       assertThat(issued.authorizationReferenceFingerprint()).isEqualTo(FINGERPRINT);
       assertThat(issued.expiresAt()).isEqualTo(NOW.plusSeconds(300));
       assertThat(issued.authorityEvidenceBundle()).containsExactly(bundle);
-      assertThat(issued.bundleReference().sourceFence()).isEqualTo("23");
+      assertThat(issued.bundleReference().sourceFence()).isEqualTo("24");
       assertThat(issued.authenticatedLoggingWorkloadIdentity())
           .isEqualTo(LOGGING_WORKLOAD_IDENTITY);
       assertThat(issued.decodedBundle().controlPlaneRequestId()).isEqualTo("client-βeta");
+      assertThat(issued.postAuthorizationTuple().canonicalBytes())
+          .containsExactly(postTupleBytes(tuple, bundle, sharedReference()));
+      assertThat(issued.postAuthorizationTuple().bundleReference().sourceFence())
+          .isNotEqualTo(issued.postAuthorizationTuple().issuanceFence());
       assertThat(recovered.authorityEvidenceBundle()).containsExactly(bundle);
       assertThat(recovered.operatorAuthorizationReference()).isEqualTo(OPAQUE_REFERENCE);
+      assertThat(recovered.postAuthorizationTuple().canonicalBytes())
+          .containsExactly(postTupleBytes(tuple, bundle, sharedReference()));
       assertThat(recovered.authenticatedLoggingWorkloadIdentity())
           .isEqualTo(LOGGING_WORKLOAD_IDENTITY);
 
@@ -213,6 +221,7 @@ class StartSessionOperatorAuthorizationClientTest {
     assertRejected(tuple, valid.toBuilder().setUnknownFields(unknownFields()).build());
     assertRejected(tuple, valid.toBuilder().clearExpiresAt().build());
     assertRejected(tuple, valid.toBuilder().clearBundleReference().build());
+    assertRejected(tuple, valid.toBuilder().clearOriginalAccountPostAuthorizationTuple().build());
     assertRejected(
         tuple,
         valid.toBuilder()
@@ -226,6 +235,34 @@ class StartSessionOperatorAuthorizationClientTest {
         valid.toBuilder()
             .setBundleReference(
                 valid.getBundleReference().toBuilder().setSourceVersion("18").build())
+            .build());
+    assertRejected(
+        tuple,
+        valid.toBuilder()
+            .setOriginalAccountPostAuthorizationTuple(
+                ByteString.copyFrom(
+                    postTupleBytes(
+                        tuple,
+                        validBundle,
+                        new StartSessionAuthorityEvidenceBundle.BundleReference(
+                            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+                            "17",
+                            "25",
+                            "18446744073709551615"))))
+            .build());
+    assertRejected(
+        tuple,
+        valid.toBuilder()
+            .setOriginalAccountPostAuthorizationTuple(
+                ByteString.copyFrom(
+                    postTupleBytes(
+                        tuple,
+                        validBundle,
+                        new StartSessionAuthorityEvidenceBundle.BundleReference(
+                            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+                            "17",
+                            "24",
+                            "18446744073709551614"))))
             .build());
     assertRejected(
         tuple,
@@ -433,6 +470,8 @@ class StartSessionOperatorAuthorizationClientTest {
         .setAuthorityEvidenceBundle(ByteString.copyFrom(bundle))
         .setBundleReference(reference())
         .setAuthenticatedLoggingWorkloadIdentity(LOGGING_WORKLOAD_IDENTITY)
+        .setOriginalAccountPostAuthorizationTuple(
+            ByteString.copyFrom(postTupleBytes(tuple, bundle, sharedReference())))
         .build();
   }
 
@@ -445,6 +484,8 @@ class StartSessionOperatorAuthorizationClientTest {
         .setAuthorityEvidenceBundle(ByteString.copyFrom(bundle))
         .setBundleReference(reference())
         .setAuthenticatedLoggingWorkloadIdentity(LOGGING_WORKLOAD_IDENTITY)
+        .setOriginalAccountPostAuthorizationTuple(
+            ByteString.copyFrom(postTupleBytes(tuple, bundle, sharedReference())))
         .build();
   }
 
@@ -457,86 +498,47 @@ class StartSessionOperatorAuthorizationClientTest {
 
   private static AuthorityEvidenceBundleReference reference() {
     return AuthorityEvidenceBundleReference.newBuilder()
-        .setBundleVersion(StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION)
-        .setSourceVersion("17")
-        .setSourceFence("23")
-        .setLinearization("18446744073709551615")
+        .setBundleVersion(sharedReference().bundleVersion())
+        .setSourceVersion(sharedReference().sourceVersion())
+        .setSourceFence(sharedReference().sourceFence())
+        .setLinearization(sharedReference().linearization())
         .build();
+  }
+
+  private static StartSessionAuthorityEvidenceBundle.BundleReference sharedReference() {
+    return new StartSessionAuthorityEvidenceBundle.BundleReference(
+        StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "24", "18446744073709551615");
+  }
+
+  private static byte[] postTupleBytes(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      byte[] bundle,
+      StartSessionAuthorityEvidenceBundle.BundleReference reference) {
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+            tuple, LOGGING_WORKLOAD_IDENTITY, FINGERPRINT, RESERVATION_OWNER, 9L, bundle, reference)
+        .canonicalBytes();
   }
 
   private static byte[] bundleBytes(
       StartSessionPreAuthorizationReservationTuple tuple, Instant expiry) throws Exception {
-    String tenantId = TENANT_ID.toString();
-    Map<String, Object> projection =
-        Map.of(
-            "sourceType",
-            "ACCOUNT",
-            "sourceEvidenceId",
+    return StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+        tuple,
+        new Values(
+            ISSUANCE_ID,
             "sha256:" + "a".repeat(64),
-            "sourceEvidenceVersion",
             "17",
-            "projectionStatus",
             "CURRENT",
-            "evaluatedAt",
-            NOW.toString(),
-            "expiresAt",
-            expiry.toString());
-    Map<String, Object> authority =
-        Map.of(
-            "issuerAuthGeneration", 1L,
-            "accountAuthorityGeneration", 2L,
-            "tenantAuthorityGeneration", Map.of(tenantId, 3L),
-            "membershipAuthorityGeneration", Map.of(tenantId, 4L),
-            "privateRealmGrantVersions", List.of());
-    Map<String, Object> evidence =
-        Map.of(
-            "evidenceType",
-            StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
-            "actorAccountId",
-            ACTOR_ID.toString(),
-            "controlUiTokenJti",
-            TOKEN_JTI.toString(),
-            "role",
-            "tenantAdmin",
-            "accountGeneration",
+            NOW,
+            expiry,
+            1L,
+            2L,
+            3L,
+            4L,
+            5L,
+            23L,
+            TOKEN_JTI,
             "2",
-            "tenantGeneration",
-            "3");
-    Map<String, Object> bundle =
-        new LinkedHashMap<>(
-            Map.of(
-                "bundleVersion",
-                StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-                "authorityScope",
-                Map.of(
-                    "scope", Map.of("tenantId", tenantId, "targetNamespace", "world-runtime"),
-                    "actionFamily", tuple.actionFamily(),
-                    "applicableAccountId", ACTOR_ID.toString(),
-                    "applicableTenantId", tenantId),
-                "accountProjectionEvidence",
-                projection,
-                "issuanceOperationIdentity",
-                Map.of(
-                    "issuanceOperationId", ISSUANCE_ID.toString(),
-                    "controlPlaneRequestId", tuple.controlPlaneRequestId(),
-                    "actionFamilyRequestIdentity",
-                        Map.of(
-                            "requestIdentityKind",
-                            "controlPlaneRequestId",
-                            "requestId",
-                            tuple.controlPlaneRequestId()),
-                    "mutationDigest", tuple.mutationDigest()),
-                "issuanceKind",
-                "human_operator",
-                "authorityTuple",
-                authority,
-                "membershipVersion",
-                Map.of(tenantId, 5L),
-                "issuanceFence",
-                "23",
-                "issuanceEvidence",
-                evidence));
-    return canonical(bundle);
+            "3"));
   }
 
   private static UnknownFieldSet unknownFields() {

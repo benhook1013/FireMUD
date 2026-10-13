@@ -24,7 +24,6 @@ import net.firedevops.firemud.accountservice.repository.AccountStartSessionOpera
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.IssuanceCandidate;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.IssuanceRecord;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionRequest;
-import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionResult;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.Status;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiActorService.Current;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiIssuanceRepository.Stored;
@@ -314,7 +313,9 @@ public final class AccountStartSessionOperatorAuthorizationService {
               requireFreshClaimEvidence(claim);
               return new IssueOutcome(created.created(), created.issuance());
             });
-    if (outcome.created()) return candidate.response();
+    if (outcome.created()) {
+      return authorizationResponse(candidate.response(), outcome.issuance());
+    }
 
     AuthorizationResponse originalResponse = openOriginalResponse(tuple, outcome.issuance());
     var winnerEnvironment = hostedTerms.captureCurrentEnvironmentBoundary();
@@ -551,7 +552,10 @@ public final class AccountStartSessionOperatorAuthorizationService {
                 request.canonicalTupleBytes(),
                 request.reservationOwnerId(),
                 request.reservationClaimFence());
-            if (sameAttemptReplay && originalResponse.isEmpty()) {
+            Instant currentInstant = clock.instant();
+            if (sameAttemptReplay
+                && (originalResponse.isEmpty()
+                    || !currentInstant.isBefore(observed.referenceExpiresAt()))) {
               bundle.requireCurrentSnapshotForExactReplay(
                   current.source(),
                   current.stored(),
@@ -565,26 +569,36 @@ public final class AccountStartSessionOperatorAuthorizationService {
                   tuple,
                   AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
                       observed.bundleReference()),
-                  clock.instant());
+                  currentInstant);
             }
-            RedemptionResult result =
-                repository.redeemExact(
-                    new RedemptionRequest(
-                        tuple.controlPlaneRequestId(),
-                        request.canonicalTupleBytes(),
-                        observed.authorizationReferenceFingerprint(),
-                        observed.reservationOwnerId(),
-                        observed.reservationClaimFence(),
-                        gameSessionPeerUri,
-                        request.ownerAttemptId(),
-                        request.ownerFence(),
-                        observed.authorityEvidenceBundle(),
-                        Instant.ofEpochMilli(clock.millis())));
+            net.firedevops.firemud.accountservice.repository
+                    .AccountStartSessionOperatorAuthorizationRepository.RedemptionResult
+                result =
+                    repository.redeemExact(
+                        new RedemptionRequest(
+                            tuple.controlPlaneRequestId(),
+                            request.canonicalTupleBytes(),
+                            observed.authorizationReferenceFingerprint(),
+                            observed.reservationOwnerId(),
+                            observed.reservationClaimFence(),
+                            gameSessionPeerUri,
+                            request.ownerAttemptId(),
+                            request.ownerFence(),
+                            observed.authorityEvidenceBundle(),
+                            currentInstant));
             requireRedemptionProjection(result, observed);
             if (sameAttemptReplay != result.replay()) {
               throw denied("Account returned a changed one-time redemption outcome");
             }
-            return result;
+            StartSessionPostAuthorizationExecutionTuple originalTuple =
+                postAuthorizationTuple(exact);
+            return new RedemptionResult(
+                result.authorizationReferenceFingerprint(),
+                result.authorityEvidenceBundle(),
+                result.issuanceOperationId(),
+                result.issuanceFence(),
+                result.replay(),
+                originalTuple.canonicalBytes());
           });
     } finally {
       Arrays.fill(referenceBytes, (byte) 0);
@@ -861,8 +875,8 @@ public final class AccountStartSessionOperatorAuthorizationService {
     try {
       String fingerprint =
           fingerprintKeys.fingerprintForIssue(ReferenceKind.HUMAN_OPERATOR, referenceBytes);
-      AuthorizationResponse response =
-          new AuthorizationResponse(
+      StoredAuthorizationResponse response =
+          new StoredAuthorizationResponse(
               authorizationReference,
               fingerprint,
               referenceExpiresAt,
@@ -922,9 +936,8 @@ public final class AccountStartSessionOperatorAuthorizationService {
                   record.issuanceFence(),
                   bundle),
               record.responseEnvelopeExpiresAt());
-      AuthorizationResponse response = decodeResponse(plaintext);
-      requireResponseMatchesRecord(response, record);
-      return response;
+      StoredAuthorizationResponse response = decodeResponse(plaintext);
+      return authorizationResponse(response, record);
     } finally {
       if (plaintext != null) Arrays.fill(plaintext, (byte) 0);
     }
@@ -950,9 +963,8 @@ public final class AccountStartSessionOperatorAuthorizationService {
                   record.issuanceFence(),
                   bundle),
               record.responseEnvelopeExpiresAt());
-      AuthorizationResponse response = decodeResponse(plaintext);
-      requireResponseMatchesRecord(response, record);
-      return Optional.of(response);
+      StoredAuthorizationResponse response = decodeResponse(plaintext);
+      return Optional.of(authorizationResponse(response, record));
     } catch (AccountResponseEnvelopeCryptography.ResponseRecoveryExpiredException expired) {
       return Optional.empty();
     } finally {
@@ -982,7 +994,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
         bundle.canonicalBytes());
   }
 
-  private static byte[] encodeResponse(AuthorizationResponse response) {
+  private static byte[] encodeResponse(StoredAuthorizationResponse response) {
     return AccountControlUiAuthority.canonical(
         Map.of(
             "operatorAuthorizationReference", response.operatorAuthorizationReference(),
@@ -995,7 +1007,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
             "bundleReference", response.bundleReference().asJsonValue()));
   }
 
-  private static AuthorizationResponse decodeResponse(byte[] exactBytes) {
+  private static StoredAuthorizationResponse decodeResponse(byte[] exactBytes) {
     try {
       String json = new String(exactBytes, StandardCharsets.UTF_8);
       Map<String, Object> root = JSON.readValue(json, new TypeReference<>() {});
@@ -1012,12 +1024,12 @@ public final class AccountStartSessionOperatorAuthorizationService {
               root.get("bundleReference"));
       byte[] canonical =
           encodeResponse(
-              new AuthorizationResponse(
+              new StoredAuthorizationResponse(
                   reference, fingerprint, expiresAt, bundleBytes, sourceReference));
       if (!MessageDigest.isEqual(canonical, exactBytes)) {
         throw denied("Original response envelope is not canonical");
       }
-      return new AuthorizationResponse(
+      return new StoredAuthorizationResponse(
           reference, fingerprint, expiresAt, bundleBytes, sourceReference);
     } catch (IllegalStateException failure) {
       throw failure;
@@ -1026,7 +1038,8 @@ public final class AccountStartSessionOperatorAuthorizationService {
     }
   }
 
-  private void requireResponseMatchesRecord(AuthorizationResponse response, IssuanceRecord record) {
+  private void requireResponseMatchesRecord(
+      StoredAuthorizationResponse response, IssuanceRecord record) {
     var bundle =
         AccountStartSessionOperatorAuthorityBundle.decode(record.authorityEvidenceBundle());
     if (!response
@@ -1058,6 +1071,43 @@ public final class AccountStartSessionOperatorAuthorizationService {
     } finally {
       Arrays.fill(referenceBytes, (byte) 0);
     }
+  }
+
+  private AuthorizationResponse authorizationResponse(
+      StoredAuthorizationResponse response, IssuanceRecord record) {
+    requireResponseMatchesRecord(response, record);
+    return new AuthorizationResponse(
+        response.operatorAuthorizationReference(),
+        response.authorizationReferenceFingerprint(),
+        response.expiresAt(),
+        response.authorityEvidenceBundle(),
+        response.bundleReference(),
+        postAuthorizationTuple(record).canonicalBytes());
+  }
+
+  /** Builds the complete public owner tuple only from Account's immutable original record. */
+  private static StartSessionPostAuthorizationExecutionTuple postAuthorizationTuple(
+      IssuanceRecord record) {
+    Objects.requireNonNull(record, "retained Account issuance record is required");
+    StartSessionPreAuthorizationReservationTuple tuple =
+        decodeTuple(record.preAuthorizationTuple());
+    AccountStartSessionOperatorAuthorityBundle bundle =
+        AccountStartSessionOperatorAuthorityBundle.decode(record.authorityEvidenceBundle());
+    var reference = record.bundleReference();
+    bundle.requireTupleBinding(tuple);
+    if (!tuple.controlPlaneRequestId().equals(record.controlPlaneRequestId())
+        || !tuple.mutationDigest().equals(record.mutationDigest())
+        || bundle.issuanceFence() != record.issuanceFence()) {
+      throw denied("Retained Account issuance binding is inconsistent");
+    }
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        tuple,
+        record.issuanceWorkloadUri(),
+        record.authorizationReferenceFingerprint(),
+        record.reservationOwnerId(),
+        record.reservationClaimFence(),
+        record.authorityEvidenceBundle(),
+        reference);
   }
 
   private static void requireSameCurrent(Current expected, Current observed) {
@@ -1135,7 +1185,10 @@ public final class AccountStartSessionOperatorAuthorizationService {
   }
 
   private static void requireRedemptionProjection(
-      RedemptionResult result, IssuanceRecord issuance) {
+      net.firedevops.firemud.accountservice.repository
+              .AccountStartSessionOperatorAuthorizationRepository.RedemptionResult
+          result,
+      IssuanceRecord issuance) {
     if (!issuance
             .authorizationReferenceFingerprint()
             .equals(result.authorizationReferenceFingerprint())
@@ -1178,7 +1231,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
     long observedAt = evidence.getObservedAtEpochMillis();
     long expiresAt = evidence.getClaimExpiresAtEpochMillis();
     long now = clock.millis();
-    if (observedAt <= 0L || expiresAt <= observedAt || now < observedAt || now >= expiresAt) {
+    if (observedAt <= 0L || expiresAt <= observedAt || now >= expiresAt) {
       throw denied("Logging/Admin StartSession claim evidence is stale or contradictory");
     }
   }
@@ -1439,7 +1492,7 @@ public final class AccountStartSessionOperatorAuthorizationService {
 
   private record PreparedIssuance(
       AccountStartSessionOperatorAuthorityBundle bundle,
-      AuthorizationResponse response,
+      StoredAuthorizationResponse response,
       IssuanceCandidate candidate) {
     private PreparedIssuance {
       Objects.requireNonNull(bundle, "authority bundle is required");
@@ -1588,8 +1641,42 @@ public final class AccountStartSessionOperatorAuthorizationService {
       String authorizationReferenceFingerprint,
       Instant expiresAt,
       byte[] authorityEvidenceBundle,
-      AccountStartSessionOperatorAuthorityBundle.BundleReference bundleReference) {
+      AccountStartSessionOperatorAuthorityBundle.BundleReference bundleReference,
+      byte[] originalAccountPostAuthorizationTuple) {
     public AuthorizationResponse {
+      requireReference(operatorAuthorizationReference);
+      requireFingerprint(authorizationReferenceFingerprint);
+      Objects.requireNonNull(expiresAt, "reference expiry is required");
+      authorityEvidenceBundle = copy(authorityEvidenceBundle);
+      Objects.requireNonNull(bundleReference, "source bundle reference is required");
+      originalAccountPostAuthorizationTuple = copy(originalAccountPostAuthorizationTuple);
+      StartSessionPostAuthorizationExecutionTuple.decode(originalAccountPostAuthorizationTuple);
+    }
+
+    @Override
+    public byte[] authorityEvidenceBundle() {
+      return copy(authorityEvidenceBundle);
+    }
+
+    @Override
+    public byte[] originalAccountPostAuthorizationTuple() {
+      return copy(originalAccountPostAuthorizationTuple);
+    }
+
+    @Override
+    public String toString() {
+      return "AuthorizationResponse[reference, bundle, and fingerprint redacted]";
+    }
+  }
+
+  /** Private five-field plaintext used only inside the unchanged encrypted recovery envelope. */
+  private record StoredAuthorizationResponse(
+      String operatorAuthorizationReference,
+      String authorizationReferenceFingerprint,
+      Instant expiresAt,
+      byte[] authorityEvidenceBundle,
+      AccountStartSessionOperatorAuthorityBundle.BundleReference bundleReference) {
+    private StoredAuthorizationResponse {
       requireReference(operatorAuthorizationReference);
       requireFingerprint(authorizationReferenceFingerprint);
       Objects.requireNonNull(expiresAt, "reference expiry is required");
@@ -1601,10 +1688,39 @@ public final class AccountStartSessionOperatorAuthorizationService {
     public byte[] authorityEvidenceBundle() {
       return copy(authorityEvidenceBundle);
     }
+  }
+
+  /** Public redemption result with the independently reconstructed original Account tuple. */
+  public record RedemptionResult(
+      String authorizationReferenceFingerprint,
+      byte[] authorityEvidenceBundle,
+      UUID issuanceOperationId,
+      long issuanceFence,
+      boolean replay,
+      byte[] originalAccountPostAuthorizationTuple) {
+    public RedemptionResult {
+      authorityEvidenceBundle = copy(authorityEvidenceBundle);
+      originalAccountPostAuthorizationTuple = copy(originalAccountPostAuthorizationTuple);
+      StartSessionPostAuthorizationExecutionTuple.decode(originalAccountPostAuthorizationTuple);
+    }
+
+    @Override
+    public byte[] authorityEvidenceBundle() {
+      return copy(authorityEvidenceBundle);
+    }
+
+    @Override
+    public byte[] originalAccountPostAuthorizationTuple() {
+      return copy(originalAccountPostAuthorizationTuple);
+    }
 
     @Override
     public String toString() {
-      return "AuthorizationResponse[reference, bundle, and fingerprint redacted]";
+      return "RedemptionResult[issuanceOperationId="
+          + issuanceOperationId
+          + ", replay="
+          + replay
+          + ", authority and tuple redacted]";
     }
   }
 

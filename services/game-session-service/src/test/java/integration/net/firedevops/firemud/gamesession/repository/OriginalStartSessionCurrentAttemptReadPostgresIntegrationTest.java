@@ -39,7 +39,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.json.JsonMapper;
 
-/** PostgreSQL proof of the exact, observation-only current original StartSession attempt read. */
+/**
+ * PostgreSQL proof of exact original-attempt reads. Synthetic Account projection bytes prove
+ * persistence and readback binding only, not Account RPC provenance.
+ */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class OriginalStartSessionCurrentAttemptReadPostgresIntegrationTest {
@@ -71,6 +74,7 @@ class OriginalStartSessionCurrentAttemptReadPostgresIntegrationTest {
         fixture.attach(
             claim,
             projection(
+                tuple,
                 tuple.authorizationReferenceFingerprint(),
                 tuple.authorityEvidenceBundleBytes(),
                 ISSUANCE_ID,
@@ -91,6 +95,92 @@ class OriginalStartSessionCurrentAttemptReadPostgresIntegrationTest {
     assertThat(current.postAuthorizationExecutionTuple()).containsExactly(tuple.canonicalBytes());
     assertThat(current.accountRedemptionProjection())
         .containsExactly(attached.accountRedemptionProjection());
+    assertThat(fixture.ownerAttemptRowJson(tuple.controlPlaneRequestId())).isEqualTo(before);
+  }
+
+  @Test
+  void exactLargeReservationFencesSurviveOwnerReservationAndProjectionReplay() {
+    for (long fence :
+        new long[] {
+          9_007_199_254_740_991L, 9_007_199_254_740_992L, 9_007_199_254_740_993L, Long.MAX_VALUE
+        }) {
+      Fixture fixture = fixture(Duration.ofSeconds(30));
+      var baseline = tuple("operator-attempt-large-fence-" + fence);
+      var tuple =
+          StartSessionPostAuthorizationExecutionTuple.createHuman(
+              baseline.preAuthorizationTuple(),
+              baseline.authenticatedWorkloadIdentity(),
+              baseline.authorizationReferenceFingerprint(),
+              baseline.reservationOwnerId(),
+              fence,
+              baseline.authorityEvidenceBundleBytes(),
+              baseline.bundleReference());
+      var reserved = fixture.reserve(tuple);
+      AttemptClaim claim = reserved.claim().orElseThrow();
+      byte[] originalBytes = tuple.canonicalBytes();
+      var accountProjection =
+          projection(
+              tuple,
+              tuple.authorizationReferenceFingerprint(),
+              tuple.authorityEvidenceBundleBytes(),
+              ISSUANCE_ID,
+              23L);
+      AttemptSnapshot attached = fixture.attach(claim, accountProjection);
+      AttemptSnapshot replayed = fixture.attach(claim, accountProjection);
+      String retainedRow = fixture.ownerAttemptRowJson(tuple.controlPlaneRequestId());
+
+      assertThat(replayed.postAuthorizationExecutionTuple()).containsExactly(originalBytes);
+      assertThat(replayed.accountRedemptionProjection())
+          .containsExactly(attached.accountRedemptionProjection());
+      assertThat(
+              StartSessionPostAuthorizationExecutionTuple.decode(
+                      replayed.postAuthorizationExecutionTuple())
+                  .reservationClaimFence())
+          .isEqualTo(fence);
+      assertThat(fixture.reserve(tuple).disposition())
+          .isEqualTo(
+              GameSessionStartSessionOperatorAttemptRepository.ReservationDisposition.EXACT_REPLAY);
+      assertThat(fixture.ownerAttemptRowJson(tuple.controlPlaneRequestId())).isEqualTo(retainedRow);
+      assertThat(fixture.dsl().fetchCount(DSL.table("game_session_start_session_operator_attempt")))
+          .isEqualTo(1);
+      assertThat(fixture.dsl().fetchCount(DSL.table("game_instances"))).isZero();
+      assertThat(fixture.dsl().fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
+    }
+  }
+
+  @Test
+  void historicalReadPreservesLegacyScalarBytesWhileCurrentReadFailsClosed() {
+    Fixture fixture = fixture(Duration.ofMinutes(1));
+    StartSessionPostAuthorizationExecutionTuple tuple = tuple("historical-scalar-v1");
+    UUID ownerAttemptId = UUID.randomUUID();
+    UUID ownerMutationId = UUID.randomUUID();
+    long ownerFence = 1L;
+    byte[] legacyScalarProjection = legacyScalarProjection(tuple);
+    fixture.insertLegacyAttempt(
+        tuple,
+        ownerAttemptId,
+        ownerMutationId,
+        UUID.randomUUID(),
+        ownerFence,
+        legacyScalarProjection);
+    String before = fixture.ownerAttemptRowJson(tuple.controlPlaneRequestId());
+
+    AttemptSnapshot historical =
+        fixture
+            .repository()
+            .readHistoricalOwnerAttempt(tuple, ownerAttemptId, ownerFence)
+            .orElseThrow();
+
+    assertThat(historical.accountRedemptionProjection()).containsExactly(legacyScalarProjection);
+    assertThat(fixture.ownerAttemptRowJson(tuple.controlPlaneRequestId())).isEqualTo(before);
+    assertThatThrownBy(
+            () ->
+                fixture.currentOriginalAttempt(
+                    currentAttemptRequest(tuple, ownerAttemptId, ownerMutationId, ownerFence)))
+        .isInstanceOf(
+            GameSessionStartSessionOperatorAttemptRepository
+                .StartSessionOperatorAttemptConflictException.class)
+        .hasMessageContaining("legacy");
     assertThat(fixture.ownerAttemptRowJson(tuple.controlPlaneRequestId())).isEqualTo(before);
   }
 
@@ -118,6 +208,7 @@ class OriginalStartSessionCurrentAttemptReadPostgresIntegrationTest {
     mismatched.attach(
         claim,
         projection(
+            tuple,
             tuple.authorizationReferenceFingerprint(),
             tuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
@@ -166,6 +257,7 @@ class OriginalStartSessionCurrentAttemptReadPostgresIntegrationTest {
     expired.attach(
         expiredClaim,
         projection(
+            expiredTuple,
             expiredTuple.authorizationReferenceFingerprint(),
             expiredTuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
@@ -196,6 +288,7 @@ class OriginalStartSessionCurrentAttemptReadPostgresIntegrationTest {
     fixture.attach(
         claim,
         projection(
+            tuple,
             tuple.authorizationReferenceFingerprint(),
             tuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
@@ -269,8 +362,37 @@ class OriginalStartSessionCurrentAttemptReadPostgresIntegrationTest {
   }
 
   private static AccountRedemptionProjection projection(
-      String fingerprint, byte[] bundle, UUID issuanceOperationId, long issuanceFence) {
-    return new AccountRedemptionProjection(fingerprint, bundle, issuanceOperationId, issuanceFence);
+      StartSessionPostAuthorizationExecutionTuple tuple,
+      String fingerprint,
+      byte[] bundle,
+      UUID issuanceOperationId,
+      long issuanceFence) {
+    return new AccountRedemptionProjection(
+        fingerprint, bundle, issuanceOperationId, issuanceFence, tuple.canonicalBytes());
+  }
+
+  private static byte[] legacyScalarProjection(StartSessionPostAuthorizationExecutionTuple tuple) {
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
+    Map<String, Object> projection =
+        Map.of(
+            "projectionSchemaId",
+            "accountStartSessionRedemptionProjection",
+            "projectionSchemaVersion",
+            "1",
+            "authorizationReferenceFingerprint",
+            tuple.authorizationReferenceFingerprint(),
+            "authorityEvidenceBundle",
+            bundle.jsonValue(),
+            "issuanceOperationId",
+            bundle.issuanceOperationId().toString(),
+            "issuanceFence",
+            Long.parseLong(tuple.issuanceFence()));
+    try {
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(projection));
+    } catch (IOException malformed) {
+      throw new IllegalStateException("Could not encode a legacy scalar projection", malformed);
+    }
   }
 
   private static Request currentAttemptRequest(
@@ -448,6 +570,35 @@ class OriginalStartSessionCurrentAttemptReadPostgresIntegrationTest {
       return Objects.requireNonNull(
           transactions.execute(status -> repository.readCurrentOriginalAttempt(request)),
           "Current original StartSession attempt snapshot");
+    }
+
+    void insertLegacyAttempt(
+        StartSessionPostAuthorizationExecutionTuple tuple,
+        UUID ownerAttemptId,
+        UUID ownerMutationId,
+        UUID claimOwnerId,
+        long ownerFence,
+        byte[] legacyProjection) {
+      dsl.execute(
+          "INSERT INTO game_session_start_session_operator_attempt"
+              + " (target_namespace, control_plane_request_id, canonical_tenant_id,"
+              + " owner_attempt_id, owner_mutation_id, claim_owner_id, owner_fence,"
+              + " post_authorization_execution_tuple, mutation_digest,"
+              + " authorization_reference_fingerprint, account_redemption_projection,"
+              + " lease_expires_at)"
+              + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+              + " clock_timestamp() + interval '5 minutes')",
+          NAMESPACE,
+          tuple.controlPlaneRequestId(),
+          tuple.preAuthorizationTuple().action().scope().tenantId(),
+          ownerAttemptId,
+          ownerMutationId,
+          claimOwnerId,
+          ownerFence,
+          tuple.canonicalBytes(),
+          tuple.mutationDigest(),
+          tuple.authorizationReferenceFingerprint(),
+          legacyProjection);
     }
 
     String ownerAttemptRowJson(String requestId) {

@@ -180,8 +180,6 @@ class StartSessionReservationEvidenceClientMtlsTest {
                     .build(),
             response -> response.toBuilder().setObservedAtEpochMillis(0L).build(),
             response ->
-                response.toBuilder().setObservedAtEpochMillis(NOW_EPOCH_MILLIS + 1L).build(),
-            response ->
                 response.toBuilder()
                     .setClaimExpiresAtEpochMillis(response.getObservedAtEpochMillis())
                     .build(),
@@ -195,6 +193,24 @@ class StartSessionReservationEvidenceClientMtlsTest {
           .hasMessageContaining("stale or mismatched");
     }
     assertThat(handlerCalls).hasValue(invalidResponses.size());
+  }
+
+  @Test
+  void acceptsFutureObservationWhenProducerIntervalAndAccountExpiryAreLive() throws Exception {
+    startServer(pki.loggingAdminServer());
+    client = newClient(pki.accountClient());
+    client.init();
+    responseMutation.set(
+        response -> response.toBuilder().setObservedAtEpochMillis(NOW_EPOCH_MILLIS + 1L).build());
+
+    ReadCurrentClaimEvidenceResponse evidence =
+        read(tuple(), StartSessionReservationEvidenceClient.Purpose.ISSUE);
+
+    assertThat(evidence.getObservedAtEpochMillis()).isEqualTo(NOW_EPOCH_MILLIS + 1L);
+    assertThat(evidence.getClaimExpiresAtEpochMillis())
+        .isGreaterThan(evidence.getObservedAtEpochMillis())
+        .isGreaterThan(NOW_EPOCH_MILLIS);
+    assertThat(handlerCalls).hasValue(1);
   }
 
   @Test

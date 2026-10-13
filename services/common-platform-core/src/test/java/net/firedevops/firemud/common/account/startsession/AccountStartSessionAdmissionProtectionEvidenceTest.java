@@ -38,16 +38,15 @@ class AccountStartSessionAdmissionProtectionEvidenceTest {
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Test
-  void redemptionProjectionRetainsTheOriginalNumericIssuanceFenceRepresentation()
-      throws IOException {
+  void currentRedemptionProjectionRetainsTheCompleteCanonicalOwnerTuple() throws IOException {
     StartSessionPostAuthorizationExecutionTuple tuple = originalTuple("admission-projection");
 
     byte[] projection = StartSessionAccountRedemptionProjection.fromOriginalTuple(tuple);
     Map<String, Object> projectionValue = readObject(projection);
 
-    Object issuanceFence = projectionValue.get("issuanceFence");
-    assertThat(issuanceFence).isInstanceOf(Number.class);
-    assertThat(((Number) issuanceFence).toString()).isEqualTo("23");
+    assertThat(projection).containsExactly(tuple.canonicalBytes());
+    assertThat(projectionValue.get("issuanceFence")).isEqualTo("23");
+    StartSessionAccountRedemptionProjection.requireCurrentBinding(projection, tuple);
     assertThat(((Map<?, ?>) projectionValue.get("authorityEvidenceBundle")).get("issuanceFence"))
         .isEqualTo("23");
   }

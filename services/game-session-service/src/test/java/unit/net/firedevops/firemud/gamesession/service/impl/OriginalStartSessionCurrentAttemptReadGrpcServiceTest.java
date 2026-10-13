@@ -44,6 +44,7 @@ import org.springframework.transaction.support.SimpleTransactionStatus;
 import tools.jackson.databind.json.JsonMapper;
 
 class OriginalStartSessionCurrentAttemptReadGrpcServiceTest {
+  private static final JsonMapper JSON = JsonMapper.builder().build();
   private static final String NAMESPACE = "world-runtime";
   private static final UUID READ_ID = UUID.fromString("01111111-1111-4111-8111-111111111111");
   private static final UUID ATTEMPT = UUID.fromString("02222222-2222-4222-8222-222222222222");
@@ -152,7 +153,10 @@ class OriginalStartSessionCurrentAttemptReadGrpcServiceTest {
         snapshot(request, Instant.parse("2030-01-01T00:00:00Z"), exactProjection);
     when(changedPhase.phaseState()).thenReturn("COMMITTED");
     AttemptSnapshot changedProjection =
-        snapshot(request, Instant.parse("2030-01-01T00:00:00Z"), new byte[] {2});
+        snapshot(
+            request,
+            Instant.parse("2030-01-01T00:00:00Z"),
+            legacyScalarProjection(request.originalTuple()));
     GameSessionStartSessionOperatorAttemptRepository repository = mockRepository();
     when(repository.readCurrentOriginalAttempt(ArgumentMatchers.any(Request.class)))
         .thenReturn(
@@ -257,8 +261,33 @@ class OriginalStartSessionCurrentAttemptReadGrpcServiceTest {
             tuple.authorizationReferenceFingerprint(),
             tuple.authorityEvidenceBundleBytes(),
             authority.issuanceOperationId(),
-            Long.parseLong(tuple.issuanceFence()))
+            Long.parseLong(tuple.issuanceFence()),
+            tuple.canonicalBytes())
         .canonicalBytes();
+  }
+
+  private static byte[] legacyScalarProjection(StartSessionPostAuthorizationExecutionTuple tuple) {
+    var authority =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
+    Map<String, Object> projection =
+        Map.of(
+            "projectionSchemaId",
+            "accountStartSessionRedemptionProjection",
+            "projectionSchemaVersion",
+            "1",
+            "authorizationReferenceFingerprint",
+            tuple.authorizationReferenceFingerprint(),
+            "authorityEvidenceBundle",
+            authority.jsonValue(),
+            "issuanceOperationId",
+            authority.issuanceOperationId().toString(),
+            "issuanceFence",
+            Long.parseLong(tuple.issuanceFence()));
+    try {
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(projection));
+    } catch (IOException malformed) {
+      throw new IllegalStateException("Could not encode a legacy scalar projection", malformed);
+    }
   }
 
   private static Request request(String namespace) {

@@ -220,7 +220,6 @@ public final class StartSessionReservationEvidenceClient
         || response.getClaimFence() != currentClaimFence
         || response.getPurpose() != toWirePurpose(purpose)
         || response.getObservedAtEpochMillis() <= 0L
-        || response.getObservedAtEpochMillis() > localNowEpochMillis
         || response.getClaimExpiresAtEpochMillis() <= response.getObservedAtEpochMillis()
         || response.getClaimExpiresAtEpochMillis() <= localNowEpochMillis) {
       throw new IllegalStateException(

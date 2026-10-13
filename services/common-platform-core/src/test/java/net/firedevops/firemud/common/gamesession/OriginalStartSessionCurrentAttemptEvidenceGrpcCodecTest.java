@@ -19,8 +19,7 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
   @Test
   void roundTripsExactRequestPendingPhaseProjectionAndOriginalExpiry() {
     Request request = request();
-    byte[] projection =
-        "attached-account-projection".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    byte[] projection = request.originalTuple().canonicalBytes();
     Result result =
         new Result(request, Instant.parse("2030-01-01T00:00:00.123456789Z"), projection);
     var wireRequest = OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toRequest(request);
@@ -65,7 +64,10 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
 
     var response =
         OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(
-            new Result(request, Instant.parse("2030-01-01T00:00:00Z"), new byte[] {1, 2, 3}));
+            new Result(
+                request,
+                Instant.parse("2030-01-01T00:00:00Z"),
+                request.originalTuple().canonicalBytes()));
     var changedEcho =
         response.toBuilder()
             .setRequest(
@@ -85,7 +87,10 @@ class OriginalStartSessionCurrentAttemptEvidenceGrpcCodecTest {
     Request request = request();
     var valid =
         OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(
-            new Result(request, Instant.parse("2030-01-01T00:00:00Z"), new byte[] {1, 2, 3}));
+            new Result(
+                request,
+                Instant.parse("2030-01-01T00:00:00Z"),
+                request.originalTuple().canonicalBytes()));
     var unknownResponse =
         valid.toBuilder()
             .setUnknownFields(

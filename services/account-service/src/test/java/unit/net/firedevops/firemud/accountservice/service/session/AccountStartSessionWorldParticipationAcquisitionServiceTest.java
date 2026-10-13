@@ -291,6 +291,24 @@ class AccountStartSessionWorldParticipationAcquisitionServiceTest {
   }
 
   @Test
+  void rejectsLegacyScalarProjectionBeforeCurrentnessOrWrites() {
+    Harness harness = new Harness();
+    harness.configureClientResult(legacyScalarProjection(harness.tuple));
+
+    assertCode(
+        Status.Code.FAILED_PRECONDITION,
+        () -> authorized(() -> harness.service.acquire(request(null))));
+
+    assertThat(harness.steps).containsExactly("remote-read");
+    verify(harness.issuer, times(0))
+        .withCurrentWorldReceivingParticipationCurrentness(
+            any(byte[].class), eq(GAME_SESSION_ATTEMPT_ID), eq(GAME_SESSION_FENCE), any());
+    verifyNoInteractions(harness.participationRepository);
+    verifyNoInteractions(harness.attemptEvidenceRepository);
+    assertThat(harness.readbackTransactions.begins).isZero();
+  }
+
+  @Test
   void rejectsChangedCommittedSourceVectorDuringIndependentReadbackWithoutRetryWrite() {
     Harness harness = new Harness();
     harness.configureSuccess();
@@ -445,6 +463,21 @@ class AccountStartSessionWorldParticipationAcquisitionServiceTest {
 
   private static byte[] projection(
       StartSessionPostAuthorizationExecutionTuple tuple, Map<String, Object> additionalFields) {
+    if (additionalFields.isEmpty()) {
+      return tuple.canonicalBytes();
+    }
+    @SuppressWarnings("unchecked")
+    Map<String, Object> tupleValue = JSON.readValue(tuple.canonicalBytes(), Map.class);
+    var changed = new java.util.LinkedHashMap<>(tupleValue);
+    changed.putAll(additionalFields);
+    try {
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(changed));
+    } catch (java.io.IOException impossible) {
+      throw new IllegalStateException(impossible);
+    }
+  }
+
+  private static byte[] legacyScalarProjection(StartSessionPostAuthorizationExecutionTuple tuple) {
     var bundle = StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
     Map<String, Object> projection =
         Map.of(
@@ -454,17 +487,8 @@ class AccountStartSessionWorldParticipationAcquisitionServiceTest {
             "authorityEvidenceBundle", bundle.jsonValue(),
             "issuanceOperationId", bundle.issuanceOperationId().toString(),
             "issuanceFence", Long.parseLong(tuple.issuanceFence()));
-    if (additionalFields.isEmpty()) {
-      try {
-        return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(projection));
-      } catch (java.io.IOException impossible) {
-        throw new IllegalStateException(impossible);
-      }
-    }
-    var changed = new java.util.LinkedHashMap<>(projection);
-    changed.putAll(additionalFields);
     try {
-      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(changed));
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(projection));
     } catch (java.io.IOException impossible) {
       throw new IllegalStateException(impossible);
     }

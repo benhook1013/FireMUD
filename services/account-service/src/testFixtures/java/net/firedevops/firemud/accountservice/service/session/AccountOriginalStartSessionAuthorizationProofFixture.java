@@ -163,7 +163,9 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
 
           @Override
           public void attachAccountRedemptionProjection(
-              OwnerClaim ownerClaim, StartSessionPostAuthorizationExecutionTuple originalTuple) {
+              OwnerClaim ownerClaim,
+              StartSessionPostAuthorizationExecutionTuple originalTuple,
+              byte[] originalAccountPostAuthorizationTuple) {
             // Existing callers may continue to use this fixture with a stipulated owner attempt.
           }
         });
@@ -241,7 +243,8 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
                   directAuthorization.bundleReference().bundleVersion(),
                   directAuthorization.bundleReference().sourceVersion(),
                   directAuthorization.bundleReference().sourceFence(),
-                  directAuthorization.bundleReference().linearization()));
+                  directAuthorization.bundleReference().linearization()),
+              directAuthorization.originalAccountPostAuthorizationTuple());
     } else {
       authorization =
           Objects.requireNonNull(
@@ -250,25 +253,24 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
               "Authenticated Account issue transport returned no authorization");
     }
 
-    var sharedReference = authorization.bundleReference();
-    var originalTuple =
-        StartSessionPostAuthorizationExecutionTuple.createHuman(
+    byte[] originalAccountPostAuthorizationTuple =
+        authorization.originalAccountPostAuthorizationTuple();
+    StartSessionPostAuthorizationExecutionTuple originalTuple =
+        requireIssuedTupleBinding(
             preTuple,
-            loggingPeerUri,
-            authorization.authorizationReferenceFingerprint(),
+            authorization,
+            originalAccountPostAuthorizationTuple,
             reservationOwnerId,
-            reservationClaimFence,
-            authorization.authorityEvidenceBundle(),
-            sharedReference);
+            reservationClaimFence);
 
     OwnerClaim ownerClaim =
         Objects.requireNonNull(
             ownerAttemptLifecycle.reserve(originalTuple),
             "Game Session owner attempt reservation returned no claim");
 
-    boolean replay;
+    AccountStartSessionOperatorAuthorizationService.RedemptionResult redemption;
     if (transport == null) {
-      var redemption =
+      redemption =
           withPeer(
               gameSessionPeerUri,
               () ->
@@ -281,14 +283,35 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
                           reservationClaimFence,
                           ownerClaim.ownerAttemptId(),
                           ownerClaim.ownerFence())));
-      replay = redemption.replay();
     } else {
-      replay =
-          transport.redeem(
-              preTupleBytes, authorization, reservationOwnerId, reservationClaimFence, ownerClaim);
+      redemption =
+          Objects.requireNonNull(
+              transport.redeem(
+                  preTupleBytes,
+                  authorization,
+                  reservationOwnerId,
+                  reservationClaimFence,
+                  ownerClaim),
+              "Authenticated Account redemption transport returned no result");
     }
-    assertThat(replay).isFalse();
-    ownerAttemptLifecycle.attachAccountRedemptionProjection(ownerClaim, originalTuple);
+    var issuedBundle =
+        StartSessionAuthorityEvidenceBundle.decode(authorization.authorityEvidenceBundle());
+    if (!authorization
+            .authorizationReferenceFingerprint()
+            .equals(redemption.authorizationReferenceFingerprint())
+        || !Arrays.equals(
+            authorization.authorityEvidenceBundle(), redemption.authorityEvidenceBundle())
+        || !issuedBundle.issuanceOperationId().equals(redemption.issuanceOperationId())
+        || !issuedBundle.issuanceFence().equals(Long.toString(redemption.issuanceFence()))) {
+      throw new IllegalStateException(
+          "Account redemption response differs from the exact issued tuple"
+              + " or authorization evidence");
+    }
+    assertThat(redemption.originalAccountPostAuthorizationTuple())
+        .containsExactly(originalAccountPostAuthorizationTuple);
+    assertThat(redemption.replay()).isFalse();
+    ownerAttemptLifecycle.attachAccountRedemptionProjection(
+        ownerClaim, originalTuple, originalAccountPostAuthorizationTuple.clone());
 
     var retained =
         accountSources.tx(
@@ -487,8 +510,11 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
   public interface OwnerAttemptLifecycle {
     OwnerClaim reserve(StartSessionPostAuthorizationExecutionTuple originalTuple);
 
+    /** Receives the exact ISSUE tuple bytes after Account's REDEEM tuple echo has been compared. */
     void attachAccountRedemptionProjection(
-        OwnerClaim ownerClaim, StartSessionPostAuthorizationExecutionTuple originalTuple);
+        OwnerClaim ownerClaim,
+        StartSessionPostAuthorizationExecutionTuple originalTuple,
+        byte[] originalAccountPostAuthorizationTuple);
   }
 
   /** Authenticated issue and redemption calls used by a composed transport proof. */
@@ -499,7 +525,7 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
         UUID reservationOwnerId,
         long reservationClaimFence);
 
-    boolean redeem(
+    AccountStartSessionOperatorAuthorizationService.RedemptionResult redeem(
         byte[] canonicalPreAuthorizationTupleBytes,
         IssuedAuthorization authorization,
         UUID reservationOwnerId,
@@ -507,12 +533,13 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
         OwnerClaim ownerClaim);
   }
 
-  /** Exact Account issue response fields needed to form the original execution tuple. */
+  /** Account issue response fields and exact independently returned original owner tuple. */
   public record IssuedAuthorization(
       String operatorAuthorizationReference,
       String authorizationReferenceFingerprint,
       byte[] authorityEvidenceBundle,
-      StartSessionAuthorityEvidenceBundle.BundleReference bundleReference) {
+      StartSessionAuthorityEvidenceBundle.BundleReference bundleReference,
+      byte[] originalAccountPostAuthorizationTuple) {
     public IssuedAuthorization {
       Objects.requireNonNull(operatorAuthorizationReference, "Account reference is required");
       Objects.requireNonNull(
@@ -521,12 +548,46 @@ public final class AccountOriginalStartSessionAuthorizationProofFixture {
           Objects.requireNonNull(authorityEvidenceBundle, "Account authority bundle is required")
               .clone();
       Objects.requireNonNull(bundleReference, "Account bundle reference is required");
+      originalAccountPostAuthorizationTuple =
+          Objects.requireNonNull(
+                  originalAccountPostAuthorizationTuple, "Account original owner tuple is required")
+              .clone();
     }
 
     @Override
     public byte[] authorityEvidenceBundle() {
       return authorityEvidenceBundle.clone();
     }
+
+    @Override
+    public byte[] originalAccountPostAuthorizationTuple() {
+      return originalAccountPostAuthorizationTuple.clone();
+    }
+  }
+
+  private StartSessionPostAuthorizationExecutionTuple requireIssuedTupleBinding(
+      StartSessionPreAuthorizationReservationTuple preTuple,
+      IssuedAuthorization authorization,
+      byte[] exactAccountTupleBytes,
+      UUID reservationOwnerId,
+      long reservationClaimFence) {
+    StartSessionPostAuthorizationExecutionTuple accountTuple =
+        StartSessionPostAuthorizationExecutionTuple.decode(exactAccountTupleBytes);
+    if (!Arrays.equals(accountTuple.canonicalBytes(), exactAccountTupleBytes)
+        || !preTuple.canonicalJson().equals(accountTuple.preAuthorizationTuple().canonicalJson())
+        || !loggingPeerUri.equals(accountTuple.authenticatedWorkloadIdentity())
+        || !authorization
+            .authorizationReferenceFingerprint()
+            .equals(accountTuple.authorizationReferenceFingerprint())
+        || !reservationOwnerId.equals(accountTuple.reservationOwnerId())
+        || reservationClaimFence != accountTuple.reservationClaimFence()
+        || !Arrays.equals(
+            authorization.authorityEvidenceBundle(), accountTuple.authorityEvidenceBundleBytes())
+        || !authorization.bundleReference().equals(accountTuple.bundleReference())) {
+      throw new IllegalStateException(
+          "Account's exact issued owner tuple differs from the original request or response");
+    }
+    return accountTuple;
   }
 
   /** Non-secret owner identities needed by Account redemption and acquisition. */

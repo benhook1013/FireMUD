@@ -8,21 +8,31 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
+import com.google.protobuf.ByteString;
+import io.grpc.CallCredentials;
+import io.grpc.ClientInterceptor;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import net.firedevops.firemud.loggingadmin.v1.ReadCurrentClaimEvidenceResponse;
+import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidencePurpose;
+import net.firedevops.firemud.loggingadmin.v1.StartSessionReservationEvidenceServiceGrpc;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -129,6 +139,75 @@ class StartSessionReservationEvidenceClientTest {
     } finally {
       client.close();
     }
+  }
+
+  @Test
+  void acceptsFutureProducerObservationButStillRejectsClaimExpiredAtLocalNow(
+      @TempDir Path directory) throws Exception {
+    long localNow = CLOCK.millis();
+    StartSessionPreAuthorizationReservationTuple tuple = tuple();
+    var stub =
+        mock(
+            StartSessionReservationEvidenceServiceGrpc
+                .StartSessionReservationEvidenceServiceBlockingStub.class);
+    when(stub.withCallCredentials(any(CallCredentials.class))).thenReturn(stub);
+    when(stub.withInterceptors(any(ClientInterceptor[].class))).thenReturn(stub);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    ReadCurrentClaimEvidenceResponse futureObservation =
+        evidenceResponse(tuple, localNow + 1L, localNow + 30_000L);
+    ReadCurrentClaimEvidenceResponse expiresAtLocalNow =
+        evidenceResponse(tuple, localNow - 1L, localNow);
+    when(stub.readCurrentClaimEvidence(any())).thenReturn(futureObservation, expiresAtLocalNow);
+
+    StartSessionReservationEvidenceClient client =
+        new StartSessionReservationEvidenceClient(
+            new ServiceEndpointsProperties(),
+            tlsProperties(directory),
+            mock(GrpcChannelFactory.class),
+            BlockingGrpcStubCustomizer.noop(),
+            CLOCK);
+    var stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
+    stubField.setAccessible(true);
+    stubField.set(client, stub);
+
+    assertThat(
+            client.readCurrentClaimEvidence(
+                tuple,
+                RESERVATION_OWNER_ID,
+                1L,
+                RESERVATION_OWNER_ID,
+                1L,
+                StartSessionReservationEvidenceClient.Purpose.ISSUE))
+        .isEqualTo(futureObservation);
+    assertThatThrownBy(
+            () ->
+                client.readCurrentClaimEvidence(
+                    tuple,
+                    RESERVATION_OWNER_ID,
+                    1L,
+                    RESERVATION_OWNER_ID,
+                    1L,
+                    StartSessionReservationEvidenceClient.Purpose.ISSUE))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("stale or mismatched");
+  }
+
+  private static ReadCurrentClaimEvidenceResponse evidenceResponse(
+      StartSessionPreAuthorizationReservationTuple tuple, long observedAt, long expiresAt) {
+    return ReadCurrentClaimEvidenceResponse.newBuilder()
+        .setControlPlaneRequestId(tuple.controlPlaneRequestId())
+        .setPreAuthorizationTupleJson(
+            ByteString.copyFrom(tuple.canonicalJson().getBytes(StandardCharsets.UTF_8)))
+        .setMutationDigest(tuple.mutationDigest())
+        .setReservationOwnerId(RESERVATION_OWNER_ID.toString())
+        .setReservationClaimFence(1L)
+        .setClaimOwnerId(RESERVATION_OWNER_ID.toString())
+        .setClaimFence(1L)
+        .setObservedAtEpochMillis(observedAt)
+        .setClaimExpiresAtEpochMillis(expiresAt)
+        .setPurpose(
+            StartSessionReservationEvidencePurpose.START_SESSION_RESERVATION_EVIDENCE_PURPOSE_ISSUE)
+        .build();
   }
 
   private static StartSessionReservationEvidenceClient newClient(

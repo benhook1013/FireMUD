@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -12,7 +13,9 @@ import io.grpc.Context;
 import io.grpc.Status;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -22,8 +25,9 @@ import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorld
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.StoredParticipation;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadRequest;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
@@ -34,7 +38,6 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
 import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import tools.jackson.databind.json.JsonMapper;
 
 /** Mocked owner-storage boundary only; no PostgreSQL or authenticated Game Session proof. */
 class AccountStartSessionWorldParticipationHistoricalReadServiceTest {
@@ -47,7 +50,6 @@ class AccountStartSessionWorldParticipationHistoricalReadServiceTest {
   private static final long GAME_SESSION_FENCE = 37L;
   private static final String PREPARATION_INPUT =
       "{ \"historical\" : \"retained exactly\", \"revision\": 1 }\n";
-  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   private final AccountStartSessionWorldParticipationRepository repository =
       mock(AccountStartSessionWorldParticipationRepository.class);
@@ -96,7 +98,8 @@ class AccountStartSessionWorldParticipationHistoricalReadServiceTest {
   void readsExactHistoryAfterIngressExpiryAndPriorSettlementWithoutCurrentnessOrMutation()
       throws Exception {
     StoredParticipation expired = participation(true);
-    when(repository.findHistoricalExact(PARTICIPATION_ID, PARTICIPATION_FENCE))
+    when(repository.findHistoricalForOriginalTuple(
+            argThat(bytes -> Arrays.equals(bytes, originalTupleBytes()))))
         .thenAnswer(
             call -> {
               assertWritableReadCommittedTransaction();
@@ -112,8 +115,10 @@ class AccountStartSessionWorldParticipationHistoricalReadServiceTest {
     var evidence = authorized(() -> service.read(request()));
 
     assertThat(evidence.request()).isEqualTo(request());
-    assertThat(evidence.originalPostAuthorizationTuple())
+    assertThat(evidence.request().originalPostAuthorizationTuple())
         .containsExactly(expired.originalPostAuthorizationTuple());
+    assertThat(evidence.accountWorldParticipationId()).isEqualTo(PARTICIPATION_ID);
+    assertThat(evidence.accountWorldParticipationFence()).isEqualTo(PARTICIPATION_FENCE);
     assertThat(evidence.gameSessionOwnerAttemptId()).isEqualTo(GAME_SESSION_ATTEMPT_ID);
     assertThat(evidence.gameSessionOwnerFence()).isEqualTo(GAME_SESSION_FENCE);
     assertThat(evidence.canonicalGameInstanceId()).isEqualTo(GAME_INSTANCE_ID);
@@ -122,13 +127,16 @@ class AccountStartSessionWorldParticipationHistoricalReadServiceTest {
     assertThat(transactions.begins).isEqualTo(1);
     assertThat(transactions.commits).isEqualTo(1);
     assertNoSql();
-    verify(repository).findHistoricalExact(PARTICIPATION_ID, PARTICIPATION_FENCE);
+    verify(repository)
+        .findHistoricalForOriginalTuple(
+            argThat(bytes -> Arrays.equals(bytes, originalTupleBytes())));
     verifyNoMoreInteractions(repository);
   }
 
   @Test
-  void absentMismatchedNamespaceAndMismatchedRetainedIdentityFailClosed() {
-    when(repository.findHistoricalExact(PARTICIPATION_ID, PARTICIPATION_FENCE))
+  void absentMismatchedNamespaceAndMismatchedOriginalTupleFailClosed() {
+    when(repository.findHistoricalForOriginalTuple(
+            argThat(bytes -> Arrays.equals(bytes, originalTupleBytes()))))
         .thenReturn(Optional.empty());
     assertCode(Status.Code.FAILED_PRECONDITION, () -> authorized(() -> service.read(request())));
     assertThat(transactions.commits).isZero();
@@ -136,7 +144,8 @@ class AccountStartSessionWorldParticipationHistoricalReadServiceTest {
 
     TransactionSynchronizationManager.clear();
     transactions.resetCounts();
-    when(repository.findHistoricalExact(PARTICIPATION_ID, PARTICIPATION_FENCE))
+    when(repository.findHistoricalForOriginalTuple(
+            argThat(bytes -> Arrays.equals(bytes, originalTupleBytes()))))
         .thenReturn(
             Optional.of(
                 participation(false, "other-runtime", PARTICIPATION_ID, PARTICIPATION_FENCE)));
@@ -145,7 +154,8 @@ class AccountStartSessionWorldParticipationHistoricalReadServiceTest {
 
     TransactionSynchronizationManager.clear();
     transactions.resetCounts();
-    when(repository.findHistoricalExact(PARTICIPATION_ID, PARTICIPATION_FENCE))
+    when(repository.findHistoricalForOriginalTuple(
+            argThat(bytes -> Arrays.equals(bytes, originalTupleBytes()))))
         .thenReturn(
             Optional.of(
                 participation(false, NAMESPACE, PARTICIPATION_ID, PARTICIPATION_FENCE + 1L)));
@@ -159,14 +169,21 @@ class AccountStartSessionWorldParticipationHistoricalReadServiceTest {
                 () ->
                     service.read(
                         new AccountStartSessionWorldParticipationHistoricalReadRequest(
-                            READ_ID, "other-runtime", PARTICIPATION_ID, PARTICIPATION_FENCE))));
+                            READ_ID,
+                            "other-runtime",
+                            originalTuple("other-runtime", true).canonicalBytes()))));
     verify(repository, org.mockito.Mockito.times(3))
-        .findHistoricalExact(PARTICIPATION_ID, PARTICIPATION_FENCE);
+        .findHistoricalForOriginalTuple(
+            argThat(bytes -> Arrays.equals(bytes, originalTupleBytes())));
+  }
+
+  private static byte[] originalTupleBytes() {
+    return originalTuple(NAMESPACE, true).canonicalBytes();
   }
 
   private AccountStartSessionWorldParticipationHistoricalReadRequest request() {
     return new AccountStartSessionWorldParticipationHistoricalReadRequest(
-        READ_ID, NAMESPACE, PARTICIPATION_ID, PARTICIPATION_FENCE);
+        READ_ID, NAMESPACE, originalTupleBytes());
   }
 
   private static StoredParticipation participation(boolean expired) {
@@ -228,85 +245,24 @@ class AccountStartSessionWorldParticipationHistoricalReadServiceTest {
 
   private static byte[] authorityBundle(
       StartSessionPreAuthorizationReservationTuple tuple, boolean expired) {
-    String actorId = tuple.actor().accountId().toString();
-    String tenantId = tuple.action().scope().tenantId().toString();
-    Map<String, Object> projection =
-        Map.of(
-            "sourceType",
-            "ACCOUNT",
-            "sourceEvidenceId",
+    return StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+        tuple,
+        new Values(
+            uuid("f5d044bd-7e5f-4e2d-9859-9025cbdcc60f"),
             "sha256:" + "a".repeat(64),
-            "sourceEvidenceVersion",
             "17",
-            "projectionStatus",
             "CURRENT",
-            "evaluatedAt",
-            expired ? "2020-01-01T00:00:00Z" : "2026-10-09T00:00:00Z",
-            "expiresAt",
-            expired ? "2020-01-02T00:00:00Z" : "2026-10-10T00:00:00Z");
-    Map<String, Object> operation =
-        Map.of(
-            "issuanceOperationId", "f5d044bd-7e5f-4e2d-9859-9025cbdcc60f",
-            "controlPlaneRequestId", tuple.controlPlaneRequestId(),
-            "actionFamilyRequestIdentity",
-                Map.of(
-                    "requestIdentityKind",
-                    "controlPlaneRequestId",
-                    "requestId",
-                    tuple.controlPlaneRequestId()),
-            "mutationDigest", tuple.mutationDigest());
-    Map<String, Object> authority =
-        Map.of(
-            "issuerAuthGeneration", 1L,
-            "accountAuthorityGeneration", 2L,
-            "tenantAuthorityGeneration", Map.of(tenantId, 3L),
-            "membershipAuthorityGeneration", Map.of(tenantId, 4L),
-            "privateRealmGrantVersions", List.of());
-    Map<String, Object> human =
-        Map.of(
-            "evidenceType", StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
-            "actorAccountId", actorId,
-            "controlUiTokenJti", "a681bba7-c215-4cf1-a35b-14348912cbdc",
-            "role", "tenantAdmin",
-            "accountGeneration", "2",
-            "tenantGeneration", "3");
-    Map<String, Object> value =
-        Map.of(
-            "bundleVersion",
-            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-            "authorityScope",
-            Map.of(
-                "scope",
-                Map.of(
-                    "tenantId",
-                    tenantId,
-                    "targetNamespace",
-                    tuple.action().scope().targetNamespace()),
-                "actionFamily",
-                tuple.actionFamily(),
-                "applicableAccountId",
-                actorId,
-                "applicableTenantId",
-                tenantId),
-            "accountProjectionEvidence",
-            projection,
-            "issuanceOperationIdentity",
-            operation,
-            "issuanceKind",
-            "human_operator",
-            "authorityTuple",
-            authority,
-            "membershipVersion",
-            Map.of(tenantId, 5L),
-            "issuanceFence",
-            "23",
-            "issuanceEvidence",
-            human);
-    try {
-      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value));
-    } catch (java.io.IOException impossible) {
-      throw new IllegalStateException(impossible);
-    }
+            Instant.parse(expired ? "2020-01-01T00:00:00Z" : "2026-10-09T00:00:00Z"),
+            Instant.parse(expired ? "2020-01-02T00:00:00Z" : "2026-10-10T00:00:00Z"),
+            1L,
+            2L,
+            3L,
+            4L,
+            5L,
+            23L,
+            uuid("a681bba7-c215-4cf1-a35b-14348912cbdc"),
+            "2",
+            "3"));
   }
 
   private static <T> T authorized(Supplier<T> action) {

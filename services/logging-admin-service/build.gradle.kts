@@ -13,6 +13,7 @@ firemudJooq {
 }
 
 dependencies {
+    testImplementation(testFixtures(project(":common-platform-core")))
     testImplementation(libs.grpc.inprocess)
     testImplementation(libs.grpc.netty.shaded)
     testImplementation(testFixtures(project(":logging-admin-service")))

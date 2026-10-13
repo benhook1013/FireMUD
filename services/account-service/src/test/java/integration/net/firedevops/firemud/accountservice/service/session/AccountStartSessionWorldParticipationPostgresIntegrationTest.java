@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -211,6 +212,8 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
                           reservationClaimFence,
                           reservationOwnerId,
                           reservationClaimFence)));
+      var issuedRecord =
+          account.tx(() -> operatorRepository.findByControlPlaneRequestId(requestId).orElseThrow());
 
       // The exact Account issuance result becomes the original post-authorization tuple. The
       // target owner is still Game Session; World is only the same-namespace receiver.
@@ -227,23 +230,64 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
                   authorization.bundleReference().sourceVersion(),
                   authorization.bundleReference().sourceFence(),
                   authorization.bundleReference().linearization()));
+      assertThat(authorization.originalAccountPostAuthorizationTuple())
+          .containsExactly(originalTuple.canonicalBytes());
       assertThat(originalTuple.preAuthorizationTuple().targetOwner())
           .isEqualTo("game-session-service");
 
+      UUID recoveryClaimOwnerId = UUID.randomUUID();
+      long recoveryClaimFence = reservationClaimFence + 1L;
+      var recoveryClaim =
+          claim.toBuilder()
+              .setClaimOwnerId(recoveryClaimOwnerId.toString())
+              .setClaimFence(recoveryClaimFence)
+              .setPurpose(
+                  StartSessionReservationEvidencePurpose
+                      .START_SESSION_RESERVATION_EVIDENCE_PURPOSE_RECOVER)
+              .build();
+      when(claimClient.readCurrentClaimEvidence(
+              preAuthorizationTuple,
+              reservationOwnerId,
+              reservationClaimFence,
+              recoveryClaimOwnerId,
+              recoveryClaimFence,
+              StartSessionReservationEvidenceClient.Purpose.RECOVER))
+          .thenReturn(recoveryClaim);
+      var recovered =
+          withPeer(
+              LOGGING_PEER_URI,
+              () ->
+                  operatorAuthorization.recover(
+                      new AccountStartSessionOperatorAuthorizationService.RecoverRequest(
+                          preAuthorizationTuple.canonicalJson().getBytes(StandardCharsets.UTF_8),
+                          reservationOwnerId,
+                          reservationClaimFence,
+                          recoveryClaimOwnerId,
+                          recoveryClaimFence)));
+      assertThat(recovered.originalAccountPostAuthorizationTuple())
+          .containsExactly(originalTuple.canonicalBytes());
+      var recoveredRecord =
+          account.tx(() -> operatorRepository.findByControlPlaneRequestId(requestId).orElseThrow());
+      assertThat(recoveredRecord.encryptedResponseEnvelope())
+          .containsExactly(issuedRecord.encryptedResponseEnvelope());
+
       // Account performs its real one-time redemption. The Game Session peer and attempt/fence
       // are stipulated test inputs, not evidence from an authenticated Game Session producer.
-      withPeer(
-          GAME_SESSION_PEER_URI,
-          () ->
-              operatorAuthorization.redeem(
-                  new AccountStartSessionOperatorAuthorizationService.RedeemRequest(
-                      preAuthorizationTuple.canonicalJson().getBytes(StandardCharsets.UTF_8),
-                      authorization.operatorAuthorizationReference(),
-                      authorization.authorizationReferenceFingerprint(),
-                      reservationOwnerId,
-                      reservationClaimFence,
-                      gameSessionAttemptId,
-                      gameSessionOwnerFence)));
+      var redemption =
+          withPeer(
+              GAME_SESSION_PEER_URI,
+              () ->
+                  operatorAuthorization.redeem(
+                      new AccountStartSessionOperatorAuthorizationService.RedeemRequest(
+                          preAuthorizationTuple.canonicalJson().getBytes(StandardCharsets.UTF_8),
+                          recovered.operatorAuthorizationReference(),
+                          recovered.authorizationReferenceFingerprint(),
+                          reservationOwnerId,
+                          reservationClaimFence,
+                          gameSessionAttemptId,
+                          gameSessionOwnerFence)));
+      assertThat(redemption.originalAccountPostAuthorizationTuple())
+          .containsExactly(originalTuple.canonicalBytes());
 
       var redeemed =
           account.tx(() -> operatorRepository.findByControlPlaneRequestId(requestId).orElseThrow());
@@ -252,6 +296,8 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
       assertThat(redeemed.redemptionOwnerAttemptId()).isEqualTo(gameSessionAttemptId);
       assertThat(redeemed.redemptionOwnerFence()).isEqualTo(gameSessionOwnerFence);
       assertThat(redeemed.issuanceFence()).isPositive();
+      assertThat(redeemed.encryptedResponseEnvelope())
+          .containsExactly(issuedRecord.encryptedResponseEnvelope());
 
       var repository = new AccountStartSessionWorldParticipationRepository(account.dsl);
       var initialCapture =
@@ -446,13 +492,13 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
       assertThatThrownBy(() -> account.tx(() -> repository.settleExact(conflictingTerminal)))
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("StartSession World participation conflicts with its immutable binding");
-      assertThatThrownBy(
-              () ->
-                  account.dsl.execute(
-                      "UPDATE account_start_session_world_participation_settlements "
-                          + "SET outcome = 'ABORTED' WHERE participation_id = ?",
-                      first.participationId()))
-          .isInstanceOf(RuntimeException.class);
+      assertGuardRejected(
+          () ->
+              account.dsl.execute(
+                  "UPDATE account_start_session_world_participation_settlements "
+                      + "SET outcome = 'ABORTED' WHERE participation_id = ?",
+                  first.participationId()),
+          "StartSession World participation evidence is append-only");
       assertThat(
               account.tx(
                   () ->
@@ -501,6 +547,31 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
                   DSL.table("account_start_session_world_participation_settlements")))
           .isEqualTo(1);
     }
+  }
+
+  private static void assertGuardRejected(
+      org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String expectedDiagnostic) {
+    assertThatThrownBy(action)
+        .satisfies(
+            failure -> {
+              SQLException sqlFailure = findSqlException(failure);
+              assertThat(sqlFailure.getSQLState()).isEqualTo("23514");
+              if (!(sqlFailure instanceof org.postgresql.util.PSQLException postgresFailure)) {
+                throw new AssertionError(
+                    "Participation settlement guard rejection must be a PostgreSQL exception",
+                    sqlFailure);
+              }
+              var serverError = postgresFailure.getServerErrorMessage();
+              assertThat(serverError).isNotNull();
+              assertThat(serverError.getMessage()).isEqualTo(expectedDiagnostic);
+            });
+  }
+
+  private static SQLException findSqlException(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException sqlException) return sqlException;
+    }
+    throw new AssertionError("Guard rejection must retain its SQL exception", failure);
   }
 
   private static Candidate candidate(

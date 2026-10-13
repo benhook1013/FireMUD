@@ -28,7 +28,6 @@ import net.firedevops.firemud.account.v1.RecoverOperatorAuthorizationReferenceRe
 import net.firedevops.firemud.account.v1.RecoverOperatorAuthorizationReferenceResponse;
 import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationRequest;
 import net.firedevops.firemud.account.v1.RedeemOperatorAuthorizationResponse;
-import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository.RedemptionResult;
 import net.firedevops.firemud.accountservice.service.impl.StartSessionOperatorAuthorizationGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorityBundle;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService;
@@ -38,7 +37,11 @@ import net.firedevops.firemud.accountservice.service.session.AccountStartSession
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.RedeemRequest;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.RedeemedOperationProjection;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
@@ -68,6 +71,7 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
       UUID.fromString("43221254-3728-47a4-b15d-37542871e685");
   private static final UUID ISSUANCE_OPERATION_ID =
       UUID.fromString("4fa8b657-c6ed-4797-b61d-66083f582198");
+  private static final UUID TOKEN_JTI = UUID.fromString("a681bba7-c215-4cf1-a35b-14348912cbdc");
   private final AccountStartSessionOperatorAuthorizationService ownerService =
       mock(AccountStartSessionOperatorAuthorizationService.class);
   private final StartSessionOperatorAuthorizationGrpcService service =
@@ -110,8 +114,13 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
     when(ownerService.recover(any())).thenReturn(authorization);
     when(ownerService.redeem(any()))
         .thenReturn(
-            new RedemptionResult(
-                FINGERPRINT, bytes("redemption-bundle"), ISSUANCE_OPERATION_ID, 9L, true));
+            new AccountStartSessionOperatorAuthorizationService.RedemptionResult(
+                FINGERPRINT,
+                authorization.authorityEvidenceBundle(),
+                ISSUANCE_OPERATION_ID,
+                9L,
+                true,
+                authorization.originalAccountPostAuthorizationTuple()));
 
     TestObserver<IssueHumanOperatorAuthorizationReferenceResponse> issueObserver =
         callIssue(issueRequest(tupleBytes), LOGGING_URI);
@@ -123,7 +132,7 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
     assertThat(issueObserver.value.getExpiresAt().getSeconds())
         .isEqualTo(Instant.parse("2026-10-09T00:03:00Z").getEpochSecond());
     assertThat(issueObserver.value.getAuthorityEvidenceBundle().toByteArray())
-        .containsExactly(bytes("authority-bundle"));
+        .containsExactly(authorityBundleBytes());
     assertThat(issueObserver.value.getBundleReference().getBundleVersion())
         .isEqualTo(AccountStartSessionOperatorAuthorityBundle.BUNDLE_VERSION);
     assertThat(issueObserver.value.getBundleReference().getSourceVersion()).isEqualTo("17");
@@ -131,6 +140,8 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
     assertThat(issueObserver.value.getBundleReference().getLinearization()).isEqualTo("3");
     assertThat(issueObserver.value.getAuthenticatedLoggingWorkloadIdentity())
         .isEqualTo(LOGGING_URI);
+    assertThat(issueObserver.value.getOriginalAccountPostAuthorizationTuple().toByteArray())
+        .containsExactly(authorization.originalAccountPostAuthorizationTuple());
 
     var issueCaptor = org.mockito.ArgumentCaptor.forClass(IssueRequest.class);
     verify(ownerService).issue(issueCaptor.capture());
@@ -149,6 +160,8 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
         .isEqualTo(AUTHORIZATION_REFERENCE);
     assertThat(recoverObserver.value.getAuthenticatedLoggingWorkloadIdentity())
         .isEqualTo(LOGGING_URI);
+    assertThat(recoverObserver.value.getOriginalAccountPostAuthorizationTuple().toByteArray())
+        .containsExactly(authorization.originalAccountPostAuthorizationTuple());
     var recoverCaptor = org.mockito.ArgumentCaptor.forClass(RecoverRequest.class);
     verify(ownerService).recover(recoverCaptor.capture());
     assertThat(recoverCaptor.getValue().canonicalTupleBytes()).containsExactly(tupleBytes);
@@ -162,11 +175,13 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
     assertThat(redeemObserver.failure).isNull();
     assertThat(redeemObserver.value.getAuthorizationReferenceFingerprint()).isEqualTo(FINGERPRINT);
     assertThat(redeemObserver.value.getAuthorityEvidenceBundle().toByteArray())
-        .containsExactly(bytes("redemption-bundle"));
+        .containsExactly(authorityBundleBytes());
     assertThat(redeemObserver.value.getIssuanceOperationId())
         .isEqualTo(ISSUANCE_OPERATION_ID.toString());
     assertThat(redeemObserver.value.getIssuanceFence()).isEqualTo(9L);
     assertThat(redeemObserver.value.getReplay()).isTrue();
+    assertThat(redeemObserver.value.getOriginalAccountPostAuthorizationTuple().toByteArray())
+        .containsExactly(authorization.originalAccountPostAuthorizationTuple());
     var redeemCaptor = org.mockito.ArgumentCaptor.forClass(RedeemRequest.class);
     verify(ownerService).redeem(redeemCaptor.capture());
     assertThat(redeemCaptor.getValue().canonicalTupleBytes()).containsExactly(tupleBytes);
@@ -219,7 +234,7 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
     assertThat(response.getBundleReference().getSourceFence()).isEqualTo("4");
     assertThat(response.getBundleReference().getLinearization()).isEqualTo("3");
     assertThat(response.getAuthorityEvidenceBundle().toByteArray())
-        .containsExactly(bytes("authority-bundle"));
+        .containsExactly(authorityBundleBytes());
     assertThat(response.toString()).doesNotContain(CONTROL_UI_JWT, AUTHORIZATION_REFERENCE);
 
     var readCaptor =
@@ -514,7 +529,7 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
         9L,
         new AccountStartSessionOperatorAuthorityBundle.BundleReference(
             AccountStartSessionOperatorAuthorityBundle.BUNDLE_VERSION, "17", "4", "3"),
-        bytes("authority-bundle"));
+        authorityBundleBytes());
   }
 
   private static byte[] canonicalTupleBytes() {
@@ -522,7 +537,7 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
         new StartSessionOperatorAction(
             StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
             StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
-            new StartSessionOperatorAction.Scope(TENANT_ID, "tenant-runtime"),
+            new StartSessionOperatorAction.Scope(TENANT_ID, NAMESPACE),
             new StartSessionOperatorAction.Target(42L, TARGET_ACCOUNT_ID),
             StartSessionOperatorAction.ExpectedVersion.ABSENT,
             new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
@@ -534,13 +549,58 @@ class StartSessionOperatorAuthorizationGrpcServiceTest {
   }
 
   private static AuthorizationResponse authorizationResponse() {
+    byte[] bundleBytes = authorityBundleBytes();
+    var bundleReference =
+        new AccountStartSessionOperatorAuthorityBundle.BundleReference(
+            AccountStartSessionOperatorAuthorityBundle.BUNDLE_VERSION, "17", "4", "3");
+    var tuple =
+        StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(
+            new String(canonicalTupleBytes(), StandardCharsets.UTF_8));
+    byte[] originalTuple =
+        StartSessionPostAuthorizationExecutionTuple.createHuman(
+                tuple,
+                LOGGING_URI,
+                FINGERPRINT,
+                RESERVATION_OWNER_ID,
+                3L,
+                bundleBytes,
+                new StartSessionAuthorityEvidenceBundle.BundleReference(
+                    bundleReference.bundleVersion(),
+                    bundleReference.sourceVersion(),
+                    bundleReference.sourceFence(),
+                    bundleReference.linearization()))
+            .canonicalBytes();
     return new AuthorizationResponse(
         AUTHORIZATION_REFERENCE,
         FINGERPRINT,
         Instant.parse("2026-10-09T00:03:00Z"),
-        bytes("authority-bundle"),
-        new AccountStartSessionOperatorAuthorityBundle.BundleReference(
-            AccountStartSessionOperatorAuthorityBundle.BUNDLE_VERSION, "17", "4", "3"));
+        bundleBytes,
+        bundleReference,
+        originalTuple);
+  }
+
+  private static byte[] authorityBundleBytes() {
+    StartSessionPreAuthorizationReservationTuple tuple =
+        StartSessionPreAuthorizationReservationTuple.fromCanonicalJson(
+            new String(canonicalTupleBytes(), StandardCharsets.UTF_8));
+    return StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+        tuple,
+        new Values(
+            ISSUANCE_OPERATION_ID,
+            "sha256:" + "a".repeat(64),
+            "17",
+            "CURRENT",
+            Instant.parse("2026-10-09T00:00:00Z"),
+            Instant.parse("2026-10-09T00:03:00Z"),
+            1L,
+            2L,
+            3L,
+            4L,
+            5L,
+            9L,
+            TOKEN_JTI,
+            "2",
+            "3"));
   }
 
   private static UnknownFieldSet unknownFields() {

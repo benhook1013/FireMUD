@@ -62,6 +62,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.test.TlsTestSupport;
@@ -70,6 +71,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -132,8 +135,10 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
     TransactionSynchronizationManager.clear();
   }
 
-  @Test
-  void issueAndRecoverPreserveTheExactOriginalResponseAndCompleteEvidence() throws Exception {
+  @ParameterizedTest
+  @ValueSource(longs = {9_007_199_254_740_993L, Long.MAX_VALUE})
+  void issueAndRecoverPreserveTheExactOriginalResponseAndCompleteEvidence(long reservationFence)
+      throws Exception {
     startServer(pki.accountServer(), UnaryOperator.identity(), UnaryOperator.identity());
     client = newClient(pki.loggingClient());
     client.initialize();
@@ -141,9 +146,9 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
 
     var issued =
         client.issueHuman(
-            tuple, CONTROL_UI_JWT, RESERVATION_OWNER_ID, Long.MAX_VALUE, CLAIM_OWNER_ID, 71L);
+            tuple, CONTROL_UI_JWT, RESERVATION_OWNER_ID, reservationFence, CLAIM_OWNER_ID, 71L);
     var recovered =
-        client.recover(tuple, RESERVATION_OWNER_ID, Long.MAX_VALUE, CLAIM_OWNER_ID, 71L);
+        client.recover(tuple, RESERVATION_OWNER_ID, reservationFence, CLAIM_OWNER_ID, 71L);
 
     assertThat(issued.operatorAuthorizationReference()).isEqualTo(OPERATOR_REFERENCE);
     assertThat(recovered.operatorAuthorizationReference()).isEqualTo(OPERATOR_REFERENCE);
@@ -154,6 +159,21 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
     assertThat(recovered.authorityEvidenceBundle())
         .containsExactly(issued.authorityEvidenceBundle());
     assertThat(recovered.bundleReference()).isEqualTo(issued.bundleReference());
+    assertThat(issued.postAuthorizationTuple().canonicalBytes())
+        .containsExactly(originalTupleBytes(tuple, RESERVATION_OWNER_ID, reservationFence));
+    assertThat(recovered.postAuthorizationTuple().canonicalBytes())
+        .containsExactly(issued.postAuthorizationTuple().canonicalBytes());
+    assertThat(issued.postAuthorizationTuple().reservationOwnerId())
+        .isEqualTo(RESERVATION_OWNER_ID);
+    assertThat(issued.postAuthorizationTuple().reservationClaimFence()).isEqualTo(reservationFence);
+    assertThat(recovered.postAuthorizationTuple().reservationClaimFence())
+        .isEqualTo(reservationFence);
+    Map<?, ?> encodedTuple =
+        JSON.readValue(issued.postAuthorizationTuple().canonicalBytes(), Map.class);
+    assertThat(encodedTuple.get("reservationClaimFence"))
+        .isEqualTo(Long.toString(reservationFence));
+    assertThat(issued.bundleReference().sourceFence())
+        .isNotEqualTo(issued.postAuthorizationTuple().issuanceFence());
     assertThat(issued.authenticatedLoggingWorkloadIdentity()).isEqualTo(LOGGING_URI);
     assertThat(recovered.authenticatedLoggingWorkloadIdentity()).isEqualTo(LOGGING_URI);
     assertThat(issued.decodedBundle().controlPlaneRequestId())
@@ -163,7 +183,7 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
     assertThat(receivedIssue.getCanonicalPreAuthorizationTupleBytes().toByteArray())
         .containsExactly(tuple.canonicalJson().getBytes(StandardCharsets.UTF_8));
     assertThat(receivedIssue.getReservationOwnerId()).isEqualTo(RESERVATION_OWNER_ID.toString());
-    assertThat(receivedIssue.getReservationClaimFence()).isEqualTo(Long.MAX_VALUE);
+    assertThat(receivedIssue.getReservationClaimFence()).isEqualTo(reservationFence);
     assertThat(receivedIssue.getCurrentClaimOwnerId()).isEqualTo(CLAIM_OWNER_ID.toString());
     assertThat(receivedIssue.getCurrentClaimFence()).isEqualTo(71L);
     assertThat(receivedRecovery.getCanonicalPreAuthorizationTupleBytes().toByteArray())
@@ -250,6 +270,27 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
     client.initialize();
     assertInvalidResponse();
     stopTransportOnly();
+
+    for (UnaryOperator<IssueHumanOperatorAuthorizationReferenceResponse> substitute :
+        List.<UnaryOperator<IssueHumanOperatorAuthorizationReferenceResponse>>of(
+            response -> response.toBuilder().clearOriginalAccountPostAuthorizationTuple().build(),
+            response ->
+                response.toBuilder()
+                    .setBundleReference(
+                        response.getBundleReference().toBuilder().setSourceFence("25"))
+                    .build(),
+            response ->
+                response.toBuilder()
+                    .setBundleReference(
+                        response.getBundleReference().toBuilder()
+                            .setLinearization("18446744073709551614"))
+                    .build())) {
+      startServer(pki.accountServer(), substitute, UnaryOperator.identity());
+      client = newClient(pki.loggingClient());
+      client.initialize();
+      assertInvalidResponse();
+      stopTransportOnly();
+    }
 
     startServer(
         pki.accountServer(),
@@ -513,6 +554,12 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
         .setAuthorityEvidenceBundle(ByteString.copyFrom(bundleFor(tupleFrom(request))))
         .setBundleReference(bundleReference())
         .setAuthenticatedLoggingWorkloadIdentity(LOGGING_URI)
+        .setOriginalAccountPostAuthorizationTuple(
+            ByteString.copyFrom(
+                originalTupleBytes(
+                    tupleFrom(request),
+                    UUID.fromString(request.getReservationOwnerId()),
+                    request.getReservationClaimFence())))
         .build();
   }
 
@@ -525,7 +572,31 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
         .setAuthorityEvidenceBundle(ByteString.copyFrom(bundleFor(tupleFrom(request))))
         .setBundleReference(bundleReference())
         .setAuthenticatedLoggingWorkloadIdentity(LOGGING_URI)
+        .setOriginalAccountPostAuthorizationTuple(
+            ByteString.copyFrom(
+                originalTupleBytes(
+                    tupleFrom(request),
+                    UUID.fromString(request.getReservationOwnerId()),
+                    request.getReservationClaimFence())))
         .build();
+  }
+
+  private static byte[] originalTupleBytes(
+      StartSessionPreAuthorizationReservationTuple tuple, UUID reservationOwner, long fence) {
+    var reference = bundleReference();
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+            tuple,
+            LOGGING_URI,
+            FINGERPRINT,
+            reservationOwner,
+            fence,
+            bundleFor(tuple),
+            new StartSessionAuthorityEvidenceBundle.BundleReference(
+                reference.getBundleVersion(),
+                reference.getSourceVersion(),
+                reference.getSourceFence(),
+                reference.getLinearization()))
+        .canonicalBytes();
   }
 
   private static byte[] bundleFor(
@@ -601,7 +672,7 @@ class StartSessionOperatorAuthorizationClientMtlsTest {
     return AuthorityEvidenceBundleReference.newBuilder()
         .setBundleVersion(StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION)
         .setSourceVersion("17")
-        .setSourceFence("23")
+        .setSourceFence("24")
         .setLinearization("18446744073709551615")
         .build();
   }

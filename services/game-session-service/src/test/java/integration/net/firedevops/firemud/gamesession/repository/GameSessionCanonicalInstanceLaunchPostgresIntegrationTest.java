@@ -5,12 +5,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Statement;
+import java.time.Duration;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamesession.client.GameDesignFreshTenantCreationClient;
@@ -19,6 +25,8 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanc
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanceLaunchRepository.InvalidCanonicalInstanceLaunchException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.CanonicalRealmCatalog;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.FreshTenantAssociation;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -31,9 +39,11 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * PostgreSQL proof of atomic original StartSession owner allocation and exact retained readback.
@@ -47,6 +57,7 @@ class GameSessionCanonicalInstanceLaunchPostgresIntegrationTest {
   private static final String MIGRATION_LOCATION =
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
   private static final String NAMESPACE = "test";
+  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -227,6 +238,59 @@ class GameSessionCanonicalInstanceLaunchPostgresIntegrationTest {
   }
 
   @Test
+  void freshAllocationRequiresRetainedFullAccountTupleBeforeCreatingRuntime() throws Exception {
+    try (Fixture fixture = newFixture(null)) {
+      for (OwnerEvidenceMode mode :
+          new OwnerEvidenceMode[] {
+            OwnerEvidenceMode.ABSENT, OwnerEvidenceMode.UNATTACHED, OwnerEvidenceMode.LEGACY_SCALAR
+          }) {
+        LaunchInputs inputs = prepareLaunch(fixture, mode);
+
+        assertThatThrownBy(
+                () ->
+                    inputs
+                        .repository()
+                        .createStartingLaunch(
+                            inputs.proof().originalTuple(),
+                            inputs.proof().completeLaunchBindingEvidence(),
+                            inputs.catalog()))
+            .isInstanceOf(InvalidCanonicalInstanceLaunchException.class)
+            .hasMessageContaining(mode.expectedFailure());
+        assertNoAllocation(fixture, inputs.proof().originalTuple().controlPlaneRequestId());
+      }
+    }
+  }
+
+  @Test
+  void freshAllocationRejectsSourceFenceAndLinearizationSubstitution() throws Exception {
+    try (Fixture fixture = newFixture(null)) {
+      for (boolean changeSourceFence : new boolean[] {true, false}) {
+        LaunchInputs inputs = prepareLaunch(fixture);
+        StartSessionPostAuthorizationExecutionTuple original = inputs.proof().originalTuple();
+        StartSessionPostAuthorizationExecutionTuple substituted =
+            withBundleReference(
+                original,
+                changeSourceFence ? "24" : original.bundleReference().sourceFence(),
+                changeSourceFence
+                    ? original.bundleReference().linearization()
+                    : "18446744073709551614");
+
+        assertThatThrownBy(
+                () ->
+                    inputs
+                        .repository()
+                        .createStartingLaunch(
+                            substituted,
+                            inputs.proof().completeLaunchBindingEvidence(),
+                            inputs.catalog()))
+            .isInstanceOf(InvalidCanonicalInstanceLaunchException.class)
+            .hasMessageContaining("differs from the exact incoming tuple");
+        assertNoAllocation(fixture, original.controlPlaneRequestId());
+      }
+    }
+  }
+
+  @Test
   void retainedV42LaunchWithoutCapturedTupleRemainsNullAndCannotBeUpgradedByRetry()
       throws Exception {
     try (Fixture fixture = newFixture(MigrationVersion.fromVersion("42"))) {
@@ -275,6 +339,10 @@ class GameSessionCanonicalInstanceLaunchPostgresIntegrationTest {
   }
 
   private static LaunchInputs prepareLaunch(Fixture fixture) {
+    return prepareLaunch(fixture, OwnerEvidenceMode.ATTACHED);
+  }
+
+  private static LaunchInputs prepareLaunch(Fixture fixture, OwnerEvidenceMode ownerEvidenceMode) {
     FreshTenantAssociation association = createFreshAssociation(fixture);
     var catalogProof =
         GameSessionCanonicalRealmCatalogProofFixtures.forFreshAssociation(association);
@@ -305,7 +373,112 @@ class GameSessionCanonicalInstanceLaunchPostgresIntegrationTest {
             "generation-fixture",
             2L,
             releaseRef);
+    attachSyntheticOwnerEvidence(fixture, proof.originalTuple(), ownerEvidenceMode);
     return new LaunchInputs(catalog, proof, fixture.launchRepository());
+  }
+
+  private static void attachSyntheticOwnerEvidence(
+      Fixture fixture, StartSessionPostAuthorizationExecutionTuple tuple, OwnerEvidenceMode mode) {
+    if (mode == OwnerEvidenceMode.ABSENT) return;
+
+    GameSessionStartSessionOperatorAttemptRepository attempts =
+        new GameSessionStartSessionOperatorAttemptRepository(fixture.dsl(), Duration.ofMinutes(5));
+    TransactionTemplate ownerTransaction = new TransactionTemplate(fixture.transactionManager());
+    AttemptClaim claim =
+        Objects.requireNonNull(
+                ownerTransaction.execute(status -> attempts.reserve(tuple)),
+                "synthetic owner attempt reservation")
+            .claim()
+            .orElseThrow();
+    if (mode == OwnerEvidenceMode.UNATTACHED) return;
+
+    if (mode == OwnerEvidenceMode.LEGACY_SCALAR) {
+      int attached =
+          fixture
+              .dsl()
+              .execute(
+                  "UPDATE game_session_start_session_operator_attempt"
+                      + " SET account_redemption_projection = ?"
+                      + " WHERE target_namespace = ? AND control_plane_request_id = ?"
+                      + " AND account_redemption_projection IS NULL",
+                  legacyScalarProjection(tuple),
+                  NAMESPACE,
+                  tuple.controlPlaneRequestId());
+      assertThat(attached).isEqualTo(1);
+      return;
+    }
+
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
+    AccountRedemptionProjection syntheticProjection =
+        new AccountRedemptionProjection(
+            tuple.authorizationReferenceFingerprint(),
+            tuple.authorityEvidenceBundleBytes(),
+            bundle.issuanceOperationId(),
+            Long.parseLong(tuple.issuanceFence()),
+            tuple.canonicalBytes());
+    // The fixture models a synthetic Account response; exact bytes do not prove RPC origin.
+    Objects.requireNonNull(
+        ownerTransaction.execute(
+            status -> attempts.attachAccountRedemptionProjection(claim, syntheticProjection)),
+        "synthetic Account tuple attachment");
+  }
+
+  private static byte[] legacyScalarProjection(StartSessionPostAuthorizationExecutionTuple tuple) {
+    // Schema-v1 is synthesized only to verify historical compatibility and current fail-closed
+    // behavior.
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
+    Map<String, Object> projection =
+        Map.of(
+            "projectionSchemaId",
+            "accountStartSessionRedemptionProjection",
+            "projectionSchemaVersion",
+            "1",
+            "authorizationReferenceFingerprint",
+            tuple.authorizationReferenceFingerprint(),
+            "authorityEvidenceBundle",
+            bundle.jsonValue(),
+            "issuanceOperationId",
+            bundle.issuanceOperationId().toString(),
+            "issuanceFence",
+            Long.parseLong(tuple.issuanceFence()));
+    try {
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(projection));
+    } catch (IOException malformed) {
+      throw new IllegalStateException(
+          "Could not encode a legacy scalar Account projection", malformed);
+    }
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple withBundleReference(
+      StartSessionPostAuthorizationExecutionTuple original,
+      String sourceFence,
+      String linearization) {
+    var reference = original.bundleReference();
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        original.preAuthorizationTuple(),
+        original.authenticatedWorkloadIdentity(),
+        original.authorizationReferenceFingerprint(),
+        original.reservationOwnerId(),
+        original.reservationClaimFence(),
+        original.authorityEvidenceBundleBytes(),
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            reference.bundleVersion(), reference.sourceVersion(), sourceFence, linearization));
+  }
+
+  private static void assertNoAllocation(Fixture fixture, String requestId) {
+    assertThat(
+            countByRequest(
+                fixture.dsl(), "game_instances", "run_owned_start_request_id", requestId))
+        .isZero();
+    assertThat(
+            countByRequest(
+                fixture.dsl(),
+                "game_session_canonical_instance_launch",
+                "control_plane_request_id",
+                requestId))
+        .isZero();
   }
 
   private static CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector(
@@ -482,6 +655,23 @@ class GameSessionCanonicalInstanceLaunchPostgresIntegrationTest {
       CanonicalRealmCatalog catalog,
       SyntheticLaunchProof proof,
       GameSessionCanonicalInstanceLaunchRepository repository) {}
+
+  private enum OwnerEvidenceMode {
+    ATTACHED(""),
+    ABSENT("unavailable for fresh launch"),
+    UNATTACHED("no full Account tuple"),
+    LEGACY_SCALAR("not the exact current full tuple");
+
+    private final String expectedFailure;
+
+    OwnerEvidenceMode(String expectedFailure) {
+      this.expectedFailure = expectedFailure;
+    }
+
+    String expectedFailure() {
+      return expectedFailure;
+    }
+  }
 
   private record Fixture(
       String schema,

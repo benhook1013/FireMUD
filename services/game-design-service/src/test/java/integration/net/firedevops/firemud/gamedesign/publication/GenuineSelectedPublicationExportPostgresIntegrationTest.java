@@ -57,6 +57,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountOriginalStar
 import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture.OriginalStartSessionAuthorizationTransport;
 import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture.OwnerAttemptLifecycle;
 import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture.OwnerClaim;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionOperatorAuthorizationService.RedemptionResult;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeService;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeTerminalReadService;
@@ -3526,7 +3527,9 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
 
                   @Override
                   public void attachAccountRedemptionProjection(
-                      OwnerClaim ownerClaim, StartSessionPostAuthorizationExecutionTuple tuple) {
+                      OwnerClaim ownerClaim,
+                      StartSessionPostAuthorizationExecutionTuple tuple,
+                      byte[] originalAccountPostAuthorizationTuple) {
                     AttemptClaim claim =
                         Objects.requireNonNull(
                             reservedOwnerAttempt.get(),
@@ -3535,6 +3538,8 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                     assertThat(ownerClaim.ownerMutationId()).isEqualTo(claim.ownerMutationId());
                     assertThat(ownerClaim.ownerFence()).isEqualTo(claim.ownerFence());
                     assertThat(tuple.canonicalBytes()).containsExactly(reservedTupleBytes.get());
+                    assertThat(originalAccountPostAuthorizationTuple)
+                        .containsExactly(tuple.canonicalBytes());
                     var authority =
                         StartSessionAuthorityEvidenceBundle.decode(
                             tuple.authorityEvidenceBundleBytes());
@@ -3543,7 +3548,10 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
                             tuple.authorizationReferenceFingerprint(),
                             tuple.authorityEvidenceBundleBytes(),
                             authority.issuanceOperationId(),
-                            Long.parseLong(tuple.issuanceFence()));
+                            Long.parseLong(tuple.issuanceFence()),
+                            originalAccountPostAuthorizationTuple);
+                    assertThat(projection.canonicalBytes())
+                        .containsExactly(originalAccountPostAuthorizationTuple);
                     assertThat(projection.canonicalBytes())
                         .containsExactly(
                             StartSessionAccountRedemptionProjection.fromOriginalTuple(tuple));
@@ -7373,11 +7381,12 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
           issued.operatorAuthorizationReference(),
           issued.authorizationReferenceFingerprint(),
           issued.authorityEvidenceBundle(),
-          issued.bundleReference());
+          issued.bundleReference(),
+          issued.postAuthorizationTuple().canonicalBytes());
     }
 
     @Override
-    public boolean redeem(
+    public RedemptionResult redeem(
         byte[] canonicalPreAuthorizationTupleBytes,
         IssuedAuthorization authorization,
         UUID reservationOwnerId,
@@ -7406,14 +7415,23 @@ class GenuineSelectedPublicationExportPostgresIntegrationTest {
               .authorizationReferenceFingerprint()
               .equals(response.getAuthorizationReferenceFingerprint())
           || !Arrays.equals(
+              authorization.originalAccountPostAuthorizationTuple(),
+              response.getOriginalAccountPostAuthorizationTuple().toByteArray())
+          || !Arrays.equals(
               authorization.authorityEvidenceBundle(),
               response.getAuthorityEvidenceBundle().toByteArray())
           || !authority.issuanceOperationId().toString().equals(response.getIssuanceOperationId())
           || !authority.issuanceFence().equals(Long.toString(response.getIssuanceFence()))) {
         throw new IllegalStateException(
-            "Account redemption response differs from the exact issued authority bundle");
+            "Account redemption response differs from the exact issued owner tuple");
       }
-      return response.getReplay();
+      return new RedemptionResult(
+          response.getAuthorizationReferenceFingerprint(),
+          response.getAuthorityEvidenceBundle().toByteArray(),
+          authority.issuanceOperationId(),
+          response.getIssuanceFence(),
+          response.getReplay(),
+          response.getOriginalAccountPostAuthorizationTuple().toByteArray());
     }
 
     @Override

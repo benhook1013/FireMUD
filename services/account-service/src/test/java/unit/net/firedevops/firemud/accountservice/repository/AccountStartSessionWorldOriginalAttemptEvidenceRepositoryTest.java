@@ -341,22 +341,7 @@ class AccountStartSessionWorldOriginalAttemptEvidenceRepositoryTest {
   }
 
   private static byte[] accountProjection(StartSessionPostAuthorizationExecutionTuple tuple) {
-    StartSessionAuthorityEvidenceBundle bundle =
-        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
-    return AccountControlUiAuthority.canonical(
-        Map.of(
-            "projectionSchemaId",
-            "accountStartSessionRedemptionProjection",
-            "projectionSchemaVersion",
-            "1",
-            "authorizationReferenceFingerprint",
-            tuple.authorizationReferenceFingerprint(),
-            "authorityEvidenceBundle",
-            bundle.jsonValue(),
-            "issuanceOperationId",
-            bundle.issuanceOperationId().toString(),
-            "issuanceFence",
-            9L));
+    return tuple.canonicalBytes();
   }
 
   private static String sha256Hex(byte[] bytes) {

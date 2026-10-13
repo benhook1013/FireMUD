@@ -301,6 +301,16 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
         .isEqualTo(
             AccountStartSessionOperatorAuthorityBundle.fromSharedReference(
                 harness.capture().bundleReference()));
+    var originalTuple =
+        StartSessionPostAuthorizationExecutionTuple.decode(
+            response.get().originalAccountPostAuthorizationTuple());
+    assertThat(originalTuple.preAuthorizationTuple()).isEqualTo(harness.tuple());
+    assertThat(originalTuple.authenticatedWorkloadIdentity()).isEqualTo(LOGGING_PEER);
+    assertThat(originalTuple.reservationOwnerId()).isEqualTo(harness.reservationOwnerId());
+    assertThat(originalTuple.reservationClaimFence()).isEqualTo(10L);
+    assertThat(originalTuple.bundleReference().sourceFence()).isEqualTo("31");
+    assertThat(Long.parseLong(originalTuple.issuanceFence()))
+        .isNotEqualTo(Long.parseLong(originalTuple.bundleReference().sourceFence()));
 
     var candidateCaptor =
         org.mockito.ArgumentCaptor.forClass(
@@ -391,6 +401,8 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
           .containsExactly(harness.originalResponse().authorityEvidenceBundle());
       assertThat(response.bundleReference())
           .isEqualTo(harness.originalResponse().bundleReference());
+      assertThat(response.originalAccountPostAuthorizationTuple())
+          .containsExactly(harness.originalResponse().originalAccountPostAuthorizationTuple());
     }
     assertThat(harness.randomCalls()).hasValue(0);
     verify(harness.repository(), never()).createOrReadExact(any());
@@ -1380,7 +1392,7 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
   }
 
   @Test
-  void expiredOrFutureOriginalClaimEvidenceStopsBeforeCaptureAndPrivateCrypto() {
+  void expiredOrContradictoryClaimEvidenceStopsButFutureObservationWithLiveExpiryIsAccepted() {
     MutableClock expiredClock = new MutableClock(NOW);
     IssueHarness expired = issueHarness(false, false, expiredClock, NOW.minusSeconds(1), NOW);
     loggingContext()
@@ -1400,17 +1412,18 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
     MutableClock futureClock = new MutableClock(NOW);
     IssueHarness future =
         issueHarness(false, false, futureClock, NOW.plusSeconds(1), NOW.plusSeconds(30));
-    loggingContext()
-        .run(
-            () ->
-                assertThatThrownBy(() -> future.service().issue(future.issueRequest()))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("claim evidence is stale or contradictory"));
+    AtomicReference<AccountStartSessionOperatorAuthorizationService.AuthorizationResponse>
+        futureResponse = new AtomicReference<>();
+    loggingContext().run(() -> futureResponse.set(future.service().issue(future.issueRequest())));
 
-    assertThat(future.randomCalls()).hasValue(0);
-    verify(future.captureRepository(), never())
+    assertThat(futureResponse.get()).isNotNull();
+    assertThat(futureResponse.get().expiresAt()).isEqualTo(NOW.plusSeconds(60));
+    assertThat(futureResponse.get().originalAccountPostAuthorizationTuple()).isNotEmpty();
+    assertThat(future.randomCalls()).hasValue(1);
+    verify(future.captureRepository())
         .prepareOrReadExact(any(), any(), anyString(), any(), anyLong());
-    verifyNoInteractions(future.fingerprintKeys(), future.responseCrypto());
+    verify(future.fingerprintKeys()).fingerprintForIssue(any(), any());
+    verify(future.responseCrypto()).encrypt(any(), any(), any());
     verify(future.claims(), times(1))
         .readCurrentClaimEvidence(any(), any(), anyLong(), any(), anyLong(), eq(Purpose.ISSUE));
 
@@ -1588,9 +1601,18 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             invocation -> {
               assertThat(invocation.<ReferenceKind>getArgument(0))
                   .isEqualTo(ReferenceKind.HUMAN_OPERATOR);
-              assertThat(invocation.<byte[]>getArgument(1))
-                  .containsExactly("A".repeat(43).getBytes(StandardCharsets.US_ASCII));
-              assertThat(invocation.<String>getArgument(2)).isEqualTo(originalFingerprint);
+              String actualFingerprint = invocation.getArgument(2);
+              String freshFingerprint = "arfp/v1/test-key/" + "b".repeat(64);
+              assertThat(actualFingerprint).isIn(originalFingerprint, freshFingerprint);
+              // A fresh request can lose the create race and return the retained response.
+              byte[] expectedReference =
+                  (actualFingerprint.equals(originalFingerprint)
+                          ? "A".repeat(43)
+                          : Base64.getUrlEncoder()
+                              .withoutPadding()
+                              .encodeToString(fill(32, (byte) 0x5a)))
+                      .getBytes(StandardCharsets.US_ASCII);
+              assertThat(invocation.<byte[]>getArgument(1)).containsExactly(expectedReference);
               assertThat(invocation.<Instant>getArgument(3)).isEqualTo(NOW.plusSeconds(60));
               assertThat(invocation.<Instant>getArgument(4)).isEqualTo(NOW.plusSeconds(80));
               return true;
@@ -1808,6 +1830,13 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             "expiresAt", referenceExpiresAt.toString(),
             "authorityEvidenceBundle", bundle.jsonValue(),
             "bundleReference", bundle.referenceForCapture(capture).asJsonValue());
+    assertThat(responseValue)
+        .containsOnlyKeys(
+            "operatorAuthorizationReference",
+            "authorizationReferenceFingerprint",
+            "expiresAt",
+            "authorityEvidenceBundle",
+            "bundleReference");
     byte[] responseBytes = AccountControlUiAuthority.canonical(responseValue);
     var response =
         new AccountStartSessionOperatorAuthorizationService.AuthorizationResponse(
@@ -1815,7 +1844,17 @@ class AccountStartSessionOperatorAuthorizationServiceTest {
             fingerprint,
             referenceExpiresAt,
             bundle.canonicalBytes(),
-            bundle.referenceForCapture(capture));
+            bundle.referenceForCapture(capture),
+            StartSessionPostAuthorizationExecutionTuple.createHuman(
+                    tuple,
+                    LOGGING_PEER,
+                    fingerprint,
+                    reservationOwnerId,
+                    10L,
+                    bundle.canonicalBytes(),
+                    AccountStartSessionOperatorAuthorityBundle.toSharedReference(
+                        bundle.referenceForCapture(capture)))
+                .canonicalBytes());
     var record =
         new IssuanceRecord(
             tuple.controlPlaneRequestId(),

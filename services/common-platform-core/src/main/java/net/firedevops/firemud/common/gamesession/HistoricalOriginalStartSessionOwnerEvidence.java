@@ -208,13 +208,13 @@ public final class HistoricalOriginalStartSessionOwnerEvidence {
           || !selector.controlPlaneRequestId().equals(launchAssociation.controlPlaneRequestId())
           || !selector.launchDescriptorId().equals(launchAssociation.launchDescriptorId())
           || !request.expectedOwnerAttemptId().equals(ownerAttemptId)
-          || request.expectedOwnerFence() != ownerFence
-          || !Arrays.equals(
-              StartSessionAccountRedemptionProjection.fromOriginalTuple(originalTuple),
-              accountRedemptionProjection)) {
+          || request.expectedOwnerFence() != ownerFence) {
         throw new IllegalArgumentException(
             "Historical StartSession tuple, projection, attempt, or association selector differs");
       }
+
+      StartSessionAccountRedemptionProjection.requireHistoricalBinding(
+          accountRedemptionProjection, originalTuple);
 
       var selectionRequest = firstSelection.request();
       if (selectionRequest.schemaVersion()

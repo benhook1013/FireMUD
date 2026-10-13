@@ -79,13 +79,11 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
         freshReadId(
             identity.accountWorldParticipationId(),
             identity.gameSessionOwnerAttemptId(),
-            identity.canonicalGameInstanceId());
+            identity.canonicalGameInstanceId(),
+            identity.decodedTuple().reservationOwnerId());
     AccountStartSessionWorldParticipationHistoricalReadRequest accountRequest =
         new AccountStartSessionWorldParticipationHistoricalReadRequest(
-            accountReadId,
-            identity.targetNamespace(),
-            identity.accountWorldParticipationId(),
-            identity.accountWorldParticipationFence());
+            accountReadId, identity.targetNamespace(), identity.originalPostAuthorizationTuple());
     AccountStartSessionWorldParticipationHistoricalReadEvidence accountEvidence =
         accountClient.read(accountRequest);
     if (accountEvidence == null) {
@@ -124,15 +122,16 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
       AccountStartSessionWorldParticipationHistoricalReadRequest expectedRequest,
       AccountStartSessionWorldParticipationHistoricalReadEvidence actual) {
     if (!expectedRequest.equals(actual.request())
-        || !Arrays.equals(
-            identity.originalPostAuthorizationTuple(), actual.originalPostAuthorizationTuple())
+        || !identity.accountWorldParticipationId().equals(actual.accountWorldParticipationId())
+        || identity.accountWorldParticipationFence() != actual.accountWorldParticipationFence()
         || !identity.gameSessionOwnerAttemptId().equals(actual.gameSessionOwnerAttemptId())
         || identity.gameSessionOwnerFence() != actual.gameSessionOwnerFence()
         || !identity.canonicalGameInstanceId().equals(actual.canonicalGameInstanceId())
         || !identity.preparationInputJson().equals(actual.preparationInputJson())
         || !identity.preparationInputDigest().equals(actual.preparationInputDigest())) {
       throw denied(
-          "Account historical participation differs from the complete original World execution tuple");
+          "Account historical participation differs from the complete original World execution"
+              + " tuple");
     }
   }
 
@@ -147,7 +146,8 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
         || !identity.gameSessionOwnerAttemptId().equals(actual.ownerAttemptId())
         || identity.gameSessionOwnerFence() != actual.ownerFence()) {
       throw denied(
-          "Game Session historical evidence differs from the exact original tuple or owner attempt");
+          "Game Session historical evidence differs from the exact original tuple or owner"
+              + " attempt");
     }
 
     HistoricalOriginalStartSessionOwnerEvidence.LaunchAssociation association =
@@ -179,7 +179,8 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
         || !retained.sameJsonValue(
             retained.gameSessionReadEvidence().get("releaseAttestationJson"), release)) {
       throw denied(
-          "Game Session descriptor or release attestation differs from the exact retained preparation input");
+          "Game Session descriptor or release attestation differs from the exact retained"
+              + " preparation input");
     }
     retained.requireLaunchBindingAndSource(descriptor, release);
   }
@@ -203,7 +204,8 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
         || !text(retained.sourceIntake, "sourceEvidenceDigest")
             .equals(firstSelection.sourceEvidenceDigest())) {
       throw denied(
-          "Game Session first-selection pin differs from the exact retained World release and source");
+          "Game Session first-selection pin differs from the exact retained World release and"
+              + " source");
     }
   }
 
@@ -792,7 +794,8 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
               || number(this.identity, "catalogRevision", true)
                   != number(gameSessionReadEvidence, "catalogRevision", true))) {
         throw denied(
-            "Retained World launch-captured catalog identity differs between identity and Game Session evidence");
+            "Retained World launch-captured catalog identity differs between identity and Game"
+                + " Session evidence");
       }
 
       if (number(launchBinding, "schemaVersion", true) != 1L

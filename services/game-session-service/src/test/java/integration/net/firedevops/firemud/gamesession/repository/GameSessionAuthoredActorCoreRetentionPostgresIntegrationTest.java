@@ -68,7 +68,7 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
   void retainsExactEmptyOwnerResultAndRejectsConflictOrMutation() throws Exception {
     try (Fixture fixture = newFixture()) {
       LaunchInputs launch = fixture.createLaunch();
-      var attempt = fixture.createAttempt(launch.proof().originalTuple());
+      var attempt = launch.attempt();
       var selector = exactReplayRequest(launch, attempt.claim());
       byte[] requestBytes =
           StartSessionTemplateAssociationReadGrpcCodec.toRequest(selector).toByteArray();
@@ -154,7 +154,7 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
   void originalSelectionPinIsAppendOnlyAndBoundToTheExactLiveAttemptAndLaunch() throws Exception {
     try (Fixture fixture = newFixture()) {
       LaunchInputs launch = fixture.createLaunch();
-      AttemptInputs attempt = fixture.createAttempt(launch.proof().originalTuple());
+      AttemptInputs attempt = launch.attempt();
       var tuple = launch.proof().originalTuple();
       byte[] selectionRequest = new byte[] {1};
       byte[] selectionResponse = new byte[] {2};
@@ -301,9 +301,8 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
     }
 
     try (Fixture fixture = newFixture()) {
-      LaunchInputs launch = fixture.createLaunch();
-      AttemptInputs expiringAttempt =
-          fixture.createAttempt(launch.proof().originalTuple(), Duration.ofSeconds(2));
+      LaunchInputs launch = fixture.createLaunch(Duration.ofSeconds(2));
+      AttemptInputs expiringAttempt = launch.attempt();
       Thread.sleep(Duration.ofMillis(2200).toMillis());
       assertThatThrownBy(
               () ->
@@ -583,7 +582,10 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
   }
 
   private record LaunchInputs(
-      CanonicalRealmCatalog catalog, SyntheticLaunchProof proof, UUID gameInstanceUuid) {}
+      CanonicalRealmCatalog catalog,
+      SyntheticLaunchProof proof,
+      UUID gameInstanceUuid,
+      AttemptInputs attempt) {}
 
   private record AttemptInputs(
       AttemptClaim claim,
@@ -605,6 +607,10 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
     }
 
     LaunchInputs createLaunch() {
+      return createLaunch(Duration.ofMinutes(5));
+    }
+
+    LaunchInputs createLaunch(Duration leaseDuration) {
       FreshTenantAssociation fresh = createFreshAssociation();
       var catalogProof = GameSessionCanonicalRealmCatalogProofFixtures.forFreshAssociation(fresh);
       CanonicalRealmCatalog catalog =
@@ -616,6 +622,7 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
                   UUID.randomUUID(),
                   UUID.randomUUID());
       SyntheticLaunchProof proof = launchProof(catalog);
+      AttemptInputs attempt = createAttempt(proof.originalTuple(), leaseDuration);
       var launches =
           new GameSessionCanonicalInstanceLaunchRepository(
               dsl,
@@ -625,12 +632,7 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
       var created =
           launches.createStartingLaunch(
               proof.originalTuple(), proof.completeLaunchBindingEvidence(), catalog);
-      return new LaunchInputs(catalog, proof, created.gameInstanceUuid());
-    }
-
-    AttemptInputs createAttempt(
-        net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple tuple) {
-      return createAttempt(tuple, Duration.ofMinutes(5));
+      return new LaunchInputs(catalog, proof, created.gameInstanceUuid(), attempt);
     }
 
     AttemptInputs createAttempt(
@@ -650,7 +652,9 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
               tuple.authorizationReferenceFingerprint(),
               tuple.authorityEvidenceBundleBytes(),
               bundle.issuanceOperationId(),
-              Long.parseLong(bundle.issuanceFence()));
+              Long.parseLong(bundle.issuanceFence()),
+              tuple.canonicalBytes());
+      // Synthetic Account fixture: the retained tuple is exact, but this does not prove RPC origin.
       var attached =
           Objects.requireNonNull(
               transactions()

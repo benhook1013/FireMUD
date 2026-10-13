@@ -8,6 +8,7 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
@@ -259,6 +260,9 @@ public final class GameSessionCanonicalInstanceLaunchRepository {
       return retained;
     }
 
+    // Retained launch retries replay above; this exact owner tuple guard applies only to fresh
+    // rows.
+    requireRetainedCurrentAccountTuple(input);
     rejectOrphanedRunOwnedInstance(input);
     UUID gameInstanceUuid = newNonNilUuid();
     long startingRowVersion = 0L;
@@ -273,6 +277,41 @@ public final class GameSessionCanonicalInstanceLaunchRepository {
           "New Game Session STARTING instance and launch association did not read back in their owner transaction");
     }
     return readLaunchRow(inserted, true);
+  }
+
+  private void requireRetainedCurrentAccountTuple(PreparedLaunch input) {
+    requireOwnerTransaction();
+    Record ownerAttempt =
+        dsl.fetchOne(
+            "SELECT post_authorization_execution_tuple, account_redemption_projection"
+                + " FROM game_session_start_session_operator_attempt"
+                + " WHERE target_namespace = ? AND control_plane_request_id = ? FOR UPDATE",
+            workloadNamespace,
+            input.originalTuple().controlPlaneRequestId());
+    if (ownerAttempt == null) {
+      throw new InvalidCanonicalInstanceLaunchException(
+          "Exact Game Session original StartSession owner attempt is unavailable for fresh launch");
+    }
+
+    byte[] retainedTuple = ownerAttempt.get("post_authorization_execution_tuple", byte[].class);
+    if (retainedTuple == null
+        || !Arrays.equals(retainedTuple, input.originalTuple().canonicalBytes())) {
+      throw new InvalidCanonicalInstanceLaunchException(
+          "Retained Game Session original StartSession tuple differs from the exact incoming tuple");
+    }
+    byte[] accountProjection = ownerAttempt.get("account_redemption_projection", byte[].class);
+    if (accountProjection == null) {
+      throw new InvalidCanonicalInstanceLaunchException(
+          "Exact Game Session original StartSession owner attempt has no full Account tuple");
+    }
+    try {
+      StartSessionAccountRedemptionProjection.requireCurrentBinding(
+          accountProjection, input.originalTuple());
+    } catch (IllegalArgumentException malformedOrLegacy) {
+      throw new InvalidCanonicalInstanceLaunchException(
+          "Retained Account redemption evidence is not the exact current full tuple",
+          malformedOrLegacy);
+    }
   }
 
   private Optional<CanonicalInstanceLaunch> readByLaunchIdentityInTransaction(
