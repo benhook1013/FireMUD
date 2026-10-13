@@ -407,8 +407,13 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
     def running(pid):
         try:
             return Path(f"/proc/{pid}/stat").read_bytes().rsplit(b")", 1)[1].split()[0] != b"Z"
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
             return False
+
+    def test_running_treats_disappearing_process_as_not_running(self):
+        for error in (FileNotFoundError, ProcessLookupError):
+            with self.subTest(error=error), mock.patch.object(Path, "read_bytes", side_effect=error):
+                self.assertFalse(self.running(12345))
 
     def test_wrapper_sigkill_supervisor_retains_guard_until_cleanup(self):
         process, fixture, _ = self.launch("worker", FIXTURE_MODE="worker")

@@ -1856,12 +1856,16 @@ jobs:
 
           registry_digest() {
             local image="$1"
+            local inspect_output inspect_status
             local digest
-            if ! digest="$(docker buildx imagetools inspect "$image" |
-              awk '$1 == "Digest:" { print $2; exit }')"; then
-              echo "Unable to inspect exact registry digest for $image; refusing to publish." >&2
-              return 1
+            if inspect_output="$(docker buildx imagetools inspect "$image")"; then
+              :
+            else
+              inspect_status=$?
+              echo "Unable to inspect exact registry digest for $image (imagetools exit $inspect_status); refusing to publish." >&2
+              return "$inspect_status"
             fi
+            digest="$(awk '$1 == "Digest:" && $2 ~ /^sha256:[0-9a-f]{64}$/ { print $2; exit }' <<<"$inspect_output")"
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
               echo "Registry manifest for $image has no exact digest." >&2
               return 1
