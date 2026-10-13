@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import net.firedevops.firemud.common.authoring.DraftBaseReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
@@ -16,6 +17,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationE
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
+import net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBaseRepository;
 import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
@@ -23,6 +25,7 @@ import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
+import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationService;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublishedEvidence;
@@ -33,6 +36,7 @@ import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
+import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.ExecuteContext;
@@ -81,7 +85,8 @@ class RealmPolicyPublicationPostgresIntegrationTest {
           "sealed");
 
   @Container
-  static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
+  static final PostgreSQLContainer<?> POSTGRES =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
   void retainedAndFreshPolicyPublicationsSurviveAdditiveReleaseColumn() throws Exception {
@@ -264,8 +269,7 @@ class RealmPolicyPublicationPostgresIntegrationTest {
                 baseline(
                     fixture.target(),
                     fixture.dsl(),
-                    fixture.policySource(),
-                    "1",
+                    new GameDesignSourceRepository(fixture.dsl()),
                     "Replacement World"));
     GameDesignPublicationOperation operation = fixture.prepare(true);
     var selected = fixture.policySource().readCapture(operation).orElseThrow().snapshot();
@@ -422,7 +426,7 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     source.setSchema(schema);
-    migrate(source, schema, "50.14");
+    migrate(source, schema);
     var transactions = new DataSourceTransactionManager(source);
     var write = new TransactionTemplate(transactions);
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -432,6 +436,8 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         new DataSourceConnectionProvider(new TransactionAwareDataSourceProxy(source)));
     configuration.set(new SpringTransactionProvider(transactions));
     var dsl = DSL.using(configuration);
+    var sources = new GameDesignSourceRepository(dsl);
+    var policySource = new RealmPolicySourceRepository(dsl);
     var games = new GameRepository(dsl);
     var versions = new VersionRepository(dsl);
     Game game =
@@ -448,21 +454,17 @@ class RealmPolicyPublicationPostgresIntegrationTest {
               var requested = new Version();
               requested.setTenantId(game.getTenantId());
               requested.setVersionNumber(1);
-              return versions.save(requested);
+              Version created = versions.save(requested);
+              sources
+                  .readGenesis(target(created))
+                  .orElseThrow(
+                      () -> new IllegalStateException("fresh Version lacks actual source genesis"));
+              return created;
             });
-    TargetProof target =
-        new TargetProof(
-            version.getCanonicalTenantId(),
-            version.getCanonicalVersionId(),
-            version.getId(),
-            version.getTenantId(),
-            version.getIdentitySourceGameRowId(),
-            version.getIdentitySourceGameTenantKey(),
-            version.getIdentitySourceProvenanceKind());
-    var policySource = new RealmPolicySourceRepository(dsl);
+    TargetProof target = target(version);
     var baseline =
         isolatedPolicyBaseline
-            ? write.execute(status -> baseline(target, dsl, policySource, "0", "World"))
+            ? write.execute(status -> baseline(target, dsl, sources, "World"))
             : null;
     var publicationWrites = new RealmPolicyPublicationRepository(dsl);
     var publicationReads = new RealmPolicyPublicationService(publicationWrites, transactions);
@@ -481,7 +483,7 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         publicationReads);
   }
 
-  private static void migrate(DriverManagerDataSource source, String schema, String target) {
+  private static void migrate(DriverManagerDataSource source, String schema) {
     Flyway.configure()
         .dataSource(source)
         .schemas(schema)
@@ -489,7 +491,6 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .table("flyway_schema_history_game_design_service")
-        .target(target)
         .load()
         .migrate();
   }
@@ -497,24 +498,27 @@ class RealmPolicyPublicationPostgresIntegrationTest {
   private static DraftCommitBinding baseline(
       TargetProof target,
       DSLContext dsl,
-      RealmPolicySourceRepository policySource,
-      String expectedEpoch,
+      GameDesignSourceRepository sources,
       String worldDisplayName) {
-    DraftCommitBinding binding = policyBinding(target, expectedEpoch, worldDisplayName);
+    SourceHead head = currentSourceHead(target, dsl, sources);
+    DraftCommitBinding binding =
+        policyBinding(target, head.baseReference(), head.sourceEpoch(), worldDisplayName);
     var coordinator = new DraftCommitCoordinatorRepository(dsl);
-    coordinator.claim(binding);
+    var reviewed =
+        new GameDesignReviewedBaseRepository(dsl)
+            .resolve(target, DraftBaseReference.parse(binding.baseCommitId()));
+    sources.claimReviewed(binding, reviewed);
     coordinator.claimApplicationSlot(binding);
     coordinator.markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
-    var applied = policySource.apply(binding);
-    IsolatedPublicationOwnerSetup.advanceIsolatedVisibility(
+    var applied = sources.apply(binding);
+    IsolatedPublicationOwnerSetup.advanceIsolatedSourceVisibility(
         dsl, binding, List.of(applied.ownerOutcome()));
-    policySource.captureSynchronized(binding);
     coordinator.releaseApplicationSlot(binding);
     return binding;
   }
 
   private static DraftCommitBinding policyBinding(
-      TargetProof target, String expectedEpoch, String worldDisplayName) {
+      TargetProof target, String baseReference, String expectedEpoch, String worldDisplayName) {
     var policy =
         RealmEntryPolicy.parse(
             "{\"schemaVersion\":1,\"worldSlug\":\"world\",\"worldDisplayName\":\""
@@ -532,7 +536,7 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         target,
         UUID.randomUUID(),
         UUID.randomUUID(),
-        "ISOLATED-initial-source-base",
+        baseReference,
         List.of(
             new DraftCommitBinding.RevisionPayload(
                 "0", UUID.randomUUID(), Owner.GAME_DESIGN_CONTROL_PLANE, payload)),
@@ -545,6 +549,47 @@ class RealmPolicyPublicationPostgresIntegrationTest {
                 "effective",
                 expectedEpoch)));
   }
+
+  private static SourceHead currentSourceHead(
+      TargetProof target, DSLContext dsl, GameDesignSourceRepository sources) {
+    var row =
+        java.util.Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT source_epoch, visible_commit_id, genesis_receipt_id "
+                    + "FROM game_design_realm_policy_source WHERE canonical_tenant_id = ? "
+                    + "AND canonical_version_id = ?",
+                target.canonicalTenantId(),
+                target.canonicalVersionId()),
+            "fresh Draft fixture must retain its actual policy source head");
+    UUID visibleCommit = row.get("visible_commit_id", UUID.class);
+    UUID genesisReceipt = row.get("genesis_receipt_id", UUID.class);
+    UUID sharedGenesisReceipt =
+        sources
+            .readGenesis(target)
+            .orElseThrow(
+                () -> new IllegalStateException("fresh Draft fixture lacks shared genesis"))
+            .policy()
+            .receiptId();
+    if (!sharedGenesisReceipt.equals(genesisReceipt)) {
+      throw new IllegalStateException("policy source head differs from shared genesis receipt");
+    }
+    String baseReference =
+        visibleCommit == null ? "genesis:" + sharedGenesisReceipt : visibleCommit.toString();
+    return new SourceHead(row.get("source_epoch", String.class), baseReference);
+  }
+
+  private static TargetProof target(Version version) {
+    return new TargetProof(
+        version.getCanonicalTenantId(),
+        version.getCanonicalVersionId(),
+        version.getId(),
+        version.getTenantId(),
+        version.getIdentitySourceGameRowId(),
+        version.getIdentitySourceGameTenantKey(),
+        version.getIdentitySourceProvenanceKind());
+  }
+
+  private record SourceHead(String sourceEpoch, String baseReference) {}
 
   private static void assertRejectedHeaderClonesPreserveOriginal(
       Fixture fixture, RealmPolicyPublishedEvidence.PublishedSet original) {
@@ -760,11 +805,17 @@ class RealmPolicyPublicationPostgresIntegrationTest {
       return tx(
           () -> {
             try {
-              var operation = IsolatedPublicationOwnerSetup.retain(dsl, target, 1);
+              var sources = new GameDesignSourceRepository(dsl);
+              String sourceBaseReference = currentSourceHead(target, dsl, sources).baseReference();
+              var operation =
+                  IsolatedPublicationOwnerSetup.retainSourceBacked(
+                      dsl,
+                      target,
+                      1,
+                      "ISOLATED remote owner transaction proof",
+                      sourceBaseReference);
               if (capturePolicySource) {
-                policySource.captureSynchronized(
-                    operation.account().input().selection().selectedCommit());
-                policySource.freeze(operation);
+                sources.freeze(operation);
               }
               return operation;
             } catch (Exception failure) {

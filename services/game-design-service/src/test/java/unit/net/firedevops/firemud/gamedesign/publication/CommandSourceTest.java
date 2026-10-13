@@ -7,6 +7,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -46,17 +47,26 @@ class CommandSourceTest {
 
     var malformed =
         List.of(
-            CommandSource.upsertPayload(definition)
-                .replace("\"operation\":\"UPSERT\"", "\"operation\":\"UPSERT\",\"extra\":true"),
-            "{\"schemaVersion\":1,\"revisionKind\":\"UNSUPPORTED\",\"operation\":\"DELETE\",\"commandId\":\"look\"}",
-            CommandSource.upsertPayload(definition)
-                .replace("\"schemaVersion\":1", "\"schemaVersion\":2"));
-    for (String payload : malformed) {
+            Map.entry(
+                CommandSource.upsertPayload(definition)
+                    .replace("\"operation\":\"UPSERT\"", "\"operation\":\"UPSERT\",\"extra\":true"),
+                "Closed command source operation fields are required"),
+            Map.entry(
+                "{\"schemaVersion\":1,\"revisionKind\":\"UNSUPPORTED\",\"operation\":\"DELETE\",\"commandId\":\"look\"}",
+                "Unsupported Game Design command source revision kind"),
+            Map.entry(
+                CommandSource.upsertPayload(definition)
+                    .replace("\"schemaVersion\":1", "\"schemaVersion\":2"),
+                "Unsupported command source operation schema"));
+    for (var malformedCase : malformed) {
       var bad =
           binding(
-              commitId, List.of(revision("0", revisionId, payload)), List.of(commandScope("0")));
+              commitId,
+              List.of(revision("0", revisionId, malformedCase.getKey())),
+              List.of(commandScope("0")));
       assertThatThrownBy(() -> CommandSource.mutations(bad))
-          .isInstanceOf(IllegalArgumentException.class);
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining(malformedCase.getValue());
     }
   }
 

@@ -47,6 +47,7 @@ import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -378,6 +379,113 @@ class VersionPublishCommandServiceImplTest {
     verify(publishAttemptService, never()).markFullVersionSucceeded(any(String.class));
     verify(publishAttemptService, never())
         .recordFullVersionParticipantDigests(any(String.class), any(List.class));
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = VersionLifecycleState.class,
+      names = {"PUBLISHED", "ACTIVE", "RETIRED"})
+  void selectedSucceededReplayRevalidatesExactTerminalEvidenceWithoutWriting(
+      VersionLifecycleState lifecycleState) throws Exception {
+    SelectedSucceededReplayFixture fixture = selectedSucceededReplayFixture(lifecycleState);
+
+    PublishWorkflowSnapshot snapshot = service.reconcileFullVersionPublish(fixture.request());
+
+    assertEquals("SUCCEEDED", snapshot.status());
+    verify(publishAttemptRepository).requirePublishedOperation(fixture.attempt());
+    verify(publishGateService)
+        .assertGatePassed(
+            any(VersionDto.class), org.mockito.ArgumentMatchers.eq(fixture.participantDigests()));
+    verify(recordedParticipantDigestService)
+        .assertMatchesRecordedDigests(
+            "tenant-1", PublishType.FULL_VERSION, fixture.participantDigests());
+    verify(publishGateService, never())
+        .collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class));
+    assertNoPublicationWrites();
+  }
+
+  @Test
+  void selectedSucceededReplayRejectsMismatchedCommittedBundle() throws Exception {
+    SelectedSucceededReplayFixture fixture =
+        selectedSucceededReplayFixture(VersionLifecycleState.ACTIVE);
+    String changedWorkflowId = fixture.request().publishWorkflowId() + ":changed";
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.of(withWorkflowId(fixture.bundle(), changedWorkflowId)));
+
+    assertThrows(
+        VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+        () -> service.reconcileFullVersionPublish(fixture.request()));
+
+    assertNoPublicationWrites();
+  }
+
+  @Test
+  void selectedSucceededReplayRejectsMismatchedCommittedArtifact() throws Exception {
+    SelectedSucceededReplayFixture fixture =
+        selectedSucceededReplayFixture(VersionLifecycleState.RETIRED);
+    VersionAssetArtifactStateDto artifact = fixture.artifact();
+    when(versionAssetArtifactService.findState("tenant-1", 10L))
+        .thenReturn(
+            Optional.of(
+                new VersionAssetArtifactStateDto(
+                    artifact.tenantId(),
+                    artifact.versionId(),
+                    artifact.exportedVersionNumber(),
+                    "PURGED",
+                    artifact.stateEpoch(),
+                    artifact.manifestHash(),
+                    artifact.lastWorkflowId(),
+                    artifact.lastErrorCode(),
+                    artifact.lastErrorMessage(),
+                    artifact.updatedAt(),
+                    artifact.exportedManifestAssetKeys())));
+
+    assertThrows(
+        VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+        () -> service.reconcileFullVersionPublish(fixture.request()));
+
+    assertNoPublicationWrites();
+  }
+
+  @Test
+  void selectedSucceededReplayRejectsPublicationGateMismatch() throws Exception {
+    SelectedSucceededReplayFixture fixture =
+        selectedSucceededReplayFixture(VersionLifecycleState.ACTIVE);
+    org.mockito.Mockito.doThrow(
+            new IllegalStateException("ISOLATED retained publication gate mismatch"))
+        .when(publishGateService)
+        .assertGatePassed(
+            any(VersionDto.class), org.mockito.ArgumentMatchers.eq(fixture.participantDigests()));
+
+    assertThrows(
+        VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+        () -> service.reconcileFullVersionPublish(fixture.request()));
+
+    verify(publishGateService)
+        .assertGatePassed(
+            any(VersionDto.class), org.mockito.ArgumentMatchers.eq(fixture.participantDigests()));
+    assertNoPublicationWrites();
+  }
+
+  @Test
+  void selectedSucceededReplayRejectsRecordedDigestMismatch() throws Exception {
+    SelectedSucceededReplayFixture fixture =
+        selectedSucceededReplayFixture(VersionLifecycleState.RETIRED);
+    org.mockito.Mockito.doThrow(
+            new IllegalStateException("ISOLATED retained participant digest mismatch"))
+        .when(recordedParticipantDigestService)
+        .assertMatchesRecordedDigests(
+            "tenant-1", PublishType.FULL_VERSION, fixture.participantDigests());
+
+    assertThrows(
+        VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+        () -> service.reconcileFullVersionPublish(fixture.request()));
+
+    verify(recordedParticipantDigestService)
+        .assertMatchesRecordedDigests(
+            "tenant-1", PublishType.FULL_VERSION, fixture.participantDigests());
+    assertNoPublicationWrites();
   }
 
   @Test
@@ -2417,6 +2525,178 @@ class VersionPublishCommandServiceImplTest {
     return new SelectedPublishFixture(reservation, request, attempt, version);
   }
 
+  private SelectedSucceededReplayFixture selectedSucceededReplayFixture(
+      VersionLifecycleState lifecycleState) throws Exception {
+    TargetProof target =
+        new TargetProof(
+            CANONICAL_TENANT_ID,
+            CANONICAL_VERSION_ID,
+            10L,
+            "tenant-1",
+            1L,
+            "tenant-1",
+            "NEW_GAME_ROW");
+    // Stipulated original upstream bytes, not live Account or World producer proof. This closed
+    // operation carries one typed World graph, reviewed base, selection, and publication request.
+    var operation =
+        IsolatedPublicationOperationFixtures.fresh(
+            target, "genesis:66666666-6666-4666-8666-666666666666");
+    var selected = operation.account().input().selection();
+    SelectionSnapshot reservation =
+        new SelectionSnapshot(
+            AuthoredDraftPublishSelection.fromStored(selected.canonicalJson(), selected.digest()),
+            OffsetDateTime.parse("2026-10-08T00:00:00Z"));
+    PublishWorkflowRequest request = selectedRequest(reservation);
+    PublishAttempt attempt =
+        fullAttempt(PublishAttemptStatus.SUCCEEDED, 10L, 1, request.publishWorkflowId());
+    attempt.setRequestDigest(reservation.selection().digest());
+    Version version = fullVersion(10L, 1, lifecycleState);
+    version.setVersionStateEpoch(
+        switch (lifecycleState) {
+          case PUBLISHED -> 6L;
+          case ACTIVE -> 7L;
+          case RETIRED -> 8L;
+          default ->
+              throw new IllegalArgumentException("terminal replay fixture requires a release");
+        });
+    version.setCanonicalTenantId(CANONICAL_TENANT_ID);
+    version.setCanonicalVersionId(CANONICAL_VERSION_ID);
+
+    // The retained v2 selector payload must bind to the exact selected World commit and original
+    // publication request, regardless of the Version's later legal lifecycle state.
+    WorldPublishedStartLocationEvidence selectedEvidence = operation.world();
+    List<PublishParticipantDigestDto> participantDigests =
+        PublishedWorldSelectorFixtures.participants(
+            10L, selectedEvidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+    ExportedAssetManifest manifest = exportedManifest(List.of("manifest.json"));
+    PublishedReleaseBundleDto bundle =
+        new PublishedReleaseBundleDto(
+            1L,
+            "tenant-1",
+            10L,
+            1,
+            "v2",
+            request.publishWorkflowId(),
+            MANIFEST_HASH,
+            List.of("manifest.json"),
+            participantDigests,
+            List.of(),
+            "generation-revision",
+            false,
+            null,
+            LocalDateTime.now(),
+            CANONICAL_TENANT_ID,
+            CANONICAL_VERSION_ID,
+            "opaque-release-reference-from-owner",
+            1,
+            artifactDigests(List.of("manifest.json")),
+            selectedEvidence);
+    VersionAssetArtifactStateDto artifact =
+        new VersionAssetArtifactStateDto(
+            "tenant-1",
+            10L,
+            1,
+            "PUBLISHED",
+            2L,
+            MANIFEST_HASH,
+            request.publishWorkflowId(),
+            null,
+            null,
+            LocalDateTime.now(),
+            List.of("manifest.json"));
+
+    when(authoredSelections.readByPublishRequest(
+            request.intent().canonicalTenantId(), request.publishRequestId()))
+        .thenReturn(Optional.of(reservation));
+    when(publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId()))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.of(bundle));
+    when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.of(artifact));
+    when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L)).thenReturn(manifest);
+    return new SelectedSucceededReplayFixture(
+        request, attempt, bundle, participantDigests, artifact);
+  }
+
+  private void assertNoPublicationWrites() {
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+    verify(versionAssetArtifactService, never())
+        .stageExport(any(String.class), any(Long.class), any(Integer.class), any(String.class));
+    verify(versionAssetArtifactService, never())
+        .markExportedUnattested(
+            any(String.class),
+            any(Long.class),
+            any(Integer.class),
+            any(String.class),
+            any(ExportedAssetManifest.class));
+    verify(versionAssetArtifactService, never())
+        .markPublished(
+            any(String.class),
+            any(Long.class),
+            any(Long.class),
+            any(String.class),
+            any(String.class));
+    verify(publishedReleaseBundleService, never())
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(String.class),
+            any(List.class),
+            any(WorldPublishedStartLocationEvidence.class));
+    verify(publishedReleaseBundleService, never())
+        .createFullVersionBundle(
+            any(VersionDto.class),
+            any(String.class),
+            any(ExportedAssetManifest.class),
+            any(String.class),
+            any(List.class));
+    verify(publishAttemptService, never()).executeFullVersionTransaction(any());
+    verify(publishAttemptService, never())
+        .recordFullVersionParticipantDigests(any(String.class), any(List.class));
+    verify(publishAttemptService, never()).markFullVersionSucceeded(any(String.class));
+    verify(publishAttemptService, never())
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
+    verify(publishAttemptRepository, never())
+        .sealPublication(any(PublishAttempt.class), org.mockito.ArgumentMatchers.anyBoolean());
+    verify(publishAttemptRepository, never()).save(any(PublishAttempt.class));
+    verify(versionRepository, never()).save(any(Version.class));
+    verify(gameRepository, never()).findByTenantIdForUpdate(any(String.class));
+    verify(publishGateService, never())
+        .collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class));
+    verify(recordedParticipantDigestService, never())
+        .recordVerifiedDigests(
+            any(String.class), any(PublishType.class), any(String.class), any(List.class));
+    verify(authoredSelections, never()).reserve(any(PublishIntent.class));
+  }
+
+  private static PublishedReleaseBundleDto withWorkflowId(
+      PublishedReleaseBundleDto bundle, String workflowId) {
+    return new PublishedReleaseBundleDto(
+        bundle.id(),
+        bundle.tenantId(),
+        bundle.versionId(),
+        bundle.versionNumber(),
+        bundle.attestationSchemaVersion(),
+        workflowId,
+        bundle.manifestHash(),
+        bundle.requiredManifestAssetKeys(),
+        bundle.participantDigests(),
+        bundle.commandDefinitions(),
+        bundle.generationConfigRevision(),
+        bundle.scriptOnly(),
+        bundle.scriptPatchVersion(),
+        bundle.publishedAt(),
+        bundle.canonicalTenantId(),
+        bundle.canonicalVersionId(),
+        bundle.publishedReleaseBundleRef(),
+        bundle.manifestSchemaVersion(),
+        bundle.artifactDigests(),
+        bundle.worldPublishedStartLocationEvidence());
+  }
+
   private VersionAssetArtifactStateDto stagedArtifact(
       PublishWorkflowRequest request, Version version) {
     return new VersionAssetArtifactStateDto(
@@ -2479,6 +2759,13 @@ class VersionPublishCommandServiceImplTest {
       PublishWorkflowRequest request,
       PublishAttempt attempt,
       Version version) {}
+
+  private record SelectedSucceededReplayFixture(
+      PublishWorkflowRequest request,
+      PublishAttempt attempt,
+      PublishedReleaseBundleDto bundle,
+      List<PublishParticipantDigestDto> participantDigests,
+      VersionAssetArtifactStateDto artifact) {}
 
   private static ExportedAssetManifest exportedManifest(List<String> usageKeys) {
     return new ExportedAssetManifest(MANIFEST_HASH, 1, usageKeys, artifactDigests(usageKeys));
