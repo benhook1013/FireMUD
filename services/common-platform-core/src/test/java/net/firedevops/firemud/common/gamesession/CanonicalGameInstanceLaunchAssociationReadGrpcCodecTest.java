@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAsso
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence.Request;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.testing.AuthoringFixtures;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameInstanceLaunchAssociationResponse;
 import org.junit.jupiter.api.Test;
 
@@ -44,6 +45,7 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
 
     assertThat(result.ownerAttemptId()).isEqualTo(OWNER_ATTEMPT_ID);
     assertThat(result.ownerFence()).isEqualTo(4L);
+    assertThat(result.playableStateScope()).isEqualTo(RealmEntryPolicy.StateScope.SHARED);
     assertThat(result.launchBindingEvidence()).isEqualTo(launchBinding);
     for (var invalid :
         new GetCanonicalGameInstanceLaunchAssociationResponse[] {
@@ -57,6 +59,26 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
               () ->
                   CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(
                       request, invalid))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    for (var invalidScope :
+        new GetCanonicalGameInstanceLaunchAssociationResponse[] {
+          response.toBuilder().clearPlayableStateScope().build(),
+          response.toBuilder()
+              .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED)
+              .build(),
+          response.toBuilder()
+              .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
+              .build(),
+          response.toBuilder().setPlayableStateScopeValue(999).build()
+        }) {
+      var wireResponse =
+          GetCanonicalGameInstanceLaunchAssociationResponse.parseFrom(invalidScope.toByteArray());
+      assertThatThrownBy(
+              () ->
+                  CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(
+                      request, wireResponse))
           .isInstanceOf(IllegalArgumentException.class);
     }
   }
@@ -76,7 +98,7 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
         .setDescriptorResultDigest(request.expectedDescriptorResultDigest())
         .setReleaseAttestationEvidenceDigest(request.expectedReleaseAttestationEvidenceDigest())
         .setPlayableStateNamespaceId("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
-        .setPlayableStateScope(RealmEntryPolicy.StateScope.SHARED.name())
+        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
         .setPublicProduction(true)
         .setCurrentGameInstanceStatus(CurrentGameInstanceStatus.STARTING.name())
         .setCurrentRowVersion(1L)
