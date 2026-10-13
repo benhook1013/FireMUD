@@ -2084,23 +2084,33 @@ full_files = quoted_entries(
     "]);",
 )
 
-lookup_start_marker = "fullSmokeJob = jobs.find("
-lookup_end_marker = ") ?? null;"
+lookup_start_marker = "const producerJobs = jobs.filter("
+lookup_end_marker = "fullSmokeJob = producerJobs[0] ?? null;"
 try:
     lookup_start = smoke.index(lookup_start_marker)
     lookup_end = smoke.index(lookup_end_marker, lookup_start) + len(lookup_end_marker)
 except ValueError as exc:
     raise SystemExit("smoke.yml must define the fullSmokeJob lookup block") from exc
 
+lookup = smoke[lookup_start:lookup_end]
 job_name_literals = re.findall(
     r'job[.]name\s*===\s*["\']([^"\']+)["\']',
-    smoke[lookup_start:lookup_end],
+    lookup,
 )
 if job_name_literals != ["PR Full-Stack Smoke"]:
     raise SystemExit(
         "smoke.yml fullSmokeJob lookup must use exactly one PR Full-Stack Smoke literal: "
         + repr(job_name_literals)
     )
+
+if "job.name === canonicalSmokeJobName" not in lookup:
+    raise SystemExit("smoke.yml producer filter must include the affirmative canonical name")
+if not re.search(
+    r'if \(producerJobs[.]length > 1\)\s*\{\s*'
+    r'await failNonTerminalSnapshot\("with ambiguous producer jobs"\);\s*return;\s*\}',
+    lookup,
+):
+    raise SystemExit("smoke.yml must reject duplicate producers before selecting the sole match")
 
 try:
     runtime_workflow = yaml.load(runtime_images, Loader=yaml.BaseLoader)
@@ -2109,10 +2119,14 @@ except (KeyError, TypeError, yaml.YAMLError) as exc:
     raise SystemExit(
         "runtime-images.yml must define the pr-local-smoke job name used by Smoke Gate"
     ) from exc
-if runtime_job_name != "PR Full-Stack Smoke":
+runtime_name_template = "PR Full-Stack Smoke (runtime-required=${{ needs.image-meta.outputs.runtime_smoke_required }})"
+canonical_name = re.search(r'const canonicalSmokeJobName = "([^"\n]+)";', smoke)
+if runtime_job_name != runtime_name_template or canonical_name is None or canonical_name[1] != runtime_name_template.replace(
+    "${{ needs.image-meta.outputs.runtime_smoke_required }}", "true"
+):
     raise SystemExit(
         "smoke.yml full-stack PR job lookup does not match runtime-images.yml: "
-        f"smoke={'PR Full-Stack Smoke'!r}, runtime={runtime_job_name!r}"
+        f"canonical={canonical_name[1] if canonical_name else None!r}, runtime={runtime_job_name!r}"
     )
 
 runtime_paths = pull_request_paths(runtime_images, "runtime-images.yml")
