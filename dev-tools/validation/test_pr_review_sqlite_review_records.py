@@ -945,6 +945,24 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.records.bootstrap()
 
     @staticmethod
+    def _downgrade_controller_state_to_v1(connection: sqlite3.Connection) -> None:
+        row = connection.execute("SELECT state_json FROM review_state WHERE singleton = 1").fetchone()
+        document = json.loads(row[0])
+        document["schema_version"] = 1
+        document.pop("review_period_decisions", None)
+        connection.execute(
+            "UPDATE review_state SET state_json = ? WHERE singleton = 1",
+            (json.dumps(document, sort_keys=True, separators=(",", ":")),),
+        )
+        connection.execute("UPDATE controller_metadata SET data_model_version = 1 WHERE singleton = 1")
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'review_records_metadata'"
+        ).fetchone():
+            connection.execute(
+                "UPDATE review_records_metadata SET controller_data_model_version = 1 WHERE singleton = 1"
+            )
+
+    @staticmethod
     def observation(
         key: str,
         disposition: str = "unresolved",
@@ -981,6 +999,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
 
     def test_bootstrap_raises_controller_writer_fence(self) -> None:
         with sqlite3.connect(self.database) as connection:
+            self._downgrade_controller_state_to_v1(connection)
             connection.execute("UPDATE controller_metadata SET min_writer_build = 2")
 
         old_writer = SqliteStateStore(self.database, writer_build=2)
@@ -1472,6 +1491,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute("DROP TABLE source_finding_resolutions")
             connection.execute("DROP TABLE source_finding_resolution_corrections")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 4, min_writer_build = 2")
+            self._downgrade_controller_state_to_v1(connection)
             connection.execute("UPDATE controller_metadata SET min_writer_build = 2")
         old_writer = SqliteStateStore(self.database, writer_build=2)
         self.assertEqual(old_writer.status()["min_writer_build"], 2)
@@ -1498,6 +1518,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute("DROP TABLE source_finding_resolutions")
             connection.execute("DROP TABLE source_finding_resolution_corrections")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 5, min_writer_build = 3")
+            self._downgrade_controller_state_to_v1(connection)
             connection.execute("UPDATE controller_metadata SET min_writer_build = 3")
         self.records.migrate()
         self.records.migrate()
@@ -1512,6 +1533,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_current_version_migration_repairs_controller_writer_fence(self) -> None:
         self.bootstrap()
         with sqlite3.connect(self.database) as connection:
+            self._downgrade_controller_state_to_v1(connection)
             connection.execute("UPDATE controller_metadata SET min_writer_build = 2")
 
         old_writer = SqliteStateStore(self.database, writer_build=2)
@@ -3730,6 +3752,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute("DROP TABLE source_finding_resolution_corrections")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 6 WHERE singleton = 1")
             connection.execute("UPDATE controller_metadata SET min_writer_build = 5 WHERE singleton = 1")
+            self._downgrade_controller_state_to_v1(connection)
 
         self.records.migrate()
         self.assertEqual(self.records.history(2828)["runs"][0]["run_id"], "v6-retained-run")
@@ -3795,23 +3818,24 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute("DROP TABLE source_finding_resolution_corrections")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 7, min_writer_build = 6")
             connection.execute("UPDATE controller_metadata SET min_writer_build = 6")
+            self._downgrade_controller_state_to_v1(connection)
 
         old_records = SqliteReviewRecords(self.database, writer_build=6)
         old_state = SqliteStateStore(self.database, writer_build=6)
         self.records.migrate()
         self.records.migrate()
-        with self.assertRaisesRegex(RecordsSchemaIncompatible, "requires writer build 8"):
+        with self.assertRaisesRegex(RecordsSchemaIncompatible, "requires writer build 9"):
             old_records.history(2828)
-        with self.assertRaisesRegex(StateError, "requires writer build 8"):
+        with self.assertRaisesRegex(StateError, "requires writer build 9"):
             old_state.update(lambda state: state)
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(
                 connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 9
             )
             self.assertEqual(
-                connection.execute("SELECT min_writer_build FROM review_records_metadata").fetchone()[0], 8
+                connection.execute("SELECT min_writer_build FROM review_records_metadata").fetchone()[0], 9
             )
-            self.assertEqual(connection.execute("SELECT min_writer_build FROM controller_metadata").fetchone()[0], 8)
+            self.assertEqual(connection.execute("SELECT min_writer_build FROM controller_metadata").fetchone()[0], 9)
         history = self.records.history(2828)
         self.assertEqual(history["runs"][0]["counts"], counts_before)
         self.assertEqual(history["source_resolutions"][0]["fix_sha"], "b" * 40)
@@ -3873,6 +3897,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute("ALTER TABLE finding_observations DROP COLUMN display_severity")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 8, min_writer_build = 7")
             connection.execute("UPDATE controller_metadata SET min_writer_build = 7")
+            self._downgrade_controller_state_to_v1(connection)
 
         old_records = SqliteReviewRecords(self.database, writer_build=7)
         old_state = SqliteStateStore(self.database, writer_build=7)
@@ -3880,9 +3905,9 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.records.migrate()
         self.records.migrate()
 
-        with self.assertRaisesRegex(RecordsSchemaIncompatible, "requires writer build 8"):
+        with self.assertRaisesRegex(RecordsSchemaIncompatible, "requires writer build 9"):
             old_records.history(2828)
-        with self.assertRaisesRegex(StateError, "requires writer build 8"):
+        with self.assertRaisesRegex(StateError, "requires writer build 9"):
             old_state.update(lambda state: state)
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(
@@ -3891,11 +3916,11 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             )
             self.assertEqual(
                 connection.execute("SELECT min_writer_build FROM review_records_metadata").fetchone()[0],
-                8,
+                9,
             )
             self.assertEqual(
                 connection.execute("SELECT min_writer_build FROM controller_metadata").fetchone()[0],
-                8,
+                9,
             )
             self.assertEqual(
                 connection.execute(

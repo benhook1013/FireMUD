@@ -31,6 +31,21 @@ class JobStoreTest(unittest.TestCase):
     def bootstrap(self) -> None:
         self.store.bootstrap()
 
+    def _make_controller_model_v1(self) -> None:
+        with sqlite3.connect(self.database) as connection:
+            state = json.loads(
+                connection.execute("SELECT state_json FROM review_state WHERE singleton = 1").fetchone()[0]
+            )
+            state["schema_version"] = 1
+            state.pop("review_period_decisions", None)
+            connection.execute(
+                "UPDATE controller_metadata SET data_model_version = 1, min_writer_build = 9 WHERE singleton = 1"
+            )
+            connection.execute(
+                "UPDATE review_state SET state_json = ? WHERE singleton = 1",
+                (json.dumps(state, separators=(",", ":")),),
+            )
+
     def test_credential_diagnostics_locate_brief_without_writing_or_echoing(self) -> None:
         self.bootstrap()
         ordinary = "The password field is omitted. Authentication uses environment configuration."
@@ -192,6 +207,52 @@ class JobStoreTest(unittest.TestCase):
                     "SELECT data_model_version, min_writer_build FROM controller_metadata WHERE singleton = 1"
                 ).fetchone(),
                 original_metadata,
+            )
+
+    def test_v1_bootstrap_and_normal_job_operations_preserve_controller_provenance(self) -> None:
+        controller = SqliteStateStore(self.database)
+        controller.update(lambda state: state)
+        self._make_controller_model_v1()
+
+        self.bootstrap()
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT controller_data_model_version FROM job_metadata WHERE singleton = 1"
+                ).fetchone(),
+                (1,),
+            )
+            state = json.loads(connection.execute(
+                "SELECT state_json FROM review_state WHERE singleton = 1"
+            ).fetchone()[0])
+            self.assertEqual(state["schema_version"], 1)
+
+        before_upgrade = self.store.create("legacy-job", "General", "Legacy controller job")
+        self.assertEqual(self.store.get(before_upgrade["id"])["title"], "Legacy controller job")
+        self.store.append_update(before_upgrade["id"], "Mutation on model 1")
+        self.assertEqual(self.store.get(before_upgrade["id"])["updates"][0]["body"], "Mutation on model 1")
+
+        controller.update(lambda state: state)
+
+        after_upgrade = self.store.create("retained-job", "Gameplay", "Retained model 1 metadata")
+        self.assertEqual(self.store.get(after_upgrade["id"])["title"], "Retained model 1 metadata")
+        self.store.append_update(after_upgrade["id"], "Mutation after controller upgrade")
+        self.assertEqual(
+            self.store.get(after_upgrade["id"])["updates"][0]["body"],
+            "Mutation after controller upgrade",
+        )
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT data_model_version FROM controller_metadata WHERE singleton = 1"
+                ).fetchone(),
+                (2,),
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT controller_data_model_version FROM job_metadata WHERE singleton = 1"
+                ).fetchone(),
+                (1,),
             )
 
     def test_primary_is_independent_from_status_and_switch_is_revisioned(self) -> None:

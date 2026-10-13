@@ -176,20 +176,28 @@ public final class RealmPolicySourceRepository {
         binding.revisions().stream()
             .filter(r -> r.owner() == Owner.GAME_DESIGN_CONTROL_PLANE)
             .filter(RealmPolicySource::isPolicyRevision)
-            .map(r -> RealmPolicySource.revision(binding, r))
+            .map(r -> RealmPolicySource.mutation(binding, r))
             .toList();
     if (updates.isEmpty())
       throw new IllegalArgumentException("Typed authored policy revisions required");
-    for (var update : updates) {
+    for (RealmPolicySource.Mutation update : updates) {
+      String revisionBinding =
+          RealmPolicySource.canonical(
+              List.of(java.util.Map.of("revisionId", update.revisionId().toString())));
       if (dsl.fetchExists(
           dsl.selectOne()
-              .from("game_design_realm_policy_application")
+              .from("game_design_realm_policy_application a")
+              .join("game_design_draft_commit c")
+              .on(
+                  "c.canonical_tenant_id = a.canonical_tenant_id "
+                      + "AND c.canonical_version_id = a.canonical_version_id "
+                      + "AND c.request_id = a.request_id AND c.commit_id = a.commit_id")
               .where(
-                  "canonical_tenant_id = ? AND canonical_version_id = ? AND snapshot_json::jsonb -> 'policies' @> ?::jsonb",
+                  "a.canonical_tenant_id = ? AND a.canonical_version_id = ? "
+                      + "AND (c.binding_json::jsonb -> 'revisions') @> ?::jsonb",
                   binding.target().canonicalTenantId(),
                   binding.target().canonicalVersionId(),
-                  RealmPolicySource.canonical(
-                      List.of(java.util.Map.of("revisionId", update.revisionId().toString())))))) {
+                  revisionBinding))) {
         throw new IllegalArgumentException("Authored policy revision identity cannot be reused");
       }
       if (inheritedPolicies.stream().anyMatch(p -> p.revisionId().equals(update.revisionId()))) {
