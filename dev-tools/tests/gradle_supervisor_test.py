@@ -568,7 +568,10 @@ set -e
         documented = (ROOT / "docker/README.md").read_text()
         match = re.search(r"bash dev-tools/validation/run-locked-gradle.sh --resource-session bash -e -c '(.*?)\n'", documented, re.DOTALL)
         self.assertIsNotNone(match)
+        # This mocked local ownership chain must not inherit the hosting CI identity.
         process, _fixture, log = self.session("documented-inline", match.group(1), inline=True, cwd=checkout,
+                                             GITHUB_ACTIONS="false", GITHUB_RUN_ID="",
+                                             GITHUB_RUN_ATTEMPT="", GITHUB_JOB="",
                                              FIREMUD_SMOKE_RUN_ID="doc-chain",
                                              COMPOSE_PROJECT_NAME="firemud-smoke-doc-chain",
                                              FIREMUD_SMOKE_OWNERSHIP_TOKEN="a" * 64,
