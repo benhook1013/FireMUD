@@ -43,6 +43,9 @@ case "$SMOKE_MUTATION_EXTENSION" in
     ;;
 esac
 
+initialize_run_owned_compose_proof "$@"
+install_run_owned_compose_proof_traps
+
 bash "$ENSURE_ENV_SCRIPT"
 COMPOSE_SERVICES=()
 if [[ -n "$FIREMUD_SMOKE_COMPOSE_SERVICES" ]]; then
@@ -97,6 +100,7 @@ if [[ "$FIREMUD_SMOKE_VALIDATE_ONLY" == "1" ]]; then
 fi
 
 claim_run_owned_compose_project
+FIREMUD_SMOKE_PROOF_CLAIMED=true
 export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
 bash "$ENSURE_CERTS_SCRIPT" --compose-mtls "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
 ensure_run_owned_initial_admission_capability "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" create-or-verify

@@ -1498,7 +1498,7 @@ jobs:
             ${{ steps.minio-source.outputs.server_image_id }}
           SMOKE_MINIO_CLIENT_IMAGE_ID: >-
             ${{ steps.minio-source.outputs.client_image_id }}
-        run: bash ./dev-tools/verify-smoke-images.sh
+        run: bash ./dev-tools/verify-smoke-images.sh --keep-running
 
       - name: Export fixed-tag preview image artifact
         run: |

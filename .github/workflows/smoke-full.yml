@@ -86,7 +86,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🧪 Run Canonical Image Smoke Proof
-        run: SMOKE_IMAGE_TAG="${{ inputs.image_tag }}" bash ./dev-tools/verify-smoke-images.sh
+        run: SMOKE_IMAGE_TAG="${{ inputs.image_tag }}" bash ./dev-tools/verify-smoke-images.sh --keep-running
 
       - name: 📜 Dump Docker Compose Logs on Failure
         if: failure()

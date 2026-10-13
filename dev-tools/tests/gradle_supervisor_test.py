@@ -1,7 +1,10 @@
 """Behavioral proof for the canonical wrapper without starting repository Gradle."""
 
 import importlib.util
+import json
 import os
+import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -23,6 +26,37 @@ class GradleSupervisorTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="firemud-gradle-supervisor-test-")
         self.root = Path(self.temp.name)
         self.resource = self.root / "resource"
+        self.bin = self.root / "mock-bin"
+        self.bin.mkdir()
+        self.docker_state = self.root / "docker-state.json"
+        self.docker_state.write_text("{}")
+        docker = self.bin / "docker"
+        docker.write_text("""#!/usr/bin/env python3
+import json, os, pathlib, sys
+arguments = sys.argv[1:]
+state_path = pathlib.Path(os.environ['MOCK_DOCKER_STATE'])
+all_state = json.loads(state_path.read_text())
+if arguments and arguments[0] == 'compose':
+    project = os.environ['COMPOSE_PROJECT_NAME']
+    if 'down' in arguments: all_state.pop(project, None)
+    elif 'up' in arguments or 'restart' in arguments: all_state[project] = ['running']
+    else: raise SystemExit('unexpected mock Compose command')
+    state_path.write_text(json.dumps(all_state))
+    raise SystemExit(0)
+if arguments[:2] in (['network', 'ls'], ['volume', 'ls']):
+    if len(arguments) != 6 or arguments[2] != '--filter' or not arguments[3].startswith('label=com.docker.compose.project='):
+        raise SystemExit('unscoped mock resource command')
+    raise SystemExit(0)
+if len(arguments) != 6 or arguments[:3] != ['ps', '-a', '--filter'] or arguments[4] != '--format' or arguments[5] not in ('{{.State}}', '{{.ID}}'):
+    raise SystemExit('unexpected mock Docker command')
+prefix = 'label=com.docker.compose.project='
+if not arguments[3].startswith(prefix): raise SystemExit('missing exact project')
+project = arguments[3][len(prefix):]
+state = all_state.get(project, [])
+if state == 'unavailable': raise SystemExit(93)
+for value in state: print(value if arguments[5] == '{{.State}}' else 'mock-container')
+""")
+        docker.chmod(0o755)
         self.processes = []
         self.logs = []
         self.fixture = self.root / "fake-gradle"
@@ -89,6 +123,7 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
         fixture_dir = self.root / f"fixture-{name}"
         fixture_dir.mkdir()
         env = {**os.environ, "CI": "false", "FIXTURE_DIR": str(fixture_dir),
+               "PATH": f"{self.bin}:{os.environ['PATH']}", "MOCK_DOCKER_STATE": str(self.docker_state),
                "FIREMUD_LOCK_GRADLE_EXEC": str(self.fixture),
                "FIREMUD_LOCK_GRADLE_RESOURCE_DIR": str(self.resource),
                "FIREMUD_LOCK_GRADLE_RUN_SECONDS": "10",
@@ -402,6 +437,321 @@ time.sleep(float(os.environ.get('FIXTURE_SLEEP', '60')))
         self.assertFalse(self.running(worker))
         replacement, _, _ = self.launch("replacement", FIXTURE_MODE="exit")
         self.assertEqual(replacement.wait(timeout=5), 23)
+
+    def session(self, name, script, *, inline=False, cwd=None, **settings):
+        command = self.root / f"{name}.sh"
+        command.write_text(script)
+        fixture = self.root / f"fixture-{name}"
+        fixture.mkdir()
+        env = {**os.environ, "CI": "false", "FIXTURE_DIR": str(fixture),
+               "PATH": f"{self.bin}:{os.environ['PATH']}", "MOCK_DOCKER_STATE": str(self.docker_state),
+               "FIREMUD_LOCK_GRADLE_EXEC": str(self.fixture), "FIXTURE_MODE": "exit",
+               "FIREMUD_LOCK_GRADLE_RESOURCE_DIR": str(self.resource),
+               "FIREMUD_LOCK_GRADLE_RUN_SECONDS": "10", "FIREMUD_LOCK_GRADLE_CANCEL_SECONDS": "2", **settings}
+        log = (self.root / f"{name}.log").open("w+")
+        self.logs.append(log)
+        shell_command = ["bash", "-e", "-c", script] if inline else ["bash", str(command)]
+        process = subprocess.Popen(["bash", str(self.checkout(name)), "--resource-session", *shell_command],
+                                   env=env, stdout=log, stderr=log, cwd=cwd)
+        self.processes.append(process)
+        return process, fixture, log
+
+    def test_full_session_excludes_other_worktrees_until_teardown(self):
+        nested = self.checkout("nested")
+        process, fixture, log = self.session("session", f"""set -eu
+set +e
+CI=true bash '{nested}' :account-service:test
+status=$?
+set -e
+[ "$status" = 23 ]
+printf '%s' "$status" > "$FIXTURE_DIR/nested-status"
+printf '%s' "$$" > "$FIXTURE_DIR/session-ready"
+while [ ! -e "$FIXTURE_DIR/finish" ]; do sleep .03; done
+printf done > "$FIXTURE_DIR/teardown"
+""")
+        self.ready(fixture, "session-ready")
+        self.assertEqual((fixture / "nested-status").read_text(), "23")
+        self.assertIn("--no-daemon", (fixture / "args").read_text())
+        contender, contender_fixture, _ = self.launch("session-contender", FIXTURE_MODE="exit")
+        self.assertEqual(contender.wait(timeout=5), 1)
+        self.assertFalse((contender_fixture / "ready").exists())
+        (fixture / "finish").touch()
+        self.assertEqual(process.wait(timeout=5), 0, self.output(log))
+        self.assertTrue((fixture / "teardown").exists())
+        replacement, _, _ = self.launch("session-replacement", FIXTURE_MODE="exit")
+        self.assertEqual(replacement.wait(timeout=5), 23)
+
+    def test_session_signal_runs_teardown_before_releasing_guard(self):
+        process, fixture, log = self.session("cancel-session", """set -eu
+trap 'trap "" TERM INT HUP; sleep .3; printf done > "$FIXTURE_DIR/teardown"; exit 143' TERM
+printf '%s' "$$" > "$FIXTURE_DIR/session-ready"
+while true; do sleep .03; done
+""")
+        self.ready(fixture, "session-ready")
+        process.terminate()
+        contender, _, _ = self.launch("cancel-contender", FIXTURE_MODE="exit")
+        self.assertEqual(contender.wait(timeout=5), 1)
+        self.assertEqual(process.wait(timeout=5), 143, self.output(log))
+        self.assertTrue((fixture / "teardown").exists())
+
+    def test_dead_session_owner_rejects_later_nested_admission(self):
+        nested = self.checkout("dead-nested")
+        process, fixture, log = self.session("dead-session", f"""set -eu
+printf '%s' "$FIREMUD_LOCAL_RESOURCE_SESSION_PID" > "$FIXTURE_DIR/owner"
+printf '%s' "$$" > "$FIXTURE_DIR/session-ready"
+for attempt in {{1..100}}; do
+  [ ! -e "$FIXTURE_DIR/continue" ] || break
+  sleep .03
+done
+set +e
+CI=true bash '{nested}' :account-service:test
+printf '%s' "$?" > "$FIXTURE_DIR/nested-status"
+printf '%s' "$$" > "$FIXTURE_DIR/teardown"
+""")
+        self.ready(fixture, "session-ready")
+        owner = int((fixture / "owner").read_text())
+        os.kill(owner, signal.SIGKILL)
+        self.assertNotEqual(process.wait(timeout=5), 0)
+        (fixture / "continue").touch()
+        self.ready(fixture, "teardown")
+        self.assertEqual((fixture / "nested-status").read_text(), "1", self.output(log))
+        self.assertFalse((fixture / "ready").exists())
+
+    def test_multiline_command_newline_argument_and_cwd_preserve_admission(self):
+        nested = self.checkout("newline-nested")
+        cwd = self.root / "directory\nwith-newline"
+        cwd.mkdir()
+        project = "firemud-smoke-multiline"
+        script = f"""set -eu
+{self.register_command(project)}
+set +e
+bash '{nested}' :account-service:test $'argument\nwith-newline'
+status=$?
+set -e
+[ "$status" = 23 ]
+"""
+        process, fixture, log = self.session("multiline", script, inline=True, cwd=cwd)
+        self.assertEqual(process.wait(timeout=5), 0, self.output(log))
+        lines = (self.resource / "local-resource.meta").read_text().splitlines()
+        self.assertEqual(len(lines), 6)
+        self.assertEqual(json.loads(lines[2]), str(cwd))
+        self.assertEqual(shlex.split(json.loads(lines[3]))[-1], script)
+        self.assertEqual(json.loads(lines[5])["runtimeProjects"], [project])
+        self.assertIn("argument\nwith-newline", (fixture / "args").read_text())
+        admitted, _fixture, log = self.launch("after-multiline", FIXTURE_MODE="exit")
+        self.assertEqual(admitted.wait(timeout=5), 23, self.output(log))
+
+    def test_documented_multiline_fresh_restart_chain_and_clean_readmission(self):
+        wrapper = self.checkout("documented-chain")
+        checkout = wrapper.parents[2]
+        helper = checkout / "dev-tools/smoke/run-owned-compose.sh"
+        helper.parent.mkdir()
+        shutil.copy(ROOT / "dev-tools/smoke/run-owned-compose.sh", helper)
+        for name, claim in (("verify-fresh-bootstrap.sh", "claim_run_owned_compose_project"),
+                            ("verify-restart-state.sh", "require_run_owned_compose_project")):
+            (checkout / "dev-tools" / name).write_text(f"""#!/usr/bin/env bash
+set -euo pipefail
+ROOT_DIR='{checkout}'
+source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
+initialize_run_owned_compose_proof "$@"
+COMPOSE_FILES=(-f docker/docker-compose.yml -f docker/docker-compose.override.yml -f docker/docker-compose.grpc-mtls.override.yml)
+install_run_owned_compose_proof_traps
+{claim}
+FIREMUD_SMOKE_PROOF_CLAIMED=true
+docker compose "${{COMPOSE_FILES[@]}}" up -d
+set +e
+bash "$ROOT_DIR/dev-tools/validation/run-locked-gradle.sh" :account-service:test
+status=$?
+set -e
+[ "$status" = 23 ]
+""")
+        documented = (ROOT / "docker/README.md").read_text()
+        match = re.search(r"bash dev-tools/validation/run-locked-gradle.sh --resource-session bash -e -c '(.*?)\n'", documented, re.DOTALL)
+        self.assertIsNotNone(match)
+        process, _fixture, log = self.session("documented-inline", match.group(1), inline=True, cwd=checkout,
+                                             FIREMUD_SMOKE_RUN_ID="doc-chain",
+                                             COMPOSE_PROJECT_NAME="firemud-smoke-doc-chain",
+                                             FIREMUD_SMOKE_OWNERSHIP_TOKEN="a" * 64,
+                                             FIREMUD_SMOKE_TEST_MODE="1",
+                                             FIREMUD_SMOKE_OWNERSHIP_DIR=str(self.root / "ownership"))
+        self.assertEqual(process.wait(timeout=5), 0, self.output(log))
+        self.assertEqual(json.loads(self.docker_state.read_text()), {})
+        self.assertFalse(list((self.root / "ownership").glob("*.marker")))
+        admitted, _fixture, log = self.launch("after-documented-chain", FIXTURE_MODE="exit")
+        self.assertEqual(admitted.wait(timeout=5), 23, self.output(log))
+
+    def test_prior_well_formed_metadata_preserves_exact_project_hold(self):
+        self.resource.mkdir(mode=0o700)
+        project = "firemud-smoke-prior-format"
+        prior = "111\nprior-time\nprior-cwd\nprior-command\nprior-owner\n" + json.dumps({"runtimeProjects": [project]}) + "\n"
+        metadata = self.resource / "local-resource.meta"
+        metadata.write_text(prior)
+        self.docker_state.write_text(json.dumps({project: ["running"]}))
+        blocked, _fixture, log = self.launch("prior-blocked", FIXTURE_MODE="exit")
+        self.assertEqual(blocked.wait(timeout=5), 1)
+        self.assertIn(project, self.output(log))
+        self.assertEqual(metadata.read_text(), prior)
+        self.docker_state.write_text("{}")
+        admitted, _fixture, log = self.launch("prior-recovered", FIXTURE_MODE="exit")
+        self.assertEqual(admitted.wait(timeout=5), 23, self.output(log))
+        metadata.write_text("111\nprior-time\nprior-cwd\nprior-command\nprior-owner\n")
+        admitted, _fixture, log = self.launch("prior-five-lines", FIXTURE_MODE="exit")
+        self.assertEqual(admitted.wait(timeout=5), 23, self.output(log))
+
+    def test_outer_deadline_drains_nested_closed_fd_term_ignoring_worker(self):
+        nested = self.checkout("outer-deadline-nested")
+        process, fixture, log = self.session("outer-deadline", f"""set -eu
+FIREMUD_LOCK_GRADLE_RUN_SECONDS=10 FIREMUD_LOCK_GRADLE_CANCEL_SECONDS=4 FIXTURE_MODE=worker \
+  bash '{nested}' :account-service:test
+""", FIREMUD_LOCK_GRADLE_RUN_SECONDS="1", FIREMUD_LOCK_GRADLE_CANCEL_SECONDS="1")
+        worker = self.ready(fixture, "worker")
+        contender, _fixture, _log = self.launch("outer-deadline-contender", FIXTURE_MODE="exit")
+        self.assertEqual(contender.wait(timeout=5), 1)
+        self.assertEqual(process.wait(timeout=6), 124, self.output(log))
+        self.assertFalse(self.running(worker))
+        admitted, _fixture, log = self.launch("outer-deadline-after", FIXTURE_MODE="exit")
+        self.assertEqual(admitted.wait(timeout=5), 23, self.output(log))
+
+    def test_nested_deadline_cancels_only_its_workers_not_parent_or_sibling(self):
+        nested = self.checkout("nested-deadline")
+        sibling = self.root / "sibling-fixture"
+        sibling.mkdir()
+        process, fixture, log = self.session("nested-isolation", f"""set -eu
+FIXTURE_DIR='{sibling}' FIXTURE_MODE=hold bash '{nested}' :game-session-service:test &
+sibling_wrapper=$!
+FIREMUD_LOCK_GRADLE_RUN_SECONDS=1 FIREMUD_LOCK_GRADLE_CANCEL_SECONDS=1 FIXTURE_MODE=worker \
+  bash '{nested}' :account-service:test &
+worker_wrapper=$!
+set +e
+wait "$worker_wrapper"
+status=$?
+set -e
+[ "$status" = 124 ]
+kill -0 "$(cat '{sibling}/ready')"
+printf '%s' "$$" > "$FIXTURE_DIR/session-ready"
+while [ ! -e "$FIXTURE_DIR/finish" ]; do sleep .03; done
+kill -TERM "$sibling_wrapper"
+set +e
+wait "$sibling_wrapper"
+status=$?
+set -e
+[ "$status" = 143 ]
+""")
+        worker = self.ready(fixture, "worker")
+        self.ready(fixture, "session-ready")
+        self.assertFalse(self.running(worker))
+        self.assertTrue(self.running(int((sibling / "ready").read_text())))
+        self.assertIsNone(process.poll())
+        (fixture / "finish").touch()
+        self.assertEqual(process.wait(timeout=5), 0, self.output(log))
+
+    def register_command(self, project):
+        return f"python3 '{ROOT / 'dev-tools/validation/gradle-run-supervisor.py'}' --register-runtime-project '{project}'"
+
+    def failed_runtime(self, name, project, state):
+        self.docker_state.write_text(json.dumps({project: state}))
+        process, _fixture, log = self.session(name, f"set -eu\n{self.register_command(project)}\nexit 37\n")
+        self.assertEqual(process.wait(timeout=5), 37, self.output(log))
+        return (self.resource / "local-resource.meta").read_text()
+
+    def test_failed_cleanup_live_or_unknown_blocks_gradle_and_runtime(self):
+        project = "firemud-smoke-failed-cleanup"
+        metadata = self.failed_runtime("failed-runtime", project, ["running"])
+        for index, state in enumerate((["running"], "unavailable", ["restarting"], ["paused"])):
+            self.docker_state.write_text(json.dumps({project: state}))
+            contender, fixture, log = self.launch(f"blocked-gradle-{index}", FIXTURE_MODE="exit")
+            self.assertEqual(contender.wait(timeout=5), 1)
+            self.assertFalse((fixture / "ready").exists())
+            self.assertIn(project, self.output(log))
+            runtime, fixture, log = self.session(f"blocked-runtime-{index}", 'touch "$FIXTURE_DIR/started"')
+            self.assertEqual(runtime.wait(timeout=5), 1)
+            self.assertFalse((fixture / "started").exists())
+            self.assertEqual((self.resource / "local-resource.meta").read_text(), metadata)
+
+    def test_stopped_or_absent_releases_hold_despite_volume_cleanup_failure(self):
+        project = "firemud-smoke-stopped"
+        for index, state in enumerate((["exited"], [])):
+            self.failed_runtime(f"stopped-runtime-{index}", project, state)
+            retained_volume = self.root / f"retained-volume-{index}"
+            retained_volume.touch()
+            contender, _fixture, log = self.launch(f"stopped-admission-{index}", FIXTURE_MODE="exit")
+            self.assertEqual(contender.wait(timeout=5), 23, self.output(log))
+            self.assertTrue(retained_volume.exists())
+            self.assertFalse((self.resource / "local-resource.meta").exists())
+
+    def test_abrupt_owner_death_retains_project_until_verified_absence(self):
+        project = "firemud-smoke-dead-runtime"
+        self.docker_state.write_text(json.dumps({project: ["running"]}))
+        process, fixture, log = self.session("abrupt-runtime", f"""set -eu
+{self.register_command(project)}
+printf '%s' "$FIREMUD_LOCAL_RESOURCE_SESSION_PID" > "$FIXTURE_DIR/owner"
+printf '%s' "$$" > "$FIXTURE_DIR/session-ready"
+for attempt in {{1..100}}; do
+  [ ! -e "$FIXTURE_DIR/finish" ] || break
+  sleep .03
+done
+printf '%s' "$$" > "$FIXTURE_DIR/finished"
+""")
+        self.ready(fixture, "session-ready")
+        os.kill(int((fixture / "owner").read_text()), signal.SIGKILL)
+        self.assertNotEqual(process.wait(timeout=5), 0)
+        (fixture / "finish").touch()
+        self.ready(fixture, "finished")
+        blocked, _fixture, log = self.launch("dead-runtime-contender", FIXTURE_MODE="exit",
+                                             FIREMUD_LOCK_GRADLE_WAIT="1")
+        self.assertEqual(blocked.wait(timeout=5), 1, self.output(log))
+        self.docker_state.write_text("{}")
+        admitted, _fixture, log = self.launch("dead-runtime-recovery", FIXTURE_MODE="exit")
+        self.assertEqual(admitted.wait(timeout=5), 23, self.output(log))
+
+    def test_concurrent_contenders_preserve_all_unresolved_identities(self):
+        projects = ["firemud-smoke-first", "firemud-smoke-second"]
+        self.docker_state.write_text(json.dumps({project: ["running"] for project in projects}))
+        script = "set -eu\n" + "\n".join(f"{self.register_command(project)} &" for project in projects) + "\nwait\nexit 37\n"
+        owner, _fixture, log = self.session("multiple-projects", script)
+        self.assertEqual(owner.wait(timeout=5), 37, self.output(log))
+        before = (self.resource / "local-resource.meta").read_text()
+        recorded = json.loads(before.splitlines()[5])["runtimeProjects"]
+        self.assertEqual(set(recorded), set(projects))
+        one, _fixture, _log = self.launch("contender-one", FIXTURE_MODE="exit")
+        two, _fixture, _log = self.launch("contender-two", FIXTURE_MODE="exit")
+        self.assertEqual(one.wait(timeout=5), 1)
+        self.assertEqual(two.wait(timeout=5), 1)
+        self.assertEqual((self.resource / "local-resource.meta").read_text(), before)
+        self.docker_state.write_text(json.dumps({projects[1]: ["running"]}))
+        remaining, _fixture, log = self.launch("contender-remaining", FIXTURE_MODE="exit")
+        self.assertEqual(remaining.wait(timeout=5), 1)
+        self.assertIn(projects[1], self.output(log))
+        self.assertEqual((self.resource / "local-resource.meta").read_text(), before)
+
+    def test_invalid_inherited_session_cannot_bypass_with_ci(self):
+        process, fixture, log = self.launch("invalid-session", CI="true",
+                                           FIREMUD_LOCAL_RESOURCE_SESSION_FD="99999",
+                                           FIREMUD_LOCAL_RESOURCE_SESSION_PID=str(os.getpid()),
+                                           FIREMUD_LOCAL_RESOURCE_SESSION_START=SUPERVISOR.identity(os.getpid())[0],
+                                           FIREMUD_LOCAL_RESOURCE_SESSION_OWNER="forged")
+        self.assertEqual(process.wait(timeout=5), 1)
+        self.assertFalse((fixture / "ready").exists())
+        self.assertIn("Invalid inherited local resource session", self.output(log))
+
+    def test_session_rejects_foreign_unheld_descriptor_and_dead_owner(self):
+        self.resource.mkdir(mode=0o700)
+        lock = self.resource / "local-resource.lock"
+        with lock.open("a") as descriptor:
+            (self.resource / "local-resource.meta").write_text(f"{os.getpid()}\nnow\nroot\ncommand\ntoken\n")
+            env = {"FIREMUD_LOCK_GRADLE_RESOURCE_DIR": str(self.resource),
+                   SUPERVISOR.SESSION_FD: str(descriptor.fileno()), SUPERVISOR.SESSION_PID: str(os.getpid()),
+                   SUPERVISOR.SESSION_START: SUPERVISOR.identity(os.getpid())[0], SUPERVISOR.SESSION_TOKEN: "token"}
+            with mock.patch.dict(os.environ, env):
+                with self.assertRaisesRegex(ValueError, "no exclusive session ownership"):
+                    SUPERVISOR.verify_resource_session()
+                with (self.root / "foreign").open("a") as foreign, \
+                     mock.patch.dict(os.environ, {SUPERVISOR.SESSION_FD: str(foreign.fileno())}), \
+                     self.assertRaisesRegex(ValueError, "descriptor does not match"):
+                    SUPERVISOR.verify_resource_session()
+                with mock.patch.object(SUPERVISOR, "admit_process", return_value=None), \
+                     self.assertRaisesRegex(ValueError, "owner is not live"):
+                    SUPERVISOR.verify_resource_session()
 
     @staticmethod
     def running(pid):
