@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Mock contracts never admit work to the live user resource slot.
+export CI=true
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_OWNED_COMPOSE_HELPER="$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
 
@@ -1799,3 +1802,50 @@ run_owned_helper stop_run_owned_compose_project -f docker-compose.yml
 [[ -e "$FAKE_DOCKER_STATE/compose-down" ]]
 
 echo "smoke script boundary contract checks passed"
+
+# Default proof lifecycle removes its authenticated claim on all normal exits.
+# Explicit keep retains the original claim; ambiguity never releases it.
+cat >"$TEST_ROOT/proof-lifecycle.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT_DIR="$1"
+source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
+mode="$2"
+if [[ "$mode" == keep ]]; then
+  initialize_run_owned_compose_proof --keep-running
+else
+  initialize_run_owned_compose_proof
+fi
+COMPOSE_FILES=(-f docker-compose.yml)
+install_run_owned_compose_proof_traps
+claim_run_owned_compose_project
+FIREMUD_SMOKE_PROOF_CLAIMED=true
+printf 'game-session|%s|game-session-service|running|\n' "$COMPOSE_PROJECT_NAME" >"$FAKE_DOCKER_STATE/containers"
+case "$mode" in
+  success|keep) exit 0 ;;
+  failure) exit 37 ;;
+  signal) kill -TERM "$$" ;;
+  cleanup-failure) export FAKE_DOCKER_FAIL_RESOURCE_INSPECTION=true; exit 0 ;;
+  both-fail) export FAKE_DOCKER_FAIL_RESOURCE_INSPECTION=true; exit 37 ;;
+esac
+EOF
+for lifecycle_case in success failure signal cleanup-failure both-fail keep; do
+  case "$lifecycle_case" in
+    success|keep) expected_status=0 ;;
+    failure|both-fail) expected_status=37 ;;
+    signal) expected_status=143 ;;
+    cleanup-failure) expected_status=1 ;;
+  esac
+  actual_status=0
+  CI=true bash "$TEST_ROOT/proof-lifecycle.sh" "$ROOT_DIR" "$lifecycle_case" \
+    >"$TEST_ROOT/lifecycle.out" 2>"$TEST_ROOT/lifecycle.err" || actual_status=$?
+  [[ "$actual_status" == "$expected_status" ]]
+  case "$lifecycle_case" in
+    cleanup-failure|both-fail|keep)
+      [[ -e "$marker_path" && -e "$FAKE_DOCKER_STATE/containers" ]]
+      run_owned_helper stop_run_owned_compose_project -f docker-compose.yml
+      ;;
+    *) [[ ! -e "$marker_path" && ! -s "$FAKE_DOCKER_STATE/containers" ]] ;;
+  esac
+done
+echo "smoke proof lifecycle contract checks passed"

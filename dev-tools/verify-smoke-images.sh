@@ -45,6 +45,8 @@ case "$SMOKE_MUTATION_EXTENSION" in
     ;;
 esac
 
+initialize_run_owned_compose_proof "$@"
+
 if [[ -z "${SMOKE_IMAGE_TAG:-}" ]]; then
   echo "SMOKE_IMAGE_TAG is required" >&2
   exit 1
@@ -108,6 +110,7 @@ cleanup() {
   local capture_file
   local service
   trap - EXIT
+  trap '' INT TERM HUP
   if ((exit_status != 0)) && [[ "$COMPOSE_START_ATTEMPTED" == true ]]; then
     for service in game-design-service game-session-service world-management-service; do
       echo "Capturing bounded run-owned smoke logs for $service." >&2
@@ -130,6 +133,7 @@ cleanup() {
       echo "Could not capture run-owned smoke service logs." >&2
     fi
   fi
+  finish_run_owned_compose_proof "$exit_status" || exit_status=$?
   if [[ -n "$COMPOSE_CONFIG_FILE" ]]; then
     rm -f "$COMPOSE_CONFIG_FILE"
   fi
@@ -142,6 +146,9 @@ cleanup() {
   exit "$exit_status"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 merge_env_vars() {
   local source_file="$1"
@@ -221,6 +228,7 @@ upsert_env_var "$ROOT_ENV_FILE" "SMOKE_IMAGE_TAG" "$SMOKE_IMAGE_TAG"
 upsert_env_var "$DOCKER_ENV_FILE" "SMOKE_IMAGE_TAG" "$SMOKE_IMAGE_TAG"
 
 claim_run_owned_compose_project
+FIREMUD_SMOKE_PROOF_CLAIMED=true
 export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
 bash "$ENSURE_CERTS_SCRIPT" --compose-mtls "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
 ensure_run_owned_initial_admission_capability "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" create-or-verify

@@ -576,6 +576,83 @@ jobs:
               throw new Error(`${label} retry loop exited unexpectedly`);
             }
 
+            // One canonical producer definition; the contract test reports fingerprint upkeep.
+            const canonicalRuntimeWorkflowSha256 = "c4bd569e46902970ce1844a68b127dfcc5f78f22648028799f8297e113d8ce7b";
+            const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
+            const workflowPath = ".github/workflows/runtime-images.yml";
+            const repositoryName = `${owner}/${repo}`;
+            const positiveInteger = (value) => Number.isSafeInteger(value) && value > 0;
+
+            async function verifyCanonicalSmokeProducer(run, candidate, identity) {
+              if (!positiveInteger(run.id) || !positiveInteger(run.run_attempt)) return false;
+              const { data: source } = await withTransientGitHubRetry(
+                "exact runtime workflow attempt lookup",
+                () => github.request("GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}", {
+                  owner, repo, run_id: run.id, attempt_number: run.run_attempt,
+                })
+              );
+              const expectedTitle = `Build Runtime Images secure-pr-artifact pr-${prNumber} ` +
+                `base-${identity.baseSha} head-${identity.headSha} merge-${identity.mergeSha} mode-required`;
+              if (
+                source.id !== run.id || source.run_attempt !== run.run_attempt ||
+                source.status !== "completed" || source.conclusion !== "success" ||
+                source.path !== workflowPath || source.repository?.full_name !== repositoryName ||
+                !positiveInteger(source.workflow_id) || source.display_title !== expectedTitle ||
+                source.event !== run.event || !["pull_request", "repository_dispatch"].includes(source.event)
+              ) return false;
+              const expectedHeadRepository = source.event === "pull_request"
+                ? context.payload.pull_request.head.repo?.full_name
+                : repositoryName;
+              if (typeof expectedHeadRepository !== "string" ||
+                  source.head_repository?.full_name !== expectedHeadRepository) return false;
+              if (source.event === "pull_request" && source.head_sha !== identity.headSha) return false;
+              if (source.event === "repository_dispatch" && (
+                source.head_branch !== context.payload.repository.default_branch ||
+                !/^[0-9a-f]{40}$/.test(source.head_sha ?? "")
+              )) return false;
+              const { data: workflow } = await withTransientGitHubRetry(
+                "runtime workflow identity lookup",
+                () => github.rest.actions.getWorkflow({ owner, repo, workflow_id: source.workflow_id })
+              );
+              if (workflow.id !== source.workflow_id || workflow.path !== workflowPath ||
+                  workflow.name !== "Build Runtime Images") return false;
+              const jobs = await withTransientGitHubRetry(
+                "exact runtime attempt jobs lookup",
+                () => github.paginate(
+                  "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs",
+                  { owner, repo, run_id: source.id, attempt_number: source.run_attempt, per_page: 100 }
+                )
+              );
+              const producers = jobs.filter((job) => job.name === canonicalSmokeJobName);
+              if (producers.length !== 1) return false;
+              const job = producers[0];
+              if (
+                !positiveInteger(job.id) || job.id !== candidate.id ||
+                job.run_id !== source.id || job.run_attempt !== source.run_attempt ||
+                job.head_sha !== source.head_sha || job.status !== "completed" || job.conclusion !== "success" ||
+                job.check_run_url !== `https://api.github.com/repos/${repositoryName}/check-runs/${job.id}`
+              ) return false;
+              // PR workflows execute their test merge definition; typed refreshes execute the
+              // immutable default-branch revision recorded by their native run attempt.
+              const workflowSha = source.event === "pull_request" ? identity.mergeSha : source.head_sha;
+              const { data: definition } = await withTransientGitHubRetry(
+                "immutable runtime workflow definition lookup",
+                () => github.rest.repos.getContent({ owner, repo, path: workflowPath, ref: workflowSha })
+              );
+              if (definition.type !== "file" || definition.path !== workflowPath ||
+                  definition.encoding !== "base64" || typeof definition.content !== "string") return false;
+              const bytes = Buffer.from(definition.content, "base64");
+              if (definition.size !== bytes.length) return false;
+              if (require("node:crypto").createHash("sha256").update(bytes).digest("hex") !==
+                  canonicalRuntimeWorkflowSha256) return false;
+              const { data: latest } = await withTransientGitHubRetry(
+                "current runtime attempt lookup",
+                () => github.rest.actions.getWorkflowRun({ owner, repo, run_id: source.id })
+              );
+              return latest.id === source.id && latest.run_attempt === source.run_attempt &&
+                latest.status === "completed" && latest.conclusion === "success";
+            }
+
             // Commit objects are immutable; mutable PR/base reads stay fresh.
             const immutableCommits = new Map();
             async function immutableCommit(ref, label) {
@@ -884,6 +961,7 @@ jobs:
 
                 let fullSmokeJob = null;
                 let fullSmokeStep = null;
+                let canonicalProducerVerified = false;
                 async function failNonTerminalSnapshot(reason) {
                   if (await isCurrentPullRequestObsolete("Stopping obsolete stale-snapshot smoke gate for")) {
                     return;
@@ -921,15 +999,33 @@ jobs:
                   if (await isCurrentPullRequestObsolete("Stopping obsolete completed smoke gate for")) {
                     return;
                   }
-                  fullSmokeJob = jobs.find(
-                    (job) => job.name === "PR Full-Stack Smoke"
-                  ) ?? null;
+                  const producerJobs = jobs.filter((job) =>
+                    job.name === "PR Full-Stack Smoke" || job.name === canonicalSmokeJobName
+                  );
+                  if (producerJobs.length > 1) {
+                    await failNonTerminalSnapshot("with ambiguous producer jobs");
+                    return;
+                  }
+                  fullSmokeJob = producerJobs[0] ?? null;
                   fullSmokeStep = fullSmokeJob?.steps?.find(
                     (step) => step.name === "Run credential-free full-stack smoke"
                   ) ?? null;
                   if (fullSmokeJob?.status === "completed") {
+                    // Known terminal smoke failure/skipping cannot be replaced by job success.
                     if (fullSmokeStep?.status === "completed") {
                       break;
+                    }
+                    if (fullSmokeJob.name === canonicalSmokeJobName &&
+                        fullSmokeJob.conclusion === "success") {
+                      try {
+                        canonicalProducerVerified = await verifyCanonicalSmokeProducer(
+                          matching, fullSmokeJob, currentIdentity
+                        );
+                      } catch (error) {
+                        if (error instanceof TerminalGitHubRequestError) throw error;
+                        core.warning(`Canonical smoke producer proof is unavailable: ${error.message}`);
+                      }
+                      if (canonicalProducerVerified) break;
                     }
                   }
                   if (completedJobSnapshotAttempt < maxCompletedJobSnapshotRetries) {
@@ -967,7 +1063,7 @@ jobs:
                   );
                   return;
                 }
-                if (fullSmokeStep?.conclusion !== "success") {
+                if (!canonicalProducerVerified && fullSmokeStep?.conclusion !== "success") {
                   if (await isCurrentPullRequestObsolete("Stopping obsolete skipped full-smoke gate for")) {
                     return;
                   }

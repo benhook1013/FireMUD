@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Mock contracts never admit work to the live user resource slot.
+export CI=true
+
 DIAGNOSTICS_ONLY=false
 case "$#:${1:-}" in
   0:) ;;
@@ -25,10 +28,24 @@ export TEST_OWNERSHIP_DIR
 
 docker() {
   case "$1 $2" in
-    "ps -a"|"network ls"|"volume ls") return 0 ;;
+    "ps -a"|"network ls"|"volume ls")
+      if [[ "${SMOKE_TEST_DIAGNOSTICS_MODE:-}" == true && "$1 $2" == "ps -a" \
+        && -e "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources" ]]; then
+        printf 'mock-container\n'
+      fi
+      return 0
+      ;;
     compose\ *)
       if [[ "${SMOKE_TEST_DIAGNOSTICS_MODE:-}" == true ]]; then
         local arguments=" $* "
+        if [[ "$arguments" == *" up "* ]]; then
+          touch "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources"
+        elif [[ "$arguments" == *" down "* ]]; then
+          if [[ -e "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources" && "${SMOKE_TEST_CLEANUP_FAIL:-false}" == true ]]; then
+            return 92
+          fi
+          rm -f "$TEST_OWNERSHIP_DIR/$GITHUB_RUN_ID.resources"
+        fi
         if [[ "$arguments" == *" logs "* ]]; then
           if [[ "$arguments" != *" logs --no-color --timestamps --tail 200 "* ]]; then
             echo "Unexpected smoke diagnostic log command: $*" >&2
@@ -141,6 +158,8 @@ run_diagnostic_smoke_case() {
   local expected_status="$5"
   local run_id="${TEST_RUN_ID}-${suffix}"
   local actual_status=0
+  local keep_args=()
+  [[ "${6:-}" != keep ]] || keep_args=(--keep-running)
 
   set +e
   GITHUB_ACTIONS=true \
@@ -155,7 +174,7 @@ run_diagnostic_smoke_case() {
     SMOKE_TEST_DIAGNOSTICS_MODE=true \
     SMOKE_TEST_PROBE_STATUS="$probe_status" \
     SMOKE_TEST_LOG_CAPTURE_FAIL="$logs_fail" \
-    bash "$ROOT_DIR/dev-tools/verify-smoke-images.sh" >"$OUT_FILE" 2>"$ERR_FILE"
+    bash "$ROOT_DIR/dev-tools/verify-smoke-images.sh" "${keep_args[@]}" >"$OUT_FILE" 2>"$ERR_FILE"
   actual_status=$?
   set -e
 
@@ -168,6 +187,15 @@ run_diagnostic_smoke_case() {
 }
 
 run_failure_diagnostic_regressions() {
+  run_diagnostic_smoke_case cleanup-success false 0 false 0
+  [[ ! -e "$TEST_OWNERSHIP_DIR/${TEST_RUN_ID}-cleanup-success.resources" ]]
+  SMOKE_TEST_CLEANUP_FAIL=true run_diagnostic_smoke_case cleanup-failure false 0 false 1
+  [[ -e "$TEST_OWNERSHIP_DIR/${TEST_RUN_ID}-cleanup-failure.resources" ]]
+  grep -Fq 'proof cleanup failed or remains unknown' "$ERR_FILE"
+  SMOKE_TEST_CLEANUP_FAIL=true run_diagnostic_smoke_case combined-failure false 37 false 37
+  [[ -e "$TEST_OWNERSHIP_DIR/${TEST_RUN_ID}-combined-failure.resources" ]]
+  run_diagnostic_smoke_case deliberate-keep false 0 false 0 keep
+  [[ -e "$TEST_OWNERSHIP_DIR/${TEST_RUN_ID}-deliberate-keep.resources" ]]
   run_diagnostic_smoke_case probe-failure false 37 false 37
   for service in game-design-service game-session-service world-management-service; do
     if ! grep -Fq "MOCK_LOG service=$service safeDiagnostic=true" "$OUT_FILE"; then
