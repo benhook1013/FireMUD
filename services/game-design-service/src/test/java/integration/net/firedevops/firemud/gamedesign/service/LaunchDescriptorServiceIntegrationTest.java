@@ -3,6 +3,7 @@ package integration.net.firedevops.firemud.gamedesign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
@@ -1273,6 +1274,15 @@ class LaunchDescriptorServiceIntegrationTest {
         .isInstanceOf(DataAccessException.class);
 
     assertThatThrownBy(() -> jdbcTemplate.execute("TRUNCATE TABLE launch_descriptor"))
+        .isInstanceOf(DataAccessException.class)
+        .rootCause()
+        .satisfies(
+            failure -> {
+              assertThat(failure).isInstanceOf(SQLException.class);
+              assertThat(((SQLException) failure).getSQLState()).isEqualTo("0A000");
+            })
+        .hasMessageContaining("cannot truncate a table referenced in a foreign key constraint");
+    assertThatThrownBy(() -> jdbcTemplate.execute("TRUNCATE TABLE launch_descriptor CASCADE"))
         .isInstanceOf(DataAccessException.class)
         .rootCause()
         .hasMessageContaining("launch descriptors are immutable");

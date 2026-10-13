@@ -8,7 +8,13 @@ import java.util.HexFormat;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.gamedesign.draft.IsolatedAssetSourceOwnerSetup;
+import net.firedevops.firemud.gamedesign.entity.Game;
+import net.firedevops.firemud.gamedesign.entity.Version;
+import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
@@ -18,8 +24,11 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 class VersionAssetExportSnapshotIntegrationTest {
   private static final String USAGE_KEY = "logo.bin";
@@ -46,7 +55,7 @@ class VersionAssetExportSnapshotIntegrationTest {
 
     assertThatThrownBy(() -> insertItem(fixture, wrongDigest, CONTENT_TYPE, SOURCE_BYTES.length))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("source metadata does not match game_assets");
+        .hasStackTraceContaining("export item differs from synchronized ordinary source");
   }
 
   @Test
@@ -63,11 +72,60 @@ class VersionAssetExportSnapshotIntegrationTest {
   }
 
   @Test
+  void freezesOnlyTheSynchronizedAssetProjectionAndDeniesDirectAssociation() {
+    Fixture fixture = fixture();
+    var repository = new VersionAssetPublicationRepository(fixture.dsl);
+    assertThatThrownBy(
+            () ->
+                repository.associateDraftAsset(
+                    fixture.tenantId, fixture.versionId, fixture.assetId, "RESOURCE"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("synchronized ASSET_REFERENCE");
+    var snapshot =
+        fixture.dsl.transactionResult(
+            configuration ->
+                new VersionAssetPublicationRepository(DSL.using(configuration))
+                    .freezeOrReadSnapshot(fixture.tenantId, 1));
+    assertThat(snapshot.items()).hasSize(1);
+    assertThat(snapshot.items().getFirst().usageKey()).isEqualTo(USAGE_KEY);
+    assertThat(snapshot.items().getFirst().contentDigest()).isEqualTo(sha256(SOURCE_BYTES));
+    assertThat(repository.readFrozenAssetBytes(fixture.tenantId, 1, snapshot.items().getFirst()))
+        .containsExactly(SOURCE_BYTES);
+  }
+
+  @Test
+  void rejectsRenamingSynchronizedSourceBeforePersistingSnapshot() {
+    Fixture fixture = fixture();
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "UPDATE game_assets SET file_name = ? WHERE tenant_id = ? AND id = ?",
+                    "renamed-logo.bin",
+                    fixture.tenantId,
+                    fixture.assetId))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("ordinary asset source bytes are immutable from source history");
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table("version_asset_export_snapshot"),
+                DSL.field("tenant_id").eq(fixture.tenantId),
+                DSL.field("version_id").eq(fixture.versionId)))
+        .isZero();
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table("version_asset_export_item"),
+                DSL.field("tenant_id").eq(fixture.tenantId),
+                DSL.field("version_id").eq(fixture.versionId)))
+        .isZero();
+  }
+
+  @Test
   void rejectsRenamedMappedSourceBeforePersistingSnapshot() {
     Fixture fixture = fixture();
-    // V37 normally prevents this drift with its source-name foreign key. Drop that one guard in
-    // this isolated schema to prove the repository still rejects a stale/legacy mapping itself.
+    // Disable the two earlier database guards in this isolated schema to exercise the
+    // repository freeze path's exact source readback against a stale projected mapping.
     fixture.dsl.execute("ALTER TABLE version_asset DROP CONSTRAINT fk_version_asset_asset_name");
+    fixture.dsl.execute("DROP TRIGGER ordinary_asset_byte_history_guard ON game_assets");
     fixture.dsl.execute(
         "UPDATE game_assets SET file_name = ? WHERE tenant_id = ? AND id = ?",
         "renamed-logo.bin",
@@ -82,7 +140,7 @@ class VersionAssetExportSnapshotIntegrationTest {
                           .freezeOrReadSnapshot(fixture.tenantId, 1);
                     }))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessage("Version asset usage key no longer matches its source file name");
+        .hasMessage("ASSET_SOURCE_EXACT_BYTES_UNAVAILABLE");
     assertThat(
             fixture.dsl.fetchCount(
                 DSL.table("version_asset_export_snapshot"),
@@ -103,14 +161,14 @@ class VersionAssetExportSnapshotIntegrationTest {
     assertThatThrownBy(
             () -> insertItem(wrongType, sha256(SOURCE_BYTES), "image/png", SOURCE_BYTES.length))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("source metadata does not match game_assets");
+        .hasStackTraceContaining("export item differs from synchronized ordinary source");
 
     Fixture wrongSize = fixture();
     assertThatThrownBy(
             () ->
                 insertItem(wrongSize, sha256(SOURCE_BYTES), CONTENT_TYPE, SOURCE_BYTES.length + 1L))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("source metadata does not match game_assets");
+        .hasStackTraceContaining("export item differs from synchronized ordinary source");
 
     Fixture wrongMapping = fixture();
     assertThatThrownBy(
@@ -127,7 +185,7 @@ class VersionAssetExportSnapshotIntegrationTest {
                     sha256(SOURCE_BYTES),
                     SOURCE_BYTES.length))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("source metadata does not match game_assets");
+        .hasStackTraceContaining("export item differs from synchronized ordinary source");
   }
 
   @Test
@@ -187,8 +245,7 @@ class VersionAssetExportSnapshotIntegrationTest {
                     fixture.tenantId,
                     fixture.assetId))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining(
-            "game asset source rows are immutable while a frozen version snapshot references them");
+        .hasStackTraceContaining("ordinary asset source bytes are immutable from source history");
     assertThat(repository.readFrozenSnapshot(fixture.tenantId, 1).items())
         .containsExactly(selection);
     assertThat(repository.readFrozenAssetBytes(fixture.tenantId, 1, selection))
@@ -196,8 +253,35 @@ class VersionAssetExportSnapshotIntegrationTest {
   }
 
   @Test
-  void rejectsOversizedFrozenSourceFromMetadataBeforePayloadRead() {
-    Fixture fixture = fixture();
+  void rejectsOversizedCurrentSourceBeforePersistingExportSnapshot() {
+    byte[] oversized = new byte[(int) VersionAssetPublicationRepository.MAX_SOURCE_ASSET_BYTES + 1];
+    Fixture fixture = fixture(oversized);
+
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.transaction(
+                    configuration ->
+                        new VersionAssetPublicationRepository(DSL.using(configuration))
+                            .freezeOrReadSnapshot(fixture.tenantId, 1)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("ASSET_TOO_LARGE");
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table("version_asset_export_snapshot"),
+                DSL.field("tenant_id").eq(fixture.tenantId),
+                DSL.field("version_id").eq(fixture.versionId)))
+        .isZero();
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table("version_asset_export_item"),
+                DSL.field("tenant_id").eq(fixture.tenantId),
+                DSL.field("version_id").eq(fixture.versionId)))
+        .isZero();
+  }
+
+  @Test
+  void rejectsOversizedRetainedFrozenSourceFromMetadataBeforePayloadRead() {
+    Fixture fixture = fixture(MigrationVersion.fromVersion("49.1"));
     byte[] oversized = new byte[(int) VersionAssetPublicationRepository.MAX_SOURCE_ASSET_BYTES + 1];
     fixture.dsl.transaction(
         configuration -> {
@@ -217,6 +301,7 @@ class VersionAssetExportSnapshotIntegrationTest {
               fixture.tenantId,
               fixture.versionId);
         });
+    migrateToLatest(fixture);
 
     assertThatThrownBy(
             () ->
@@ -320,10 +405,18 @@ class VersionAssetExportSnapshotIntegrationTest {
   }
 
   private Fixture fixture() {
-    return fixture(null);
+    return fixture(null, SOURCE_BYTES);
+  }
+
+  private Fixture fixture(byte[] sourceBytes) {
+    return fixture(null, sourceBytes);
   }
 
   private Fixture fixture(MigrationVersion target) {
+    return fixture(target, SOURCE_BYTES);
+  }
+
+  private Fixture fixture(MigrationVersion target, byte[] sourceBytes) {
     String schema = "game_design_export_snapshot_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = postgres.dataSource();
     dataSource.setSchema(schema);
@@ -343,6 +436,45 @@ class VersionAssetExportSnapshotIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
 
     String tenantId = UUID.randomUUID().toString();
+    if (target == null) {
+      var write = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+      write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+      return write.execute(
+          status -> {
+            var game = new Game();
+            game.setTenantId(tenantId);
+            game.setName("Export snapshot test");
+            game = new GameRepository(dsl).save(game);
+            var version = new Version();
+            version.setTenantId(tenantId);
+            version.setVersionNumber(1);
+            version = new VersionRepository(dsl).save(version);
+            Long assetId =
+                Objects.requireNonNull(
+                        dsl.fetchOne(
+                            "INSERT INTO game_assets (tenant_id, file_name, content_type, data) "
+                                + "VALUES (?, ?, ?, ?) RETURNING id",
+                            tenantId,
+                            USAGE_KEY,
+                            CONTENT_TYPE,
+                            sourceBytes),
+                        "asset insert returned no row")
+                    .get(0, Long.class);
+            IsolatedAssetSourceOwnerSetup.upsert(
+                dsl,
+                new TargetProof(
+                    version.getCanonicalTenantId(),
+                    version.getCanonicalVersionId(),
+                    version.getId(),
+                    version.getTenantId(),
+                    version.getIdentitySourceGameRowId(),
+                    version.getIdentitySourceGameTenantKey(),
+                    version.getIdentitySourceProvenanceKind()),
+                assetId,
+                USAGE_KEY);
+            return new Fixture(dsl, tenantId, version.getId(), assetId, dataSource, schema);
+          });
+    }
     Long gameId =
         Objects.requireNonNull(
                 dsl.fetchOne(

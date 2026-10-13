@@ -92,6 +92,10 @@ class RealmPolicyPublicationPostgresIntegrationTest {
   void retainedAndFreshPolicyPublicationsSurviveAdditiveReleaseColumn() throws Exception {
     Fixture fixture = fixture(true);
     GameDesignPublicationOperation operation = fixture.prepare(true);
+    var sourceCapture =
+        new GameDesignSourceRepository(fixture.dsl()).readCapture(operation).orElseThrow();
+    assertThat(sourceCapture.asset().orElseThrow().snapshot().items()).isEmpty();
+    assertThat(fixture.dsl().fetchCount(DSL.table("version_asset"))).isZero();
     fixture.writePublish(operation, false);
 
     var originalOwnerRead = fixture.operations().read(operation.workflowId()).orElseThrow();
@@ -619,7 +623,7 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         original,
         "operation_bytes",
         "existing.operation_bytes || decode('00', 'hex')",
-        terminalBindingError);
+        "Publication v2 schema, exact frame count or inventory digest invalid");
     assertRejectedHeaderClonePreservesOriginal(
         fixture,
         original,

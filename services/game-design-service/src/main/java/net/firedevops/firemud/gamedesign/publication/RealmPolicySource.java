@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import tools.jackson.databind.JsonNode;
@@ -71,7 +72,7 @@ public final class RealmPolicySource {
   public static boolean isPolicyRevision(DraftCommitBinding.RevisionPayload input) {
     var kind = text(tree(input.payload()), "revisionKind");
     if (RealmEntryPolicy.REVISION_KIND.equals(kind)) return true;
-    if ("COMMAND_DEFINITION".equals(kind)) return false;
+    if ("COMMAND_DEFINITION".equals(kind) || AssetSource.REVISION_KIND.equals(kind)) return false;
     throw new IllegalArgumentException("Unsupported Game Design owner revision kind");
   }
 

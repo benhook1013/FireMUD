@@ -1010,10 +1010,22 @@ class PublishAttemptServiceTransactionIntegrationTest {
                   persisted.getIdentitySourceGameRowId(),
                   persisted.getIdentitySourceGameTenantKey(),
                   persisted.getIdentitySourceProvenanceKind());
+          GameAsset asset = new GameAsset();
+          asset.setTenantId(tenantId);
+          asset.setFileName("fixture.bin");
+          asset.setContentType("application/octet-stream");
+          asset.setData(FIXTURE_ASSET_BYTES);
+          GameAsset persistedAsset = gameAssetRepository.save(asset);
           try {
             GameDesignPublicationOperation operation =
                 IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
-                    dsl, target, persisted.getVersionStateEpoch(), "ISOLATED publication proof");
+                    dsl,
+                    target,
+                    persisted.getVersionStateEpoch(),
+                    "ISOLATED publication proof",
+                    List.of(
+                        new IsolatedPublicationOwnerSetup.OrdinaryAsset(
+                            persistedAsset.getId(), "fixture.bin")));
             return new SelectedPublicationFixture(persisted, operation);
           } catch (Exception failure) {
             throw new IllegalStateException("Selected publication fixture setup failed", failure);
@@ -1083,14 +1095,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
             .orElseThrow(() -> new IllegalStateException("Fixture Version was not persisted"));
     versionAssetArtifactService.stageExport(
         tenantId, version.getId(), versionNumber, fixture.operation().workflowId());
-    GameAsset asset = new GameAsset();
-    asset.setTenantId(tenantId);
-    asset.setFileName("fixture.bin");
-    asset.setContentType("application/octet-stream");
-    asset.setData(FIXTURE_ASSET_BYTES);
-    GameAsset persistedAsset = gameAssetRepository.save(asset);
-    versionAssetPublicationService.associateDraftAsset(
-        tenantId, version.getId(), persistedAsset.getId(), "fixture.bin");
     versionAssetPublicationService.freezeOrReadSnapshot(tenantId, versionNumber);
     FrozenAssetExportCandidate frozenCandidate =
         exportCandidateService.recordExportCandidate(

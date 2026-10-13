@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamedesign.draft;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -13,6 +15,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.PostgresProperties;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
@@ -47,10 +50,106 @@ class GameDesignSourcePostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
+  void ordinaryAssetSourceProjectsInheritedAndDeletedReferencesThroughCoordinatorFence()
+      throws Exception {
+    Fixture fixture = fixture();
+    var genesis = fixture.sources().readGenesis(fixture.target()).orElseThrow();
+    assertThat(genesis.asset().receiptId()).isNotEqualTo(genesis.policy().receiptId());
+    assertThat(genesis.asset().target()).isEqualTo(fixture.target());
+    assertThat(genesis.asset().creationTransactionId())
+        .isEqualTo(genesis.policy().creationTransactionId());
+    long assetId =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "INSERT INTO game_assets (tenant_id, file_name, content_type, data) "
+                    + "VALUES (?, 'logo.bin', 'application/octet-stream', ?) RETURNING id",
+                fixture.target().gameDesignVersionTenantKey(),
+                new byte[] {0, 1, (byte) 0xff})
+            .get(0, Long.class);
+    DraftCommitBinding upsert =
+        assetBinding(
+            fixture.target(),
+            "genesis:" + genesis.policy().receiptId(),
+            "0",
+            AssetSource.upsertPayload(
+                Long.toString(assetId), "logo.bin", AssetSource.Requiredness.REQUIRED));
+    var applied = apply(fixture, upsert);
+    synchronize(fixture, upsert, applied);
+    var selected =
+        fixture.sources().readSynchronized(fixture.target(), upsert.commitId()).orElseThrow();
+    assertThat(selected.asset().items()).hasSize(1);
+    var selectedAsset = selected.asset().items().getFirst();
+    assertThat(selectedAsset.reference().usageKey()).isEqualTo("logo.bin");
+    assertThat(selectedAsset.reference().assetRowId()).isEqualTo(Long.toString(assetId));
+    assertThat(selectedAsset.byteSize()).isEqualTo(3);
+    assertThat(selectedAsset.contentType()).isEqualTo("application/octet-stream");
+    assertThat(selectedAsset.contentDigest())
+        .isEqualTo(
+            "sha256:"
+                + HexFormat.of()
+                    .formatHex(
+                        MessageDigest.getInstance("SHA-256")
+                            .digest(new byte[] {0, 1, (byte) 0xff})));
+    assertThat(fixture.dsl().fetchCount(DSL.table("version_asset"))).isEqualTo(1);
+
+    DraftCommitBinding command =
+        binding(fixture.target(), upsert.commitId().toString(), null, "0", null, false);
+    var commandApplied = apply(fixture, command);
+    synchronize(fixture, command, commandApplied);
+    var inherited =
+        fixture.sources().readSynchronized(fixture.target(), command.commitId()).orElseThrow();
+    assertThat(inherited.asset().items()).containsExactlyElementsOf(selected.asset().items());
+    assertThat(fixture.dsl().fetchCount(DSL.table("version_asset"))).isEqualTo(1);
+
+    DraftCommitBinding staleDelete =
+        assetBinding(
+            fixture.target(),
+            command.commitId().toString(),
+            "0",
+            AssetSource.deletePayload("logo.bin"));
+    assertThatThrownBy(
+            () ->
+                fixture.tx(
+                    () -> {
+                      start(fixture, staleDelete);
+                      return fixture.sources().apply(staleDelete);
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("ASSET_SOURCE_EPOCH_CONFLICT");
+    assertThat(fixture.coordinator().readApplicationSlot(fixture.target())).isEmpty();
+    assertThat(
+            fixture.sources().readSynchronized(fixture.target(), command.commitId()).orElseThrow())
+        .isEqualTo(inherited);
+    assertThat(fixture.dsl().fetchCount(DSL.table("version_asset"))).isEqualTo(1);
+    DraftCommitBinding delete =
+        assetBinding(
+            fixture.target(),
+            command.commitId().toString(),
+            "1",
+            AssetSource.deletePayload("logo.bin"));
+    var deleted = apply(fixture, delete);
+    synchronize(fixture, delete, deleted);
+    assertThat(
+            fixture
+                .sources()
+                .readSynchronized(fixture.target(), delete.commitId())
+                .orElseThrow()
+                .asset()
+                .items())
+        .isEmpty();
+    assertThat(fixture.dsl().fetchCount(DSL.table("version_asset"))).isZero();
+  }
+
+  @Test
   void versionInsertSharesGenesisAndPolicyCommandMixedCommitsKeepOneExactOutcome() {
     Fixture fixture = fixture();
     var genesis = fixture.sources().readGenesis(fixture.target()).orElseThrow();
     assertThat(genesis.policy().receiptId()).isEqualTo(genesis.command().receiptId());
+    assertThat(genesis.asset().receiptId()).isNotEqualTo(genesis.policy().receiptId());
+    assertThat(genesis.asset().target()).isEqualTo(fixture.target());
+    assertThat(genesis.asset().creationTransactionId())
+        .isEqualTo(genesis.policy().creationTransactionId());
     assertThat(genesis.policy().creationTransactionId())
         .isEqualTo(genesis.command().creationTransactionId());
     assertThat(fixture.tx(() -> fixture.sources().enrollFreshDraft(fixture.target())))
@@ -66,6 +165,7 @@ class GameDesignSourcePostgresIntegrationTest {
         fixture.sources().readSynchronized(fixture.target(), policy.commitId()).orElseThrow();
     assertThat(policySnapshot.policy().policies()).hasSize(1);
     assertThat(policySnapshot.command().definitions()).isEmpty();
+    assertThat(policySnapshot.asset().items()).isEmpty();
 
     DraftCommitBinding command =
         binding(fixture.target(), policy.commitId().toString(), null, "0", null, false);
@@ -76,6 +176,7 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThat(commandSnapshot.policy().policies())
         .containsExactlyElementsOf(policySnapshot.policy().policies());
     assertThat(commandSnapshot.command().definitions()).hasSize(1);
+    assertThat(commandSnapshot.asset().items()).isEmpty();
     assertThat(commandResult.ownerOutcome().appliedEpochs())
         .containsExactly(commandResult.command().orElseThrow().commandAppliedEpoch());
 
@@ -96,6 +197,7 @@ class GameDesignSourcePostgresIntegrationTest {
         fixture.sources().readSynchronized(fixture.target(), mixed.commitId()).orElseThrow();
     assertThat(mixedSnapshot.policy().sourceEpoch()).isEqualTo("2");
     assertThat(mixedSnapshot.command().sourceEpoch()).isEqualTo("2");
+    assertThat(mixedSnapshot.asset().items()).isEmpty();
     assertThat(mixedSnapshot.command().definitions().getFirst().sourceCommitId())
         .isEqualTo(mixed.commitId());
     assertThat(fixture.tx(() -> fixture.sources().captureSynchronized(mixed)))
@@ -470,6 +572,25 @@ class GameDesignSourcePostgresIntegrationTest {
     }
     return DraftCommitBinding.create(
         target, UUID.randomUUID(), UUID.randomUUID(), base, revisions, scopes);
+  }
+
+  private static DraftCommitBinding assetBinding(
+      TargetProof target, String base, String expectedEpoch, String payload) {
+    return DraftCommitBinding.create(
+        target,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        base,
+        List.of(
+            new RevisionPayload("0", UUID.randomUUID(), Owner.GAME_DESIGN_CONTROL_PLANE, payload)),
+        List.of(
+            new AffectedUnit(
+                Owner.GAME_DESIGN_CONTROL_PLANE,
+                AssetSource.SCOPE,
+                target.canonicalVersionId().toString(),
+                AssetSource.SCOPE,
+                AssetSource.SCOPE_ID,
+                expectedEpoch)));
   }
 
   private static String withRawRequiredOwners(String canonicalJson, String requiredOwnerJson) {

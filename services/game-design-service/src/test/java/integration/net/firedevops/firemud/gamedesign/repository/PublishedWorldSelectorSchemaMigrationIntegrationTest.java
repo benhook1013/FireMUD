@@ -63,7 +63,6 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
     String acceptedRowBeforeLatest = retainedBundleRow(jdbc, acceptedReleaseId);
     Map<String, Object> functionBeforeLatest = selectorFunctionIdentity(jdbc);
     Map<String, Object> triggerBeforeLatest = selectorTriggerIdentity(jdbc);
-    String functionBodyBeforeLatest = selectorFunctionBody(jdbc);
 
     PersistedTarget rejected = persistTarget(jdbc, 2);
     WorldPublishedStartLocationEvidence rejectedEvidence = evidence(rejected);
@@ -91,7 +90,9 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
     assertThat(retainedBundleRow(jdbc, acceptedReleaseId)).isEqualTo(acceptedRowBeforeLatest);
     assertThat(selectorFunctionIdentity(jdbc)).isEqualTo(functionBeforeLatest);
     assertThat(selectorTriggerIdentity(jdbc)).isEqualTo(triggerBeforeLatest);
-    assertThat(selectorFunctionBody(jdbc)).isEqualTo(functionBodyBeforeLatest);
+    // Later selected-publication migrations intentionally replace the guard body while retaining
+    // its identity. Keep the schema-specific insert/reject assertions above and the current-guard
+    // behavior proof below as the semantic checks across that migration boundary.
     assertLatestGuardRejectsReleaseWithoutOwnerAttempt(jdbc, 3);
   }
 
@@ -160,7 +161,6 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
             });
     assertThat(releaseCount(jdbc, rejected.versionId())).isEqualTo(0L);
 
-    String functionBodyAfterSelectorMigration = selectorFunctionBody(jdbc);
     migrate(dataSource, schema, null);
 
     assertThat(retainedBundleRow(jdbc, retainedBundleId)).isEqualTo(retainedRowBefore);
@@ -168,7 +168,9 @@ class PublishedWorldSelectorSchemaMigrationIntegrationTest {
     assertThat(retainedBundleRow(jdbc, acceptedReleaseId)).isEqualTo(acceptedRowBeforeLatest);
     assertThat(selectorFunctionIdentity(jdbc)).isEqualTo(functionBefore);
     assertThat(selectorTriggerIdentity(jdbc)).isEqualTo(triggerBefore);
-    assertThat(selectorFunctionBody(jdbc)).isEqualTo(functionBodyAfterSelectorMigration);
+    // V1020 deliberately replaces the guard body with the current full semantic owner guard.
+    // The identity checks above and both migration-boundary insert/reject cases prove continuity
+    // without freezing a superseded PL/pgSQL implementation detail.
     assertLatestGuardRejectsReleaseWithoutOwnerAttempt(jdbc, 4);
   }
 
