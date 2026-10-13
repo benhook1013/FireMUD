@@ -52,7 +52,7 @@ if [[ -n "$FIREMUD_SMOKE_COMPOSE_SERVICES" ]]; then
     fi
   done <<<"$FIREMUD_SMOKE_COMPOSE_SERVICES"
 else
-  if ! compose_services_output="$(FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT=/tmp/firemud-compose-grpc-mtls-config-only docker compose "${COMPOSE_FILES[@]}" config --services)"; then
+  if ! compose_services_output="$(FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT=/tmp/firemud-compose-grpc-mtls-config-only FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH=/tmp/firemud-compose-authored-world-source-config-only docker compose "${COMPOSE_FILES[@]}" config --services)"; then
     echo "Docker Compose service discovery failed." >&2
     exit 1
   fi

@@ -235,3 +235,8 @@ Entry format:
   - Observation: the wrong class filter executed no tests and failed explicitly; the static tasks were reported `SKIPPED` despite a successful focused unit build. Neither result qualified the missing proof.
   - Expected pattern: read the class’s declared package before specifying a test filter, and verify task execution rather than equating build success with every requested check passing. Enable the repository’s canonical full-check property when selecting static tasks.
   - Current status: corrected package selection passed 50 focused unit cases; the subsequent runtime fix passed 58 selected unit cases. A separate canonical `-PfullCheck` run executed the required static checks successfully. No validation requirement was waived.
+
+- `2026-10-13`: Fresh-bootstrap discovery needs every required Compose placeholder
+  - Context: the existing fresh-bootstrap wrapper failed before claiming a run or building images because its configuration-only service discovery supplied the mTLS certificate placeholder but omitted the required authored-world source receipt mount.
+  - Observation: Compose interpolation rejected the missing directory. The discovery command now supplies a configuration-only receipt path as well; this path is never used by the actual deployment, whose unchanged run-owned claim and capability create and bind the real receipt directory before Compose starts.
+  - Current status: the correction is being verified with the existing smoke contract and an actual fresh packaged player-flow run. Configuration parsing establishes no runtime or owner-provenance proof.
