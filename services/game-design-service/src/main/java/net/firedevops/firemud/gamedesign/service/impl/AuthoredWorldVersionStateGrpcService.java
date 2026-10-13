@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.Objects;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -11,6 +12,8 @@ import net.firedevops.firemud.gamedesign.v1.AuthoredWorldVersionStateServiceGrpc
 import net.firedevops.firemud.gamedesign.v1.GetAuthoredWorldVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetAuthoredWorldVersionStateResponse;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.TransactionException;
 
 /**
@@ -78,10 +81,30 @@ public final class AuthoredWorldVersionStateGrpcService
           Status.FAILED_PRECONDITION
               .withDescription("Authored-world source or version ownership is ambiguous")
               .asRuntimeException());
-    } catch (DataAccessException | org.jooq.exception.DataAccessException exception) {
+    } catch (DataAccessResourceFailureException | TransientDataAccessException exception) {
       responseObserver.onError(
           Status.UNAVAILABLE
               .withDescription("Game Design owner storage is temporarily unavailable")
+              .asRuntimeException());
+    } catch (DataAccessException exception) {
+      Status.Code code =
+          hasConnectionFailureSqlState(exception) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
+      responseObserver.onError(
+          Status.fromCode(code)
+              .withDescription(
+                  code == Status.Code.UNAVAILABLE
+                      ? "Game Design owner storage is temporarily unavailable"
+                      : "Game Design owner storage could not be read")
+              .asRuntimeException());
+    } catch (org.jooq.exception.DataAccessException exception) {
+      Status.Code code =
+          hasConnectionFailureSqlState(exception) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
+      responseObserver.onError(
+          Status.fromCode(code)
+              .withDescription(
+                  code == Status.Code.UNAVAILABLE
+                      ? "Game Design owner storage is temporarily unavailable"
+                      : "Game Design owner storage could not be read")
               .asRuntimeException());
     } catch (TransactionException exception) {
       responseObserver.onError(
@@ -107,5 +130,17 @@ public final class AuthoredWorldVersionStateGrpcService
         && GrpcPeerIdentity.isValidNamespace(workloadNamespace)
         && peer.uri()
             .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/world-management-service");
+  }
+
+  private static boolean hasConnectionFailureSqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException exception) {
+        String sqlState = exception.getSQLState();
+        if (sqlState != null && sqlState.startsWith("08")) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 }

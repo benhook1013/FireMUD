@@ -287,7 +287,23 @@ public final class WorldAuthoredSourceIntakeGrpcService
   private static void respondWithOwnerFailure(
       StreamObserver<?> responseObserver, RuntimeException exception) {
     if (exception instanceof StatusRuntimeException statusException) {
-      responseObserver.onError(statusException);
+      Status.Code code = statusException.getStatus().getCode();
+      if (code == Status.Code.UNAVAILABLE) {
+        responseObserver.onError(
+            Status.UNAVAILABLE
+                .withDescription("World intake dependency is temporarily unavailable")
+                .asRuntimeException());
+      } else if (code == Status.Code.DEADLINE_EXCEEDED) {
+        responseObserver.onError(
+            Status.DEADLINE_EXCEEDED
+                .withDescription("World intake dependency read timed out")
+                .asRuntimeException());
+      } else {
+        responseObserver.onError(
+            Status.FAILED_PRECONDITION
+                .withDescription("World authored-source intake has no exact committed proof")
+                .asRuntimeException());
+      }
     } else if (exception instanceof SecurityException) {
       responseObserver.onError(
           Status.PERMISSION_DENIED
