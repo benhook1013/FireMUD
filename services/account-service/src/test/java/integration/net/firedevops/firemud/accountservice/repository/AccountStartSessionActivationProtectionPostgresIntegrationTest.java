@@ -419,6 +419,34 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                         valid.operationIdentityBytes(),
                         valid.operationIdentityDigest()));
 
+    Map<String, Object> changedProjectionRequest =
+        JSON.readValue(valid.requestBytes(), new tools.jackson.core.type.TypeReference<>() {});
+    byte[] originalTuple =
+        Base64.getDecoder()
+            .decode(
+                (String) changedProjectionRequest.get("originalPostAuthorizationTupleBytesBase64"));
+    byte[] differentSpelling =
+        (" " + new String(originalTuple, StandardCharsets.UTF_8)).getBytes(StandardCharsets.UTF_8);
+    changedProjectionRequest.put(
+        "accountRedemptionProjectionBytesBase64",
+        Base64.getEncoder().encodeToString(differentSpelling));
+    byte[] changedProjection = jsonBytes(changedProjectionRequest);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transaction()
+                    .executeWithoutResult(
+                        status ->
+                            fixture
+                                .dsl()
+                                .execute(
+                                    "SELECT account_ss_activation_assert_current(?, ?, ?, FALSE)",
+                                    changedProjection,
+                                    valid.operationIdentityBytes(),
+                                    valid.operationIdentityDigest())))
+        .hasMessageContaining(
+            "Activation protection differs from original Account redemption or capture");
+
     byte[] changedAttempt =
         activationRequest(valid, UUID.randomUUID().toString(), valid.expiryText(), "PREPARING");
     assertCurrentnessRejected(fixture, changedAttempt, valid.operationIdentityBytes());
@@ -636,7 +664,11 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
             .format(normalizedLease);
 
     byte[] preAuthorization = bytes("{}");
-    byte[] authorityBundle = bytes("{}");
+    Map<String, Object> bundleValue =
+        Map.of(
+            "issuanceOperationIdentity",
+            Map.of("issuanceOperationId", issuanceOperationId.toString()));
+    byte[] authorityBundle = jsonBytes(bundleValue);
     byte[] tuple =
         jsonBytes(
             Map.of(
@@ -649,22 +681,10 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                 "issuanceFence",
                 Long.toString(issuanceFence),
                 "authorityEvidenceBundle",
-                Map.of()));
-    byte[] projection =
-        jsonBytes(
-            Map.of(
-                "projectionSchemaId",
-                "accountStartSessionRedemptionProjection",
-                "projectionSchemaVersion",
-                "1",
-                "authorizationReferenceFingerprint",
-                fingerprint,
-                "authorityEvidenceBundle",
-                Map.of(),
-                "issuanceOperationId",
-                issuanceOperationId.toString(),
-                "issuanceFence",
-                issuanceFence));
+                bundleValue));
+    // Current-use integrity preserves the complete stipulated original tuple without scalarizing
+    // it.
+    byte[] projection = tuple.clone();
     SourceEvidence sourceEvidence =
         new SourceEvidence(
             SourceKind.ACCOUNT,

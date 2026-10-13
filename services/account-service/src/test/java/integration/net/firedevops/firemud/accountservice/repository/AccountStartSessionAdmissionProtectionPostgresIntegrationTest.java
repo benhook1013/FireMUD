@@ -27,6 +27,7 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.So
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.SQLDialect;
@@ -45,14 +46,151 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 /**
  * SQL integrity and source-writer definitions. Upstream Account capture, redeemed authorization,
  * World settlement and Game Session observation are explicitly stipulated with upstream triggers
- * disabled. New V133 guards remain enabled for acquisition and all assertions. These fixtures are
- * not genuine authenticated Account/World/Game Session producer or consumer proof.
+ * disabled. Current admission guards remain enabled for acquisition and all assertions. These
+ * fixtures are not genuine authenticated Account/World/Game Session producer or consumer proof.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
   @Container
   static final PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void forwardUpgradePreservesLegacyRowsAndChangesOnlyExactCurrentProjectionChecks() {
+    Fixture historical = fixture(60_000L, "163", true);
+    acquire(historical);
+    String beforeRow =
+        historical
+            .dsl()
+            .fetchSingle(
+                "SELECT to_jsonb(protection)::text FROM account_start_session_admission_protections protection WHERE protection_id = ?",
+                historical.protectionId())
+            .get(0, String.class);
+    var checksums =
+        historical
+            .dsl()
+            .fetch(
+                "SELECT version, checksum FROM flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank");
+    String admissionSignature =
+        "account_ss_admission_assert_current(account_start_session_admission_protections,boolean)";
+    String activationSignature = "account_ss_activation_assert_current(bytea,bytea,text,boolean)";
+    Map<String, String> beforeDefinitions = new LinkedHashMap<>();
+    Map<String, Long> beforeOids = new LinkedHashMap<>();
+    for (String signature : List.of(admissionSignature, activationSignature)) {
+      beforeDefinitions.put(
+          signature,
+          historical
+              .dsl()
+              .fetchSingle("SELECT pg_get_functiondef(?::regprocedure)", signature)
+              .get(0, String.class));
+      beforeOids.put(
+          signature,
+          historical
+              .dsl()
+              .fetchSingle("SELECT ?::regprocedure::oid::bigint", signature)
+              .get(0, Long.class));
+    }
+    String historicalSettlement =
+        historical
+            .dsl()
+            .fetchSingle(
+                "SELECT pg_get_functiondef('account_ss_admission_settlement_insert_guard()'::regprocedure)")
+            .get(0, String.class);
+    Flyway.configure()
+        .dataSource(historical.dataSource())
+        .schemas(historical.dataSource().getSchema())
+        .defaultSchema(historical.dataSource().getSchema())
+        .placeholders(Map.of("serviceSchema", historical.dataSource().getSchema()))
+        .locations("classpath:db/migration")
+        .target(MigrationVersion.fromVersion("164"))
+        .load()
+        .migrate();
+    assertThat(
+            historical
+                .dsl()
+                .fetch(
+                    "SELECT version, checksum FROM flyway_schema_history WHERE success AND version IS NOT NULL AND version <> '164' ORDER BY installed_rank"))
+        .isEqualTo(checksums);
+    for (String signature : beforeDefinitions.keySet()) {
+      assertThat(
+              historical
+                  .dsl()
+                  .fetchSingle("SELECT ?::regprocedure::oid::bigint", signature)
+                  .get(0, Long.class))
+          .isEqualTo(beforeOids.get(signature));
+      String after =
+          historical
+              .dsl()
+              .fetchSingle("SELECT pg_get_functiondef(?::regprocedure)", signature)
+              .get(0, String.class);
+      String before = beforeDefinitions.get(signature);
+      int start =
+          before.indexOf(
+              signature.equals(admissionSignature)
+                  ? "    IF projection_value IS DISTINCT FROM jsonb_build_object("
+                  : "        OR projection_value IS DISTINCT FROM jsonb_build_object(");
+      int end =
+          signature.equals(admissionSignature)
+              ? before.indexOf(" THEN", start)
+              : before.indexOf("\n        OR capture.canonical_sha256", start);
+      assertThat(start).isGreaterThanOrEqualTo(0);
+      assertThat(end).isGreaterThan(start);
+      String replacement =
+          signature.equals(admissionSignature)
+              ? "    IF original.account_redemption_projection IS DISTINCT FROM original.original_post_authorization_tuple\n"
+                  + "        OR projection_value #>> '{authorityEvidenceBundle,issuanceOperationIdentity,issuanceOperationId}'\n"
+                  + "            IS DISTINCT FROM authorization_row.issuance_operation_id::TEXT"
+              : "        OR projection_bytes IS DISTINCT FROM tuple_bytes\n"
+                  + "        OR projection_value #>> '{authorityEvidenceBundle,issuanceOperationIdentity,issuanceOperationId}'\n"
+                  + "            IS DISTINCT FROM authorization_row.issuance_operation_id::TEXT";
+      assertThat(after).isEqualTo(before.substring(0, start) + replacement + before.substring(end));
+    }
+    assertThat(
+            historical
+                .dsl()
+                .fetchSingle(
+                    "SELECT pg_get_functiondef('account_ss_admission_settlement_insert_guard()'::regprocedure)")
+                .get(0, String.class))
+        .isEqualTo(historicalSettlement);
+    assertThat(
+            historical
+                .dsl()
+                .fetchSingle(
+                    "SELECT to_jsonb(protection)::text FROM account_start_session_admission_protections protection WHERE protection_id = ?",
+                    historical.protectionId())
+                .get(0, String.class))
+        .isEqualTo(beforeRow);
+    assertThatThrownBy(
+            () ->
+                historical
+                    .transaction()
+                    .executeWithoutResult(
+                        status ->
+                            historical
+                                .dsl()
+                                .execute(
+                                    "SELECT * FROM account_ss_admission_read_current_exact(?, ?, ?)",
+                                    historical.protectionId(),
+                                    1L,
+                                    historical.request())))
+        .hasMessageContaining(
+            "Admission projection differs from complete original Account redemption");
+    assertThatThrownBy(
+            () ->
+                historical
+                    .transaction()
+                    .executeWithoutResult(
+                        status ->
+                            historical
+                                .dsl()
+                                .execute(
+                                    "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                                    historical.source().key())))
+        .hasMessageContaining("Original StartSession admission protection remains pending");
+    Fixture current = fixture();
+    acquire(current);
+    assertThat(current.projection()).containsExactly(current.tuple());
+  }
 
   @Test
   void installsAdditiveHooksWithoutRemovingExistingOwnerChecks() {
@@ -551,19 +689,24 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
   }
 
   private static Fixture fixture(long leaseMillis) {
+    return fixture(leaseMillis, null, false);
+  }
+
+  private static Fixture fixture(long leaseMillis, String target, boolean historicalScalar) {
     String schema = "ss_admission_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource source =
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     source.setSchema(schema);
-    Flyway.configure()
-        .dataSource(source)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    var migration =
+        Flyway.configure()
+            .dataSource(source)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (target != null) migration.target(MigrationVersion.fromVersion(target));
+    migration.load().migrate();
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
     TransactionTemplate transaction =
         new TransactionTemplate(new DataSourceTransactionManager(source));
@@ -584,6 +727,8 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
     SourceEvidence evidence =
         new SourceEvidence(
             SourceKind.HOSTED_TERMS, "test-terms", "1", "1", null, null, bytes("terms"));
+    Map<String, Object> authorityBundle =
+        Map.of("issuanceOperationIdentity", Map.of("issuanceOperationId", issuance.toString()));
     byte[] tuple =
         json(
             Map.of(
@@ -594,22 +739,25 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
                 "issuanceFence",
                 "9",
                 "authorityEvidenceBundle",
-                Map.of()));
+                authorityBundle));
+    // Upstream authority is explicitly stipulated; current SQL still requires exact tuple bytes.
     byte[] projection =
-        json(
-            Map.of(
-                "projectionSchemaId",
-                "accountStartSessionRedemptionProjection",
-                "projectionSchemaVersion",
-                "1",
-                "authorizationReferenceFingerprint",
-                "arfp/v1/key-1/" + "a".repeat(64),
-                "authorityEvidenceBundle",
-                Map.of(),
-                "issuanceOperationId",
-                issuance.toString(),
-                "issuanceFence",
-                9L));
+        historicalScalar
+            ? json(
+                Map.of(
+                    "projectionSchemaId",
+                    "accountStartSessionRedemptionProjection",
+                    "projectionSchemaVersion",
+                    "1",
+                    "authorizationReferenceFingerprint",
+                    "arfp/v1/key-1/" + "a".repeat(64),
+                    "authorityEvidenceBundle",
+                    authorityBundle,
+                    "issuanceOperationId",
+                    issuance.toString(),
+                    "issuanceFence",
+                    9L))
+            : tuple.clone();
     var holdRequest =
         new WorldCanonicalInitialAdmissionHold.Request(
             "test",
@@ -781,7 +929,7 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
               "bundle_linearization",
               "17",
               "authority_evidence_bundle",
-              bytes("{}"),
+              json(authorityBundle),
               "authorization_reference_fingerprint",
               "arfp/v1/key-1/" + "a".repeat(64),
               "encrypted_response_envelope",
@@ -805,7 +953,7 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
               "redemption_reference_fingerprint",
               "arfp/v1/key-1/" + "a".repeat(64),
               "redemption_authority_evidence_bundle",
-              bytes("{}"));
+              json(authorityBundle));
           insert(
               dsl,
               "account_start_session_world_participations",

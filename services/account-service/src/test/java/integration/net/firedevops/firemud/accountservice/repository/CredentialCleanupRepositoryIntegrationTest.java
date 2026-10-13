@@ -51,7 +51,13 @@ class CredentialCleanupRepositoryIntegrationTest {
   @BeforeAll
   void setUpRepositories() {
     dataSource = newDataSource();
-    Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
+    Flyway.configure()
+        .dataSource(dataSource)
+        .defaultSchema("public")
+        .placeholders(java.util.Map.of("serviceSchema", "public"))
+        .locations(MIGRATION_LOCATION)
+        .load()
+        .migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     passwordResetTokenRepository = new PasswordResetTokenRepository(dsl);
     emailVerificationTokenRepository = new EmailVerificationTokenRepository(dsl);
