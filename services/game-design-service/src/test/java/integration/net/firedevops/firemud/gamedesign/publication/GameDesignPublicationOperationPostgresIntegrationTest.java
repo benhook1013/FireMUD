@@ -544,6 +544,89 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
         .isNull();
   }
 
+  @Test
+  void publicationReceiptSurvivesAdditiveReleaseColumnAndFreshSealAfterAddition() throws Exception {
+    var retained = fixture();
+    publish(retained);
+    var original = retained.service().readExact(retained.operation()).orElseThrow();
+    String originalEvidence =
+        java.util.Objects.requireNonNull(
+                retained
+                    .dsl()
+                    .fetchOne(
+                        "SELECT release_row_json FROM game_design_publication_operation WHERE publish_workflow_id = ?",
+                        retained.operation().workflowId()),
+                "Expected retained publication operation row")
+            .get("release_row_json", String.class);
+    String originalWholeRow =
+        java.util.Objects.requireNonNull(
+                retained
+                    .dsl()
+                    .fetchOne(
+                        "SELECT to_jsonb(r)::TEXT AS evidence FROM published_release_bundle r WHERE tenant_id = ? AND version_id = ?",
+                        retained.operation().tenantKey(),
+                        retained.operation().versionId()),
+                "Expected original published release row")
+            .get("evidence", String.class);
+    assertThat(originalEvidence).isEqualTo(originalWholeRow);
+
+    retained.completeMigration().run();
+    retained
+        .write()
+        .executeWithoutResult(
+            status ->
+                retained
+                    .dsl()
+                    .execute(
+                        "ALTER TABLE published_release_bundle ADD COLUMN future_optional_evidence TEXT"));
+    String expandedWholeRow =
+        java.util.Objects.requireNonNull(
+                retained
+                    .dsl()
+                    .fetchOne(
+                        "SELECT to_jsonb(r)::TEXT AS evidence FROM published_release_bundle r WHERE tenant_id = ? AND version_id = ?",
+                        retained.operation().tenantKey(),
+                        retained.operation().versionId()),
+                "Expected published release row after additive column")
+            .get("evidence", String.class);
+    assertThat(expandedWholeRow).isNotEqualTo(originalEvidence);
+    var replay = retained.service().readExact(retained.operation()).orElseThrow();
+    assertThat(replay.receiptBytes()).isEqualTo(original.receiptBytes());
+    assertThat(replay.terminalEvidenceBytes()).isEqualTo(original.terminalEvidenceBytes());
+    assertThatThrownBy(
+            () ->
+                retained
+                    .write()
+                    .executeWithoutResult(
+                        status ->
+                            retained
+                                .dsl()
+                                .execute(
+                                    "UPDATE published_release_bundle SET generation_config_revision = 'changed' WHERE tenant_id = ? AND version_id = ?",
+                                    retained.operation().tenantKey(),
+                                    retained.operation().versionId())))
+        .isInstanceOf(RuntimeException.class);
+    assertThat(retained.service().readExact(retained.operation()).orElseThrow().receiptBytes())
+        .isEqualTo(original.receiptBytes());
+
+    var fresh = fixture();
+    fresh.completeMigration().run();
+    fresh
+        .write()
+        .executeWithoutResult(
+            status ->
+                fresh
+                    .dsl()
+                    .execute(
+                        "ALTER TABLE published_release_bundle ADD COLUMN future_optional_evidence TEXT"));
+    publish(fresh);
+    var freshRead = fresh.service().readExact(fresh.operation()).orElseThrow();
+    assertThat(freshRead.outcome()).isEqualTo("PUBLISHED");
+    assertThat(freshRead.receiptBytes()).isNotNull();
+    assertThat(fresh.service().readExact(fresh.operation()).orElseThrow().receiptBytes())
+        .isEqualTo(freshRead.receiptBytes());
+  }
+
   private ReadCollector readThroughHandler(
       Fixture fixture,
       GameDesignPublicationTerminalReadEvidence.ReadRequest request,
