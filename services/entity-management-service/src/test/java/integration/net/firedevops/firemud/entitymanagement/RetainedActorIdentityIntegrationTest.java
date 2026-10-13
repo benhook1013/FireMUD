@@ -242,12 +242,14 @@ class RetainedActorIdentityIntegrationTest {
                     "OWNER_PROVENANCE_MISSING",
                     accountId,
                     tenantId))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(org.springframework.dao.DuplicateKeyException.class)
+        .hasMessageContaining("ux_characters_character_uuid");
     assertThatThrownBy(
             () ->
                 insertNamespace(
                     tenantUuid, namespaceUuid, PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
-        .isInstanceOf(RuntimeException.class);
+        .isInstanceOf(org.springframework.dao.DuplicateKeyException.class)
+        .hasMessageContaining("pk_entity_playable_state_namespace_scopes");
   }
 
   private List<UUID> storedActorUuids(

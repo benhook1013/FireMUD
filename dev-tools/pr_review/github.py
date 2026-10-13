@@ -1013,6 +1013,26 @@ query($owner:String!, $repo:String!, $number:Int!) {
     return pull_request
 
 
+def fetch_period_reset_ref_identity(repo: str, pr_number: int) -> dict[str, Any]:
+    """Read the selected PR identity and its actual base ref for a Hosted reset."""
+
+    owner, name = parse_repo(repo)
+    query = """
+query($owner:String!, $repo:String!, $number:Int!) {
+  repository(owner:$owner, name:$repo) { pullRequest(number:$number) {
+    number state mergedAt baseRefName baseRefOid headRefName headRefOid
+    headRepository { nameWithOwner }
+    baseRef { name target { oid } }
+  } }
+}
+""".strip()
+    payload = run_gh_query(query, {"owner": owner, "repo": name, "number": pr_number})
+    pull_request = _pull_request_from_graphql_payload(payload)
+    if type(pull_request.get("number")) is not int or pull_request["number"] != pr_number:
+        raise RuntimeError("GitHub response has no matching period-reset identity")
+    return pull_request
+
+
 def post_issue_comment(repo: str, pr: int, body: str) -> dict[str, Any]:
     """Explicit publication only; callers own durable intent and retry recovery."""
     completed = subprocess.run(
