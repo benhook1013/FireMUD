@@ -90,9 +90,14 @@ public final class AuthoredWorldSourceReadGrpcService
               .asRuntimeException());
       return;
     } catch (org.jooq.exception.DataAccessException exception) {
+      Status.Code code =
+          hasConnectionFailureSqlState(exception) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
       responseObserver.onError(
-          Status.UNAVAILABLE
-              .withDescription("Authored-world source storage could not complete the read")
+          Status.fromCode(code)
+              .withDescription(
+                  code == Status.Code.UNAVAILABLE
+                      ? "Authored-world source evidence is temporarily unavailable"
+                      : "Authored-world source evidence could not be read")
               .asRuntimeException());
       return;
     } catch (RuntimeException exception) {

@@ -10,6 +10,7 @@ import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -26,6 +27,7 @@ import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
 import org.junit.jupiter.api.Test;
+import org.jooq.exception.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 
 class AuthoredWorldSourceReadGrpcServiceTest {
@@ -158,6 +160,37 @@ class AuthoredWorldSourceReadGrpcServiceTest {
     assertThat(offline.response).isNull();
   }
 
+  @Test
+  void classifiesJooqStorageFailuresByConnectionSqlStateWithoutLeakingDetails() {
+    when(authoredWorldSourceRepository.read(
+            SOURCE_OPERATION_ID, WORLD_TENANT_ID, WORLD_SLUG, "test"))
+        .thenThrow(
+            new DataAccessException(
+                "unique constraint failed", new SQLException("constraint", "23505")))
+        .thenThrow(
+            new DataAccessException("relation missing", new SQLException("missing", "42P01")))
+        .thenThrow(new DataAccessException("storage failed"))
+        .thenThrow(
+            new DataAccessException("connection dropped", new SQLException("dropped", "08006")));
+
+    assertStorageFailure(callWorldSource(worldSourceRequest(), WORLD_URI), Status.Code.INTERNAL);
+    assertStorageFailure(callWorldSource(worldSourceRequest(), WORLD_URI), Status.Code.INTERNAL);
+    assertStorageFailure(callWorldSource(worldSourceRequest(), WORLD_URI), Status.Code.INTERNAL);
+    assertStorageFailure(callWorldSource(worldSourceRequest(), WORLD_URI), Status.Code.UNAVAILABLE);
+  }
+
+  private static void assertStorageFailure(WorldSourceObserver observer, Status.Code expectedCode) {
+    assertThat(observer.failure).isEqualTo(expectedCode);
+    assertThat(observer.response).isNull();
+    assertThat(observer.completed).isFalse();
+    assertThat(Status.fromThrowable(observer.error).getDescription())
+        .isEqualTo(
+            expectedCode == Status.Code.UNAVAILABLE
+                ? "Authored-world source evidence is temporarily unavailable"
+                : "Authored-world source evidence could not be read");
+    assertThat(((io.grpc.StatusRuntimeException) observer.error).getTrailers()).isNull();
+  }
+
   private WorldSourceObserver callWorldSource(
       ResolveAuthoredWorldSourceRequest request, String peerUri) {
     WorldSourceObserver observer = new WorldSourceObserver();
@@ -242,6 +275,7 @@ class AuthoredWorldSourceReadGrpcServiceTest {
       implements StreamObserver<ResolveAuthoredWorldSourceResponse> {
     private ResolveAuthoredWorldSourceResponse response;
     private Status.Code failure;
+    private Throwable error;
     private boolean completed;
 
     @Override
@@ -251,6 +285,7 @@ class AuthoredWorldSourceReadGrpcServiceTest {
 
     @Override
     public void onError(Throwable throwable) {
+      error = throwable;
       failure = Status.fromThrowable(throwable).getCode();
     }
 

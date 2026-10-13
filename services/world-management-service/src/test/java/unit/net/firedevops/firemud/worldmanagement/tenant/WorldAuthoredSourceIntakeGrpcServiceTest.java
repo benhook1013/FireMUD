@@ -10,7 +10,9 @@ import static org.mockito.Mockito.when;
 import com.google.protobuf.UnknownFieldSet;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -35,6 +37,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 
 class WorldAuthoredSourceIntakeGrpcServiceTest {
+  private static final Metadata.Key<String> UPSTREAM_DETAIL =
+      Metadata.Key.of("x-upstream-detail", Metadata.ASCII_STRING_MARSHALLER);
   private static final String NAMESPACE = "firemud";
   private static final UUID INTAKE_REQUEST_ID =
       UUID.fromString("44444444-4444-4444-8444-444444444444");
@@ -465,6 +469,53 @@ class WorldAuthoredSourceIntakeGrpcServiceTest {
     assertThat(unrelatedSqlError.getCode()).isEqualTo(Status.Code.INTERNAL);
     assertThat(unrelatedSqlError.getDescription())
         .isEqualTo("World intake storage could not complete the request");
+  }
+
+  @Test
+  void mapsUpstreamStatusFailuresToSafeWorldOutcomes() {
+    for (Status.Code upstreamCode :
+        List.of(
+            Status.Code.UNAVAILABLE,
+            Status.Code.DEADLINE_EXCEEDED,
+            Status.Code.NOT_FOUND,
+            Status.Code.PERMISSION_DENIED)) {
+      Metadata upstreamTrailers = new Metadata();
+      upstreamTrailers.put(UPSTREAM_DETAIL, "untrusted upstream trailer");
+      StatusRuntimeException upstreamFailure =
+          Status.fromCode(upstreamCode)
+              .withDescription("untrusted upstream description")
+              .asRuntimeException(upstreamTrailers);
+      doThrow(upstreamFailure)
+          .when(intakeService)
+          .intake(
+              1,
+              NAMESPACE,
+              INTAKE_REQUEST_ID,
+              TENANT_ID,
+              WORLD_SLUG,
+              SOURCE_OPERATION_ID,
+              SOURCE_DIGEST);
+      RecordingObserver<IntakeAuthoredWorldSourceResponse> observer = new RecordingObserver<>();
+
+      withGameDesign(() -> grpcService.intakeAuthoredWorldSource(intakeRequest(), observer));
+
+      Status response = Status.fromThrowable(observer.error);
+      boolean retryable =
+          upstreamCode == Status.Code.UNAVAILABLE || upstreamCode == Status.Code.DEADLINE_EXCEEDED;
+      assertThat(response.getCode())
+          .isEqualTo(retryable ? upstreamCode : Status.Code.FAILED_PRECONDITION);
+      assertThat(response.getDescription())
+          .isEqualTo(
+              switch (upstreamCode) {
+                case UNAVAILABLE -> "World intake dependency is temporarily unavailable";
+                case DEADLINE_EXCEEDED -> "World intake dependency read timed out";
+                default -> "World authored-source intake has no exact committed proof";
+              });
+      assertThat(response.getDescription()).doesNotContain("untrusted upstream");
+      assertThat(((StatusRuntimeException) observer.error).getTrailers()).isNull();
+      assertThat(observer.values).isEmpty();
+      assertThat(observer.completed).isFalse();
+    }
   }
 
   @Test

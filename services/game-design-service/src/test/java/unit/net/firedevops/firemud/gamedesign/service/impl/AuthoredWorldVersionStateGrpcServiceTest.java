@@ -10,6 +10,7 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -25,6 +26,9 @@ import net.firedevops.firemud.gamedesign.v1.GetAuthoredWorldVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetAuthoredWorldVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 
 class AuthoredWorldVersionStateGrpcServiceTest {
   private static final String NAMESPACE = "test";
@@ -163,6 +167,59 @@ class AuthoredWorldVersionStateGrpcServiceTest {
     verifyNoInteractions(service);
   }
 
+  @Test
+  void classifiesSpringAndJooqStorageFailuresWithoutLeakingDetails() {
+    AuthoredWorldVersionStateService service = mock(AuthoredWorldVersionStateService.class);
+    when(service.read(request()))
+        .thenThrow(new DataAccessResourceFailureException("database unavailable"))
+        .thenThrow(new TransientDataAccessException("database timed out") {})
+        .thenThrow(
+            new DataAccessException(
+                "unique constraint failed", new SQLException("constraint", "23505")) {})
+        .thenThrow(
+            new DataAccessException("connection dropped", new SQLException("dropped", "08006")) {})
+        .thenThrow(
+            new org.jooq.exception.DataAccessException(
+                "relation missing", new SQLException("missing", "42P01")))
+        .thenThrow(new org.jooq.exception.DataAccessException("permanent storage failure"))
+        .thenThrow(
+            new org.jooq.exception.DataAccessException(
+                "connection dropped", new SQLException("dropped", "08006")));
+    var handler = new AuthoredWorldVersionStateGrpcService(service, NAMESPACE);
+
+    assertStorageFailure(callRead(handler), Status.Code.UNAVAILABLE);
+    assertStorageFailure(callRead(handler), Status.Code.UNAVAILABLE);
+    assertStorageFailure(callRead(handler), Status.Code.INTERNAL);
+    assertStorageFailure(callRead(handler), Status.Code.UNAVAILABLE);
+    assertStorageFailure(callRead(handler), Status.Code.INTERNAL);
+    assertStorageFailure(callRead(handler), Status.Code.INTERNAL);
+    assertStorageFailure(callRead(handler), Status.Code.UNAVAILABLE);
+  }
+
+  private static TestObserver<GetAuthoredWorldVersionStateResponse> callRead(
+      AuthoredWorldVersionStateGrpcService handler) {
+    TestObserver<GetAuthoredWorldVersionStateResponse> observer = new TestObserver<>();
+    withPeer(
+        peer(NAMESPACE, "world-management-service"),
+        () ->
+            handler.getAuthoredWorldVersionState(
+                AuthoredWorldVersionStateGrpcCodec.toRequest(request()), observer));
+    return observer;
+  }
+
+  private static void assertStorageFailure(
+      TestObserver<?> observer, Status.Code expectedCode) {
+    assertStatus(observer, expectedCode);
+    assertThat(observer.value).isNull();
+    assertThat(observer.completed).isFalse();
+    assertThat(Status.fromThrowable(observer.failure).getDescription())
+        .isEqualTo(
+            expectedCode == Status.Code.UNAVAILABLE
+                ? "Game Design owner storage is temporarily unavailable"
+                : "Game Design owner storage could not be read");
+    assertThat(((StatusRuntimeException) observer.failure).getTrailers()).isNull();
+  }
+
   private static void assertStatus(TestObserver<?> observer, Status.Code expectedCode) {
     assertThat(observer.error).isNotNull();
     assertThat(observer.error.type()).isEqualTo(StatusRuntimeException.class);
@@ -236,6 +293,7 @@ class AuthoredWorldVersionStateGrpcServiceTest {
   private static final class TestObserver<T> implements StreamObserver<T> {
     private T value;
     private ErrorEvidence error;
+    private Throwable failure;
     private boolean completed;
 
     @Override
@@ -245,6 +303,7 @@ class AuthoredWorldVersionStateGrpcServiceTest {
 
     @Override
     public void onError(Throwable failure) {
+      this.failure = failure;
       error = new ErrorEvidence(failure.getClass(), Status.fromThrowable(failure).getCode());
     }
 

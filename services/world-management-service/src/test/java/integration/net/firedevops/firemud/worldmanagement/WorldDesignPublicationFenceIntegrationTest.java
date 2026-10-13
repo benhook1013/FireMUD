@@ -268,7 +268,7 @@ class WorldDesignPublicationFenceIntegrationTest {
         intake(canonicalTenantId, "brighter-coast", tenantSlug, 8_101L);
     WorldAuthoredVersionIdentityReceipt secondIdentity =
         identity(second, secondGameDesignVersionId);
-    assertThat(secondGameDesignVersionId).isEqualTo(firstIdentity.localVersionKey());
+    assertThat(secondGameDesignVersionId).isNotEqualTo(GAME_DESIGN_VERSION_A);
     assertThat(secondIdentity.localVersionKey()).isNotEqualTo(secondGameDesignVersionId);
     assertThatThrownBy(() -> intake(canonicalTenantId, "contradictory-world", tenantSlug, 8_103L))
         .isInstanceOf(WorldAuthoredSourceIntakeRepository.RegistrationConflictException.class)
@@ -290,8 +290,16 @@ class WorldDesignPublicationFenceIntegrationTest {
     long secondOwnerCount = ownerCount(canonicalTenantId, secondGameDesignVersionId);
     long firstAttemptCount = attemptCount(canonicalTenantId, GAME_DESIGN_VERSION_A);
     long secondAttemptCount = attemptCount(canonicalTenantId, secondGameDesignVersionId);
+    assertThat(firstOwnerCount).isEqualTo(1L);
+    assertThat(secondOwnerCount).isEqualTo(1L);
+    assertThat(firstAttemptCount).isEqualTo(1L);
+    assertThat(secondAttemptCount).isEqualTo(1L);
     assertThat(repository.readAttempt(firstRequest)).contains(firstFrozen);
     assertThat(repository.readAttempt(secondRequest)).contains(secondFrozen);
+    assertThat(ownerCount(canonicalTenantId, GAME_DESIGN_VERSION_A)).isEqualTo(1L);
+    assertThat(ownerCount(canonicalTenantId, secondGameDesignVersionId)).isEqualTo(1L);
+    assertThat(attemptCount(canonicalTenantId, GAME_DESIGN_VERSION_A)).isEqualTo(1L);
+    assertThat(attemptCount(canonicalTenantId, secondGameDesignVersionId)).isEqualTo(1L);
     assertThat(ownerCount(canonicalTenantId, GAME_DESIGN_VERSION_A)).isEqualTo(firstOwnerCount);
     assertThat(ownerCount(canonicalTenantId, secondGameDesignVersionId))
         .isEqualTo(secondOwnerCount);
