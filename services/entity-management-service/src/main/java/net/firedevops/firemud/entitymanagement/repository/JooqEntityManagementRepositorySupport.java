@@ -1,10 +1,7 @@
 package net.firedevops.firemud.entitymanagement.repository;
 
-import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTERS;
-
 import java.util.List;
 import net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport;
-import net.firedevops.firemud.entitymanagement.entity.ActorIdentityStatus;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.CharacterEquipmentEntry;
 import net.firedevops.firemud.entitymanagement.entity.CharacterEquipmentKey;
@@ -17,47 +14,12 @@ import net.firedevops.firemud.entitymanagement.entity.ItemStack;
 import net.firedevops.firemud.entitymanagement.entity.ItemStackCompatibilityMode;
 import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryEntry;
 import net.firedevops.firemud.entitymanagement.entity.RoomGroundInventoryKey;
-import org.jooq.Condition;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.impl.DSL;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 
 final class JooqEntityManagementRepositorySupport {
   private JooqEntityManagementRepositorySupport() {}
-
-  static Condition ownerResolvedActorExists(
-      DSLContext dsl, Field<Long> characterField, Field<Long> tenantField) {
-    return DSL.exists(
-        dsl.selectOne()
-            .from(CHARACTERS)
-            .where(
-                CHARACTERS
-                    .ID
-                    .eq(characterField)
-                    .and(CHARACTERS.TENANT_ID.eq(tenantField))
-                    .and(
-                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                            ActorIdentityStatus.OWNER_RESOLVED.name()))));
-  }
-
-  static void requireOwnerResolvedActor(DSLContext dsl, Long tenantId, Long characterId) {
-    long ownerResolvedCount =
-        dsl.fetchCount(
-            CHARACTERS,
-            CHARACTERS
-                .ID
-                .eq(characterId)
-                .and(CHARACTERS.TENANT_ID.eq(tenantId))
-                .and(
-                    CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                        ActorIdentityStatus.OWNER_RESOLVED.name())));
-    if (ownerResolvedCount != 1) {
-      throw new IllegalStateException("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
-    }
-  }
 
   static <T> Page<T> page(List<T> content, Pageable pageable, long total) {
     if (pageable == null || pageable.isUnpaged()) {

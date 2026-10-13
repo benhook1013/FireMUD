@@ -5,7 +5,6 @@ import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTER_EQUI
 import static net.firedevops.firemud.entitymanagement.jooq.Tables.ITEMS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import net.firedevops.firemud.entitymanagement.entity.ActorIdentityStatus;
 import net.firedevops.firemud.entitymanagement.entity.CharacterEquipmentEntry;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -36,10 +35,7 @@ public class CharacterEquipmentRepository {
                     CHARACTER_EQUIPMENT
                         .CHARACTER_ID
                         .eq(characterId)
-                        .and(CHARACTERS.TENANT_ID.eq(tenantId))
-                        .and(
-                            CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                                ActorIdentityStatus.OWNER_RESOLVED.name()))));
+                        .and(CHARACTERS.TENANT_ID.eq(tenantId))));
     var content =
         dsl.select(
                 CHARACTER_EQUIPMENT.CHARACTER_ID,
@@ -72,10 +68,7 @@ public class CharacterEquipmentRepository {
                 CHARACTER_EQUIPMENT
                     .CHARACTER_ID
                     .eq(characterId)
-                    .and(CHARACTERS.TENANT_ID.eq(tenantId))
-                    .and(
-                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                            ActorIdentityStatus.OWNER_RESOLVED.name())))
+                    .and(CHARACTERS.TENANT_ID.eq(tenantId)))
             .orderBy(CHARACTER_EQUIPMENT.SLOT.asc())
             .limit(
                 JooqEntityManagementRepositorySupport.limitOrDefault(pageable, Integer.MAX_VALUE))

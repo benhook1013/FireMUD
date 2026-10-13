@@ -10,9 +10,11 @@ The current replacement-validation path is also narrower than the target contrac
 
 At the live enqueue boundary, the current Automation implementation expands each enabled command node over its target entity ids, assigns `commandOrdinal`, and enforces configured bounded per-run and per-entity fan-out with atomic rejection before admission when a bound is exceeded. The current path still does not prove complete durable child/target identity or end-to-end fan-out/replay semantics; the target Command-Handoff Identity and its atomic rejection distinction remain required. `automationDispatchId` alone is not a dedupe key; use the complete Command-Handoff Identity for the target contract.
 
-## V3 Concurrent Index Migration Recovery
+The actor-identity and assignment/roster changes in this preparation are storage and unregistered source only. Existing runtime consumers, expiry, and cleanup retain develop behavior; no new quarantine hold or authenticated roster handler is active. Follow [Entity Runtime and Data](./runtime-and-data.md#implementation-status) for this boundary and [GR-3.1](../../../project-management/implementation-tracking/gameplay-rules-entities-and-effects.md#validation-and-proof) for pending proof.
 
-Entity V3 creates `ux_characters_character_uuid_idx` concurrently, then `idx_characters_owner_resolved_roster` concurrently, and finally attaches the first index as the `ux_characters_character_uuid` unique constraint. Follow the [database migration contract](../../system-architecture-database-migrations.md) for migration activation and roll-forward. These local recovery steps preserve all character rows and require writer admission to remain closed and quiesced throughout inspection and recovery.
+## V1004 Concurrent Index Migration Recovery
+
+Entity V1004 creates `ux_characters_character_uuid_idx` concurrently, then `idx_characters_owner_resolved_roster` concurrently, and finally attaches the first index as the `ux_characters_character_uuid` unique constraint. Follow the [database migration contract](../../system-architecture-database-migrations.md) for migration activation and roll-forward. These local recovery steps preserve all character rows and require writer admission to remain closed and quiesced throughout inspection and recovery.
 
 Use the deployed Entity `SERVICE_SCHEMA` value, confirm the selected schema, and inspect the exact index definitions, PostgreSQL validity/readiness flags, and any attached constraint before taking action. In `psql`, set `service_schema` to that deployed schema and run:
 
@@ -60,23 +62,23 @@ WHERE activity.datname = current_database()
 ORDER BY activity.xact_start NULLS LAST, activity.query_start NULLS LAST;
 ```
 
-An invalid index may be removed only after confirming it is one of these exact V3 indexes, is unattached to a constraint, and its definition matches the expected V3 object. Use the deployed schema explicitly. Run only the statement for the specific index confirmed invalid and unattached; each statement must run outside a transaction.
+An invalid index may be removed only after confirming it is one of these exact V1004 indexes, is unattached to a constraint, and its definition matches the expected V1004 object. Use the deployed schema explicitly. Run only the statement for the specific index confirmed invalid and unattached; each statement must run outside a transaction.
 
-Only if inspection confirms `ux_characters_character_uuid_idx` is invalid, unattached, and matches the expected V3 definition:
+Only if inspection confirms `ux_characters_character_uuid_idx` is invalid, unattached, and matches the expected V1004 definition:
 
 ```sql
 DROP INDEX CONCURRENTLY IF EXISTS :"service_schema".ux_characters_character_uuid_idx;
 ```
 
-Only if inspection independently confirms `idx_characters_owner_resolved_roster` is invalid, unattached, and matches the expected V3 definition:
+Only if inspection independently confirms `idx_characters_owner_resolved_roster` is invalid, unattached, and matches the expected V1004 definition:
 
 ```sql
 DROP INDEX CONCURRENTLY IF EXISTS :"service_schema".idx_characters_owner_resolved_roster;
 ```
 
-Drop only the specific invalid, unattached index confirmed by inspection, then verify it is absent. Do not drop a valid index or the attached `ux_characters_character_uuid` constraint as generic cleanup. A blind Flyway repair-and-migrate is unsafe when an earlier V3 statement succeeded: retrying the whole file may collide with a surviving valid index, and attaching the unique index renames it to the constraint's final name. If either expected index is valid, the final constraint exists, or the observed state is otherwise mixed, stop automatic retry and use an operator-reviewed, phase-specific roll-forward plan that accounts for Flyway history and the exact surviving definitions. Do not delete or rewrite character data to make the migration proceed.
+Drop only the specific invalid, unattached index confirmed by inspection, then verify it is absent. Do not drop a valid index or the attached `ux_characters_character_uuid` constraint as generic cleanup. A blind Flyway repair-and-migrate is unsafe when an earlier V1004 statement succeeded: retrying the whole file may collide with a surviving valid index, and attaching the unique index renames it to the constraint's final name. If either expected index is valid, the final constraint exists, or the observed state is otherwise mixed, stop automatic retry and use an operator-reviewed, phase-specific roll-forward plan that accounts for Flyway history and the exact surviving definitions. Do not delete or rewrite character data to make the migration proceed.
 
-Dropping invalid, unattached indexes does not remove the failed V3 entry from Flyway history. Only when exact post-cleanup inspection proves that both `ux_characters_character_uuid_idx` and `idx_characters_owner_resolved_roster` indexes and the `ux_characters_character_uuid` constraint are absent, repair the failed V3 history entry in the owning Entity schema/history table before rerunning migrate, keeping writer admission closed and writers quiesced throughout. Any surviving valid object or mixed state still requires the operator-reviewed, phase-specific roll-forward plan above.
+Dropping invalid, unattached indexes does not remove the failed V1004 entry from Flyway history. Only when exact post-cleanup inspection proves that both `ux_characters_character_uuid_idx` and `idx_characters_owner_resolved_roster` indexes and the `ux_characters_character_uuid` constraint are absent, repair the failed V1004 history entry in the owning Entity schema/history table before rerunning migrate, keeping writer admission closed and writers quiesced throughout. Any surviving valid object or mixed state still requires the operator-reviewed, phase-specific roll-forward plan above.
 
 ## Target Replacement Operations
 
@@ -88,7 +90,7 @@ Replacement operations use the stable `playableStateNamespaceId` and owner-resol
 - `liveness` is process-local only.
 - `readiness` is truthful local readiness for the currently implemented entity-query slice and must fail when the service cannot safely answer room/entity lookup traffic with its required local persistence/cache/bootstrap state.
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
-- `entity.actor-condition.expiry-interval-seconds` controls the scheduled actor-condition expiry sweep. The default is 30 seconds, and the sweep globally and without a batch bound deletes rows whose `expires_at` has elapsed and whose character is `OWNER_RESOLVED`; elapsed conditions on `QUARANTINED` actors are retained. Gameplay reads filter those rows before evaluating state, so an expired effect is not restored. The sweep targets only `actor_active_conditions`; separate `entity_mutation_effects` receipts remain and are checked by `ApplyActorCondition` before mutation, but a receipt-retention guarantee across the replay/restore horizon is unproved. No concrete duplicate-application or S2-loss claim is made. Target proof still requires explicit S1/S2 classification, dependent-reference/hold checks, a safe watermark, and typed target, request-digest, and concurrency enforcement; expiry is not itself a retention or disposal decision.
+- `entity.actor-condition.expiry-interval-seconds` controls the scheduled actor-condition expiry sweep. The default is 30 seconds, and the sweep globally and without a batch bound deletes rows whose `expires_at` has elapsed. Gameplay reads filter those rows before evaluating state, so an expired effect is not restored. The sweep targets only `actor_active_conditions`; separate `entity_mutation_effects` receipts remain and are checked by `ApplyActorCondition` before mutation, but a receipt-retention guarantee across the replay/restore horizon is unproved. No concrete duplicate-application or S2-loss claim is made. Target proof still requires explicit S1/S2 classification, dependent-reference/hold checks, a safe watermark, and typed target, request-digest, and concurrency enforcement; expiry is not itself a retention or disposal decision.
 
 ## Tick Locking
 

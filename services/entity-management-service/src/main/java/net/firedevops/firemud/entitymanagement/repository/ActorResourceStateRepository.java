@@ -29,17 +29,12 @@ public class ActorResourceStateRepository {
                 .TENANT_ID
                 .eq(tenantId)
                 .and(ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY.eq(playableStateKey))
-                .and(ACTOR_RESOURCE_STATES.CHARACTER_ID.eq(characterId))
-                .and(
-                    JooqEntityManagementRepositorySupport.ownerResolvedActorExists(
-                        dsl, ACTOR_RESOURCE_STATES.CHARACTER_ID, ACTOR_RESOURCE_STATES.TENANT_ID)))
+                .and(ACTOR_RESOURCE_STATES.CHARACTER_ID.eq(characterId)))
         .orderBy(ACTOR_RESOURCE_STATES.STAT_KEY.asc())
         .fetch(this::toEntity);
   }
 
   public ActorResourceState save(ActorResourceState entity) {
-    JooqEntityManagementRepositorySupport.requireOwnerResolvedActor(
-        dsl, entity.getTenantId(), entity.getCharacterId());
     if (entity.getId() == null) {
       Long id =
           dsl.insertInto(ACTOR_RESOURCE_STATES)
@@ -59,31 +54,16 @@ public class ActorResourceStateRepository {
       entity.setId(id);
       return entity;
     }
-    int updatedRows =
-        dsl.update(ACTOR_RESOURCE_STATES)
-            .set(ACTOR_RESOURCE_STATES.CURRENT_VALUE, entity.getCurrentValue())
-            .set(ACTOR_RESOURCE_STATES.MAX_VALUE, entity.getMaxValue())
-            .set(ACTOR_RESOURCE_STATES.BASE_VALUE, entity.getBaseValue())
-            .set(ACTOR_RESOURCE_STATES.SOURCE_TYPE, entity.getSourceType())
-            .set(ACTOR_RESOURCE_STATES.SOURCE_ID, entity.getSourceId())
-            .set(ACTOR_RESOURCE_STATES.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
-            .set(ACTOR_RESOURCE_STATES.VERSION, entity.getVersion() + 1)
-            .where(
-                ACTOR_RESOURCE_STATES
-                    .ID
-                    .eq(entity.getId())
-                    .and(ACTOR_RESOURCE_STATES.TENANT_ID.eq(entity.getTenantId()))
-                    .and(ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY.eq(entity.getPlayableStateKey()))
-                    .and(ACTOR_RESOURCE_STATES.CHARACTER_ID.eq(entity.getCharacterId()))
-                    .and(
-                        JooqEntityManagementRepositorySupport.ownerResolvedActorExists(
-                            dsl,
-                            ACTOR_RESOURCE_STATES.CHARACTER_ID,
-                            ACTOR_RESOURCE_STATES.TENANT_ID)))
-            .execute();
-    if (updatedRows != 1) {
-      throw new IllegalStateException("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
-    }
+    dsl.update(ACTOR_RESOURCE_STATES)
+        .set(ACTOR_RESOURCE_STATES.CURRENT_VALUE, entity.getCurrentValue())
+        .set(ACTOR_RESOURCE_STATES.MAX_VALUE, entity.getMaxValue())
+        .set(ACTOR_RESOURCE_STATES.BASE_VALUE, entity.getBaseValue())
+        .set(ACTOR_RESOURCE_STATES.SOURCE_TYPE, entity.getSourceType())
+        .set(ACTOR_RESOURCE_STATES.SOURCE_ID, entity.getSourceId())
+        .set(ACTOR_RESOURCE_STATES.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
+        .set(ACTOR_RESOURCE_STATES.VERSION, entity.getVersion() + 1)
+        .where(ACTOR_RESOURCE_STATES.ID.eq(entity.getId()))
+        .execute();
     entity.setVersion(entity.getVersion() + 1);
     return entity;
   }
