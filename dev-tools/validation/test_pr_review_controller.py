@@ -168,6 +168,17 @@ class FakeGitHub:
     def pull_request(self, number):
         return self.values[number]
 
+    def period_reset_ref_identity(self, number):
+        item = self.values[number]
+        return {
+            "number": number, "state": item.state,
+            "mergedAt": "2026-10-14T00:00:00Z" if item.merged else None,
+            "headRefName": item.head_ref, "headRefOid": item.head,
+            "headRepository": {"nameWithOwner": item.head_repository},
+            "baseRefName": item.base_ref, "baseRefOid": item.base_tip,
+            "baseRef": {"name": item.base_ref, "target": {"oid": item.base_tip}},
+        }
+
 
 class AuditedEvidence(dict):
     def __init__(self, *args, audit=None, on_audit=None, **kwargs):
@@ -1278,6 +1289,205 @@ class ControllerTests(unittest.TestCase):
                     self.assertEqual(
                         controller.status()["prs"][0]["review_obligations"]["hosted"], before_obligations
                     )
+
+    def actual_base_period_reset_controller(self, mergeable="MERGEABLE"):
+        retained = self.allocation_evidence(
+            checkpoint="retained-pr-base-checkpoint", source_run_id="retained-pr-base-result",
+            channel="hosted", accepted=1,
+        )
+        provider = AuditedEvidence({(1, "hosted"): [retained, self.scope_timeline_evidence()]})
+        controller = self.make(
+            {1: pr(1, HEAD_1, base_tip=BASE, mergeable=mergeable)}, provider,
+            heads={"feature-1": HEAD_1, "develop": PARENT},
+        )
+        controller.set_stack([1])
+        original_read = controller.github.period_reset_ref_identity
+
+        def read_actual_refs(number):
+            value = original_read(number)
+            value["baseRef"]["target"]["oid"] = PARENT
+            return value
+
+        controller.github.period_reset_ref_identity = read_actual_refs
+        return controller, provider, retained
+
+    def test_hosted_period_reset_verifies_actual_base_without_replacing_retained_pr_base_oid(self):
+        for baseline_mode in ("checkpoint", "current_history"):
+            for mergeable in ("MERGEABLE", "CONFLICTING", "UNKNOWN"):
+                with self.subTest(baseline_mode=baseline_mode, mergeable=mergeable):
+                    controller, provider, retained = self.actual_base_period_reset_controller(mergeable)
+                    baseline = (
+                        {"checkpoint": retained["checkpoint"]}
+                        if baseline_mode == "checkpoint"
+                        else {"current_history_baseline": True, "baseline_id": "actual-base-reset"}
+                    )
+                    before_state = controller._state()
+                    before_history = copy.deepcopy(provider.backing)
+                    before = controller.status()
+                    live, reconciliation = controller._reconciliation(before_state)
+                    self.assertEqual(live[1].base_tip, BASE)
+                    self.assertNotEqual(live[1].base_tip, controller.git.heads[live[1].base_ref])
+                    self.assertFalse(controller._current_branches_match(
+                        before_state, live, reconciliation, 1, controller.git.heads
+                    ))
+                    with patch.object(
+                        controller.github, "period_reset_ref_identity",
+                        wraps=controller.github.period_reset_ref_identity,
+                    ) as refs_read:
+                        result = controller.decide_period_reset(
+                            pr=1, channel="hosted", head=HEAD_1, **baseline,
+                            actor="operator@example.invalid", reason="reset against separately verified current base refs",
+                        )
+                    self.assertEqual(refs_read.call_count, 2)
+                    self.assertEqual(result["status"], "recorded")
+                    self.assertEqual(result["period"]["current_base_tip"], BASE)
+                    self.assertEqual(result["period"]["current_base_ref"], "develop")
+                    self.assertEqual(controller.github.values[1].base_tip, BASE)
+                    self.assertEqual(controller.git.heads["develop"], PARENT)
+                    self.assertEqual(provider.backing, before_history)
+                    after_state = controller._state()
+                    self.assertEqual(
+                        dataclasses.replace(after_state, review_period_decisions=before_state.review_period_decisions),
+                        before_state,
+                    )
+                    after = controller.status()
+                    self.assertEqual(after["prs"][0]["reconciliation"], before["prs"][0]["reconciliation"])
+                    self.assertEqual(after["review_targets"]["hosted"], before["review_targets"]["hosted"])
+                    self.assertEqual(
+                        after["prs"][0]["review_obligations"], before["prs"][0]["review_obligations"]
+                    )
+
+    def test_hosted_period_reset_refuses_uncertain_actual_base_identity(self):
+        for baseline_mode in ("checkpoint", "current_history"):
+            for problem in ("missing-base-ref", "missing-target", "malformed-tip", "wrong-ref-name",
+                            "disagreeing-tip", "missing-capability", "unavailable-read", "missing-state",
+                            "missing-merged-evidence", "wrong-pr", "wrong-head"):
+                with self.subTest(baseline_mode=baseline_mode, problem=problem):
+                    controller, provider, retained = self.actual_base_period_reset_controller()
+                    value = controller.github.period_reset_ref_identity(1)
+                    if problem == "missing-base-ref":
+                        value["baseRef"] = None
+                    elif problem == "missing-target":
+                        value["baseRef"]["target"] = None
+                    elif problem == "malformed-tip":
+                        value["baseRef"]["target"]["oid"] = "ambiguous-tip"
+                    elif problem == "wrong-ref-name":
+                        value["baseRef"]["name"] = "other-base"
+                    elif problem == "disagreeing-tip":
+                        value["baseRef"]["target"]["oid"] = BASE
+                    elif problem == "missing-state":
+                        value.pop("state")
+                    elif problem == "missing-merged-evidence":
+                        value.pop("mergedAt")
+                    elif problem == "wrong-pr":
+                        value["number"] = 2
+                    elif problem == "wrong-head":
+                        value["headRefOid"] = HEAD_2
+                    if problem == "missing-capability":
+                        controller.github.period_reset_ref_identity = None
+                    elif problem == "unavailable-read":
+                        controller.github.period_reset_ref_identity = Mock(side_effect=OSError("identity unavailable"))
+                    else:
+                        controller.github.period_reset_ref_identity = lambda _number, selected=value: selected
+                    baseline = (
+                        {"checkpoint": retained["checkpoint"]}
+                        if baseline_mode == "checkpoint"
+                        else {"current_history_baseline": True, "baseline_id": "uncertain-actual-base"}
+                    )
+                    original = controller._state()
+                    original_history = copy.deepcopy(provider.backing)
+                    with self.assertRaises(ControllerError):
+                        controller.decide_period_reset(
+                            pr=1, channel="hosted", head=HEAD_1, **baseline,
+                            actor="operator@example.invalid", reason="uncertain actual refs must refuse",
+                        )
+                    self.assertEqual(controller._state(), original)
+                    self.assertEqual(provider.backing, original_history)
+
+    def test_hosted_period_reset_rechecks_actual_refs_before_recording(self):
+        for baseline_mode in ("checkpoint", "current_history"):
+            for movement in ("actual-base-tip", "remote-base-tip", "remote-head-tip", "base-ref", "head-ref",
+                             "pr-head", "head-repository", "pr-base-oid", "closed", "missing-base", "unavailable"):
+                with self.subTest(baseline_mode=baseline_mode, movement=movement):
+                    controller, provider, retained = self.actual_base_period_reset_controller()
+                    original_read = controller.github.period_reset_ref_identity
+                    reads = 0
+
+                    def moving_refs(number, read=original_read, change=movement, selected_controller=controller):
+                        nonlocal reads
+                        value = read(number)
+                        reads += 1
+                        if reads != 2:
+                            return value
+                        if change == "actual-base-tip":
+                            value["baseRef"]["target"]["oid"] = HEAD_2
+                            selected_controller.git.heads["develop"] = HEAD_2
+                        elif change == "remote-base-tip":
+                            selected_controller.git.heads["develop"] = HEAD_2
+                        elif change == "remote-head-tip":
+                            selected_controller.git.heads["feature-1"] = HEAD_2
+                        elif change == "base-ref":
+                            value["baseRefName"] = "other-base"
+                            value["baseRef"]["name"] = "other-base"
+                        elif change == "head-ref":
+                            value["headRefName"] = "other-head"
+                        elif change == "pr-head":
+                            value["headRefOid"] = HEAD_2
+                        elif change == "head-repository":
+                            value["headRepository"]["nameWithOwner"] = "other/repo"
+                        elif change == "pr-base-oid":
+                            value["baseRefOid"] = HEAD_2
+                        elif change == "closed":
+                            value["state"] = "CLOSED"
+                        elif change == "missing-base":
+                            value["baseRef"] = None
+                            selected_controller.git.heads.pop("develop")
+                        else:
+                            raise OSError("actual refs cannot be rechecked")
+                        return value
+
+                    controller.github.period_reset_ref_identity = moving_refs
+                    baseline = (
+                        {"checkpoint": retained["checkpoint"]}
+                        if baseline_mode == "checkpoint"
+                        else {"current_history_baseline": True, "baseline_id": "moving-actual-base"}
+                    )
+                    original = controller._state()
+                    original_history = copy.deepcopy(provider.backing)
+                    with self.assertRaises(ControllerError):
+                        controller.decide_period_reset(
+                            pr=1, channel="hosted", head=HEAD_1, **baseline,
+                            actor="operator@example.invalid", reason="actual refs moved before append",
+                        )
+                    self.assertEqual(reads, 2)
+                    self.assertEqual(controller._state(), original)
+                    self.assertEqual(provider.backing, original_history)
+
+    def test_cli_period_reset_does_not_read_hosted_actual_ref_identity(self):
+        controller, _provider, retained = self.parent_moved_period_reset_controller("cli")
+        controller.github.period_reset_ref_identity = Mock(side_effect=AssertionError("Hosted-only read"))
+        result = controller.decide_period_reset(
+            pr=2, channel="cli", head=HEAD_3, checkpoint=retained["checkpoint"],
+            actor="operator@example.invalid", reason="retain original CLI reset behavior",
+        )
+        self.assertEqual(result["status"], "recorded")
+        controller.github.period_reset_ref_identity.assert_not_called()
+
+    def test_live_hosted_reset_provider_keeps_actual_ref_and_retained_pr_base_separate(self):
+        controller, _provider, _retained = self.actual_base_period_reset_controller()
+        value = controller.github.period_reset_ref_identity(1)
+        payload = {"data": {"repository": {"pullRequest": value}}}
+        with patch.object(github, "run_gh_query", return_value=payload) as query:
+            actual = LiveGitHub("owner/repo").period_reset_ref_identity(1)
+        self.assertEqual(actual["baseRefOid"], BASE)
+        self.assertEqual(actual["baseRef"]["target"]["oid"], PARENT)
+        self.assertEqual(query.call_args.args[1], {"owner": "owner", "repo": "repo", "number": 1})
+        self.assertIn("baseRef { name target { oid } }", query.call_args.args[0])
+        with (
+            patch.object(github, "run_gh_query", return_value={"data": {"repository": {"pullRequest": None}}}),
+            self.assertRaises((RuntimeError, TypeError)),
+        ):
+            LiveGitHub("owner/repo").period_reset_ref_identity(1)
 
     def test_hosted_period_reset_allows_mergeability_or_ancestry_holds_with_exact_refs(self):
         for baseline_mode in ("checkpoint", "current_history"):
