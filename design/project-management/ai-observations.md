@@ -239,9 +239,9 @@ Entry format:
 - `2026-10-13`: Fresh-bootstrap discovery needs every required Compose placeholder
   - Context: the existing fresh-bootstrap wrapper failed before claiming a run or building images because its configuration-only service discovery supplied the mTLS certificate placeholder but omitted the required authored-world source receipt mount.
   - Observation: Compose interpolation rejected the missing directory. The discovery command now supplies a configuration-only receipt path as well; this path is never used by the actual deployment, whose unchanged run-owned claim and capability create and bind the real receipt directory before Compose starts.
-  - Current status: the correction is being verified with the existing smoke contract and an actual fresh packaged player-flow run. Configuration parsing establishes no runtime or owner-provenance proof.
+  - Current status: the existing smoke contract, shellcheck and actual configuration-only parsing pass. The subsequent fresh rebuilt packaged WebSocket and Telnet player-flow baselines pass with the unchanged real run-owned claim; this does not establish canonical owner provenance.
 
 - `2026-10-13`: Native Linux Docker proof can still invoke a Windows credential helper
   - Context: the claimed Gameplay fresh-bootstrap run rebuilt all service jars and images successfully, then failed before startup while pulling public Redis images. WSL reported `UtilAcceptVsock` and `accept4` timeout errors followed by a Docker credential lookup failure.
   - Observation: using the native Linux Docker socket does not select a separate client credential configuration. A run-scoped private client configuration can omit unavailable Windows credential helpers while preserving static registry settings and Compose plugin discovery; the global client configuration need not change.
-  - Current status: the required packaged proof is being retried with that isolated configuration. This client failure does not establish an application failure or explain the earlier Testcontainers endpoint refusals.
+  - Current status: the required packaged proof passes both transports with the isolated configuration and pinned public images. This client failure establishes neither an application regression nor a cause for the earlier Testcontainers endpoint refusals.
