@@ -4,22 +4,21 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.sql.SQLException;
 import java.util.Optional;
-import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
+import net.firedevops.firemud.gamedesign.v1.AuthoredWorldSourceReadServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
-import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessException;
 
 /** Standalone exact authored-source owner read; deliberately not registered as a gRPC service. */
 public final class AuthoredWorldSourceReadGrpcService
-    extends TenantIdentityServiceGrpc.TenantIdentityServiceImplBase {
+    extends AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceImplBase {
   private final GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
   private final String workloadNamespace;
 
@@ -131,22 +130,6 @@ public final class AuthoredWorldSourceReadGrpcService
         && GrpcPeerIdentity.isValidNamespace(workloadNamespace)
         && peer.uri()
             .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/world-management-service");
-  }
-
-  private static UUID parseCanonicalNonNilUuid(String value) {
-    if (value == null) {
-      return null;
-    }
-    try {
-      UUID parsed = UUID.fromString(value);
-      return isCanonicalNonNilUuid(parsed) && parsed.toString().equals(value) ? parsed : null;
-    } catch (IllegalArgumentException exception) {
-      return null;
-    }
-  }
-
-  private static boolean isCanonicalNonNilUuid(UUID value) {
-    return value != null && !new UUID(0L, 0L).equals(value);
   }
 
   private static boolean hasConnectionFailureSqlState(Throwable failure) {

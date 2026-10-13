@@ -14,12 +14,12 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
-import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.AuthoredWorldSourceReadServiceGrpc;
 
 /** Explicit mTLS client for exact, non-mutating Game Design authored-world source reads. */
 public final class AuthoredWorldSourceClient
     extends AbstractReloadingBlockingGrpcClient<
-        TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub> {
+        AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
@@ -62,7 +62,8 @@ public final class AuthoredWorldSourceClient
   public AuthoredWorldSourceEvidence read(AuthoredWorldSourceGrpcCodec.ReadRequest request) {
     Objects.requireNonNull(request, "request");
     requireNamespace(request.targetNamespace());
-    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub currentStub = requireStub();
+    AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceBlockingStub currentStub =
+        requireStub();
     var response =
         currentStub
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
@@ -86,11 +87,11 @@ public final class AuthoredWorldSourceClient
   }
 
   @Override
-  protected TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub buildStub(
-      ManagedChannel channel) {
+  protected AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceBlockingStub
+      buildStub(ManagedChannel channel) {
     String expectedGameDesignPeerUri =
         "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service";
-    return TenantIdentityServiceGrpc.newBlockingStub(channel)
+    return AuthoredWorldSourceReadServiceGrpc.newBlockingStub(channel)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedGameDesignPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedGameDesignPeerUri))
         .withCompression("gzip");
@@ -103,8 +104,10 @@ public final class AuthoredWorldSourceClient
     super.close();
   }
 
-  private TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub requireStub() {
-    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub currentStub = stub();
+  private AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceBlockingStub
+      requireStub() {
+    AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceBlockingStub currentStub =
+        stub();
     if (closed || !initialized || currentStub == null) {
       throw new IllegalStateException(
           "Authored-world source client is not initialized and available");

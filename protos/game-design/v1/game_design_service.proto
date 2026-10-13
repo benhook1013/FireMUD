@@ -31,9 +31,6 @@ service GameDesignService {
   rpc GetPublishedReleaseBundle(GetPublishedReleaseBundleRequest)
       returns (GetPublishedReleaseBundleResponse);
   rpc GetVersionState(GetVersionStateRequest) returns (GetVersionStateResponse);
-  // Exact current version state for one already-registered authored-world source.
-  rpc GetAuthoredWorldVersionState(GetAuthoredWorldVersionStateRequest)
-      returns (GetAuthoredWorldVersionStateResponse);
   rpc CompareAndSetVersionState(CompareAndSetVersionStateRequest)
       returns (CompareAndSetVersionStateResponse);
   rpc ResolveLaunchDescriptor(ResolveLaunchDescriptorRequest)
@@ -71,6 +68,12 @@ service GameDesignService {
   rpc PutHelpTopic(PutHelpTopicRequest) returns (PutHelpTopicResponse);
   rpc ListHelpTopics(ListHelpTopicsRequest) returns (ListHelpTopicsResponse);
   rpc DeleteHelpTopic(DeleteHelpTopicRequest) returns (DeleteHelpTopicResponse);
+}
+
+// Standalone, unregistered exact version-state read for an already-intaken authored-world source.
+service AuthoredWorldVersionStateService {
+  rpc GetAuthoredWorldVersionState(GetAuthoredWorldVersionStateRequest)
+      returns (GetAuthoredWorldVersionStateResponse);
 }
 
 message SaveRevisionRequest {

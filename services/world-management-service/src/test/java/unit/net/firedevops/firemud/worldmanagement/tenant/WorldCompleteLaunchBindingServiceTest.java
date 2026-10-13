@@ -286,7 +286,7 @@ class WorldCompleteLaunchBindingServiceTest {
     CompleteLaunchBindingEvidence changedPair =
         committedPair(
             fixture.evidence().descriptor(),
-            fixture.request().expectedReleaseAttestationEvidenceDigest());
+            digest('8'));
     WorldCompleteLaunchBindingRepository.StoredBinding changedStored =
         stored(fixture.sourceReceipt(), changedPair);
     stubCommittedLaunchReads(fixture);
@@ -417,7 +417,7 @@ class WorldCompleteLaunchBindingServiceTest {
     CompleteLaunchBindingEvidence changedPair =
         committedPair(
             fixture.evidence().descriptor(),
-            fixture.request().expectedReleaseAttestationEvidenceDigest());
+            digest('8'));
     WorldCompleteLaunchBindingRepository.StoredBinding changedStored =
         stored(fixture.sourceReceipt(), changedPair);
     stubCommittedLaunchReads(fixture);

@@ -582,6 +582,7 @@ class WorldAuthoredSourceIntakeIntegrationTest {
       long canonicalRegionId =
           seedCanonicalRegionBeforeGuard(schema, canonicalTenantId, canonicalTenantKey);
       migrateFixture(schema, MigrationVersion.fromVersion("24"));
+      migrateFixture(schema, MigrationVersion.fromVersion("27.2"));
 
       try (Connection connection = fixtureConnection(schema)) {
         assertProtectedReservationTriggerCatalog(connection);
@@ -641,6 +642,59 @@ class WorldAuthoredSourceIntakeIntegrationTest {
     } finally {
       dropFixtureSchema(schema);
     }
+  }
+
+  @Test
+  void sameLegacyTenantUpdatesDoNotLockTheSharedReservationRow() throws Exception {
+    long legacyTenantKey = 7_000_000_000L + ThreadLocalRandom.current().nextLong(1_000_000L);
+    long firstRegionId = insertRegion(legacyTenantKey, "first-before-concurrent-update");
+    long secondRegionId = insertRegion(legacyTenantKey, "second-before-concurrent-update");
+    TransactionTemplate firstTransaction = new TransactionTemplate(transactionManager);
+    TransactionTemplate secondTransaction = new TransactionTemplate(transactionManager);
+    CountDownLatch firstUpdateFinished = new CountDownLatch(1);
+    CountDownLatch allowFirstCommit = new CountDownLatch(1);
+
+    try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+      Future<?> first =
+          executor.submit(
+              () ->
+                  firstTransaction.execute(
+                      status -> {
+                        dsl.execute(
+                            "UPDATE region SET name = ? WHERE id = ?",
+                            "first-uncommitted-update",
+                            firstRegionId);
+                        firstUpdateFinished.countDown();
+                        await(allowFirstCommit, 20);
+                        return null;
+                      }));
+
+      try {
+        assertThat(firstUpdateFinished.await(5, TimeUnit.SECONDS)).isTrue();
+        assertThat(first.isDone()).isFalse();
+
+        Future<?> second =
+            executor.submit(
+                () ->
+                    secondTransaction.execute(
+                        status -> {
+                          dsl.execute(
+                              "UPDATE region SET name = ? WHERE id = ?",
+                              "second-committed-update",
+                              secondRegionId);
+                          return null;
+                        }));
+        second.get(5, TimeUnit.SECONDS);
+        assertThat(first.isDone()).isFalse();
+      } finally {
+        allowFirstCommit.countDown();
+      }
+
+      first.get(20, TimeUnit.SECONDS);
+    }
+
+    assertThat(readRegionName(firstRegionId)).isEqualTo("first-uncommitted-update");
+    assertThat(readRegionName(secondRegionId)).isEqualTo("second-committed-update");
   }
 
   @Test
@@ -1024,6 +1078,16 @@ class WorldAuthoredSourceIntakeIntegrationTest {
     }
   }
 
+  private long insertRegion(long tenantKey, String name) {
+    return Objects.requireNonNull(
+            dsl.fetchOne(
+                "INSERT INTO region (tenant_id, name) VALUES (?, ?) RETURNING id",
+                tenantKey,
+                name),
+            "Region concurrency fixture insert returned no row")
+        .get(0, Long.class);
+  }
+
   private static void updateRegion(
       Connection connection, long regionId, long tenantKey, String name) throws SQLException {
     try (PreparedStatement statement =
@@ -1076,6 +1140,13 @@ class WorldAuthoredSourceIntakeIntegrationTest {
         return result.getString(1);
       }
     }
+  }
+
+  private String readRegionName(long regionId) {
+    return Objects.requireNonNull(
+            dsl.fetchOne("SELECT name FROM region WHERE id = ?", regionId),
+            "Region concurrency fixture read returned no row")
+        .get(0, String.class);
   }
 
   private static void assertCanonicalRegion(

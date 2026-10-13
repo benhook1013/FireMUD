@@ -21,8 +21,10 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceReadGrpcService;
+import net.firedevops.firemud.gamedesign.v1.AuthoredWorldSourceReadServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
+import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 
@@ -46,6 +48,22 @@ class AuthoredWorldSourceReadGrpcServiceTest {
       mock(GameAuthoredWorldSourceRepository.class);
   private final AuthoredWorldSourceReadGrpcService service =
       new AuthoredWorldSourceReadGrpcService(authoredWorldSourceRepository, "test");
+
+  @Test
+  void usesASeparateServiceIdentityFromRegisteredTenantIdentityRpcSurface() {
+    assertThat(TenantIdentityServiceGrpc.getServiceDescriptor().getName())
+        .isEqualTo("gamedesign.v1.TenantIdentityService");
+    assertThat(
+            TenantIdentityServiceGrpc.getServiceDescriptor()
+                .findMethodByName("ResolveAuthoredWorldSource"))
+        .isNull();
+    assertThat(AuthoredWorldSourceReadServiceGrpc.getServiceDescriptor().getName())
+        .isEqualTo("gamedesign.v1.AuthoredWorldSourceReadService");
+    assertThat(
+            AuthoredWorldSourceReadServiceGrpc.getServiceDescriptor()
+                .findMethodByName("ResolveAuthoredWorldSource"))
+        .isNotNull();
+  }
 
   @Test
   void resolvesExactPersistedWorldSourceOnlyForSameNamespaceWorldManagementPeer() {
