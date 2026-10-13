@@ -22,7 +22,7 @@
 
 ### Authored-world source retention
 
-A fresh intake completes its authenticated Game Design source read before opening the short World owner transaction. The allocator retains its association and legacy-table safety locks, with a transaction-local lock-wait cap of one second that preserves a tighter positive caller limit. Lock timeout and deadlock failures return `UNAVAILABLE` without committed intake evidence; exact retries retain the original request identity. This does not register or activate the passive service.
+A fresh intake completes its authenticated Game Design source read before opening the short World owner transaction. The allocator retains its association and legacy-table safety locks, with a transaction-local one-second limit for each lock wait that preserves a tighter positive caller limit. Lock timeout and deadlock failures return `UNAVAILABLE` without committed intake evidence; exact retries retain the original request identity. This does not register or activate the passive service.
 
 World Management retains exact authored-source evidence as owner-local source data. The intake receipt binds the target namespace, canonical tenant UUID, world selector, source operation and evidence digest, and immutable request/receipt identities. World reserves numeric tenant keys already present in its data and prevents those legacy keys from being reused for a canonical authored tenant association; it does not reinterpret or migrate existing `V1`–`V23` rows into the new UUID identity.
 

@@ -784,8 +784,7 @@ class WorldAuthoredSourceIntakeIntegrationTest {
     WorldAuthoredSourceIntakeReceipt receipt =
         intakeTransaction.execute(
             status -> {
-              dsl.fetchValue(
-                  "SELECT set_config('lock_timeout', '250ms', true)", String.class);
+              dsl.fetchValue("SELECT set_config('lock_timeout', '250ms', true)", String.class);
               WorldAuthoredSourceIntakeReceipt accepted =
                   repository.acceptFresh(NAMESPACE, requestId, source);
               Integer activeTimeoutMillis =
