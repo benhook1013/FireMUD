@@ -182,6 +182,46 @@ class GameInstanceServiceImplTest {
     assertNumericLaunchDeniedWithoutMutation(request);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"", "123e4567-e89b-12d3-a456-426614174000"})
+  void canonicalTenantUuidCannotBeCoercedIntoLegacyNumericLaunchAuthority(String legacyTenantId) {
+    StartSessionRequest request = new StartSessionRequest(1L, 3L, "cp-canonical-tenant", 42L);
+    doReturn(
+            ResolveLaunchDescriptorResponse.newBuilder()
+                .setLaunchDescriptor(
+                    net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
+                        .setLaunchDescriptorId("ld-cp-canonical-tenant")
+                        .setCanonicalTenantId("123e4567-e89b-12d3-a456-426614174000")
+                        .setTenantId(legacyTenantId)
+                        .setGameTemplateId(request.gameTemplateId())
+                        .setControlPlaneRequestId(request.controlPlaneRequestId())
+                        .setVersionId(11L)
+                        .setScriptPatchVersion("")
+                        .setRuntimeFlagsJson("{}")
+                        .setGenerationConfigRevision("genrev-11")
+                        .setVersionStateEpoch(77L)
+                        .setReleaseBundleId(77L)
+                        .setPublishedReleaseBundleRef("prb:1:11:77")
+                        .build())
+                .build())
+        .when(gameDesignClient)
+        .resolveLaunchDescriptor(
+            request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId());
+
+    Map<Long, GameInstance> before = new HashMap<>();
+    store.forEach((id, instance) -> before.put(id, copyOf(instance)));
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> service.startSession(request));
+
+    assertEquals("tenantId must be numeric", error.getMessage());
+    org.assertj.core.api.Assertions.assertThat(store).usingRecursiveComparison().isEqualTo(before);
+    verify(gameDesignClient)
+        .resolveLaunchDescriptor(
+            request.tenantId(), request.gameTemplateId(), request.controlPlaneRequestId());
+    verifyNoMoreInteractions(gameDesignClient);
+    verifyNoInteractions(repository, worldManagementClient, stateService);
+  }
+
   @Test
   void runOwnedInitialLaunchExactRetryReturnsSameActiveTargetWithoutReplayingActivation() {
     StartSessionRequest request =

@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -31,6 +32,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -366,6 +368,85 @@ class GameInstanceServiceLifecycleIntegrationTest {
                                     .WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED)
                             .build())
                     .build());
+  }
+
+  @Test
+  void numericStartIsDeniedBeforeStateOrWorldMutation() {
+    when(gameDesignClient.resolveLaunchDescriptor(42L, 7L, "cp-1"))
+        .thenReturn(deniedNumericLaunchResponse());
+    assertThatThrownBy(() -> service.startSession(new StartSessionRequest(42L, 7L, "cp-1", 100L)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("FAILED_PRECONDITION");
+
+    assertThat(repository.findAll()).isEmpty();
+    verifyNoInteractions(sessionStateService, worldManagementClient);
+  }
+
+  @Test
+  void numericReplacementLaunchIsDeniedBeforeChangingPriorRunningSession() {
+    when(gameDesignClient.resolveLaunchDescriptor(42L, 7L, "cp-2"))
+        .thenReturn(deniedNumericLaunchResponse());
+    GameInstance existing = new GameInstance();
+    existing.setTenantId(42L);
+    existing.setRuntimeVersion("1.0.0");
+    existing.setScriptPatchVersion("patch-1");
+    existing.setScriptPinEpoch(1L);
+    existing.setScriptPatchPinnedControlPlaneRequestId("pin-request-1");
+    existing.setOwnerAccountId(100L);
+    existing.setStatus("RUNNING");
+    existing = repository.saveAndFlush(existing);
+    long existingId = existing.getId();
+
+    assertThatThrownBy(
+            () -> service.startSession(new StartSessionRequest(42L, 7L, "cp-2", 100L), true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("FAILED_PRECONDITION");
+
+    assertThat(repository.findAll()).hasSize(1);
+    GameInstance restored = repository.findById(existingId).orElseThrow();
+    assertThat(restored.getStatus()).isEqualTo("RUNNING");
+    assertThat(restored.getRuntimeVersion()).isEqualTo("1.0.0");
+    assertThat(restored.getScriptPatchVersion()).isEqualTo("patch-1");
+    assertThat(restored.getScriptPinEpoch()).isEqualTo(1L);
+    assertThat(restored.getScriptPatchPinnedControlPlaneRequestId()).isEqualTo("pin-request-1");
+    assertThat(restored.getOwnerAccountId()).isEqualTo(100L);
+    verifyNoInteractions(sessionStateService, worldManagementClient);
+  }
+
+  @Test
+  void numericReplacementLaunchIsDeniedBeforePriorWorldTermination() {
+    when(gameDesignClient.resolveLaunchDescriptor(42L, 7L, "cp-2"))
+        .thenReturn(deniedNumericLaunchResponse());
+    GameInstance existing = new GameInstance();
+    existing.setTenantId(42L);
+    existing.setRuntimeVersion("1.0.0");
+    existing.setScriptPatchVersion("patch-1");
+    existing.setScriptPinEpoch(1L);
+    existing.setScriptPatchPinnedControlPlaneRequestId("pin-request-1");
+    existing.setOwnerAccountId(100L);
+    existing.setStatus("RUNNING");
+    existing = repository.saveAndFlush(existing);
+    long existingId = existing.getId();
+
+    assertThatThrownBy(
+            () -> service.startSession(new StartSessionRequest(42L, 7L, "cp-2", 100L), true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("FAILED_PRECONDITION");
+    assertThat(repository.findById(existingId)).isPresent();
+    assertThat(repository.findById(existingId).orElseThrow().getStatus()).isEqualTo("RUNNING");
+    assertThat(repository.findAll()).hasSize(1);
+    verifyNoInteractions(sessionStateService, worldManagementClient);
+  }
+
+  private static net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse
+      deniedNumericLaunchResponse() {
+    return net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse.newBuilder()
+        .setError(
+            ErrorDetail.newBuilder()
+                .setCode("FAILED_PRECONDITION")
+                .setMessage("Numeric Game Session launch selectors cannot authorize a launch")
+                .build())
+        .build();
   }
 
   @Test

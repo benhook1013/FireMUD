@@ -94,6 +94,9 @@ class RealmPolicyPublicationReadConfigurationTest {
                             .getFullMethodName(),
                         PublishedRealmEntryPolicyServiceGrpc
                             .getListPublishedRealmEntryPoliciesMethod()
-                            .getFullMethodName()));
+                            .getFullMethodName(),
+                        "gamedesign.v1.GameDesignService/ResolveLaunchDescriptor",
+                        "gamedesign.v1.GameDesignService/GetLaunchDescriptor",
+                        "gamedesign.v1.GameDesignService/GetCompleteLaunchBinding"));
   }
 }

@@ -4,6 +4,7 @@ package entity_management.v1;
 
 import "shared/v1/errors.proto";
 import "shared/v1/instance_refs.proto";
+import "shared/v1/player_execution_context.proto";
 
 option java_package = "net.firedevops.firemud.entitymanagement.v1";
 option java_multiple_files = true;
@@ -34,6 +35,130 @@ service EntityManagementService {
       returns (ValidateEntityTemplateReferenceResponse);
   rpc ValidateEntityUpgradeMappings(ValidateEntityUpgradeMappingsRequest)
       returns (ValidateEntityUpgradeMappingsResponse);
+}
+
+// Canonical gameplay roster discovery is a pre-admission, non-admitting boundary. Both methods
+// are restricted to PRESEEDED_ONLY; other policy values are non-authorizing and fail with
+// FAILED_PRECONDITION. This wire contract does not authorize the legacy numeric
+// ListCharactersByAccount RPC for canonical gameplay. A valid ListPreseededRoster response may
+// contain zero actors; that is a successful lookup. These RPCs use canonical non-OK gRPC statuses
+// rather than in-response errors: malformed requests are INVALID_ARGUMENT, stale snapshots or
+// selections not present in the bound snapshot are FAILED_PRECONDITION, unauthorized callers are
+// UNAUTHENTICATED or PERMISSION_DENIED as applicable, and unavailable dependencies are
+// UNAVAILABLE. No partial success is returned.
+service CanonicalGameplayRosterService {
+  // Returns the persisted preseeded roster for the exact expected target. The server requires an
+  // authenticated, server-derived PlayerExecutionContext and exact same-namespace Game Session
+  // mTLS caller allowlisting. Context account_id equals canonical_account_uuid; request_id equals
+  // request_uuid; tenant_id, realm_id, playable_state_namespace_id, playable_state_scope, and
+  // game_instance_id equal the corresponding expected_target values; session_id identifies the
+  // authenticated session. Context playable_state_scope is the exact text "SHARED" or
+  // "ISOLATED" corresponding to the target enum value; numeric enum text is invalid. No
+  // character_id is selected yet. The target policy must be PRESEEDED_ONLY. These equality
+  // checks do not require an additional Account lookup. A successful response includes its
+  // immutable snapshot UUID and digest, including when the roster is empty.
+  rpc ListPreseededRoster(CanonicalGameplayRosterRequest)
+      returns (CanonicalGameplayRosterResponse);
+  // Reads the selected assignment only if the supplied snapshot UUID and digest still identify
+  // the roster from which selected_character_uuid was chosen. The response echoes that exact
+  // snapshot reference. A changed snapshot or selection absent from it fails with
+  // FAILED_PRECONDITION. It has the same authenticated context and exact target equality
+  // requirements as ListPreseededRoster, and context.character_id must equal
+  // selected_character_uuid. The target policy must be PRESEEDED_ONLY.
+  rpc ReadSelectedPreseededAssignment(CanonicalGameplayRosterSelectedAssignmentRequest)
+      returns (CanonicalGameplayRosterSelectedAssignmentResponse);
+}
+
+message CanonicalGameplayRosterRequest {
+  string request_uuid = 1;
+  string canonical_account_uuid = 2;
+  CanonicalGameplayRosterTarget expected_target = 3;
+  shared.v1.PlayerExecutionContext player_execution_context = 4;
+}
+
+message CanonicalGameplayRosterTarget {
+  string tenant_uuid = 1;
+  string realm_uuid = 2;
+  string world_slug = 3;
+  string realm_slug = 4;
+  string game_instance_uuid = 5;
+  int64 catalog_revision = 6;
+  reserved 7, 8;
+  string published_policy_digest = 9;
+  string published_release_bundle_ref = 10;
+  string admission_pointer_snapshot_digest = 11;
+  string published_owner_proof_digest = 12;
+  string playable_state_namespace_uuid = 13;
+  PlayableStateScope playable_state_scope = 14;
+  CanonicalGameplayRosterEntryPolicy entry_policy = 15;
+  string canonical_version_uuid = 16;
+  // Exact positive counters observed from the current owning Game Session target.
+  int64 pointer_version = 17;
+  int64 active_world_epoch = 18;
+}
+
+enum CanonicalGameplayRosterEntryPolicy {
+  CANONICAL_ROSTER_ENTRY_POLICY_UNSPECIFIED = 0;
+  CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED = 1;
+  CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY = 2;
+  CANONICAL_ROSTER_ENTRY_POLICY_AUTO_PROVISIONED = 3;
+}
+
+message CanonicalGameplayRosterResponse {
+  string canonical_account_uuid = 1;
+  CanonicalGameplayRosterTarget target = 2;
+  string snapshot_uuid = 3;
+  string snapshot_digest = 4;
+  repeated CanonicalGameplayRosterActor actors = 5;
+  reserved 6;
+  reserved "error";
+}
+
+// Immutable identity and content digest of one exact roster snapshot.
+message CanonicalGameplayRosterSnapshotReference {
+  string snapshot_uuid = 1;
+  string snapshot_digest = 2;
+}
+
+message CanonicalGameplayRosterActor {
+  string character_uuid = 1;
+  string display_name = 2;
+  CanonicalGameplayRosterActorKind actor_kind = 3;
+}
+
+message CanonicalGameplayRosterSelectedAssignmentRequest {
+  string request_uuid = 1;
+  string canonical_account_uuid = 2;
+  string selected_character_uuid = 3;
+  CanonicalGameplayRosterTarget expected_target = 4;
+  // Exact snapshot_uuid and snapshot_digest returned by ListPreseededRoster. Retries must reuse
+  // these values and may not silently select against a changed roster.
+  CanonicalGameplayRosterSnapshotReference expected_snapshot = 5;
+  shared.v1.PlayerExecutionContext player_execution_context = 6;
+}
+
+message CanonicalGameplayRosterSelectedAssignmentResponse {
+  string request_uuid = 1;
+  string canonical_account_uuid = 2;
+  string selected_character_uuid = 3;
+  CanonicalGameplayRosterTarget target = 4;
+  // Original non-nil operation identity and immutable intent digest from the unique committed
+  // ASSIGNED PRESEEDED PLAYER receipt matching this exact account, actor, target, and owner proof.
+  // This read returns persisted owner evidence; it never mints an assignment identity or digest.
+  string assignment_uuid = 5;
+  string intent_digest = 6;
+  reserved 7;
+  reserved "error";
+  // Exact snapshot reference supplied by the caller and validated by this operation. The
+  // response echoes that binding alongside the original persisted assignment reference. The
+  // reference does not prove admission or current Account eligibility; placement must revalidate
+  // it with its owning Entity write/readback contract.
+  CanonicalGameplayRosterSnapshotReference snapshot = 8;
+}
+
+enum CanonicalGameplayRosterActorKind {
+  CANONICAL_ROSTER_ACTOR_KIND_UNSPECIFIED = 0;
+  CANONICAL_ROSTER_ACTOR_KIND_PLAYER = 1;
 }
 
 message CreateCharacterRequest {

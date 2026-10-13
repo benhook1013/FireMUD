@@ -723,6 +723,44 @@ class AuthoredWorldLaunchDescriptorGrpcCodecTest {
         "approved-remap-41-42");
   }
 
+  @Test
+  void completeReadRejectsUnknownFieldsOnArtifactAndErrorMessages() throws Exception {
+    var world = authoredWorldFixture();
+    var descriptor = world.launchBinding().descriptor();
+    var release = releaseWithArtifact(world.launchBinding().releaseAttestation());
+    var binding = new CompleteLaunchBindingEvidence(descriptor, release);
+    var request = AuthoredWorldLaunchDescriptorGrpcCodec.toGetRequest(getRequest(descriptor));
+    var good = completeResponse(request, binding);
+
+    var releaseWithUnknownArtifact =
+        good.getReleaseAttestation().toBuilder()
+            .setArtifactDigests(
+                0,
+                good.getReleaseAttestation().getArtifactDigests(0).toBuilder()
+                    .setUnknownFields(UNKNOWN_FIELD))
+            .build();
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request,
+                    good.toBuilder().setReleaseAttestation(releaseWithUnknownArtifact).build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unsupported fields");
+
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldLaunchDescriptorGrpcCodec.fromCompleteResponse(
+                    request,
+                    good.toBuilder()
+                        .setError(
+                            ErrorDetail.newBuilder()
+                                .setUnknownFields(UNKNOWN_FIELD)
+                                .setCode("DENIED"))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("unsupported fields");
+  }
+
   private static AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest getRequest(
       AuthoredWorldLaunchDescriptorEvidence descriptor) {
     return new AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest(
