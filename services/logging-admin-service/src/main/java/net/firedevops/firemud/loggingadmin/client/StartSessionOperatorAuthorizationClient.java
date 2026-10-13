@@ -6,6 +6,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -31,6 +32,7 @@ import net.firedevops.firemud.common.grpc.GrpcTlsMaterialResolver;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Explicitly initialized, typed Logging & Admin client for Account's StartSession issue/recover
@@ -42,6 +44,12 @@ public class StartSessionOperatorAuthorizationClient
         StartSessionOperatorAuthorizationServiceGrpc
             .StartSessionOperatorAuthorizationServiceBlockingStub> {
   private static final int MAX_TUPLE_BYTES = 8 * 1_024;
+  private static final int MAX_REQUEST_BYTES = MAX_TUPLE_BYTES + 16 * 1_024 + 1_024;
+  private static final int MAX_RESPONSE_BYTES =
+      StartSessionAuthorityEvidenceBundle.MAX_BUNDLE_BYTES
+          + StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES
+          + 2_048;
+  private static final Duration MAX_REFERENCE_LIFETIME = Duration.ofMinutes(5);
   private static final int MAX_CONTROL_UI_TOKEN_BYTES = 16 * 1_024;
   private static final int MAX_REFERENCE_BYTES = 128;
   private static final long RPC_DEADLINE_SECONDS = 5L;
@@ -109,6 +117,8 @@ public class StartSessionOperatorAuthorizationClient
       buildStub(io.grpc.ManagedChannel channel) {
     return applyStubCustomizer(
         StartSessionOperatorAuthorizationServiceGrpc.newBlockingStub(channel)
+            .withMaxInboundMessageSize(MAX_RESPONSE_BYTES)
+            .withMaxOutboundMessageSize(MAX_REQUEST_BYTES)
             .withCompression("gzip"));
   }
 
@@ -120,6 +130,7 @@ public class StartSessionOperatorAuthorizationClient
       long reservationClaimFence,
       UUID currentClaimOwnerId,
       long currentClaimFence) {
+    requireNoAmbientSqlOrSynchronization();
     byte[] tupleBytes = canonicalTupleBytes(tuple);
     requireVisibleAsciiToken(controlUiJwt);
     requireOwnerFence(reservationOwnerId, reservationClaimFence, "reservation owner");
@@ -133,10 +144,17 @@ public class StartSessionOperatorAuthorizationClient
             .setCurrentClaimOwnerId(currentClaimOwnerId.toString())
             .setCurrentClaimFence(currentClaimFence)
             .build();
+    if (request.getSerializedSize() > MAX_REQUEST_BYTES) {
+      throw new IllegalArgumentException(
+          "Account authorization request exceeds its supported bound");
+    }
     IssueHumanOperatorAuthorizationReferenceResponse response =
         requirePinnedAccountStub(tuple.action().scope().targetNamespace())
             .withDeadlineAfter(RPC_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .issueHumanOperatorAuthorizationReference(request);
+    if (response == null || response.getSerializedSize() > MAX_RESPONSE_BYTES) {
+      throw malformedResponse();
+    }
     return validateResponse(
         response.getOperatorAuthorizationReference(),
         response.getAuthorizationReferenceFingerprint(),
@@ -160,6 +178,7 @@ public class StartSessionOperatorAuthorizationClient
       long reservationClaimFence,
       UUID currentClaimOwnerId,
       long currentClaimFence) {
+    requireNoAmbientSqlOrSynchronization();
     byte[] tupleBytes = canonicalTupleBytes(tuple);
     requireOwnerFence(reservationOwnerId, reservationClaimFence, "reservation owner");
     requireOwnerFence(currentClaimOwnerId, currentClaimFence, "current claim owner");
@@ -171,10 +190,17 @@ public class StartSessionOperatorAuthorizationClient
             .setCurrentClaimOwnerId(currentClaimOwnerId.toString())
             .setCurrentClaimFence(currentClaimFence)
             .build();
+    if (request.getSerializedSize() > MAX_REQUEST_BYTES) {
+      throw new IllegalArgumentException(
+          "Account authorization request exceeds its supported bound");
+    }
     RecoverOperatorAuthorizationReferenceResponse response =
         requirePinnedAccountStub(tuple.action().scope().targetNamespace())
             .withDeadlineAfter(RPC_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .recoverOperatorAuthorizationReference(request);
+    if (response == null || response.getSerializedSize() > MAX_RESPONSE_BYTES) {
+      throw malformedResponse();
+    }
     return validateResponse(
         response.getOperatorAuthorizationReference(),
         response.getAuthorizationReferenceFingerprint(),
@@ -255,8 +281,12 @@ public class StartSessionOperatorAuthorizationClient
         throw malformedResponse();
       }
       Instant expiresAt = exactExpiry(expiryTimestamp);
-      if (!expiresAt.isAfter(clock.instant())) {
+      Instant now = clock.instant();
+      if (!expiresAt.isAfter(now)) {
         throw new IllegalStateException("Account authorization response is expired");
+      }
+      if (expiresAt.isAfter(now.plus(MAX_REFERENCE_LIFETIME))) {
+        throw malformedResponse();
       }
       StartSessionAuthorityEvidenceBundle bundle =
           StartSessionAuthorityEvidenceBundle.decode(authorityEvidenceBundle);
@@ -345,6 +375,14 @@ public class StartSessionOperatorAuthorizationClient
         || token.getBytes(StandardCharsets.UTF_8).length > MAX_CONTROL_UI_TOKEN_BYTES
         || token.chars().anyMatch(value -> value < 0x21 || value > 0x7e)) {
       throw new IllegalArgumentException("control-ui token is invalid or over its supported bound");
+    }
+  }
+
+  private static void requireNoAmbientSqlOrSynchronization() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "Account authorization requires no ambient SQL or synchronization");
     }
   }
 
