@@ -33,6 +33,7 @@ import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.service.impl.TenantIdentityGrpcService;
+import net.firedevops.firemud.gamedesign.v1.PublishedRealmEntryPolicyServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
 import org.junit.jupiter.api.Test;
@@ -52,9 +53,11 @@ class TenantIdentityGrpcAuthWiringTest {
   private static final String FRESH_CREATION_METHOD =
       "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation";
   private static final String POLICY_RESOLVE_METHOD =
-      "game_design.v1.PublishedRealmEntryPolicyService/ResolvePublishedRealmEntryPolicy";
+      PublishedRealmEntryPolicyServiceGrpc.getResolvePublishedRealmEntryPolicyMethod()
+          .getFullMethodName();
   private static final String POLICY_LIST_METHOD =
-      "game_design.v1.PublishedRealmEntryPolicyService/ListPublishedRealmEntryPolicies";
+      PublishedRealmEntryPolicyServiceGrpc.getListPublishedRealmEntryPoliciesMethod()
+          .getFullMethodName();
   private static final String RESOLVE_LAUNCH_DESCRIPTOR_METHOD =
       "gamedesign.v1.GameDesignService/ResolveLaunchDescriptor";
   private static final String GET_LAUNCH_DESCRIPTOR_METHOD =
