@@ -1591,6 +1591,47 @@ class VersionPublishCommandServiceImplTest {
   }
 
   @Test
+  void failureMarkingReadbackFailureKeepsPendingContractAndOriginalFailure() {
+    SelectedPublishFixture fixture = selectedPublishFixture(1);
+    PublishWorkflowRequest request = fixture.request();
+    IllegalStateException operationFailure = new IllegalStateException("failure mark uncertain");
+    IllegalStateException readFailure = new IllegalStateException("publication read failed");
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(participantDigests());
+    org.mockito.Mockito.doThrow(
+            new PublishGateFailureException(
+                PublishGateFailureCode.RECORDED_CONTENT_DIGEST_MISMATCH,
+                "recorded digest mismatch"))
+        .when(publishGateService)
+        .assertGatePassed(any(VersionDto.class), any(List.class));
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.empty())
+        .thenThrow(readFailure);
+    org.mockito.Mockito.doThrow(
+            new PublishAttemptService.FullVersionTransactionException(operationFailure))
+        .when(publishAttemptService)
+        .executeFullVersionTransaction(any());
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () -> reflectiveUnitHarnessReconcileSelectedPublicationMechanics(request));
+
+    assertTrue(thrown.getMessage().contains("failure marking readback failed"));
+    assertEquals(readFailure, thrown.getCause());
+    assertEquals(1, readFailure.getSuppressed().length);
+    assertEquals(operationFailure, readFailure.getSuppressed()[0]);
+    assertEquals(PublishAttemptStatus.PENDING, fixture.attempt().getStatus());
+    verify(publishAttemptService, never())
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, never()).delete(any(Version.class));
+    verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
+    verify(assetExportService, never())
+        .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
+  }
+
+  @Test
   void freshFullVersionPublishIsDeniedBeforeAnyMutation() {
     String workflowId = "publish:tenant-1:publish-request:workflow-1";
 
@@ -2317,10 +2358,6 @@ class VersionPublishCommandServiceImplTest {
         .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
   }
 
-  @ParameterizedTest
-  @EnumSource(
-      value = Status.Code.class,
-      names = {"UNAVAILABLE", "DEADLINE_EXCEEDED"})
   private PublishAttempt fullAttempt(
       PublishAttemptStatus status, long versionId, int versionNumber, String workflowId) {
     PublishAttempt attempt = new PublishAttempt();

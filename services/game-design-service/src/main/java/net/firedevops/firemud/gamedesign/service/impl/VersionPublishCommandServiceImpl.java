@@ -665,7 +665,15 @@ public class VersionPublishCommandServiceImpl {
             return Boolean.TRUE;
           });
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
-      PublicationReadback winningPublication = readPublication(request, attempt);
+      PublicationReadback winningPublication;
+      try {
+        winningPublication = readPublication(request, attempt);
+      } catch (RuntimeException readFailure) {
+        readFailure.addSuppressed(ex.causeException());
+        throw pendingReconciliation(
+            "full-version failure marking readback failed; reconciliation is required",
+            readFailure);
+      }
       if (winningPublication.isComplete()) return reconcileCommittedAttempt(request, attempt);
       throw pendingReconciliation(
           "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
