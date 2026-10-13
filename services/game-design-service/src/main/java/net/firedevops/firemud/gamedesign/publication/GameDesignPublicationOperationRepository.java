@@ -16,6 +16,32 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal owner storage collaborator.")
 public final class GameDesignPublicationOperationRepository {
+  // Keep this v1 projection fixed: its keys and values reproduce the V50.12 release-row JSON
+  // byte-for-byte while remaining independent of columns added by later migrations.
+  private static final String RELEASE_ROW_EVIDENCE_V1 =
+      "jsonb_build_object("
+          + "'artifact_digests_json', r.artifact_digests_json, "
+          + "'attestation_schema_version', r.attestation_schema_version, "
+          + "'canonical_tenant_id', r.canonical_tenant_id, "
+          + "'canonical_version_id', r.canonical_version_id, "
+          + "'command_definitions_json', r.command_definitions_json, "
+          + "'generation_config_revision', r.generation_config_revision, "
+          + "'id', r.id, "
+          + "'manifest_hash', r.manifest_hash, "
+          + "'manifest_schema_version', r.manifest_schema_version, "
+          + "'participant_digests_json', r.participant_digests_json, "
+          + "'publish_workflow_id', r.publish_workflow_id, "
+          + "'published_at', r.published_at, "
+          + "'published_release_bundle_ref', r.published_release_bundle_ref, "
+          + "'required_manifest_asset_keys_json', r.required_manifest_asset_keys_json, "
+          + "'script_only', r.script_only, "
+          + "'script_patch_version', r.script_patch_version, "
+          + "'tenant_id', r.tenant_id, "
+          + "'version_id', r.version_id, "
+          + "'version_number', r.version_number, "
+          + "'world_published_start_location_evidence_json', r.world_published_start_location_evidence_json"
+          + ")::TEXT";
+
   private final DSLContext dsl;
 
   public GameDesignPublicationOperationRepository(DSLContext dsl) {
@@ -73,7 +99,9 @@ public final class GameDesignPublicationOperationRepository {
     GameDesignPublicationOperation operation = requirePending(tenant, workflow, version, digest);
     Record release =
         dsl.fetchOne(
-            "SELECT r.*, to_jsonb(r)::TEXT AS evidence FROM published_release_bundle r WHERE tenant_id = ? AND version_id = ?",
+            "SELECT r.*, "
+                + RELEASE_ROW_EVIDENCE_V1
+                + " AS evidence FROM published_release_bundle r WHERE tenant_id = ? AND version_id = ?",
             tenant,
             version);
     String evidence = release == null ? null : release.get("evidence", String.class);
@@ -137,7 +165,9 @@ public final class GameDesignPublicationOperationRepository {
         throw new IllegalStateException("PUBLICATION_RECEIPT_CORRUPT");
       Record release =
           dsl.fetchOne(
-              "SELECT to_jsonb(r)::TEXT AS evidence FROM published_release_bundle r WHERE tenant_id = ? AND version_id = ?",
+              "SELECT "
+                  + RELEASE_ROW_EVIDENCE_V1
+                  + " AS evidence FROM published_release_bundle r WHERE tenant_id = ? AND version_id = ?",
               operation.tenantKey(),
               operation.versionId());
       String actual = release == null ? null : release.get("evidence", String.class);
