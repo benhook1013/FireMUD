@@ -10,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -166,7 +167,7 @@ class PreseededActorAssignmentIntegrationTest {
     UUID historicalNamespace = UUID.randomUUID();
     UUID v8CanonicalVersion = UUID.randomUUID();
 
-    migrationFlyway(schema).target(MigrationVersion.fromVersion("7")).load().migrate();
+    migrationFlyway(schema).target(MigrationVersion.fromVersion("1008")).load().migrate();
     try (Connection connection = connectToSchema(schema)) {
       try (PreparedStatement tenant =
           connection.prepareStatement(
@@ -210,7 +211,7 @@ class PreseededActorAssignmentIntegrationTest {
       }
     }
 
-    migrationFlyway(schema).target(MigrationVersion.fromVersion("8")).load().migrate();
+    migrationFlyway(schema).target(MigrationVersion.fromVersion("1009")).load().migrate();
     try (Connection connection = connectToSchema(schema);
         PreparedStatement snapshot =
             connection.prepareStatement(
@@ -289,7 +290,22 @@ class PreseededActorAssignmentIntegrationTest {
     UUID retainedTenantUuid = UUID.randomUUID();
     UUID retainedNamespaceUuid = UUID.randomUUID();
 
-    migrationFlyway(schema).target(MigrationVersion.fromVersion("4")).load().migrate();
+    migrationFlyway(schema).target(MigrationVersion.fromVersion("1005")).load().migrate();
+    List<AppliedMigration> parentHistory = appliedMigrationHistory(schema);
+    assertThat(parentHistory)
+        .extracting(AppliedMigration::version)
+        .containsExactly("1", "1000", "1001", "1002", "1003", "1004", "1005");
+    assertThat(parentHistory)
+        .extracting(AppliedMigration::script)
+        .containsExactly(
+            "V1__baseline.sql",
+            "saga/V1000__create_saga_schema.sql",
+            "saga/V1001__saga_instance_table.sql",
+            "saga/V1002__saga_step_table.sql",
+            "V1003__quarantine_unresolved_actor_identity.sql",
+            "V1004__build_actor_identity_indexes_concurrently.sql",
+            "V1005__validate_actor_identity_constraints.sql");
+    assertThat(parentHistory).extracting(AppliedMigration::checksum).doesNotContainNull();
     try (Connection connection = connectToSchema(schema)) {
       try (PreparedStatement statement =
           connection.prepareStatement(
@@ -322,6 +338,24 @@ class PreseededActorAssignmentIntegrationTest {
     }
 
     migrationFlyway(schema).load().migrate();
+
+    List<AppliedMigration> upgradedHistory = appliedMigrationHistory(schema);
+    assertThat(upgradedHistory.subList(0, parentHistory.size()))
+        .containsExactlyElementsOf(parentHistory);
+    List<AppliedMigration> successorHistory =
+        upgradedHistory.subList(parentHistory.size(), upgradedHistory.size());
+    assertThat(successorHistory)
+        .extracting(AppliedMigration::version)
+        .containsExactly("1006", "1007", "1008", "1009", "1010");
+    assertThat(successorHistory)
+        .extracting(AppliedMigration::script)
+        .containsExactly(
+            "V1006__preseeded_actor_assignment.sql",
+            "V1007__preseeded_assignment_owner_snapshot.sql",
+            "V1008__canonical_gameplay_roster_snapshots.sql",
+            "V1009__canonical_publication_uuid_actor_evidence.sql",
+            "V1010__canonical_roster_owner_counters.sql");
+    assertThat(successorHistory).extracting(AppliedMigration::checksum).doesNotContainNull();
 
     try (Connection connection = connectToSchema(schema)) {
       try (PreparedStatement statement =
@@ -1081,13 +1115,35 @@ class PreseededActorAssignmentIntegrationTest {
             .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
             .schemas(schema)
             .defaultSchema(schema)
-            .locations("classpath:db/migration")
+            .locations("classpath:db/migration", "classpath:db/migration/saga")
+            .table("flyway_schema_history_" + schema)
+            .outOfOrder(false)
             .placeholders(Map.of("serviceSchema", schema));
     configuration
         .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
         .setTransactionalLock(false);
     return configuration;
   }
+
+  private List<AppliedMigration> appliedMigrationHistory(String schema) throws SQLException {
+    List<AppliedMigration> migrations = new ArrayList<>();
+    try (Connection connection = connectToSchema(schema);
+        Statement statement = connection.createStatement();
+        ResultSet rows =
+            statement.executeQuery(
+                "SELECT version, script, checksum FROM flyway_schema_history_"
+                    + schema
+                    + " WHERE success AND version IS NOT NULL ORDER BY installed_rank")) {
+      while (rows.next()) {
+        migrations.add(
+            new AppliedMigration(
+                rows.getString(1), rows.getString(2), rows.getObject(3, Integer.class)));
+      }
+    }
+    return migrations;
+  }
+
+  private record AppliedMigration(String version, String script, Integer checksum) {}
 
   private Connection connectToSchema(String schema) throws SQLException {
     Connection connection =
