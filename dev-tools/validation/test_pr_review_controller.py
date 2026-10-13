@@ -390,13 +390,18 @@ class ControllerTests(unittest.TestCase):
 
         hosted_used = [
             self.allocation_evidence(checkpoint=f"hosted-useful-{index}", accepted=1)
-            for index in (1, 2)
+            for index in (1, 2, 3)
         ]
         progress = ReviewController._default_period_progress(state, 1, Channel.HOSTED, hosted_used)
-        self.assertEqual(progress["used"], 2)
+        self.assertEqual(progress["used"], 3)
         self.assertEqual(progress["minimum_remaining"], 0)
         self.assertTrue(progress["budget_exhausted"])
         self.assertFalse(progress["taper_complete"])
+        cli_default = ReviewController._default_period_progress(state, 1, Channel.CLI, [])
+        self.assertEqual(
+            (cli_default["minimum"], cli_default["maximum"], cli_default["minimum_remaining"]),
+            (3, 6, 3),
+        )
         closed = select_review_target(
             state,
             Channel.HOSTED,
@@ -492,6 +497,54 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(retry["status"], "already_recorded")
         self.assertEqual(retry["period"]["period_id"], period["period_id"])
+
+    def test_historical_period_reset_replays_keep_saved_bounds_and_reject_changed_inputs(self):
+        for channel, saved_bounds in (("hosted", (2, 2, 1)), ("cli", (0, 6, 3))):
+            for baseline_mode in ("checkpoint", "current_history"):
+                with self.subTest(channel=channel, baseline_mode=baseline_mode):
+                    if baseline_mode == "checkpoint":
+                        controller, _provider, retained = self.parent_moved_period_reset_controller(channel)
+                        baseline = {"checkpoint": retained["checkpoint"]}
+                    else:
+                        controller, _provider, _history = self.current_history_period_reset_controller(channel)
+                        baseline = {
+                            "current_history_baseline": True,
+                            "baseline_id": f"historical-{channel}-replay",
+                        }
+                    inputs = {
+                        "pr": 2,
+                        "channel": channel,
+                        "head": HEAD_3,
+                        **baseline,
+                        "actor": "operator@example.invalid",
+                        "reason": f"replay historical {channel} period",
+                    }
+                    initial = controller.decide_period_reset(**inputs)
+                    historical = dataclasses.replace(
+                        controller._state().review_period_decisions[-1],
+                        minimum_completed=saved_bounds[0],
+                        maximum_completed=saved_bounds[1],
+                        zero_useful_required=saved_bounds[2],
+                    )
+                    controller.store.update(
+                        lambda state, saved=historical: dataclasses.replace(
+                            state,
+                            review_period_decisions=tuple(
+                                saved if item.period_id == saved.period_id else item
+                                for item in state.review_period_decisions
+                            ),
+                        )
+                    )
+
+                    replay = controller.decide_period_reset(**inputs)
+
+                    self.assertEqual(replay["status"], "already_recorded")
+                    self.assertEqual(replay["period"], historical.to_dict())
+                    self.assertEqual(replay["period"]["period_id"], initial["period"]["period_id"])
+                    with self.assertRaisesRegex(ControllerError, "different reset inputs"):
+                        controller.decide_period_reset(**{**inputs, "actor": "another@example.invalid"})
+                    with self.assertRaisesRegex(ControllerError, "different reset inputs"):
+                        controller.decide_period_reset(**{**inputs, "reason": "changed decision reason"})
 
     def current_history_period_reset_controller(self, channel="cli", *, sqlite=False):
         controller, provider, _retained = self.parent_moved_period_reset_controller(channel, sqlite=sqlite)
@@ -987,6 +1040,14 @@ class ControllerTests(unittest.TestCase):
                     reason=f"start a future-only {channel} period",
                 )
                 self.assertEqual(result["status"], "recorded")
+                self.assertEqual(
+                    (
+                        result["period"]["minimum_completed"],
+                        result["period"]["maximum_completed"],
+                        result["period"]["zero_useful_required"],
+                    ),
+                    (2, 3, 1) if channel == "hosted" else (3, 6, 3),
+                )
                 self.assertEqual(result["period"]["baseline_mode"], "current_history")
                 self.assertNotIn("reviewed_head", result["period"])
                 self.assertEqual(controller.status()["prs"][1]["reconciliation"], "PARENT_MOVED")
@@ -1029,7 +1090,7 @@ class ControllerTests(unittest.TestCase):
                 current_history_baseline=True,
                 baseline_id="same-id-changed-candidate",
                 actor="operator@example.invalid",
-                reason="same reset key cannot change candidate",
+                reason="baseline one exact current candidate",
             )
         self.assertEqual(controller._state().review_period_decisions[0].period_id, initial["period"]["period_id"])
 
@@ -1355,7 +1416,7 @@ class ControllerTests(unittest.TestCase):
                 channel="hosted",
                 source_run_id=f"hosted-run-{index}",
             )
-            for index in (1, 2)
+            for index in (1, 2, 3)
         ]
         admitted = []
 
@@ -14009,7 +14070,7 @@ class ControllerTests(unittest.TestCase):
         cases = (
             ("hosted", "retain", 2, "COMPLETE"),
             ("cli", "reopen", 3, "READY"),
-            ("hosted", "reopen", 2, "BUDGET_EXHAUSTED"),
+            ("hosted", "reopen", 2, "READY"),
             ("cli", "retain", 3, "COMPLETE"),
         )
         for channel, decision, count, expected_status in cases:
@@ -16288,7 +16349,7 @@ class ReviewProgressPresentationTests(unittest.TestCase):
         view = {
             "status": "CAP_ACTIVE",
             "minimum_additional_completed": 0,
-            "maximum_additional_completed": 2,
+            "maximum_additional_completed": 3,
             "completed_count": 0,
             "in_flight": 1,
             "remaining": 1,
@@ -16299,7 +16360,7 @@ class ReviewProgressPresentationTests(unittest.TestCase):
     def test_maximum_includes_running_round_without_changing_request_slots(self):
         value = self.project(history=[{"active_review": True}])
         self.assertEqual(value["label"], "Reviewing")
-        self.assertEqual(value["rule"]["label"], "Maximum 2 rounds remaining")
+        self.assertEqual(value["rule"]["label"], "Maximum 3 rounds remaining")
         self.assertEqual(value["rule"]["request_slots_remaining"], 1)
         self.assertEqual(value["rule"]["in_flight"], 1)
         self.assertIn("before the maximum", value["rule"]["description"])
@@ -16311,20 +16372,24 @@ class ReviewProgressPresentationTests(unittest.TestCase):
         )
         self.assertEqual(exact["rule"]["label"], "1 required round remaining")
         differing = self.project(view={"minimum_additional_completed": 1})
-        self.assertEqual(differing["rule"]["label"], "1 required round remaining · Maximum 2 rounds remaining")
+        self.assertEqual(differing["rule"]["label"], "1 required round remaining · Maximum 3 rounds remaining")
 
     def test_completion_stop_and_non_ancestry_blockers(self):
         cases = [
             ({"status": "STOPPED"}, "READY", "Stopped", "Human stop"),
-            ({"status": "CAP_TAPERED"}, "READY", "Review complete", "Taper met · Maximum 2 rounds"),
+            ({"status": "CAP_TAPERED"}, "READY", "Review complete", "Taper met · Maximum 3 rounds"),
             (
-                {"status": "CAP_AUDITED_STOP", "minimum_additional_completed": 2},
+                {
+                    "status": "CAP_AUDITED_STOP",
+                    "minimum_additional_completed": 2,
+                    "maximum_additional_completed": 2,
+                },
                 "READY",
                 "Review complete",
                 "Required rounds complete",
             ),
-            ({}, "RATE_LIMITED", "Cooldown active", "Maximum 2 rounds remaining"),
-            ({}, "HELD", "Pending adjudication", "Maximum 2 rounds remaining"),
+            ({}, "RATE_LIMITED", "Cooldown active", "Maximum 3 rounds remaining"),
+            ({}, "HELD", "Pending adjudication", "Maximum 3 rounds remaining"),
         ]
         for view, status, label, rule in cases:
             with self.subTest(label=label):
@@ -16335,13 +16400,19 @@ class ReviewProgressPresentationTests(unittest.TestCase):
     def test_unchecked_retains_configuration_but_not_counters(self):
         value = self.project(checked=False)
         self.assertEqual(value["label"], "Progress not checked")
-        self.assertEqual(value["rule"]["label"], "Maximum 2 rounds configured")
+        self.assertEqual(value["rule"]["label"], "Maximum 3 rounds configured")
         for field in ("completed", "maximum_remaining", "in_flight", "request_slots_remaining"):
             self.assertIsNone(value["rule"][field])
         normal = ReviewController._review_progress_view(None, {}, [], "NOT_CHECKED", checked=False)
         self.assertEqual(normal["rule"]["label"], "Normal taper")
         retained = self.project(
-            "COMPLETE", checked=False, view={"status": "CAP_AUDITED_STOP", "minimum_additional_completed": 2}
+            "COMPLETE",
+            checked=False,
+            view={
+                "status": "CAP_AUDITED_STOP",
+                "minimum_additional_completed": 2,
+                "maximum_additional_completed": 2,
+            },
         )
         self.assertEqual(retained["rule"]["label"], "Required rounds complete")
         self.assertIsNone(retained["rule"]["completed"])
@@ -16398,7 +16469,7 @@ class ReviewProgressPresentationTests(unittest.TestCase):
                     }
                 )
                 self.assertEqual(progress["label"], label)
-                self.assertEqual(progress["rule"]["label"], "Maximum 2 rounds remaining")
+                self.assertEqual(progress["rule"]["label"], "Maximum 3 rounds remaining")
         progress = self.project()
         ReviewController._present_review_turns(
             {
@@ -16427,7 +16498,7 @@ class ReviewProgressPresentationTests(unittest.TestCase):
         ReviewController._present_review_turns(report)
         self.assertEqual(progress["label"], "Needs review")
         self.assertNotIn("waiting_for_pr", progress)
-        self.assertEqual(progress["rule"]["label"], "Maximum 2 rounds remaining")
+        self.assertEqual(progress["rule"]["label"], "Maximum 3 rounds remaining")
 
     def test_ancestry_request_status_and_original_evidence_are_unchanged(self):
         factory = ControllerTests()

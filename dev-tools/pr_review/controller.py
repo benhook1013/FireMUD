@@ -7452,9 +7452,9 @@ class ReviewController:
 
         period = ReviewController._active_review_period(state, pr, channel)
         minimum = period.minimum_completed if period is not None else (
-            2 if channel == policy.Channel.HOSTED else 0
+            2 if channel == policy.Channel.HOSTED else 3
         )
-        maximum = period.maximum_completed if period is not None else (2 if channel == policy.Channel.HOSTED else 6)
+        maximum = period.maximum_completed if period is not None else (3 if channel == policy.Channel.HOSTED else 6)
         zero_useful_required = period.zero_useful_required if period is not None else (
             1 if channel == policy.Channel.HOSTED else 3
         )
@@ -8453,8 +8453,8 @@ class ReviewController:
         ):
             raise ControllerError("current candidate head or base changed during review-period reset")
 
-        minimum_completed = 2 if selected == policy.Channel.HOSTED else 0
-        maximum_completed = 2 if selected == policy.Channel.HOSTED else 6
+        minimum_completed = 2 if selected == policy.Channel.HOSTED else 3
+        maximum_completed = 3 if selected == policy.Channel.HOSTED else 6
         zero_useful_required = 1 if selected == policy.Channel.HOSTED else 3
         decision = ReviewPeriodDecision(
             pr=pr,
@@ -8490,23 +8490,32 @@ class ReviewController:
             superseded_allocation=observed_allocation,
         )
 
+        def same_period_reset_inputs(existing: ReviewPeriodDecision, requested: ReviewPeriodDecision) -> bool:
+            # Review-period policy bounds are recorded decision outputs. A
+            # later default-policy change must not invalidate a replay of the
+            # same reset identity and evidence snapshot.
+            existing_inputs = dataclasses.replace(
+                existing,
+                minimum_completed=requested.minimum_completed,
+                maximum_completed=requested.maximum_completed,
+                zero_useful_required=requested.zero_useful_required,
+                recorded_at=requested.recorded_at,
+                superseded_allocation_identity=None,
+                superseded_allocation=None,
+            )
+            requested_inputs = dataclasses.replace(
+                requested,
+                superseded_allocation_identity=None,
+                superseded_allocation=None,
+            )
+            return existing_inputs == requested_inputs
+
         existing_period = next(
             (item for item in state.review_period_decisions if item.period_id == decision.period_id),
             None,
         )
         if existing_period is not None:
-            existing_inputs = dataclasses.replace(
-                existing_period,
-                recorded_at=decision.recorded_at,
-                superseded_allocation_identity=None,
-                superseded_allocation=None,
-            )
-            requested_inputs = dataclasses.replace(
-                decision,
-                superseded_allocation_identity=None,
-                superseded_allocation=None,
-            )
-            if existing_inputs != requested_inputs:
+            if not same_period_reset_inputs(existing_period, decision):
                 raise ControllerError("this review-period identity was already recorded with different reset inputs")
             return {
                 "status": "already_recorded",
@@ -8527,18 +8536,7 @@ class ReviewController:
                 None,
             )
             if existing is not None:
-                existing_inputs = dataclasses.replace(
-                    existing,
-                    recorded_at=decision.recorded_at,
-                    superseded_allocation_identity=None,
-                    superseded_allocation=None,
-                )
-                requested_inputs = dataclasses.replace(
-                    decision,
-                    superseded_allocation_identity=None,
-                    superseded_allocation=None,
-                )
-                if existing_inputs != requested_inputs:
+                if not same_period_reset_inputs(existing, decision):
                     raise ControllerError("this review-period identity was already recorded with different reset inputs")
                 outcome["already_recorded"] = True
                 return current_state

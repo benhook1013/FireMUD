@@ -640,7 +640,7 @@ def _parser() -> argparse.ArgumentParser:
     period_commands = period.add_subparsers(dest="period_command", required=True)
     period_reset = period_commands.add_parser(
         "reset",
-        help="start a new default Hosted (2 rounds) or CLI (6 rounds) review period",
+        help="start a new default Hosted (2 minimum, 3 maximum) or CLI (3 minimum, 6 maximum) review period",
     )
     period_reset.add_argument("--pr", required=True, type=_positive_int)
     period_reset.add_argument("--channel", required=True, choices=("hosted", "cli"))
