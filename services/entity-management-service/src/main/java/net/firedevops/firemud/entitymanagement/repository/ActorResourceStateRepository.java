@@ -2,14 +2,12 @@ package net.firedevops.firemud.entitymanagement.repository;
 
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.*;
 import static net.firedevops.firemud.entitymanagement.jooq.Tables.ACTOR_RESOURCE_STATES;
-import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTERS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
 import org.jooq.DSLContext;
 import org.jooq.Record;
-import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -32,13 +30,16 @@ public class ActorResourceStateRepository {
                 .eq(tenantId)
                 .and(ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY.eq(playableStateKey))
                 .and(ACTOR_RESOURCE_STATES.CHARACTER_ID.eq(characterId))
-                .and(ownerResolvedActorExists()))
+                .and(
+                    JooqEntityManagementRepositorySupport.ownerResolvedActorExists(
+                        dsl, ACTOR_RESOURCE_STATES.CHARACTER_ID, ACTOR_RESOURCE_STATES.TENANT_ID)))
         .orderBy(ACTOR_RESOURCE_STATES.STAT_KEY.asc())
         .fetch(this::toEntity);
   }
 
   public ActorResourceState save(ActorResourceState entity) {
-    requireOwnerResolvedActor(entity.getTenantId(), entity.getCharacterId());
+    JooqEntityManagementRepositorySupport.requireOwnerResolvedActor(
+        dsl, entity.getTenantId(), entity.getCharacterId());
     if (entity.getId() == null) {
       Long id =
           dsl.insertInto(ACTOR_RESOURCE_STATES)
@@ -74,39 +75,17 @@ public class ActorResourceStateRepository {
                     .and(ACTOR_RESOURCE_STATES.TENANT_ID.eq(entity.getTenantId()))
                     .and(ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY.eq(entity.getPlayableStateKey()))
                     .and(ACTOR_RESOURCE_STATES.CHARACTER_ID.eq(entity.getCharacterId()))
-                    .and(ownerResolvedActorExists()))
+                    .and(
+                        JooqEntityManagementRepositorySupport.ownerResolvedActorExists(
+                            dsl,
+                            ACTOR_RESOURCE_STATES.CHARACTER_ID,
+                            ACTOR_RESOURCE_STATES.TENANT_ID)))
             .execute();
     if (updatedRows != 1) {
       throw new IllegalStateException("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
     }
     entity.setVersion(entity.getVersion() + 1);
     return entity;
-  }
-
-  private void requireOwnerResolvedActor(Long tenantId, Long characterId) {
-    long ownerResolvedCount =
-        dsl.fetchCount(
-            CHARACTERS,
-            CHARACTERS
-                .ID
-                .eq(characterId)
-                .and(CHARACTERS.TENANT_ID.eq(tenantId))
-                .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")));
-    if (ownerResolvedCount != 1) {
-      throw new IllegalStateException("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
-    }
-  }
-
-  private org.jooq.Condition ownerResolvedActorExists() {
-    return DSL.exists(
-        dsl.selectOne()
-            .from(CHARACTERS)
-            .where(
-                CHARACTERS
-                    .ID
-                    .eq(ACTOR_RESOURCE_STATES.CHARACTER_ID)
-                    .and(CHARACTERS.TENANT_ID.eq(ACTOR_RESOURCE_STATES.TENANT_ID))
-                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED"))));
   }
 
   private ActorResourceState toEntity(Record record) {

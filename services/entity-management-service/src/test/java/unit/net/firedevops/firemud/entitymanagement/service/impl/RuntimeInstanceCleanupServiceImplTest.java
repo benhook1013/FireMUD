@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import net.firedevops.firemud.entitymanagement.repository.QuarantinedActorRetentionRepository;
+import net.firedevops.firemud.entitymanagement.service.RuntimeInstanceCleanupHeldException;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -43,7 +44,7 @@ class RuntimeInstanceCleanupServiceImplTest {
                 dependencies
                     .service()
                     .cleanupRuntimeInstance(TENANT_ID, GAME_INSTANCE_ID, TERMINATION_REQUEST_ID))
-        .isInstanceOf(IllegalStateException.class)
+        .isInstanceOf(RuntimeInstanceCleanupHeldException.class)
         .hasMessageContaining("ENTITY_UNCLASSIFIED_OR_QUARANTINED_EVIDENCE_BLOCKS_CLEANUP");
   }
 

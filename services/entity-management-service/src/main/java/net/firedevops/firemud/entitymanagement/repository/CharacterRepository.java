@@ -151,7 +151,13 @@ public class CharacterRepository {
   public Optional<Character> findWithInventoryById(Long id) {
     Character character =
         dsl.selectFrom(CHARACTERS)
-            .where(CHARACTERS.ID.eq(id).and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
+            .where(
+                CHARACTERS
+                    .ID
+                    .eq(id)
+                    .and(
+                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
+                            ActorIdentityStatus.OWNER_RESOLVED.name())))
             .fetchOne(this::toEntity);
     if (character == null) {
       return Optional.empty();
@@ -186,7 +192,13 @@ public class CharacterRepository {
   public Optional<Character> findById(Long id) {
     return Optional.ofNullable(
         dsl.selectFrom(CHARACTERS)
-            .where(CHARACTERS.ID.eq(id).and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
+            .where(
+                CHARACTERS
+                    .ID
+                    .eq(id)
+                    .and(
+                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
+                            ActorIdentityStatus.OWNER_RESOLVED.name())))
             .fetchOne(this::toEntity));
   }
 
@@ -198,7 +210,9 @@ public class CharacterRepository {
                     .ID
                     .eq(id)
                     .and(CHARACTERS.TENANT_ID.eq(tenantId))
-                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
+                    .and(
+                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
+                            ActorIdentityStatus.OWNER_RESOLVED.name())))
             .fetchOne(this::toEntity));
   }
 
@@ -212,7 +226,9 @@ public class CharacterRepository {
                     .eq(id)
                     .and(CHARACTERS.TENANT_ID.eq(tenantId))
                     .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
-                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
+                    .and(
+                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
+                            ActorIdentityStatus.OWNER_RESOLVED.name())))
             .fetchOne(this::toEntity));
   }
 
@@ -224,7 +240,7 @@ public class CharacterRepository {
             .eq(tenantId)
             .and(CHARACTERS.ACCOUNT_ID.eq(accountId))
             .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
-            .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED"));
+            .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq(ActorIdentityStatus.OWNER_RESOLVED.name()));
     long total = dsl.fetchCount(CHARACTERS, condition);
     var content =
         dsl.selectFrom(CHARACTERS)
@@ -248,7 +264,9 @@ public class CharacterRepository {
                     .eq(tenantId)
                     .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
                     .and(DSL.lower(CHARACTERS.NAME).eq(name.toLowerCase()))
-                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
+                    .and(
+                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
+                            ActorIdentityStatus.OWNER_RESOLVED.name())))
             .limit(1)
             .fetchOne(this::toEntity));
   }
@@ -260,7 +278,10 @@ public class CharacterRepository {
   public long countQuarantinedByTenantId(Long tenantId) {
     return dsl.fetchCount(
         CHARACTERS,
-        CHARACTERS.TENANT_ID.eq(tenantId).and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("QUARANTINED")));
+        CHARACTERS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq(ActorIdentityStatus.QUARANTINED.name())));
   }
 
   /**
@@ -551,7 +572,9 @@ public class CharacterRepository {
             operation.get(NAMESPACE_UUID), actor.get(CHARACTERS.PLAYABLE_STATE_NAMESPACE_ID))
         || !Objects.equals(
             operation.get(PLAYABLE_STATE_SCOPE), actor.get(CHARACTERS.PLAYABLE_STATE_SCOPE))
-        || !"OWNER_RESOLVED".equals(actor.get(CHARACTERS.ACTOR_IDENTITY_STATUS))
+        || !ActorIdentityStatus.OWNER_RESOLVED
+            .name()
+            .equals(actor.get(CHARACTERS.ACTOR_IDENTITY_STATUS))
         || actor.get(CHARACTERS.ACTOR_IDENTITY_QUARANTINE_REASON) != null
         || !Objects.equals(operation.get(DISPLAY_NAME), actor.get(CHARACTERS.NAME))) {
       return Optional.empty();
@@ -1113,7 +1136,9 @@ public class CharacterRepository {
                         CHARACTERS.PLAYABLE_STATE_NAMESPACE_ID.eq(
                             target.playableStateNamespaceId()))
                     .and(CHARACTERS.PLAYABLE_STATE_SCOPE.eq(target.playableStateScope().name()))
-                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED"))
+                    .and(
+                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
+                            ActorIdentityStatus.OWNER_RESOLVED.name()))
                     .and(CHARACTERS.ACTOR_IDENTITY_QUARANTINE_REASON.isNull()))
             .orderBy(CHARACTERS.CHARACTER_UUID.asc())
             .limit(CanonicalGameplayRosterSnapshotDigest.MAX_ROSTER_SIZE + 1)
@@ -1252,7 +1277,7 @@ public class CharacterRepository {
       Long id =
           dsl.insertInto(CHARACTERS)
               .set(CHARACTERS.CHARACTER_UUID, characterUuid)
-              .set(CHARACTERS.ACTOR_IDENTITY_STATUS, "QUARANTINED")
+              .set(CHARACTERS.ACTOR_IDENTITY_STATUS, ActorIdentityStatus.QUARANTINED.name())
               .set(CHARACTERS.ACTOR_IDENTITY_QUARANTINE_REASON, "OWNER_PROVENANCE_MISSING")
               .set(CHARACTERS.TENANT_ID, entity.getTenantId())
               .set(CHARACTERS.ACCOUNT_ID, entity.getAccountId())
@@ -1295,7 +1320,9 @@ public class CharacterRepository {
                     .ID
                     .eq(entity.getId())
                     .and(CHARACTERS.TENANT_ID.eq(entity.getTenantId()))
-                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
+                    .and(
+                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
+                            ActorIdentityStatus.OWNER_RESOLVED.name())))
             .execute();
     if (updatedRows != 1) {
       throw new IllegalStateException("CHARACTER_IDENTITY_NOT_OWNER_RESOLVED");
