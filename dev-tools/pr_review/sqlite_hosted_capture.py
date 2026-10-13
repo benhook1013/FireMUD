@@ -287,6 +287,13 @@ _HOSTED_COMMENT_FOOTER = re.compile(
     r"[ \t]*\r?\n[ \t\r\n]*)?"
     r"<!-- This is an auto-generated (?:comment|reply) by CodeRabbit -->[ \t\r\n]*\Z"
 )
+_HOSTED_COMMENT_ADDRESSED_FOOTER = re.compile(
+    r"\A[ \t\r\n]*_Source: Path instructions_[ \t]*\r?\n"
+    r"[ \t\r\n]*<!-- This is an auto-generated reply by CodeRabbit -->[ \t\r\n]*"
+    r"✅ Confirmed as addressed by @(?=[A-Za-z0-9-]{1,39}[ \t]*(?:\r?\n|\Z))"
+    r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*[ \t]*\r?\n"
+    r"[ \t\r\n]*<!-- This is an auto-generated comment by CodeRabbit -->[ \t\r\n]*\Z"
+)
 
 
 def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[str, Any]]:
@@ -336,7 +343,10 @@ def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[st
             sections.append((match.group(1), section))
             previous_end = match.end()
         trailing = _strip_leading_finding_separator(_strip_hosted_auxiliary_comments(body[previous_end:]))
-        if _HOSTED_COMMENT_FOOTER.fullmatch(trailing):
+        if (
+            _HOSTED_COMMENT_FOOTER.fullmatch(trailing)
+            or _HOSTED_COMMENT_ADDRESSED_FOOTER.fullmatch(trailing)
+        ):
             trailing = ""
         if trailing.strip():
             raise HostedCaptureError(
