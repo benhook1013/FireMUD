@@ -154,12 +154,12 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
             dsl.fetchSingle(
                     "SELECT count(*) FROM flyway_schema_history_game_design_service WHERE version IS NOT NULL AND success")
                 .get(0, Long.class))
-        .isEqualTo(84L);
+        .isEqualTo(85L);
     assertThat(
             dsl.fetchSingle(
                     "SELECT max(version::int) FROM flyway_schema_history_game_design_service WHERE version ~ '^[0-9]+$'")
                 .get(0, Integer.class))
-        .isEqualTo(1024);
+        .isEqualTo(1025);
     assertEnabledGuards(dsl, schema);
   }
 
@@ -206,7 +206,7 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
                 .fetchSingle(
                     "SELECT count(*) FROM flyway_schema_history_game_design_service WHERE version IS NOT NULL AND success")
                 .get(0, Long.class))
-        .isEqualTo(84L);
+        .isEqualTo(85L);
     assertThat(retainedRows(fixture)).isEqualTo(rows);
     assertEnabledGuards(fixture);
   }
@@ -235,7 +235,7 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
                 .fetchSingle(
                     "SELECT count(*) FROM flyway_schema_history_game_design_service WHERE version IS NOT NULL AND success")
                 .get(0, Long.class))
-        .isEqualTo(84L);
+        .isEqualTo(85L);
     assertThat(retainedRows(fixture)).isEqualTo(rows);
     assertThat(GameDesignPublicationOperation.fromStored(original).canonicalBytes())
         .containsExactly(original);
@@ -334,14 +334,14 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
                 .fetchSingle(
                     "SELECT max(version::int) FROM flyway_schema_history_game_design_service WHERE version ~ '^[0-9]+$'")
                 .get(0, Integer.class))
-        .isEqualTo(1024);
+        .isEqualTo(1025);
     assertThat(
             fixture
                 .dsl()
                 .fetchSingle(
                     "SELECT count(*) FROM flyway_schema_history_game_design_service WHERE version IS NOT NULL AND success")
                 .get(0, Long.class))
-        .isEqualTo(84L);
+        .isEqualTo(85L);
     assertThat(predecessorChecksums(fixture)).isEqualTo(parentChecksums);
     assertThat(reviewedBaseRow(fixture, binding)).isEqualTo(beforeRow);
     var retained = new GameDesignReviewedBaseRepository(fixture.dsl()).read(binding).orElseThrow();
@@ -454,6 +454,65 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
     assertThat(retained.terminalEvidenceBytes()).containsExactly(original.terminalEvidenceBytes());
     assertThat(retainedRows(fixture)).isEqualTo(rows);
     assertThat(predecessorChecksums(fixture)).isEqualTo(checksums);
+    assertEnabledGuards(fixture);
+  }
+
+  @Test
+  void upgradedTemplateInsertWitnessUsesEpochSafeXidProjectionAndRejectsForgery() throws Exception {
+    var fixture = fixture(false);
+    upgrade(fixture);
+    assertEnabledGuards(fixture);
+
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT ('4294967297'::xid8)::xid::TEXT")
+                .get(0, String.class))
+        .isEqualTo("1");
+    assertThatThrownBy(() -> fixture.dsl().fetchSingle("SELECT ('4294967297'::TEXT::XID)::TEXT"))
+        .satisfies(
+            failure -> {
+              Throwable cause = failure;
+              while (!(cause instanceof SQLException) && cause.getCause() != null)
+                cause = cause.getCause();
+              assertThat(cause).isInstanceOf(SQLException.class);
+              assertThat(((SQLException) cause).getSQLState()).isEqualTo("22003");
+            });
+
+    Long templateId =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "INSERT INTO game_templates (tenant_id, name, config) VALUES (?, ?, '{}'::JSONB) RETURNING id",
+                fixture.operation().tenantKey(),
+                "witness-" + UUID.randomUUID())
+            .get(0, Long.class);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT count(*) FROM game_design_template_config_source_row_insert WHERE template_id = ? AND creation_transaction_id ~ '^[1-9][0-9]*$'",
+                    templateId)
+                .get(0, Long.class))
+        .isEqualTo(1L);
+
+    deny(
+        fixture,
+        () ->
+            fixture
+                .dsl()
+                .execute(
+                    "INSERT INTO game_design_template_config_source_row_insert (template_id, creation_transaction_id) VALUES (?, pg_current_xact_id()::TEXT)",
+                    templateId),
+        "template insert witness requires actual row insert trigger");
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT count(*) FROM game_design_template_config_source_row_insert WHERE template_id = ?",
+                    templateId)
+                .get(0, Long.class))
+        .isEqualTo(1L);
     assertEnabledGuards(fixture);
   }
 

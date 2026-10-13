@@ -6,7 +6,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -49,7 +48,6 @@ public class StartSessionOperatorAuthorizationClient
       StartSessionAuthorityEvidenceBundle.MAX_BUNDLE_BYTES
           + StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES
           + 2_048;
-  private static final Duration MAX_REFERENCE_LIFETIME = Duration.ofMinutes(5);
   private static final int MAX_CONTROL_UI_TOKEN_BYTES = 16 * 1_024;
   private static final int MAX_REFERENCE_BYTES = 128;
   private static final long RPC_DEADLINE_SECONDS = 5L;
@@ -282,11 +280,9 @@ public class StartSessionOperatorAuthorizationClient
       }
       Instant expiresAt = exactExpiry(expiryTimestamp);
       Instant now = clock.instant();
+      // Account bounds issuance lifetime on its own clock; local time only checks expiry.
       if (!expiresAt.isAfter(now)) {
         throw new IllegalStateException("Account authorization response is expired");
-      }
-      if (expiresAt.isAfter(now.plus(MAX_REFERENCE_LIFETIME))) {
-        throw malformedResponse();
       }
       StartSessionAuthorityEvidenceBundle bundle =
           StartSessionAuthorityEvidenceBundle.decode(authorityEvidenceBundle);

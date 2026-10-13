@@ -326,6 +326,7 @@ class StartSessionOperatorAuthorizationClientTest {
                 valid.getBundleReference().toBuilder().setUnknownFields(unknownFields()).build())
             .build());
     assertRejected(tuple, valid.toBuilder().setExpiresAt(timestamp(NOW.plusSeconds(301))).build());
+    assertRejected(tuple, valid.toBuilder().setExpiresAt(timestamp(NOW)).build());
     assertRejected(tuple, valid.toBuilder().setExpiresAt(timestamp(NOW.minusSeconds(1))).build());
 
     RecoverOperatorAuthorizationReferenceResponse validRecovery =
@@ -494,11 +495,35 @@ class StartSessionOperatorAuthorizationClientTest {
   }
 
   @Test
-  void rejectsAccountReferenceLifetimeAboveItsConfiguredMaximum() throws Exception {
-    StartSessionPreAuthorizationReservationTuple tuple = tuple("client-overlong-reference");
-    assertRejected(
-        tuple,
-        issueResponse(tuple, NOW.plusSeconds(301), bundleBytes(tuple, NOW.plusSeconds(301))));
+  void issueAndRecoverAcceptAccountLifetimeUnderLocalClockSkew() throws Exception {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("client-account-clock-ahead");
+    Instant accountEvaluatedAt = NOW.plusSeconds(120);
+    Instant accountExpiry = accountEvaluatedAt.plusSeconds(300);
+    byte[] bundle = bundleBytes(tuple, accountEvaluatedAt, accountExpiry);
+    var stub =
+        mock(
+            StartSessionOperatorAuthorizationServiceGrpc
+                .StartSessionOperatorAuthorizationServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.issueHumanOperatorAuthorizationReference(any()))
+        .thenReturn(issueResponse(tuple, accountExpiry, bundle));
+    when(stub.recoverOperatorAuthorizationReference(any()))
+        .thenReturn(recoverResponse(tuple, accountExpiry, bundle));
+
+    try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
+      StartSessionOperatorAuthorizationClient.AuthorizationReference issued =
+          client.issueHuman(tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L);
+      StartSessionOperatorAuthorizationClient.AuthorizationReference recovered =
+          client.recover(tuple, RESERVATION_OWNER, 9L, CLAIM_OWNER, 12L);
+
+      assertThat(accountExpiry).isAfter(NOW.plusSeconds(300));
+      assertThat(issued.expiresAt()).isEqualTo(accountExpiry);
+      assertThat(recovered.expiresAt()).isEqualTo(accountExpiry);
+      assertThat(issued.authorityEvidenceBundle()).containsExactly(bundle);
+      assertThat(recovered.authorityEvidenceBundle()).containsExactly(bundle);
+      verify(stub).issueHumanOperatorAuthorizationReference(any());
+      verify(stub).recoverOperatorAuthorizationReference(any());
+    }
   }
 
   private void assertRejected(
