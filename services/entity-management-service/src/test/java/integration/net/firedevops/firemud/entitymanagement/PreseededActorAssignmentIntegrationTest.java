@@ -678,6 +678,16 @@ class PreseededActorAssignmentIntegrationTest {
 
   @Test
   void numericTenantCollisionKeepsCanonicalActorOutOfLegacyReadersAndWriters() {
+    assertNumericTenantCollisionKeepsCanonicalActorOutOfLegacyReadersAndWriters(false);
+  }
+
+  @Test
+  void numericTenantCollisionKeepsQuarantinedCanonicalActorOutOfLegacyReadersAndWriters() {
+    assertNumericTenantCollisionKeepsCanonicalActorOutOfLegacyReadersAndWriters(true);
+  }
+
+  private void assertNumericTenantCollisionKeepsCanonicalActorOutOfLegacyReadersAndWriters(
+      boolean quarantined) {
     PreseededActorAssignmentResult assigned =
         assign(
             assignmentUuid,
@@ -697,12 +707,37 @@ class PreseededActorAssignmentIntegrationTest {
             "SELECT id FROM characters WHERE character_uuid = ?",
             Long.class,
             assigned.characterUuid());
+    if (quarantined) {
+      jdbcTemplate.update(
+          "UPDATE characters SET actor_identity_status = 'QUARANTINED', "
+              + "actor_identity_quarantine_reason = 'AMBIGUOUS_ACCOUNT_NAMESPACE' WHERE id = ?",
+          canonicalCharacterId);
+    }
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT tenant_uuid FROM characters WHERE id = ?",
+                UUID.class,
+                canonicalCharacterId))
+        .isEqualTo(tenantUuid);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT actor_identity_status FROM characters WHERE id = ?",
+                String.class,
+                canonicalCharacterId))
+        .isEqualTo(quarantined ? "QUARANTINED" : "OWNER_RESOLVED");
     Long legacyCharacterId =
         jdbcTemplate.queryForObject(
             "INSERT INTO characters (account_id, name, tenant_id, playable_state_key) "
                 + "VALUES (23, 'Legacy Actor', ?, 'shared-live') RETURNING id",
             Long.class,
             entityTenantRowId);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT tenant_uuid IS NULL AND actor_identity_status = 'QUARANTINED' "
+                    + "FROM characters WHERE id = ?",
+                Boolean.class,
+                legacyCharacterId))
+        .isTrue();
     Long itemId =
         jdbcTemplate.queryForObject(
             "INSERT INTO items (name, tenant_id) VALUES ('Legacy Item', ?) RETURNING id",
@@ -797,7 +832,8 @@ class PreseededActorAssignmentIntegrationTest {
                 entityTenantRowId, namespaceUuid.toString(), "Canonical Actor"))
         .isEmpty();
     assertThat(characterRepository.countByTenantId(entityTenantRowId)).isEqualTo(2);
-    assertThat(characterRepository.countQuarantinedByTenantId(entityTenantRowId)).isEqualTo(2);
+    assertThat(characterRepository.countQuarantinedByTenantId(entityTenantRowId))
+        .isEqualTo(quarantined ? 3 : 2);
     assertThat(inventoryEntryRepository.countByCharacterTenantId(entityTenantRowId)).isEqualTo(1);
     assertThat(characterEquipmentRepository.countByCharacterTenantId(entityTenantRowId))
         .isEqualTo(1);
@@ -1018,14 +1054,16 @@ class PreseededActorAssignmentIntegrationTest {
     PreseededActorAssignmentOwnerEvidence owner =
         evidence(assignmentUuid, accountUuid, 4L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     assertThat(
-            characterRepository.readPreseededActorAssignmentReceipt(
-                new PreseededActorAssignmentReceiptRequest(
-                    assignmentUuid,
-                    accountUuid,
-                    assigned.characterUuid(),
-                    assigned.intentDigest(),
-                    assignmentRequest(owner).expectedTarget())))
-        .isPresent();
+            characterRepository
+                .readPreseededActorAssignmentReceipt(
+                    new PreseededActorAssignmentReceiptRequest(
+                        assignmentUuid,
+                        accountUuid,
+                        assigned.characterUuid(),
+                        assigned.intentDigest(),
+                        assignmentRequest(owner).expectedTarget()))
+                .isPresent())
+        .isEqualTo(!quarantined);
     CanonicalGameplayRosterTarget rosterTarget =
         new CanonicalGameplayRosterTarget(
             tenantUuid,
@@ -1068,7 +1106,7 @@ class PreseededActorAssignmentIntegrationTest {
                         rosterRequestUuid, accountUuid, rosterTarget, Instant.now()))
                 .actors())
         .extracting(actor -> actor.characterUuid())
-        .containsExactly(assigned.characterUuid());
+        .containsExactly(quarantined ? new UUID[0] : new UUID[] {assigned.characterUuid()});
   }
 
   @Test

@@ -67,7 +67,10 @@ def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
     # A branch name can move while validation runs. Require the caller's pinned commit.
     if not re.fullmatch(r"[0-9a-fA-F]{40}", base_ref):
         raise ValueError("--base-ref must be a full immutable 40-character commit SHA")
-    commit = git(repo_root, "rev-parse", "--verify", f"{base_ref}^{{commit}}").decode().strip()
+    try:
+        commit = git(repo_root, "rev-parse", "--verify", f"{base_ref}^{{commit}}").decode().strip()
+    except ValueError as error:
+        raise ValueError(f"immutable receiving parent commit is unavailable: {base_ref}; fetch that exact SHA") from error
     if commit.lower() != base_ref.lower():
         raise ValueError("--base-ref must identify a commit directly")
     paths = git(repo_root, "ls-tree", "-r", "--name-only", commit, "services", "buildSrc").decode().splitlines()
@@ -266,6 +269,7 @@ def run_self_test() -> None:
             raise AssertionError("mutable base ref was accepted")
 
     with tempfile.TemporaryDirectory() as tmp:
+        git(Path(tmp), "init", "-q")
         event_path = Path(tmp) / "event.json"
         sha = "1" * 40
         for event, expected in [({"pull_request": {"base": {"sha": sha}}}, sha),
@@ -273,6 +277,10 @@ def run_self_test() -> None:
             event_path.write_text(json.dumps(event), encoding="utf-8")
             if event_base_ref(str(event_path)) != expected:
                 raise AssertionError(f"unexpected event base for {event}")
+        manual_event = {"inputs": {"flyway_base_sha": sha}}
+        event_path.write_text(json.dumps(manual_event), encoding="utf-8")
+        if event_base_ref(str(event_path)) != sha:
+            raise AssertionError("manual dispatch base SHA was not selected")
 
         # CI passes push metadata through the environment; the explicit option
         # must handle the same unborn-branch sentinel without reading Git history.
@@ -287,6 +295,34 @@ def run_self_test() -> None:
             if result.returncode or "Parent frontier comparison" not in result.stdout:
                 raise AssertionError(f"unborn explicit={explicit}: {result.stdout} {result.stderr}")
 
+        manual_environment = dict(os.environ)
+        manual_environment["FIREMUD_FLYWAY_BASE_REF"] = "1" * 40
+        manual_environment["GITHUB_EVENT_NAME"] = "workflow_dispatch"
+        manual_environment["GITHUB_EVENT_PATH"] = str(event_path)
+        event_path.write_text(json.dumps({"inputs": {}}), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--root", tmp],
+                                check=False, env=manual_environment, capture_output=True, text=True)
+        if result.returncode == 0 or "requires a full immutable" not in result.stderr:
+            raise AssertionError(f"manual dispatch without a base was accepted: {result.stdout} {result.stderr}")
+
+        event_path.write_text(json.dumps({"inputs": {"flyway_base_sha": "not-a-sha"}}), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--root", tmp],
+                                check=False, env=manual_environment, capture_output=True, text=True)
+        if result.returncode == 0 or "full immutable 40-character" not in result.stderr:
+            raise AssertionError(f"malformed manual dispatch base was accepted: {result.stdout} {result.stderr}")
+
+        event_path.write_text(json.dumps({"inputs": {"flyway_base_sha": "0" * 40}}), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--root", tmp],
+                                check=False, env=manual_environment, capture_output=True, text=True)
+        if result.returncode == 0 or "requires a full immutable" not in result.stderr:
+            raise AssertionError(f"zero-sentinel manual dispatch base was accepted: {result.stdout} {result.stderr}")
+
+        event_path.write_text(json.dumps({"inputs": {"flyway_base_sha": "2" * 40}}), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--root", tmp],
+                                check=False, env=manual_environment, capture_output=True, text=True)
+        if result.returncode == 0 or "immutable receiving parent commit is unavailable" not in result.stderr:
+            raise AssertionError(f"unavailable manual dispatch parent was accepted: {result.stdout} {result.stderr}")
+
     print("Flyway migration sanity checker self-test passed.")
 
 
@@ -297,6 +333,9 @@ def event_base_ref(event_path: str | None) -> str | None:
     pull_request = event.get("pull_request")
     if isinstance(pull_request, dict):
         return pull_request.get("base", {}).get("sha")
+    inputs = event.get("inputs")
+    if isinstance(inputs, dict):
+        return inputs.get("flyway_base_sha")
     before = event.get("before")
     # A newly created branch has no parent history in the push event.
     return before if before and before != "0" * 40 else None
@@ -320,7 +359,13 @@ def main() -> int:
         return 0
     root = args.root.resolve()
     try:
-        base_ref = args.base_ref or event_base_ref(os.environ.get("GITHUB_EVENT_PATH"))
+        event_path = os.environ.get("GITHUB_EVENT_PATH")
+        if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+            base_ref = event_base_ref(event_path)
+            if not base_ref or base_ref == "0" * 40:
+                raise ValueError("workflow_dispatch requires a full immutable Flyway base SHA input")
+        else:
+            base_ref = args.base_ref or event_base_ref(event_path)
         # All input paths use GitHub's all-zero sentinel for a new branch.
         if base_ref == "0" * 40:
             base_ref = None

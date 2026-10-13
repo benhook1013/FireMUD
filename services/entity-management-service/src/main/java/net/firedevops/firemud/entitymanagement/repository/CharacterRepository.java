@@ -150,7 +150,10 @@ public class CharacterRepository {
   }
 
   static Condition legacyCharacterRow() {
-    return CHARACTERS.ACTOR_IDENTITY_STATUS.ne(ActorIdentityStatus.OWNER_RESOLVED.name());
+    return CHARACTERS
+        .ACTOR_IDENTITY_STATUS
+        .ne(ActorIdentityStatus.OWNER_RESOLVED.name())
+        .and(CHARACTERS.TENANT_UUID.isNull());
   }
 
   public Optional<Character> findWithInventoryById(Long id) {
