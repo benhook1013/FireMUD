@@ -746,7 +746,8 @@ class WorldAuthoredSourceIntakeIntegrationTest {
         RuntimeException lockTimeout = failedIntake.get(5, TimeUnit.SECONDS);
         long attemptDurationNanos = System.nanoTime() - attemptStartedNanos;
 
-        assertThat(lockTimeout).isInstanceOf(DataAccessException.class);
+        assertThat(lockTimeout)
+            .isInstanceOf(org.springframework.dao.CannotAcquireLockException.class);
         assertThat(sqlStateFrom(lockTimeout)).isEqualTo("55P03");
         assertThat(attemptDurationNanos).isLessThan(TimeUnit.SECONDS.toNanos(5));
         assertThat(countForCanonicalTenant(tenant)).isZero();
