@@ -39,7 +39,7 @@ import support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFi
 class GameDesignPublishedRealmPolicyClientTest {
   private static final String NAMESPACE = "test";
   private static final UUID TENANT_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
-  private static final UUID VERSION_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
+  private static final UUID VERSION_ID = UUID.fromString("55555555-5555-4555-8555-555555555551");
 
   @Test
   void returnsCompleteTypedEvidenceAndSendsExactRequestWithDeadline() throws Exception {

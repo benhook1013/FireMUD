@@ -169,15 +169,20 @@ public final class CanonicalGameplayRosterSelectionService {
       return Denial.ROSTER_UNAVAILABLE;
     }
     if (status.getCode() == Status.Code.FAILED_PRECONDITION) {
-      return Denial.STALE_MENU_IDENTITY;
+      return Denial.ROUTE_CHANGED;
     }
     return Denial.INVALID_ROSTER_PROOF;
   }
 
   private static Denial assignmentFailure(StatusRuntimeException failure) {
-    return isTransient(failure.getStatus())
-        ? Denial.ASSIGNMENT_UNAVAILABLE
-        : Denial.INVALID_ASSIGNMENT_PROOF;
+    Status status = failure.getStatus();
+    if (isTransient(status)) {
+      return Denial.ASSIGNMENT_UNAVAILABLE;
+    }
+    if (status.getCode() == Status.Code.FAILED_PRECONDITION) {
+      return Denial.STALE_MENU_IDENTITY;
+    }
+    return Denial.INVALID_ASSIGNMENT_PROOF;
   }
 
   private static boolean isTransient(Status status) {
