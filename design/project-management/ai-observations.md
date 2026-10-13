@@ -224,3 +224,8 @@ Entry format:
   - Context: the compact-output follow-up describes the existing `--summary --json` option for routine PR identity and readiness.
   - Observation: the summary omits ancestor rows and detailed check inventories while retaining verdict and readiness fields, pending and failed check names, the observed-check count, optional-check counts, and inventory availability/status. Omitting detailed inventories does not mean omitting all check information.
   - Expected pattern: use the summary for routine identity and readiness, then read detailed status, history, or routes when check inventory or finding/provenance evidence is needed.
+
+- `2026-10-13`: CI matrix failure discovery requires every jobs page
+  - Context: the shared Gameplay observer monitored a large Validation matrix through `gh run view --json jobs`.
+  - Observation: the returned jobs view omitted failed Buf and Game Logic rows. Their completion timestamps were 01:04:25 and 01:08:08 UTC, but the observer first discovered them around 01:16 UTC through the fully paginated Jobs API; the exact time the API exposed each failure was not recorded. This delayed front-PR failure reporting by roughly 12 and 8 minutes; no GitHub API or FireController failure was established.
+  - Expected pattern: inspect the complete paginated source-run jobs inventory before metadata callbacks and report failed jobs while other jobs remain active. Do not wait for the whole workflow to finish or treat a partial jobs view as exhaustive.
