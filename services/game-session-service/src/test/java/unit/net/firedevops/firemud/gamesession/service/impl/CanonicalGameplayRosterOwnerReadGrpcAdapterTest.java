@@ -2,6 +2,7 @@ package unit.net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -205,10 +206,11 @@ class CanonicalGameplayRosterOwnerReadGrpcAdapterTest {
         () -> adapter.getCanonicalGameplayRosterOwnerRead(request(), staleObserver));
     assertStatus(staleObserver, Status.Code.FAILED_PRECONDITION);
 
-    when(source.readCurrent(any(CanonicalGameplayRosterOwnerReadEvidence.Request.class)))
-        .thenThrow(
+    doThrow(
             new CanonicalPublishedPlayerRouteReadService.InvalidAuthorityException(
-                "changed policy or source"));
+                "changed policy or source"))
+        .when(source)
+        .readCurrent(any(CanonicalGameplayRosterOwnerReadEvidence.Request.class));
     var invalidObserver = responseObserver();
     runAsPeer(
         ENTITY_SERVICE,
