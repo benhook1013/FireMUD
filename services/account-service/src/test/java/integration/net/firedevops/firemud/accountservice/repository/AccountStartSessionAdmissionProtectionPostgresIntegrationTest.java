@@ -193,12 +193,12 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
             dsl.fetchSingle(
                     "SELECT count(*) FROM flyway_schema_history_account_service WHERE version IS NOT NULL AND success")
                 .get(0, Long.class))
-        .isEqualTo(113L);
+        .isEqualTo(114L);
     assertThat(
             dsl.fetchSingle(
                     "SELECT max(version::int) FROM flyway_schema_history_account_service WHERE version ~ '^[0-9]+$'")
                 .get(0, Integer.class))
-        .isEqualTo(1003);
+        .isEqualTo(1004);
     assertThat(
             dsl.fetchSingle(
                     "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND NOT t.tgisinternal AND t.tgenabled <> 'O'",
@@ -264,7 +264,14 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
                 .fetchSingle(
                     "SELECT count(*) FROM flyway_schema_history_account_service WHERE version IS NOT NULL AND success")
                 .get(0, Long.class))
-        .isEqualTo(113L);
+        .isEqualTo(114L);
+    assertThat(
+            parent
+                .dsl()
+                .fetchSingle(
+                    "SELECT max(version::int) FROM flyway_schema_history_account_service WHERE version ~ '^[0-9]+$'")
+                .get(0, Integer.class))
+        .isEqualTo(1004);
     assertThat(
             parent
                 .dsl()

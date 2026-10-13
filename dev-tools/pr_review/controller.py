@@ -8279,18 +8279,22 @@ class ReviewController:
             anchor.stop_audit_base_ref is None or anchor.stop_audit_base_ref == item.base_ref
         ):
             raise ControllerError("current candidate base identity changed during review-period reset")
-        allowed_anchor_statuses = {
-            stack.ReconciliationStatus.COHERENT,
-            # A reset changes only the channel's future counters. It does not
-            # reconcile stale ancestry or relax request/merge-readiness holds.
-            stack.ReconciliationStatus.PARENT_MOVED,
-            stack.ReconciliationStatus.PATCH_CHANGED,
-            stack.ReconciliationStatus.EQUIVALENT_HISTORY,
-        }
-        if reconciliation.status_for(pr, selected.value) not in allowed_anchor_statuses:
-            raise ControllerError(
-                f"current {selected.value} review anchor is {reconciliation.status_for(pr, selected.value).value}"
-            )
+        if selected == policy.Channel.CLI:
+            allowed_anchor_statuses = {
+                stack.ReconciliationStatus.COHERENT,
+                # A reset changes only the channel's future counters. It does not
+                # reconcile stale ancestry or relax request/merge-readiness holds.
+                stack.ReconciliationStatus.PARENT_MOVED,
+                stack.ReconciliationStatus.PATCH_CHANGED,
+                stack.ReconciliationStatus.EQUIVALENT_HISTORY,
+            }
+            if reconciliation.status_for(pr, selected.value) not in allowed_anchor_statuses:
+                raise ControllerError(
+                    f"current {selected.value} review anchor is {reconciliation.status_for(pr, selected.value).value}"
+                )
+        # Hosted counter resets independently prove actual refs below; they do
+        # not require reconciled ancestry or a merge-ready status. Baseline
+        # evidence and ordinary request/readiness holds remain separate.
         if selected == policy.Channel.HOSTED:
             try:
                 remote_heads = self.git.remote_heads()
@@ -8575,7 +8579,6 @@ class ReviewController:
         if (
             item.merged
             or item.state != "OPEN"
-            or item.mergeable != "MERGEABLE"
             or not item.base_exists
             or item.base_ref not in remote_heads
             or not item.head_ref
