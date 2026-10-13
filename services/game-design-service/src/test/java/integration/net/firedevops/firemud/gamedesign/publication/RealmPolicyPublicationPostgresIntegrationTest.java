@@ -84,11 +84,56 @@ class RealmPolicyPublicationPostgresIntegrationTest {
   static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Test
-  void actualSealAssociatesCompleteSetAndReadKeepsOriginalEpochAfterVersionMovement()
-      throws Exception {
+  void retainedAndFreshPolicyPublicationsSurviveAdditiveReleaseColumn() throws Exception {
     Fixture fixture = fixture(true);
     GameDesignPublicationOperation operation = fixture.prepare(true);
     fixture.writePublish(operation, false);
+
+    var originalOwnerRead = fixture.operations().read(operation.workflowId()).orElseThrow();
+    String originalReleaseEvidence =
+        java.util.Objects.requireNonNull(
+                fixture
+                    .dsl()
+                    .fetchOne(
+                        "SELECT release_row_json FROM game_design_publication_operation WHERE publish_workflow_id = ?",
+                        operation.workflowId()),
+                "Expected retained policy publication operation row")
+            .get("release_row_json", String.class);
+    String originalWholeReleaseRow =
+        java.util.Objects.requireNonNull(
+                fixture
+                    .dsl()
+                    .fetchOne(
+                        "SELECT to_jsonb(r)::TEXT AS evidence FROM published_release_bundle r WHERE tenant_id = ? AND version_id = ?",
+                        operation.tenantKey(),
+                        operation.versionId()),
+                "Expected original policy published release row")
+            .get("evidence", String.class);
+    assertThat(originalReleaseEvidence).isEqualTo(originalWholeReleaseRow);
+
+    fixture.tx(
+        () -> {
+          fixture
+              .dsl()
+              .execute(
+                  "ALTER TABLE published_release_bundle ADD COLUMN future_optional_evidence TEXT");
+          return null;
+        });
+    String expandedWholeReleaseRow =
+        java.util.Objects.requireNonNull(
+                fixture
+                    .dsl()
+                    .fetchOne(
+                        "SELECT to_jsonb(r)::TEXT AS evidence FROM published_release_bundle r WHERE tenant_id = ? AND version_id = ?",
+                        operation.tenantKey(),
+                        operation.versionId()),
+                "Expected policy published release row after additive column")
+            .get("evidence", String.class);
+    assertThat(expandedWholeReleaseRow).isNotEqualTo(originalReleaseEvidence);
+    var retainedOwnerRead = fixture.operations().read(operation.workflowId()).orElseThrow();
+    assertThat(retainedOwnerRead.receiptBytes()).isEqualTo(originalOwnerRead.receiptBytes());
+    assertThat(retainedOwnerRead.terminalEvidenceBytes())
+        .isEqualTo(originalOwnerRead.terminalEvidenceBytes());
 
     var original = fixture.publicationReads().readPublishedSet(fixture.target()).orElseThrow();
     assertThat(original.policies()).hasSize(1);
@@ -157,6 +202,47 @@ class RealmPolicyPublicationPostgresIntegrationTest {
                                 fixture.target().canonicalTenantId(),
                                 fixture.target().canonicalVersionId())))
         .isInstanceOf(RuntimeException.class);
+
+    Fixture fresh = fixture(true);
+    fresh.tx(
+        () -> {
+          fresh
+              .dsl()
+              .execute(
+                  "ALTER TABLE published_release_bundle ADD COLUMN future_optional_evidence TEXT");
+          return null;
+        });
+    GameDesignPublicationOperation freshOperation = fresh.prepare(true);
+    fresh.writePublish(freshOperation, false);
+    var freshRead = fresh.publicationReads().readPublishedSet(fresh.target()).orElseThrow();
+    assertThat(freshRead.policies()).hasSize(1);
+    assertThat(freshRead.policyCount()).isEqualTo(1);
+    assertThat(
+            fresh
+                .publicationReads()
+                .readPublishedPolicy(fresh.target(), "world", "main")
+                .orElseThrow()
+                .policyId())
+        .isEqualTo(freshRead.policies().getFirst().policyId());
+    var freshOwnerRead = fresh.operations().read(freshOperation.workflowId()).orElseThrow();
+    assertThat(freshOwnerRead.outcome()).isEqualTo("PUBLISHED");
+    byte[] freshReceipt = freshOwnerRead.receiptBytes();
+    assertThat(freshReceipt).isNotNull();
+    var freshRetry =
+        fresh.tx(
+            () ->
+                fresh
+                    .publicationWrites()
+                    .retainSealedPublished(freshOperation.workflowId())
+                    .orElseThrow());
+    assertThat(freshRetry.policies().getFirst().policyId())
+        .isEqualTo(freshRead.policies().getFirst().policyId());
+    assertThat(freshRetry.operationBytes()).containsExactly(freshRead.operationBytes());
+    assertThat(freshRetry.captureBytes()).containsExactly(freshRead.captureBytes());
+    assertThat(freshRetry.terminalEvidenceBytes())
+        .containsExactly(freshRead.terminalEvidenceBytes());
+    assertThat(fresh.operations().read(freshOperation.workflowId()).orElseThrow().receiptBytes())
+        .isEqualTo(freshReceipt);
   }
 
   @Test
@@ -336,7 +422,7 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     source.setSchema(schema);
-    migrate(source, schema, "50.12");
+    migrate(source, schema, "50.14");
     var transactions = new DataSourceTransactionManager(source);
     var write = new TransactionTemplate(transactions);
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);

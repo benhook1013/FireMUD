@@ -367,6 +367,116 @@ class RealmPolicySourcePostgresIntegrationTest {
   }
 
   @Test
+  void nonGenesisSourceHeadInsertRequiresItsVisibleSnapshotEpoch() {
+    var fixture = retainedFixture(false);
+    var snapshot = seedRetainedSnapshot(fixture, "1");
+
+    assertThatThrownBy(
+            () ->
+                fixture.tx(
+                    () ->
+                        fixture
+                            .dsl()
+                            .execute(
+                                "INSERT INTO game_design_realm_policy_source (canonical_tenant_id, canonical_version_id, source_epoch, visible_commit_id) VALUES (?, ?, '2', ?)",
+                                fixture.target().canonicalTenantId(),
+                                fixture.target().canonicalVersionId(),
+                                fixture.baseline().commitId())))
+        .hasMessageContaining("realm policy source head must match its visible snapshot epoch");
+    assertThat(fixture.dsl().fetchCount(DSL.table("game_design_realm_policy_source"))).isZero();
+    assertThat(
+            fixture
+                .reads()
+                .readSnapshot(fixture.target(), fixture.baseline().commitId())
+                .orElseThrow())
+        .isEqualTo(snapshot);
+
+    fixture.tx(
+        () -> {
+          fixture
+              .dsl()
+              .execute(
+                  "INSERT INTO game_design_realm_policy_source (canonical_tenant_id, canonical_version_id, source_epoch, visible_commit_id) VALUES (?, ?, '1', ?)",
+                  fixture.target().canonicalTenantId(),
+                  fixture.target().canonicalVersionId(),
+                  fixture.baseline().commitId());
+          return null;
+        });
+    var sourceHead =
+        java.util.Objects.requireNonNull(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT source_epoch FROM game_design_realm_policy_source WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                    fixture.target().canonicalTenantId(),
+                    fixture.target().canonicalVersionId()),
+            "valid source-head insert should persist a row");
+    assertThat(sourceHead.get("source_epoch", String.class)).isEqualTo("1");
+  }
+
+  @Test
+  void visibilityPointerCannotRewindDeleteOrTruncateAndExactFenceRetryRemainsStable() {
+    var fixture = freshFixture();
+    var first = policyBinding(fixture.target(), "0", "main", true);
+    start(fixture, first);
+    var firstApplication = fixture.tx(() -> fixture.policies().apply(first));
+    synchronize(fixture, first, firstApplication);
+
+    var second = policyBinding(fixture.target(), "1", "private", false);
+    start(fixture, second);
+    var secondApplication = fixture.tx(() -> fixture.policies().apply(second));
+    synchronize(fixture, second, secondApplication);
+
+    var replayedFence =
+        fixture.tx(
+            () ->
+                fixture
+                    .coordinator()
+                    .advanceVisibilityFence(
+                        second,
+                        new DraftCommitCoordinatorRepository.CoordinatorProof(
+                            second, List.of(secondApplication.ownerOutcome()))));
+    assertThat(replayedFence.commitId()).isEqualTo(second.commitId());
+    assertThat(visiblePointerCommit(fixture)).isEqualTo(second.commitId());
+
+    assertThatThrownBy(
+            () ->
+                fixture.tx(
+                    () ->
+                        fixture
+                            .dsl()
+                            .execute(
+                                "UPDATE game_design_draft_commit_visibility SET request_id = ?, commit_id = ?, input_digest = ? WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                                first.requestId(),
+                                first.commitId(),
+                                first.digest(),
+                                fixture.target().canonicalTenantId(),
+                                fixture.target().canonicalVersionId())))
+        .hasMessageContaining("may advance only to its actively applying commit");
+    assertThat(visiblePointerCommit(fixture)).isEqualTo(second.commitId());
+
+    assertThatThrownBy(
+            () ->
+                fixture.tx(
+                    () ->
+                        fixture
+                            .dsl()
+                            .execute(
+                                "DELETE FROM game_design_draft_commit_visibility WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                                fixture.target().canonicalTenantId(),
+                                fixture.target().canonicalVersionId())))
+        .hasMessageContaining("Draft visibility pointers cannot be deleted");
+    assertThat(visiblePointerCommit(fixture)).isEqualTo(second.commitId());
+
+    assertThatThrownBy(
+            () ->
+                fixture.tx(
+                    () -> fixture.dsl().execute("TRUNCATE game_design_draft_commit_visibility")))
+        .hasMessageContaining("Draft visibility pointers cannot be truncated");
+    assertThat(visiblePointerCommit(fixture)).isEqualTo(second.commitId());
+  }
+
+  @Test
   void absentBaselineDeniesAndApplicationReplayAndMismatchBindActualCoordinatorResult() {
     var fixture = retainedFixture(false);
     var binding = policyBinding(fixture.target(), "0", "main", true);
@@ -692,7 +802,7 @@ class RealmPolicySourcePostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .table("flyway_schema_history_game_design_service")
-        .target("50.12")
+        .target("50.14")
         .load()
         .migrate();
     var transactions = new DataSourceTransactionManager(dataSource);
@@ -749,7 +859,7 @@ class RealmPolicySourcePostgresIntegrationTest {
               return new GameRepository(dsl).save(created);
             });
     var version = write.execute(status -> insertRetainedVersion(dsl, properties, game, 1));
-    migrate(dataSource, schema, "50.12");
+    migrate(dataSource, schema, "50.13");
     var target = target(version);
     var baseline = policyBinding(target, "0", "main", true);
     var policies = new RealmPolicySourceRepository(dsl);
@@ -764,43 +874,12 @@ class RealmPolicySourcePostgresIntegrationTest {
             coordinator,
             new RealmPolicySourceService(policies, transactions));
     if (isolatedBaseline) {
+      // Historical input for V50.14: this isolated retained-schema fixture is seeded before the
+      // additive guard migration. Its owner-result bytes are test assumptions, not production
+      // provenance; V50.14 performs no retained-row provenance inference or rewrite.
+      seedRetainedSnapshot(fixture, "1");
       fixture.tx(
           () -> {
-            // Explicit ISOLATED assumption: prior authenticated owner creation supplied this actual
-            // complete policy source/epoch. There is intentionally no production initializer API.
-            coordinator.claim(baseline);
-            coordinator.claimApplicationSlot(baseline);
-            coordinator.markOwnerInProgress(baseline, Owner.GAME_DESIGN_CONTROL_PLANE);
-            var outcome =
-                new DraftCommitCoordinatorRepository.OwnerOutcome(
-                    Owner.GAME_DESIGN_CONTROL_PLANE,
-                    DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
-                    baseline.commitId(),
-                    baseline.digest(),
-                    "ISOLATED-initial-owner-baseline",
-                    "ISOLATED-authenticated-baseline".getBytes(StandardCharsets.UTF_8),
-                    List.of(
-                        new DraftCommitCoordinatorRepository.AppliedEpoch(
-                            RealmPolicySource.SCOPE,
-                            target.canonicalVersionId().toString(),
-                            RealmPolicySource.SCOPE,
-                            "effective",
-                            "0",
-                            BigInteger.ONE.toString())));
-            coordinator.recordOwnerOutcome(baseline, outcome);
-            coordinator.advanceVisibilityFence(
-                baseline,
-                new DraftCommitCoordinatorRepository.CoordinatorProof(baseline, List.of(outcome)));
-            coordinator.releaseApplicationSlot(baseline);
-            var policy = RealmPolicySource.revision(baseline, baseline.revisions().getFirst());
-            var snapshot = new RealmPolicySnapshot(baseline, "1", List.of(policy));
-            dsl.execute(
-                "INSERT INTO game_design_realm_policy_snapshot (canonical_tenant_id, canonical_version_id, commit_id, request_id, snapshot_json) VALUES (?, ?, ?, ?, ?)",
-                target.canonicalTenantId(),
-                target.canonicalVersionId(),
-                baseline.commitId(),
-                baseline.requestId(),
-                snapshot.canonicalJson());
             dsl.execute(
                 "INSERT INTO game_design_realm_policy_source (canonical_tenant_id, canonical_version_id, source_epoch, visible_commit_id) VALUES (?, ?, '1', ?)",
                 target.canonicalTenantId(),
@@ -809,7 +888,66 @@ class RealmPolicySourcePostgresIntegrationTest {
             return null;
           });
     }
+    migrate(dataSource, schema, "50.14");
     return fixture;
+  }
+
+  private static RealmPolicySnapshot seedRetainedSnapshot(Fixture fixture, String sourceEpoch) {
+    return fixture.tx(
+        () -> {
+          var binding = fixture.baseline();
+          fixture.coordinator().claim(binding);
+          fixture.coordinator().claimApplicationSlot(binding);
+          fixture.coordinator().markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
+          var outcome =
+              new DraftCommitCoordinatorRepository.OwnerOutcome(
+                  Owner.GAME_DESIGN_CONTROL_PLANE,
+                  DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
+                  binding.commitId(),
+                  binding.digest(),
+                  "ISOLATED-initial-owner-baseline",
+                  "ISOLATED-authenticated-baseline".getBytes(StandardCharsets.UTF_8),
+                  List.of(
+                      new DraftCommitCoordinatorRepository.AppliedEpoch(
+                          RealmPolicySource.SCOPE,
+                          fixture.target().canonicalVersionId().toString(),
+                          RealmPolicySource.SCOPE,
+                          "effective",
+                          "0",
+                          BigInteger.ONE.toString())));
+          fixture.coordinator().recordOwnerOutcome(binding, outcome);
+          fixture
+              .coordinator()
+              .advanceVisibilityFence(
+                  binding,
+                  new DraftCommitCoordinatorRepository.CoordinatorProof(binding, List.of(outcome)));
+          fixture.coordinator().releaseApplicationSlot(binding);
+          var policy = RealmPolicySource.revision(binding, binding.revisions().getFirst());
+          var snapshot = new RealmPolicySnapshot(binding, sourceEpoch, List.of(policy));
+          fixture
+              .dsl()
+              .execute(
+                  "INSERT INTO game_design_realm_policy_snapshot (canonical_tenant_id, canonical_version_id, commit_id, request_id, snapshot_json) VALUES (?, ?, ?, ?, ?)",
+                  fixture.target().canonicalTenantId(),
+                  fixture.target().canonicalVersionId(),
+                  binding.commitId(),
+                  binding.requestId(),
+                  snapshot.canonicalJson());
+          return snapshot;
+        });
+  }
+
+  private static UUID visiblePointerCommit(Fixture fixture) {
+    var pointer =
+        java.util.Objects.requireNonNull(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT commit_id FROM game_design_draft_commit_visibility WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                    fixture.target().canonicalTenantId(),
+                    fixture.target().canonicalVersionId()),
+            "synchronized Draft commit should retain its visibility pointer");
+    return pointer.get("commit_id", UUID.class);
   }
 
   private static void migrate(DriverManagerDataSource dataSource, String schema, String target) {

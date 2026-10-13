@@ -33,6 +33,7 @@ import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.service.impl.TenantIdentityGrpcService;
+import net.firedevops.firemud.gamedesign.v1.PublishedRealmEntryPolicyServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
 import org.junit.jupiter.api.Test;
@@ -54,8 +55,10 @@ class TenantIdentityGrpcAuthWiringTest {
   private static final List<String> CONFIGURED_PUBLIC_METHODS =
       List.of(
           FRESH_CREATION_METHOD,
-          "game_design.v1.PublishedRealmEntryPolicyService/ResolvePublishedRealmEntryPolicy",
-          "game_design.v1.PublishedRealmEntryPolicyService/ListPublishedRealmEntryPolicies");
+          PublishedRealmEntryPolicyServiceGrpc.getResolvePublishedRealmEntryPolicyMethod()
+              .getFullMethodName(),
+          PublishedRealmEntryPolicyServiceGrpc.getListPublishedRealmEntryPoliciesMethod()
+              .getFullMethodName());
   private static final String OTHER_METHOD = "gamedesign.v1.TenantIdentityService/UnlistedMethod";
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
   private static final String GAME_SESSION_URI = "spiffe://firemud/ns/test/sa/game-session-service";

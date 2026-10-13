@@ -9,6 +9,7 @@ import net.firedevops.firemud.gamedesign.config.RealmPolicyPublicationReadConfig
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationGrpcService;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationService;
+import net.firedevops.firemud.gamedesign.v1.PublishedRealmEntryPolicyServiceGrpc;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.bind.Bindable;
@@ -88,7 +89,11 @@ class RealmPolicyPublicationReadConfigurationTest {
                             .orElse(List.of()))
                     .containsExactly(
                         "gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation",
-                        "game_design.v1.PublishedRealmEntryPolicyService/ResolvePublishedRealmEntryPolicy",
-                        "game_design.v1.PublishedRealmEntryPolicyService/ListPublishedRealmEntryPolicies"));
+                        PublishedRealmEntryPolicyServiceGrpc
+                            .getResolvePublishedRealmEntryPolicyMethod()
+                            .getFullMethodName(),
+                        PublishedRealmEntryPolicyServiceGrpc
+                            .getListPublishedRealmEntryPoliciesMethod()
+                            .getFullMethodName()));
   }
 }
