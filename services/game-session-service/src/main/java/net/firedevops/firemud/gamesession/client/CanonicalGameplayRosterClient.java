@@ -56,7 +56,7 @@ public final class CanonicalGameplayRosterClient
         CanonicalGameplayRosterServiceGrpc.CanonicalGameplayRosterServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
   // Matches Entity's bounded CanonicalGameplayRosterSnapshotDigest contract.
-  private static final int MAX_ROSTER_SIZE = 100;
+  public static final int MAX_ROSTER_SIZE = 100;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final String SNAPSHOT_DIGEST_DOMAIN =
       "firemud.entity.canonical-gameplay-roster.v3";
@@ -277,28 +277,7 @@ public final class CanonicalGameplayRosterClient
       throw new IllegalArgumentException(
           "Selected assignment reads require an exact SHARED PRESEEDED_ONLY roster target");
     }
-    if (roster.actors().size() > MAX_ROSTER_SIZE) {
-      throw new IllegalArgumentException("Validated Entity roster exceeds its maximum size");
-    }
-    Set<UUID> characterUuids = new HashSet<>();
-    for (RosterActor actor : roster.actors()) {
-      if (actor == null) {
-        throw new IllegalArgumentException("Validated Entity roster contains an absent actor");
-      }
-      UUID characterUuid = actor.characterUuid();
-      requireNonNil(characterUuid, "roster character UUID");
-      if (!characterUuids.add(characterUuid)) {
-        throw new IllegalArgumentException("Validated Entity roster contains a duplicate actor");
-      }
-      String displayName = actor.displayName();
-      if (displayName == null
-          || displayName.isBlank()
-          || !displayName.equals(displayName.trim())
-          || displayName.length() > 100
-          || displayName.codePoints().anyMatch(Character::isISOControl)) {
-        throw new IllegalArgumentException("Validated Entity roster contains a malformed actor");
-      }
-    }
+    requireValidActors(roster.actors());
     if (!roster
         .snapshotDigest()
         .equals(calculateSnapshotDigest(roster.canonicalAccountUuid(), target, roster.actors()))) {
@@ -391,29 +370,23 @@ public final class CanonicalGameplayRosterClient
       throw invalidResponse("actor roster exceeds its maximum size");
     }
 
-    Set<UUID> characterUuids = new HashSet<>();
     List<RosterActor> actors = new ArrayList<>(response.getActorsCount());
     for (CanonicalGameplayRosterActor actor : response.getActorsList()) {
       if (!actor.getUnknownFields().asMap().isEmpty()) {
         throw invalidResponse("actor contains unknown fields");
       }
       UUID characterUuid = parseCanonicalUuid(actor.getCharacterUuid(), "character_uuid");
-      if (!characterUuids.add(characterUuid)) {
-        throw invalidResponse("actor roster contains a duplicate character UUID");
-      }
       if (actor.getActorKind()
           != CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER) {
         throw invalidResponse("actor roster contains an unsupported actor kind");
       }
       String displayName = actor.getDisplayName();
-      if (displayName == null
-          || displayName.isBlank()
-          || !displayName.equals(displayName.trim())
-          || displayName.length() > 100
-          || displayName.codePoints().anyMatch(Character::isISOControl)) {
-        throw invalidResponse("actor display name is malformed");
-      }
       actors.add(new RosterActor(characterUuid, displayName));
+    }
+    try {
+      requireValidActors(actors);
+    } catch (IllegalArgumentException malformedActors) {
+      throw invalidResponse(malformedActors.getMessage());
     }
     if (!snapshotDigest.equals(
         calculateSnapshotDigest(expectedAccountUuid, expectedTarget, actors))) {
@@ -460,6 +433,38 @@ public final class CanonicalGameplayRosterClient
         .setPointerVersion(route.pointerVersion())
         .setActiveWorldEpoch(route.activeWorldEpoch())
         .build();
+  }
+
+  /** Requires a typed Entity roster to satisfy the shared actor-list contract. */
+  public static void requireValidActors(List<RosterActor> actors) {
+    if (actors == null) {
+      throw new IllegalArgumentException("Validated Entity roster is absent");
+    }
+    if (actors.size() > MAX_ROSTER_SIZE) {
+      throw new IllegalArgumentException("Validated Entity roster exceeds its maximum size");
+    }
+    Set<UUID> characterUuids = new HashSet<>();
+    for (RosterActor actor : actors) {
+      if (actor == null) {
+        throw new IllegalArgumentException("Validated Entity roster contains an absent actor");
+      }
+      UUID characterUuid = actor.characterUuid();
+      requireNonNil(characterUuid, "roster character UUID");
+      if (!characterUuids.add(characterUuid)) {
+        throw new IllegalArgumentException("duplicate actor: duplicate character UUID");
+      }
+      if (!isCanonicalDisplayName(actor.displayName())) {
+        throw new IllegalArgumentException("display name is malformed");
+      }
+    }
+  }
+
+  private static boolean isCanonicalDisplayName(String value) {
+    return value != null
+        && !value.isBlank()
+        && value.equals(value.trim())
+        && value.length() <= 100
+        && value.codePoints().noneMatch(Character::isISOControl);
   }
 
   private static String rawOwnerProofDigest(String prefixedDigest) {
