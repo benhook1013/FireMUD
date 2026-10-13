@@ -1,11 +1,9 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient;
@@ -16,7 +14,6 @@ import net.firedevops.firemud.gamesession.dto.CanonicalPublishedPlayerRoute;
  */
 public final class CanonicalGameplayActorSelection {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
-  private static final int MAX_ROSTER_SIZE = 100;
 
   private CanonicalGameplayActorSelection() {}
 
@@ -42,18 +39,7 @@ public final class CanonicalGameplayActorSelection {
         return Optional.empty();
       }
       List<CanonicalGameplayRosterClient.RosterActor> actors = snapshot.actors();
-      if (actors == null || actors.size() > MAX_ROSTER_SIZE) {
-        return Optional.empty();
-      }
-      Set<UUID> actorIds = new HashSet<>();
-      for (CanonicalGameplayRosterClient.RosterActor actor : actors) {
-        if (actor == null
-            || !isNonNil(actor.characterUuid())
-            || !actorIds.add(actor.characterUuid())
-            || !isCanonicalDisplayName(actor.displayName())) {
-          return Optional.empty();
-        }
-      }
+      CanonicalGameplayRosterClient.requireValidActors(actors);
       return Optional.of(new ValidatedRoster(snapshot, expectedAccountUuid, expectedRoute));
     } catch (RuntimeException malformed) {
       return Optional.empty();
@@ -107,14 +93,6 @@ public final class CanonicalGameplayActorSelection {
         actor.characterUuid(),
         actor.displayName(),
         ordinal);
-  }
-
-  private static boolean isCanonicalDisplayName(String value) {
-    return value != null
-        && !value.isBlank()
-        && value.equals(value.trim())
-        && value.length() <= 100
-        && value.codePoints().noneMatch(Character::isISOControl);
   }
 
   private static boolean isCanonicalDigest(String value) {
