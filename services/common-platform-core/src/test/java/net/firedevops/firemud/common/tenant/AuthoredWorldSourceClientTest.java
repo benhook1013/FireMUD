@@ -23,8 +23,8 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.gamedesign.v1.AuthoredWorldSourceReadServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
-import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -118,8 +118,8 @@ class AuthoredWorldSourceClientTest {
 
   @Test
   void readsAndReturnsOnlyTheExactValidatedSourceReceipt(@TempDir Path directory) throws Exception {
-    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub =
-        mock(TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub.class);
+    AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceBlockingStub stub =
+        mock(AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceBlockingStub.class);
     AuthoredWorldSourceClient client = clientWithStub(directory, stub);
     ResolveAuthoredWorldSourceResponse response =
         AuthoredWorldSourceGrpcCodec.toReadResponse(READ_REQUEST, source());
@@ -137,8 +137,8 @@ class AuthoredWorldSourceClientTest {
   @Test
   void rejectsSubstitutedCorruptOrOpenResponsesAndPropagatesTransportFailure(
       @TempDir Path directory) throws Exception {
-    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub =
-        mock(TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub.class);
+    AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceBlockingStub stub =
+        mock(AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceBlockingStub.class);
     AuthoredWorldSourceClient client = clientWithStub(directory, stub);
     when(stub.withDeadlineAfter(anyLong(), eq(TimeUnit.SECONDS))).thenReturn(stub);
 
@@ -168,7 +168,8 @@ class AuthoredWorldSourceClientTest {
   }
 
   private static AuthoredWorldSourceClient clientWithStub(
-      Path directory, TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub)
+      Path directory,
+      AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceBlockingStub stub)
       throws Exception {
     AuthoredWorldSourceClient client =
         newClient(fileBackedMtls(directory), mock(GrpcChannelFactory.class));

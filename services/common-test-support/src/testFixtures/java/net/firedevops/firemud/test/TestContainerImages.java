@@ -19,11 +19,12 @@ public final class TestContainerImages {
   }
 
   static String selectedReference(Properties images, String repository) {
+    if (!"postgres".equals(repository) && !"redis".equals(repository)) {
+      throw new IllegalArgumentException(
+          "Unsupported official test image repository: " + repository);
+    }
     String reference = images.getProperty(repository + ".image");
-    String pattern =
-        "public\\.ecr\\.aws/docker/library/"
-            + repository
-            + ":[A-Za-z0-9_][A-Za-z0-9_.-]*@sha256:[0-9a-f]{64}";
+    String pattern = repository + ":[A-Za-z0-9_][A-Za-z0-9_.-]*@sha256:[0-9a-f]{64}";
     if (reference == null || !reference.matches(pattern)) {
       throw new IllegalStateException(
           "Missing or malformed test image reference for " + repository);

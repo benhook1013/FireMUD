@@ -167,6 +167,13 @@ Entry format:
   - Expected pattern: At publication and closeout, verify the actual base branch tip and current mergeability through the bounded canonical topology/status checks. Treat a stale PR base OID or missing new-head source CI as unresolved state, and reconcile before claiming readiness.
   - Reconsideration trigger: Verify the next published front against its actual remote base and current required CI; retain any remaining stale-base diagnostic gap for controller maintenance.
 
+- `2026-10-13`: Public image registries can return transient anonymous manifest throttles
+  - Context: A rebuilt runtime workflow failed after Gradle when an ECR Public manifest request returned HTTP 429 `DataLimitExceeded`; the earlier Docker Hub failure log's provenance is unknown. Fresh read-only checks found each selected Hub and ECR OCI index byte-identical and returned HTTP 200, without pulling images. GitHub-hosted runners are exempt from Docker Hub public-image pull limits, while ECR Public documents anonymous pull quotas.
+  - Observation: An HTTP-successful manifest/index read does not establish that an image pull, build, or runtime proof will succeed. The available checks do not establish that the original Hub failure was disproved or identify why the later ECR request was throttled.
+  - Expected pattern: Preserve the exact official image tags and digests, use the public Hub source on affected GitHub-hosted jobs, and report manifest, pull, build, and smoke evidence as separate boundaries. Do not add credentials, caches, mirrors, or alternate authorities from manifest-only evidence.
+  - Current status: The shared test, Compose, preview, base-image, and upgrade references now use short official image names. All assigned local contracts passed, and the physical PostgreSQL 16-to-18 proof passed with the pinned Hub images: the historical source remained intact, the separate target was restored, and the Compose and Kubernetes dump clients produced seeded backups. Runtime base-image build and full-stack smoke proof remain unestablished; the affected hosted runtime job's ECR 429 still lacks subsequent exact-head CI evidence.
+  - Reconsideration trigger: Revisit after exact-head hosted runtime-image and smoke execution, or if a later fetch failure changes the evidence.
+
 - `2026-10-13`: Local PostgreSQL availability can fail after container startup
   - Context: Gameplay’s #3120 final-parent full gate at `42c524c` selected 105 PostgreSQL cases but 13 errors in three suites reported connection refusal on ephemeral localhost ports, after the preceding complete gate at `d0362dd` passed all 105 cases.
   - Observation: Docker daemon availability and a started-container event do not prove a fixture’s JDBC endpoint remains reachable; the failure cause and responsible lifecycle are unknown. These connection errors do not establish failed product assertions.
@@ -188,3 +195,15 @@ Entry format:
   - Context: The #3155 second Hosted request reported a predecessor terminal-capture warning after the earlier Hosted run had already been captured and finalized.
   - Observation: `HostedCaptureError` reported unmarked content after a finding comment's final `cr-comment:v1` marker. The warning retained a diagnostic and did not prevent the new request from being posted; the exact content or actor responsible remains unverified.
   - Expected pattern: Preserve the completed checkpoint and frozen counts, distinguish a recapture warning from a failed new provider request, and report the diagnostic to controller maintenance. Do not invent replacement findings or spend another review to repair historical capture metadata.
+
+- `2026-10-13`: Certificate fixture validity can mask the intended negative assertion
+  - Context: the #3156 local Game Design PostgreSQL gate failed the descriptor-readback mismatch fixture before reaching that boundary because its newly issued certificate raised `CertificateNotYetValidException`.
+  - Observation: certificate readiness and live validation time disagreed transiently; the exact operating-system clock cause remains unproven. Successful certificate generation alone did not establish that the fixture was valid for the next consumer check.
+  - Expected pattern: verify generated fixture certificates with the same actual validity check before exercising a later boundary, use a short monotonic readiness budget, and propagate expired or malformed certificates immediately. Preserve production certificate validation and the intended negative assertion.
+  - Current status: the test-only readiness correction is under local validation. No production validity check, certificate lifetime, or required proof has been relaxed.
+
+- `2026-10-13`: Compact selected-PR JSON still includes large inventories
+  - Context: Gameplay closeout used controller `reviews status --pr 3183 --compact --json` and the equivalent #3156 request.
+  - Observation: their JSON captures were approximately 251 KB and 172 KB, including check inventories and historical transition details; printing the complete selected response consumed substantial context despite requesting compact output.
+  - Expected pattern: a compact selected-PR projection should retain identity, review obligations, required-check outcomes, routes and readiness reasons, with detailed inventories available separately. Until then, capture JSON and print only the fields needed for the current decision.
+  - Current status: reported to Overseer for controller improvement; no controller implementation change was made in this lane.

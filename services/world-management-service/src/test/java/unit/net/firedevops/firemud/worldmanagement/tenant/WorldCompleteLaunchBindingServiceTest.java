@@ -284,9 +284,7 @@ class WorldCompleteLaunchBindingServiceTest {
   void committedLaunchRetryRejectsAChangedRetainedReleasePairWithoutReplacement() {
     CommittedLaunchFixture fixture = committedLaunchFixture();
     CompleteLaunchBindingEvidence changedPair =
-        committedPair(
-            fixture.evidence().descriptor(),
-            fixture.request().expectedReleaseAttestationEvidenceDigest());
+        committedPair(fixture.evidence().descriptor(), digest('8'));
     WorldCompleteLaunchBindingRepository.StoredBinding changedStored =
         stored(fixture.sourceReceipt(), changedPair);
     stubCommittedLaunchReads(fixture);
@@ -415,9 +413,7 @@ class WorldCompleteLaunchBindingServiceTest {
   void committedLaunchRejectsChangedPairDuringLostCommitAcknowledgmentRecovery() {
     CommittedLaunchFixture fixture = committedLaunchFixture();
     CompleteLaunchBindingEvidence changedPair =
-        committedPair(
-            fixture.evidence().descriptor(),
-            fixture.request().expectedReleaseAttestationEvidenceDigest());
+        committedPair(fixture.evidence().descriptor(), digest('8'));
     WorldCompleteLaunchBindingRepository.StoredBinding changedStored =
         stored(fixture.sourceReceipt(), changedPair);
     stubCommittedLaunchReads(fixture);

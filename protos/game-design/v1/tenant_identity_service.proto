@@ -7,11 +7,14 @@ option java_multiple_files = true;
 
 // Read-only exact Account/Game Session workload handoff for owner-created tenant evidence.
 service TenantIdentityService {
-  // Unregistered authored-world source read; no creation or admission permission.
-  rpc ResolveAuthoredWorldSource(ResolveAuthoredWorldSourceRequest)
-      returns (ResolveAuthoredWorldSourceResponse);
   rpc ResolveFreshTenantCreation(ResolveFreshTenantCreationRequest)
       returns (ResolveFreshTenantCreationResponse);
+}
+
+// Standalone, unregistered exact authored-world source read; no mutation or admission permission.
+service AuthoredWorldSourceReadService {
+  rpc ResolveAuthoredWorldSource(ResolveAuthoredWorldSourceRequest)
+      returns (ResolveAuthoredWorldSourceResponse);
 }
 
 message ResolveFreshTenantCreationRequest {

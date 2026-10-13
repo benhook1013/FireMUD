@@ -14,6 +14,7 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -182,7 +183,7 @@ class WorldAuthoredSourceIntakeGrpcServiceTest {
 
     RecordingObserver<ReadAuthoredWorldSourceIntakeByIdResponse> userContext =
         new RecordingObserver<>();
-    SessionContext.setContext("account", List.of(), java.util.Map.of());
+    SessionContext.setContext("account", List.of(), Map.of());
     try {
       withGameDesign(() -> grpcService.readAuthoredWorldSourceIntakeById(request, userContext));
     } finally {
@@ -324,6 +325,35 @@ class WorldAuthoredSourceIntakeGrpcServiceTest {
     assertThat(Status.fromThrowable(wrongReadTargetNamespace.error).getCode())
         .isEqualTo(Status.Code.PERMISSION_DENIED);
     assertThat(wrongReadTargetNamespace.values).isEmpty();
+    verifyNoInteractions(intakeService);
+  }
+
+  @Test
+  void intakeAndExactReadRejectCallerContextBeforeDecodeAndOwnerAccess() {
+    RecordingObserver<IntakeAuthoredWorldSourceResponse> intakeObserver = new RecordingObserver<>();
+    RecordingObserver<ReadAuthoredWorldSourceIntakeResponse> readObserver =
+        new RecordingObserver<>();
+
+    SessionContext.setContext("account", List.of(), java.util.Map.of());
+    try {
+      withGameDesign(
+          () ->
+              grpcService.intakeAuthoredWorldSource(
+                  intakeRequest().toBuilder().setSchemaVersion(2).build(), intakeObserver));
+      withGameDesign(
+          () ->
+              grpcService.readAuthoredWorldSourceIntake(
+                  readRequest().toBuilder().setRequestId("not-a-uuid").build(), readObserver));
+    } finally {
+      SessionContext.clear();
+    }
+
+    assertThat(Status.fromThrowable(intakeObserver.error).getCode())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(Status.fromThrowable(readObserver.error).getCode())
+        .isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(intakeObserver.values).isEmpty();
+    assertThat(readObserver.values).isEmpty();
     verifyNoInteractions(intakeService);
   }
 

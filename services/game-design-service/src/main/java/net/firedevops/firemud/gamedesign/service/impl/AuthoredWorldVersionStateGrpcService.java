@@ -5,8 +5,9 @@ import io.grpc.stub.StreamObserver;
 import java.util.Objects;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
-import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.AuthoredWorldVersionStateServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetAuthoredWorldVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetAuthoredWorldVersionStateResponse;
 import org.springframework.dao.DataAccessException;
@@ -19,7 +20,7 @@ import org.springframework.transaction.TransactionException;
  * intake remains disabled until the owning orchestrator explicitly wires and proves this boundary.
  */
 public final class AuthoredWorldVersionStateGrpcService
-    extends GameDesignServiceGrpc.GameDesignServiceImplBase {
+    extends AuthoredWorldVersionStateServiceGrpc.AuthoredWorldVersionStateServiceImplBase {
   private final AuthoredWorldVersionStateService service;
   private final String workloadNamespace;
 
@@ -33,7 +34,7 @@ public final class AuthoredWorldVersionStateGrpcService
   public void getAuthoredWorldVersionState(
       GetAuthoredWorldVersionStateRequest request,
       StreamObserver<GetAuthoredWorldVersionStateResponse> responseObserver) {
-    if (!isWorldManagementPeer()) {
+    if (SessionContext.hasAuthenticatedCallerContext() || !isWorldManagementPeer()) {
       responseObserver.onError(
           Status.PERMISSION_DENIED
               .withDescription("Verified same-namespace World Management identity is required")

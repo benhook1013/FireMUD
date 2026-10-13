@@ -28,6 +28,7 @@ public final class StartSessionPostAuthorizationExecutionTuple {
   public static final String TUPLE_SCHEMA_VERSION = "1";
   public static final int MAX_CANONICAL_TUPLE_BYTES = 256 * 1_024;
 
+  private static final long MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991L;
   private static final Pattern AUTHORIZATION_REFERENCE_FINGERPRINT =
       Pattern.compile("arfp/v1/[A-Za-z0-9_-]{1,64}/[0-9a-f]{64}");
   private static final Set<String> ROOT_FIELDS =
@@ -194,7 +195,7 @@ public final class StartSessionPostAuthorizationExecutionTuple {
                   root.get("authorizationReferenceFingerprint"),
                   "authorizationReferenceFingerprint"),
               canonicalUuid(root.get("reservationOwnerId"), "reservationOwnerId"),
-              positiveLong(root.get("reservationClaimFence"), "reservationClaimFence"),
+              reservationClaimFence(root.get("reservationClaimFence")),
               bundleBytes,
               reference);
       if (!TUPLE_SCHEMA_ID.equals(string(root.get("tupleSchemaId"), "tupleSchemaId"))
@@ -305,7 +306,7 @@ public final class StartSessionPostAuthorizationExecutionTuple {
     root.put("membershipVersion", bundle.membershipVersion());
     root.put("issuanceFence", bundle.issuanceFence());
     root.put("reservationOwnerId", reservationOwnerId.toString());
-    root.put("reservationClaimFence", reservationClaimFence);
+    root.put("reservationClaimFence", reservationClaimFenceJsonValue(reservationClaimFence));
     root.put("authorityEvidenceBundle", bundle.jsonValue());
     root.put(
         "authorityEvidenceBundleReference",
@@ -421,18 +422,37 @@ public final class StartSessionPostAuthorizationExecutionTuple {
     }
   }
 
-  private static long positiveLong(Object value, String field) {
-    if (!(value instanceof Number number)) {
-      throw invalid(field + " must be a positive integer");
+  private static Object reservationClaimFenceJsonValue(long value) {
+    return value <= MAX_SAFE_JSON_INTEGER ? value : Long.toString(value);
+  }
+
+  private static long reservationClaimFence(Object value) {
+    if (value instanceof Number number) {
+      long parsed = parseReservationClaimFence(number.toString());
+      if (parsed > MAX_SAFE_JSON_INTEGER) {
+        throw invalid("reservationClaimFence numeric value exceeds the safe JSON integer range");
+      }
+      return parsed;
     }
+    if (value instanceof String text) {
+      long parsed = parseReservationClaimFence(text);
+      if (parsed <= MAX_SAFE_JSON_INTEGER) {
+        throw invalid("reservationClaimFence string value must exceed the safe JSON integer range");
+      }
+      return parsed;
+    }
+    throw invalid("reservationClaimFence must be a positive integer or canonical decimal string");
+  }
+
+  private static long parseReservationClaimFence(String value) {
     try {
-      long parsed = Long.parseLong(number.toString());
-      if (parsed <= 0L || !Long.toString(parsed).equals(number.toString())) {
-        throw invalid(field + " must be a positive canonical integer");
+      long parsed = Long.parseLong(value);
+      if (parsed <= 0L || !Long.toString(parsed).equals(value)) {
+        throw invalid("reservationClaimFence must be positive and canonically encoded");
       }
       return parsed;
     } catch (NumberFormatException malformed) {
-      throw invalid(field + " must be a positive signed 64-bit integer");
+      throw invalid("reservationClaimFence must fit a positive signed 64-bit integer");
     }
   }
 
