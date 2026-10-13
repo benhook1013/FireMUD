@@ -67,7 +67,7 @@ public record CanonicalInitialAdmissionRequest(
       throw new IllegalArgumentException(
           "EXPECT_CLOSED requires a positive exact expectedPriorPointerVersion");
     }
-    // Match the 128-character owner attempt and immutable intent ledgers.
+    // The retained owner attempt and compatibility audit both support 128 code points.
     requireText(initialAdmissionRequestId, "initialAdmissionRequestId", 128);
     if (!REQUEST_DIGEST.matcher(Objects.requireNonNull(requestDigest, "requestDigest")).matches()) {
       throw new IllegalArgumentException(

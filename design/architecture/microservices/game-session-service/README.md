@@ -32,6 +32,8 @@ Target state makes Game Session the authoritative owner of region/tick coordinat
 
 Current seams are narrower: patch/request convergence reads, instance-scoped pause/resume, region-epoch fencing, and existing version-fence paths do not yet prove complete `scriptPinEpoch` propagation, final-effect enforcement, or Game-Session-owned append-only history. Track those implementation and proof gaps in the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
 
+The canonical authored-world launch preparation service is an evidence-only, source-backed preparation seam. It validates the committed realm catalog and source intake, resolves the canonical descriptor, independently reads it back, and persists exact prepared evidence. It is not wired into instance creation or runtime composition and does not write game_instances, call World activation, admit gameplay, or authorize PLAY; focused proof sources are present and validation is deferred.
+
 ## Terminology
 
 - **Tenant** – a hosted game world or project, identified by `tenantId`. All database rows and Redis keys include this prefix so data is isolated between games.

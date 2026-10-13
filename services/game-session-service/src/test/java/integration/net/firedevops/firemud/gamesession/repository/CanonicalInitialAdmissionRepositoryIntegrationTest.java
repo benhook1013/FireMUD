@@ -450,6 +450,35 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   }
 
   @Test
+  void retainsAndReadsBack128CharacterRequestIdentityFromOwnerAttempt() {
+    Fixture fixture = fixture();
+    PreparedAdmission prepared = prepareAdmission(fixture);
+    String requestId = "r".repeat(128);
+    CanonicalInitialAdmissionRequest request =
+        initialAdmissionRequest(
+            prepared.catalog(),
+            prepared.binding(),
+            requestId,
+            CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER,
+            null,
+            uuid(115),
+            uuid(116));
+
+    fixture.transactions.execute(
+        status -> {
+          fixture.initialAdmissionRepository.reserve(request);
+          return null;
+        });
+
+    CanonicalInitialAdmissionOwnerProof retained =
+        fixture.initialAdmissionRepository.read(NAMESPACE, requestId).orElseThrow();
+    assertThat(retained.outcome()).isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
+    assertThat(retained.initialAdmissionRequestId()).isEqualTo(requestId);
+    assertThat(retained.holdId()).isEqualTo(request.holdId());
+    assertThat(retained.holdFence()).isEqualTo(request.holdFence());
+  }
+
+  @Test
   void newNoPriorPointerReservationRejectsAnAlreadyOpenRealmWithoutLeavingPendingAttempt() {
     Fixture fixture = fixture();
     PreparedAdmission preparedAdmission = prepareAdmission(fixture);

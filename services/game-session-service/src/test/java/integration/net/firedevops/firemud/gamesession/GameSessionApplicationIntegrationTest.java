@@ -8,6 +8,11 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.when;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.common.ApiResponse;
@@ -22,8 +27,10 @@ import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
+import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.test.FiremudAuthTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -92,6 +99,43 @@ class GameSessionApplicationIntegrationTest {
 
   @org.springframework.beans.factory.annotation.Autowired
   private SessionContextService sessionContextService;
+
+  @org.springframework.beans.factory.annotation.Autowired
+  private GameInstanceRepository gameInstanceRepository;
+
+  @Test
+  void legacyNumericStartIsDeniedBeforePersistenceOrWorldPreparation() throws Exception {
+    when(gameDesignClient.resolveLaunchDescriptor(42L, 7L, "cp-1"))
+        .thenReturn(
+            net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("FAILED_PRECONDITION")
+                        .setMessage("Numeric Game Session launch selectors are not authorizing")
+                        .build())
+                .build());
+    StartSessionRequest request = new StartSessionRequest(42L, 7L, "cp-1", 100L);
+    int existingGameInstances = gameInstanceRepository.findAll().size();
+
+    HttpRequest.Builder httpRequest =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/sessions"))
+            .header("Content-Type", "application/json");
+    privilegedHeaders().forEach(httpRequest::header);
+    HttpResponse<String> response =
+        HttpClient.newHttpClient()
+            .send(
+                httpRequest
+                    .POST(
+                        HttpRequest.BodyPublishers.ofString(
+                            OBJECT_MAPPER.writeValueAsString(request), StandardCharsets.UTF_8))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("FAILED_PRECONDITION");
+    assertThat(gameInstanceRepository.findAll()).hasSize(existingGameInstances);
+    org.mockito.Mockito.verifyNoInteractions(worldManagementClient);
+  }
 
   @Test
   void startSessionUsesRealHttpAndPersistencePath() throws Exception {
