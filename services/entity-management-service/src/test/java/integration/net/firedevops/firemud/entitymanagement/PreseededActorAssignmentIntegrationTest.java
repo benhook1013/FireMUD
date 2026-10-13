@@ -160,7 +160,7 @@ class PreseededActorAssignmentIntegrationTest {
 
   @Test
   void migrationRetainsOlderRosterEvidenceWithoutBackfillingOwnerCounters() throws Exception {
-    String schema = "entity_publication_history_" + UUID.randomUUID().toString().replace("-", "");
+    String schema = "ph_" + UUID.randomUUID().toString().replace("-", "");
     UUID historicalSnapshot = UUID.randomUUID();
     UUID v8Snapshot = UUID.randomUUID();
     UUID historicalTenant = UUID.randomUUID();
@@ -285,13 +285,14 @@ class PreseededActorAssignmentIntegrationTest {
   @Test
   void quarantinesEveryRetainedDuplicateBeforeEnforcingUniqueLiveAccountNamespace()
       throws Exception {
-    String schema = "entity_preseeded_assignment_" + UUID.randomUUID().toString().replace("-", "");
+    String schema = "pa_" + UUID.randomUUID().toString().replace("-", "");
     UUID retainedAccountUuid = UUID.randomUUID();
     UUID retainedTenantUuid = UUID.randomUUID();
     UUID retainedNamespaceUuid = UUID.randomUUID();
 
     migrationFlyway(schema).target(MigrationVersion.fromVersion("1005")).load().migrate();
     List<AppliedMigration> parentHistory = appliedMigrationHistory(schema);
+    assertThat(parentHistory).allSatisfy(entry -> assertThat(entry.success()).isTrue());
     assertThat(parentHistory)
         .extracting(AppliedMigration::version)
         .containsExactly("1", "1000", "1001", "1002", "1003", "1004", "1005");
@@ -340,6 +341,7 @@ class PreseededActorAssignmentIntegrationTest {
     migrationFlyway(schema).load().migrate();
 
     List<AppliedMigration> upgradedHistory = appliedMigrationHistory(schema);
+    assertThat(upgradedHistory).allSatisfy(entry -> assertThat(entry.success()).isTrue());
     assertThat(upgradedHistory.subList(0, parentHistory.size()))
         .containsExactlyElementsOf(parentHistory);
     List<AppliedMigration> successorHistory =
@@ -1110,6 +1112,7 @@ class PreseededActorAssignmentIntegrationTest {
   }
 
   private FluentConfiguration migrationFlyway(String schema) {
+    assertThat(("flyway_schema_history_" + schema + "_s_idx").length()).isLessThanOrEqualTo(63);
     FluentConfiguration configuration =
         Flyway.configure()
             .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
@@ -1131,19 +1134,24 @@ class PreseededActorAssignmentIntegrationTest {
         Statement statement = connection.createStatement();
         ResultSet rows =
             statement.executeQuery(
-                "SELECT version, script, checksum FROM flyway_schema_history_"
+                "SELECT installed_rank, version, script, checksum, success FROM flyway_schema_history_"
                     + schema
-                    + " WHERE success AND version IS NOT NULL ORDER BY installed_rank")) {
+                    + " WHERE version IS NOT NULL ORDER BY installed_rank")) {
       while (rows.next()) {
         migrations.add(
             new AppliedMigration(
-                rows.getString(1), rows.getString(2), rows.getObject(3, Integer.class)));
+                rows.getInt(1),
+                rows.getString(2),
+                rows.getString(3),
+                rows.getObject(4, Integer.class),
+                rows.getBoolean(5)));
       }
     }
     return migrations;
   }
 
-  private record AppliedMigration(String version, String script, Integer checksum) {}
+  private record AppliedMigration(
+      int installedRank, String version, String script, Integer checksum, boolean success) {}
 
   private Connection connectToSchema(String schema) throws SQLException {
     Connection connection =

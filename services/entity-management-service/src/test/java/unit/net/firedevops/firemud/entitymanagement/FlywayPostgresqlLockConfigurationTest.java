@@ -18,7 +18,8 @@ class FlywayPostgresqlLockConfigurationTest {
   void identityValidationScansFinishBeforeStrongLockFinalization() throws IOException {
     String migration =
         Files.readString(
-            Path.of("src/main/resources/db/migration/V4__validate_actor_identity_constraints.sql"));
+            Path.of(
+                "src/main/resources/db/migration/V1005__validate_actor_identity_constraints.sql"));
     int lastValidation = migration.lastIndexOf("VALIDATE CONSTRAINT ");
     int setNotNull = migration.indexOf("ALTER COLUMN character_uuid SET NOT NULL");
     int dropProofCheck = migration.indexOf("DROP CONSTRAINT ck_characters_character_uuid_nonnull");

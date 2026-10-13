@@ -7,6 +7,8 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -28,6 +30,7 @@ import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationState;
 import org.flywaydb.core.api.MigrationVersion;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
 import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
@@ -62,7 +65,7 @@ class RetainedActorIdentityIntegrationTest {
   private UUID accountUuid;
   private UUID namespaceUuid;
   private long fixtureIdOffset;
-  private String migrationSchema;
+  private String testServiceSchema;
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -76,6 +79,8 @@ class RetainedActorIdentityIntegrationTest {
   static void configure(DynamicPropertyRegistry registry) {
     PostgresBackedServiceTestSupport.registerPostgresService(
         registry, postgres, "entity_management_service");
+    registry.add(
+        "spring.flyway.locations", () -> "classpath:db/migration,classpath:db/migration/saga");
     PostgresBackedServiceTestSupport.registerRedisService(registry, redis);
   }
 
@@ -89,6 +94,7 @@ class RetainedActorIdentityIntegrationTest {
   @Autowired private ScopedCharacterResolver scopedCharacterResolver;
   @Autowired private CharacterService characterService;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private Flyway flyway;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
@@ -111,8 +117,9 @@ class RetainedActorIdentityIntegrationTest {
       case "destinationOnlyQuarantinedAuditBlocksCleanupWithoutRuntimeRows" -> 400_000L;
       case "destinationOnlyOwnerResolvedAuditDoesNotBlockCleanupWithoutRuntimeRows" -> 500_000L;
       case "unresolvedRoomGroundIsHeldWithoutInferringActorOrS3Mapping" -> 600_000L;
-      case "flywayV1ToLatestRetainsLegacyRowsAndValidatesConstraints" -> 700_000L;
+      case "flywayParentFrontierToLatestRetainsLegacyRowsAndValidatesConstraints" -> 700_000L;
       case "characterUpdateRequiresExactTenantAndPreservesOwnerResolvedRowOnMismatch" -> 800_000L;
+      case "freshDefaultFlywayInstallsCompleteCombinedManifest" -> 900_000L;
       default -> throw new IllegalArgumentException("No fixture ID range for " + testMethodName);
     };
   }
@@ -817,9 +824,64 @@ class RetainedActorIdentityIntegrationTest {
   }
 
   @Test
+  void freshDefaultFlywayInstallsCompleteCombinedManifest() {
+    // Flyway normalizes the declared Saga sub-location into its recursive parent location.
+    assertThat(flyway.getConfiguration().getLocations())
+        .extracting(location -> location.getDescriptor())
+        .containsExactly("classpath:db/migration");
+    assertThat(flyway.getConfiguration().getTable())
+        .isEqualTo("flyway_schema_history_entity_management_service");
+    assertThat(flyway.getConfiguration().isOutOfOrder()).isFalse();
+    assertThat(flyway.info().applied())
+        .filteredOn(migration -> migration.getVersion() != null)
+        .extracting(migration -> migration.getVersion().getVersion())
+        .containsExactly(
+            "1", "1000", "1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008", "1009",
+            "1010");
+    assertThat(flyway.info().applied())
+        .filteredOn(migration -> migration.getVersion() != null)
+        .extracting(migration -> migration.getScript())
+        .containsExactly(
+            "V1__baseline.sql",
+            "saga/V1000__create_saga_schema.sql",
+            "saga/V1001__saga_instance_table.sql",
+            "saga/V1002__saga_step_table.sql",
+            "V1003__quarantine_unresolved_actor_identity.sql",
+            "V1004__build_actor_identity_indexes_concurrently.sql",
+            "V1005__validate_actor_identity_constraints.sql",
+            "V1006__preseeded_actor_assignment.sql",
+            "V1007__preseeded_assignment_owner_snapshot.sql",
+            "V1008__canonical_gameplay_roster_snapshots.sql",
+            "V1009__canonical_publication_uuid_actor_evidence.sql",
+            "V1010__canonical_roster_owner_counters.sql");
+    assertThat(flyway.info().current().getVersion())
+        .isEqualTo(MigrationVersion.fromVersion("1010"));
+    assertThat(flyway.info().applied())
+        .extracting(migration -> migration.getState())
+        .doesNotContain(MigrationState.OUT_OF_ORDER);
+  }
+
+  @Test
   @Timeout(value = 3, unit = TimeUnit.MINUTES)
-  void flywayV1ToLatestRetainsLegacyRowsAndValidatesConstraints() throws SQLException {
-    migrateLegacySchemaToV1();
+  void flywayParentFrontierToLatestRetainsLegacyRowsAndValidatesConstraints() throws SQLException {
+    migrateLegacySchemaToParentFrontier();
+    List<MigrationHistoryEntry> parentHistory = readMigrationHistory();
+    assertThat(parentHistory)
+        .extracting(MigrationHistoryEntry::version)
+        .containsExactly("1", "1000", "1001", "1002");
+    assertThat(parentHistory)
+        .extracting(MigrationHistoryEntry::script)
+        .containsExactly(
+            "V1__baseline.sql",
+            "saga/V1000__create_saga_schema.sql",
+            "saga/V1001__saga_instance_table.sql",
+            "saga/V1002__saga_step_table.sql");
+    assertThat(parentHistory)
+        .allSatisfy(
+            entry -> {
+              assertThat(entry.success()).isTrue();
+              assertThat(entry.checksum()).isNotNull();
+            });
     try (Connection connection = connectToMigrationSchema()) {
       var statement = connection.createStatement();
       statement.executeUpdate(
@@ -858,6 +920,31 @@ class RetainedActorIdentityIntegrationTest {
     }
 
     migrateLegacySchemaToLatest();
+
+    List<MigrationHistoryEntry> upgradedHistory = readMigrationHistory();
+    assertThat(upgradedHistory.subList(0, parentHistory.size()))
+        .containsExactlyElementsOf(parentHistory);
+    assertThat(upgradedHistory)
+        .extracting(MigrationHistoryEntry::version)
+        .containsExactly(
+            "1", "1000", "1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008", "1009",
+            "1010");
+    assertThat(upgradedHistory)
+        .extracting(MigrationHistoryEntry::script)
+        .containsExactly(
+            "V1__baseline.sql",
+            "saga/V1000__create_saga_schema.sql",
+            "saga/V1001__saga_instance_table.sql",
+            "saga/V1002__saga_step_table.sql",
+            "V1003__quarantine_unresolved_actor_identity.sql",
+            "V1004__build_actor_identity_indexes_concurrently.sql",
+            "V1005__validate_actor_identity_constraints.sql",
+            "V1006__preseeded_actor_assignment.sql",
+            "V1007__preseeded_assignment_owner_snapshot.sql",
+            "V1008__canonical_gameplay_roster_snapshots.sql",
+            "V1009__canonical_publication_uuid_actor_evidence.sql",
+            "V1010__canonical_roster_owner_counters.sql");
+    assertThat(upgradedHistory).allSatisfy(entry -> assertThat(entry.success()).isTrue());
 
     try (Connection connection = connectToMigrationSchema();
         var statement = connection.createStatement()) {
@@ -1199,29 +1286,41 @@ class RetainedActorIdentityIntegrationTest {
         visibleRef);
   }
 
-  private void migrateLegacySchemaToV1() throws SQLException {
-    migrationSchema = "retained_actor_v1_to_v2_" + UUID.randomUUID().toString().replace("-", "");
+  private void migrateLegacySchemaToParentFrontier() throws SQLException {
+    testServiceSchema = "rai_" + UUID.randomUUID().toString().replace("-", "");
     try (Connection connection =
             DriverManager.getConnection(
                 postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
         var statement = connection.createStatement()) {
-      statement.execute("CREATE SCHEMA " + migrationSchema);
+      statement.execute("CREATE SCHEMA " + testServiceSchema);
     }
-    migrationFlyway().target(MigrationVersion.fromVersion("1")).load().migrate();
+    Flyway parentFlyway = migrationFlyway().target(MigrationVersion.fromVersion("1002")).load();
+    assertThat(parentFlyway.getConfiguration().isOutOfOrder()).isFalse();
+    parentFlyway.migrate();
+    assertThat(parentFlyway.info().current().getVersion())
+        .isEqualTo(MigrationVersion.fromVersion("1002"));
   }
 
   private void migrateLegacySchemaToLatest() {
-    migrationFlyway().load().migrate();
+    Flyway upgradeFlyway = migrationFlyway().load();
+    assertThat(upgradeFlyway.getConfiguration().isOutOfOrder()).isFalse();
+    upgradeFlyway.migrate();
+    assertThat(upgradeFlyway.info().current().getVersion())
+        .isEqualTo(MigrationVersion.fromVersion("1010"));
+    assertThat(upgradeFlyway.info().applied())
+        .extracting(migration -> migration.getState())
+        .doesNotContain(MigrationState.OUT_OF_ORDER);
   }
 
   private FluentConfiguration migrationFlyway() {
     FluentConfiguration configuration =
         Flyway.configure()
             .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
-            .schemas(migrationSchema)
-            .defaultSchema(migrationSchema)
-            .locations("classpath:db/migration")
-            .placeholders(Map.of("serviceSchema", migrationSchema));
+            .schemas(testServiceSchema)
+            .defaultSchema(testServiceSchema)
+            .table("flyway_schema_history_" + testServiceSchema)
+            .locations("classpath:db/migration", "classpath:db/migration/saga")
+            .placeholders(Map.of("serviceSchema", testServiceSchema));
     configuration
         .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
         .setTransactionalLock(false);
@@ -1234,10 +1333,35 @@ class RetainedActorIdentityIntegrationTest {
         DriverManager.getConnection(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     try (var statement = connection.createStatement()) {
-      statement.execute("SET search_path TO " + migrationSchema);
+      statement.execute("SET search_path TO " + testServiceSchema);
     }
     return connection;
   }
+
+  private List<MigrationHistoryEntry> readMigrationHistory() throws SQLException {
+    List<MigrationHistoryEntry> history = new ArrayList<>();
+    try (Connection connection = connectToMigrationSchema();
+        var statement = connection.createStatement();
+        var rows =
+            statement.executeQuery(
+                "SELECT installed_rank, version, script, checksum, success FROM flyway_schema_history_"
+                    + testServiceSchema
+                    + " WHERE version IS NOT NULL ORDER BY installed_rank")) {
+      while (rows.next()) {
+        history.add(
+            new MigrationHistoryEntry(
+                rows.getInt("installed_rank"),
+                rows.getString("version"),
+                rows.getString("script"),
+                rows.getObject("checksum", Integer.class),
+                rows.getBoolean("success")));
+      }
+    }
+    return history;
+  }
+
+  private record MigrationHistoryEntry(
+      int installedRank, String version, String script, Integer checksum, boolean success) {}
 
   private long readLong(java.sql.Statement statement, String sql) throws SQLException {
     try (var rows = statement.executeQuery(sql)) {
