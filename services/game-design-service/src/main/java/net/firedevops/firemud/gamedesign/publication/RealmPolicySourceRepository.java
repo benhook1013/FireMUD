@@ -202,16 +202,6 @@ public final class RealmPolicySourceRepository {
             new BigInteger(epoch).add(BigInteger.ONE).toString(),
             RealmPolicySource.effective(inheritedPolicies, updates));
     var result = new RealmPolicyApplication(genesis, inherited, epoch, snapshot);
-    int advanced =
-        dsl.execute(
-            "UPDATE game_design_realm_policy_source SET source_epoch = ? "
-                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND source_epoch = ? AND visible_commit_id IS NOT DISTINCT FROM CAST(? AS UUID)",
-            snapshot.sourceEpoch(),
-            binding.target().canonicalTenantId(),
-            binding.target().canonicalVersionId(),
-            epoch,
-            inherited);
-    if (advanced != 1) throw new IllegalStateException("POLICY_SOURCE_EPOCH_CONFLICT");
     dsl.execute(
         "INSERT INTO game_design_realm_policy_application "
             + "(canonical_tenant_id, canonical_version_id, commit_id, request_id, inherited_commit_id, genesis_receipt_id, expected_epoch, snapshot_json, result_bytes) "
@@ -225,6 +215,16 @@ public final class RealmPolicySourceRepository {
         epoch,
         snapshot.canonicalJson(),
         result.canonicalBytes());
+    int advanced =
+        dsl.execute(
+            "UPDATE game_design_realm_policy_source SET source_epoch = ? "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND source_epoch = ? AND visible_commit_id IS NOT DISTINCT FROM CAST(? AS UUID)",
+            snapshot.sourceEpoch(),
+            binding.target().canonicalTenantId(),
+            binding.target().canonicalVersionId(),
+            epoch,
+            inherited);
+    if (advanced != 1) throw new IllegalStateException("POLICY_SOURCE_EPOCH_CONFLICT");
     var retained = application(binding).orElseThrow();
     return retained;
   }

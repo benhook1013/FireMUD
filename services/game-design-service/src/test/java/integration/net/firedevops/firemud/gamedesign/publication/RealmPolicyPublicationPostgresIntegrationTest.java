@@ -305,16 +305,14 @@ class RealmPolicyPublicationPostgresIntegrationTest {
   }
 
   @Test
-  void releaseWithoutTypedSourceRemainsValidButMissingCaptureWithSourceFailsClosed()
-      throws Exception {
+  void missingPolicyCaptureFailsClosedForEveryFullVersionRelease() throws Exception {
     Fixture unrelated = fixture(false);
     GameDesignPublicationOperation noPolicy = unrelated.prepare(false);
-    unrelated.writePublish(noPolicy, false);
+    assertThatThrownBy(() -> unrelated.writePublish(noPolicy, false))
+        .hasMessageContaining("POLICY_PUBLICATION_CAPTURE_UNAVAILABLE");
+    assertThat(unrelated.operations().read(noPolicy.workflowId()).orElseThrow().outcome())
+        .isEqualTo("PENDING");
     assertThat(unrelated.publicationReads().readPublishedSet(unrelated.target())).isEmpty();
-    assertThat(
-            unrelated.tx(
-                () -> unrelated.publicationWrites().retainSealedPublished(noPolicy.workflowId())))
-        .isEmpty();
 
     Fixture missingCapture = fixture(true);
     GameDesignPublicationOperation policyOperation = missingCapture.prepare(false);
