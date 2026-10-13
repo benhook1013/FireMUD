@@ -259,6 +259,42 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
   }
 
   @Test
+  void exactLargeReservationFencesSurviveOwnerReservationAndProjectionReplay() {
+    for (long fence :
+        new long[] {
+          9_007_199_254_740_991L, 9_007_199_254_740_992L, 9_007_199_254_740_993L, Long.MAX_VALUE
+        }) {
+      Fixture fixture = fixture(Duration.ofSeconds(30));
+      StartSessionPostAuthorizationExecutionTuple tuple =
+          tuple(
+              "operator-attempt-large-fence-" + fence,
+              "exact fence replay",
+              RESERVATION_OWNER,
+              fence);
+      ReservationResult reserved = fixture.reserve(tuple);
+      AttemptClaim claim = reserved.claim().orElseThrow();
+      byte[] originalBytes = tuple.canonicalBytes();
+      AttemptSnapshot attached = fixture.attach(claim, projection(tuple));
+      AttemptSnapshot replayed = fixture.attach(claim, projection(tuple));
+
+      assertThat(replayed.postAuthorizationExecutionTuple()).containsExactly(originalBytes);
+      assertThat(replayed.accountRedemptionProjection())
+          .containsExactly(attached.accountRedemptionProjection());
+      assertThat(
+              StartSessionPostAuthorizationExecutionTuple.decode(
+                      replayed.postAuthorizationExecutionTuple())
+                  .reservationClaimFence())
+          .isEqualTo(fence);
+      assertThat(fixture.reserve(tuple).disposition())
+          .isEqualTo(ReservationDisposition.EXACT_REPLAY);
+      assertThat(fixture.attemptCount()).isEqualTo(1);
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances")))).isZero();
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
+          .isZero();
+    }
+  }
+
+  @Test
   void exactAccountProjectionAttachesOnceWhileFingerprintAndSourceSubstitutionsConflict() {
     Fixture fixture = fixture(Duration.ofSeconds(30));
     StartSessionPostAuthorizationExecutionTuple tuple = tuple("operator-attempt-projection");

@@ -14,12 +14,12 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
-import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.AuthoredWorldVersionStateServiceGrpc;
 
 /** Explicit mTLS client for exact source-qualified current Game Design version-state reads. */
 public final class AuthoredWorldVersionStateClient
     extends AbstractReloadingBlockingGrpcClient<
-        GameDesignServiceGrpc.GameDesignServiceBlockingStub> {
+        AuthoredWorldVersionStateServiceGrpc.AuthoredWorldVersionStateServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
@@ -62,7 +62,8 @@ public final class AuthoredWorldVersionStateClient
   public AuthoredWorldVersionStateEvidence read(AuthoredWorldVersionStateEvidence.Request request) {
     Objects.requireNonNull(request, "request");
     requireNamespace(request.targetNamespace());
-    GameDesignServiceGrpc.GameDesignServiceBlockingStub currentStub = requireStub();
+    AuthoredWorldVersionStateServiceGrpc.AuthoredWorldVersionStateServiceBlockingStub currentStub =
+        requireStub();
     var response =
         currentStub
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
@@ -86,10 +87,11 @@ public final class AuthoredWorldVersionStateClient
   }
 
   @Override
-  protected GameDesignServiceGrpc.GameDesignServiceBlockingStub buildStub(ManagedChannel channel) {
+  protected AuthoredWorldVersionStateServiceGrpc.AuthoredWorldVersionStateServiceBlockingStub
+      buildStub(ManagedChannel channel) {
     String expectedGameDesignPeerUri =
         "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service";
-    return GameDesignServiceGrpc.newBlockingStub(channel)
+    return AuthoredWorldVersionStateServiceGrpc.newBlockingStub(channel)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedGameDesignPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedGameDesignPeerUri))
         .withCompression("gzip");
@@ -102,8 +104,10 @@ public final class AuthoredWorldVersionStateClient
     super.close();
   }
 
-  private GameDesignServiceGrpc.GameDesignServiceBlockingStub requireStub() {
-    GameDesignServiceGrpc.GameDesignServiceBlockingStub currentStub = stub();
+  private AuthoredWorldVersionStateServiceGrpc.AuthoredWorldVersionStateServiceBlockingStub
+      requireStub() {
+    AuthoredWorldVersionStateServiceGrpc.AuthoredWorldVersionStateServiceBlockingStub currentStub =
+        stub();
     if (closed || !initialized || currentStub == null) {
       throw new IllegalStateException(
           "Authored-world version-state client is not initialized and available");

@@ -115,10 +115,60 @@ class StartSessionPostAuthorizationExecutionTupleTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void encodesReservationClaimFenceExactlyAcrossTheSafeJsonIntegerBoundary() throws Exception {
+    long[] values = {
+      9_007_199_254_740_991L, 9_007_199_254_740_992L, 9_007_199_254_740_993L, Long.MAX_VALUE
+    };
+
+    for (long value : values) {
+      byte[] bytes = create("post-tuple-fence-" + value, value).canonicalBytes();
+      Map<String, Object> root = JSON.readValue(bytes, Map.class);
+      Object encodedFence = root.get("reservationClaimFence");
+      if (value <= 9_007_199_254_740_991L) {
+        assertThat(encodedFence).isInstanceOf(Number.class);
+        assertThat(encodedFence.toString()).isEqualTo(Long.toString(value));
+      } else {
+        assertThat(encodedFence).isEqualTo(Long.toString(value));
+      }
+
+      StartSessionPostAuthorizationExecutionTuple decoded =
+          StartSessionPostAuthorizationExecutionTuple.decode(bytes);
+      assertThat(decoded.reservationClaimFence()).isEqualTo(value);
+      assertThat(decoded.canonicalBytes()).containsExactly(bytes);
+      assertThat(
+              StartSessionPostAuthorizationExecutionTuple.decode(decoded.canonicalBytes())
+                  .canonicalBytes())
+          .containsExactly(bytes);
+    }
+  }
+
+  @Test
+  void rejectsUnsafeLegacyNumericAndNoncanonicalStringReservationClaimFences() throws Exception {
+    byte[][] unsafeNumericValues = {
+      tupleBytesWithFence(9_007_199_254_740_992L), tupleBytesWithFence(Long.MAX_VALUE)
+    };
+    for (byte[] bytes : unsafeNumericValues) {
+      assertThatThrownBy(() -> StartSessionPostAuthorizationExecutionTuple.decode(bytes))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    for (String encodedFence :
+        List.of("19", "01", "+9007199254740992", "9223372036854775808", "")) {
+      byte[] bytes = tupleBytesWithFence(encodedFence);
+      assertThatThrownBy(() -> StartSessionPostAuthorizationExecutionTuple.decode(bytes))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
   private static StartSessionPostAuthorizationExecutionTuple create(String requestId) {
+    return create(requestId, 19L);
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple create(String requestId, long fence) {
     StartSessionPreAuthorizationReservationTuple pre = preTuple(requestId);
     return StartSessionPostAuthorizationExecutionTuple.createHuman(
-        pre, WORKLOAD, FINGERPRINT, RESERVATION_OWNER, 19L, bundle(pre, "17"), reference("17"));
+        pre, WORKLOAD, FINGERPRINT, RESERVATION_OWNER, fence, bundle(pre, "17"), reference("17"));
   }
 
   private static StartSessionPreAuthorizationReservationTuple preTuple(String requestId) {
@@ -214,6 +264,13 @@ class StartSessionPostAuthorizationExecutionTupleTest {
 
   private static byte[] tupleBytes(StartSessionPostAuthorizationExecutionTuple tuple) {
     return tuple.canonicalBytes();
+  }
+
+  private static byte[] tupleBytesWithFence(Object fence) throws IOException {
+    Map<String, Object> root =
+        JSON.readValue(create("post-tuple-fence-legacy").canonicalBytes(), Map.class);
+    root.put("reservationClaimFence", fence);
+    return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(root));
   }
 
   private static void assertJsonNumber(Object actual, long expected) {

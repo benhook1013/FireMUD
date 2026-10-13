@@ -134,7 +134,7 @@ def _trusted_database_images(values_path: Path) -> dict[str, str]:
     for name, image in images.items():
         repository = "redis" if name == "redis" else "postgres"
         if not isinstance(image, str) or not re.fullmatch(
-            rf"(?:public\.ecr\.aws/docker/library/)?{repository}:"
+            rf"{repository}:"
             r"[0-9]+(?:\.[0-9]+)*(?:-[A-Za-z0-9._-]+)?(?:@sha256:[0-9a-f]{64})?",
             image,
         ):

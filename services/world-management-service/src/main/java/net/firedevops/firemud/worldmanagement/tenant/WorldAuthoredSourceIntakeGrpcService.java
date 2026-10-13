@@ -50,7 +50,7 @@ public final class WorldAuthoredSourceIntakeGrpcService
   public void intakeAuthoredWorldSource(
       IntakeAuthoredWorldSourceRequest request,
       StreamObserver<IntakeAuthoredWorldSourceResponse> responseObserver) {
-    if (!requireAuthenticatedGameDesignPeer(responseObserver)) {
+    if (!requireAuthenticatedGameDesignPeerWithoutCallerContext(responseObserver)) {
       return;
     }
     IntakeRequest binding;
@@ -107,7 +107,7 @@ public final class WorldAuthoredSourceIntakeGrpcService
   public void readAuthoredWorldSourceIntake(
       ReadAuthoredWorldSourceIntakeRequest request,
       StreamObserver<ReadAuthoredWorldSourceIntakeResponse> responseObserver) {
-    if (!requireAuthenticatedGameDesignPeer(responseObserver)) {
+    if (!requireAuthenticatedGameDesignPeerWithoutCallerContext(responseObserver)) {
       return;
     }
     ReadRequest readRequest;
@@ -266,20 +266,6 @@ public final class WorldAuthoredSourceIntakeGrpcService
         receipt.requestDigest(),
         receipt.receiptDigest(),
         receipt.source());
-  }
-
-  private boolean requireAuthenticatedGameDesignPeer(StreamObserver<?> responseObserver) {
-    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (peer != null
-        && peer.isService("game-design-service")
-        && peer.isInNamespace(trustedNamespace)) {
-      return true;
-    }
-    responseObserver.onError(
-        Status.PERMISSION_DENIED
-            .withDescription("Verified same-namespace Game Design workload is required")
-            .asRuntimeException());
-    return false;
   }
 
   private boolean requireAuthenticatedGameDesignPeerWithoutCallerContext(

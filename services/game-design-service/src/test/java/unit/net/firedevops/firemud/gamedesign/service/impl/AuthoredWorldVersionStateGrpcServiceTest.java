@@ -10,12 +10,17 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamedesign.v1.AuthoredWorldVersionStateServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetAuthoredWorldVersionStateRequest;
 import net.firedevops.firemud.gamedesign.v1.GetAuthoredWorldVersionStateResponse;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
@@ -28,6 +33,24 @@ class AuthoredWorldVersionStateGrpcServiceTest {
   private static final UUID SOURCE_OPERATION_ID = uuid("33333333-3333-4333-8333-333333333333");
   private static final UUID REGISTRATION_REQUEST_ID = uuid("44444444-4444-4444-8444-444444444444");
   private static final UUID CANONICAL_VERSION_ID = uuid("55555555-5555-4555-8555-555555555555");
+
+  @Test
+  void usesASeparateServiceIdentityFromRegisteredGameDesignRpcSurface() {
+    assertThat(GameDesignServiceGrpc.getServiceDescriptor().getName())
+        .isEqualTo("gamedesign.v1.GameDesignService");
+    assertThat(
+            GameDesignServiceGrpc.getServiceDescriptor().getMethods().stream()
+                .map(method -> method.getFullMethodName())
+                .toList())
+        .doesNotContain("gamedesign.v1.GameDesignService/GetAuthoredWorldVersionState");
+    assertThat(AuthoredWorldVersionStateServiceGrpc.getServiceDescriptor().getName())
+        .isEqualTo("gamedesign.v1.AuthoredWorldVersionStateService");
+    assertThat(
+            AuthoredWorldVersionStateServiceGrpc.getServiceDescriptor().getMethods().stream()
+                .map(method -> method.getFullMethodName())
+                .toList())
+        .contains("gamedesign.v1.AuthoredWorldVersionStateService/GetAuthoredWorldVersionState");
+  }
 
   @Test
   void exactWorldPeerMayReadAndReceivesClosedEvidence() {
@@ -93,6 +116,30 @@ class AuthoredWorldVersionStateGrpcServiceTest {
         () -> handler.getAuthoredWorldVersionState(malformed, wrongNamespace));
     assertStatus(wrongNamespace, Status.Code.PERMISSION_DENIED);
 
+    verifyNoInteractions(service);
+  }
+
+  @Test
+  void authenticatedCallerContextIsDeniedBeforeDecodeEvenForTheExactWorldPeer() {
+    AuthoredWorldVersionStateService service = mock(AuthoredWorldVersionStateService.class);
+    var handler = new AuthoredWorldVersionStateGrpcService(service, NAMESPACE);
+    GetAuthoredWorldVersionStateRequest malformed =
+        GetAuthoredWorldVersionStateRequest.newBuilder()
+            .setSchemaVersion(99)
+            .setReadRequestId("not-a-uuid")
+            .build();
+    TestObserver<GetAuthoredWorldVersionStateResponse> observer = new TestObserver<>();
+
+    SessionContext.setContext("account", List.of(), Map.of());
+    try {
+      withPeer(
+          peer(NAMESPACE, "world-management-service"),
+          () -> handler.getAuthoredWorldVersionState(malformed, observer));
+    } finally {
+      SessionContext.clear();
+    }
+
+    assertStatus(observer, Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(service);
   }
 
