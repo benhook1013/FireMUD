@@ -2231,7 +2231,6 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 decision=args.decision,
                 head=args.head,
                 checkpoint=args.checkpoint,
-                actor=args.actor,
                 reason=args.reason,
             ), 0
         if args.decide_command == "allocation":
