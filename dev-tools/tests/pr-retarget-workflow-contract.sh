@@ -364,8 +364,66 @@ for filename in ("ci.yml", "security.yml", "license-scan.yml", "codeql.yml"):
             raise SystemExit("CodeQL must retain its weekly full-analysis schedule")
         if workflow["jobs"]["codeql-gate"]["if"] != "${{ always() && github.event_name == 'pull_request' }}":
             raise SystemExit("CodeQL Gate must cover every PR base and remain PR-only")
-    if set(events) != expected_events or events["workflow_dispatch"] not in ("", {}):
-        raise SystemExit(f"{filename} must retain exactly its supported events and manual dispatch")
+    if set(events) != expected_events:
+        raise SystemExit(f"{filename} must retain exactly its supported events")
+    if filename == "ci.yml":
+        dispatch = events["workflow_dispatch"]
+        if not isinstance(dispatch, dict) or set(dispatch) != {"inputs"}:
+            raise SystemExit("ci.yml manual dispatch must define only its Flyway parent input")
+        inputs = dispatch["inputs"]
+        if not isinstance(inputs, dict) or set(inputs) != {"flyway_base_sha"}:
+            raise SystemExit("ci.yml manual dispatch must require exactly flyway_base_sha")
+        base_input = inputs["flyway_base_sha"]
+        if (
+            not isinstance(base_input, dict)
+            or set(base_input) != {"description", "required", "type"}
+            or base_input["required"] != "true"
+            or base_input["type"] != "string"
+            or "full immutable commit sha" not in base_input["description"].lower()
+        ):
+            raise SystemExit("ci.yml flyway_base_sha must be a required string describing the immutable parent SHA")
+    elif events["workflow_dispatch"] not in ("", {}):
+        raise SystemExit(f"{filename} must retain an empty manual dispatch")
+PYTHON
+
+# Manual CI dispatch must pass and fetch its exact immutable Flyway parent.
+python3 - "$ci_path" <<'PYTHON'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.load(Path(sys.argv[1]).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+job = workflow["jobs"]["flyway-migration-sanity-checks"]
+steps = job["steps"]
+fetch_steps = [step for step in steps if step.get("name") == "Fetch manual Flyway parent when needed"]
+if len(fetch_steps) != 1:
+    raise SystemExit("CI must have exactly one manual Flyway parent fetch step")
+fetch = fetch_steps[0]
+if fetch.get("if") != "${{ github.event_name == 'workflow_dispatch' }}":
+    raise SystemExit("Flyway parent fetching must run only for manual dispatch")
+if fetch.get("env") != {"FLYWAY_BASE_SHA": "${{ inputs.flyway_base_sha }}"}:
+    raise SystemExit("Flyway parent fetch must use the configured manual input")
+fetch_script = fetch.get("run", "")
+for required in (
+    "^[[:xdigit:]]{40}$",
+    'git cat-file -e "${FLYWAY_BASE_SHA}^{commit}"',
+    'git fetch --no-tags origin "$FLYWAY_BASE_SHA"',
+    'git rev-parse --verify "${FLYWAY_BASE_SHA}^{commit}"',
+):
+    if required not in fetch_script:
+        raise SystemExit(f"Flyway parent fetch must validate and resolve the exact SHA: missing {required}")
+
+check_steps = [step for step in steps if step.get("name") == "🧪 Check Flyway Migration Versions"]
+if len(check_steps) != 1:
+    raise SystemExit("CI must have exactly one Flyway version check step")
+expected_base = (
+    "${{ github.event_name == 'workflow_dispatch' && inputs.flyway_base_sha "
+    "|| github.event_name == 'pull_request' && github.event.pull_request.base.sha "
+    "|| github.event.before }}"
+)
+if check_steps[0].get("env", {}).get("FIREMUD_FLYWAY_BASE_REF") != expected_base:
+    raise SystemExit("Flyway version check must preserve dispatch, PR-base, and push-before parent selection")
 PYTHON
 
 # Optional native-PR comments cannot delay cancellation or require fork/bot write tokens.
