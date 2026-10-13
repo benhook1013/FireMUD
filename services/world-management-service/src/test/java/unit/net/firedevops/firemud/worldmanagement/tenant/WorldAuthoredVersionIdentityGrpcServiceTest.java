@@ -7,7 +7,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Map;
@@ -31,6 +33,9 @@ import org.junit.jupiter.api.Test;
 
 /** Authentication and dispatch proof only; physical owner persistence is separate. */
 class WorldAuthoredVersionIdentityGrpcServiceTest {
+  private static final Metadata.Key<String> PROVIDER_DETAIL =
+      Metadata.Key.of("x-provider-detail", Metadata.ASCII_STRING_MARSHALLER);
+
   @Test
   void deniesWrongMissingAndOtherNamespacePeersBeforeDecodingOrOwnerAccess() {
     var owner = mock(WorldAuthoredVersionIdentityService.class);
@@ -129,6 +134,73 @@ class WorldAuthoredVersionIdentityGrpcServiceTest {
     }
   }
 
+  @Test
+  void exposesOnlyRetryableTransportCodesWithSafeLocalDescriptions() {
+    var request = request("test", id(5));
+    for (var code : List.of(Status.Code.UNAVAILABLE, Status.Code.DEADLINE_EXCEEDED)) {
+      var owner = mock(WorldAuthoredVersionIdentityService.class);
+      var grpc = new WorldAuthoredVersionIdentityGrpcService(owner, "test");
+      var providerTrailers = new Metadata();
+      providerTrailers.put(PROVIDER_DETAIL, "provider secret trailer");
+      StatusRuntimeException failure =
+          Status.fromCode(code)
+              .withDescription("provider secret description")
+              .asRuntimeException(providerTrailers);
+      when(owner.associate(
+              "test",
+              id(1),
+              "north-star",
+              id(3),
+              request.sourceEvidenceDigest(),
+              id(4),
+              42L,
+              id(5)))
+          .thenThrow(failure);
+
+      var response =
+          call(
+              grpc,
+              WorldAuthoredVersionIdentityGrpcCodec.toRequest(request),
+              peer("game-design-service", "test"));
+
+      assertThat(response.code).isEqualTo(code);
+      assertThat(response.description)
+          .isEqualTo(
+              code == Status.Code.UNAVAILABLE
+                  ? "Game Design Version state is temporarily unavailable"
+                  : "Game Design Version state read timed out");
+      assertThat(response.description).doesNotContain("provider secret");
+      assertThat(response.trailers).isNull();
+      assertThat(response.value).isNull();
+      assertThat(response.completed).isFalse();
+    }
+
+    var owner = mock(WorldAuthoredVersionIdentityService.class);
+    var grpc = new WorldAuthoredVersionIdentityGrpcService(owner, "test");
+    var providerTrailers = new Metadata();
+    providerTrailers.put(PROVIDER_DETAIL, "provider secret trailer");
+    when(owner.associate(
+            "test", id(1), "north-star", id(3), request.sourceEvidenceDigest(), id(4), 42L, id(5)))
+        .thenThrow(
+            Status.INTERNAL
+                .withDescription("provider secret description")
+                .asRuntimeException(providerTrailers));
+
+    var response =
+        call(
+            grpc,
+            WorldAuthoredVersionIdentityGrpcCodec.toRequest(request),
+            peer("game-design-service", "test"));
+
+    assertThat(response.code).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(response.description)
+        .isEqualTo("World Version association has no exact committed proof");
+    assertThat(response.description).doesNotContain("provider secret");
+    assertThat(response.trailers).isNull();
+    assertThat(response.value).isNull();
+    assertThat(response.completed).isFalse();
+  }
+
   private static WorldAuthoredVersionIdentityEvidence.Request request(String namespace, UUID read) {
     var source = source(namespace);
     return new WorldAuthoredVersionIdentityEvidence.Request(
@@ -223,6 +295,8 @@ class WorldAuthoredVersionIdentityGrpcServiceTest {
       implements StreamObserver<AssociateAuthoredWorldVersionResponse> {
     private AssociateAuthoredWorldVersionResponse value;
     private Status.Code code = Status.Code.OK;
+    private String description;
+    private Metadata trailers;
     private boolean completed;
 
     @Override
@@ -232,7 +306,12 @@ class WorldAuthoredVersionIdentityGrpcServiceTest {
 
     @Override
     public void onError(Throwable failure) {
-      code = Status.fromThrowable(failure).getCode();
+      Status status = Status.fromThrowable(failure);
+      code = status.getCode();
+      description = status.getDescription();
+      if (failure instanceof StatusRuntimeException statusFailure) {
+        trailers = statusFailure.getTrailers();
+      }
     }
 
     @Override

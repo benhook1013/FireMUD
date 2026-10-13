@@ -12,6 +12,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -254,6 +257,56 @@ class WorldAuthoredVersionIdentityServiceTest {
     assertThatThrownBy(() -> withGameDesign(() -> associate(VERSION, GAME_DESIGN_VERSION_ID)))
         .isInstanceOf(WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException.class)
         .hasMessageContaining("must be DRAFT, PUBLISHED, or ACTIVE");
+    verify(repository, never()).acceptFresh(any(WorldAuthoredSourceIntakeReceipt.class), any());
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void propagatesTransientVersionStateReadFailuresWithoutOpeningOwnerTransaction() {
+    AuthoredWorldSourceEvidence source = source();
+    WorldAuthoredSourceIntakeReceipt intake = sourceReceipt(source);
+    when(sourceIntakeRepository.readBySource(
+            NAMESPACE, TENANT, WORLD, SOURCE_OPERATION, source.evidenceDigest()))
+        .thenReturn(Optional.of(intake));
+    when(repository.readByCanonicalVersion(NAMESPACE, TENANT, WORLD, VERSION))
+        .thenReturn(Optional.empty());
+    when(repository.readByGameDesignVersion(NAMESPACE, TENANT, WORLD, GAME_DESIGN_VERSION_ID))
+        .thenReturn(Optional.empty());
+
+    for (Status.Code code : List.of(Status.Code.UNAVAILABLE, Status.Code.DEADLINE_EXCEEDED)) {
+      StatusRuntimeException failure =
+          Status.fromCode(code).withDescription("upstream transport failure").asRuntimeException();
+      when(versionStateClient.read(any())).thenThrow(failure);
+
+      assertThatThrownBy(() -> withGameDesign(() -> associate(VERSION, GAME_DESIGN_VERSION_ID)))
+          .isSameAs(failure);
+    }
+
+    verify(repository, never()).acceptFresh(any(WorldAuthoredSourceIntakeReceipt.class), any());
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void keepsMalformedVersionStateReadEvidenceTerminalBeforeOwnerMutation() {
+    AuthoredWorldSourceEvidence source = source();
+    WorldAuthoredSourceIntakeReceipt intake = sourceReceipt(source);
+    when(sourceIntakeRepository.readBySource(
+            NAMESPACE, TENANT, WORLD, SOURCE_OPERATION, source.evidenceDigest()))
+        .thenReturn(Optional.of(intake));
+    when(repository.readByCanonicalVersion(NAMESPACE, TENANT, WORLD, VERSION))
+        .thenReturn(Optional.empty());
+    when(repository.readByGameDesignVersion(NAMESPACE, TENANT, WORLD, GAME_DESIGN_VERSION_ID))
+        .thenReturn(Optional.empty());
+    when(versionStateClient.read(any()))
+        .thenThrow(
+            new IllegalStateException(
+                "malformed evidence", new IllegalArgumentException("invalid codec evidence")));
+
+    assertThatThrownBy(() -> withGameDesign(() -> associate(VERSION, GAME_DESIGN_VERSION_ID)))
+        .isInstanceOf(WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException.class)
+        .hasCauseInstanceOf(IllegalStateException.class)
+        .hasRootCauseInstanceOf(IllegalArgumentException.class);
+
     verify(repository, never()).acceptFresh(any(WorldAuthoredSourceIntakeReceipt.class), any());
     assertThat(transactionManager.startedWith).isNull();
   }
