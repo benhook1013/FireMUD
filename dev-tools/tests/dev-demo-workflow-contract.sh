@@ -2595,6 +2595,9 @@ cat >"$waiter_stub_dir/sleep" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $# -eq 1 && "$1" == 5 ]]
+if [[ "${TEST_EXIT_AFTER_FIRST_REJECTION:-}" == true ]]; then
+  exit 1
+fi
 /bin/sleep 0.05
 SH
 
@@ -2708,7 +2711,8 @@ assert_waiter_rejects() {
     FAKE_PROFILE_TELNET_PORT="$profile_telnet_port" \
     FAKE_READY_GENERATION="$ready_generation" \
     FAKE_MISSING_ROLE="$missing_role" \
-    bash "$waiter" dev-demo "$expected_waiter_head" dev 1 >"$output" 2>&1
+    TEST_EXIT_AFTER_FIRST_REJECTION=true \
+    bash "$waiter" dev-demo "$expected_waiter_head" dev 30 >"$output" 2>&1
   actual_status=$?
   set -e
 
@@ -2827,7 +2831,8 @@ assert_preview_waiter_rejects() {
     FAKE_PROFILE_UID="runtime-uid" \
     FAKE_PROFILE_TELNET_PORT=32000 \
     FAKE_MISSING_ROLE="" \
-    bash "$waiter" pr-42 "$expected_waiter_head" pr-42 1 >"$output" 2>&1
+    TEST_EXIT_AFTER_FIRST_REJECTION=true \
+    bash "$waiter" pr-42 "$expected_waiter_head" pr-42 30 >"$output" 2>&1
   actual_status=$?
   set -e
 
