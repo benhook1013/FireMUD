@@ -200,7 +200,7 @@ Entry format:
   - Context: the #3156 local Game Design PostgreSQL gate failed the descriptor-readback mismatch fixture before reaching that boundary because its newly issued certificate raised `CertificateNotYetValidException`.
   - Observation: certificate readiness and live validation time disagreed transiently; the exact operating-system clock cause remains unproven. Successful certificate generation alone did not establish that the fixture was valid for the next consumer check.
   - Expected pattern: verify generated fixture certificates with the same actual validity check before exercising a later boundary, use a short monotonic readiness budget, and propagate expired or malformed certificates immediately. Preserve production certificate validation and the intended negative assertion.
-  - Current status: the test-only readiness correction is under local validation. No production validity check, certificate lifetime, or required proof has been relaxed.
+  - Current status: the test-only readiness correction passed the 75-case local Game Design PostgreSQL suite, including the intended descriptor-readback negative case. No production validity check, certificate lifetime, or required proof has been relaxed.
 
 - `2026-10-13`: Compact selected-PR JSON still includes large inventories
   - Context: Gameplay closeout used controller `reviews status --pr 3183 --compact --json` and the equivalent #3156 request.

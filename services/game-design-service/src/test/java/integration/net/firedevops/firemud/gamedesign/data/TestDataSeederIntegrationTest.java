@@ -860,8 +860,7 @@ class TestDataSeederIntegrationTest {
             PosixFilePermission.GROUP_READ,
             PosixFilePermission.OTHERS_READ));
 
-    awaitFixtureCertificatesValid(
-        sessionCertificate, worldManagementCertificate, caCertificate);
+    awaitFixtureCertificatesValid(sessionCertificate, worldManagementCertificate, caCertificate);
 
     Path receiptDirectory =
         Files.createDirectory(testDirectory.resolve("run-owned-authored-world-source"));
