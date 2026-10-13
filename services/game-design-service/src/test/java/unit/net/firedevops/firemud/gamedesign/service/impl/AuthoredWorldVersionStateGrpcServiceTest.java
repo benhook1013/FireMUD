@@ -207,17 +207,16 @@ class AuthoredWorldVersionStateGrpcServiceTest {
     return observer;
   }
 
-  private static void assertStorageFailure(
-      TestObserver<?> observer, Status.Code expectedCode) {
+  private static void assertStorageFailure(TestObserver<?> observer, Status.Code expectedCode) {
     assertStatus(observer, expectedCode);
     assertThat(observer.value).isNull();
     assertThat(observer.completed).isFalse();
-    assertThat(Status.fromThrowable(observer.failure).getDescription())
+    assertThat(observer.failureDescription)
         .isEqualTo(
             expectedCode == Status.Code.UNAVAILABLE
                 ? "Game Design owner storage is temporarily unavailable"
                 : "Game Design owner storage could not be read");
-    assertThat(((StatusRuntimeException) observer.failure).getTrailers()).isNull();
+    assertThat(observer.failureTrailersPresent).isFalse();
   }
 
   private static void assertStatus(TestObserver<?> observer, Status.Code expectedCode) {
@@ -293,7 +292,8 @@ class AuthoredWorldVersionStateGrpcServiceTest {
   private static final class TestObserver<T> implements StreamObserver<T> {
     private T value;
     private ErrorEvidence error;
-    private Throwable failure;
+    private String failureDescription;
+    private boolean failureTrailersPresent;
     private boolean completed;
 
     @Override
@@ -303,7 +303,10 @@ class AuthoredWorldVersionStateGrpcServiceTest {
 
     @Override
     public void onError(Throwable failure) {
-      this.failure = failure;
+      failureDescription = Status.fromThrowable(failure).getDescription();
+      failureTrailersPresent =
+          failure instanceof StatusRuntimeException statusFailure
+              && statusFailure.getTrailers() != null;
       error = new ErrorEvidence(failure.getClass(), Status.fromThrowable(failure).getCode());
     }
 

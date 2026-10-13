@@ -26,8 +26,8 @@ import net.firedevops.firemud.gamedesign.v1.AuthoredWorldSourceReadServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
-import org.junit.jupiter.api.Test;
 import org.jooq.exception.DataAccessException;
+import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 
 class AuthoredWorldSourceReadGrpcServiceTest {
@@ -183,12 +183,12 @@ class AuthoredWorldSourceReadGrpcServiceTest {
     assertThat(observer.failure).isEqualTo(expectedCode);
     assertThat(observer.response).isNull();
     assertThat(observer.completed).isFalse();
-    assertThat(Status.fromThrowable(observer.error).getDescription())
+    assertThat(observer.failureDescription)
         .isEqualTo(
             expectedCode == Status.Code.UNAVAILABLE
                 ? "Authored-world source evidence is temporarily unavailable"
                 : "Authored-world source evidence could not be read");
-    assertThat(((io.grpc.StatusRuntimeException) observer.error).getTrailers()).isNull();
+    assertThat(observer.failureTrailersPresent).isFalse();
   }
 
   private WorldSourceObserver callWorldSource(
@@ -275,7 +275,8 @@ class AuthoredWorldSourceReadGrpcServiceTest {
       implements StreamObserver<ResolveAuthoredWorldSourceResponse> {
     private ResolveAuthoredWorldSourceResponse response;
     private Status.Code failure;
-    private Throwable error;
+    private String failureDescription;
+    private boolean failureTrailersPresent;
     private boolean completed;
 
     @Override
@@ -285,7 +286,10 @@ class AuthoredWorldSourceReadGrpcServiceTest {
 
     @Override
     public void onError(Throwable throwable) {
-      error = throwable;
+      failureDescription = Status.fromThrowable(throwable).getDescription();
+      failureTrailersPresent =
+          throwable instanceof io.grpc.StatusRuntimeException statusFailure
+              && statusFailure.getTrailers() != null;
       failure = Status.fromThrowable(throwable).getCode();
     }
 
