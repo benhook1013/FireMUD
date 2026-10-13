@@ -195,3 +195,15 @@ Entry format:
   - Context: The #3155 second Hosted request reported a predecessor terminal-capture warning after the earlier Hosted run had already been captured and finalized.
   - Observation: `HostedCaptureError` reported unmarked content after a finding comment's final `cr-comment:v1` marker. The warning retained a diagnostic and did not prevent the new request from being posted; the exact content or actor responsible remains unverified.
   - Expected pattern: Preserve the completed checkpoint and frozen counts, distinguish a recapture warning from a failed new provider request, and report the diagnostic to controller maintenance. Do not invent replacement findings or spend another review to repair historical capture metadata.
+
+- `2026-10-13`: Certificate fixture validity can mask the intended negative assertion
+  - Context: the #3156 local Game Design PostgreSQL gate failed the descriptor-readback mismatch fixture before reaching that boundary because its newly issued certificate raised `CertificateNotYetValidException`.
+  - Observation: certificate readiness and live validation time disagreed transiently; the exact operating-system clock cause remains unproven. Successful certificate generation alone did not establish that the fixture was valid for the next consumer check.
+  - Expected pattern: verify generated fixture certificates with the same actual validity check before exercising a later boundary, use a short monotonic readiness budget, and propagate expired or malformed certificates immediately. Preserve production certificate validation and the intended negative assertion.
+  - Current status: the test-only readiness correction is under local validation. No production validity check, certificate lifetime, or required proof has been relaxed.
+
+- `2026-10-13`: Compact selected-PR JSON still includes large inventories
+  - Context: Gameplay closeout used controller `reviews status --pr 3183 --compact --json` and the equivalent #3156 request.
+  - Observation: their JSON captures were approximately 251 KB and 172 KB, including check inventories and historical transition details; printing the complete selected response consumed substantial context despite requesting compact output.
+  - Expected pattern: a compact selected-PR projection should retain identity, review obligations, required-check outcomes, routes and readiness reasons, with detailed inventories available separately. Until then, capture JSON and print only the fields needed for the current decision.
+  - Current status: reported to Overseer for controller improvement; no controller implementation change was made in this lane.

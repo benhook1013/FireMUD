@@ -61,8 +61,7 @@ class AuthoredWorldSourceReadGrpcServiceTest {
     assertThat(AuthoredWorldSourceReadServiceGrpc.getServiceDescriptor().getName())
         .isEqualTo("gamedesign.v1.AuthoredWorldSourceReadService");
     assertThat(
-            AuthoredWorldSourceReadServiceGrpc.getServiceDescriptor()
-                .getMethods().stream()
+            AuthoredWorldSourceReadServiceGrpc.getServiceDescriptor().getMethods().stream()
                 .map(method -> method.getFullMethodName())
                 .toList())
         .contains("gamedesign.v1.AuthoredWorldSourceReadService/ResolveAuthoredWorldSource");

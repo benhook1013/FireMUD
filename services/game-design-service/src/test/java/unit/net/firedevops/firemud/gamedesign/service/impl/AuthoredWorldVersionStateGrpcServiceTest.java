@@ -46,8 +46,7 @@ class AuthoredWorldVersionStateGrpcServiceTest {
     assertThat(AuthoredWorldVersionStateServiceGrpc.getServiceDescriptor().getName())
         .isEqualTo("gamedesign.v1.AuthoredWorldVersionStateService");
     assertThat(
-            AuthoredWorldVersionStateServiceGrpc.getServiceDescriptor()
-                .getMethods().stream()
+            AuthoredWorldVersionStateServiceGrpc.getServiceDescriptor().getMethods().stream()
                 .map(method -> method.getFullMethodName())
                 .toList())
         .contains("gamedesign.v1.AuthoredWorldVersionStateService/GetAuthoredWorldVersionState");
