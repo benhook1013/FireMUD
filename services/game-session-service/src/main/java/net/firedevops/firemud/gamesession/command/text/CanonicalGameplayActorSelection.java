@@ -7,10 +7,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import net.firedevops.firemud.common.publication.RealmEntryPolicy;
-import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterEntryPolicy;
 import net.firedevops.firemud.entitymanagement.v1.CanonicalGameplayRosterTarget;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayRosterClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalPublishedPlayerRoute;
 
@@ -38,7 +35,10 @@ public final class CanonicalGameplayActorSelection {
           || !isNonNil(snapshot.snapshotUuid())
           || !isCanonicalDigest(snapshot.snapshotDigest())
           || expectedRoute == null
-          || !matchesExactPublishedTarget(snapshot.target(), expectedRoute)) {
+          || snapshot.target() == null
+          || !snapshot.target().getUnknownFields().asMap().isEmpty()
+          || !CanonicalGameplayRosterClient.expectedTarget(expectedRoute)
+              .equals(snapshot.target())) {
         return Optional.empty();
       }
       List<CanonicalGameplayRosterClient.RosterActor> actors = snapshot.actors();
@@ -107,52 +107,6 @@ public final class CanonicalGameplayActorSelection {
         actor.characterUuid(),
         actor.displayName(),
         ordinal);
-  }
-
-  private static boolean matchesExactPublishedTarget(
-      CanonicalGameplayRosterTarget target, CanonicalPublishedPlayerRoute publishedRoute) {
-    if (target == null || !target.getUnknownFields().asMap().isEmpty()) {
-      return false;
-    }
-    var route = publishedRoute.route();
-    RealmEntryPolicy policy = publishedRoute.entryPolicy();
-    if (policy.entryPolicy() != RealmEntryPolicy.EntryPolicy.PRESEEDED_ONLY
-        || policy.stateScope() != RealmEntryPolicy.StateScope.SHARED
-        || !"SHARED".equals(route.playableStateScope())) {
-      return false;
-    }
-    publishedRoute.policySetEvidence().requireValidDigest();
-    publishedRoute.selectedPolicyEvidence().requireValidDigest(publishedRoute.policySetEvidence());
-    return target.getTenantUuid().equals(route.canonicalTenantId().toString())
-        && target.getRealmUuid().equals(route.realmId().toString())
-        && target.getWorldSlug().equals(route.worldSlug())
-        && target.getRealmSlug().equals(route.realmSlug())
-        && target.getGameInstanceUuid().equals(route.canonicalGameInstanceId().toString())
-        && target.getCatalogRevision() == route.catalogRevision()
-        && target
-            .getPublishedPolicyDigest()
-            .equals(rawDigest(publishedRoute.selectedPolicyEvidence().policyDigest()))
-        && target
-            .getPublishedReleaseBundleRef()
-            .equals(publishedRoute.policySetEvidence().publishedReleaseBundleRef())
-        && target.getAdmissionPointerSnapshotDigest().equals(route.admissionPointerSnapshotDigest())
-        && target.getPublishedOwnerProofDigest().equals(rawDigest(route.ownerProofDigest()))
-        && target
-            .getPlayableStateNamespaceUuid()
-            .equals(route.playableStateNamespaceId().toString())
-        && target.getPlayableStateScope() == PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED
-        && target.getEntryPolicy()
-            == CanonicalGameplayRosterEntryPolicy.CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY
-        && target.getCanonicalVersionUuid().equals(route.canonicalVersionId().toString())
-        && target.getPointerVersion() == route.pointerVersion()
-        && target.getActiveWorldEpoch() == route.activeWorldEpoch();
-  }
-
-  private static String rawDigest(String prefixedDigest) {
-    if (prefixedDigest == null || !prefixedDigest.matches("sha256:[0-9a-f]{64}")) {
-      throw new IllegalArgumentException("Published route digest is malformed");
-    }
-    return prefixedDigest.substring("sha256:".length());
   }
 
   private static boolean isCanonicalDisplayName(String value) {
