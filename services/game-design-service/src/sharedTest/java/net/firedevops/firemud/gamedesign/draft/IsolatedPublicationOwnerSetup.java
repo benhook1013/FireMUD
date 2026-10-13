@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamedesign.draft;
 
 import java.math.BigInteger;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftBaseReference;
@@ -44,6 +45,16 @@ public final class IsolatedPublicationOwnerSetup {
             binding, new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
   }
 
+  /** Actual joined source captures; supplied remote owner authority remains explicitly isolated. */
+  public static void advanceIsolatedSourceVisibility(
+      DSLContext dsl,
+      DraftCommitBinding binding,
+      List<DraftCommitCoordinatorRepository.OwnerOutcome> outcomes) {
+    new DraftCommitCoordinatorRepository(dsl)
+        .advanceSourceVisibilityFence(
+            binding, new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
+  }
+
   /**
    * Caller supplies a writable READ_COMMITTED owner transaction and an actual Draft target/epoch.
    */
@@ -69,6 +80,23 @@ public final class IsolatedPublicationOwnerSetup {
       DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
       throws Exception {
     return retain(dsl, target, draftEpoch, notes, true);
+  }
+
+  /** Resolve and retain the exact current authored or genesis source base for this fixture. */
+  public static GameDesignPublicationOperation retainSourceBacked(
+      DSLContext dsl,
+      DraftCommitBinding.TargetProof target,
+      long draftEpoch,
+      String notes,
+      String sourceBaseReference)
+      throws Exception {
+    return retain(
+        dsl,
+        target,
+        draftEpoch,
+        notes,
+        true,
+        Objects.requireNonNull(sourceBaseReference, "sourceBaseReference"));
   }
 
   /**
