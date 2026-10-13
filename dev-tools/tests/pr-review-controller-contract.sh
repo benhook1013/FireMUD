@@ -141,8 +141,8 @@ grep -Fq 'Once taper is reached' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not preserve completed taper across head changes'
 grep -Fq 'default Hosted review period requires at least two' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define the default Hosted minimum and cap'
-grep -Fq 'default CLI period allows at most six' design/developer-workflows/pr-lifecycle.md \
-  || fail 'lifecycle guidance does not define the default CLI cap'
+grep -Fq 'default CLI period requires at least three completed attributable rounds and allows at most six' design/developer-workflows/pr-lifecycle.md \
+  || fail 'lifecycle guidance does not define the default CLI minimum and cap'
 grep -Fq 'decide period reset' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not define the audited period-reset command'
 grep -Fq -- '--force' design/developer-workflows/pr-lifecycle.md \
