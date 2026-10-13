@@ -238,24 +238,27 @@ class CanonicalGameplayRosterSelectionServiceTest {
   @Test
   void returnsExplicitSelectionAndSelectorDenialsWithoutAssignmentReads() throws Exception {
     var multiple = harness(twoActors());
-    assertThat(
+    var menu =
+        (CanonicalGameplayRosterSelectionService.SelectionRequired)
             multiple
                 .service()
                 .select(
-                    context(multiple.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null))
-        .isInstanceOf(CanonicalGameplayRosterSelectionService.SelectionRequired.class);
+                    context(multiple.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null);
     assertDenied(
         multiple
             .service()
             .select(
                 context(multiple.route(), "ffffffff-ffff-4fff-8fff-ffffffffffff"),
                 "Pilot Two",
-                null),
+                menu.menuIdentity()),
         CanonicalGameplayRosterSelectionService.Denial.INVALID_SELECTOR);
     assertDenied(
         multiple
             .service()
-            .select(context(multiple.route(), "abababab-abab-4bab-8bab-abababababab"), "3", null),
+            .select(
+                context(multiple.route(), "abababab-abab-4bab-8bab-abababababab"),
+                "3",
+                menu.menuIdentity()),
         CanonicalGameplayRosterSelectionService.Denial.SELECTOR_OUT_OF_RANGE);
     verify(multiple.stub(), never()).readSelectedPreseededAssignment(any());
 
@@ -364,6 +367,44 @@ class CanonicalGameplayRosterSelectionServiceTest {
   }
 
   @Test
+  void staleMenuIdentityPrecedesOrdinalResolutionAgainstARefreshedSmallerRoster() throws Exception {
+    var harness = harness(twoActors());
+    AtomicInteger reads = new AtomicInteger();
+    doAnswer(
+            invocation -> {
+              CanonicalGameplayRosterRequest request = invocation.getArgument(0);
+              boolean firstRead = reads.getAndIncrement() == 0;
+              return rosterResponse(
+                  request,
+                  ACCOUNT,
+                  request.getExpectedTarget(),
+                  firstRead
+                      ? twoActors()
+                      : List.of(
+                          new CanonicalGameplayRosterClient.RosterActor(FIRST_ACTOR, "Pilot One")),
+                  firstRead ? SNAPSHOT : CHANGED_SNAPSHOT);
+            })
+        .when(harness.stub())
+        .listPreseededRoster(any());
+
+    var menu =
+        (CanonicalGameplayRosterSelectionService.SelectionRequired)
+            harness
+                .service()
+                .select(
+                    context(harness.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null);
+    assertDenied(
+        harness
+            .service()
+            .select(
+                context(harness.route(), "ffffffff-ffff-4fff-8fff-ffffffffffff"),
+                "2",
+                menu.menuIdentity()),
+        CanonicalGameplayRosterSelectionService.Denial.STALE_MENU_IDENTITY);
+    verify(harness.stub(), never()).readSelectedPreseededAssignment(any());
+  }
+
+  @Test
   void rejectsMovedRouteAfterRosterAndAfterAssignmentNetworkEvidence() throws Exception {
     var changedAfterList = harness(oneActor());
     configureRouteMovement(changedAfterList, 3);
@@ -420,6 +461,131 @@ class CanonicalGameplayRosterSelectionServiceTest {
                 context(unavailable.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null),
         CanonicalGameplayRosterSelectionService.Denial.ROSTER_UNAVAILABLE);
     verify(unavailable.stub(), never()).readSelectedPreseededAssignment(any());
+  }
+
+  @Test
+  void mapsEntityGrpcFailuresByStatusAndReadBoundary() throws Exception {
+    for (Status.Code code :
+        List.of(
+            Status.Code.UNAVAILABLE,
+            Status.Code.DEADLINE_EXCEEDED,
+            Status.Code.RESOURCE_EXHAUSTED,
+            Status.Code.ABORTED)) {
+      var rosterUnavailable = harness(oneActor());
+      doThrow(Status.fromCode(code).withDescription("Entity read failed").asRuntimeException())
+          .when(rosterUnavailable.stub())
+          .listPreseededRoster(any());
+      assertDenied(
+          rosterUnavailable
+              .service()
+              .select(
+                  context(rosterUnavailable.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                  null,
+                  null),
+          CanonicalGameplayRosterSelectionService.Denial.ROSTER_UNAVAILABLE);
+
+      var assignmentUnavailable = harness(oneActor());
+      doThrow(Status.fromCode(code).withDescription("Entity read failed").asRuntimeException())
+          .when(assignmentUnavailable.stub())
+          .readSelectedPreseededAssignment(any());
+      assertDenied(
+          assignmentUnavailable
+              .service()
+              .select(
+                  context(assignmentUnavailable.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                  null,
+                  null),
+          CanonicalGameplayRosterSelectionService.Denial.ASSIGNMENT_UNAVAILABLE);
+    }
+
+    var staleRoster = harness(oneActor());
+    doThrow(Status.FAILED_PRECONDITION.withDescription("menu changed").asRuntimeException())
+        .when(staleRoster.stub())
+        .listPreseededRoster(any());
+    assertDenied(
+        staleRoster
+            .service()
+            .select(
+                context(staleRoster.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.STALE_MENU_IDENTITY);
+
+    var changedAssignment = harness(oneActor());
+    doThrow(Status.FAILED_PRECONDITION.withDescription("assignment changed").asRuntimeException())
+        .when(changedAssignment.stub())
+        .readSelectedPreseededAssignment(any());
+    assertDenied(
+        changedAssignment
+            .service()
+            .select(
+                context(changedAssignment.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                null,
+                null),
+        CanonicalGameplayRosterSelectionService.Denial.INVALID_ASSIGNMENT_PROOF);
+
+    var rejectedRoster = harness(oneActor());
+    doThrow(Status.PERMISSION_DENIED.withDescription("caller rejected").asRuntimeException())
+        .when(rejectedRoster.stub())
+        .listPreseededRoster(any());
+    assertDenied(
+        rejectedRoster
+            .service()
+            .select(
+                context(rejectedRoster.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                null,
+                null),
+        CanonicalGameplayRosterSelectionService.Denial.INVALID_ROSTER_PROOF);
+
+    for (Status.Code code : List.of(Status.Code.PERMISSION_DENIED, Status.Code.INVALID_ARGUMENT)) {
+      var invalidRoster = harness(oneActor());
+      doThrow(Status.fromCode(code).withDescription("roster rejected").asRuntimeException())
+          .when(invalidRoster.stub())
+          .listPreseededRoster(any());
+      assertDenied(
+          invalidRoster
+              .service()
+              .select(
+                  context(invalidRoster.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                  null,
+                  null),
+          CanonicalGameplayRosterSelectionService.Denial.INVALID_ROSTER_PROOF);
+
+      var invalidAssignment = harness(oneActor());
+      doThrow(Status.fromCode(code).withDescription("assignment rejected").asRuntimeException())
+          .when(invalidAssignment.stub())
+          .readSelectedPreseededAssignment(any());
+      assertDenied(
+          invalidAssignment
+              .service()
+              .select(
+                  context(invalidAssignment.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                  null,
+                  null),
+          CanonicalGameplayRosterSelectionService.Denial.INVALID_ASSIGNMENT_PROOF);
+    }
+
+    var staleRoute = harness(oneActor());
+    doThrow(Status.FAILED_PRECONDITION.withDescription("route changed").asRuntimeException())
+        .when(staleRoute.policyClient())
+        .listPublishedRealmEntryPolicies(
+            staleRoute.route().canonicalTenantId(), staleRoute.route().canonicalVersionId());
+    assertDenied(
+        staleRoute
+            .service()
+            .select(
+                context(staleRoute.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.ROUTE_CHANGED);
+
+    var invalidRoute = harness(oneActor());
+    doThrow(Status.PERMISSION_DENIED.withDescription("route rejected").asRuntimeException())
+        .when(invalidRoute.policyClient())
+        .listPublishedRealmEntryPolicies(
+            invalidRoute.route().canonicalTenantId(), invalidRoute.route().canonicalVersionId());
+    assertDenied(
+        invalidRoute
+            .service()
+            .select(
+                context(invalidRoute.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.INVALID_ROUTE_PROOF);
   }
 
   @Test
