@@ -304,13 +304,148 @@ class LiveEvidence:
             self._complete_payloads.add(pr)
 
     def admission_history(self, pr: int, channel: str) -> Sequence[dict[str, Any]]:
-        """Refresh one capped channel after execution exclusion, before state mutation."""
+        """Refresh unchanged policy-compatible history for ordinary admission."""
 
         self._payloads.pop(pr, None)
         self._complete_payloads.discard(pr)
         self._histories.pop((pr, channel), None)
         self._records_histories.pop(pr, None)
-        return self.history(pr, channel)
+        self.prefetch_history_payloads((pr,))
+        history = list(self.history(pr, channel))
+        complete_markers = [item for item in history if item.get("scope_timeline") is True]
+        if len(complete_markers) != 1 or complete_markers[0].get("scope_timeline_complete") is not True:
+            raise ControllerError("complete retained provider history cannot be verified for period reset")
+        if any(
+            item.get("history_truncated") is True
+            or item.get("history_complete") is False
+            or item.get("capture_context_available") is False
+            for item in history
+        ):
+            raise ControllerError("retained provider history is incomplete or truncated for period reset")
+        return history
+
+    def period_reset_history(self, pr: int, channel: str) -> Sequence[dict[str, Any]]:
+        """Supplement refreshed policy history with reset-only raw audit records.
+
+        Raw records retain real identities and fingerprints without manufacturing
+        reviewed heads, checkpoints, or policy eligibility.
+        """
+
+        history = list(self.admission_history(pr, channel))
+        payload = self._payload(pr)
+        pull = payload["data"]["repository"]["pullRequest"]
+        if channel == "hosted":
+            for provider_kind, connection_name in (("comment", "comments"), ("review", "reviews")):
+                nodes = pull.get(connection_name, {}).get("nodes")
+                if not isinstance(nodes, list):
+                    raise ControllerError("complete retained Hosted source history is unavailable")
+                for item in nodes:
+                    if not isinstance(item, Mapping):
+                        raise ControllerError("complete retained Hosted source history is malformed")
+                    provider_id = github.immutable_database_id(dict(item))
+                    if provider_id is None:
+                        raise ControllerError("a retained Hosted source record lacks its native ID")
+                    try:
+                        raw_fingerprint = observation_fingerprint(item)
+                    except StateError as error:
+                        raise ControllerError("a retained Hosted source record has an unstable fingerprint") from error
+                    history.append(
+                        {
+                            "pr": pr,
+                            "channel": channel,
+                            "kind": "retained_public_provider_record",
+                            "provider_kind": provider_kind,
+                            "provider_id": provider_id,
+                            "period_baseline_source_ids": (
+                                [f"hosted-review:{provider_id}"]
+                                if github.is_coderabbit_login((item.get("author") or {}).get("login"))
+                                else []
+                            ),
+                            "period_baseline_source_fingerprint": raw_fingerprint,
+                        }
+                    )
+            threads = pull.get("reviewThreads", {}).get("nodes")
+            if not isinstance(threads, list):
+                raise ControllerError("complete retained Hosted thread history is unavailable")
+            for thread in threads:
+                if not isinstance(thread, Mapping) or not isinstance(thread.get("id"), str) or not thread["id"]:
+                    raise ControllerError("a retained Hosted thread lacks its native ID")
+                comments = thread.get("comments", {}).get("nodes")
+                if not isinstance(comments, list):
+                    raise ControllerError("complete retained Hosted inline history is unavailable")
+                for comment in comments:
+                    if not isinstance(comment, Mapping) or github.immutable_database_id(dict(comment)) is None:
+                        raise ControllerError("a retained Hosted inline comment lacks its native ID")
+                    try:
+                        comment_fingerprint = observation_fingerprint(comment)
+                    except StateError as error:
+                        raise ControllerError("a retained Hosted inline comment has an unstable fingerprint") from error
+                    history.append(
+                        {
+                            "pr": pr,
+                            "channel": channel,
+                            "kind": "retained_public_provider_record",
+                            "provider_kind": "inline_comment",
+                            "provider_id": github.immutable_database_id(dict(comment)),
+                            "period_baseline_source_fingerprint": comment_fingerprint,
+                        }
+                    )
+                try:
+                    raw_fingerprint = observation_fingerprint(thread)
+                except StateError as error:
+                    raise ControllerError("a retained Hosted thread has an unstable fingerprint") from error
+                history.append(
+                    {
+                        "pr": pr,
+                        "channel": channel,
+                        "kind": "retained_public_provider_record",
+                        "provider_kind": "thread",
+                        "provider_id": thread["id"],
+                        "period_baseline_source_fingerprint": raw_fingerprint,
+                    }
+                )
+        if self.records is not None:
+            if pr not in self._records_histories:
+                try:
+                    self._records_histories[pr] = self.records.history(pr, include_display=False)
+                except RecordsNotBootstrapped:
+                    self._records_histories[pr] = None
+                except github.HostedPreflightDeadlineExceeded:
+                    raise
+                except (ReviewRecordsError, OSError) as error:
+                    raise ControllerError("complete retained native attempt history is unavailable") from error
+            native_history = self._records_histories[pr]
+            if native_history is not None:
+                attempts = native_history.get("attempts") if isinstance(native_history, Mapping) else None
+                if not isinstance(attempts, list) or any(not isinstance(item, Mapping) for item in attempts):
+                    raise ControllerError("complete retained native attempt history is malformed")
+                for attempt in attempts:
+                    if attempt.get("channel") != channel:
+                        continue
+                    attempt_id = attempt.get("attempt_id")
+                    if not isinstance(attempt_id, str) or not attempt_id.strip():
+                        raise ControllerError("a retained native attempt lacks its stable ID")
+                    try:
+                        raw_fingerprint = observation_fingerprint(attempt)
+                    except StateError as error:
+                        raise ControllerError("a retained native attempt has an unstable fingerprint") from error
+                    provider_review_id = github.immutable_database_id({"databaseId": attempt.get("provider_review_id")})
+                    history.append(
+                        {
+                            "pr": pr,
+                            "channel": channel,
+                            "kind": "retained_native_attempt",
+                            "period_baseline_source_kind": "native_attempt",
+                            "period_baseline_source_id": attempt_id,
+                            "period_baseline_source_ids": (
+                                [f"hosted-review:{provider_review_id}"]
+                                if channel == "hosted" and provider_review_id is not None
+                                else []
+                            ),
+                            "period_baseline_source_fingerprint": raw_fingerprint,
+                        }
+                    )
+        return history
 
     @contextmanager
     def review_period_reset_lock(self, pr: int, channel: str):

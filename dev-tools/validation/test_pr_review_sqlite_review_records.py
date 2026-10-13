@@ -3824,18 +3824,21 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         old_state = SqliteStateStore(self.database, writer_build=6)
         self.records.migrate()
         self.records.migrate()
-        with self.assertRaisesRegex(RecordsSchemaIncompatible, "requires writer build 9"):
+        with self.assertRaisesRegex(RecordsSchemaIncompatible, f"requires writer build {WRITER_BUILD}"):
             old_records.history(2828)
-        with self.assertRaisesRegex(StateError, "requires writer build 9"):
+        with self.assertRaisesRegex(StateError, f"requires writer build {WRITER_BUILD}"):
             old_state.update(lambda state: state)
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(
                 connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 9
             )
             self.assertEqual(
-                connection.execute("SELECT min_writer_build FROM review_records_metadata").fetchone()[0], 9
+                connection.execute("SELECT min_writer_build FROM review_records_metadata").fetchone()[0],
+                WRITER_BUILD,
             )
-            self.assertEqual(connection.execute("SELECT min_writer_build FROM controller_metadata").fetchone()[0], 9)
+            self.assertEqual(
+                connection.execute("SELECT min_writer_build FROM controller_metadata").fetchone()[0], WRITER_BUILD
+            )
         history = self.records.history(2828)
         self.assertEqual(history["runs"][0]["counts"], counts_before)
         self.assertEqual(history["source_resolutions"][0]["fix_sha"], "b" * 40)
@@ -3905,9 +3908,9 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.records.migrate()
         self.records.migrate()
 
-        with self.assertRaisesRegex(RecordsSchemaIncompatible, "requires writer build 9"):
+        with self.assertRaisesRegex(RecordsSchemaIncompatible, f"requires writer build {WRITER_BUILD}"):
             old_records.history(2828)
-        with self.assertRaisesRegex(StateError, "requires writer build 9"):
+        with self.assertRaisesRegex(StateError, f"requires writer build {WRITER_BUILD}"):
             old_state.update(lambda state: state)
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(
@@ -3916,11 +3919,11 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             )
             self.assertEqual(
                 connection.execute("SELECT min_writer_build FROM review_records_metadata").fetchone()[0],
-                9,
+                WRITER_BUILD,
             )
             self.assertEqual(
                 connection.execute("SELECT min_writer_build FROM controller_metadata").fetchone()[0],
-                9,
+                WRITER_BUILD,
             )
             self.assertEqual(
                 connection.execute(

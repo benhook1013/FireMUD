@@ -492,6 +492,40 @@ class RuntimeTest(unittest.TestCase):
                 self.assertEqual(observer._payloads[99], {"unrelated": True})
                 self.assertNotIn(42, observer._records_histories)
 
+    def test_admission_history_requires_one_complete_untruncated_timeline_marker(self) -> None:
+        marker = {"scope_timeline": True, "scope_timeline_complete": True}
+        pending = {"checkpoint": "pending-capture:run-1", "active_reservation": True}
+        global_hold = {"kind": "global_finding", "finding_id": "review-7"}
+        observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+
+        def seed_payload(_numbers):
+            payload = self._payload()
+            payload["data"]["repository"]["pullRequest"]["changedFiles"] = 1
+            observer._payloads[42] = payload
+            observer._complete_payloads.add(42)
+
+        for rows in (
+            [],
+            [{"scope_timeline": True, "scope_timeline_complete": False}],
+            [marker, marker],
+            [marker, {"history_truncated": True}],
+            [marker, {"capture_context_available": False}],
+        ):
+            with (
+                self.subTest(rows=rows),
+                patch.object(observer, "prefetch_history_payloads", side_effect=seed_payload),
+                patch.object(observer, "history", return_value=rows),
+                self.assertRaisesRegex(ControllerError, "retained provider history"),
+            ):
+                observer.admission_history(42, "cli")
+
+        with (
+            patch.object(observer, "prefetch_history_payloads", side_effect=seed_payload),
+            patch.object(observer, "history", return_value=[pending, global_hold, marker]),
+        ):
+            retained = observer.admission_history(42, "cli")
+        self.assertEqual(retained, [pending, global_hold, marker])
+
     def test_selected_status_payload_seed_replaces_only_its_derived_operation_cache(self) -> None:
         observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
         payload = {"data": {"repository": {"pullRequest": {"number": 42}}}}
