@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement.tenant;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.Objects;
 import net.firedevops.firemud.common.authoring.WorldAuthoredVersionIdentityEvidence;
 import net.firedevops.firemud.common.authoring.WorldAuthoredVersionIdentityGrpcCodec;
@@ -12,6 +13,9 @@ import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec;
 import net.firedevops.firemud.worldmanagement.v1.AssociateAuthoredWorldVersionRequest;
 import net.firedevops.firemud.worldmanagement.v1.AssociateAuthoredWorldVersionResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldAuthoredVersionIdentityServiceGrpc;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 
 /** Unregistered adapter to the existing immutable World authored-Version association owner. */
 public final class WorldAuthoredVersionIdentityGrpcService
@@ -90,9 +94,14 @@ public final class WorldAuthoredVersionIdentityGrpcService
       deny(observer, Status.PERMISSION_DENIED, "World Version association authorization denied");
     } catch (IllegalArgumentException invalid) {
       deny(observer, Status.INVALID_ARGUMENT, "World Version association input is invalid");
-    } catch (org.springframework.dao.DataAccessException
-        | org.jooq.exception.DataAccessException unavailable) {
-      deny(observer, Status.UNAVAILABLE, "World Version association storage unavailable");
+    } catch (DataAccessException | org.jooq.exception.DataAccessException storageFailure) {
+      if (hasUnavailableSqlState(storageFailure)
+          || storageFailure instanceof DataAccessResourceFailureException
+          || storageFailure instanceof TransientDataAccessException) {
+        deny(observer, Status.UNAVAILABLE, "World Version association storage unavailable");
+      } else {
+        deny(observer, Status.INTERNAL, "World Version association storage failed");
+      }
     } catch (StatusRuntimeException transportFailure) {
       Status.Code code = transportFailure.getStatus().getCode();
       if (code == Status.Code.UNAVAILABLE) {
@@ -115,5 +124,20 @@ public final class WorldAuthoredVersionIdentityGrpcService
 
   private static void deny(StreamObserver<?> observer, Status status, String description) {
     observer.onError(status.withDescription(description).asRuntimeException());
+  }
+
+  private static boolean hasUnavailableSqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException exception) {
+        String sqlState = exception.getSQLState();
+        if (sqlState != null
+            && (sqlState.startsWith("08")
+                || "55P03".equals(sqlState)
+                || "40P01".equals(sqlState))) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 }

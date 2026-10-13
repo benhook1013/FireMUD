@@ -634,7 +634,7 @@ message GetCanonicalGameInstanceLaunchAssociationResponse {
   string descriptor_result_digest = 9;
   string release_attestation_evidence_digest = 10;
   string playable_state_namespace_id = 11;
-  string playable_state_scope = 12;
+  entity_management.v1.PlayableStateScope playable_state_scope = 12;
   // Current Game Session row projection only; World lifecycle authority remains separate.
   string current_game_instance_status = 13;
   int64 current_row_version = 14;

@@ -11,6 +11,7 @@ import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -122,13 +123,84 @@ class WorldAuthoredVersionIdentityGrpcServiceTest {
             "test", id(1), "north-star", id(3), request.sourceEvidenceDigest(), id(4), 42L, id(5)))
         .thenThrow(new org.jooq.exception.DataAccessException("storage unavailable"))
         .thenThrow(new IllegalStateException("conflicting identity"));
-    for (var code : List.of(Status.Code.UNAVAILABLE, Status.Code.FAILED_PRECONDITION)) {
+    for (var code : List.of(Status.Code.INTERNAL, Status.Code.FAILED_PRECONDITION)) {
       var response =
           call(
               grpc,
               WorldAuthoredVersionIdentityGrpcCodec.toRequest(request),
               peer("game-design-service", "test"));
       assertThat(response.code).isEqualTo(code);
+      assertThat(response.value).isNull();
+      assertThat(response.completed).isFalse();
+    }
+  }
+
+  @Test
+  void classifiesOnlyRetryableStorageFailuresAsUnavailableWithoutLeakingProviderDetails() {
+    var request = request("test", id(5));
+    var failures =
+        List.of(
+            new StorageFailure(
+                new org.jooq.exception.DataAccessException(
+                    "provider secret", new SQLException("provider secret", "08006")),
+                Status.Code.UNAVAILABLE),
+            new StorageFailure(
+                new org.jooq.exception.DataAccessException(
+                    "provider secret", new SQLException("provider secret", "55P03")),
+                Status.Code.UNAVAILABLE),
+            new StorageFailure(
+                new org.jooq.exception.DataAccessException(
+                    "provider secret", new SQLException("provider secret", "40P01")),
+                Status.Code.UNAVAILABLE),
+            new StorageFailure(
+                new org.jooq.exception.DataAccessException(
+                    "provider secret", new SQLException("provider secret", "23505")),
+                Status.Code.INTERNAL),
+            new StorageFailure(
+                new org.jooq.exception.DataAccessException(
+                    "provider secret", new SQLException("provider secret", "42P01")),
+                Status.Code.INTERNAL),
+            new StorageFailure(
+                new org.jooq.exception.DataAccessException("provider secret"),
+                Status.Code.INTERNAL),
+            new StorageFailure(
+                new org.springframework.dao.DataAccessException("provider secret") {},
+                Status.Code.INTERNAL),
+            new StorageFailure(
+                new org.springframework.dao.DataAccessResourceFailureException("provider secret"),
+                Status.Code.UNAVAILABLE),
+            new StorageFailure(
+                new org.springframework.dao.TransientDataAccessException("provider secret") {},
+                Status.Code.UNAVAILABLE));
+
+    for (var failure : failures) {
+      var owner = mock(WorldAuthoredVersionIdentityService.class);
+      var grpc = new WorldAuthoredVersionIdentityGrpcService(owner, "test");
+      when(owner.associate(
+              "test",
+              id(1),
+              "north-star",
+              id(3),
+              request.sourceEvidenceDigest(),
+              id(4),
+              42L,
+              id(5)))
+          .thenThrow(failure.exception());
+
+      var response =
+          call(
+              grpc,
+              WorldAuthoredVersionIdentityGrpcCodec.toRequest(request),
+              peer("game-design-service", "test"));
+
+      assertThat(response.code).isEqualTo(failure.expectedCode());
+      assertThat(response.description)
+          .isEqualTo(
+              failure.expectedCode() == Status.Code.UNAVAILABLE
+                  ? "World Version association storage unavailable"
+                  : "World Version association storage failed");
+      assertThat(response.description).doesNotContain("provider secret");
+      assertThat(response.trailersPresent).isFalse();
       assertThat(response.value).isNull();
       assertThat(response.completed).isFalse();
     }
@@ -170,7 +242,7 @@ class WorldAuthoredVersionIdentityGrpcServiceTest {
                   ? "Game Design Version state is temporarily unavailable"
                   : "Game Design Version state read timed out");
       assertThat(response.description).doesNotContain("provider secret");
-      assertThat(response.trailers).isNull();
+      assertThat(response.trailersPresent).isFalse();
       assertThat(response.value).isNull();
       assertThat(response.completed).isFalse();
     }
@@ -196,7 +268,7 @@ class WorldAuthoredVersionIdentityGrpcServiceTest {
     assertThat(response.description)
         .isEqualTo("World Version association has no exact committed proof");
     assertThat(response.description).doesNotContain("provider secret");
-    assertThat(response.trailers).isNull();
+    assertThat(response.trailersPresent).isFalse();
     assertThat(response.value).isNull();
     assertThat(response.completed).isFalse();
   }
@@ -271,6 +343,8 @@ class WorldAuthoredVersionIdentityGrpcServiceTest {
     return UUID.fromString("11111111-1111-4111-8111-" + String.format("%012d", suffix));
   }
 
+  private record StorageFailure(RuntimeException exception, Status.Code expectedCode) {}
+
   private static GrpcPeerIdentity peer(String service, String namespace) {
     return new GrpcPeerIdentity(
         "spiffe://firemud/ns/" + namespace + "/sa/" + service, namespace, service);
@@ -296,7 +370,7 @@ class WorldAuthoredVersionIdentityGrpcServiceTest {
     private AssociateAuthoredWorldVersionResponse value;
     private Status.Code code = Status.Code.OK;
     private String description;
-    private Metadata trailers;
+    private boolean trailersPresent;
     private boolean completed;
 
     @Override
@@ -310,7 +384,7 @@ class WorldAuthoredVersionIdentityGrpcServiceTest {
       code = status.getCode();
       description = status.getDescription();
       if (failure instanceof StatusRuntimeException statusFailure) {
-        trailers = statusFailure.getTrailers();
+        trailersPresent = statusFailure.getTrailers() != null;
       }
     }
 
