@@ -152,6 +152,23 @@ class CanonicalGameplayRosterSelectionServiceTest {
   void deniesTenantNamespaceRealmAndInstanceContextMismatchesBeforeEntityRead() throws Exception {
     var harness = harness(oneActor());
     PlayerExecutionContext valid = context(harness.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+    UUID foreignTenant = uuid("13131313-1313-4313-8313-131313131313");
+    var mainTenantCatalog =
+        harness
+            .catalogRepository()
+            .readUniqueVisiblePublicProduction(
+                harness.route().targetNamespace(), harness.route().canonicalTenantId());
+    // Deliberately return the valid main-tenant owner row for a foreign-tenant query.
+    when(harness
+            .catalogRepository()
+            .readUniqueVisiblePublicProduction(harness.route().targetNamespace(), foreignTenant))
+        .thenReturn(mainTenantCatalog);
+
+    assertDenied(
+        harness
+            .service()
+            .select(valid.toBuilder().setTenantId(foreignTenant.toString()).build(), null, null),
+        CanonicalGameplayRosterSelectionService.Denial.ROUTE_MISMATCH);
 
     assertDenied(
         harness

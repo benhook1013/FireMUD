@@ -354,6 +354,36 @@
       "rebaseWhen": "behind-base-branch"
     },
     {
+      "description": "Keep the selected Python authority on the validated Python 3.15 patch line",
+      "matchManagers": [
+        "pyenv"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "allowedVersions": "/^3\\.15\\.\\d+$/",
+      "prBodyNotes": [
+        "Python feature-line changes need coordinated lock regeneration and compatibility proof."
+      ]
+    },
+    {
+      "description": "Keep the dev-demo bootstrap image on the validated Python 3.15 Alpine line",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "matchFileNames": [
+        ".github/workflows/dev-demo.yml"
+      ],
+      "allowedVersions": "/^3\\.15-alpine$/",
+      "pinDigests": true,
+      "prBodyNotes": [
+        "Keep the upstream image digest pinned; Python feature-line changes need coordinated authority, lock, and compatibility proof."
+      ]
+    },
+    {
       "matchManagers": [
         "gradle"
       ],
