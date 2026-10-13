@@ -39,15 +39,18 @@ class AuthoredWorldVersionStateGrpcServiceTest {
     assertThat(GameDesignServiceGrpc.getServiceDescriptor().getName())
         .isEqualTo("gamedesign.v1.GameDesignService");
     assertThat(
-            GameDesignServiceGrpc.getServiceDescriptor()
-                .findMethodByName("GetAuthoredWorldVersionState"))
-        .isNull();
+            GameDesignServiceGrpc.getServiceDescriptor().getMethods().stream()
+                .map(method -> method.getFullMethodName())
+                .toList())
+        .doesNotContain("gamedesign.v1.GameDesignService/GetAuthoredWorldVersionState");
     assertThat(AuthoredWorldVersionStateServiceGrpc.getServiceDescriptor().getName())
         .isEqualTo("gamedesign.v1.AuthoredWorldVersionStateService");
     assertThat(
             AuthoredWorldVersionStateServiceGrpc.getServiceDescriptor()
-                .findMethodByName("GetAuthoredWorldVersionState"))
-        .isNotNull();
+                .getMethods().stream()
+                .map(method -> method.getFullMethodName())
+                .toList())
+        .contains("gamedesign.v1.AuthoredWorldVersionStateService/GetAuthoredWorldVersionState");
   }
 
   @Test

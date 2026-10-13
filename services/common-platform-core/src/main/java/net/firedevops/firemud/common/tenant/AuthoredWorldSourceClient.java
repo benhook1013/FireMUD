@@ -87,8 +87,8 @@ public final class AuthoredWorldSourceClient
   }
 
   @Override
-  protected AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceBlockingStub
-      buildStub(ManagedChannel channel) {
+  protected AuthoredWorldSourceReadServiceGrpc.AuthoredWorldSourceReadServiceBlockingStub buildStub(
+      ManagedChannel channel) {
     String expectedGameDesignPeerUri =
         "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service";
     return AuthoredWorldSourceReadServiceGrpc.newBlockingStub(channel)

@@ -1081,9 +1081,7 @@ class WorldAuthoredSourceIntakeIntegrationTest {
   private long insertRegion(long tenantKey, String name) {
     return Objects.requireNonNull(
             dsl.fetchOne(
-                "INSERT INTO region (tenant_id, name) VALUES (?, ?) RETURNING id",
-                tenantKey,
-                name),
+                "INSERT INTO region (tenant_id, name) VALUES (?, ?) RETURNING id", tenantKey, name),
             "Region concurrency fixture insert returned no row")
         .get(0, Long.class);
   }

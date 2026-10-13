@@ -54,15 +54,18 @@ class AuthoredWorldSourceReadGrpcServiceTest {
     assertThat(TenantIdentityServiceGrpc.getServiceDescriptor().getName())
         .isEqualTo("gamedesign.v1.TenantIdentityService");
     assertThat(
-            TenantIdentityServiceGrpc.getServiceDescriptor()
-                .findMethodByName("ResolveAuthoredWorldSource"))
-        .isNull();
+            TenantIdentityServiceGrpc.getServiceDescriptor().getMethods().stream()
+                .map(method -> method.getFullMethodName())
+                .toList())
+        .doesNotContain("gamedesign.v1.TenantIdentityService/ResolveAuthoredWorldSource");
     assertThat(AuthoredWorldSourceReadServiceGrpc.getServiceDescriptor().getName())
         .isEqualTo("gamedesign.v1.AuthoredWorldSourceReadService");
     assertThat(
             AuthoredWorldSourceReadServiceGrpc.getServiceDescriptor()
-                .findMethodByName("ResolveAuthoredWorldSource"))
-        .isNotNull();
+                .getMethods().stream()
+                .map(method -> method.getFullMethodName())
+                .toList())
+        .contains("gamedesign.v1.AuthoredWorldSourceReadService/ResolveAuthoredWorldSource");
   }
 
   @Test

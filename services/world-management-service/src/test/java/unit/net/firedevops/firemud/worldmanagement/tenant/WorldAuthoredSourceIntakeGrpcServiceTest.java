@@ -330,8 +330,7 @@ class WorldAuthoredSourceIntakeGrpcServiceTest {
 
   @Test
   void intakeAndExactReadRejectCallerContextBeforeDecodeAndOwnerAccess() {
-    RecordingObserver<IntakeAuthoredWorldSourceResponse> intakeObserver =
-        new RecordingObserver<>();
+    RecordingObserver<IntakeAuthoredWorldSourceResponse> intakeObserver = new RecordingObserver<>();
     RecordingObserver<ReadAuthoredWorldSourceIntakeResponse> readObserver =
         new RecordingObserver<>();
 
