@@ -29,6 +29,7 @@ class ReviewStatus(str, Enum):
     JUDGMENT_REQUIRED = "JUDGMENT_REQUIRED"
     PROVISIONAL = "PROVISIONAL"
     ALLOCATION_EXHAUSTED = "ALLOCATION_EXHAUSTED"
+    BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
     HUMAN_STOPPED = "HUMAN_STOPPED"
 
 
@@ -63,6 +64,7 @@ class Evidence:
     active_review: bool = False
     active_reservation: bool = False
     finding_only_hold: bool = False
+    source_run_id: str | None = None
 
     @classmethod
     def from_value(cls, value: Evidence | Mapping[str, Any]) -> Evidence:
@@ -73,6 +75,7 @@ class Evidence:
             "reviewed_head": "head",
             "checkpoint_id": "checkpoint",
             "patch_identity": "patch_id",
+            "run_id": "source_run_id",
         }
         data = {aliases.get(key, key): item for key, item in value.items()}
         return cls(**{field.name: data[field.name] for field in dataclasses.fields(cls) if field.name in data})
@@ -205,6 +208,7 @@ def fresh_taper_history(
     history: Iterable[Evidence | Mapping[str, Any]],
     *,
     baseline_checkpoints: Iterable[str] = (),
+    baseline_source_run_ids: Iterable[str] = (),
 ) -> list[Evidence]:
     """Return only review evidence eligible for the current fresh taper.
 
@@ -249,6 +253,9 @@ def fresh_taper_history(
     baseline = set(baseline_checkpoints)
     if baseline:
         relevant = [item for item in relevant if item.checkpoint not in baseline]
+    source_runs = set(baseline_source_run_ids)
+    if source_runs:
+        relevant = [item for item in relevant if item.source_run_id not in source_runs]
     return relevant
 
 
@@ -258,6 +265,7 @@ def taper_satisfied_for_state(
     history: Iterable[Evidence | Mapping[str, Any]],
     *,
     baseline_checkpoints: Iterable[str] = (),
+    baseline_source_run_ids: Iterable[str] = (),
 ) -> bool:
     """Evaluate taper after any exact human-reopen or allocation baseline."""
 
@@ -267,6 +275,7 @@ def taper_satisfied_for_state(
         selected,
         history,
         baseline_checkpoints=baseline_checkpoints,
+        baseline_source_run_ids=baseline_source_run_ids,
     )
     return taper_satisfied(selected, values, required_taper(state, selected, values))
 
@@ -442,6 +451,8 @@ def select_review_target(
     taper_history_by_pr: Mapping[int, Sequence[Evidence | Mapping[str, Any]]] | None = None,
     active_review_prs: Iterable[int] = (),
     finding_clearance_prs: Iterable[int] = (),
+    minimum_completed_by_pr: Mapping[int, int] | None = None,
+    budget_exhausted_prs: Iterable[int] = (),
 ) -> ChannelDecision:
     """Derive the next target; callers still perform live GitHub/quota operations."""
 
@@ -455,8 +466,11 @@ def select_review_target(
     allocation_reopen = set(allocation_reopen_prs)
     active_reviews = set(active_review_prs)
     finding_clearance = set(finding_clearance_prs)
+    minimum_completed_by_pr = minimum_completed_by_pr or {}
+    budget_exhausted = set(budget_exhausted_prs)
     taper_history_by_pr = taper_history_by_pr or {}
     encountered_human_stop = False
+    encountered_budget_cap = False
     completed_taper_seen = False
     deferred_hosted_pr: int | None = None
 
@@ -484,6 +498,9 @@ def select_review_target(
             )
         if pr in human_stopped:
             encountered_human_stop = True
+            continue
+        if pr in budget_exhausted:
+            encountered_budget_cap = True
             continue
         if pr in allocation_blocks:
             return ChannelDecision(
@@ -529,6 +546,8 @@ def select_review_target(
             taper_values,
             required_taper(state, selected, taper_values),
         )
+        minimum_remaining = minimum_completed_by_pr.get(pr, 0)
+        channel_complete = taper_complete and minimum_remaining <= 0
         request_blockers = {
             ReviewStatus.RATE_LIMITED,
             ReviewStatus.UNSTABLE,
@@ -538,25 +557,25 @@ def select_review_target(
         }
         blocked = None
         for item in evidence:
-            if taper_complete and (item.active_review or item.active_reservation):
+            if channel_complete and (item.active_review or item.active_reservation):
                 blocked = ReviewStatus.HELD
                 break
-            if taper_complete and item.held and not (
+            if channel_complete and item.held and not (
                 pr not in allocation_reopen and pr in finding_clearance and _is_finding_only_hold(item)
             ):
                 blocked = ReviewStatus.HELD
                 break
-            if taper_complete and pr not in allocation_reopen and pr in finding_clearance and _is_finding_only_hold(item):
+            if channel_complete and pr not in allocation_reopen and pr in finding_clearance and _is_finding_only_hold(item):
                 continue
             blocked = _blocked(item, None)
             if blocked:
-                if taper_complete and pr not in allocation_reopen and blocked in request_blockers:
+                if channel_complete and pr not in allocation_reopen and blocked in request_blockers:
                     blocked = None
                     continue
                 break
         if blocked is None:
             blocked = _blocked(latest, reconciliation_by_pr.get(pr))
-        if taper_complete and pr not in allocation_reopen and blocked in request_blockers:
+        if channel_complete and pr not in allocation_reopen and blocked in request_blockers:
             blocked = None
         if blocked:
             if (
@@ -579,7 +598,7 @@ def select_review_target(
                 latest.provisional,
                 taper_complete,
             )
-        if taper_complete and pr not in allocation_reopen:
+        if channel_complete and pr not in allocation_reopen:
             # Identity guards protect a new request; they do not undo a
             # completed per-PR/channel taper.
             completed_taper_seen = True
@@ -591,6 +610,25 @@ def select_review_target(
             taper_history=taper_values,
             reconciliation=reconciliation_by_pr.get(pr),
         )
+        if minimum_remaining > 0:
+            # A completed taper closes discovery only after the channel's
+            # minimum has also been met. Until then, keep request and topology
+            # blockers visible instead of letting taper completion suppress
+            # them as it does for a genuinely closed channel.
+            if status == ReviewStatus.COMPLETE:
+                status = ReviewStatus.READY
+            if status == ReviewStatus.READY:
+                for item in evidence:
+                    blocked = _blocked(item, None)
+                    if blocked:
+                        status = blocked
+                        break
+                else:
+                    reconciliation_blocker = _blocked(
+                        Evidence(pr, "", ""), reconciliation_by_pr.get(pr)
+                    )
+                    if reconciliation_blocker in request_blockers:
+                        status = reconciliation_blocker
         if status == ReviewStatus.COMPLETE:
             if pr in allocation_reopen:
                 return ChannelDecision(
@@ -624,6 +662,14 @@ def select_review_target(
             None,
             ReviewStatus.HUMAN_STOPPED,
             f"all {selected.value} targets are complete or explicitly stopped",
+            taper_complete=completed_taper_seen,
+        )
+    if encountered_budget_cap:
+        return ChannelDecision(
+            selected,
+            None,
+            ReviewStatus.BUDGET_EXHAUSTED,
+            f"all remaining {selected.value} discovery is closed by the current review-period budget",
             taper_complete=completed_taper_seen,
         )
     return ChannelDecision(

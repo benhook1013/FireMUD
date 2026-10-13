@@ -10,7 +10,6 @@ import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishType;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository;
-import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -120,43 +119,6 @@ public class PublishAttemptRepository {
         || !result.operation().tenantKey().equals(attempt.getTenantId())) {
       throw new IllegalStateException("PUBLICATION_OPERATION_SEALED_OR_CHANGED");
     }
-  }
-
-  /**
-   * Installs a compatibility digest only once, and only on the exact legacy full-version row whose
-   * identity was validated by the caller.
-   *
-   * <p>The conditional update makes concurrent retries idempotent: the first writer installs the
-   * digest and later writers can only read the already-installed value. It deliberately does not
-   * derive or replace a digest for any other attempt shape.
-   */
-  public Optional<PublishAttempt> backfillFullVersionRequestDigestIfAbsent(
-      Long attemptId,
-      String tenantId,
-      String publishWorkflowId,
-      Long versionId,
-      int versionNumber,
-      String requestDigest) {
-    if (attemptId == null || requestDigest == null || requestDigest.isBlank()) {
-      return Optional.empty();
-    }
-    Condition fullVersionAttemptIdentity =
-        ID.eq(attemptId)
-            .and(TENANT_ID.eq(tenantId))
-            .and(PUBLISH_WORKFLOW_ID.eq(publishWorkflowId))
-            .and(PUBLISH_TYPE.eq(PublishType.FULL_VERSION.name()))
-            .and(VERSION_ID.eq(versionId))
-            .and(VERSION_NUMBER.eq(versionNumber));
-    dsl.update(PUBLISH_ATTEMPT_TABLE)
-        .set(REQUEST_DIGEST, requestDigest)
-        .set(REVISION, REVISION.plus(1L))
-        .where(fullVersionAttemptIdentity.and(REQUEST_DIGEST.isNull()))
-        .execute();
-    return Optional.ofNullable(
-        dsl.selectFrom(PUBLISH_ATTEMPT_TABLE)
-            .where(fullVersionAttemptIdentity)
-            .limit(1)
-            .fetchOne(this::toEntity));
   }
 
   public PublishAttempt save(PublishAttempt attempt) {

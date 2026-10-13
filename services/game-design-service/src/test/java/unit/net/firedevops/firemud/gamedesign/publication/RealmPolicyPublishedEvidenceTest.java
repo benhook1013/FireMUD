@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublishedEvidence;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
@@ -164,6 +165,111 @@ class RealmPolicyPublishedEvidenceTest {
             setDigest(
                 target, main, bundleRef, digest('c'), workflow, manifest, rows, new byte[] {1}))
         .isNotEqualTo(originalSet);
+  }
+
+  @Test
+  void publishedSetUsesContentValueSemanticsForStoredEvidenceBytes() throws Exception {
+    var original = RealmPolicyPublicationGrpcServiceTest.publishedSet().set();
+    var copied =
+        new RealmPolicyPublishedEvidence.PublishedSet(
+            original.target(),
+            original.versionNumber(),
+            original.sourceCommitId(),
+            original.sourceEpoch(),
+            original.publishedReleaseBundleRef(),
+            original.publishedReleaseBundleDigest(),
+            original.publishWorkflowId(),
+            original.manifestHash(),
+            original.publicationVersionStateEpoch(),
+            original.operationBytes(),
+            original.captureBytes(),
+            original.terminalEvidenceBytes(),
+            original.policyCount(),
+            original.policySetDigest(),
+            original.policies());
+
+    assertThat(copied).isEqualTo(original);
+    assertThat(copied.hashCode()).isEqualTo(original.hashCode());
+    assertThat(copied.toString()).isEqualTo(original.toString());
+
+    var terminal =
+        GameDesignPublicationTerminalEvidence.fromStored(original.terminalEvidenceBytes());
+    var release = terminal.releaseContent();
+    String changedBundleRef = original.publishedReleaseBundleRef() + "-changed";
+    var changedRelease =
+        new GameDesignPublicationTerminalEvidence.ReleaseContent(
+            release.canonicalTenantId(),
+            release.canonicalVersionId(),
+            changedBundleRef,
+            release.versionNumber(),
+            release.attestationSchemaVersion(),
+            release.publishWorkflowId(),
+            release.manifestHash(),
+            release.manifestSchemaVersion(),
+            release.artifactDigests(),
+            release.requiredManifestAssetKeys(),
+            release.participantDigests(),
+            release.commandDefinitions(),
+            release.generationConfigRevision(),
+            release.worldStartLocationEvidence());
+    byte[] changedTerminal =
+        new GameDesignPublicationTerminalEvidence(
+                original.operationBytes(),
+                terminal.outcome(),
+                changedRelease,
+                original.publicationVersionStateEpoch())
+            .canonicalBytes();
+    var originalPolicy = original.policies().get(0);
+    String changedBundleDigest = changedRelease.contentDigest();
+    String changedPolicyDigest =
+        RealmPolicyPublishedEvidence.policyDigest(
+            originalPolicy.policyId(),
+            original.target(),
+            original.versionNumber(),
+            changedBundleRef,
+            changedBundleDigest,
+            original.publishWorkflowId(),
+            original.manifestHash(),
+            originalPolicy.source());
+    var changedPolicies =
+        List.of(
+            new RealmPolicyPublishedEvidence.Policy(
+                originalPolicy.policyId(), originalPolicy.source(), changedPolicyDigest));
+    String changedDigest =
+        RealmPolicyPublishedEvidence.computePolicySetDigest(
+            original.target(),
+            original.versionNumber(),
+            original.sourceCommitId(),
+            original.sourceEpoch(),
+            changedBundleRef,
+            changedBundleDigest,
+            original.publishWorkflowId(),
+            original.manifestHash(),
+            original.publicationVersionStateEpoch(),
+            original.operationBytes(),
+            original.captureBytes(),
+            changedTerminal,
+            changedPolicies);
+    var changed =
+        new RealmPolicyPublishedEvidence.PublishedSet(
+            original.target(),
+            original.versionNumber(),
+            original.sourceCommitId(),
+            original.sourceEpoch(),
+            changedBundleRef,
+            changedBundleDigest,
+            original.publishWorkflowId(),
+            original.manifestHash(),
+            original.publicationVersionStateEpoch(),
+            original.operationBytes(),
+            original.captureBytes(),
+            changedTerminal,
+            original.policyCount(),
+            changedDigest,
+            changedPolicies);
+
+    assertThat(changed).isNotEqualTo(original);
+    assertThat(changed.toString()).isNotEqualTo(original.toString());
   }
 
   private String setDigest(

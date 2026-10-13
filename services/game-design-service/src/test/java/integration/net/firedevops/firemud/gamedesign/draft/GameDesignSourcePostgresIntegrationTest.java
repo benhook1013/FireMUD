@@ -17,8 +17,10 @@ import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.publication.CommandSource;
+import net.firedevops.firemud.gamedesign.publication.CommandSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
+import net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
@@ -100,6 +102,107 @@ class GameDesignSourcePostgresIntegrationTest {
         .isEqualTo(policyResult.ownerOutcome());
     assertThat(fixture.tx(() -> fixture.sources().apply(command)).ownerOutcome())
         .isEqualTo(commandResult.ownerOutcome());
+  }
+
+  @Test
+  void requiredOwnerSetMustBeNonEmptyDistinctAndKnownBeforeAnyOwnerFence() {
+    Fixture fixture = fixture();
+    String base =
+        "genesis:"
+            + fixture.sources().readGenesis(fixture.target()).orElseThrow().policy().receiptId();
+    String[] invalidRequiredOwnerJson = {
+      null,
+      "[]",
+      "\"GAME_DESIGN_CONTROL_PLANE\"",
+      "[\"GAME_DESIGN_CONTROL_PLANE\",1]",
+      "[\"UNKNOWN_OWNER\"]",
+      "[\"GAME_DESIGN_CONTROL_PLANE\",\"GAME_DESIGN_CONTROL_PLANE\"]"
+    };
+
+    for (String requiredOwnerJson : invalidRequiredOwnerJson) {
+      DraftCommitBinding binding = binding(fixture.target(), base, "0", null, "main", true);
+      assertThat(binding.requiredOwners()).containsExactly(Owner.GAME_DESIGN_CONTROL_PLANE);
+      String rawBindingJson = withRawRequiredOwners(binding.canonicalJson(), requiredOwnerJson);
+
+      assertThatThrownBy(() -> insertRawDraftCommit(fixture, binding, rawBindingJson))
+          .hasMessageContaining(
+              "Draft commit requiredOwners must be a non-empty array of distinct known owner strings");
+      assertThat(fixture.coordinator().read(fixture.target(), binding.requestId())).isEmpty();
+      assertThat(fixture.coordinator().readVisibilityFence(fixture.target())).isEmpty();
+      assertThat(fixture.dsl().fetchCount(DSL.table("game_design_draft_commit"))).isZero();
+      assertThat(fixture.dsl().fetchCount(DSL.table("game_design_draft_commit_owner_result")))
+          .isZero();
+      assertThat(fixture.dsl().fetchCount(DSL.table("game_design_draft_commit_visibility_fence")))
+          .isZero();
+    }
+  }
+
+  @Test
+  void sourceApplicationsRequireReservedReviewedBaseBeforeEitherOwnerCanWrite() {
+    Fixture policyFixture = fixture();
+    UUID policyGenesis =
+        policyFixture
+            .sources()
+            .readGenesis(policyFixture.target())
+            .orElseThrow()
+            .policy()
+            .receiptId();
+    DraftCommitBinding policy =
+        binding(policyFixture.target(), "genesis:" + policyGenesis, "0", null, "main", true);
+    assertMissingReviewedBaseDeniesOwnerApply(
+        policyFixture,
+        policy,
+        () -> new RealmPolicySourceRepository(policyFixture.dsl()).apply(policy));
+    var policyResult = apply(policyFixture, policy);
+    synchronize(policyFixture, policy, policyResult);
+    assertThat(policyFixture.tx(() -> policyFixture.sources().apply(policy)).ownerOutcome())
+        .isEqualTo(policyResult.ownerOutcome());
+
+    Fixture commandFixture = fixture();
+    UUID commandGenesis =
+        commandFixture
+            .sources()
+            .readGenesis(commandFixture.target())
+            .orElseThrow()
+            .command()
+            .receiptId();
+    DraftCommitBinding command =
+        binding(commandFixture.target(), "genesis:" + commandGenesis, null, "0", null, false);
+    assertMissingReviewedBaseDeniesOwnerApply(
+        commandFixture,
+        command,
+        () -> new CommandSourceRepository(commandFixture.dsl()).apply(command));
+    var commandResult = apply(commandFixture, command);
+    synchronize(commandFixture, command, commandResult);
+    assertThat(commandFixture.tx(() -> commandFixture.sources().apply(command)).ownerOutcome())
+        .isEqualTo(commandResult.ownerOutcome());
+  }
+
+  private static void assertMissingReviewedBaseDeniesOwnerApply(
+      Fixture fixture, DraftCommitBinding binding, Runnable ownerApply) {
+    var genesis = fixture.sources().readGenesis(fixture.target()).orElseThrow();
+    assertThatThrownBy(
+            () ->
+                fixture.tx(
+                    () -> {
+                      fixture.coordinator().claim(binding);
+                      fixture.coordinator().claimApplicationSlot(binding);
+                      fixture
+                          .coordinator()
+                          .markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
+                      ownerApply.run();
+                      return null;
+                    }))
+        .hasMessageContaining("Draft source application requires exact reviewed base evidence");
+
+    assertThat(fixture.sources().readGenesis(fixture.target())).contains(genesis);
+    assertThat(fixture.coordinator().read(fixture.target(), binding.requestId())).isEmpty();
+    assertThat(fixture.coordinator().readVisibilityFence(fixture.target())).isEmpty();
+    assertThat(fixture.dsl().fetchCount(DSL.table("game_design_realm_policy_application")))
+        .isZero();
+    assertThat(fixture.dsl().fetchCount(DSL.table("game_design_command_source_application")))
+        .isZero();
+    assertThat(fixture.dsl().fetchCount(DSL.table("game_design_reviewed_draft_base"))).isZero();
   }
 
   @Test
@@ -367,6 +470,51 @@ class GameDesignSourcePostgresIntegrationTest {
         target, UUID.randomUUID(), UUID.randomUUID(), base, revisions, scopes);
   }
 
+  private static String withRawRequiredOwners(String canonicalJson, String requiredOwnerJson) {
+    String validRequiredOwners = "\"requiredOwners\":[\"GAME_DESIGN_CONTROL_PLANE\"]";
+    assertThat(canonicalJson).contains(validRequiredOwners);
+    if (requiredOwnerJson == null) {
+      return canonicalJson.replace(validRequiredOwners + ",", "");
+    }
+    return canonicalJson.replace(validRequiredOwners, "\"requiredOwners\":" + requiredOwnerJson);
+  }
+
+  private static void insertRawDraftCommit(
+      Fixture fixture, DraftCommitBinding binding, String rawBindingJson) {
+    TargetProof target = binding.target();
+    fixture
+        .dsl()
+        .execute(
+            """
+            INSERT INTO game_design_draft_commit (
+                canonical_tenant_id,
+                canonical_version_id,
+                game_design_version_row_id,
+                game_design_version_tenant_key,
+                source_game_row_id,
+                source_game_tenant_key,
+                source_provenance_kind,
+                request_id,
+                commit_id,
+                base_commit_id,
+                input_digest,
+                binding_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            target.canonicalTenantId(),
+            target.canonicalVersionId(),
+            target.gameDesignVersionRowId(),
+            target.gameDesignVersionTenantKey(),
+            target.sourceGameRowId(),
+            target.sourceGameTenantKey(),
+            target.sourceProvenanceKind(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            binding.digest(),
+            rawBindingJson);
+  }
+
   private static String command(String id, String alias) {
     return "{\"schemaVersion\":1,\"commandId\":\""
         + id
@@ -392,7 +540,6 @@ class GameDesignSourcePostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .table("flyway_schema_history_game_design_service")
-        .target("50.12")
         .load()
         .migrate();
     var write = new TransactionTemplate(new DataSourceTransactionManager(dataSource));

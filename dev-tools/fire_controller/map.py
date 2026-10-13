@@ -15,7 +15,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
+from pr_review.sqlite_store import (
+    PREVIOUS_DATA_MODEL_VERSION,
+    SQLITE_SCHEMA_VERSION,
+    WRITER_BUILD,
+    SqliteStateStore,
+    load_validated_controller_state,
+    validate_controller_compatibility,
+)
 from pr_review.state import ReviewState, StateError
 
 from .context import worker_alias
@@ -466,7 +473,7 @@ class WorkstreamStore:
         try:
             with closing(self._connect(read_only=False)) as connection:
                 connection.execute("BEGIN IMMEDIATE")
-                self._require_controller_compatible(connection)
+                controller_data_model = self._require_controller_compatible(connection)
                 tables = self._table_names(connection)
                 present = tables & set(MAP_TABLES)
                 if present:
@@ -475,7 +482,7 @@ class WorkstreamStore:
                     self.validate(connection)
                     connection.commit()
                     return
-                self._create_schema(connection)
+                self._create_schema(connection, controller_data_model)
                 self.validate(connection)
                 connection.commit()
         except JobError:
@@ -487,7 +494,7 @@ class WorkstreamStore:
     def validate(cls, connection: sqlite3.Connection) -> None:
         """Validate controller identity and this module's independent inventory."""
 
-        cls._require_controller_compatible(connection)
+        controller_data_model = cls._require_controller_compatible(connection)
         tables = cls._table_names(connection)
         missing = set(MAP_TABLES) - tables
         if missing:
@@ -512,8 +519,14 @@ class WorkstreamStore:
             "SELECT map_schema_version, controller_schema_version, controller_data_model_version "
             "FROM map_metadata WHERE singleton = 1"
         ).fetchone()
-        expected_version = (MAP_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, ReviewState().schema_version)
-        if metadata is None or tuple(metadata) != expected_version:
+        map_data_model = metadata[2] if metadata is not None else None
+        if (
+            metadata is None
+            or tuple(metadata[:2]) != (MAP_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION)
+            or isinstance(map_data_model, bool)
+            or map_data_model not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+            or map_data_model > controller_data_model
+        ):
             raise JobsSchemaIncompatible("project-map metadata records incompatible schema versions")
         invalid_workstream = connection.execute(
             "SELECT id FROM map_workstreams WHERE revision < 1 OR json_valid(phase_states_json) = 0 LIMIT 1"
@@ -928,7 +941,7 @@ class WorkstreamStore:
         )
 
     @staticmethod
-    def _create_schema(connection: sqlite3.Connection) -> None:
+    def _create_schema(connection: sqlite3.Connection, controller_data_model: int) -> None:
         connection.execute(
             "CREATE TABLE map_metadata (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
             "map_schema_version INTEGER NOT NULL, "
@@ -959,7 +972,7 @@ class WorkstreamStore:
         connection.execute(
             "INSERT INTO map_metadata(singleton, map_schema_version, controller_schema_version, "
             "controller_data_model_version) VALUES (1, ?, ?, ?)",
-            (MAP_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, ReviewState().schema_version),
+            (MAP_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, controller_data_model),
         )
 
     @contextmanager
@@ -1028,30 +1041,18 @@ class WorkstreamStore:
     def _require_controller_compatible(
         connection: sqlite3.Connection,
         writer_build: int = WRITER_BUILD,
-    ) -> None:
+    ) -> int:
         try:
-            schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if schema_version != SQLITE_SCHEMA_VERSION:
-                raise JobsSchemaIncompatible(f"unsupported controller SQLite schema version: {schema_version}")
-            row = connection.execute(
-                "SELECT data_model_version, min_writer_build FROM controller_metadata WHERE singleton = 1"
-            ).fetchone()
-            if row is None:
-                raise JobsSchemaIncompatible("controller SQLite metadata is missing")
-            data_model_version, min_writer_build = row
-            if data_model_version != ReviewState().schema_version:
-                raise JobsSchemaIncompatible("controller SQLite data model is incompatible")
-            if isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0:
-                raise JobsSchemaIncompatible("controller SQLite minimum writer build is invalid")
-            if writer_build < min_writer_build:
-                raise JobsSchemaIncompatible(f"controller SQLite database requires writer build {min_writer_build}")
-            if "review_state" not in WorkstreamStore._table_names(connection):
-                raise JobsSchemaIncompatible("controller SQLite review-state table is missing")
+            data_model_version = validate_controller_compatibility(connection, writer_build=writer_build)
+            load_validated_controller_state(connection, data_model_version=data_model_version)
+            return data_model_version
         except sqlite3.DatabaseError as exc:
             raise JobsSchemaIncompatible("controller SQLite metadata is incomplete or malformed") from exc
+        except StateError as exc:
+            raise JobsSchemaIncompatible(f"controller SQLite database is incompatible: {exc}") from exc
 
     def _require_compatible(self, connection: sqlite3.Connection) -> None:
-        self._require_controller_compatible(connection, self.writer_build)
+        controller_data_model = self._require_controller_compatible(connection, self.writer_build)
         present = self._table_names(connection) & set(MAP_TABLES)
         if not present:
             raise JobsNotBootstrapped("project-map schema is not bootstrapped; call bootstrap() explicitly")
@@ -1061,8 +1062,14 @@ class WorkstreamStore:
             "SELECT map_schema_version, controller_schema_version, "
             "controller_data_model_version FROM map_metadata WHERE singleton = 1"
         ).fetchone()
-        expected = (MAP_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, ReviewState().schema_version)
-        if row is None or tuple(row) != expected:
+        map_data_model = row[2] if row is not None else None
+        if (
+            row is None
+            or tuple(row[:2]) != (MAP_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION)
+            or isinstance(map_data_model, bool)
+            or map_data_model not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+            or map_data_model > controller_data_model
+        ):
             raise JobsSchemaIncompatible("project-map schema requires a different controller data model")
 
 

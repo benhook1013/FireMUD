@@ -260,7 +260,7 @@ public final class GameDesignSourceRepository {
       binding.revisions().stream()
           .filter(revision -> revision.owner() == Owner.GAME_DESIGN_CONTROL_PLANE)
           .filter(RealmPolicySource::isPolicyRevision)
-          .forEach(revision -> RealmPolicySource.revision(binding, revision));
+          .forEach(revision -> RealmPolicySource.mutation(binding, revision));
     }
   }
 

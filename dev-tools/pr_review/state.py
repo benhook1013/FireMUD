@@ -17,10 +17,12 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+PREVIOUS_SCHEMA_VERSION = 1
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 
@@ -738,6 +740,7 @@ class ReviewAllocation:
     min_additional_completed: int | None = None
     max_additional_completed: int | None = None
     reopens_taper: bool = False
+    baseline_source_run_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
@@ -776,6 +779,12 @@ class ReviewAllocation:
             raise StateError("maximum additional completed reviews must be a positive integer")
         if not isinstance(self.reopens_taper, bool):
             raise StateError("review allocation taper-reopen marker must be boolean")
+        if not isinstance(self.baseline_source_run_ids, tuple) or any(
+            not isinstance(item, str) or not item.strip() for item in self.baseline_source_run_ids
+        ):
+            raise StateError("review allocation baseline source-run identities must be non-empty strings")
+        if len(set(self.baseline_source_run_ids)) != len(self.baseline_source_run_ids):
+            raise StateError("review allocation baseline source-run identities must be unique")
         if self.min_additional_completed is None and self.max_additional_completed is None:
             if self.baseline_checkpoint is not None:
                 raise StateError("a bounded review allocation requires a minimum or maximum")
@@ -896,6 +905,7 @@ class ReviewAllocation:
             "stop_summary_disposition_fingerprints": list(self.stop_summary_disposition_fingerprints),
             "retained_ambiguous_fingerprints": list(self.retained_ambiguous_fingerprints),
             "retained_ambiguous_reason": self.retained_ambiguous_reason,
+            "baseline_source_run_ids": list(self.baseline_source_run_ids),
         }
         if self.baseline_checkpoint is not None:
             value["baseline_checkpoint"] = self.baseline_checkpoint
@@ -940,6 +950,7 @@ class ReviewAllocation:
             "retained_ambiguous_fingerprints",
             "retained_ambiguous_fingerprint",
             "retained_ambiguous_reason",
+            "baseline_source_run_ids",
         }
         if set(value) - allowed:
             raise StateError("review allocation contains fields outside the private schema")
@@ -959,6 +970,9 @@ class ReviewAllocation:
             raise StateError("retained ambiguous fingerprints must be a JSON array")
         if legacy_retained_fingerprint is not None and raw_retained_fingerprints != (legacy_retained_fingerprint,):
             raise StateError("legacy retained ambiguous fingerprint conflicts with the fingerprint set")
+        raw_source_run_ids = value.get("baseline_source_run_ids", [])
+        if not isinstance(raw_source_run_ids, list):
+            raise StateError("allocation baseline source-run identities must be a JSON array")
         try:
             return cls(
                 pr=value["pr"],
@@ -974,6 +988,7 @@ class ReviewAllocation:
                 min_additional_completed=value.get("min_additional_completed"),
                 max_additional_completed=value.get("max_additional_completed"),
                 reopens_taper=value.get("reopens_taper", False),
+                baseline_source_run_ids=tuple(raw_source_run_ids),
                 handoff_checkpoint=value.get("handoff_checkpoint"),
                 handoff_head=value.get("handoff_head"),
                 handoff_validation=value.get("handoff_validation"),
@@ -996,6 +1011,246 @@ class ReviewAllocation:
 
 
 @dataclasses.dataclass(frozen=True)
+class ReviewPeriodDecision:
+    """One explicit, audited reset to a new channel review budget period."""
+
+    pr: int
+    channel: str
+    checkpoint: str
+    reviewed_head: str
+    reviewed_parent_identity: str
+    reviewed_parent_head: str
+    reviewed_merge_base: str
+    reviewed_patch_id: str
+    current_head: str
+    current_base_ref: str
+    current_base_tip: str
+    current_parent_identity: str
+    current_parent_head: str
+    current_merge_base: str
+    current_patch_id: str
+    baseline_checkpoints: tuple[str, ...]
+    baseline_source_run_ids: tuple[str, ...]
+    minimum_completed: int
+    maximum_completed: int
+    zero_useful_required: int
+    actor: str
+    reason: str
+    recorded_at: str
+    superseded_allocation_identity: str | None = None
+    superseded_allocation: ReviewAllocation | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
+            raise StateError("review-period PR must be a positive integer")
+        if self.channel not in {"hosted", "cli"}:
+            raise StateError("review-period channel must be hosted or cli")
+        if not isinstance(self.checkpoint, str) or not self.checkpoint.strip():
+            raise StateError("review-period reset requires an exact checkpoint identity")
+        for name in (
+            "reviewed_head",
+            "reviewed_parent_head",
+            "reviewed_merge_base",
+            "current_head",
+            "current_base_tip",
+            "current_parent_head",
+            "current_merge_base",
+        ):
+            if not isinstance(getattr(self, name), str) or not EXACT_SHA.fullmatch(getattr(self, name)):
+                raise StateError(f"review-period {name} must be an exact SHA")
+        if not isinstance(self.current_base_ref, str) or not self.current_base_ref.strip():
+            raise StateError("review-period current base ref must be non-empty")
+        for name in (
+            "reviewed_parent_identity",
+            "reviewed_patch_id",
+            "current_parent_identity",
+            "current_patch_id",
+            "actor",
+            "reason",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not value.strip():
+                raise StateError(f"review-period {name.replace('_', ' ')} must be non-empty")
+        if len(self.actor) > 100 or any(ord(character) < 0x20 for character in self.actor):
+            raise StateError("review-period actor must be at most 100 characters without controls")
+        if len(self.reason) > 500 or any(ord(character) < 0x20 for character in self.reason):
+            raise StateError("review-period reason must be at most 500 characters without controls")
+        if not isinstance(self.baseline_checkpoints, tuple) or any(
+            not isinstance(value, str) or not value.strip() for value in self.baseline_checkpoints
+        ):
+            raise StateError("review-period baseline checkpoints must be non-empty strings")
+        if self.checkpoint not in self.baseline_checkpoints:
+            raise StateError("review-period baseline must include its exact checkpoint")
+        if len(set(self.baseline_checkpoints)) != len(self.baseline_checkpoints):
+            raise StateError("review-period baseline checkpoints must be unique")
+        if not isinstance(self.baseline_source_run_ids, tuple) or any(
+            not isinstance(value, str) or not value.strip() for value in self.baseline_source_run_ids
+        ):
+            raise StateError("review-period baseline source-run identities must be non-empty strings")
+        if len(set(self.baseline_source_run_ids)) != len(self.baseline_source_run_ids):
+            raise StateError("review-period baseline source-run identities must be unique")
+        for name in ("minimum_completed", "maximum_completed", "zero_useful_required"):
+            value = getattr(self, name)
+            minimum = 0 if name == "minimum_completed" else 1
+            if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+                raise StateError(f"review-period {name.replace('_', ' ')} is invalid")
+        if self.minimum_completed > self.maximum_completed:
+            raise StateError("review-period minimum cannot exceed its maximum")
+        if not isinstance(self.recorded_at, str) or not self.recorded_at.strip():
+            raise StateError("review-period reset requires its decision time")
+        try:
+            recorded = datetime.fromisoformat(self.recorded_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise StateError("review-period decision time must be an ISO timestamp") from exc
+        if recorded.tzinfo is None:
+            raise StateError("review-period decision time must include a timezone")
+        if recorded.utcoffset() is None or recorded.utcoffset().total_seconds() != 0:
+            raise StateError("review-period decision time must be UTC")
+        if self.superseded_allocation is None:
+            if self.superseded_allocation_identity is not None:
+                raise StateError("review-period superseded allocation identity requires its snapshot")
+        elif (
+            not isinstance(self.superseded_allocation, ReviewAllocation)
+            or self.superseded_allocation.pr != self.pr
+            or self.superseded_allocation.channel != self.channel
+            or self.superseded_allocation_identity != self.superseded_allocation.identity
+        ):
+            raise StateError("review-period superseded allocation must match its PR and channel")
+
+    @property
+    def period_id(self) -> str:
+        identity = json.dumps(
+            {
+                "pr": self.pr,
+                "channel": self.channel,
+                "checkpoint": self.checkpoint,
+                "reviewed_head": self.reviewed_head.casefold(),
+                "reviewed_parent_identity": self.reviewed_parent_identity,
+                "reviewed_parent_head": self.reviewed_parent_head.casefold(),
+                "reviewed_merge_base": self.reviewed_merge_base.casefold(),
+                "reviewed_patch_id": self.reviewed_patch_id,
+                "current_head": self.current_head.casefold(),
+                "current_base_ref": self.current_base_ref,
+                "current_base_tip": self.current_base_tip.casefold(),
+                "current_parent_identity": self.current_parent_identity,
+                "current_parent_head": self.current_parent_head.casefold(),
+                "current_merge_base": self.current_merge_base.casefold(),
+                "current_patch_id": self.current_patch_id,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "period_id": self.period_id,
+            "pr": self.pr,
+            "channel": self.channel,
+            "checkpoint": self.checkpoint,
+            "reviewed_head": self.reviewed_head,
+            "reviewed_parent_identity": self.reviewed_parent_identity,
+            "reviewed_parent_head": self.reviewed_parent_head,
+            "reviewed_merge_base": self.reviewed_merge_base,
+            "reviewed_patch_id": self.reviewed_patch_id,
+            "current_head": self.current_head,
+            "current_base_ref": self.current_base_ref,
+            "current_base_tip": self.current_base_tip,
+            "current_parent_identity": self.current_parent_identity,
+            "current_parent_head": self.current_parent_head,
+            "current_merge_base": self.current_merge_base,
+            "current_patch_id": self.current_patch_id,
+            "baseline_checkpoints": list(self.baseline_checkpoints),
+            "baseline_source_run_ids": list(self.baseline_source_run_ids),
+            "minimum_completed": self.minimum_completed,
+            "maximum_completed": self.maximum_completed,
+            "zero_useful_required": self.zero_useful_required,
+            "actor": self.actor,
+            "reason": self.reason,
+            "recorded_at": self.recorded_at,
+            "superseded_allocation_identity": self.superseded_allocation_identity,
+            "superseded_allocation": (
+                self.superseded_allocation.to_dict() if self.superseded_allocation is not None else None
+            ),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> ReviewPeriodDecision:
+        allowed = {
+            "period_id",
+            "pr",
+            "channel",
+            "checkpoint",
+            "reviewed_head",
+            "reviewed_parent_identity",
+            "reviewed_parent_head",
+            "reviewed_merge_base",
+            "reviewed_patch_id",
+            "current_head",
+            "current_base_ref",
+            "current_base_tip",
+            "current_parent_identity",
+            "current_parent_head",
+            "current_merge_base",
+            "current_patch_id",
+            "baseline_checkpoints",
+            "baseline_source_run_ids",
+            "minimum_completed",
+            "maximum_completed",
+            "zero_useful_required",
+            "actor",
+            "reason",
+            "recorded_at",
+            "superseded_allocation_identity",
+            "superseded_allocation",
+        }
+        checkpoints = value.get("baseline_checkpoints")
+        source_runs = value.get("baseline_source_run_ids")
+        superseded = value.get("superseded_allocation")
+        if (
+            set(value) - allowed
+            or not isinstance(checkpoints, list)
+            or not isinstance(source_runs, list)
+            or (superseded is not None and not isinstance(superseded, Mapping))
+        ):
+            raise StateError("review-period decision contains fields outside its private schema")
+        try:
+            result = cls(
+                pr=value["pr"],
+                channel=value["channel"],
+                checkpoint=value["checkpoint"],
+                reviewed_head=value["reviewed_head"],
+                reviewed_parent_identity=value["reviewed_parent_identity"],
+                reviewed_parent_head=value["reviewed_parent_head"],
+                reviewed_merge_base=value["reviewed_merge_base"],
+                reviewed_patch_id=value["reviewed_patch_id"],
+                current_head=value["current_head"],
+                current_base_ref=value["current_base_ref"],
+                current_base_tip=value["current_base_tip"],
+                current_parent_identity=value["current_parent_identity"],
+                current_parent_head=value["current_parent_head"],
+                current_merge_base=value["current_merge_base"],
+                current_patch_id=value["current_patch_id"],
+                baseline_checkpoints=tuple(checkpoints),
+                baseline_source_run_ids=tuple(source_runs),
+                minimum_completed=value["minimum_completed"],
+                maximum_completed=value["maximum_completed"],
+                zero_useful_required=value["zero_useful_required"],
+                actor=value["actor"],
+                reason=value["reason"],
+                recorded_at=value["recorded_at"],
+                superseded_allocation_identity=value.get("superseded_allocation_identity"),
+                superseded_allocation=ReviewAllocation.from_dict(superseded) if superseded is not None else None,
+            )
+        except KeyError as exc:
+            raise StateError("review-period decision is missing a required field") from exc
+        if value.get("period_id") != result.period_id:
+            raise StateError("review-period ID does not match its exact checkpoint and anchor")
+        return result
+
+
+@dataclasses.dataclass(frozen=True)
 class ReviewState:
     """The complete persisted document, excluding all live review observations."""
 
@@ -1007,10 +1262,11 @@ class ReviewState:
     summary_dispositions: tuple[SummaryFindingDisposition, ...] = ()
     routes: tuple[FindingRoute, ...] = ()
     allocations: Mapping[str, ReviewAllocation] = dataclasses.field(default_factory=dict)
+    review_period_decisions: tuple[ReviewPeriodDecision, ...] = ()
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
-        if self.schema_version != SCHEMA_VERSION:
+        if isinstance(self.schema_version, bool) or not isinstance(self.schema_version, int) or self.schema_version != SCHEMA_VERSION:
             raise StateError(f"unsupported schema version: {self.schema_version}")
         if len(set(self.ordered_prs)) != len(self.ordered_prs) or any(
             not isinstance(pr, int) or isinstance(pr, bool) or pr <= 0 for pr in self.ordered_prs
@@ -1031,6 +1287,11 @@ class ReviewState:
                 or allocation.identity != identity
             ):
                 raise StateError("review allocations must be keyed by matching PR and channel")
+        if any(not isinstance(item, ReviewPeriodDecision) for item in self.review_period_decisions):
+            raise StateError("review-period decisions must contain validated reset records")
+        period_ids = [item.period_id for item in self.review_period_decisions]
+        if len(set(period_ids)) != len(period_ids):
+            raise StateError("review-period decisions must have unique stable IDs")
         if any(not isinstance(item, SummaryFindingDisposition) for item in self.summary_dispositions):
             raise StateError("summary dispositions must contain validated disposition records")
         if any(not isinstance(item, LegacyEvidenceTransition) for item in self.legacy_transitions):
@@ -1068,6 +1329,7 @@ class ReviewState:
             "summary_dispositions": [item.to_dict() for item in self.summary_dispositions],
             "routes": [item.to_dict() for item in self.routes],
             "allocations": {identity: item.to_dict() for identity, item in sorted(self.allocations.items())},
+            "review_period_decisions": [item.to_dict() for item in self.review_period_decisions],
         }
 
     @classmethod
@@ -1084,9 +1346,15 @@ class ReviewState:
             "summary_dispositions",
             "routes",
             "allocations",
+            "review_period_decisions",
         }:
             raise StateError("state contains fields outside the private configuration schema")
-        if value.get("schema_version") != SCHEMA_VERSION:
+        data_model_version = value.get("schema_version")
+        if (
+            isinstance(data_model_version, bool)
+            or not isinstance(data_model_version, int)
+            or data_model_version not in (PREVIOUS_SCHEMA_VERSION, SCHEMA_VERSION)
+        ):
             raise StateError("state has an unsupported schema version")
         raw_overrides = value.get("policy_overrides", {})
         if not isinstance(raw_overrides, Mapping):
@@ -1098,9 +1366,22 @@ class ReviewState:
             raise StateError("review allocations must be an object")
         if any(not isinstance(item, Mapping) for item in raw_allocations.values()):
             raise StateError("review allocation records must be objects")
+        if data_model_version == PREVIOUS_SCHEMA_VERSION and any(
+            "baseline_source_run_ids" in item for item in raw_allocations.values()
+        ):
+            raise StateError("schema v1 allocation cannot contain source-run baseline identities")
+        if data_model_version == SCHEMA_VERSION and "review_period_decisions" not in value:
+            raise StateError("schema v2 state is missing review-period decisions")
         raw_routes = value.get("routes", [])
         if not isinstance(raw_routes, list) or any(not isinstance(item, Mapping) for item in raw_routes):
             raise StateError("routes must be an array of objects")
+        raw_period_decisions = value.get("review_period_decisions", [])
+        if not isinstance(raw_period_decisions, list) or any(
+            not isinstance(item, Mapping) for item in raw_period_decisions
+        ):
+            raise StateError("review-period decisions must be an array of objects")
+        if data_model_version == PREVIOUS_SCHEMA_VERSION and raw_period_decisions:
+            raise StateError("schema v1 state cannot contain review-period decisions")
         try:
             overrides = {identity: PolicyOverride.from_dict(item) for identity, item in raw_overrides.items()}
             allocations = {identity: ReviewAllocation.from_dict(item) for identity, item in raw_allocations.items()}
@@ -1119,6 +1400,10 @@ class ReviewState:
                 ),
                 routes=tuple(FindingRoute.from_dict(item) for item in raw_routes),
                 allocations=allocations,
+                review_period_decisions=tuple(
+                    ReviewPeriodDecision.from_dict(item) for item in raw_period_decisions
+                ),
+                schema_version=SCHEMA_VERSION,
             )
         except StateError:
             raise
@@ -1288,7 +1573,12 @@ def sqlite_state_path(json_path: str | os.PathLike[str]) -> Path:
 def _cutover_sqlite_store(path: Path, *, deadline: float | None = None) -> tuple[Any, dict[str, Any]]:
     """Read and validate the immutable pointer installed by JSON-to-SQLite cutover."""
 
-    from .sqlite_store import CUTOVER_VERSION, SQLITE_SCHEMA_VERSION, SqliteStateStore
+    from .sqlite_store import (
+        CUTOVER_VERSION,
+        PREVIOUS_DATA_MODEL_VERSION,
+        SQLITE_SCHEMA_VERSION,
+        SqliteStateStore,
+    )
 
     try:
         directory_stat = path.stat(follow_symlinks=False)
@@ -1331,14 +1621,25 @@ def _cutover_sqlite_store(path: Path, *, deadline: float | None = None) -> tuple
 
     store = SqliteStateStore(database)
     status = store.status(deadline=deadline)
-    expected_values = {
-        "sqlite_schema_version": status.get("schema_version"),
-        "state_schema_version": status.get("data_model_version"),
-    }
-    for key, expected_value in expected_values.items():
-        marker_value = marker.get(key)
-        if isinstance(marker_value, bool) or not isinstance(marker_value, int) or marker_value != expected_value:
-            raise StateError("SQLite cutover marker does not match database metadata")
+    marker_sqlite_version = marker.get("sqlite_schema_version")
+    if (
+        isinstance(marker_sqlite_version, bool)
+        or not isinstance(marker_sqlite_version, int)
+        or marker_sqlite_version != status.get("schema_version")
+        or marker_sqlite_version != SQLITE_SCHEMA_VERSION
+    ):
+        raise StateError("SQLite cutover marker does not match database metadata")
+    marker_state_version = marker.get("state_schema_version")
+    database_state_version = status.get("data_model_version")
+    supported_state_versions = {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+    if (
+        isinstance(marker_state_version, bool)
+        or marker_state_version not in supported_state_versions
+        or isinstance(database_state_version, bool)
+        or database_state_version not in supported_state_versions
+        or marker_state_version > database_state_version
+    ):
+        raise StateError("SQLite cutover marker does not match database metadata")
     marker_writer_build = marker.get("min_writer_build")
     database_writer_build = status.get("min_writer_build")
     if (
@@ -1496,13 +1797,19 @@ def controller_state_status(path: str | os.PathLike[str] | None = None) -> dict[
         return base
     base["format"] = "json"
     try:
-        state = StateStore(selected).load()
+        with selected.open("r", encoding="utf-8") as handle:
+            document = json.load(handle)
+        state = ReviewState.from_dict(document)
     except (OSError, StateError) as exc:
         base["reason"] = str(exc)
         return base
+    except json.JSONDecodeError:
+        base["reason"] = f"cannot read review-stack state: {selected}"
+        return base
+    stored_schema = document.get("schema_version") if isinstance(document, Mapping) else None
     base.update(
         {
-            "state_schema_version": state.schema_version,
+            "state_schema_version": stored_schema,
             "compatible": state.schema_version == ReviewState().schema_version,
             "reason": None if state.schema_version == ReviewState().schema_version else "unsupported JSON state schema",
         }
