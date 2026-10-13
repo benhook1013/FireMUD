@@ -142,6 +142,9 @@ class LiveGitHub:
             is_draft=value["isDraft"],
         )
 
+    def period_reset_ref_identity(self, number: int) -> dict[str, Any]:
+        return github.fetch_period_reset_ref_identity(self.repo, number)
+
     # cli_runner.GitHubReader
     def pull_request_files(self, number: int) -> Sequence[str]:
         values = github.fetch_api_endpoint(f"repos/{self.repo}/pulls/{number}/files?per_page=100")
