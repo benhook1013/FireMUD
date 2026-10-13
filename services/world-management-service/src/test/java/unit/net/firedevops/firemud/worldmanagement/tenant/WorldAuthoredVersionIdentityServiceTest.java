@@ -3,6 +3,7 @@ package unit.net.firedevops.firemud.worldmanagement.tenant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -276,7 +277,7 @@ class WorldAuthoredVersionIdentityServiceTest {
     for (Status.Code code : List.of(Status.Code.UNAVAILABLE, Status.Code.DEADLINE_EXCEEDED)) {
       StatusRuntimeException failure =
           Status.fromCode(code).withDescription("upstream transport failure").asRuntimeException();
-      when(versionStateClient.read(any())).thenThrow(failure);
+      doThrow(failure).when(versionStateClient).read(any());
 
       assertThatThrownBy(() -> withGameDesign(() -> associate(VERSION, GAME_DESIGN_VERSION_ID)))
           .isSameAs(failure);
