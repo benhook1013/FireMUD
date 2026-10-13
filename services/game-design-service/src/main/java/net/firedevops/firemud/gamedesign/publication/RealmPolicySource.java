@@ -21,6 +21,12 @@ public final class RealmPolicySource {
   public static final String SCOPE = "REALM_ENTRY_POLICY_SET";
   public static final int MAX_POLICIES = 128;
 
+  public static final class InvalidPublicationPolicySetException extends IllegalArgumentException {
+    InvalidPublicationPolicySetException(String message) {
+      super(message);
+    }
+  }
+
   private RealmPolicySource() {}
 
   /** Original authored UUID and logical identity survive every inherited snapshot. */
@@ -80,14 +86,16 @@ public final class RealmPolicySource {
   public static List<Policy> ordered(List<Policy> policies) {
     var ordered = draftOrdered(policies);
     if (policies.isEmpty() || policies.size() > MAX_POLICIES) {
-      throw new IllegalArgumentException("Complete policy set must contain 1 through 128 policies");
+      throw new InvalidPublicationPolicySetException(
+          "Complete policy set must contain 1 through 128 policies");
     }
     int production = 0;
     for (Policy policy : policies) {
       if (policy.policy().visible() && policy.policy().publicProduction()) production++;
     }
     if (production != 1) {
-      throw new IllegalArgumentException("Exactly one visible public-production realm required");
+      throw new InvalidPublicationPolicySetException(
+          "Exactly one visible public-production realm required");
     }
     return ordered;
   }

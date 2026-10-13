@@ -46,52 +46,20 @@ public final class GameDesignDraftTerminalOutcomeRepository {
 
     Record byOperation = findOperation(operation.accountBinding().operationId(), true);
     if (byOperation != null) {
-      GameDesignDraftTerminalOperation persisted = toOperation(byOperation);
-      requireExactOperation(operation, persisted);
-      return persisted;
+      return toOperation(byOperation);
     }
-    Record byCommit =
-        findOperation(binding.target(), binding.requestId(), binding.commitId(), true);
-    if (byCommit != null) {
-      throw new DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException(
-          "A Game Design commit is already claimed by a different Account operation");
-    }
-
-    Record commit =
-        dsl.fetchOne(
-            "SELECT input_digest, binding_json, workflow_state FROM "
+    if (dsl.fetchOne(
+            "SELECT 1 FROM "
                 + COMMIT_TABLE
                 + " WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
                 + "AND request_id = ? AND commit_id = ? FOR UPDATE",
             binding.target().canonicalTenantId(),
             binding.target().canonicalVersionId(),
             binding.requestId(),
-            binding.commitId());
-    if (commit == null) {
+            binding.commitId())
+        == null) {
       throw new DraftCommitCoordinatorRepository.DraftCommitNotFoundException(
           "Game Design commit must be claimed before its Account operation");
-    }
-    DraftCommitBinding storedBinding =
-        DraftCommitBinding.fromStored(
-            commit.get("binding_json", String.class), commit.get("input_digest", String.class));
-    requireExactGameDesignBinding(binding, storedBinding);
-    if (!"QUEUED".equals(commit.get("workflow_state", String.class))) {
-      throw new DraftCommitCoordinatorRepository.DraftCommitStateConflictException(
-          "Original Account operation must be retained before owner dispatch begins");
-    }
-    if (!"DRAFT".equals(lockedVersion.versionState())) {
-      throw new DraftCommitCoordinatorRepository.DraftCommitStateConflictException(
-          "An Account operation can be newly claimed only while its exact Version is DRAFT");
-    }
-    Record slot =
-        dsl.fetchOne(
-            "SELECT 1 FROM game_design_draft_commit_application_slot "
-                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
-            binding.target().canonicalTenantId(),
-            binding.target().canonicalVersionId());
-    if (slot != null) {
-      throw new DraftCommitCoordinatorRepository.DraftCommitStateConflictException(
-          "An Account operation must be claimed before the Version dispatch slot is acquired");
     }
 
     DraftAuthorizationFenceBinding account = operation.accountBinding();
@@ -382,17 +350,16 @@ public final class GameDesignDraftTerminalOutcomeRepository {
       return retained;
     }
 
-    int inserted =
-        dsl.execute(
-            "INSERT INTO "
-                + OUTCOME_TABLE
-                + " (operation_id, outcome, owner_result_vector_json, terminal_evidence_bytes, "
-                + "terminal_evidence_digest) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
-            operationId,
-            result.name(),
-            ownerResultVectorJson,
-            finalEvidenceBytes.clone(),
-            evidenceDigest);
+    dsl.execute(
+        "INSERT INTO "
+            + OUTCOME_TABLE
+            + " (operation_id, outcome, owner_result_vector_json, terminal_evidence_bytes, "
+            + "terminal_evidence_digest) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+        operationId,
+        result.name(),
+        ownerResultVectorJson,
+        finalEvidenceBytes.clone(),
+        evidenceDigest);
     Record persisted = findOutcome(operationId, true);
     if (persisted == null) {
       throw new DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException(
@@ -410,9 +377,6 @@ public final class GameDesignDraftTerminalOutcomeRepository {
     if (!retained.exactlyMatches(candidate)) {
       throw new DraftCommitCoordinatorRepository.DraftCommitIdentityConflictException(
           "Concurrent Game Design terminal result retained different final evidence");
-    }
-    if (inserted == 0) {
-      return retained;
     }
     return retained;
   }

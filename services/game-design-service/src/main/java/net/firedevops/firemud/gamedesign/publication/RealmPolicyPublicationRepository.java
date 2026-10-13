@@ -7,7 +7,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
@@ -17,7 +16,6 @@ import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -37,8 +35,8 @@ public final class RealmPolicyPublicationRepository {
   }
 
   /**
-   * Retains an association only from the operation's actual sealed PUBLISHED owner readback. A
-   * release with no policy source/capture remains a valid unrelated release and creates no row.
+   * Retains an association only from the operation's actual sealed PUBLISHED owner readback. Every
+   * full-Version publication requires its complete frozen policy capture.
    */
   public Optional<RealmPolicyPublishedEvidence.PublishedSet> retainSealedPublished(
       String publishWorkflowId) {
@@ -66,10 +64,7 @@ public final class RealmPolicyPublicationRepository {
     var sourceRepository = new RealmPolicySourceRepository(dsl);
     Optional<RealmPolicySnapshot.Capture> captureResult = sourceRepository.readCapture(operation);
     if (captureResult.isEmpty()) {
-      if (sourceExists(target) || selectedCommitDeclaresRealmPolicy(operation)) {
-        throw new IllegalStateException("POLICY_PUBLICATION_CAPTURE_UNAVAILABLE");
-      }
-      return Optional.empty();
+      throw new IllegalStateException("POLICY_PUBLICATION_CAPTURE_UNAVAILABLE");
     }
     var capture = captureResult.orElseThrow();
     if (!capture.operation().equals(operation)
@@ -518,27 +513,6 @@ public final class RealmPolicyPublicationRepository {
         || !Objects.equals(terminal.publishedReleaseBundleDigest(), release.contentDigest())) {
       throw new IllegalStateException("POLICY_PUBLICATION_RELEASE_CONTENT_CONFLICT");
     }
-  }
-
-  private boolean sourceExists(TargetProof target) {
-    return dsl.fetchExists(
-        dsl.selectOne()
-            .from("game_design_realm_policy_source")
-            .where(
-                "canonical_tenant_id = ? AND canonical_version_id = ?",
-                target.canonicalTenantId(),
-                target.canonicalVersionId()));
-  }
-
-  private boolean selectedCommitDeclaresRealmPolicy(GameDesignPublicationOperation operation) {
-    return operation.account().input().selection().selectedCommit().revisions().stream()
-        .filter(revision -> revision.owner() == DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE)
-        .anyMatch(
-            revision -> {
-              JsonNode root = RealmPolicySource.tree(revision.payload());
-              return root.path("revisionKind").isTextual()
-                  && RealmEntryPolicy.REVISION_KIND.equals(root.path("revisionKind").asText());
-            });
   }
 
   private void requireExactRetry(

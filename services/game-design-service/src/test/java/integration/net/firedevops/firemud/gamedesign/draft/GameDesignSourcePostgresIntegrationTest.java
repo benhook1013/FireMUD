@@ -15,11 +15,13 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
+import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.publication.CommandSource;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -179,8 +181,39 @@ class GameDesignSourcePostgresIntegrationTest {
               }
             });
     assertThatThrownBy(() -> fixture.tx(() -> fixture.sources().freeze(operation)))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Exactly one visible public-production realm");
+        .isInstanceOfSatisfying(
+            PublishGateFailureException.class,
+            failure ->
+                assertThat(failure.failureCode())
+                    .isEqualTo(PublishGateFailureCode.INVALID_REALM_ENTRY_POLICY_SET));
+    assertThat(fixture.sources().readCapture(operation)).isEmpty();
+  }
+
+  @Test
+  void emptyRealmPolicySourceFailsWithTypedPublicationGateBeforeCapture() {
+    Fixture fixture = fixture();
+    var operation =
+        fixture.tx(
+            () -> {
+              try {
+                var retained =
+                    IsolatedPublicationOwnerSetup.retainSourceBacked(
+                        fixture.dsl(), fixture.target(), 1);
+                fixture
+                    .sources()
+                    .captureSynchronized(retained.account().input().selection().selectedCommit());
+                return retained;
+              } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+              }
+            });
+
+    assertThatThrownBy(() -> fixture.tx(() -> fixture.sources().freeze(operation)))
+        .isInstanceOfSatisfying(
+            PublishGateFailureException.class,
+            failure ->
+                assertThat(failure.failureCode())
+                    .isEqualTo(PublishGateFailureCode.INVALID_REALM_ENTRY_POLICY_SET));
     assertThat(fixture.sources().readCapture(operation)).isEmpty();
   }
 
@@ -359,7 +392,7 @@ class GameDesignSourcePostgresIntegrationTest {
         .placeholders(Map.of("serviceSchema", schema))
         .locations("classpath:db/migration")
         .table("flyway_schema_history_game_design_service")
-        .target("50.11")
+        .target("50.12")
         .load()
         .migrate();
     var write = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
