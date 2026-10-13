@@ -131,7 +131,8 @@ class GameSessionApplicationIntegrationTest {
                     .build(),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
-    assertThat(response.statusCode()).isGreaterThanOrEqualTo(400);
+    assertThat(response.statusCode()).isEqualTo(400);
+    assertThat(response.body()).contains("FAILED_PRECONDITION");
     assertThat(gameInstanceRepository.findAll()).hasSize(existingGameInstances);
     org.mockito.Mockito.verifyNoInteractions(worldManagementClient);
   }

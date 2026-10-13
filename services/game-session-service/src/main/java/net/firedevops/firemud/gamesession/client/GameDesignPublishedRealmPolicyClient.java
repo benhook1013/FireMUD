@@ -72,7 +72,7 @@ public final class GameDesignPublishedRealmPolicyClient
     requireNonNil(canonicalVersionId, "canonical version ID");
     var currentStub = stub();
     if (currentStub == null) {
-      throw new IllegalStateException(
+      throw new UninitializedClientException(
           "Game Design published realm policy client is not initialized");
     }
 
@@ -87,8 +87,20 @@ public final class GameDesignPublishedRealmPolicyClient
     try {
       return PublishedRealmEntryPolicyReadGrpcCodec.fromResponse(request, response);
     } catch (IllegalArgumentException invalid) {
-      throw new IllegalStateException(
+      throw new InvalidResponseException(
           "Game Design published realm policy response is invalid", invalid);
+    }
+  }
+
+  public static final class UninitializedClientException extends RuntimeException {
+    public UninitializedClientException(String message) {
+      super(message);
+    }
+  }
+
+  public static final class InvalidResponseException extends RuntimeException {
+    public InvalidResponseException(String message, Throwable cause) {
+      super(message, cause);
     }
   }
 
