@@ -5,15 +5,21 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOCK_DIR="$ROOT_DIR/.gradle/firemud-validation-locks"
 GRADLE_EXEC="${FIREMUD_LOCK_GRADLE_EXEC:-$ROOT_DIR/gradlew}"
 PRINT_LOCK_TARGETS=0
+RESOURCE_SESSION=0
 
 usage() {
   cat <<'EOF' >&2
 Usage: run-locked-gradle.sh [--print-lock-targets] <gradle args...>
+       run-locked-gradle.sh --resource-session <command> [args...]
 
 Wraps ./gradlew with repo-owned verification locks so overlapping local runs do
-not write the same service test-result trees at once.
+not write the same service test-result trees at once. Resource-session mode holds
+the shared local resource slot across a complete runtime proof and cleanup.
+Unresolved recorded runtime projects block new local admission until exact-project
+inspection verifies stopped or absent containers.
 
 Options:
+  --resource-session    Hold the local resource slot for a complete runtime proof.
   --print-lock-targets   Print the derived lock targets and exit.
 
 Environment:
@@ -33,6 +39,11 @@ EOF
 gradle_args=()
 while (($# > 0)); do
   case "$1" in
+    --resource-session)
+      RESOURCE_SESSION=1
+      shift
+      break
+      ;;
     --print-lock-targets)
       PRINT_LOCK_TARGETS=1
       shift
@@ -46,6 +57,10 @@ while (($# > 0)); do
       ;;
   esac
 done
+
+if ((RESOURCE_SESSION)); then
+  gradle_args=("$@")
+fi
 
 if ((${#gradle_args[@]} == 0)); then
   usage
@@ -72,6 +87,7 @@ option_consumes_next_arg() {
   esac
 }
 
+if ((!RESOURCE_SESSION)); then
 for ((i = 0; i < ${#gradle_args[@]}; i++)); do
   arg="${gradle_args[i]}"
 
@@ -109,6 +125,8 @@ for ((i = 0; i < ${#gradle_args[@]}; i++)); do
   repo_lock_required=1
 done
 
+fi
+
 lock_targets=()
 if ((repo_lock_required)); then
   lock_targets=("repo")
@@ -141,6 +159,11 @@ elif ((${#LOCK_TARGET_SET[@]} > 0)); then
   done < <(printf '%s\n' "${!LOCK_TARGET_SET[@]}" | sort)
 fi
 
+if ((RESOURCE_SESSION)); then
+  GRADLE_EXEC="${gradle_args[0]}"
+  gradle_args=("${gradle_args[@]:1}")
+fi
+
 # Bind graceful cancellation to one private channel, never a recyclable PID.
 # Unlink the FIFO after opening it so only this run's inherited FD can address it.
 cancel_directory="$(mktemp -d "${TMPDIR:-/tmp}/firemud-gradle-cancel.XXXXXXXX")"
@@ -156,6 +179,9 @@ read -r -a wrapper_identity_fields <<<"$wrapper_fields"
 wrapper_started="${wrapper_identity_fields[19]}"
 [[ "$wrapper_started" =~ ^[0-9]+$ ]] || exit 1
 supervisor_args=(--root "$ROOT_DIR" --wrapper-pid "$$" --wrapper-start "$wrapper_started" --cancel-fd "$cancel_fd")
+if ((RESOURCE_SESSION)); then
+  supervisor_args+=(--resource-session)
+fi
 for idx in "${!actual_lock_targets[@]}"; do
   supervisor_args+=(--lock "${lock_modes[idx]}=${actual_lock_targets[idx]}")
 done
