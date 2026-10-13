@@ -12,7 +12,9 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.gamedesign.draft.IsolatedAssetSourceOwnerSetup;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
+import net.firedevops.firemud.gamedesign.model.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import org.flywaydb.core.Flyway;
@@ -402,6 +404,178 @@ class VersionAssetExportSnapshotIntegrationTest {
                     fixture.versionId))
         .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("ASSET_EXPORT_CANDIDATE_IMMUTABLE");
+  }
+
+  @Test
+  void sourceHistoryIndexesLeadWithNonNullAssetId() {
+    Fixture fixture = fixture();
+    for (String table :
+        new String[] {
+          "game_design_asset_source_revision", "game_design_branding_source_revision"
+        }) {
+      var index =
+          Objects.requireNonNull(
+              fixture.dsl.fetchOne(
+                  "SELECT i.indisvalid, i.indisready, pg_get_indexdef(i.indexrelid, 1, true) "
+                      + "AS first_column, pg_get_expr(i.indpred, i.indrelid) AS predicate "
+                      + "FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+                      + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                      + "WHERE n.nspname = ? AND c.relname = ? "
+                      + "AND i.indrelid = to_regclass(?)",
+                  fixture.schema,
+                  "idx_" + table + "_asset_id",
+                  fixture.schema + "." + table),
+              "source history index was not installed");
+      assertThat(index.get("indisvalid", Boolean.class)).isTrue();
+      assertThat(index.get("indisready", Boolean.class)).isTrue();
+      assertThat(index.get("first_column", String.class)).isEqualTo("asset_id");
+      assertThat(index.get("predicate", String.class)).isEqualTo("(asset_id IS NOT NULL)");
+    }
+  }
+
+  @Test
+  void selectedCandidateLifecycleWorkflowCanChangeWhileOriginalEvidenceStaysImmutable() {
+    Fixture fixture = fixture();
+    insertSelectedCandidate(fixture);
+    bindSelectedCandidate(fixture, "original-export-workflow");
+    var originalEvidence =
+        fixture.dsl.fetchOne(
+            "SELECT * FROM version_asset_export_candidate WHERE tenant_id = ? AND version_id = ?",
+            fixture.tenantId,
+            fixture.versionId);
+    VersionAssetArtifactRepository repository = new VersionAssetArtifactRepository(fixture.dsl);
+    var artifact =
+        repository.findByTenantIdAndVersionId(fixture.tenantId, fixture.versionId).orElseThrow();
+    artifact.setArtifactState(VersionAssetArtifactState.TOMBSTONED);
+    artifact.setStateEpoch(artifact.getStateEpoch() + 1);
+    artifact.setLastWorkflowId("later-tombstone-workflow");
+
+    var saved = repository.save(artifact);
+    assertThat(saved.getArtifactState()).isEqualTo(VersionAssetArtifactState.TOMBSTONED);
+    assertThat(saved.getStateEpoch()).isEqualTo(2);
+    assertThat(saved.getLastWorkflowId()).isEqualTo("later-tombstone-workflow");
+    var binding =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT selected_candidate_version_id, selected_candidate_request_digest "
+                    + "FROM version_asset_artifact WHERE tenant_id = ? AND version_id = ?",
+                fixture.tenantId,
+                fixture.versionId),
+            "selected artifact binding readback returned no row");
+    assertThat(binding.get("selected_candidate_version_id", Long.class))
+        .isEqualTo(fixture.versionId);
+    assertThat(binding.get("selected_candidate_request_digest", String.class))
+        .isEqualTo(sha256(SOURCE_BYTES).substring(7));
+    assertThat(
+            fixture.dsl.fetchOne(
+                "SELECT * FROM version_asset_export_candidate "
+                    + "WHERE tenant_id = ? AND version_id = ?",
+                fixture.tenantId,
+                fixture.versionId))
+        .isEqualTo(originalEvidence);
+    for (String assignment :
+        new String[] {
+          "selected_candidate_request_digest = '" + "0".repeat(64) + "'",
+          "selected_candidate_version_id = NULL",
+          "manifest_hash = 'sha256:" + "0".repeat(64) + "'",
+          "published_object_proofs_json = '[]'"
+        }) {
+      assertThatThrownBy(
+              () ->
+                  fixture.dsl.execute(
+                      "UPDATE version_asset_artifact SET "
+                          + assignment
+                          + " WHERE tenant_id = ? AND version_id = ?",
+                      fixture.tenantId,
+                      fixture.versionId))
+          .isInstanceOf(DataAccessException.class)
+          .hasStackTraceContaining("ASSET_EXPORT_CANDIDATE_IMMUTABLE");
+    }
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "DELETE FROM version_asset_artifact WHERE tenant_id = ? AND version_id = ?",
+                    fixture.tenantId,
+                    fixture.versionId))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("ASSET_EXPORT_CANDIDATE_RETENTION_REQUIRED");
+  }
+
+  @Test
+  void selectedCandidateRequiresOriginalWorkflowOnInsertAndFirstEvidenceUpdate() {
+    Fixture fixture = fixture();
+    insertSelectedCandidate(fixture);
+    assertThatThrownBy(() -> bindSelectedCandidate(fixture, "unrelated-workflow"))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("ASSET_EXPORT_SELECTED_CANDIDATE_CONFLICT");
+    insertArtifactWithoutCandidate(fixture);
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "UPDATE version_asset_artifact SET manifest_hash = ?, "
+                        + "manifest_schema_version = 1, artifact_digests_json = '[]', "
+                        + "published_object_proofs_json = ?, selected_candidate_version_id = ?, "
+                        + "selected_candidate_request_digest = ?, "
+                        + "exported_manifest_asset_keys_json = '[]', last_workflow_id = ? "
+                        + "WHERE tenant_id = ? AND version_id = ?",
+                    sha256(SOURCE_BYTES),
+                    selectedManifestProof(),
+                    fixture.versionId,
+                    sha256(SOURCE_BYTES).substring(7),
+                    "unrelated-workflow",
+                    fixture.tenantId,
+                    fixture.versionId))
+        .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("ASSET_EXPORT_SELECTED_CANDIDATE_CONFLICT");
+  }
+
+  private static void insertSelectedCandidate(Fixture fixture) {
+    fixture.dsl.execute(
+        "INSERT INTO version_asset_export_candidate "
+            + "(tenant_id, version_id, canonical_tenant_id, canonical_version_id, "
+            + "expected_version_state_epoch, workflow_id, request_digest, request_preimage, "
+            + "operation_digest, selected_commit_digest, inventory_schema, inventory_digest, "
+            + "inventory_bytes, manifest_schema_version, manifest_hash, manifest_bytes, "
+            + "artifact_digests_json, required_usage_keys_json) "
+            + "SELECT tenant_id, id, canonical_tenant_id, canonical_version_id, "
+            + "version_state_epoch, 'original-export-workflow', ?, ?, ?, ?, "
+            + "'game-design-selected-draft-asset-inventory/v1', ?, ?, 1, ?, ?, '[]', '[]' "
+            + "FROM version WHERE tenant_id = ? AND id = ?",
+        sha256(SOURCE_BYTES).substring(7),
+        SOURCE_BYTES,
+        sha256(SOURCE_BYTES),
+        sha256(SOURCE_BYTES),
+        sha256(SOURCE_BYTES),
+        SOURCE_BYTES,
+        sha256(SOURCE_BYTES),
+        SOURCE_BYTES,
+        fixture.tenantId,
+        fixture.versionId);
+  }
+
+  private static void bindSelectedCandidate(Fixture fixture, String workflowId) {
+    fixture.dsl.execute(
+        "INSERT INTO version_asset_artifact "
+            + "(tenant_id, version_id, artifact_state, state_epoch, exported_version_number, "
+            + "manifest_hash, manifest_schema_version, artifact_digests_json, "
+            + "published_object_proofs_json, selected_candidate_version_id, "
+            + "selected_candidate_request_digest, exported_manifest_asset_keys_json, "
+            + "last_workflow_id) VALUES (?, ?, 'FAILED', 1, 1, ?, 1, '[]', ?, ?, ?, '[]', ?)",
+        fixture.tenantId,
+        fixture.versionId,
+        sha256(SOURCE_BYTES),
+        selectedManifestProof(),
+        fixture.versionId,
+        sha256(SOURCE_BYTES).substring(7),
+        workflowId);
+  }
+
+  private static String selectedManifestProof() {
+    return "[{\"immutableObjectKey\":\"manifests/sha256/"
+        + sha256(SOURCE_BYTES).substring(7)
+        + "\",\"contentDigest\":\""
+        + sha256(SOURCE_BYTES)
+        + "\"}]";
   }
 
   private Fixture fixture() {
