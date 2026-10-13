@@ -1,0 +1,160 @@
+syntax = "proto3";
+
+package account.v1;
+
+import "shared/v1/errors.proto";
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Planned owner transport only; this schema registers no runtime admission surface.
+// Exact same-namespace Game Session mTLS is required. Produced domain denials use typed
+// outcomes; validation/authentication, dependency outages and other pre-domain failures use
+// canonical non-OK gRPC status with bounded details, never an OK availability result.
+service AccountGameplayAdmissionLeaseService {
+  rpc AcquirePublicGameplayAdmissionLease(AcquirePublicGameplayAdmissionLeaseRequest)
+      returns (AcquirePublicGameplayAdmissionLeaseResponse);
+  rpc FinalizeGameplayAdmissionLease(FinalizeGameplayAdmissionLeaseRequest)
+      returns (FinalizeGameplayAdmissionLeaseResponse);
+  rpc ReadGameplayAdmissionLease(ReadGameplayAdmissionLeaseRequest)
+      returns (ReadGameplayAdmissionLeaseResponse);
+  rpc AbortGameplayAdmissionLease(AbortGameplayAdmissionLeaseRequest)
+      returns (AbortGameplayAdmissionLeaseResponse);
+  rpc ReconcileGameplayAdmissionLease(ReconcileGameplayAdmissionLeaseRequest)
+      returns (ReconcileGameplayAdmissionLeaseResponse);
+}
+
+message AcquirePublicGameplayAdmissionLeaseRequest {
+  string request_id = 1;
+  // Initial unscoped LOGIN delegation token, never an admitted PlayerExecutionContext.
+  // Account verifies the concrete peer and token before any owner SQL source transaction.
+  string initial_auth_token = 2;
+  PublicGameplayAdmissionCandidate candidate = 3;
+  GameplayAdmissionLeaseKind lease_kind = 4;
+  // Decimal counters retain exact precision; absence is distinct from a default value.
+  optional string expected_old_binding_generation = 5;
+  // Required with expected_old_binding_generation for RESUME; absent for NEW_BINDING.
+  // Presence of RESUME in this schema does not establish implemented resume authority.
+  optional string resume_episode_id = 6;
+}
+
+enum GameplayAdmissionLeaseKind {
+  GAMEPLAY_ADMISSION_LEASE_KIND_UNSPECIFIED = 0;
+  GAMEPLAY_ADMISSION_LEASE_KIND_NEW_BINDING = 1;
+  GAMEPLAY_ADMISSION_LEASE_KIND_RESUME = 2;
+}
+
+// Selectors and expected correlation only. Account must obtain protected actual target-owner
+// evidence; caller values are never World, route, character, coordination or admission proof.
+// Account derives the subject, peer, lease ID/fence/deadline and current Account predicates.
+message PublicGameplayAdmissionCandidate {
+  string tenant_id = 1;
+  string world_slug = 2;
+  string realm_slug = 3;
+  string realm_id = 4;
+  string playable_state_namespace_id = 5;
+  string playable_state_scope = 6;
+  string game_instance_id = 7;
+  string character_id = 8;
+  string session_id = 9;
+  string binding_generation = 10;
+  string catalog_revision = 11;
+  string pointer_version = 12;
+  string region_id = 13;
+  string region_epoch = 14;
+}
+
+// One unchanged closed AccountGameplayAdmissionLeaseEvidence carrier, not a second tuple schema.
+// Bytes must be canonical UTF-8 JSON, nonempty and <=64 KiB. Digest is lowercase hexadecimal
+// SHA-256 of those exact bytes. request_id must equal the carrier's original requestId.
+// Shape/digest validation alone establishes no authenticated receipt or authorization.
+message GameplayAdmissionLeaseReference {
+  string request_id = 1;
+  bytes evidence_canonical_json = 2;
+  string evidence_sha256 = 3;
+}
+
+message FinalizeGameplayAdmissionLeaseRequest {
+  GameplayAdmissionLeaseReference lease = 1;
+  // Lookup selector only. Account obtains the exact lease-bound PROVISIONAL decision through
+  // Gameplay's protected CanonicalGameplayAdmissionDecisionOwner transport before finalizing.
+  string binding_decision_id = 2;
+}
+
+message ReadGameplayAdmissionLeaseRequest {
+  string request_id = 1;
+  optional GameplayAdmissionLeaseReference expected_lease = 2;
+}
+
+message AbortGameplayAdmissionLeaseRequest {
+  GameplayAdmissionLeaseReference lease = 1;
+  // Absent means no supplied observation/unknown, never proved absence. Never fabricate an ID.
+  optional string binding_decision_id = 2;
+}
+
+message ReconcileGameplayAdmissionLeaseRequest {
+  string request_id = 1;
+  optional GameplayAdmissionLeaseReference expected_lease = 2;
+  optional string binding_decision_id = 3;
+}
+
+enum GameplayAdmissionLeaseState {
+  GAMEPLAY_ADMISSION_LEASE_STATE_UNSPECIFIED = 0;
+  GAMEPLAY_ADMISSION_LEASE_STATE_PENDING = 1;
+  GAMEPLAY_ADMISSION_LEASE_STATE_COMMITTED = 2;
+  GAMEPLAY_ADMISSION_LEASE_STATE_ABORTED = 3;
+}
+
+// Reject unspecified/unknown states. COMMITTED requires the exact decision ID. ABORTED requires
+// a retained cleanup ID but may have an unknown decision. PENDING has neither ID; COMMITTED has
+// no cleanup ID. pending_orphan_cleanup is true exactly for ABORTED, not completed cleanup.
+// Storage shape is not authenticated finalization; only the protected real owner supplies that.
+message GameplayAdmissionLeaseOperationReadback {
+  GameplayAdmissionLeaseReference lease = 1;
+  GameplayAdmissionLeaseState state = 2;
+  optional string binding_decision_id = 3;
+  optional string orphan_cleanup_id = 4;
+  bool pending_orphan_cleanup = 5;
+}
+
+// Storage observation only: never authoritative absence, token retirement, completed cleanup,
+// or permission to start a replacement mutation after an uncertain original outcome.
+message GameplayAdmissionLeaseNotObserved {
+  string request_id = 1;
+}
+
+message AcquirePublicGameplayAdmissionLeaseResponse {
+  oneof outcome {
+    GameplayAdmissionLeaseOperationReadback operation = 1;
+    shared.v1.ErrorDetail denied = 2;
+  }
+}
+
+message FinalizeGameplayAdmissionLeaseResponse {
+  oneof outcome {
+    GameplayAdmissionLeaseOperationReadback operation = 1;
+    shared.v1.ErrorDetail denied = 2;
+  }
+}
+
+message ReadGameplayAdmissionLeaseResponse {
+  oneof outcome {
+    GameplayAdmissionLeaseOperationReadback operation = 1;
+    GameplayAdmissionLeaseNotObserved not_observed = 2;
+  }
+}
+
+message AbortGameplayAdmissionLeaseResponse {
+  oneof outcome {
+    GameplayAdmissionLeaseOperationReadback operation = 1;
+    shared.v1.ErrorDetail denied = 2;
+  }
+}
+
+message ReconcileGameplayAdmissionLeaseResponse {
+  oneof outcome {
+    GameplayAdmissionLeaseOperationReadback operation = 1;
+    GameplayAdmissionLeaseNotObserved not_observed = 2;
+    shared.v1.ErrorDetail denied = 3;
+  }
+}

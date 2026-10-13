@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Standalone authenticated World-owner read of one exact original activation terminal receipt.
+service WorldOriginalStartSessionActivationTerminalReadService {
+  rpc ReadOriginalStartSessionActivationTerminalEvidence(
+      ReadOriginalStartSessionActivationTerminalEvidenceRequest)
+      returns (ReadOriginalStartSessionActivationTerminalEvidenceResponse);
+}
+
+// Repeated fields preserve duplicate-field evidence for receiver-side fail-closed validation.
+message ReadOriginalStartSessionActivationTerminalEvidenceRequest {
+  repeated int32 schema_version = 1;
+  repeated string target_namespace = 2;
+  repeated string read_request_id = 3;
+  repeated bytes account_protection_evidence = 4;
+}
+
+message ReadOriginalStartSessionActivationTerminalEvidenceResponse {
+  repeated string read_request_id = 1;
+  // Complete immutable World receipt; the existing 768 MiB evidence cap is not widened.
+  repeated bytes terminal_evidence = 2;
+}

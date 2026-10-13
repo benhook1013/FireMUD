@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package game_design.v1;
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Opt-in authenticated readback of immutable Game Design Draft terminal evidence.
+service GameDesignDraftTerminalReadService {
+  rpc ReadGameDesignDraftTerminalOutcome(ReadGameDesignDraftTerminalOutcomeRequest)
+      returns (ReadGameDesignDraftTerminalOutcomeResponse);
+}
+
+enum GameDesignDraftTerminalReadStatus {
+  GAME_DESIGN_DRAFT_TERMINAL_READ_STATUS_UNSPECIFIED = 0;
+  GAME_DESIGN_DRAFT_TERMINAL_READ_STATUS_UNKNOWN = 1;
+  GAME_DESIGN_DRAFT_TERMINAL_READ_STATUS_COMMITTED = 2;
+  GAME_DESIGN_DRAFT_TERMINAL_READ_STATUS_DEFINITIVELY_ABORTED = 3;
+}
+
+message ReadGameDesignDraftTerminalOutcomeRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  // Complete canonical Account fence bytes; this is read identity, not permission.
+  bytes original_account_binding = 4;
+}
+
+message ReadGameDesignDraftTerminalOutcomeResponse {
+  // The complete request tuple is echoed byte-for-byte, including the original Account binding.
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  bytes original_account_binding = 4;
+  GameDesignDraftTerminalReadStatus status = 5;
+  // Canonical account-draft-owner-readback/v1 bytes. Empty only for UNKNOWN.
+  bytes owner_readback_bytes = 6;
+}

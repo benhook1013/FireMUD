@@ -8,6 +8,9 @@ import net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishType;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
+import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
+import net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -22,7 +25,10 @@ import org.springframework.stereotype.Repository;
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class PublishAttemptRepository {
   private static final Table<?> PUBLISH_ATTEMPT_TABLE = DSL.table(DSL.name("publish_attempt"));
+  private static final Table<?> AUTHORED_PUBLISH_SELECTION_TABLE =
+      DSL.table(DSL.name("game_design_authored_draft_publish_selection"));
   private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
+  private static final Field<Long> REVISION = DSL.field(DSL.name("revision"), Long.class);
   private static final Field<String> TENANT_ID = DSL.field(DSL.name("tenant_id"), String.class);
   private static final Field<String> PUBLISH_WORKFLOW_ID =
       DSL.field(DSL.name("publish_workflow_id"), String.class);
@@ -46,6 +52,27 @@ public class PublishAttemptRepository {
       DSL.field(DSL.name("created_at"), Timestamp.class);
   private static final Field<Timestamp> COMPLETED_AT =
       DSL.field(DSL.name("completed_at"), Timestamp.class);
+  private static final Field<String> SELECTION_TENANT_ID =
+      DSL.field(DSL.name("game_design_version_tenant_key"), String.class);
+  private static final Field<Long> SELECTION_VERSION_ID =
+      DSL.field(DSL.name("game_design_version_row_id"), Long.class);
+  private static final Field<?>[] PUBLISH_ATTEMPT_RETURNING_FIELDS = {
+    ID,
+    REVISION,
+    TENANT_ID,
+    PUBLISH_WORKFLOW_ID,
+    PUBLISH_TYPE,
+    STATUS,
+    VERSION_ID,
+    VERSION_NUMBER,
+    SCRIPT_PATCH_VERSION,
+    BASE_VERSION_ID,
+    REQUEST_DIGEST,
+    FAILURE_CODE,
+    FAILURE_MESSAGE,
+    CREATED_AT,
+    COMPLETED_AT
+  };
 
   private final DSLContext dsl;
 
@@ -61,12 +88,81 @@ public class PublishAttemptRepository {
             .fetchOne(this::toEntity));
   }
 
+  /** The owning Game lock always precedes the exact attempt lock. */
+  public Optional<PublishAttempt> findByPublishWorkflowIdForUpdate(String workflow) {
+    Optional<PublishAttempt> initial = findByPublishWorkflowId(workflow);
+    if (initial.isEmpty()) return initial;
+    dsl.fetchOne("SELECT id FROM game WHERE tenant_id = ? FOR UPDATE", initial.get().getTenantId());
+    return Optional.ofNullable(
+        dsl.selectFrom(PUBLISH_ATTEMPT_TABLE)
+            .where(PUBLISH_WORKFLOW_ID.eq(workflow))
+            .forUpdate()
+            .fetchOne(this::toEntity));
+  }
+
+  public net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence
+      requirePublicationPending(PublishAttempt attempt) {
+    return new GameDesignPublicationOperationRepository(dsl)
+        .requirePending(
+            attempt.getTenantId(),
+            attempt.getPublishWorkflowId(),
+            attempt.getVersionId(),
+            attempt.getRequestDigest())
+        .world();
+  }
+
+  public void sealPublication(PublishAttempt attempt, boolean published) {
+    new GameDesignPublicationOperationRepository(dsl)
+        .seal(
+            attempt.getTenantId(),
+            attempt.getPublishWorkflowId(),
+            attempt.getVersionId(),
+            attempt.getRequestDigest(),
+            published);
+    if (published) {
+      new RealmPolicyPublicationRepository(dsl)
+          .retainSealedPublished(attempt.getPublishWorkflowId());
+    }
+  }
+
+  public void requirePublishedOperation(PublishAttempt attempt) {
+    requireTerminalOperation(attempt, "PUBLISHED");
+  }
+
+  public void requireNoPublicationOperation(PublishAttempt attempt) {
+    requireTerminalOperation(attempt, "NO_PUBLICATION");
+  }
+
+  private void requireTerminalOperation(PublishAttempt attempt, String outcome) {
+    requireSelectedPublicationReadback(attempt, outcome);
+  }
+
+  /** Read-only exact operation/selection proof for callers outside the final owner transaction. */
+  public GameDesignPublicationOperation requireSelectedPublicationReadback(
+      PublishAttempt attempt, String outcome) {
+    if (attempt == null
+        || attempt.getTenantId() == null
+        || attempt.getPublishWorkflowId() == null
+        || attempt.getVersionId() == null
+        || attempt.getRequestDigest() == null) {
+      throw new IllegalStateException("PUBLICATION_OPERATION_UNAVAILABLE");
+    }
+    return new GameDesignPublicationOperationRepository(dsl)
+        .requireOutcome(
+            attempt.getTenantId(),
+            attempt.getPublishWorkflowId(),
+            attempt.getVersionId(),
+            attempt.getRequestDigest(),
+            outcome);
+  }
+
   /**
    * Installs a compatibility digest only once, and only on the exact legacy full-version row whose
    * identity was validated by the caller.
    *
-   * <p>The conditional update makes concurrent retries idempotent: the first writer installs the
-   * digest and later writers can only read the already-installed value. It deliberately does not
+   * <p>The conditional update makes concurrent retries idempotent: it advances the attempt revision
+   * and installs the digest only while the exact attempt remains pending, unselected, and
+   * digestless; later writers can only read the already-installed value. It deliberately does not
    * derive or replace a digest for any other attempt shape.
    */
   public Optional<PublishAttempt> backfillFullVersionRequestDigestIfAbsent(
@@ -88,13 +184,40 @@ public class PublishAttemptRepository {
             .and(VERSION_NUMBER.eq(versionNumber));
     dsl.update(PUBLISH_ATTEMPT_TABLE)
         .set(REQUEST_DIGEST, requestDigest)
-        .where(fullVersionAttemptIdentity.and(REQUEST_DIGEST.isNull()))
+        .set(REVISION, REVISION.add(1L))
+        .where(
+            fullVersionAttemptIdentity
+                .and(STATUS.eq(PublishAttemptStatus.PENDING.name()))
+                .and(REQUEST_DIGEST.isNull())
+                .and(REVISION.lt(Long.MAX_VALUE))
+                .and(
+                    DSL.notExists(
+                        DSL.selectOne()
+                            .from(AUTHORED_PUBLISH_SELECTION_TABLE)
+                            .where(
+                                SELECTION_TENANT_ID
+                                    .eq(tenantId)
+                                    .and(SELECTION_VERSION_ID.eq(versionId))))))
         .execute();
-    return Optional.ofNullable(
+    PublishAttempt exactAttempt =
         dsl.selectFrom(PUBLISH_ATTEMPT_TABLE)
             .where(fullVersionAttemptIdentity)
             .limit(1)
-            .fetchOne(this::toEntity));
+            .fetchOne(this::toEntity);
+    if (exactAttempt == null) {
+      return Optional.empty();
+    }
+    if (exactAttempt.getRequestDigest() != null) {
+      return Optional.of(exactAttempt);
+    }
+    if (exactAttempt.getStatus() != PublishAttemptStatus.PENDING
+        || isSelectedAttempt(tenantId, versionId)) {
+      return Optional.empty();
+    }
+    if (Long.valueOf(Long.MAX_VALUE).equals(exactAttempt.getRevision())) {
+      throw new IllegalStateException("publish attempt revision exhausted");
+    }
+    return Optional.empty();
   }
 
   public PublishAttempt save(PublishAttempt attempt) {
@@ -116,27 +239,53 @@ public class PublishAttemptRepository {
               .set(FAILURE_MESSAGE, attempt.getFailureMessage())
               .set(CREATED_AT, JooqPersistenceSupport.toTimestamp(createdAt))
               .set(COMPLETED_AT, JooqPersistenceSupport.toTimestamp(attempt.getCompletedAt()))
-              .returning()
+              .returning(PUBLISH_ATTEMPT_RETURNING_FIELDS)
               .fetchOne();
+      if (record == null) {
+        throw new IllegalStateException("publish attempt insert returned no row");
+      }
       return toEntity(record);
     }
-    dsl.update(PUBLISH_ATTEMPT_TABLE)
-        .set(TENANT_ID, attempt.getTenantId())
-        .set(PUBLISH_WORKFLOW_ID, attempt.getPublishWorkflowId())
-        .set(PUBLISH_TYPE, attempt.getPublishType().name())
-        .set(STATUS, attempt.getStatus().name())
-        .set(VERSION_ID, attempt.getVersionId())
-        .set(VERSION_NUMBER, attempt.getVersionNumber())
-        .set(SCRIPT_PATCH_VERSION, attempt.getScriptPatchVersion())
-        .set(BASE_VERSION_ID, attempt.getBaseVersionId())
-        .set(REQUEST_DIGEST, attempt.getRequestDigest())
-        .set(FAILURE_CODE, attempt.getFailureCode())
-        .set(FAILURE_MESSAGE, attempt.getFailureMessage())
-        .set(CREATED_AT, JooqPersistenceSupport.toTimestamp(createdAt))
-        .set(COMPLETED_AT, JooqPersistenceSupport.toTimestamp(attempt.getCompletedAt()))
-        .where(ID.eq(attempt.getId()))
-        .execute();
-    return findByPublishWorkflowId(attempt.getPublishWorkflowId()).orElseThrow();
+    Long expectedRevision = attempt.getRevision();
+    if (attempt.getStatus() == null || expectedRevision == null || expectedRevision <= 0) {
+      throw new IllegalStateException("publish attempt is stale or terminal");
+    }
+    if (expectedRevision == Long.MAX_VALUE) {
+      throw new IllegalStateException("publish attempt revision exhausted");
+    }
+    Record updated =
+        dsl.update(PUBLISH_ATTEMPT_TABLE)
+            .set(TENANT_ID, attempt.getTenantId())
+            .set(PUBLISH_WORKFLOW_ID, attempt.getPublishWorkflowId())
+            .set(PUBLISH_TYPE, attempt.getPublishType().name())
+            .set(STATUS, attempt.getStatus().name())
+            .set(VERSION_ID, attempt.getVersionId())
+            .set(VERSION_NUMBER, attempt.getVersionNumber())
+            .set(SCRIPT_PATCH_VERSION, attempt.getScriptPatchVersion())
+            .set(BASE_VERSION_ID, attempt.getBaseVersionId())
+            .set(REQUEST_DIGEST, attempt.getRequestDigest())
+            .set(FAILURE_CODE, attempt.getFailureCode())
+            .set(FAILURE_MESSAGE, attempt.getFailureMessage())
+            .set(CREATED_AT, JooqPersistenceSupport.toTimestamp(createdAt))
+            .set(COMPLETED_AT, JooqPersistenceSupport.toTimestamp(attempt.getCompletedAt()))
+            .set(REVISION, REVISION.add(1L))
+            .where(
+                ID.eq(attempt.getId())
+                    .and(REVISION.eq(expectedRevision))
+                    .and(STATUS.eq(PublishAttemptStatus.PENDING.name())))
+            .returning(PUBLISH_ATTEMPT_RETURNING_FIELDS)
+            .fetchOne();
+    if (updated == null) {
+      throw new IllegalStateException("publish attempt is stale or terminal");
+    }
+    return toEntity(updated);
+  }
+
+  private boolean isSelectedAttempt(String tenantId, Long versionId) {
+    return dsl.fetchExists(
+        DSL.selectOne()
+            .from(AUTHORED_PUBLISH_SELECTION_TABLE)
+            .where(SELECTION_TENANT_ID.eq(tenantId).and(SELECTION_VERSION_ID.eq(versionId))));
   }
 
   private PublishAttempt toEntity(Record record) {
@@ -145,6 +294,7 @@ public class PublishAttemptRepository {
     }
     PublishAttempt attempt = new PublishAttempt();
     attempt.setId(record.get(ID));
+    attempt.setRevision(record.get(REVISION));
     attempt.setTenantId(record.get(TENANT_ID));
     attempt.setPublishWorkflowId(record.get(PUBLISH_WORKFLOW_ID));
     String publishType = record.get(PUBLISH_TYPE);

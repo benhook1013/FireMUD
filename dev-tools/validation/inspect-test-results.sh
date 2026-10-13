@@ -6,19 +6,44 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 usage() {
   cat <<'EOF' >&2
 Usage: inspect-test-results.sh [--root <repo-root>] <service-name>
+  inspect-test-results.sh --strict [--root <repo-root>] \
+    --require-suite <fully-qualified-suite>... \
+    --require-case <fully-qualified-suite#test-case>... <service-name>
 
 Summarize parsed JUnit XML currently on disk under services/<service>/build/test-results.
 This is diagnostic only; it helps explain quiet Gradle tails but does not prove
 the original Gradle invocation completed cleanly.
+
+Strict mode fails closed unless every named suite has exactly one non-empty,
+green report and every named test case executed exactly once without a skip,
+failure, or error.
 EOF
   exit 1
 }
+
+STRICT_MODE=0
+REQUIRED_SUITES=()
+REQUIRED_CASES=()
 
 while (($# > 0)); do
   case "$1" in
     --root)
       [[ $# -ge 2 ]] || usage
       ROOT_DIR="$2"
+      shift 2
+      ;;
+    --strict)
+      STRICT_MODE=1
+      shift
+      ;;
+    --require-suite)
+      [[ $# -ge 2 ]] || usage
+      REQUIRED_SUITES+=("$2")
+      shift 2
+      ;;
+    --require-case)
+      [[ $# -ge 2 ]] || usage
+      REQUIRED_CASES+=("$2")
       shift 2
       ;;
     --help|-h)
@@ -32,6 +57,33 @@ done
 
 [[ $# -eq 1 ]] || usage
 
+if [[ "$STRICT_MODE" == "1" ]]; then
+  ((${#REQUIRED_SUITES[@]} > 0 && ${#REQUIRED_CASES[@]} > 0)) || usage
+  for ((i = 0; i < ${#REQUIRED_SUITES[@]}; i++)); do
+    suite_name="${REQUIRED_SUITES[$i]}"
+    [[ -n "$suite_name" && ! "$suite_name" =~ [[:cntrl:]] && "$suite_name" != *'#'* ]] || usage
+    for ((j = 0; j < i; j++)); do
+      [[ "$suite_name" != "${REQUIRED_SUITES[$j]}" ]] || usage
+    done
+  done
+  for ((i = 0; i < ${#REQUIRED_CASES[@]}; i++)); do
+    case_name="${REQUIRED_CASES[$i]}"
+    [[ "$case_name" == *'#'* && "${case_name#*#}" != *'#'* && ! "$case_name" =~ [[:cntrl:]] ]] || usage
+    case_suite="${case_name%%#*}"
+    [[ -n "${case_name#*#}" ]] || usage
+    suite_is_required=0
+    for required_suite in "${REQUIRED_SUITES[@]}"; do
+      [[ "$case_suite" != "$required_suite" ]] || suite_is_required=1
+    done
+    [[ "$suite_is_required" == "1" ]] || usage
+    for ((j = 0; j < i; j++)); do
+      [[ "$case_name" != "${REQUIRED_CASES[$j]}" ]] || usage
+    done
+  done
+elif ((${#REQUIRED_SUITES[@]} > 0 || ${#REQUIRED_CASES[@]} > 0)); then
+  usage
+fi
+
 SERVICE_NAME="$1"
 SERVICE_DIR="$ROOT_DIR/services/$SERVICE_NAME"
 
@@ -40,7 +92,7 @@ if [[ ! -d "$SERVICE_DIR" ]]; then
   exit 1
 fi
 
-python3 - "$SERVICE_DIR" <<'PY'
+python3 - "$SERVICE_DIR" "$STRICT_MODE" "${REQUIRED_SUITES[@]}" --required-cases "${REQUIRED_CASES[@]}" <<'PY'
 from __future__ import annotations
 
 import datetime as dt
@@ -50,8 +102,161 @@ from collections import defaultdict
 from pathlib import Path
 
 service_dir = Path(sys.argv[1])
+strict_mode = sys.argv[2] == "1"
+case_separator = sys.argv.index("--required-cases", 3)
+required_suites = sys.argv[3:case_separator]
+required_cases = sys.argv[case_separator + 1 :]
 service_name = service_dir.name
 result_root = service_dir / "build" / "test-results"
+
+
+def strict_inspection() -> None:
+    xml_files = sorted(result_root.glob("**/TEST-*.xml")) if result_root.exists() else []
+    malformed_reports = 0
+    parsed_suite_count = 0
+    parsed_test_count = 0
+    suites: dict[str, list[dict[str, object]]] = defaultdict(list)
+    required_suite_set = set(required_suites)
+
+    def count(value: str | None) -> int | None:
+        if value is None or not value.isascii() or not value.isdecimal():
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            return None
+
+    for xml_file in xml_files:
+        try:
+            root = ET.parse(xml_file).getroot()
+        except (ET.ParseError, OSError, ValueError):
+            malformed_reports += 1
+            continue
+        if root.tag == "testsuite":
+            report_suites = [root]
+        elif root.tag == "testsuites":
+            report_suites = list(root.findall(".//testsuite"))
+        else:
+            malformed_reports += 1
+            continue
+        if not report_suites:
+            malformed_reports += 1
+            continue
+
+        report_valid = True
+        parsed_suites: list[dict[str, object]] = []
+        for suite in report_suites:
+            name = suite.attrib.get("name")
+            tests = count(suite.attrib.get("tests"))
+            failures = count(suite.attrib.get("failures"))
+            errors = count(suite.attrib.get("errors"))
+            skipped = count(suite.attrib.get("skipped"))
+            disabled = count(suite.attrib.get("disabled", "0"))
+            testcases = list(suite.findall("./testcase"))
+            if not name or None in (tests, failures, errors, skipped, disabled) or tests != len(testcases):
+                report_valid = False
+            cases: list[dict[str, object]] = []
+            for testcase in testcases:
+                classname = testcase.attrib.get("classname")
+                case_name = testcase.attrib.get("name")
+                if not classname or not case_name:
+                    report_valid = False
+                    continue
+                cases.append({
+                    "identity": f"{classname}#{case_name}",
+                    "failed": bool(testcase.findall("./failure")),
+                    "errored": bool(testcase.findall("./error")),
+                    "skipped": bool(testcase.findall("./skipped")),
+                })
+            parsed_suites.append({
+                "name": name, "tests": tests, "failures": failures, "errors": errors,
+                "skipped": skipped, "disabled": disabled, "cases": cases,
+            })
+        if not report_valid:
+            malformed_reports += 1
+            continue
+        parsed_suite_count += len(parsed_suites)
+        parsed_test_count += sum(int(suite["tests"]) for suite in parsed_suites)
+        for suite in parsed_suites:
+            if suite["name"] in required_suite_set:
+                suites[str(suite["name"])].append(suite)
+
+    problems: list[str] = []
+    suite_status: dict[str, tuple[str, dict[str, object] | None]] = {}
+    for name in required_suites:
+        matches = suites.get(name, [])
+        if not matches:
+            suite_status[name] = ("missing", None)
+            problems.append(f"Missing required suite: {name}")
+            continue
+        if len(matches) != 1:
+            suite_status[name] = ("duplicate", None)
+            problems.append(f"Duplicate required suite: {name} ({len(matches)} report(s))")
+            continue
+        suite = matches[0]
+        status = "passed"
+        if int(suite["tests"]) == 0:
+            status = "zero tests"
+            problems.append(f"Required suite has zero tests: {name}")
+        elif (int(suite["failures"]) or int(suite["errors"]) or int(suite["skipped"])
+              or int(suite["disabled"]) or any(
+                  case["failed"] or case["errored"] or case["skipped"] for case in suite["cases"]
+              )):
+            status = "failed or skipped"
+            problems.append(f"Required suite is failing, errored, or skipped: {name}")
+        suite_status[name] = (status, suite)
+
+    for case_spec in required_cases:
+        case_suite, _ = case_spec.split("#", 1)
+        suite = suite_status[case_suite][1]
+        matches = [case for case in suite["cases"] if case["identity"] == case_spec] if suite else []
+        if not matches:
+            problems.append(f"Missing required case: {case_spec}")
+        elif len(matches) != 1:
+            problems.append(f"Duplicate required case: {case_spec} ({len(matches)} execution(s))")
+        elif matches[0]["failed"] or matches[0]["errored"] or matches[0]["skipped"]:
+            problems.append(f"Required case did not pass: {case_spec}")
+
+    if malformed_reports:
+        problems.append(f"Malformed report(s): {malformed_reports}")
+    print("Strict JUnit proof: passed" if not problems else "Strict JUnit proof: failed")
+    print(f"Reports: {len(xml_files)}; suites: {parsed_suite_count}; tests: {parsed_test_count}; "
+          f"malformed reports: {malformed_reports}")
+    for name in required_suites:
+        status, suite = suite_status[name]
+        if suite is None:
+            print(f"Suite {name}: outcome={status}")
+        else:
+            print(f"Suite {name}: tests={suite['tests']} skipped={int(suite['skipped']) + int(suite['disabled'])} "
+                  f"failures={suite['failures']} errors={suite['errors']} outcome={status}")
+    for case_spec in required_cases:
+        case_suite, _ = case_spec.split("#", 1)
+        suite = suite_status[case_suite][1]
+        matches = [case for case in suite["cases"] if case["identity"] == case_spec] if suite else []
+        if not matches:
+            outcome = "missing"
+        elif len(matches) != 1:
+            outcome = "duplicate"
+        elif matches[0]["failed"]:
+            outcome = "failure"
+        elif matches[0]["errored"]:
+            outcome = "error"
+        elif matches[0]["skipped"]:
+            outcome = "skipped"
+        else:
+            outcome = "passed"
+        print(f"Case {case_spec}: executions={len(matches)} outcome={outcome}")
+    for problem in problems:
+        print(f"- {problem}")
+    if not xml_files:
+        print("No JUnit XML reports were found.")
+    if problems:
+        raise SystemExit(1)
+
+
+if strict_mode:
+    strict_inspection()
+    raise SystemExit(0)
 
 if not result_root.exists():
     print(f"Service: {service_name}")

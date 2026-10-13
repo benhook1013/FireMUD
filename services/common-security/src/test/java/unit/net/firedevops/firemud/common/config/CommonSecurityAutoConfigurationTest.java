@@ -125,12 +125,14 @@ class CommonSecurityAutoConfigurationTest {
               ServerCallHandler next = Mockito.mock(ServerCallHandler.class);
               MethodDescriptor<Empty, Empty> methodDescriptor = unaryMethod("demo.Service/Ping");
               Mockito.when(call.getMethodDescriptor()).thenReturn(methodDescriptor);
-              Mockito.when(next.startCall(Mockito.eq(call), Mockito.any(Metadata.class)))
+              Mockito.when(
+                      next.startCall(Mockito.any(ServerCall.class), Mockito.any(Metadata.class)))
                   .thenReturn(new ServerCall.Listener<>() {});
 
               interceptor.interceptCall(call, new Metadata(), next);
 
-              Mockito.verify(next).startCall(Mockito.eq(call), Mockito.any(Metadata.class));
+              Mockito.verify(next)
+                  .startCall(Mockito.any(ServerCall.class), Mockito.any(Metadata.class));
             });
   }
 

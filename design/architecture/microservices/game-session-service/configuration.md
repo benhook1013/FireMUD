@@ -23,6 +23,12 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 | `FIREMUD_SERVICES_ENTITY_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for Entity Management Service | `entity-management-service:6565` |
 | `FIREMUD_CONFLICT_TTL_SECONDS` | TTL for conflict hotspot tracking in Redis | `300` |
 
+### Isolated JWT Readiness Receiver
+
+The receiver composition for [ADR 0014](../../decisions/adr-0014-phased-jwt-signing-key-rotation-and-readiness.md) is default-inactive. Explicit enablement selects its protected local-identity producer only when Spring supplies TLS bundles; lazy bean registration is not proof that its inputs are available. Every identity read requires the fixed kubelet Pod UID projection, the exact local Game Session TLS leaf and Account-authenticated current receiver metadata. Missing or inconsistent inputs deny the read; no environment UID or fixture fallback exists. When selected with its prerequisites, the adapter explicitly extracts the TLS peer and excludes the global application bearer interceptor; the exact Account workload guard remains mandatory. The canonical attribution boundary is [Protected Readiness Receiver Attribution](../../system-architecture-jwt-and-token-contracts.md#protected-readiness-receiver-attribution). Remaining producer, transport and activation proof belongs in [Game Authoring, Publishing, and Activation](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md), not in a configuration toggle.
+
+When constructing the isolated receiver, `firemud.game-session.jwt-readiness.receiver.max-control-ui-tenant-scopes` is required, and `firemud.grpc.workload-namespace` must identify the exact protected workload namespace. Its owner-read client uses the existing Account endpoint and gRPC mTLS configuration for both current receiver metadata and exact probe-owner readback. The UID projection is `/var/run/secrets/firemud/pod-identity/uid`. The receiver reads only the fixed public projection `/var/run/secrets/firemud/jwks/jwks.json`, whose bytes must match Account's authenticated public-JWKS digest and exact opaque trust-binding revision; it has no private signing material, alternate-path discovery or classpath fallback. These local prerequisites do not authorize an application auth context, session or admission.
+
 ## FireMUD Settings Domains
 
 The canonical per-key reference for the surfaced pre-`06` platform settings now lives in the generated artifacts below rather than being hand-maintained in this service doc:

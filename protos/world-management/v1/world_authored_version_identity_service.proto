@@ -1,0 +1,31 @@
+syntax = "proto3";
+package world_management.v1;
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+import "game-design/v1/game_design_service.proto";
+import "world-management/v1/world_management_service.proto";
+
+// Standalone, unregistered, same-namespace Game Design association construction.
+service WorldAuthoredVersionIdentityService {
+  rpc AssociateAuthoredWorldVersion(AssociateAuthoredWorldVersionRequest)
+      returns (AssociateAuthoredWorldVersionResponse);
+}
+message AssociateAuthoredWorldVersionRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  string world_slug = 4;
+  string source_operation_id = 5;
+  string source_evidence_digest = 6;
+  string expected_canonical_version_id = 7;
+  int64 game_design_version_id = 8;
+  string read_request_id = 9;
+}
+message AssociateAuthoredWorldVersionResponse {
+  AssociateAuthoredWorldVersionRequest request = 1;
+  string operation_id = 2;
+  IntakeAuthoredWorldSourceResponse source_intake_receipt = 3;
+  // Original committed proof, including its historical read correlation on retry.
+  gamedesign.v1.GetAuthoredWorldVersionStateResponse version_state_evidence = 4;
+}

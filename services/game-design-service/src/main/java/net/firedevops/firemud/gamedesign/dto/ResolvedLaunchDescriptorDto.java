@@ -1,8 +1,10 @@
 package net.firedevops.firemud.gamedesign.dto;
 
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+
 public record ResolvedLaunchDescriptorDto(
     String launchDescriptorId,
-    String tenantId,
+    String canonicalTenantId,
     long gameTemplateId,
     String controlPlaneRequestId,
     long versionId,
@@ -12,31 +14,5 @@ public record ResolvedLaunchDescriptorDto(
     long versionStateEpoch,
     long releaseBundleId,
     String publishedReleaseBundleRef,
-    String remapSetId) {
-  public ResolvedLaunchDescriptorDto(
-      String launchDescriptorId,
-      String tenantId,
-      long gameTemplateId,
-      String controlPlaneRequestId,
-      long versionId,
-      String scriptPatchVersion,
-      String runtimeFlagsJson,
-      String generationConfigRevision,
-      long versionStateEpoch,
-      long releaseBundleId,
-      String publishedReleaseBundleRef) {
-    this(
-        launchDescriptorId,
-        tenantId,
-        gameTemplateId,
-        controlPlaneRequestId,
-        versionId,
-        scriptPatchVersion,
-        runtimeFlagsJson,
-        generationConfigRevision,
-        versionStateEpoch,
-        releaseBundleId,
-        publishedReleaseBundleRef,
-        null);
-  }
-}
+    String remapSetId,
+    AuthoredWorldLaunchDescriptorEvidence authoredWorldBinding) {}

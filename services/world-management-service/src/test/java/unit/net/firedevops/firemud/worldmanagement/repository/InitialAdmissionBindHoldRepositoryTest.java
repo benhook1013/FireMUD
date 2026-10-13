@@ -18,6 +18,7 @@ import java.util.UUID;
 import net.firedevops.firemud.worldmanagement.entity.InitialAdmissionBindHold;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.Result;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -92,6 +93,24 @@ class InitialAdmissionBindHoldRepositoryTest {
             () -> repository.hasNonterminalForRealm(42L, "00000000-0000-0000-0000-000000000001"));
 
     assertTrue(exception.getMessage().startsWith("INITIAL_ADMISSION_BIND_HOLD_LOOKUP_FAILED:"));
+  }
+
+  @Test
+  void legacyNonterminalFinderExcludesTypedCanonicalHoldsAndCapsItsPage() {
+    DSLContext dsl = Mockito.mock(DSLContext.class);
+    Result<Record> rows = Mockito.mock(Result.class);
+    when(dsl.fetch(anyString(), any(Object[].class))).thenReturn(rows);
+    when(rows.isEmpty()).thenReturn(true);
+    InitialAdmissionBindHoldRepository repository = new InitialAdmissionBindHoldRepository(dsl);
+
+    assertTrue(repository.findNonterminal(900).isEmpty());
+
+    ArgumentCaptor<String> query = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<Object[]> bindings = ArgumentCaptor.forClass(Object[].class);
+    verify(dsl).fetch(query.capture(), bindings.capture());
+    assertTrue(query.getValue().contains("canonical_request_bytes IS NULL"));
+    assertTrue(query.getValue().contains("ORDER BY updated_at, hold_id LIMIT ?"));
+    assertEquals(256, bindings.getValue()[0]);
   }
 
   private InitialAdmissionBindHold hold() {

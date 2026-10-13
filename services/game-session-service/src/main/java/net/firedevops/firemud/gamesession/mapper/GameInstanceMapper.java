@@ -20,5 +20,10 @@ public interface GameInstanceMapper {
   @Mapping(target = "scriptPatchPinnedReason", ignore = true)
   @Mapping(target = "scriptPatchPinnedControlPlaneRequestId", ignore = true)
   @Mapping(target = "rowVersion", ignore = true)
+  @Mapping(target = "runOwnedStartRequestId", ignore = true)
+  @Mapping(target = "runOwnedStartRequestDigest", ignore = true)
+  @Mapping(target = "runOwnedStartPublishedReleaseBundleRef", ignore = true)
+  @Mapping(target = "runOwnedStartPreparingEpoch", ignore = true)
+  @Mapping(target = "runOwnedStartActiveEpoch", ignore = true)
   GameInstance toEntity(GameInstanceDto dto);
 }

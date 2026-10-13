@@ -8,6 +8,7 @@ import net.firedevops.firemud.gamedesign.model.PublishType;
 @Data
 public class PublishAttempt {
   private Long id;
+  private Long revision;
   private String tenantId;
   private String publishWorkflowId;
   private PublishType publishType;

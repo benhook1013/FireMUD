@@ -1,0 +1,137 @@
+# ADMISSION-ONLY TEST FIXTURE. Never deploy to an existing/shared environment.
+# The runner must own a wholly fresh disposable cluster; labels are not ownership proof.
+# These pause processes are NOT Account/Game Session receivers, TLS endpoints,
+# UID-to-application-process attribution, or signer/promotion readiness evidence.
+# Execution gate: replace the existing test-tool image tag below with a verified
+# immutable pause digest before creating resources. No trusted digest is pinned here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev
+  labels:
+    firemud.dev/dev-demo: "true"
+    firemud.dev/environment-class: dev-demo-cluster
+    firemud.dev/admission-proof-only: "true"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: firemud-app
+  namespace: dev
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-service
+  namespace: dev
+  labels:
+    firemud.dev/admission-proof-only: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: account-service
+  template:
+    metadata:
+      labels:
+        app: account-service
+        firemud.dev/admission-proof-only: "true"
+    spec:
+      serviceAccountName: firemud-app
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: account-service
+          image: registry.k8s.io/pause:3.10
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 8Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+          volumeMounts:
+            - name: pod-identity
+              mountPath: /var/run/secrets/firemud/pod-identity
+              readOnly: true
+      volumes:
+        - name: pod-identity
+          downwardAPI:
+            defaultMode: 0444
+            items:
+              - path: uid
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.uid
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-session-service
+  namespace: dev
+  labels:
+    firemud.dev/admission-proof-only: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: game-session-service
+  template:
+    metadata:
+      labels:
+        app: game-session-service
+        firemud.dev/admission-proof-only: "true"
+    spec:
+      serviceAccountName: firemud-app
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: game-session-service
+          image: registry.k8s.io/pause:3.10
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 8Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+          volumeMounts:
+            - name: pod-identity
+              mountPath: /var/run/secrets/firemud/pod-identity
+              readOnly: true
+      volumes:
+        - name: pod-identity
+          downwardAPI:
+            defaultMode: 0444
+            items:
+              - path: uid
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.uid

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement.entity;
 
+import java.util.UUID;
 import lombok.Data;
 
 @Data
@@ -9,6 +10,7 @@ public class RegionInstance {
   private Long gameInstanceId;
   private WorldInstance worldInstance;
   private Integer shardId = 0;
+  private UUID operationalRegionId;
   private String name;
   private String weather;
   private Long generationSeed = 0L;

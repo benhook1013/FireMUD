@@ -1,12 +1,16 @@
 package net.firedevops.firemud.gamedesign.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
+import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto;
@@ -31,6 +35,8 @@ import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 
@@ -39,6 +45,14 @@ import org.springframework.stereotype.Service;
     value = "EI_EXPOSE_REP2",
     justification = "Injected collaborators remain internal service dependencies")
 public class VersionPublishCommandServiceImpl {
+  private static final java.util.regex.Pattern SELECTION_DIGEST =
+      java.util.regex.Pattern.compile("sha256:[0-9a-f]{64}");
+  private static final Pattern POSTGRES_IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]{0,62}");
+  private static final Pattern PLPGSQL_ROUTINE_LINE =
+      Pattern.compile(
+          "(?:^|\\n)PL/pgSQL function (?:[A-Za-z_][A-Za-z0-9_]{0,62}\\.)?"
+              + "([A-Za-z_][A-Za-z0-9_]{0,62})\\(\\) line ([1-9][0-9]{0,5})"
+              + " at [A-Za-z_ ]+(?:\\r?\\n|$)");
   private static final Logger logger =
       LoggingUtil.getLogger(VersionPublishCommandServiceImpl.class);
 
@@ -93,12 +107,17 @@ public class VersionPublishCommandServiceImpl {
   public PublishWorkflowSnapshot reconcileFullVersionPublish(PublishWorkflowRequest request) {
     request = request.recoverMissingPublishRequestId();
     validateRequestIdentity(request);
+    PublishAttempt attempt =
+        publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId()).orElse(null);
+    return reconcileFullVersionPublish(request, attempt);
+  }
+
+  private PublishWorkflowSnapshot reconcileFullVersionPublish(
+      PublishWorkflowRequest request, PublishAttempt attempt) {
     logger.info(
         "Reconciling full-version publish workflow tenant={} workflowId={}",
         request.tenantId(),
         request.publishWorkflowId());
-    PublishAttempt attempt =
-        publishAttemptRepository.findByPublishWorkflowId(request.publishWorkflowId()).orElse(null);
     if (attempt == null) {
       attempt = reserveDraftAttempt(request);
     }
@@ -119,7 +138,7 @@ public class VersionPublishCommandServiceImpl {
           emptyIfNull(attempt.getFailureMessage()));
     }
     attempt = backfillLegacyFullVersionRequestDigest(request, attempt);
-    validateFullVersionAttempt(attempt, request);
+    PublicationDigestRequestBinding selectedBinding = validateFullVersionAttempt(attempt, request);
 
     Version version = requireAttemptVersion(attempt, request);
     PublicationReadback existingPublication = readPublication(request, attempt);
@@ -140,43 +159,66 @@ public class VersionPublishCommandServiceImpl {
     try {
       dto = versionMapper.toDto(version);
       participantDigests =
-          publishGateService.collectFullVersionParticipantDigests(
-              dto, request.publishRequestId(), request.publishWorkflowId());
+          selectedBinding == null
+              ? publishGateService.collectFullVersionParticipantDigests(
+                  dto, request.publishRequestId(), request.publishWorkflowId())
+              : publishGateService.collectSelectedFullVersionParticipantDigests(
+                  dto, selectedBinding, request.publishWorkflowId());
     } catch (RuntimeException ex) {
       if (PublicationFailureClassifier.isRetryableParticipantDependencyFailure(ex)) {
         throw pendingReconciliation(
             "participant digest dependency is temporarily unavailable; retry exact publish request",
             ex);
       }
-      return failDefinitively(request, attempt, version, null, ex);
+      return failDefinitively(request, attempt, version, null, "PARTICIPANT_DIGEST_COLLECTION", ex);
     }
     try {
-      publishGateService.assertGatePassed(dto, participantDigests);
+      if (selectedBinding == null) {
+        publishGateService.assertGatePassed(dto, participantDigests);
+      } else {
+        publishGateService.assertSelectedGatePassed(dto, participantDigests);
+      }
     } catch (RuntimeException ex) {
       if (PublicationFailureClassifier.isRetryableParticipantDependencyFailure(ex)) {
         throw pendingReconciliation(
             "participant digest dependency is temporarily unavailable; retry exact publish request",
             ex);
       }
-      return failDefinitively(request, attempt, version, null, ex);
+      return failDefinitively(request, attempt, version, null, "PUBLICATION_GATE", ex);
     }
     try {
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           dto.tenantId(), PublishType.FULL_VERSION, participantDigests);
     } catch (RuntimeException ex) {
-      return failDefinitively(request, attempt, version, null, ex);
+      return failDefinitively(request, attempt, version, null, "RECORDED_DIGEST_CHECK", ex);
     }
     ExportedAssetManifest exportedManifest;
+    AssetExportService.SelectedExportResult selectedExportResult;
     try {
-      exportedManifest = assetExportService.exportAssets(request.tenantId(), dto.versionNumber());
+      if (selectedBinding == null) {
+        selectedExportResult = null;
+        exportedManifest = assetExportService.exportAssets(request.tenantId(), dto.versionNumber());
+      } else {
+        selectedExportResult =
+            Objects.requireNonNull(
+                assetExportService.exportSelectedAssets(selectedBinding),
+                "Exact selected asset candidate and object readback required");
+        exportedManifest = selectedExportResult.manifest();
+      }
+    } catch (AssetExportService.SelectedExportOutcomePendingException unresolved) {
+      throw pendingReconciliation(
+          "selected asset candidate or object readback is unresolved; retry exact publish request",
+          unresolved);
     } catch (RuntimeException ex) {
-      return failDefinitively(request, attempt, version, null, ex);
+      return failDefinitively(request, attempt, version, null, "ASSET_EXPORT", ex);
     }
 
     PublishWorkflowRequest effectiveRequest = request;
     try {
       return publishAttemptService.executeFullVersionTransaction(
-          () -> finalizeFullVersion(effectiveRequest, participantDigests, exportedManifest));
+          () ->
+              finalizeFullVersion(
+                  effectiveRequest, participantDigests, exportedManifest, selectedExportResult));
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
       RuntimeException operationFailure = ex.causeException();
       if (operationFailure instanceof PendingReconciliationException) {
@@ -198,7 +240,8 @@ public class VersionPublishCommandServiceImpl {
             "full-version finalization left incomplete evidence; readback/reconciliation is required",
             operationFailure);
       }
-      return failDefinitively(request, attempt, version, exportedManifest, operationFailure);
+      return failDefinitively(
+          request, attempt, version, exportedManifest, "RELEASE_FINALIZATION", operationFailure);
     } catch (RuntimeException ambiguousCommit) {
       PublicationReadback readback;
       try {
@@ -215,6 +258,59 @@ public class VersionPublishCommandServiceImpl {
           "full-version finalization commit outcome is unknown; readback/reconciliation is required",
           ambiguousCommit);
     }
+  }
+
+  /**
+   * Reconciles an already-reserved publication of one existing synchronized Draft. This backend
+   * entry does not allocate a Version or authenticate the retained Account/World evidence; it
+   * requires the exact durable selection and operation, and remains unregistered from creator RPC
+   * or Temporal ingress until their authenticated producers are connected.
+   */
+  public PublishWorkflowSnapshot reconcileSelectedDraftFullVersionPublish(
+      String tenantId,
+      long selectedVersionId,
+      String notes,
+      String publishRequestId,
+      String publishWorkflowId) {
+    PublishWorkflowRequest request =
+        new PublishWorkflowRequest(tenantId, notes, publishRequestId, publishWorkflowId);
+    request = request.recoverMissingPublishRequestId();
+    PublishAttempt attempt =
+        publishAttemptRepository
+            .findByPublishWorkflowId(publishWorkflowId)
+            .orElseThrow(
+                () -> pendingReconciliation("selected Draft publication attempt is unavailable"));
+    if (!Objects.equals(attempt.getTenantId(), tenantId)
+        || !Objects.equals(attempt.getVersionId(), selectedVersionId)
+        || !isSelectionDigest(attempt.getRequestDigest())) {
+      throw pendingReconciliation("selected Draft publication identity is unavailable or changed");
+    }
+    try {
+      validateFullVersionAttemptIdentity(attempt, request);
+      requireExactSelectedPublication(attempt, request);
+    } catch (PendingReconciliationException unresolved) {
+      throw unresolved;
+    } catch (RuntimeException unresolved) {
+      throw pendingReconciliation(
+          "selected Draft publication requires exact operation reconciliation", unresolved);
+    }
+    return reconcileFullVersionPublish(request, attempt);
+  }
+
+  /** User-facing semantics for the unregistered selected-Draft backend path. */
+  public VersionDto publishSelectedDraftFullVersion(
+      String tenantId,
+      long selectedVersionId,
+      String notes,
+      String publishRequestId,
+      String publishWorkflowId) {
+    PublishWorkflowSnapshot snapshot =
+        reconcileSelectedDraftFullVersionPublish(
+            tenantId, selectedVersionId, notes, publishRequestId, publishWorkflowId);
+    if (!snapshot.isSucceeded()) {
+      throw publishFailure(snapshot.failureCode(), snapshot.failureMessage());
+    }
+    return versionMapper.toDto(requireTenantVersion(tenantId, snapshot.versionId()));
   }
 
   private PublishAttempt reserveDraftAttempt(PublishWorkflowRequest request) {
@@ -259,7 +355,8 @@ public class VersionPublishCommandServiceImpl {
   private PublishWorkflowSnapshot finalizeFullVersion(
       PublishWorkflowRequest request,
       List<PublishParticipantDigestDto> participantDigests,
-      ExportedAssetManifest exportedManifest) {
+      ExportedAssetManifest exportedManifest,
+      AssetExportService.SelectedExportResult selectedExportResult) {
     if (gameRepository.findByTenantIdForUpdate(request.tenantId()) == null) {
       throw new IllegalArgumentException("game not found");
     }
@@ -300,7 +397,32 @@ public class VersionPublishCommandServiceImpl {
           "pending full-version attempt does not reference a draft version");
     }
 
+    // The pending operation owns the original authenticated capture; never recapture on retry.
+    WorldPublishedStartLocationEvidence worldEvidence;
+    try {
+      worldEvidence =
+          Objects.requireNonNull(
+              publishAttemptRepository.requirePublicationPending(attempt),
+              "Original World publication evidence is required");
+    } catch (RuntimeException unresolved) {
+      // Missing or changed original evidence is not proof that either owner can abort.
+      throw pendingReconciliation(
+          "original World publication evidence requires exact reconciliation", unresolved);
+    }
     VersionDto dto = versionMapper.toDto(version);
+    PublicationDigestRequestBinding selectedBinding = validateFullVersionAttempt(attempt, request);
+    if (selectedBinding != null) {
+      if (selectedExportResult == null
+          || !exportedManifest.equals(selectedExportResult.manifest())) {
+        throw pendingReconciliation("exact selected asset export candidate is unavailable");
+      }
+      // SQL-only exact readback joins the immutable candidate before any final release writes.
+      // Object-store calls and selected inventory export occurred outside this transaction.
+      assetExportService.requireSelectedCandidateForFinalization(
+          selectedBinding, selectedExportResult);
+    } else if (selectedExportResult != null) {
+      throw pendingReconciliation("selected asset candidate cannot finalize a generic publication");
+    }
     publishAttemptService.recordFullVersionParticipantDigests(
         request.publishWorkflowId(), participantDigests);
     VersionAssetArtifactStateDto exportedState =
@@ -319,7 +441,8 @@ public class VersionPublishCommandServiceImpl {
         request.publishWorkflowId(),
         exportedManifest,
         generationConfigRevision,
-        participantDigests);
+        participantDigests,
+        worldEvidence);
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     version.setVersionStateEpoch(version.getVersionStateEpoch() + 1L);
     version.setUpdatedAt(LocalDateTime.now());
@@ -333,6 +456,7 @@ public class VersionPublishCommandServiceImpl {
     recordedParticipantDigestService.recordVerifiedDigests(
         dto.tenantId(), PublishType.FULL_VERSION, request.publishWorkflowId(), participantDigests);
     publishAttemptService.markFullVersionSucceeded(request.publishWorkflowId());
+    publishAttemptRepository.sealPublication(attempt, true);
     return succeededSnapshot(attempt);
   }
 
@@ -403,6 +527,9 @@ public class VersionPublishCommandServiceImpl {
                 currentReadback.bundle().participantDigests());
             if (current.getStatus() == PublishAttemptStatus.PENDING) {
               publishAttemptService.markFullVersionSucceeded(request.publishWorkflowId());
+              if (isSelectionDigest(current.getRequestDigest())) {
+                publishAttemptRepository.sealPublication(current, true);
+              }
             }
             return null;
           });
@@ -430,8 +557,14 @@ public class VersionPublishCommandServiceImpl {
           "published release evidence is incomplete; readback/reconciliation is required");
     }
     VersionDto versionDto = versionMapper.toDto(readback.version());
-    PublishedReleaseBundleContract.requireSupportedSchemaForRead(readback.bundle());
-    publishGateService.assertGatePassed(versionDto, readback.bundle().participantDigests());
+    PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(readback.bundle());
+    if (PublishedReleaseBundleContract.isSelectorSchema(
+        readback.bundle().attestationSchemaVersion())) {
+      publishGateService.assertSelectedGatePassed(
+          versionDto, readback.bundle().participantDigests());
+    } else {
+      publishGateService.assertGatePassed(versionDto, readback.bundle().participantDigests());
+    }
     recordedParticipantDigestService.assertMatchesRecordedDigests(
         request.tenantId(), PublishType.FULL_VERSION, readback.bundle().participantDigests());
   }
@@ -441,9 +574,14 @@ public class VersionPublishCommandServiceImpl {
       PublishAttempt attempt,
       Version version,
       ExportedAssetManifest exportedManifest,
+      String failureStage,
       RuntimeException failure) {
     String failureCode = publishFailureCode(failure);
     String failureMessage = publishFailureMessage(failure);
+    logger.warn(
+        "Definitive full-version publication failure workflowId={} {}",
+        request.publishWorkflowId(),
+        safeFailureDiagnostic(failureStage, failure));
     try {
       publishAttemptService.executeFullVersionTransaction(
           () -> {
@@ -477,19 +615,33 @@ public class VersionPublishCommandServiceImpl {
             }
             publishAttemptService.markFullVersionFailed(
                 request.publishWorkflowId(), failureCode, failureMessage);
+            if (isSelectionDigest(current.getRequestDigest())) {
+              publishAttemptRepository.sealPublication(current, false);
+            }
             // Approved launch remap sets may reference this failed candidate, so retain the row.
             return Boolean.TRUE;
           });
     } catch (PublishAttemptService.FullVersionTransactionException ex) {
+      logger.warn(
+          "Full-version publication failure settlement unresolved workflowId={} {}",
+          request.publishWorkflowId(),
+          safeFailureDiagnostic("FAILURE_SETTLEMENT", ex.causeException()));
       throw pendingReconciliation(
           "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
           ex.causeException());
     } catch (RuntimeException ambiguousFailure) {
+      logger.warn(
+          "Full-version publication failure settlement unresolved workflowId={} {}",
+          request.publishWorkflowId(),
+          safeFailureDiagnostic("FAILURE_SETTLEMENT", ambiguousFailure));
       throw pendingReconciliation(
           "full-version failure marking commit outcome is unknown; readback/reconciliation is required",
           ambiguousFailure);
     }
-    cleanupExportedAssets(request.tenantId(), version.getVersionNumber(), exportedManifest);
+    if (!isSelectionDigest(attempt.getRequestDigest())) {
+      // Selected outputs are immutable/shared; only a separate reachability proof may purge them.
+      cleanupExportedAssets(request.tenantId(), version.getVersionNumber(), exportedManifest);
+    }
     return new PublishWorkflowSnapshot(
         attempt.getVersionId(),
         attempt.getVersionNumber(),
@@ -562,8 +714,12 @@ public class VersionPublishCommandServiceImpl {
         .orElse(attempt);
   }
 
-  private void validateFullVersionAttempt(PublishAttempt attempt, PublishWorkflowRequest request) {
+  private PublicationDigestRequestBinding validateFullVersionAttempt(
+      PublishAttempt attempt, PublishWorkflowRequest request) {
     validateFullVersionAttemptIdentity(attempt, request);
+    if (isSelectionDigest(attempt.getRequestDigest())) {
+      return requireExactSelectedPublication(attempt, request);
+    }
     PublicationDigestRequestBinding binding =
         PublicationDigestRequestBinding.full(
             request.tenantId(), String.valueOf(attempt.getVersionId()), request.publishRequestId());
@@ -571,6 +727,7 @@ public class VersionPublishCommandServiceImpl {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_IDENTITY_CONFLICT: full-version request digest does not match request");
     }
+    return null;
   }
 
   /**
@@ -581,6 +738,10 @@ public class VersionPublishCommandServiceImpl {
   private void validateTerminalFullVersionAttempt(
       PublishAttempt attempt, PublishWorkflowRequest request) {
     validateFullVersionAttemptIdentity(attempt, request);
+    if (isSelectionDigest(attempt.getRequestDigest())) {
+      requireExactSelectedPublication(attempt, request);
+      return;
+    }
     if (attempt.getRequestDigest() == null) {
       // Legacy terminal attempts predate the digest column. Their canonical workflow identity,
       // persisted full-version scope, and exact release-bundle identity are the replay binding.
@@ -593,6 +754,46 @@ public class VersionPublishCommandServiceImpl {
       throw new IllegalStateException(
           "PUBLISH_ATTEMPT_IDENTITY_CONFLICT: full-version request digest does not match request");
     }
+  }
+
+  private PublicationDigestRequestBinding requireExactSelectedPublication(
+      PublishAttempt attempt, PublishWorkflowRequest request) {
+    try {
+      String expectedOutcome =
+          switch (attempt.getStatus()) {
+            case PENDING -> "PENDING";
+            case SUCCEEDED -> "PUBLISHED";
+            case FAILED -> "NO_PUBLICATION";
+          };
+      var operation =
+          publishAttemptRepository.requireSelectedPublicationReadback(attempt, expectedOutcome);
+      var selection = operation.account().input().selection();
+      var intent = selection.intent();
+      PublicationDigestRequestBinding canonicalBinding =
+          PublicationDigestRequestBinding.full(
+              intent.canonicalTenantId().toString(),
+              Long.toString(operation.versionId()),
+              intent.publishRequestId());
+      if (!Objects.equals(operation.tenantKey(), request.tenantId())
+          || operation.versionId() != attempt.getVersionId()
+          || !Objects.equals(operation.selectionDigest(), attempt.getRequestDigest())
+          || !Objects.equals(operation.workflowId(), canonicalBinding.derivedWorkflowIdentity())
+          || !Objects.equals(operation.workflowId(), request.publishWorkflowId())
+          || !Objects.equals(intent.publishRequestId(), request.publishRequestId())
+          || !Objects.equals(intent.notes(), request.notes())) {
+        throw new IllegalStateException("SELECTED_PUBLICATION_REQUEST_IDENTITY_CHANGED");
+      }
+      return canonicalBinding;
+    } catch (PendingReconciliationException unresolved) {
+      throw unresolved;
+    } catch (RuntimeException unresolved) {
+      throw pendingReconciliation(
+          "selected Draft publication requires exact operation reconciliation", unresolved);
+    }
+  }
+
+  private static boolean isSelectionDigest(String digest) {
+    return digest != null && SELECTION_DIGEST.matcher(digest).matches();
   }
 
   private void validateFullVersionAttemptIdentity(
@@ -642,7 +843,7 @@ public class VersionPublishCommandServiceImpl {
       return PublicationReadback.partial();
     }
     try {
-      PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
+      PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(bundle);
       requireExactBundleEvidence(request, attempt, version.get(), bundle);
       requireExactArtifactEvidence(request, attempt, bundle, artifact);
     } catch (RuntimeException ex) {
@@ -849,6 +1050,70 @@ public class VersionPublishCommandServiceImpl {
   }
 
   private String emptyIfNull(String value) {
+    return value == null ? "" : value;
+  }
+
+  /**
+   * Returns bounded exception type and JDBC status diagnostics without including exception text.
+   */
+  static String safeFailureDiagnostic(String stage, Throwable failure) {
+    StringBuilder diagnostic = new StringBuilder("stage=").append(stage).append(" causeTypes=");
+    Throwable current = failure;
+    int depth = 0;
+    while (current != null && depth < 5) {
+      if (depth > 0) {
+        diagnostic.append(" <- ");
+      }
+      diagnostic.append(current.getClass().getName());
+      if (current instanceof SQLException sqlException) {
+        diagnostic
+            .append("[sqlState=")
+            .append(emptyIfNullStatic(sqlException.getSQLState()))
+            .append(",vendorCode=")
+            .append(sqlException.getErrorCode());
+        if (sqlException instanceof PSQLException postgresException) {
+          appendPostgresFailureIdentity(diagnostic, postgresException.getServerErrorMessage());
+        }
+        diagnostic.append(']');
+      }
+      current = current.getCause();
+      depth++;
+    }
+    if (current != null) {
+      diagnostic.append(" <- ...");
+    }
+    return diagnostic.toString();
+  }
+
+  private static void appendPostgresFailureIdentity(
+      StringBuilder diagnostic, ServerErrorMessage serverError) {
+    if (serverError == null) {
+      return;
+    }
+    String constraint = serverError.getConstraint();
+    if (isSafePostgresIdentifier(constraint)) {
+      diagnostic.append(",constraint=").append(constraint);
+    }
+
+    Matcher contextMatcher =
+        PLPGSQL_ROUTINE_LINE.matcher(emptyIfNullStatic(serverError.getWhere()));
+    if (contextMatcher.find()) {
+      String routine = contextMatcher.group(1);
+      if (isSafePostgresIdentifier(routine)) {
+        diagnostic
+            .append(",routine=")
+            .append(routine)
+            .append(",line=")
+            .append(contextMatcher.group(2));
+      }
+    }
+  }
+
+  private static boolean isSafePostgresIdentifier(String value) {
+    return value != null && POSTGRES_IDENTIFIER.matcher(value).matches();
+  }
+
+  private static String emptyIfNullStatic(String value) {
     return value == null ? "" : value;
   }
 }

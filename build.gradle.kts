@@ -4,6 +4,7 @@ import org.gradle.api.tasks.SourceSetContainer
 import org.gradle.api.plugins.quality.Checkstyle
 import org.gradle.api.plugins.jvm.JvmTestSuite
 import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import java.io.File
 import org.flywaydb.gradle.FlywayExtension
 import org.springframework.boot.gradle.tasks.run.BootRun
@@ -303,6 +304,30 @@ subprojects {
     // Gate Spotless checks behind fullCheck (CI or -PfullCheck)
     tasks.matching { it.name.startsWith("spotless") && it.name.endsWith("Check") }
     .configureEach { enabled = fullCheck }
+
+    tasks.withType<Test>().configureEach {
+        testLogging {
+            exceptionFormat = TestExceptionFormat.FULL
+            showExceptions = true
+            showCauses = true
+            showStackTraces = true
+        }
+    }
+
+    tasks.withType<Test>()
+        .matching {
+            it.name == "integrationTest" &&
+                project.name in setOf("account-service", "game-design-service", "entity-management-service")
+        }
+        .configureEach {
+            testLogging {
+                // Keep active integration-test boundaries visible when cancellation precedes XML.
+                events("started", "passed", "failed", "skipped")
+                minGranularity = 0
+                maxGranularity = -1
+                showStandardStreams = false
+            }
+        }
 
     tasks.test {
         useJUnitPlatform()

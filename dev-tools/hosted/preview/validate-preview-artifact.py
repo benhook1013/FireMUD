@@ -1678,6 +1678,10 @@ def validate_service_consumers(
             expected_mounts["grpc-trust"] = ("/grpc-trust", "firemud-grpc-tls")
         if service == "account-service":
             expected_mounts["jwt-jwks"] = ("/var/run/secrets/firemud/jwks", "jwt-jwks")
+        if service in {"account-service", "game-session-service"}:
+            expected_mounts["pod-identity"] = (
+                "/var/run/secrets/firemud/pod-identity", "metadata.uid"
+            )
         if service == "tcp-proxy-service":
             if exposure_mode == "public":
                 expected_mounts["telnet-tls"] = (
@@ -1719,14 +1723,26 @@ def validate_service_consumers(
             mount = mounts[volume_name]
             if mount.get("mountPath") != mount_path or mount.get("readOnly") is not True:
                 fail(f"Deployment/{service} has an unsafe {volume_name} mount")
-            if volume_name in {"gateway-ws-server-tls", "gateway-ws-client-tls"} and mount != {
+            if volume_name in {"gateway-ws-server-tls", "gateway-ws-client-tls", "pod-identity"} and mount != {
                 "name": volume_name,
                 "mountPath": mount_path,
                 "readOnly": True,
             }:
                 fail(f"Deployment/{service} has an unsafe {volume_name} mount")
             volume = volumes[volume_name]
-            if volume_name == "jwt-jwks":
+            if volume_name == "pod-identity":
+                if volume != {
+                    "name": "pod-identity",
+                    "downwardAPI": {
+                        "defaultMode": 0o444,
+                        "items": [{
+                            "path": "uid",
+                            "fieldRef": {"apiVersion": "v1", "fieldPath": "metadata.uid"},
+                        }],
+                    },
+                }:
+                    fail(f"Deployment/{service} has an unsafe pod-identity projection")
+            elif volume_name == "jwt-jwks":
                 source = _require_mapping(
                     volume.get("configMap") or {},
                     f"Deployment/{service}.spec.template.spec.volumes[{volume_name}].configMap",

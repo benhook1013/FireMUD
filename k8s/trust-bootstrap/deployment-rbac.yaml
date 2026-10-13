@@ -155,6 +155,16 @@ rules:
       - firemud-preview-runtime
       - firemud-standalone-certificate-writer
     verbs: ["get", "bind"]
+  # Trusted role grants require exact readback of the installed Pod boundary.
+  # Named GET cannot list admission resources or alter enforcement.
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    resourceNames:
+      - firemud-trust-runtime-namespace-boundary
+      - firemud-trust-runtime-binding-boundary
+      - firemud-trust-runtime-pod-boundary
+      - firemud-trust-runtime-pod-identity
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

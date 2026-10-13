@@ -1,0 +1,67 @@
+{
+  "scriptId": "account-game-session-delegation-pending-register.v1",
+  "resourcePath": "redis/lua/account-game-session-delegation-pending-register.lua",
+  "sha256": "a35fe1e46e6ebdd6522a17daaefd8a3773fbe8e3a0eaf405d5abce5cdeedc3a2",
+  "owner": "account-service",
+  "principal": "account_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "tokenRecord",
+      "ownedPrefix": "session:auth:token:",
+      "hashTagDeclaration": "NOT_REQUIRED"
+    }
+  ],
+  "arguments": [
+    {
+      "name": "canonicalPendingRecordUtf8"
+    },
+    {
+      "name": "absoluteExpiryEpochMillis"
+    }
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {
+      "code": "PENDING_CREATED",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "EXACT_PENDING_RETRY",
+      "category": "REPLAY",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "CONFLICTING_RECORD",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "EXPIRY_MISMATCH",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "CONDITIONAL_STORE_FAILED",
+      "category": "CONTENTION",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID_ARGUMENTS",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "SESSION_LEASE_CACHE_OR_WAKE_UP",
+  "tailLossBehavior": "A missing token registry projection denies token use; Account recovery requires exact durable issuance evidence.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {
+      "callerVersion": "v1",
+      "payloadVersion": "v1"
+    }
+  ],
+  "legacyPayloadShape": null
+}

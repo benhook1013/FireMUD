@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+option java_multiple_files = true;
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_outer_classname = "OriginalStartSessionLaunchReadServiceProto";
+
+import "game-session/v1/game_session_service.proto";
+
+// Account-only original StartSession readback. This API is deliberately distinct from the
+// World-only canonical launch association reader and does not grant lifecycle or admission
+// authority.
+service OriginalStartSessionLaunchReadService {
+  rpc ReadOriginalStartSessionLaunch(ReadOriginalStartSessionLaunchRequest)
+      returns (ReadOriginalStartSessionLaunchResponse);
+}
+
+message ReadOriginalStartSessionLaunchRequest {
+  uint32 schema_version = 1;
+  GetCanonicalGameInstanceLaunchAssociationRequest selector = 2;
+  bytes original_post_authorization_tuple_bytes = 3;
+}
+
+message ReadOriginalStartSessionLaunchResponse {
+  uint32 schema_version = 1;
+  ReadOriginalStartSessionLaunchRequest request = 2;
+  GetCanonicalGameInstanceLaunchAssociationResponse launch = 3;
+  bytes retained_original_post_authorization_tuple_bytes = 4;
+}

@@ -193,6 +193,39 @@ for deployment in deployments:
     assert_restricted_workload(
         deployment, infrastructure_uids.get(deployment_name, 1000)
     )
+    pod_spec = deployment["spec"]["template"]["spec"]
+    identity_volumes = [
+        volume for volume in pod_spec.get("volumes", [])
+        if volume.get("name") == "pod-identity"
+    ]
+    identity_mounts = [
+        mount for container in pod_spec["containers"]
+        for mount in container.get("volumeMounts", [])
+        if mount.get("name") == "pod-identity"
+    ]
+    if deployment_name in {"account-service", "game-session-service"}:
+        assert len(pod_spec["containers"]) == 1
+        assert not pod_spec.get("initContainers")
+        assert not pod_spec.get("ephemeralContainers")
+        assert identity_volumes == [{
+            "name": "pod-identity",
+            "downwardAPI": {
+                "defaultMode": 0o444,
+                "items": [{
+                    "path": "uid",
+                    "fieldRef": {"apiVersion": "v1", "fieldPath": "metadata.uid"},
+                }],
+            },
+        }], f"{deployment_name} lacks the fixed kubelet UID projection"
+        assert identity_mounts == [{
+            "name": "pod-identity",
+            "mountPath": "/var/run/secrets/firemud/pod-identity",
+            "readOnly": True,
+        }], f"{deployment_name} lacks the fixed read-only UID mount"
+    else:
+        assert not identity_volumes and not identity_mounts, (
+            f"{deployment_name} unexpectedly received the protected-consumer UID mount"
+        )
 seed_job = named("Job", "firemud-seed")
 assert_restricted_workload(seed_job, 1000)
 

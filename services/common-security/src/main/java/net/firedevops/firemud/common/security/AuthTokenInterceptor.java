@@ -33,7 +33,19 @@ public class AuthTokenInterceptor implements ServerInterceptor {
   public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
       ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
     if (unauthenticatedMethods.contains(call.getMethodDescriptor().getFullMethodName())) {
-      return next.startCall(call, headers);
+      ServerCall<ReqT, RespT> clearingCall =
+          new ForwardingServerCall.SimpleForwardingServerCall<>(call) {
+            @Override
+            public void close(Status status, Metadata trailers) {
+              runWithClearedSessionContext(() -> super.close(status, trailers));
+            }
+          };
+      SessionContext.clear();
+      try {
+        return withClearedSessionContextCallbacks(next.startCall(clearingCall, headers));
+      } finally {
+        SessionContext.clear();
+      }
     }
     String authHeader = headers.get(AUTH_HEADER);
     if (authHeader == null || !authHeader.startsWith("Bearer ")) {
@@ -80,6 +92,45 @@ public class AuthTokenInterceptor implements ServerInterceptor {
       SessionContext.clear();
       call.close(Status.UNAUTHENTICATED.withDescription("Invalid token"), new Metadata());
       return new ServerCall.Listener<>() {};
+    }
+  }
+
+  private static <ReqT> ServerCall.Listener<ReqT> withClearedSessionContextCallbacks(
+      ServerCall.Listener<ReqT> listener) {
+    return new ForwardingServerCallListener.SimpleForwardingServerCallListener<>(listener) {
+      @Override
+      public void onMessage(ReqT message) {
+        runWithClearedSessionContext(() -> super.onMessage(message));
+      }
+
+      @Override
+      public void onHalfClose() {
+        runWithClearedSessionContext(super::onHalfClose);
+      }
+
+      @Override
+      public void onCancel() {
+        runWithClearedSessionContext(super::onCancel);
+      }
+
+      @Override
+      public void onComplete() {
+        runWithClearedSessionContext(super::onComplete);
+      }
+
+      @Override
+      public void onReady() {
+        runWithClearedSessionContext(super::onReady);
+      }
+    };
+  }
+
+  private static void runWithClearedSessionContext(Runnable callback) {
+    SessionContext.clear();
+    try {
+      callback.run();
+    } finally {
+      SessionContext.clear();
     }
   }
 }

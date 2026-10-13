@@ -2,6 +2,8 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
   name: firemud-trust-runtime-namespace-boundary
+  annotations:
+    firemud.dev/admission-revision: hosted-pod-identity-v1
 spec:
   failurePolicy: Fail
   matchConstraints:
@@ -26,6 +28,8 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
 metadata:
   name: firemud-trust-runtime-namespace-boundary
+  annotations:
+    firemud.dev/admission-revision: hosted-pod-identity-v1
 spec:
   policyName: firemud-trust-runtime-namespace-boundary
   validationActions: [Deny]
@@ -34,6 +38,8 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
   name: firemud-trust-runtime-binding-boundary
+  annotations:
+    firemud.dev/admission-revision: hosted-pod-identity-v1
 spec:
   failurePolicy: Fail
   matchConstraints:
@@ -89,6 +95,184 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
 metadata:
   name: firemud-trust-runtime-binding-boundary
+  annotations:
+    firemud.dev/admission-revision: hosted-pod-identity-v1
 spec:
   policyName: firemud-trust-runtime-binding-boundary
+  validationActions: [Deny]
+---
+# Match literal hosted namespace names, never removable Pod/Namespace labels.
+# Kubernetes evaluates native validation after mutating admission, including
+# subresource updates that could otherwise inject an ephemeral container.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-trust-runtime-pod-boundary
+  annotations:
+    firemud.dev/admission-revision: hosted-pod-identity-v1
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods, pods/ephemeralcontainers]
+        scope: Namespaced
+  matchConditions:
+    - name: hosted-runtime-namespace
+      expression: request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$')
+  variables:
+    - name: containers
+      expression: >-
+        object.spec.containers +
+        (has(object.spec.initContainers) ? object.spec.initContainers : [])
+    - name: ephemeralContainers
+      expression: >-
+        has(object.spec.ephemeralContainers) ? object.spec.ephemeralContainers : []
+  validations:
+    - expression: >-
+        (!has(object.spec.hostNetwork) || !object.spec.hostNetwork) &&
+        (!has(object.spec.hostPID) || !object.spec.hostPID) &&
+        (!has(object.spec.hostIPC) || !object.spec.hostIPC) &&
+        (!has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.hostPath))) &&
+        (!has(object.spec.securityContext) ||
+         !has(object.spec.securityContext.sysctls) || object.spec.securityContext.sysctls.size() == 0)
+      message: hosted runtime Pods must not use host namespaces, hostPath, or sysctl overrides
+      reason: Forbidden
+    - expression: >-
+        variables.containers.all(c,
+          (!has(c.ports) || c.ports.all(p, !has(p.hostPort) || p.hostPort == 0)) &&
+          has(c.securityContext) &&
+          (!has(c.securityContext.privileged) || !c.securityContext.privileged) &&
+          has(c.securityContext.allowPrivilegeEscalation) && !c.securityContext.allowPrivilegeEscalation &&
+          (!has(c.securityContext.procMount) || c.securityContext.procMount == 'Default') &&
+          (!has(c.securityContext.windowsOptions) || !has(c.securityContext.windowsOptions.hostProcess) || !c.securityContext.windowsOptions.hostProcess) &&
+          has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) &&
+          'ALL' in c.securityContext.capabilities.drop &&
+          (!has(c.securityContext.capabilities.add) || c.securityContext.capabilities.add.all(capability, capability == 'NET_BIND_SERVICE')))
+      message: every hosted runtime application/init container must drop all capabilities and exclude host ports and privilege escalation
+      reason: Forbidden
+    - expression: >-
+        variables.ephemeralContainers.all(c,
+          (!has(c.ports) || c.ports.all(p, !has(p.hostPort) || p.hostPort == 0)) &&
+          has(c.securityContext) &&
+          (!has(c.securityContext.privileged) || !c.securityContext.privileged) &&
+          has(c.securityContext.allowPrivilegeEscalation) && !c.securityContext.allowPrivilegeEscalation &&
+          (!has(c.securityContext.procMount) || c.securityContext.procMount == 'Default') &&
+          (!has(c.securityContext.windowsOptions) || !has(c.securityContext.windowsOptions.hostProcess) || !c.securityContext.windowsOptions.hostProcess) &&
+          has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) &&
+          'ALL' in c.securityContext.capabilities.drop &&
+          (!has(c.securityContext.capabilities.add) || c.securityContext.capabilities.add.all(capability, capability == 'NET_BIND_SERVICE')))
+      message: hosted runtime ephemeral containers must satisfy the same host and capability restrictions
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-trust-runtime-pod-boundary
+  annotations:
+    firemud.dev/admission-revision: hosted-pod-identity-v1
+spec:
+  policyName: firemud-trust-runtime-pod-boundary
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: firemud-trust-runtime-pod-identity
+  annotations:
+    firemud.dev/admission-revision: hosted-pod-identity-v1
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Equivalent
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods, pods/ephemeralcontainers]
+        scope: Namespaced
+  matchConditions:
+    - name: hosted-runtime-namespace
+      expression: request.namespace == 'dev' || request.namespace.matches('^pr-[1-9][0-9]{0,50}$')
+  variables:
+    - name: protected
+      # Keep the boundary when an UPDATE removes the original identity labels,
+      # application name, or ServiceAccount. firemud-app is shared by all apps;
+      # the specific app/name/container selectors identify its protected users.
+      expression: >-
+        ([object] + (oldObject != null ? [oldObject] : [])).exists(p,
+          (has(p.metadata.labels) &&
+           (('app' in p.metadata.labels && p.metadata.labels['app'] in ['account-service', 'game-session-service']) ||
+            ('app.kubernetes.io/name' in p.metadata.labels && p.metadata.labels['app.kubernetes.io/name'] in ['account-service', 'game-session-service']))) ||
+          (has(p.metadata.name) && p.metadata.name.matches('^(account-service|game-session-service)(-|$)')) ||
+          (has(p.metadata.generateName) && p.metadata.generateName.matches('^(account-service|game-session-service)(-|$)')) ||
+          (has(p.spec.serviceAccountName) && p.spec.serviceAccountName in ['account-service', 'game-session-service']) ||
+          p.spec.containers.exists(c, c.name in ['account-service', 'game-session-service']))
+    - name: identityPath
+      expression: "'/var/run/secrets/firemud/pod-identity'"
+  validations:
+    - expression: >-
+        !variables.protected ||
+        (object.spec.containers.size() == 1 &&
+         object.spec.containers[0].name in ['account-service', 'game-session-service'] &&
+         (!has(object.spec.initContainers) || object.spec.initContainers.size() == 0) &&
+         (!has(object.spec.ephemeralContainers) || object.spec.ephemeralContainers.size() == 0) &&
+         (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0))
+      message: Account and Game Session require exactly their application container and no init/ephemeral containers or injected annotations
+      reason: Forbidden
+    - expression: >-
+        !variables.protected ||
+        (has(object.spec.securityContext) &&
+         has(object.spec.securityContext.runAsNonRoot) && object.spec.securityContext.runAsNonRoot &&
+         has(object.spec.securityContext.runAsUser) && object.spec.securityContext.runAsUser > 0 &&
+         has(object.spec.securityContext.seccompProfile) && object.spec.securityContext.seccompProfile.type == 'RuntimeDefault' &&
+         object.spec.containers.all(c,
+           has(c.securityContext) &&
+           (!has(c.securityContext.runAsNonRoot) || c.securityContext.runAsNonRoot) &&
+           (!has(c.securityContext.runAsUser) || c.securityContext.runAsUser > 0) &&
+           (!has(c.securityContext.seccompProfile) || c.securityContext.seccompProfile.type == 'RuntimeDefault') &&
+           (!has(c.volumeDevices) || c.volumeDevices.size() == 0)))
+      message: protected Pod identity consumers require nonroot RuntimeDefault confinement without block devices
+      reason: Forbidden
+    - expression: >-
+        !variables.protected ||
+        (has(object.spec.volumes) && object.spec.volumes.filter(v, v.name == 'pod-identity').size() == 1 &&
+         object.spec.volumes.filter(v, v.name == 'pod-identity').all(v,
+           has(v.downwardAPI) && has(v.downwardAPI.defaultMode) && v.downwardAPI.defaultMode == 292 &&
+           has(v.downwardAPI.items) && v.downwardAPI.items.size() == 1 &&
+           v.downwardAPI.items[0].path == 'uid' &&
+           (!has(v.downwardAPI.items[0].mode) || v.downwardAPI.items[0].mode == 292) &&
+           has(v.downwardAPI.items[0].fieldRef) &&
+           v.downwardAPI.items[0].fieldRef.apiVersion == 'v1' &&
+           v.downwardAPI.items[0].fieldRef.fieldPath == 'metadata.uid' &&
+           !has(v.downwardAPI.items[0].resourceFieldRef)))
+      message: protected Pod UID must come only from the canonical kubelet downwardAPI metadata.uid volume
+      reason: Forbidden
+    - expression: >-
+        !variables.protected || object.spec.containers.all(c,
+          has(c.volumeMounts) && c.volumeMounts.filter(m, m.name == 'pod-identity').size() == 1 &&
+          c.volumeMounts.all(m,
+            m.mountPath.startsWith('/') && !m.mountPath.endsWith('/') && !m.mountPath.contains('//') &&
+            !m.mountPath.split('/').exists(segment, segment in ['.', '..']) &&
+            (m.name == 'pod-identity' ?
+              (m.mountPath == variables.identityPath && has(m.readOnly) && m.readOnly &&
+               !has(m.subPath) && !has(m.subPathExpr) &&
+               (!has(m.mountPropagation) || m.mountPropagation == 'None')) :
+              (m.mountPath != '/' && m.mountPath != variables.identityPath &&
+               !variables.identityPath.startsWith(m.mountPath + '/') &&
+               !m.mountPath.startsWith(variables.identityPath + '/')))))
+      message: protected Pod UID mount must be read-only at the canonical path without subpaths, shadow mounts, or mount propagation
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: firemud-trust-runtime-pod-identity
+  annotations:
+    firemud.dev/admission-revision: hosted-pod-identity-v1
+spec:
+  policyName: firemud-trust-runtime-pod-identity
   validationActions: [Deny]

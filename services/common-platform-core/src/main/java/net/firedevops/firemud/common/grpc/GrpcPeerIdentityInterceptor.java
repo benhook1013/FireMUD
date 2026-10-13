@@ -7,6 +7,7 @@ import io.grpc.Metadata;
 import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
+import javax.net.ssl.SSLSession;
 
 /**
  * Makes the authenticated TLS peer identity available to gRPC handlers.
@@ -19,10 +20,14 @@ public final class GrpcPeerIdentityInterceptor implements ServerInterceptor {
   @Override
   public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
       ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
-    GrpcPeerIdentity peerIdentity =
-        GrpcPeerIdentity.fromSslSession(call.getAttributes().get(Grpc.TRANSPORT_ATTR_SSL_SESSION))
-            .orElse(null);
-    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peerIdentity);
+    SSLSession sslSession = call.getAttributes().get(Grpc.TRANSPORT_ATTR_SSL_SESSION);
+    GrpcPeerIdentity peerIdentity = GrpcPeerIdentity.fromSslSession(sslSession).orElse(null);
+    GrpcPeerCertificateEvidence certificateEvidence =
+        GrpcPeerCertificateEvidence.fromSslSession(sslSession).orElse(null);
+    Context context =
+        Context.current()
+            .withValue(GrpcPeerIdentity.CONTEXT_KEY, peerIdentity)
+            .withValue(GrpcPeerCertificateEvidence.CONTEXT_KEY, certificateEvidence);
     return Contexts.interceptCall(context, call, headers, next);
   }
 }

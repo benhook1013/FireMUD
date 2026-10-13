@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package game_design.v1;
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered transport for complete selected-owner source content.
+service GameDesignSelectedOwnerIntakeSourceService {
+  rpc ReadSelectedSource(SelectedOwnerIntakeSourceRequest)
+      returns (SelectedOwnerIntakeSourceResponse);
+}
+
+message SelectedOwnerIntakeSourceRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string intended_reader = 4;
+  string purpose = 5;
+  bytes preliminary_source_scope = 6;
+  string preliminary_scope_digest = 7;
+}
+
+message SelectedOwnerIntakeSourceResponse {
+  SelectedOwnerIntakeSourceRequest request = 1;
+  bytes selected_source_content = 2;
+  string selected_source_digest = 3;
+}

@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package game_session.v1;
+
+import "game-design/v1/game_design_service.proto";
+import "game-design/v1/start_session_template_association_service.proto";
+
+option java_package = "net.firedevops.firemud.gamesession.v1";
+option java_multiple_files = true;
+
+// Unregistered, read-only historical evidence. This endpoint never grants StartSession
+// continuation, mutation, current lease, or admission authority.
+service HistoricalOriginalStartSessionOwnerEvidenceReadService {
+  rpc ReadHistoricalOriginalStartSessionOwnerEvidence(
+      ReadHistoricalOriginalStartSessionOwnerEvidenceRequest)
+      returns (ReadHistoricalOriginalStartSessionOwnerEvidenceResponse);
+}
+
+message ReadHistoricalOriginalStartSessionOwnerEvidenceRequest {
+  int32 schema_version = 1;
+  string read_request_id = 2;
+  string target_namespace = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string game_instance_uuid = 6;
+  string control_plane_request_id = 7;
+  string launch_descriptor_id = 8;
+  string expected_descriptor_request_digest = 9;
+  string expected_descriptor_result_digest = 10;
+  string expected_release_attestation_evidence_digest = 11;
+  string expected_owner_attempt_id = 12;
+  int64 expected_owner_fence = 13;
+}
+
+message ReadHistoricalOriginalStartSessionOwnerEvidenceResponse {
+  ReadHistoricalOriginalStartSessionOwnerEvidenceRequest request = 1;
+  bytes canonical_post_authorization_tuple = 2;
+  string owner_attempt_id = 3;
+  int64 owner_fence = 4;
+  bytes account_redemption_projection = 5;
+  game_design.v1.ReadStartSessionTemplateAssociationRequest template_association_request = 6;
+  game_design.v1.ReadStartSessionTemplateAssociationResponse template_association_response = 7;
+  string template_association_request_digest = 8;
+  string template_association_response_digest = 9;
+  game_design.v1.ResolveStartSessionLaunchDescriptorResponse descriptor_pin_response = 10;
+  string descriptor_pin_request_digest = 11;
+  string descriptor_pin_response_digest = 12;
+  string playable_state_namespace_id = 13;
+  string playable_state_scope = 14;
+  bool public_production = 15;
+  int64 captured_starting_row_version = 16;
+  gamedesign.v1.LaunchDescriptor launch_descriptor = 17;
+  gamedesign.v1.AuthoredWorldReleaseAttestationEvidence release_attestation = 18;
+  string association_target_namespace = 19;
+  string association_canonical_tenant_id = 20;
+  string association_world_slug = 21;
+  string association_game_instance_uuid = 22;
+  string association_control_plane_request_id = 23;
+  string association_launch_descriptor_id = 24;
+}

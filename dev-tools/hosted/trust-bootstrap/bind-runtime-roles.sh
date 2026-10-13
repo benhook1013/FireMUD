@@ -16,6 +16,73 @@ if [[ -z "${KUBECONFIG:-}" || ! -r "$KUBECONFIG" ]]; then
   exit 2
 fi
 
+# The trusted checkout is the contract authority. Read every complete policy
+# and binding before granting either runtime role; names or Fail/Deny alone
+# cannot establish that the protected Pod boundary is installed.
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
+python3 - "$repo_root/k8s/trust-bootstrap/deployment-admission.yaml" <<'PY'
+import json
+import copy
+import subprocess
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    required = [item for item in yaml.safe_load_all(stream) if item]
+
+revision_key = "firemud.dev/admission-revision"
+expected_names = {
+    "firemud-trust-runtime-namespace-boundary",
+    "firemud-trust-runtime-binding-boundary",
+    "firemud-trust-runtime-pod-boundary",
+    "firemud-trust-runtime-pod-identity",
+}
+expected_resources = {
+    (kind, name)
+    for kind in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding")
+    for name in expected_names
+}
+if {(item["kind"], item["metadata"]["name"]) for item in required} != expected_resources or len(required) != 8:
+    raise SystemExit("trusted deployment admission manifest does not contain the exact required policy/binding set")
+
+
+def canonical_spec(kind, spec):
+    if not isinstance(spec, dict):
+        return spec
+    result = copy.deepcopy(spec)
+    # MatchResources defaults empty selectors to all objects/namespaces and
+    # matchPolicy to Equivalent. An omitted binding matchResources matches all.
+    # Normalize only those API defaults; all other fields remain exact.
+    match_key = "matchConstraints" if kind == "ValidatingAdmissionPolicy" else "matchResources"
+    match = result.setdefault(match_key, {})
+    if isinstance(match, dict):
+        match.setdefault("namespaceSelector", {})
+        match.setdefault("objectSelector", {})
+        match.setdefault("matchPolicy", "Equivalent")
+    return result
+
+
+for expected in required:
+    kind, name = expected["kind"], expected["metadata"]["name"]
+    actual = json.loads(subprocess.check_output(
+        ["kubectl", "get", f"{kind}.admissionregistration.k8s.io", name, "-o", "json"],
+        text=True,
+    ))
+    if (
+        actual.get("apiVersion") != expected["apiVersion"]
+        or actual.get("kind") != kind
+        or actual.get("metadata", {}).get("name") != name
+        or actual.get("metadata", {}).get("deletionTimestamp") is not None
+        or expected["metadata"].get("annotations", {}).get(revision_key) != "hosted-pod-identity-v1"
+        or actual.get("metadata", {}).get("annotations", {}).get(revision_key) != "hosted-pod-identity-v1"
+        or canonical_spec(kind, actual.get("spec")) != canonical_spec(kind, expected["spec"])
+    ):
+        raise SystemExit(f"required admission {kind}/{name} differs from the trusted content/revision; refusing runtime role grants")
+    if kind == "ValidatingAdmissionPolicy" and actual.get("status", {}).get("typeChecking", {}).get("expressionWarnings"):
+        raise SystemExit(f"required admission {name} has CEL type-check warnings; refusing runtime role grants")
+PY
+
 namespace_json="$(kubectl get namespace "$namespace" -o json)"
 if [[ "$namespace" == dev ]]; then
   jq -e '

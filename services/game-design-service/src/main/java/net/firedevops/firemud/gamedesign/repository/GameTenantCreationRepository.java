@@ -8,6 +8,7 @@ import java.util.regex.Pattern;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.entity.Game;
+import net.firedevops.firemud.gamedesign.publication.TemplateReferenceRepository;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -156,7 +157,9 @@ public class GameTenantCreationRepository {
     if (completedRecord == null) {
       throw new IllegalStateException("Completed fresh tenant creation operation is missing");
     }
-    return toReceipt(completedRecord);
+    FreshTenantCreationEvidence evidence = toReceipt(completedRecord);
+    new TemplateReferenceRepository(dsl).initializeFreshTenant(evidence);
+    return evidence;
   }
 
   /** Reads only a complete operation whose persisted source tuple still matches its game row. */

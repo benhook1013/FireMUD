@@ -210,6 +210,8 @@ The target executor:
 
 Other workers may be running but do not process ticks for that region while the lease is held. See `system-architecture-tick-concepts-and-invariants.md` for the full authority and lease model.
 
+First timeline bootstrap is Game Session lease-owner work performed on demand from World's exact authenticated operational-region assignments, not a launcher-created default executor or a separate ownerless preparation path. Only a genuinely absent, fully qualified `<tenantId, gameInstanceId, regionId>` timeline may start at `regionEpoch = 1` and `lastCommittedTickId = -1`, making the first tick `tickId = 0`. The owner atomically installs the actual fresh durable executor fence for that lease acquisition and revalidates that same lease; neither possession of a lease nor the assignment read alone establishes admission or mutation authority. Retained timelines and replay checkpoints remain unchanged across restart or ownership handoff: missing or contradictory qualification denies bootstrap, and synthetic region IDs or reset-on-restart are forbidden. This is the target first-creation rule, not proof that the current instance-scoped implementation has shipped region bootstrap.
+
 The current-live durable ownership boundary remains instance-scoped at `{tenantId, gameInstanceId}`. Its `RuntimeOwnershipStatus` row carries the selected runtime region fields and opaque `executorFence`, but it is not yet a separate durable ownership row for every region. The region-scoped lease and target-state `GetRegionTickStatus` model above must not be treated as replacing that live instance-scoped boundary until the target surfaces are shipped.
 
 ### Ownership Identities and Fences

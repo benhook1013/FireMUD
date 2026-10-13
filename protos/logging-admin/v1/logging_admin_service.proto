@@ -19,6 +19,41 @@ service LoggingAdminService {
   rpc ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse);
 }
 
+// Read-only Account evidence for the current Logging/Admin StartSession reservation claim.
+service StartSessionReservationEvidenceService {
+  rpc ReadCurrentClaimEvidence(ReadCurrentClaimEvidenceRequest)
+      returns (ReadCurrentClaimEvidenceResponse);
+}
+
+enum StartSessionReservationEvidencePurpose {
+  START_SESSION_RESERVATION_EVIDENCE_PURPOSE_UNSPECIFIED = 0;
+  START_SESSION_RESERVATION_EVIDENCE_PURPOSE_ISSUE = 1;
+  START_SESSION_RESERVATION_EVIDENCE_PURPOSE_RECOVER = 2;
+}
+
+message ReadCurrentClaimEvidenceRequest {
+  string control_plane_request_id = 1;
+  bytes pre_authorization_tuple_json = 2;
+  string reservation_owner_id = 3;
+  int64 reservation_claim_fence = 4;
+  string claim_owner_id = 5;
+  int64 claim_fence = 6;
+  StartSessionReservationEvidencePurpose purpose = 7;
+}
+
+message ReadCurrentClaimEvidenceResponse {
+  string control_plane_request_id = 1;
+  bytes pre_authorization_tuple_json = 2;
+  string mutation_digest = 3;
+  string reservation_owner_id = 4;
+  int64 reservation_claim_fence = 5;
+  string claim_owner_id = 6;
+  int64 claim_fence = 7;
+  int64 claim_expires_at_epoch_millis = 8;
+  int64 observed_at_epoch_millis = 9;
+  StartSessionReservationEvidencePurpose purpose = 10;
+}
+
 message PingRequest {}
 
 message PingResponse {

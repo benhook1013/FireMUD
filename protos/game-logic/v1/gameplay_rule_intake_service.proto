@@ -1,0 +1,23 @@
+syntax = "proto3";
+package game_logic.v1;
+option java_package = "net.firedevops.firemud.gamelogic.v1";
+option java_multiple_files = true;
+
+// Standalone and unregistered. Only the exact same-namespace Game Design workload may request
+// retention under an original, distinct Account intake authorization.
+service GameLogicGameplayRuleIntakeService {
+  rpc RetainGameplayRuleIntake(RetainGameplayRuleIntakeRequest)
+      returns (RetainGameplayRuleIntakeResponse);
+}
+message RetainGameplayRuleIntakeRequest {
+  uint32 schema_version = 1;
+  string target_namespace = 2;
+  string correlation_id = 3;
+  bytes original_intake_authorization = 4;
+  string intake_authorization_digest = 5;
+}
+message RetainGameplayRuleIntakeResponse {
+  RetainGameplayRuleIntakeRequest request = 1;
+  bytes original_terminal = 2;
+  string terminal_digest = 3;
+}

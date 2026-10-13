@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -25,6 +26,8 @@ import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -67,6 +70,32 @@ class RevisionServiceImplTest {
     RevisionDto result = service.saveRevision(dto);
 
     assertEquals(10L, result.id());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void saveRevisionRejectsGameplayRulesBeforeAnyRepositoryOrWorldCall(boolean withWorldMutation) {
+    RevisionDto dto =
+        new RevisionDto(
+            null,
+            "1",
+            7L,
+            3L,
+            "{}",
+            "GAMEPLAY_RULE",
+            "rule-revision",
+            withWorldMutation ? generationSubtreeMutation() : null,
+            null,
+            null);
+
+    IllegalArgumentException ex =
+        assertThrows(IllegalArgumentException.class, () -> service.saveRevision(dto));
+
+    assertEquals(
+        "INVALID_ARGUMENT: GAMEPLAY_RULE requires authorized coordinated source authoring",
+        ex.getMessage());
+    verifyNoInteractions(
+        gameRepository, versionRepository, revisionRepository, worldManagementClient);
   }
 
   @Test

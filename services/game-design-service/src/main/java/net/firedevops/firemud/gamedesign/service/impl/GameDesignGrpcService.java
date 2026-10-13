@@ -8,12 +8,18 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.UUID;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
+import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.settings.GameDesignSettingsProtoMapper;
+import net.firedevops.firemud.gamedesign.dto.CompleteLaunchBindingDto;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.HelpTopicDto;
 import net.firedevops.firemud.gamedesign.dto.PublishedPluginVersionDto;
@@ -22,6 +28,7 @@ import net.firedevops.firemud.gamedesign.dto.RevisionDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapEntryDto;
 import net.firedevops.firemud.gamedesign.dto.TemplateRemapSetDto;
 import net.firedevops.firemud.gamedesign.dto.VersionDto;
+import net.firedevops.firemud.gamedesign.service.CompleteLaunchBindingService;
 import net.firedevops.firemud.gamedesign.service.GameAuthoredHelpTopicService;
 import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
 import net.firedevops.firemud.gamedesign.service.PingService;
@@ -52,8 +59,10 @@ import net.firedevops.firemud.gamedesign.v1.DeleteSettingsDomainOverrideResponse
 import net.firedevops.firemud.gamedesign.v1.FinalizePurgeVersionAssetsRequest;
 import net.firedevops.firemud.gamedesign.v1.FinalizePurgeVersionAssetsResponse;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.GetCompleteLaunchBindingResponse;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestRequest;
 import net.firedevops.firemud.gamedesign.v1.GetDesignControlPlaneDigestResponse;
+import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionRequest;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedPluginVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleRequest;
@@ -117,16 +126,20 @@ import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
 @RequiredArgsConstructor
 public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(GameDesignGrpcService.class);
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
+  private static final Pattern SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
   private final PingService pingService;
   private final RevisionService revisionService;
   private final VersionService versionService;
   private final LaunchDescriptorService launchDescriptorService;
+  private final CompleteLaunchBindingService completeLaunchBindingService;
   private final TemplateRemapSetService templateRemapSetService;
   private final VersionAssetArtifactService versionAssetArtifactService;
   private final SettingsAuthorityService settingsAuthorityService;
@@ -137,6 +150,9 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       value = "EI_EXPOSE_REP2",
       justification = "MeterRegistry is injected and not exposed")
   private final MeterRegistry meterRegistry;
+
+  @Value("${firemud.grpc.workload-namespace:}")
+  private String workloadNamespace;
 
   @Override
   @Timed(value = "gamedesignGrpc.ping")
@@ -705,7 +721,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       requireLaunchAttestationReadAccess();
       PublishedReleaseBundleDto bundle =
           versionService.getPublishedReleaseBundle(request.getTenantId(), request.getVersionId());
-      PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
+      PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(bundle);
       TemporalVersionPublishWorkflowMetadataResolver.WorkflowMetadata workflowMetadata =
           publishWorkflowMetadataResolver.resolve(bundle.publishWorkflowId());
       builder.setBundle(
@@ -874,7 +890,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       builder.setLaunchDescriptor(
           net.firedevops.firemud.gamedesign.v1.LaunchDescriptor.newBuilder()
               .setLaunchDescriptorId(descriptor.launchDescriptorId())
-              .setTenantId(descriptor.tenantId())
+              .setCanonicalTenantId(descriptor.canonicalTenantId())
               .setGameTemplateId(descriptor.gameTemplateId())
               .setControlPlaneRequestId(descriptor.controlPlaneRequestId())
               .setVersionId(descriptor.versionId())
@@ -918,6 +934,152 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
     responseObserver.onNext(builder.build());
     responseObserver.onCompleted();
   }
+
+  @Override
+  @Timed(value = "gamedesignGrpc.getCompleteLaunchBinding")
+  public void getCompleteLaunchBinding(
+      GetLaunchDescriptorRequest request,
+      StreamObserver<GetCompleteLaunchBindingResponse> responseObserver) {
+    GetCompleteLaunchBindingResponse.Builder builder =
+        GetCompleteLaunchBindingResponse.newBuilder();
+
+    // Authenticate the exact workload before examining request fields or consulting owner data.
+    if (!isAuthenticatedWorldManagementPeer()) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetCompleteLaunchBinding",
+              "PERMISSION_DENIED",
+              "Verified same-namespace World Management workload is required"));
+      responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+      return;
+    }
+
+    final CompleteLaunchBindingReadRequest readRequest;
+    try {
+      readRequest = parseCompleteLaunchBindingRequest(request, workloadNamespace);
+    } catch (IllegalArgumentException invalid) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetCompleteLaunchBinding",
+              "INVALID_ARGUMENT",
+              "Canonical complete launch binding read request is required"));
+      responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+      return;
+    }
+
+    try {
+      CompleteLaunchBindingDto dto =
+          completeLaunchBindingService.getCompleteLaunchBinding(
+              readRequest.requestId(),
+              readRequest.canonicalTenantId(),
+              readRequest.worldSlug(),
+              readRequest.controlPlaneRequestId(),
+              readRequest.expectedRequestDigest(),
+              readRequest.expectedResultDigest());
+      CompleteLaunchBindingEvidence evidence =
+          new CompleteLaunchBindingEvidence(dto.descriptor(), dto.releaseAttestation());
+      GetCompleteLaunchBindingResponse response =
+          AuthoredWorldLaunchDescriptorGrpcCodec.toCompleteResponse(request, evidence);
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (FrozenLaunchDescriptorDenialException denied) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetCompleteLaunchBinding",
+              denied.failureCode(),
+              denied.getMessage()));
+      responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException | IllegalStateException inconsistent) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "GetCompleteLaunchBinding",
+              "FAILED_PRECONDITION",
+              "Exact launch descriptor or release attestation is unavailable or inconsistent"));
+      responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+    } catch (Exception failure) {
+      builder.setError(
+          GrpcAppErrors.internal(meterRegistry, logger, "GetCompleteLaunchBinding", failure));
+      responseObserver.onNext(builder.build());
+      responseObserver.onCompleted();
+    }
+  }
+
+  private boolean isAuthenticatedWorldManagementPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    return GrpcPeerIdentity.isValidNamespace(workloadNamespace)
+        && peer != null
+        && peer.isInNamespace(workloadNamespace)
+        && peer.isService("world-management-service");
+  }
+
+  private static CompleteLaunchBindingReadRequest parseCompleteLaunchBindingRequest(
+      GetLaunchDescriptorRequest request, String targetNamespace) {
+    if (request == null || !request.getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalArgumentException("Unknown or missing request fields");
+    }
+    UUID requestId = parseCanonicalNonNilUuid(request.getRequestId());
+    UUID tenantId = parseCanonicalNonNilUuid(request.getCanonicalTenantId());
+    net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest.validateReadSelector(
+        targetNamespace, tenantId, request.getWorldSlug());
+    requireControlPlaneRequestId(request.getControlPlaneRequestId());
+    requireRequestDigest(request.getExpectedRequestDigest());
+    requireRequestDigest(request.getExpectedResultDigest());
+    if (requestId.toString().equals(request.getControlPlaneRequestId())) {
+      throw new IllegalArgumentException("Read request ID must differ from the launch request ID");
+    }
+    return new CompleteLaunchBindingReadRequest(
+        requestId,
+        tenantId,
+        request.getWorldSlug(),
+        request.getControlPlaneRequestId(),
+        request.getExpectedRequestDigest(),
+        request.getExpectedResultDigest());
+  }
+
+  private static UUID parseCanonicalNonNilUuid(String value) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException("Canonical UUID is required");
+    }
+    UUID parsed = UUID.fromString(value);
+    if (NIL_UUID.equals(parsed) || !parsed.toString().equals(value)) {
+      throw new IllegalArgumentException("Canonical nonnil UUID is required");
+    }
+    return parsed;
+  }
+
+  private static void requireControlPlaneRequestId(String value) {
+    if (value == null
+        || value.isBlank()
+        || value.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 64) {
+      throw new IllegalArgumentException("Canonical control-plane request ID is required");
+    }
+  }
+
+  private static void requireRequestDigest(String value) {
+    if (value == null || !SHA256.matcher(value).matches()) {
+      throw new IllegalArgumentException("Canonical SHA-256 digest is required");
+    }
+  }
+
+  private record CompleteLaunchBindingReadRequest(
+      UUID requestId,
+      UUID canonicalTenantId,
+      String worldSlug,
+      String controlPlaneRequestId,
+      String expectedRequestDigest,
+      String expectedResultDigest) {}
 
   @Override
   @Timed(value = "gamedesignGrpc.createTemplateRemapSet")

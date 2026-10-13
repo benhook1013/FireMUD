@@ -129,6 +129,69 @@ class PreviewArtifactServiceValidationTest(unittest.TestCase):
                 [self._publication_grpc_deployment()], "pr-42"
             )
 
+    def _protected_grpc_deployment(self, service):
+        document = self._publication_grpc_deployment()
+        document["metadata"]["name"] = service
+        pod = document["spec"]["template"]["spec"]
+        container = pod["containers"][0]
+        container["name"] = service
+        pod["volumes"][0]["secret"]["secretName"] = f"firemud-grpc-{service}"
+        container["volumeMounts"].append({
+            "name": "pod-identity",
+            "mountPath": "/var/run/secrets/firemud/pod-identity",
+            "readOnly": True,
+        })
+        pod["volumes"].append({
+            "name": "pod-identity",
+            "downwardAPI": {
+                "defaultMode": 0o444,
+                "items": [{
+                    "path": "uid",
+                    "fieldRef": {"apiVersion": "v1", "fieldPath": "metadata.uid"},
+                }],
+            },
+        })
+        if service == "account-service":
+            container["volumeMounts"].append({
+                "name": "jwt-jwks",
+                "mountPath": "/var/run/secrets/firemud/jwks",
+                "readOnly": True,
+            })
+            pod["volumes"].append({"name": "jwt-jwks", "configMap": {"name": "jwt-jwks"}})
+        return document
+
+    def test_protected_consumers_require_exact_kubelet_uid_projection(self):
+        for service in ("account-service", "game-session-service"):
+            for mode in ("standalone", "hosted-controller"):
+                with self.subTest(service=service, mode=mode), patch.object(self.validator, "SERVICE_IMAGES", {service}):
+                    self.validator.validate_service_consumers(
+                        [self._protected_grpc_deployment(service)], "pr-42", mode
+                    )
+
+    def test_protected_consumers_reject_uid_source_and_mount_substitution(self):
+        mutations = (
+            ("missing", lambda pod, mount, volume: pod["volumes"].remove(volume)),
+            ("duplicate", lambda pod, mount, volume: pod["volumes"].append(copy.deepcopy(volume))),
+            ("writable", lambda pod, mount, volume: mount.update({"readOnly": False})),
+            ("shadow-path", lambda pod, mount, volume: mount.update({"mountPath": "/tmp/uid"})),
+            ("subpath", lambda pod, mount, volume: mount.update({"subPath": "uid"})),
+            ("mount-propagation", lambda pod, mount, volume: mount.update({"mountPropagation": "Bidirectional"})),
+            ("wrong-field", lambda pod, mount, volume: volume["downwardAPI"]["items"][0]["fieldRef"].update({"fieldPath": "metadata.name"})),
+            ("wrong-path", lambda pod, mount, volume: volume["downwardAPI"]["items"][0].update({"path": "other"})),
+            ("writable-mode", lambda pod, mount, volume: volume["downwardAPI"].update({"defaultMode": 0o644})),
+            ("configmap", lambda pod, mount, volume: (volume.pop("downwardAPI"), volume.update({"configMap": {"name": "fake-uid"}}))),
+        )
+        for service in ("account-service", "game-session-service"):
+            for label, mutate in mutations:
+                with self.subTest(service=service, mutation=label):
+                    document = self._protected_grpc_deployment(service)
+                    pod = document["spec"]["template"]["spec"]
+                    mount = next(m for m in pod["containers"][0]["volumeMounts"] if m["name"] == "pod-identity")
+                    volume = next(v for v in pod["volumes"] if v["name"] == "pod-identity")
+                    mutate(pod, mount, volume)
+                    with patch.object(self.validator, "SERVICE_IMAGES", {service}), self.assertRaises(ValueError):
+                        self.validator.validate_service_consumers([document], "pr-42")
+
     def test_publication_grpc_consumer_rejects_invalid_namespace_binding(self):
         invalid_envs = (
             ("missing", None),
@@ -959,6 +1022,21 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
             "metadata": {"name": "account-service"},
             "spec": {"template": {"spec": pod}},
         }
+        pod["containers"][0]["volumeMounts"].append({
+            "name": "pod-identity",
+            "mountPath": "/var/run/secrets/firemud/pod-identity",
+            "readOnly": True,
+        })
+        pod["volumes"].append({
+            "name": "pod-identity",
+            "downwardAPI": {
+                "defaultMode": 0o444,
+                "items": [{
+                    "path": "uid",
+                    "fieldRef": {"apiVersion": "v1", "fieldPath": "metadata.uid"},
+                }],
+            },
+        })
         with patch.object(self.validator, "SERVICE_IMAGES", {"account-service"}):
             self.validator.validate_service_consumers(
                 [document], "pr-42", "standalone", "public"

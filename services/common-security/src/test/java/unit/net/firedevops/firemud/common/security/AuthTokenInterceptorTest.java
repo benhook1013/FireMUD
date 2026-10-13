@@ -1,15 +1,21 @@
 package unit.net.firedevops.firemud.common.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.google.protobuf.Empty;
+import io.grpc.Context;
+import io.grpc.Contexts;
 import io.grpc.Metadata;
 import io.grpc.MethodDescriptor;
 import io.grpc.ServerCall;
 import io.grpc.ServerCall.Listener;
 import io.grpc.ServerCallHandler;
 import io.grpc.Status;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
@@ -65,6 +71,205 @@ class AuthTokenInterceptorTest {
     assertThat(SessionContext.getAccountId()).isNull();
     assertThat(SessionContext.getGlobalRoles()).isEmpty();
     assertThat(SessionContext.getScopedRolesMap()).isEmpty();
+  }
+
+  @Test
+  void clearsStaleThreadLocalBeforeExemptDispatchAndEveryListenerCallback() {
+    AuthTokenInterceptor interceptor =
+        new AuthTokenInterceptor(jwtUtil, Set.of(METHOD.getFullMethodName()));
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    ServerCall<Empty, Empty> call = Mockito.mock(ServerCall.class);
+    List<Boolean> callerContextObserved = new ArrayList<>();
+    ServerCallHandler<Empty, Empty> next =
+        new ServerCallHandler<>() {
+          @Override
+          public Listener<Empty> startCall(ServerCall<Empty, Empty> serverCall, Metadata headers) {
+            callerContextObserved.add(
+                AuthTokenInterceptorTest.this.recordCallerContextAndSeedThreadLocal());
+            return new Listener<>() {
+              @Override
+              public void onMessage(Empty message) {
+                callerContextObserved.add(
+                    AuthTokenInterceptorTest.this.recordCallerContextAndSeedThreadLocal());
+              }
+
+              @Override
+              public void onHalfClose() {
+                callerContextObserved.add(
+                    AuthTokenInterceptorTest.this.recordCallerContextAndSeedThreadLocal());
+              }
+
+              @Override
+              public void onReady() {
+                callerContextObserved.add(
+                    AuthTokenInterceptorTest.this.recordCallerContextAndSeedThreadLocal());
+              }
+
+              @Override
+              public void onComplete() {
+                callerContextObserved.add(
+                    AuthTokenInterceptorTest.this.recordCallerContextAndSeedThreadLocal());
+              }
+
+              @Override
+              public void onCancel() {
+                callerContextObserved.add(
+                    AuthTokenInterceptorTest.this.recordCallerContextAndSeedThreadLocal());
+              }
+            };
+          }
+        };
+
+    Mockito.when(call.getMethodDescriptor()).thenReturn(METHOD);
+    seedStaleCallerContext();
+
+    Listener<Empty> listener = interceptor.interceptCall(call, new Metadata(), next);
+
+    assertThat(callerContextObserved).containsExactly(false);
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+    seedStaleCallerContext();
+    listener.onMessage(Empty.getDefaultInstance());
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+    seedStaleCallerContext();
+    listener.onHalfClose();
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+    seedStaleCallerContext();
+    listener.onReady();
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+    seedStaleCallerContext();
+    listener.onComplete();
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+    seedStaleCallerContext();
+    Listener<Empty> cancelListener = interceptor.interceptCall(call, new Metadata(), next);
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+    seedStaleCallerContext();
+    cancelListener.onCancel();
+
+    assertThat(callerContextObserved)
+        .containsExactly(false, false, false, false, false, false, false);
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+    assertThat(SessionContext.getAccountId()).isNull();
+  }
+
+  @Test
+  void preservesAuthenticatedGrpcCallerAndPeerContextForExemptReceiverGuard() {
+    AuthTokenInterceptor jwtInterceptor = new AuthTokenInterceptor(jwtUtil);
+    AuthTokenInterceptor exemptInterceptor =
+        new AuthTokenInterceptor(jwtUtil, Set.of(METHOD.getFullMethodName()));
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    ServerCall<Empty, Empty> call = Mockito.mock(ServerCall.class);
+    // A context sentinel verifies ThreadLocal cleanup does not replace the enclosing gRPC context.
+    Context.Key<String> peerContextKey = Context.key("test-peer-context");
+    String peerContextValue = "account-peer-context-preserved";
+    AtomicReference<String> accountObservedAtStart = new AtomicReference<>();
+    AtomicReference<String> peerObservedAtStart = new AtomicReference<>();
+    AtomicBoolean callerContextObservedAtStart = new AtomicBoolean(false);
+    AtomicReference<String> accountObservedInCallback = new AtomicReference<>();
+    AtomicReference<String> peerObservedInCallback = new AtomicReference<>();
+    AtomicBoolean callerContextObservedInCallback = new AtomicBoolean(false);
+    ServerCallHandler<Empty, Empty> receiver =
+        new ServerCallHandler<>() {
+          @Override
+          public Listener<Empty> startCall(ServerCall<Empty, Empty> serverCall, Metadata headers) {
+            accountObservedAtStart.set(SessionContext.getAccountId());
+            peerObservedAtStart.set(peerContextKey.get());
+            callerContextObservedAtStart.set(SessionContext.hasAuthenticatedCallerContext());
+            return new Listener<>() {
+              @Override
+              public void onHalfClose() {
+                accountObservedInCallback.set(SessionContext.getAccountId());
+                peerObservedInCallback.set(peerContextKey.get());
+                callerContextObservedInCallback.set(SessionContext.hasAuthenticatedCallerContext());
+              }
+            };
+          }
+        };
+    Mockito.when(call.getMethodDescriptor()).thenReturn(METHOD);
+
+    Metadata headers = new Metadata();
+    String token =
+        jwtUtil.generateToken(
+            "trusted-account",
+            Map.of(
+                "accountId", "42",
+                "globalRoles", List.of(),
+                "scopedRoles", Map.of()));
+    headers.put(AUTH_HEADER, "Bearer " + token);
+    seedStaleCallerContext();
+    Context peerContext = Context.current().withValue(peerContextKey, peerContextValue);
+    Listener<Empty> listener =
+        Contexts.interceptCall(
+            peerContext,
+            call,
+            headers,
+            (peerCall, peerHeaders) ->
+                jwtInterceptor.interceptCall(
+                    peerCall,
+                    peerHeaders,
+                    (authenticatedCall, authenticatedHeaders) ->
+                        exemptInterceptor.interceptCall(
+                            authenticatedCall, authenticatedHeaders, receiver)));
+
+    assertThat(accountObservedAtStart).hasValue("42");
+    assertThat(callerContextObservedAtStart).isTrue();
+    assertThat(peerObservedAtStart).hasValue(peerContextValue);
+    listener.onHalfClose();
+
+    // This is the same caller-context predicate used by passive receivers, so the legitimate JWT
+    // principal remains visible and would still be denied there despite the method exemption.
+    assertThat(accountObservedInCallback).hasValue("42");
+    assertThat(callerContextObservedInCallback).isTrue();
+    assertThat(peerObservedInCallback).hasValue(peerContextValue);
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+  }
+
+  @Test
+  void clearsSessionContextWhenExemptCallClosesOrStartCallFails() {
+    AuthTokenInterceptor interceptor =
+        new AuthTokenInterceptor(jwtUtil, Set.of(METHOD.getFullMethodName()));
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    ServerCall<Empty, Empty> call = Mockito.mock(ServerCall.class);
+    AtomicReference<ServerCall<Empty, Empty>> forwardedCall = new AtomicReference<>();
+    AtomicBoolean callerContextObservedDuringClose = new AtomicBoolean(true);
+    ServerCallHandler<Empty, Empty> next =
+        new ServerCallHandler<>() {
+          @Override
+          public Listener<Empty> startCall(ServerCall<Empty, Empty> serverCall, Metadata headers) {
+            forwardedCall.set(serverCall);
+            return new Listener<>() {};
+          }
+        };
+    Mockito.when(call.getMethodDescriptor()).thenReturn(METHOD);
+    Mockito.doAnswer(
+            invocation -> {
+              callerContextObservedDuringClose.set(SessionContext.hasAuthenticatedCallerContext());
+              seedStaleCallerContext();
+              return null;
+            })
+        .when(call)
+        .close(Mockito.any(Status.class), Mockito.any(Metadata.class));
+
+    interceptor.interceptCall(call, new Metadata(), next);
+    seedStaleCallerContext();
+    forwardedCall.get().close(Status.OK, new Metadata());
+
+    assertThat(callerContextObservedDuringClose).isFalse();
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+
+    seedStaleCallerContext();
+    assertThatThrownBy(
+            () ->
+                interceptor.interceptCall(
+                    call,
+                    new Metadata(),
+                    (serverCall, headers) -> {
+                      assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
+                      seedStaleCallerContext();
+                      throw new IllegalStateException("failed startCall");
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("failed startCall");
+    assertThat(SessionContext.hasAuthenticatedCallerContext()).isFalse();
   }
 
   @Test
@@ -199,6 +404,16 @@ class AuthTokenInterceptorTest {
   private void seedThreadLocalInternalServiceState() {
     SessionContext.setContext(
         "", java.util.List.of(), Map.of(), true, "seeded-service", "seeded-instance");
+  }
+
+  private void seedStaleCallerContext() {
+    SessionContext.setContext("stale-account", List.of("platformAdmin"), Map.of());
+  }
+
+  private boolean recordCallerContextAndSeedThreadLocal() {
+    boolean callerContextPresent = SessionContext.hasAuthenticatedCallerContext();
+    seedStaleCallerContext();
+    return callerContextPresent;
   }
 
   private Metadata internalServiceHeaders() {

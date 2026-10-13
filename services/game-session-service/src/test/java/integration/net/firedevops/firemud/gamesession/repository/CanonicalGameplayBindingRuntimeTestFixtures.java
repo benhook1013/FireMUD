@@ -2,13 +2,19 @@ package net.firedevops.firemud.gamesession.repository;
 
 import java.time.Instant;
 import java.util.UUID;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof.Outcome;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 
-/** Shared PostgreSQL fixtures for lease-bound binding tests that require a real launch target. */
+/**
+ * Shared PostgreSQL storage fixtures for lease-bound binding tests that require a real launch
+ * target. Upstream Game Design source, authorization, and publication authority are synthetic test
+ * stipulations; these seeded rows do not prove authenticated Game Design owner transport.
+ */
 public final class CanonicalGameplayBindingRuntimeTestFixtures {
   private static final String SHA256 = "sha256:" + "a".repeat(64);
   private static final String RAW_SHA256 = "a".repeat(64);
@@ -70,8 +76,13 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
           seedSourceAndCatalog(tx, target);
           seedFreshTenantAssociation(tx, target);
           seedStartingRuntimeAndLaunch(tx, target);
+          // The fixture reaches RUNNING with the exact stipulated World ACTIVE epoch.
           tx.execute(
-              "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
+              "UPDATE game_instances SET status = 'RUNNING',"
+                  + " run_owned_start_preparing_epoch = ?, run_owned_start_active_epoch = ?"
+                  + " WHERE tenant_id = ? AND id = ?",
+              target.activeWorldEpoch() - 1,
+              target.activeWorldEpoch(),
               target.gameSessionTenantId(),
               target.gameInstanceId());
         });
@@ -79,15 +90,20 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
   }
 
   private static void seedSourceAndCatalog(DSLContext tx, RuntimeTarget target) {
+    GameSessionCanonicalRealmCatalogProofFixtures.Proof proof =
+        GameSessionCanonicalRealmCatalogProofFixtures.forRuntimeTarget(target);
+    var source = proof.source();
+    var publishedPolicy = proof.publishedSet().policies().getFirst().source().policy();
+
     tx.execute(
         "INSERT INTO game_session_authored_world_tenant_source_binding"
             + " (target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id,"
             + " source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, 'NEW_GAME_ROW')",
         target.targetNamespace(),
-        target.canonicalTenantId(),
-        target.tenantSlug(),
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey());
+        source.canonicalTenantId(),
+        source.tenantSlug(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey());
 
     tx.execute(
         "INSERT INTO game_session_authored_world_source_intake"
@@ -101,16 +117,16 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         target.targetNamespace(),
         target.sourceIntakeRequestId(),
         SHA256,
-        target.sourceRegistrationRequestId(),
-        target.sourceOperationId(),
-        SHA256,
-        target.canonicalTenantId(),
-        target.tenantSlug(),
-        target.worldSlug(),
-        target.worldDisplayName(),
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey(),
-        SHA256,
+        source.registrationRequestId(),
+        source.operationId(),
+        source.requestDigest(),
+        source.canonicalTenantId(),
+        source.tenantSlug(),
+        source.worldSlug(),
+        source.worldDisplayName(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey(),
+        source.evidenceDigest(),
         SHA256);
 
     tx.execute(
@@ -129,12 +145,12 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         target.sourceIntakeRequestId(),
         SHA256,
         SHA256,
-        target.sourceRegistrationRequestId(),
-        target.sourceOperationId(),
-        SHA256,
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey(),
-        SHA256);
+        source.registrationRequestId(),
+        source.operationId(),
+        source.requestDigest(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey(),
+        source.evidenceDigest());
 
     tx.execute(
         "INSERT INTO game_session_canonical_realm_catalog"
@@ -145,16 +161,18 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
             + " source_intake_schema_version, source_intake_request_id, source_intake_request_digest,"
             + " source_intake_receipt_digest, source_schema_version, source_registration_request_id,"
             + " source_operation_id, source_request_digest, source_world_display_name,"
-            + " source_game_row_id, source_game_tenant_key, source_provenance_kind, source_evidence_digest)"
-            + " VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, TRUE, 'SHARED', ?, 'PLAYER_CHOICE', 1, ?, ?, ?, ?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', ?)",
+            + " source_game_row_id, source_game_tenant_key, source_provenance_kind, source_evidence_digest,"
+            + " complete_policy_set_evidence)"
+            + " VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, TRUE, 'SHARED', ?, ?, 1, ?, ?, ?, ?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         target.targetNamespace(),
         target.canonicalTenantId(),
         target.tenantSlug(),
         target.worldSlug(),
         target.realmId(),
-        target.realmSlug(),
-        target.realmDisplayName(),
+        publishedPolicy.realmSlug(),
+        publishedPolicy.realmDisplayName(),
         target.playableStateNamespaceId(),
+        publishedPolicy.entryPolicy().name(),
         target.catalogCreationRequestId(),
         SHA256,
         SHA256,
@@ -162,16 +180,49 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         target.sourceIntakeRequestId(),
         SHA256,
         SHA256,
-        target.sourceRegistrationRequestId(),
-        target.sourceOperationId(),
-        SHA256,
-        target.worldDisplayName(),
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey(),
-        SHA256);
+        source.registrationRequestId(),
+        source.operationId(),
+        source.requestDigest(),
+        source.worldDisplayName(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey(),
+        source.provenanceKind(),
+        source.evidenceDigest(),
+        proof.completePolicySetBytes());
   }
 
   private static void seedFreshTenantAssociation(DSLContext tx, RuntimeTarget target) {
+    UUID sourceOperationId;
+    do {
+      sourceOperationId = UUID.randomUUID();
+    } while (sourceOperationId.equals(target.tenantAssociationOperationId()));
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            target.targetNamespace(),
+            target.tenantAssociationRequestId(),
+            target.sourceGameTenantKey(),
+            "Fixture game",
+            null);
+    FreshTenantCreationEvidence syntheticSourceEvidence =
+        new FreshTenantCreationEvidence(
+            1,
+            target.targetNamespace(),
+            target.tenantAssociationRequestId(),
+            sourceOperationId,
+            requestDigest,
+            target.canonicalTenantId(),
+            target.sourceGameRowId(),
+            target.sourceGameTenantKey(),
+            "NEW_GAME_ROW",
+            GameTenantCreationDigest.evidenceDigest(
+                target.targetNamespace(),
+                target.tenantAssociationRequestId(),
+                sourceOperationId,
+                requestDigest,
+                target.canonicalTenantId(),
+                target.sourceGameRowId(),
+                target.sourceGameTenantKey(),
+                "NEW_GAME_ROW"));
     tx.execute(
         "INSERT INTO game_session_tenant_scope_reservation"
             + " (game_session_tenant_id, reservation_kind) VALUES (?, 'FRESH_SOURCE_BOUND')",
@@ -191,8 +242,13 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
             + " (association_operation_id, target_namespace, association_request_id,"
             + " source_schema_version, source_target_namespace, source_request_id,"
             + " source_canonical_tenant_id, canonical_tenant_id, legacy_game_session_tenant_id,"
-            + " source_game_row_id, source_game_tenant_key, provenance_kind, association_kind)"
-            + " VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', 'FRESH_SOURCE_BOUND')",
+            + " source_game_row_id, source_game_tenant_key, provenance_kind, association_kind,"
+            + " complete_source_evidence)"
+            + " VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', 'FRESH_SOURCE_BOUND',"
+            + " jsonb_build_object('schemaVersion', 1, 'targetNamespace', ?,"
+            + " 'creationRequestId', ?, 'operationId', ?, 'requestDigest', ?,"
+            + " 'canonicalTenantId', ?, 'sourceGameRowId', ?, 'sourceGameTenantKey', ?,"
+            + " 'provenanceKind', 'NEW_GAME_ROW', 'evidenceDigest', ?))",
         target.tenantAssociationOperationId(),
         target.targetNamespace(),
         target.tenantAssociationRequestId(),
@@ -202,26 +258,47 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         target.canonicalTenantId(),
         target.gameSessionTenantId(),
         target.sourceGameRowId(),
-        target.sourceGameTenantKey());
+        target.sourceGameTenantKey(),
+        syntheticSourceEvidence.targetNamespace(),
+        syntheticSourceEvidence.creationRequestId().toString(),
+        syntheticSourceEvidence.operationId().toString(),
+        syntheticSourceEvidence.requestDigest(),
+        syntheticSourceEvidence.canonicalTenantId().toString(),
+        syntheticSourceEvidence.sourceGameRowId(),
+        syntheticSourceEvidence.sourceGameTenantKey(),
+        syntheticSourceEvidence.evidenceDigest());
   }
 
   private static void seedStartingRuntimeAndLaunch(DSLContext tx, RuntimeTarget target) {
+    GameSessionCanonicalRealmCatalogProofFixtures.Proof catalogProof =
+        GameSessionCanonicalRealmCatalogProofFixtures.forRuntimeTarget(target);
+    GameSessionCanonicalInstanceLaunchProofFixtures.SyntheticLaunchProof launchProof =
+        GameSessionCanonicalInstanceLaunchProofFixtures.forRuntimeTarget(
+            target, catalogProof.source());
+    var descriptor = launchProof.completeLaunchBindingEvidence().descriptor();
+
     tx.execute(
         "INSERT INTO game_instances"
-            + " (id, tenant_id, runtime_version, owner_account_id, status, row_version,"
+            + " (id, tenant_id, runtime_version, owner_account_id, owner_account_uuid, status, row_version,"
             + " game_instance_uuid, game_template_id, launch_descriptor_id, version_id,"
             + " release_bundle_id, generation_config_revision, version_state_epoch,"
             + " run_owned_start_request_id, run_owned_start_request_digest,"
             + " run_owned_start_published_release_bundle_ref, run_owned_start_preparing_epoch,"
             + " run_owned_start_active_epoch)"
-            + " VALUES (?, ?, 'fixture-runtime', 99, 'STARTING', 1, ?, 1, ?, 1, 1, ?, 1, ?, ?, ?, 1, 2)",
+            + " VALUES (?, ?, ?, NULL, ?, 'STARTING', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)",
         target.gameInstanceId(),
         target.gameSessionTenantId(),
+        Long.toString(descriptor.versionId()),
+        launchProof.originalTuple().preAuthorizationTuple().action().target().ownerAccountId(),
         target.gameInstanceUuid(),
+        descriptor.gameTemplateId(),
         target.launchDescriptorId(),
+        descriptor.versionId(),
+        descriptor.releaseBundleId(),
         target.generationConfigRevision(),
+        descriptor.versionStateEpoch(),
         target.controlPlaneRequestId(),
-        RAW_SHA256,
+        launchProof.originalTuple().mutationDigest(),
         target.publishedReleaseBundleRef());
 
     tx.execute(
@@ -235,15 +312,11 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
             + " playable_state_namespace_id, playable_state_scope, public_production,"
             + " captured_starting_row_version, game_template_id, launch_descriptor_id, version_id,"
             + " release_bundle_id, generation_config_revision, version_state_epoch,"
-            + " complete_launch_binding_evidence)"
+            + " complete_launch_binding_evidence, original_start_session_tuple,"
+            + " catalog_creation_request_id, catalog_revision, catalog_source_intake_operation_id,"
+            + " catalog_source_intake_request_id)"
             + " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', 'FRESH_SOURCE_BOUND',"
-            + " ?, ?, ?, ?, ?, 'SHARED', TRUE, 1, 1, ?, 1, 1, ?, 1,"
-            + " jsonb_build_object('descriptor', jsonb_build_object('targetNamespace', ?,"
-            + " 'controlPlaneRequestId', ?, 'canonicalTenantId', ?, 'worldSlug', ?,"
-            + " 'gameTemplateId', '1', 'launchDescriptorId', ?, 'versionId', '1',"
-            + " 'releaseBundleId', '1', 'generationConfigRevision', ?, 'versionStateEpoch', '1',"
-            + " 'publishedReleaseBundleRef', ?), 'releaseAttestation',"
-            + " jsonb_build_object('canonicalVersionId', ?)))",
+            + " ?, ?, ?, ?, ?, 'SHARED', TRUE, 1, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?)",
         target.targetNamespace(),
         target.controlPlaneRequestId(),
         target.gameSessionTenantId(),
@@ -260,16 +333,19 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
         target.realmId(),
         target.worldSlug(),
         target.playableStateNamespaceId(),
-        target.launchDescriptorId(),
-        target.generationConfigRevision(),
-        target.targetNamespace(),
-        target.controlPlaneRequestId(),
-        target.canonicalTenantId().toString(),
-        target.worldSlug(),
-        target.launchDescriptorId(),
-        target.generationConfigRevision(),
-        target.publishedReleaseBundleRef(),
-        target.canonicalVersionId().toString());
+        descriptor.gameTemplateId(),
+        descriptor.launchDescriptorId(),
+        descriptor.versionId(),
+        descriptor.releaseBundleId(),
+        descriptor.generationConfigRevision(),
+        descriptor.versionStateEpoch(),
+        GameSessionCanonicalInstanceLaunchProofFixtures.completeLaunchBindingJson(
+            launchProof.completeLaunchBindingEvidence()),
+        launchProof.originalTuple().canonicalBytes(),
+        target.catalogCreationRequestId(),
+        target.catalogRevision(),
+        target.sourceIntakeOperationId(),
+        target.sourceIntakeRequestId());
   }
 
   public record RuntimeTarget(
@@ -391,7 +467,7 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
           1L,
           SHA256,
           terminalAt,
-          "PLAYER_CHOICE",
+          "PRESEEDED_ONLY",
           gameInstanceId + 50_000L,
           "source-" + shortToken,
           UUID.randomUUID(),

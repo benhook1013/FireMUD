@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Source-only, unregistered owner read. The receiving Account service authenticates the exact
+// same-namespace Game Session mTLS peer before opening its issuer-source snapshot.
+service AccountIssuerAuthoritySourceService {
+  rpc ReadCurrentIssuerAuthoritySource(ReadCurrentIssuerAuthoritySourceRequest)
+      returns (AccountIssuerAuthoritySourceSnapshot);
+}
+
+message ReadCurrentIssuerAuthoritySourceRequest {
+  uint32 schema_version = 1;
+  string target_namespace = 2;
+  string reconciliation_operation_id = 3;
+  string issuer_id = 4;
+  optional AccountIssuerAuthoritySourceSnapshot expected_source = 5;
+}
+
+// Closed issuer source carrier. Decimal counters remain strings to preserve exact precision.
+// Sequence zero is the original enrollment checkpoint and has no source_event. Positive
+// sequences carry the unchanged canonical issuer variant of the Account authority source event.
+message AccountIssuerAuthoritySourceSnapshot {
+  uint32 schema_version = 1;
+  string target_namespace = 2;
+  string caller_workload = 3;
+  string reconciliation_operation_id = 4;
+  string issuer_id = 5;
+  string issuer_auth_generation = 6;
+  string source_version = 7;
+  string outbox_stream_key = 8;
+  string last_committed_outbox_sequence = 9;
+  optional bytes source_event = 10;
+}

@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package game_design.v1;
+
+import "game-design/v1/game_design_service.proto";
+import "game-design/v1/start_session_template_association_service.proto";
+import "game-design/v1/tenant_identity_service.proto";
+
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered historical-content read for the exact already-authorized
+// StartSession replay. The receiver authenticates Game Session and independently confirms the
+// Account operation before reading local immutable source or publication evidence.
+service GameDesignStartSessionPublishedRealmPolicyReadService {
+  rpc ReadStartSessionPublishedRealmPolicy(ReadStartSessionPublishedRealmPolicyRequest)
+      returns (ReadStartSessionPublishedRealmPolicyResponse);
+}
+
+message ReadStartSessionPublishedRealmPolicyRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  // Complete original ExactReplay authorization request; no grammar is copied or reduced here.
+  game_design.v1.ReadStartSessionTemplateAssociationRequest authorization_request = 4;
+  // Existing complete closed descriptor and release evidence, unchanged.
+  gamedesign.v1.LaunchDescriptor launch_descriptor = 5;
+  gamedesign.v1.AuthoredWorldReleaseAttestationEvidence release_attestation = 6;
+  // The existing canonical seven-field TargetProof JSON representation, unchanged.
+  bytes canonical_target_proof_json = 7;
+}
+
+message ReadStartSessionPublishedRealmPolicyResponse {
+  int32 schema_version = 1;
+  // Echoes the entire request, including the nested exact Account authorization tuple and fence.
+  ReadStartSessionPublishedRealmPolicyRequest request = 2;
+  // Complete independent Account-confirmed association response and its full request echo.
+  game_design.v1.ReadStartSessionTemplateAssociationResponse authorization_response = 3;
+  // Existing complete authored-world source response grammar and correlation.
+  gamedesign.v1.ResolveAuthoredWorldSourceResponse source_evidence = 4;
+  // Canonical complete immutable policy-set carrier, validated by its existing Common codec.
+  bytes published_policy_set = 5;
+}

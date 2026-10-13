@@ -33,7 +33,17 @@ class GameInstanceMapperTest {
 
     GameInstance mappedEntity = mapper.toEntity(dto);
 
+    assertThat(mappedEntity.getId()).isEqualTo(1L);
+    assertThat(mappedEntity.getTenantId()).isEqualTo(2L);
+    assertThat(mappedEntity.getRuntimeVersion()).isEqualTo("runtime-1");
+    assertThat(mappedEntity.getScriptPinEpoch()).isNull();
+    assertThat(mappedEntity.getScriptPatchPinnedControlPlaneRequestId()).isNull();
     assertThat(mappedEntity.getScriptPatchBaseVersionId()).isNull();
+    assertThat(mappedEntity.getRunOwnedStartRequestId()).isNull();
+    assertThat(mappedEntity.getRunOwnedStartRequestDigest()).isNull();
+    assertThat(mappedEntity.getRunOwnedStartPublishedReleaseBundleRef()).isNull();
+    assertThat(mappedEntity.getRunOwnedStartPreparingEpoch()).isNull();
+    assertThat(mappedEntity.getRunOwnedStartActiveEpoch()).isNull();
 
     GameInstance persistedEntity = new GameInstance();
     persistedEntity.setScriptPatchBaseVersionId(99L);

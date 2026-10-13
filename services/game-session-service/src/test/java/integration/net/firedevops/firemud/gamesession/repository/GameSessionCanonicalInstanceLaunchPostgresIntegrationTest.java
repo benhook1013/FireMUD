@@ -1,0 +1,716 @@
+package net.firedevops.firemud.gamesession.repository;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import java.io.IOException;
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.Statement;
+import java.time.Duration;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamesession.client.GameDesignFreshTenantCreationClient;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanceLaunchProofFixtures.SyntheticLaunchProof;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanceLaunchRepository.CanonicalInstanceLaunch;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanceLaunchRepository.InvalidCanonicalInstanceLaunchException;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.CanonicalRealmCatalog;
+import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.FreshTenantAssociation;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
+import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
+import net.firedevops.firemud.test.TestContainerImages;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
+import org.jooq.DSLContext;
+import org.jooq.Record;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
+import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.json.JsonMapper;
+
+/**
+ * PostgreSQL proof of atomic original StartSession owner allocation and exact retained readback.
+ * Synthetic Account tuple, descriptor/release, and Game Design source/catalog values are storage
+ * inputs only; this suite proves neither authenticated producer transport nor current
+ * authorization.
+ */
+@Testcontainers(disabledWithoutDocker = true)
+@SuppressWarnings("resource")
+class GameSessionCanonicalInstanceLaunchPostgresIntegrationTest {
+  private static final String MIGRATION_LOCATION =
+      "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
+  private static final String NAMESPACE = "test";
+  private static final JsonMapper JSON = JsonMapper.builder().build();
+
+  @Container
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void atomicallyCreatesStartingPairAndExactRetryKeepsAllocationAfterLifecycleAdvance()
+      throws Exception {
+    try (Fixture fixture = newFixture(null)) {
+      LaunchInputs inputs = prepareLaunch(fixture);
+      CanonicalInstanceLaunch created =
+          inputs
+              .repository()
+              .createStartingLaunch(
+                  inputs.proof().originalTuple(),
+                  inputs.proof().completeLaunchBindingEvidence(),
+                  inputs.catalog());
+
+      assertThat(created.currentGameInstanceStatus())
+          .isEqualTo(
+              CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
+                  .STARTING);
+      assertThat(created.currentRowVersion()).isZero();
+      assertThat(created.capturedStartingRowVersion()).isZero();
+      assertThat(created.originalStartSessionTuple())
+          .containsExactly(inputs.proof().originalTuple().canonicalBytes());
+      assertThat(created.catalogRevision()).isEqualTo(inputs.catalog().catalogRevision());
+      assertThat(created.catalogCreationRequestId()).isEqualTo(inputs.catalog().catalogRequestId());
+      assertThat(created.catalogSourceIntakeOperationId())
+          .isEqualTo(inputs.catalog().intakeOperationId());
+      assertThat(
+              countByRequest(
+                  fixture.dsl(),
+                  "game_instances",
+                  "run_owned_start_request_id",
+                  created.controlPlaneRequestId()))
+          .isEqualTo(1L);
+      assertThat(
+              countByRequest(
+                  fixture.dsl(),
+                  "game_session_canonical_instance_launch",
+                  "control_plane_request_id",
+                  created.controlPlaneRequestId()))
+          .isEqualTo(1L);
+
+      var independent =
+          inputs
+              .repository()
+              .readByLaunchIdentity(
+                  selector(inputs.proof(), inputs.catalog(), created.gameInstanceUuid()))
+              .orElseThrow();
+      assertThat(independent.gameInstanceUuid()).isEqualTo(created.gameInstanceUuid());
+      assertThat(independent.catalogRevision()).isEqualTo(inputs.catalog().catalogRevision());
+      assertThat(independent.launchBindingEvidence())
+          .isEqualTo(inputs.proof().completeLaunchBindingEvidence());
+
+      var originalTupleRead =
+          inputs
+              .repository()
+              .readByOriginalTuple(
+                  selector(inputs.proof(), inputs.catalog(), created.gameInstanceUuid()),
+                  inputs.proof().originalTuple().canonicalBytes())
+              .orElseThrow();
+      assertThat(originalTupleRead.originalStartSessionTuple())
+          .containsExactly(inputs.proof().originalTuple().canonicalBytes());
+      assertThat(originalTupleRead.currentGameInstanceStatus())
+          .isEqualTo(
+              CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
+                  .STARTING);
+      assertThat(originalTupleRead.currentRowVersion()).isZero();
+
+      var mismatchedTuple =
+          GameSessionCanonicalInstanceLaunchProofFixtures.withAuditReason(
+              inputs.proof().originalTuple(), "different original tuple bytes");
+      assertThatThrownBy(
+              () ->
+                  inputs
+                      .repository()
+                      .readByOriginalTuple(
+                          selector(inputs.proof(), inputs.catalog(), created.gameInstanceUuid()),
+                          mismatchedTuple.canonicalBytes()))
+          .isInstanceOf(InvalidCanonicalInstanceLaunchException.class)
+          .hasMessageContaining("Retained original StartSession tuple differs");
+
+      assertThat(
+              fixture
+                  .dsl()
+                  .execute(
+                      "UPDATE game_instances SET status = 'RUNNING', row_version = row_version + 1"
+                          + " WHERE tenant_id = ? AND id = ?",
+                      created.gameSessionTenantId(),
+                      created.gameInstanceId()))
+          .isEqualTo(1);
+      CanonicalInstanceLaunch retry =
+          inputs
+              .repository()
+              .createStartingLaunch(
+                  inputs.proof().originalTuple(),
+                  inputs.proof().completeLaunchBindingEvidence(),
+                  inputs.catalog());
+      assertThat(retry.gameInstanceUuid()).isEqualTo(created.gameInstanceUuid());
+      assertThat(retry.currentGameInstanceStatus())
+          .isEqualTo(
+              CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus.RUNNING);
+      assertThat(retry.currentRowVersion()).isEqualTo(created.capturedStartingRowVersion() + 1L);
+      assertThat(retry.capturedStartingRowVersion())
+          .isEqualTo(created.capturedStartingRowVersion());
+      var currentOriginalTupleRead =
+          inputs
+              .repository()
+              .readByOriginalTuple(
+                  selector(inputs.proof(), inputs.catalog(), created.gameInstanceUuid()),
+                  inputs.proof().originalTuple().canonicalBytes())
+              .orElseThrow();
+      assertThat(currentOriginalTupleRead.currentGameInstanceStatus())
+          .isEqualTo(
+              CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus.RUNNING);
+      assertThat(currentOriginalTupleRead.currentRowVersion())
+          .isEqualTo(created.capturedStartingRowVersion() + 1L);
+
+      var changedTuple =
+          GameSessionCanonicalInstanceLaunchProofFixtures.withAuditReason(
+              inputs.proof().originalTuple(), "substituted retry tuple");
+      assertThatThrownBy(
+              () ->
+                  inputs
+                      .repository()
+                      .createStartingLaunch(
+                          changedTuple,
+                          inputs.proof().completeLaunchBindingEvidence(),
+                          inputs.catalog()))
+          .isInstanceOf(InvalidCanonicalInstanceLaunchException.class)
+          .hasMessageContaining("already bound to different complete launch evidence");
+      assertThat(
+              countByRequest(
+                  fixture.dsl(),
+                  "game_instances",
+                  "run_owned_start_request_id",
+                  created.controlPlaneRequestId()))
+          .isEqualTo(1L);
+    }
+  }
+
+  @Test
+  void rollsBackRuntimeAllocationWhenAtomicLaunchAssociationInsertFails() throws Exception {
+    try (Fixture fixture = newFixture(null)) {
+      LaunchInputs inputs = prepareLaunch(fixture);
+      fixture
+          .dsl()
+          .execute(
+              "ALTER TABLE game_session_canonical_instance_launch"
+                  + " ADD CONSTRAINT chk_test_reject_canonical_launch CHECK (FALSE)");
+
+      assertThatThrownBy(
+              () ->
+                  inputs
+                      .repository()
+                      .createStartingLaunch(
+                          inputs.proof().originalTuple(),
+                          inputs.proof().completeLaunchBindingEvidence(),
+                          inputs.catalog()))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(
+              countByRequest(
+                  fixture.dsl(),
+                  "game_instances",
+                  "run_owned_start_request_id",
+                  inputs.proof().originalTuple().controlPlaneRequestId()))
+          .isZero();
+      assertThat(
+              countByRequest(
+                  fixture.dsl(),
+                  "game_session_canonical_instance_launch",
+                  "control_plane_request_id",
+                  inputs.proof().originalTuple().controlPlaneRequestId()))
+          .isZero();
+    }
+  }
+
+  @Test
+  void freshAllocationRequiresRetainedFullAccountTupleBeforeCreatingRuntime() throws Exception {
+    try (Fixture fixture = newFixture(null)) {
+      for (OwnerEvidenceMode mode :
+          new OwnerEvidenceMode[] {
+            OwnerEvidenceMode.ABSENT, OwnerEvidenceMode.UNATTACHED, OwnerEvidenceMode.LEGACY_SCALAR
+          }) {
+        LaunchInputs inputs = prepareLaunch(fixture, mode);
+
+        assertThatThrownBy(
+                () ->
+                    inputs
+                        .repository()
+                        .createStartingLaunch(
+                            inputs.proof().originalTuple(),
+                            inputs.proof().completeLaunchBindingEvidence(),
+                            inputs.catalog()))
+            .isInstanceOf(InvalidCanonicalInstanceLaunchException.class)
+            .hasMessageContaining(mode.expectedFailure());
+        assertNoAllocation(fixture, inputs.proof().originalTuple().controlPlaneRequestId());
+      }
+    }
+  }
+
+  @Test
+  void freshAllocationRejectsSourceFenceAndLinearizationSubstitution() throws Exception {
+    try (Fixture fixture = newFixture(null)) {
+      for (boolean changeSourceFence : new boolean[] {true, false}) {
+        LaunchInputs inputs = prepareLaunch(fixture);
+        StartSessionPostAuthorizationExecutionTuple original = inputs.proof().originalTuple();
+        StartSessionPostAuthorizationExecutionTuple substituted =
+            withBundleReference(
+                original,
+                changeSourceFence ? "24" : original.bundleReference().sourceFence(),
+                changeSourceFence
+                    ? original.bundleReference().linearization()
+                    : "18446744073709551614");
+
+        assertThatThrownBy(
+                () ->
+                    inputs
+                        .repository()
+                        .createStartingLaunch(
+                            substituted,
+                            inputs.proof().completeLaunchBindingEvidence(),
+                            inputs.catalog()))
+            .isInstanceOf(InvalidCanonicalInstanceLaunchException.class)
+            .hasMessageContaining("differs from the exact incoming tuple");
+        assertNoAllocation(fixture, original.controlPlaneRequestId());
+      }
+    }
+  }
+
+  @Test
+  void retainedV42LaunchWithoutCapturedTupleRemainsNullAndCannotBeUpgradedByRetry()
+      throws Exception {
+    try (Fixture fixture = newFixture(MigrationVersion.fromVersion("42"))) {
+      LaunchInputs inputs = prepareLaunch(fixture);
+      UUID retainedUuid = UUID.randomUUID();
+      long retainedInstanceId = insertHistoricalV26Pair(fixture.dsl(), inputs, retainedUuid);
+      fixture.migrateLatest();
+
+      var currentCatalog =
+          fixture
+              .catalogRepository()
+              .readByCanonicalTenantId(inputs.catalog().canonicalTenantId())
+              .orElseThrow();
+      var repository = fixture.launchRepository();
+      assertThatThrownBy(
+              () ->
+                  repository.createStartingLaunch(
+                      inputs.proof().originalTuple(),
+                      inputs.proof().completeLaunchBindingEvidence(),
+                      currentCatalog))
+          .isInstanceOf(InvalidCanonicalInstanceLaunchException.class)
+          .hasMessageContaining("original_start_session_tuple");
+
+      Record retained =
+          Objects.requireNonNull(
+              fixture
+                  .dsl()
+                  .fetchOne(
+                      "SELECT original_start_session_tuple IS NULL AS tuple_missing,"
+                          + " catalog_revision IS NULL AS revision_missing"
+                          + " FROM game_session_canonical_instance_launch"
+                          + " WHERE target_namespace = ? AND control_plane_request_id = ?",
+                      NAMESPACE,
+                      inputs.proof().originalTuple().controlPlaneRequestId()));
+      assertThat(retained.get("tuple_missing", Boolean.class)).isTrue();
+      assertThat(retained.get("revision_missing", Boolean.class)).isTrue();
+      assertThat(
+              countByRequest(
+                  fixture.dsl(),
+                  "game_instances",
+                  "run_owned_start_request_id",
+                  inputs.proof().originalTuple().controlPlaneRequestId()))
+          .isEqualTo(1L);
+      assertThat(retainedInstanceId).isPositive();
+    }
+  }
+
+  private static LaunchInputs prepareLaunch(Fixture fixture) {
+    return prepareLaunch(fixture, OwnerEvidenceMode.ATTACHED);
+  }
+
+  private static LaunchInputs prepareLaunch(Fixture fixture, OwnerEvidenceMode ownerEvidenceMode) {
+    FreshTenantAssociation association = createFreshAssociation(fixture);
+    var catalogProof =
+        GameSessionCanonicalRealmCatalogProofFixtures.forFreshAssociation(association);
+    CanonicalRealmCatalog catalog =
+        fixture
+            .catalogRepository()
+            .establishFreshPublicRealm(
+                association,
+                catalogProof.source(),
+                catalogProof.publishedSet(),
+                UUID.randomUUID(),
+                UUID.randomUUID());
+    String operationId = "original-start-session-" + UUID.randomUUID();
+    long gameTemplateId = 91L;
+    String descriptorId = "launch-" + UUID.randomUUID();
+    String releaseRef = "fixture-release/" + UUID.randomUUID();
+    SyntheticLaunchProof proof =
+        GameSessionCanonicalInstanceLaunchProofFixtures.create(
+            NAMESPACE,
+            operationId,
+            association.canonicalTenantId(),
+            catalog.worldSlug(),
+            catalog.sourceEvidence(),
+            gameTemplateId,
+            13L,
+            17L,
+            descriptorId,
+            "generation-fixture",
+            2L,
+            releaseRef);
+    attachSyntheticOwnerEvidence(fixture, proof.originalTuple(), ownerEvidenceMode);
+    return new LaunchInputs(catalog, proof, fixture.launchRepository());
+  }
+
+  private static void attachSyntheticOwnerEvidence(
+      Fixture fixture, StartSessionPostAuthorizationExecutionTuple tuple, OwnerEvidenceMode mode) {
+    if (mode == OwnerEvidenceMode.ABSENT) return;
+
+    GameSessionStartSessionOperatorAttemptRepository attempts =
+        new GameSessionStartSessionOperatorAttemptRepository(fixture.dsl(), Duration.ofMinutes(5));
+    TransactionTemplate ownerTransaction = new TransactionTemplate(fixture.transactionManager());
+    AttemptClaim claim =
+        Objects.requireNonNull(
+                ownerTransaction.execute(status -> attempts.reserve(tuple)),
+                "synthetic owner attempt reservation")
+            .claim()
+            .orElseThrow();
+    if (mode == OwnerEvidenceMode.UNATTACHED) return;
+
+    if (mode == OwnerEvidenceMode.LEGACY_SCALAR) {
+      int attached =
+          fixture
+              .dsl()
+              .execute(
+                  "UPDATE game_session_start_session_operator_attempt"
+                      + " SET account_redemption_projection = ?"
+                      + " WHERE target_namespace = ? AND control_plane_request_id = ?"
+                      + " AND account_redemption_projection IS NULL",
+                  legacyScalarProjection(tuple),
+                  NAMESPACE,
+                  tuple.controlPlaneRequestId());
+      assertThat(attached).isEqualTo(1);
+      return;
+    }
+
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
+    AccountRedemptionProjection syntheticProjection =
+        new AccountRedemptionProjection(
+            tuple.authorizationReferenceFingerprint(),
+            tuple.authorityEvidenceBundleBytes(),
+            bundle.issuanceOperationId(),
+            Long.parseLong(tuple.issuanceFence()),
+            tuple.canonicalBytes());
+    // The fixture models a synthetic Account response; exact bytes do not prove RPC origin.
+    Objects.requireNonNull(
+        ownerTransaction.execute(
+            status -> attempts.attachAccountRedemptionProjection(claim, syntheticProjection)),
+        "synthetic Account tuple attachment");
+  }
+
+  private static byte[] legacyScalarProjection(StartSessionPostAuthorizationExecutionTuple tuple) {
+    // Schema-v1 is synthesized only to verify historical compatibility and current fail-closed
+    // behavior.
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
+    Map<String, Object> projection =
+        Map.of(
+            "projectionSchemaId",
+            "accountStartSessionRedemptionProjection",
+            "projectionSchemaVersion",
+            "1",
+            "authorizationReferenceFingerprint",
+            tuple.authorizationReferenceFingerprint(),
+            "authorityEvidenceBundle",
+            bundle.jsonValue(),
+            "issuanceOperationId",
+            bundle.issuanceOperationId().toString(),
+            "issuanceFence",
+            Long.parseLong(tuple.issuanceFence()));
+    try {
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(projection));
+    } catch (IOException malformed) {
+      throw new IllegalStateException(
+          "Could not encode a legacy scalar Account projection", malformed);
+    }
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple withBundleReference(
+      StartSessionPostAuthorizationExecutionTuple original,
+      String sourceFence,
+      String linearization) {
+    var reference = original.bundleReference();
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        original.preAuthorizationTuple(),
+        original.authenticatedWorkloadIdentity(),
+        original.authorizationReferenceFingerprint(),
+        original.reservationOwnerId(),
+        original.reservationClaimFence(),
+        original.authorityEvidenceBundleBytes(),
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            reference.bundleVersion(), reference.sourceVersion(), sourceFence, linearization));
+  }
+
+  private static void assertNoAllocation(Fixture fixture, String requestId) {
+    assertThat(
+            countByRequest(
+                fixture.dsl(), "game_instances", "run_owned_start_request_id", requestId))
+        .isZero();
+    assertThat(
+            countByRequest(
+                fixture.dsl(),
+                "game_session_canonical_instance_launch",
+                "control_plane_request_id",
+                requestId))
+        .isZero();
+  }
+
+  private static CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector(
+      SyntheticLaunchProof proof, CanonicalRealmCatalog catalog, UUID gameInstanceUuid) {
+    var descriptor = proof.completeLaunchBindingEvidence().descriptor();
+    return new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+        UUID.randomUUID(),
+        catalog.targetNamespace(),
+        catalog.canonicalTenantId(),
+        catalog.worldSlug(),
+        gameInstanceUuid,
+        descriptor.controlPlaneRequestId(),
+        descriptor.launchDescriptorId(),
+        descriptor.requestDigest(),
+        descriptor.resultDigest(),
+        proof.completeLaunchBindingEvidence().releaseAttestation().evidenceDigest());
+  }
+
+  private static long insertHistoricalV26Pair(
+      DSLContext dsl, LaunchInputs inputs, UUID gameInstanceUuid) {
+    var tuple = inputs.proof().originalTuple();
+    var descriptor = inputs.proof().completeLaunchBindingEvidence().descriptor();
+    CanonicalRealmCatalog catalog = inputs.catalog();
+    return dsl.transactionResult(
+        configuration -> {
+          DSLContext tx = DSL.using(configuration);
+          Record runtime =
+              tx.fetchOne(
+                  "INSERT INTO game_instances"
+                      + " (tenant_id, runtime_version, owner_account_id, owner_account_uuid, status,"
+                      + " row_version, game_instance_uuid, game_template_id, launch_descriptor_id, version_id,"
+                      + " release_bundle_id, generation_config_revision, version_state_epoch,"
+                      + " run_owned_start_request_id, run_owned_start_request_digest,"
+                      + " run_owned_start_published_release_bundle_ref)"
+                      + " VALUES (?, ?, NULL, ?, 'STARTING', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+                  catalog.gameSessionTenantId(),
+                  Long.toString(descriptor.versionId()),
+                  tuple.preAuthorizationTuple().action().target().ownerAccountId(),
+                  gameInstanceUuid,
+                  descriptor.gameTemplateId(),
+                  descriptor.launchDescriptorId(),
+                  descriptor.versionId(),
+                  descriptor.releaseBundleId(),
+                  descriptor.generationConfigRevision(),
+                  descriptor.versionStateEpoch(),
+                  tuple.controlPlaneRequestId(),
+                  tuple.mutationDigest(),
+                  descriptor.publishedReleaseBundleRef());
+          long instanceId = Objects.requireNonNull(runtime).get("id", Long.class);
+          FreshTenantCreationEvidence fresh = catalog.associationSourceEvidence();
+          var binding =
+              GameSessionCanonicalInstanceLaunchProofFixtures.completeLaunchBindingJson(
+                  inputs.proof().completeLaunchBindingEvidence());
+          tx.execute(
+              "INSERT INTO game_session_canonical_instance_launch"
+                  + " (target_namespace, control_plane_request_id, game_session_tenant_id, canonical_tenant_id,"
+                  + " tenant_association_operation_id, tenant_association_request_id,"
+                  + " tenant_source_schema_version, tenant_source_target_namespace, tenant_source_request_id,"
+                  + " tenant_source_canonical_tenant_id, tenant_source_game_row_id, tenant_source_game_tenant_key,"
+                  + " tenant_source_provenance_kind, tenant_association_kind, game_instance_id, game_instance_uuid,"
+                  + " canonical_realm_id, world_slug, playable_state_namespace_id, playable_state_scope,"
+                  + " public_production, captured_starting_row_version, game_template_id, launch_descriptor_id,"
+                  + " version_id, release_bundle_id, generation_config_revision, version_state_epoch,"
+                  + " complete_launch_binding_evidence)"
+                  + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'FRESH_SOURCE_BOUND',"
+                  + " ?, ?, ?, ?, ?, 'SHARED', TRUE, 0, ?, ?, ?, ?, ?, ?, ?::jsonb)",
+              NAMESPACE,
+              tuple.controlPlaneRequestId(),
+              catalog.gameSessionTenantId(),
+              catalog.canonicalTenantId(),
+              catalog.tenantAssociationOperationId(),
+              fresh.creationRequestId(),
+              fresh.schemaVersion(),
+              fresh.targetNamespace(),
+              fresh.creationRequestId(),
+              fresh.canonicalTenantId(),
+              fresh.sourceGameRowId(),
+              fresh.sourceGameTenantKey(),
+              fresh.provenanceKind(),
+              instanceId,
+              gameInstanceUuid,
+              catalog.realmId(),
+              catalog.worldSlug(),
+              catalog.playableStateNamespaceId(),
+              descriptor.gameTemplateId(),
+              descriptor.launchDescriptorId(),
+              descriptor.versionId(),
+              descriptor.releaseBundleId(),
+              descriptor.generationConfigRevision(),
+              descriptor.versionStateEpoch(),
+              binding);
+          return instanceId;
+        });
+  }
+
+  private static FreshTenantAssociation createFreshAssociation(Fixture fixture) {
+    UUID requestId = UUID.randomUUID();
+    UUID canonicalTenantId = UUID.randomUUID();
+    FreshTenantCreationEvidence evidence = freshCreationEvidence(requestId, canonicalTenantId);
+    GameDesignFreshTenantCreationClient client = mock(GameDesignFreshTenantCreationClient.class);
+    when(client.resolveCreation(requestId, evidence.requestDigest()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return evidence;
+            });
+    return fixture
+        .associationRepository(client)
+        .associateFreshTenant(requestId, evidence.requestDigest());
+  }
+
+  private static FreshTenantCreationEvidence freshCreationEvidence(
+      UUID creationRequestId, UUID canonicalTenantId) {
+    String sourceKey = "launch-owner-key-" + creationRequestId.toString().substring(0, 8);
+    long sourceRowId = Math.abs(creationRequestId.getMostSignificantBits() % 1_000_000L) + 1L;
+    UUID sourceOperationId = UUID.randomUUID();
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            NAMESPACE, creationRequestId, sourceKey, "Launch fixture game", null);
+    return new FreshTenantCreationEvidence(
+        1,
+        NAMESPACE,
+        creationRequestId,
+        sourceOperationId,
+        requestDigest,
+        canonicalTenantId,
+        sourceRowId,
+        sourceKey,
+        "NEW_GAME_ROW",
+        GameTenantCreationDigest.evidenceDigest(
+            NAMESPACE,
+            creationRequestId,
+            sourceOperationId,
+            requestDigest,
+            canonicalTenantId,
+            sourceRowId,
+            sourceKey,
+            "NEW_GAME_ROW"));
+  }
+
+  private static long countByRequest(
+      DSLContext dsl, String table, String requestColumn, String requestId) {
+    Record row =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT COUNT(*) AS row_count FROM " + table + " WHERE " + requestColumn + " = ?",
+                requestId));
+    return Objects.requireNonNull(row.get("row_count", Long.class));
+  }
+
+  private static Fixture newFixture(MigrationVersion migrationVersion) {
+    String schema = "gs_canonical_launch_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName(postgres.getDriverClassName());
+    dataSource.setUrl(postgres.getJdbcUrl());
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    dataSource.setSchema(schema);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history")
+        .locations(MIGRATION_LOCATION)
+        .target(migrationVersion == null ? MigrationVersion.LATEST : migrationVersion)
+        .load()
+        .migrate();
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    return new Fixture(schema, dataSource, dsl, new DataSourceTransactionManager(dataSource));
+  }
+
+  private record LaunchInputs(
+      CanonicalRealmCatalog catalog,
+      SyntheticLaunchProof proof,
+      GameSessionCanonicalInstanceLaunchRepository repository) {}
+
+  private enum OwnerEvidenceMode {
+    ATTACHED(""),
+    ABSENT("unavailable for fresh launch"),
+    UNATTACHED("no full Account tuple"),
+    LEGACY_SCALAR("not the exact current full tuple");
+
+    private final String expectedFailure;
+
+    OwnerEvidenceMode(String expectedFailure) {
+      this.expectedFailure = expectedFailure;
+    }
+
+    String expectedFailure() {
+      return expectedFailure;
+    }
+  }
+
+  private record Fixture(
+      String schema,
+      DriverManagerDataSource dataSource,
+      DSLContext dsl,
+      DataSourceTransactionManager transactionManager)
+      implements AutoCloseable {
+    GameSessionFreshTenantAssociationRepository associationRepository(
+        GameDesignFreshTenantCreationClient client) {
+      return new GameSessionFreshTenantAssociationRepository(
+          dsl, transactionManager, client, NAMESPACE);
+    }
+
+    GameSessionCanonicalRealmCatalogRepository catalogRepository() {
+      return new GameSessionCanonicalRealmCatalogRepository(dsl, transactionManager, NAMESPACE);
+    }
+
+    GameSessionCanonicalInstanceLaunchRepository launchRepository() {
+      return new GameSessionCanonicalInstanceLaunchRepository(
+          dsl, transactionManager, NAMESPACE, catalogRepository());
+    }
+
+    void migrateLatest() {
+      Flyway.configure()
+          .dataSource(dataSource)
+          .schemas(schema)
+          .defaultSchema(schema)
+          .table("flyway_schema_history")
+          .locations(MIGRATION_LOCATION)
+          .load()
+          .migrate();
+    }
+
+    @Override
+    public void close() throws Exception {
+      try (Connection connection = dataSource.getConnection();
+          Statement statement = connection.createStatement()) {
+        statement.execute("DROP SCHEMA " + schema + " CASCADE");
+      }
+    }
+  }
+}

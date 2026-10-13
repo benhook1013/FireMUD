@@ -64,7 +64,8 @@ public class InitialAdmissionBindHoldRepository {
             "SELECT "
                 + SELECT_COLUMNS
                 + " FROM initial_admission_bind_hold WHERE status IN "
-                + "('PENDING', 'RECONCILIATION_REQUIRED') ORDER BY updated_at, hold_id LIMIT ?",
+                + "('PENDING', 'RECONCILIATION_REQUIRED') "
+                + "AND canonical_request_bytes IS NULL ORDER BY updated_at, hold_id LIMIT ?",
             Math.max(1, Math.min(limit, 256)));
     return rows.map(this::toEntity);
   }

@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Opt-in authenticated readback of the selector in an exact frozen World publication capture.
+service WorldPublishedStartLocationReadService {
+  rpc ReadWorldPublishedStartLocation(ReadWorldPublishedStartLocationRequest)
+      returns (ReadWorldPublishedStartLocationResponse);
+}
+
+message WorldPublishedStartLocationAffectedTuple {
+  string owner = 1;
+  string aggregate_type = 2;
+  string aggregate_id = 3;
+  string scope_type = 4;
+  string scope_id = 5;
+  string expected_epoch = 6;
+}
+
+message ReadWorldPublishedStartLocationRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  string canonical_version_id = 4;
+  string intake_request_id = 5;
+  string publication_fence = 6;
+  string publication_request_id = 7;
+  string request_digest = 8;
+  int64 version_state_epoch = 9;
+  string publish_workflow_id = 10;
+  string applied_commit_id = 11;
+  string content_digest = 12;
+  int32 digest_schema_version = 13;
+  repeated WorldPublishedStartLocationAffectedTuple world_affected_tuples = 14;
+}
+
+message ReadWorldPublishedStartLocationResponse {
+  // Exact echo of the complete immutable frozen selection request.
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  string canonical_version_id = 4;
+  string intake_request_id = 5;
+  string publication_fence = 6;
+  string publication_request_id = 7;
+  string request_digest = 8;
+  int64 version_state_epoch = 9;
+  string publish_workflow_id = 10;
+  string applied_commit_id = 11;
+  string content_digest = 12;
+  int32 digest_schema_version = 13;
+  repeated WorldPublishedStartLocationAffectedTuple world_affected_tuples = 14;
+  // Exact original World receipt, Account binding, and APPLIED result bytes.
+  bytes selector_receipt_bytes = 15;
+  bytes original_account_binding_bytes = 16;
+  bytes applied_result_bytes = 17;
+}

@@ -259,6 +259,9 @@ message GetDraftDesignDigestRequest {
   string publish_request_id = 5;
   string derived_workflow_identity = 6;
   string request_digest = 7;
+  // Separate content-selection binding; does not change publicationDigestRequest/v1.
+  bytes source_read_binding = 8;
+  string source_read_binding_digest = 9;
 }
 
 message GetDraftDesignDigestResponse {
@@ -274,4 +277,11 @@ message GetDraftDesignDigestResponse {
     string script_patch_version = 8;
   }
   string base_version_id = 9;
+  bytes source_read_binding = 10;
+  string source_read_binding_digest = 11;
+  // Exact genuine RETAINED owner evidence, not caller-supplied authorization alone.
+  bytes retained_intake_terminal = 12;
+  string retained_intake_terminal_digest = 13;
+  string ability_schema_digest = 14;
+  string canonicalization = 15;
 }

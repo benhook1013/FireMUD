@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Read-only complete canonical World lifecycle owner evidence for authenticated Game Session.
+service WorldCanonicalInstanceLifecycleReadService {
+  rpc ReadWorldCanonicalInstanceLifecycle(ReadWorldCanonicalInstanceLifecycleRequest)
+      returns (ReadWorldCanonicalInstanceLifecycleResponse);
+}
+
+message ReadWorldCanonicalInstanceLifecycleRequest {
+  // Complete closed versioned WorldCanonicalInstanceLifecycleEvidence.Request bytes.
+  bytes canonical_request_bytes = 1;
+}
+
+message ReadWorldCanonicalInstanceLifecycleResponse {
+  // Complete closed evidence bytes, including the exact request echo and full launch binding.
+  bytes canonical_response_bytes = 1;
+}
