@@ -129,6 +129,64 @@ public final class RealmPolicyPublishedEvidence {
     public List<Policy> policies() {
       return List.copyOf(policies);
     }
+
+    @Override
+    public boolean equals(Object other) {
+      if (this == other) return true;
+      if (!(other instanceof PublishedSet that)) return false;
+      return versionNumber == that.versionNumber
+          && publicationVersionStateEpoch == that.publicationVersionStateEpoch
+          && policyCount == that.policyCount
+          && Objects.equals(target, that.target)
+          && Objects.equals(sourceCommitId, that.sourceCommitId)
+          && Objects.equals(sourceEpoch, that.sourceEpoch)
+          && Objects.equals(publishedReleaseBundleRef, that.publishedReleaseBundleRef)
+          && Objects.equals(publishedReleaseBundleDigest, that.publishedReleaseBundleDigest)
+          && Objects.equals(publishWorkflowId, that.publishWorkflowId)
+          && Objects.equals(manifestHash, that.manifestHash)
+          && Arrays.equals(operationBytes, that.operationBytes)
+          && Arrays.equals(captureBytes, that.captureBytes)
+          && Arrays.equals(terminalEvidenceBytes, that.terminalEvidenceBytes)
+          && Objects.equals(policySetDigest, that.policySetDigest)
+          && Objects.equals(policies, that.policies);
+    }
+
+    @Override
+    public int hashCode() {
+      int result =
+          Objects.hash(
+              target,
+              versionNumber,
+              sourceCommitId,
+              sourceEpoch,
+              publishedReleaseBundleRef,
+              publishedReleaseBundleDigest,
+              publishWorkflowId,
+              manifestHash,
+              publicationVersionStateEpoch,
+              policyCount,
+              policySetDigest,
+              policies);
+      result = 31 * result + Arrays.hashCode(operationBytes);
+      result = 31 * result + Arrays.hashCode(captureBytes);
+      result = 31 * result + Arrays.hashCode(terminalEvidenceBytes);
+      return result;
+    }
+
+    @Override
+    public String toString() {
+      return "PublishedSet[target="
+          + target
+          + ", sourceCommitId="
+          + sourceCommitId
+          + ", sourceEpoch="
+          + sourceEpoch
+          + ", policyCount="
+          + policyCount
+          + ", policySetDigest="
+          + policySetDigest
+          + "]";
+    }
   }
 
   public static String targetProofJson(DraftCommitBinding.TargetProof target) {

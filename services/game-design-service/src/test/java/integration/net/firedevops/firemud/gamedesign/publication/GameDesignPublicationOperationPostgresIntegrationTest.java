@@ -83,6 +83,7 @@ import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixt
 import net.firedevops.firemud.gamedesign.service.impl.VersionAssetArtifactServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.VersionAssetExportCandidateServiceImpl;
 import net.firedevops.firemud.gamedesign.v1.ReadGameDesignPublicationTerminalResponse;
+import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.test.TlsTestSupport;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.BasicConstraints;
@@ -105,7 +106,10 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -116,7 +120,8 @@ import tools.jackson.databind.ObjectMapper;
 @Testcontainers(disabledWithoutDocker = true)
 class GameDesignPublicationOperationPostgresIntegrationTest {
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   private static final AtomicLong TEST_CERTIFICATE_SERIAL = new AtomicLong(1);
 
@@ -457,10 +462,80 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
       for (String peer : java.util.List.of("account-service", "world-management-service")) {
         var result = readThroughHandler(fixture, request, peer);
         assertThat(result.error).isNull();
+        assertThat(result.completed).isTrue();
         var evidence =
             GameDesignPublicationTerminalReadGrpcCodec.fromResponse(request, result.response);
         assertThat(evidence.terminalEvidence().orElseThrow().canonicalBytes()).isEqualTo(expected);
         assertThat(evidence.status().name()).isEqualTo(published ? "PUBLISHED" : "NO_PUBLICATION");
+      }
+    }
+  }
+
+  @Test
+  void authenticatedTerminalReadMapsTransactionFailuresToUnavailable() throws Exception {
+    var fixture = fixture();
+    var request =
+        GameDesignPublicationTerminalReadEvidence.ReadRequest.create(
+            "test", fixture.operation().canonicalBytes());
+    PlatformTransactionManager failingTransactions =
+        new PlatformTransactionManager() {
+          @Override
+          public TransactionStatus getTransaction(TransactionDefinition definition) {
+            throw new TransactionException("ISOLATED transaction manager failure") {};
+          }
+
+          @Override
+          public void commit(TransactionStatus status) {}
+
+          @Override
+          public void rollback(TransactionStatus status) {}
+        };
+    var owner =
+        new GameDesignPublicationOperationService(
+            new GameDesignPublicationOperationRepository(fixture.dsl()), failingTransactions);
+
+    var result = readThroughHandler(fixture, request, "account-service", owner);
+
+    assertThat(result.error).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(result.response).isNull();
+    assertThat(result.completed).isFalse();
+  }
+
+  @Test
+  void authenticatedTerminalReadMapsResponseEncodingFailuresWithoutPartialResponses()
+      throws Exception {
+    var fixture = fixture();
+    publish(fixture);
+    var request =
+        GameDesignPublicationTerminalReadEvidence.ReadRequest.create(
+            "test", fixture.operation().canonicalBytes());
+
+    for (RuntimeException encodingFailure :
+        List.of(
+            new IllegalArgumentException("ISOLATED invalid response"),
+            new IllegalStateException("ISOLATED inconsistent response"),
+            new RuntimeException("ISOLATED response encoder failure"))) {
+      try (var codec =
+          org.mockito.Mockito.mockStatic(
+              GameDesignPublicationTerminalReadGrpcCodec.class,
+              org.mockito.Mockito.CALLS_REAL_METHODS)) {
+        codec
+            .when(
+                () ->
+                    GameDesignPublicationTerminalReadGrpcCodec.toResponse(
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+            .thenThrow(encodingFailure);
+
+        var result = readThroughHandler(fixture, request, "account-service");
+
+        Status.Code expected =
+            encodingFailure instanceof IllegalArgumentException
+                    || encodingFailure instanceof IllegalStateException
+                ? Status.Code.FAILED_PRECONDITION
+                : Status.Code.INTERNAL;
+        assertThat(result.error).isEqualTo(expected);
+        assertThat(result.response).isNull();
+        assertThat(result.completed).isFalse();
       }
     }
   }
@@ -631,7 +706,15 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
       Fixture fixture,
       GameDesignPublicationTerminalReadEvidence.ReadRequest request,
       String service) {
-    var handler = new GameDesignPublicationTerminalReadGrpcService(fixture.service(), "test");
+    return readThroughHandler(fixture, request, service, fixture.service());
+  }
+
+  private ReadCollector readThroughHandler(
+      Fixture fixture,
+      GameDesignPublicationTerminalReadEvidence.ReadRequest request,
+      String service,
+      GameDesignPublicationOperationService owner) {
+    var handler = new GameDesignPublicationTerminalReadGrpcService(owner, "test");
     var collector = new ReadCollector();
     var context =
         Context.current()
@@ -652,6 +735,7 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
       implements StreamObserver<ReadGameDesignPublicationTerminalResponse> {
     private ReadGameDesignPublicationTerminalResponse response;
     private Status.Code error;
+    private boolean completed;
 
     @Override
     public void onNext(ReadGameDesignPublicationTerminalResponse value) {
@@ -664,7 +748,9 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     }
 
     @Override
-    public void onCompleted() {}
+    public void onCompleted() {
+      completed = true;
+    }
   }
 
   private static final String ASSET_FILE_NAME = "publication-operation-logo.png";
@@ -772,7 +858,7 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                                           + assignment
                                           + " WHERE publish_workflow_id = ?",
                                       fixture.operation().workflowId())))
-          .isInstanceOf(RuntimeException.class);
+          .hasMessageContaining("publication operation identity or terminal outcome is immutable");
     }
     assertThatThrownBy(
             () ->
@@ -795,6 +881,10 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
   @Test
   void originalSealRejectsForgedCommittedEpochAndPreservesPendingOwnerRows() throws Exception {
     for (String forgedField : java.util.List.of("epoch", "digest", "content", "terminal")) {
+      String expectedGuardMessage =
+          forgedField.equals("terminal")
+              ? "publication terminal bytes differ from original owner result"
+              : "publication terminal content or committed epoch differs from owner seal";
       var fixture = fixture();
       assertThatThrownBy(
               () ->
@@ -805,7 +895,7 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                             publishInTransaction(fixture, false);
                             rawTerminalSeal(fixture, forgedField);
                           }))
-          .isInstanceOf(RuntimeException.class);
+          .hasMessageContaining(expectedGuardMessage);
       var pending = fixture.service().readExact(fixture.operation()).orElseThrow();
       assertThat(pending.outcome()).isEqualTo("PENDING");
       assertThat(pending.terminalEvidenceBytes()).isNull();

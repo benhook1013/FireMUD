@@ -17,6 +17,7 @@ import threading
 import time
 import unittest
 from collections.abc import Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from subprocess import CompletedProcess
 from types import SimpleNamespace
@@ -66,6 +67,7 @@ from pr_review.state import (
     FindingRoute,
     Judgment,
     LegacyEvidenceTransition,
+    ReviewAllocation,
     ReviewState,
     StackReconciliationDecision,
     StateStore,
@@ -181,6 +183,26 @@ class AuditedEvidence(dict):
         self.on_audit = on_audit
         self.audit_calls = []
         self.stop_audit_calls = []
+        self.review_activity_gate = threading.Lock()
+        self.review_period_lock_held = False
+        self.admission_history_reads = []
+
+    @contextmanager
+    def review_period_reset_lock(self, pr_number, channel):
+        if channel not in {"hosted", "cli"}:
+            raise ControllerError("invalid provider channel")
+        if not self.review_activity_gate.acquire(blocking=False):
+            raise ControllerError("provider admission or execution is active")
+        self.review_period_lock_held = True
+        try:
+            yield
+        finally:
+            self.review_period_lock_held = False
+            self.review_activity_gate.release()
+
+    def admission_history(self, pr_number, channel):
+        self.admission_history_reads.append((pr_number, channel, self.review_period_lock_held))
+        return list(self.get((pr_number, channel), ()) or ())
 
     def get(self, key, default=None):
         if self.backing is not None:
@@ -352,6 +374,385 @@ def hosted_anchor(*, parent_identity="develop", parent_head=BASE, merge_base=BAS
 
 
 class ControllerTests(unittest.TestCase):
+    def test_default_period_minimum_taper_and_budget_closure_are_independent(self):
+        state = ReviewState(ordered_prs=(1,))
+        hosted_dry = [self.allocation_evidence(checkpoint="hosted-dry")]
+        hosted_waiting = select_review_target(
+            state,
+            Channel.HOSTED,
+            [1],
+            {1: hosted_dry},
+            minimum_completed_by_pr={1: 1},
+        )
+        self.assertEqual(hosted_waiting.target, 1)
+        self.assertEqual(hosted_waiting.status, ReviewStatus.READY)
+        self.assertTrue(hosted_waiting.taper_complete)
+
+        hosted_used = [
+            self.allocation_evidence(checkpoint=f"hosted-useful-{index}", accepted=1)
+            for index in (1, 2)
+        ]
+        progress = ReviewController._default_period_progress(state, 1, Channel.HOSTED, hosted_used)
+        self.assertEqual(progress["used"], 2)
+        self.assertEqual(progress["minimum_remaining"], 0)
+        self.assertTrue(progress["budget_exhausted"])
+        self.assertFalse(progress["taper_complete"])
+        closed = select_review_target(
+            state,
+            Channel.HOSTED,
+            [1],
+            {1: hosted_used},
+            budget_exhausted_prs={1},
+        )
+        self.assertIsNone(closed.target)
+        self.assertEqual(closed.status, ReviewStatus.BUDGET_EXHAUSTED)
+        self.assertFalse(closed.taper_complete)
+
+        cli_results = [
+            self.allocation_evidence(
+                checkpoint=f"cli-useful-{index}",
+                accepted=1,
+                channel="cli",
+                source_run_id=f"cli-run-{index}",
+            )
+            for index in range(1, 7)
+        ]
+        cli_progress = ReviewController._default_period_progress(state, 1, Channel.CLI, cli_results)
+        self.assertEqual(cli_progress["used"], 6)
+        self.assertTrue(cli_progress["budget_exhausted"])
+        self.assertFalse(cli_progress["taper_complete"])
+        non_counting = [
+            {
+                **self.allocation_evidence(
+                    checkpoint=f"non-counting-{index}",
+                    channel="cli",
+                    source_run_id=f"failed-run-{index}",
+                ),
+                "completed": False,
+                "attributable": False,
+                flag: True,
+            }
+            for index, flag in enumerate(("connection_failed", "rate_limited", "provisional"), 1)
+        ]
+        self.assertEqual(
+            ReviewController._default_period_progress(
+                state, 1, Channel.CLI, [*cli_results[:1], *non_counting]
+            )["used"],
+            1,
+        )
+
+        independent_cli = select_review_target(state, Channel.CLI, [1], {1: []})
+        self.assertEqual(independent_cli.target, 1)
+
+    def test_period_reset_uses_stable_checkpoint_and_separate_current_head_then_is_idempotent(self):
+        checkpoint = self.allocation_evidence(
+            head=HEAD_1,
+            checkpoint="cli-checkpoint-1",
+            source_run_id="cli-run-1",
+        )
+        checkpoint["channel"] = "cli"
+        controller = self.make(
+            {1: pr(1, HEAD_2)},
+            {(1, "cli"): [checkpoint]},
+            heads={"feature-1": HEAD_2, "develop": BASE},
+        )
+        controller.set_stack([1])
+
+        result = controller.decide_period_reset(
+            pr=1,
+            channel="cli",
+            head=HEAD_2,
+            checkpoint="cli-checkpoint-1",
+            actor="operator@example.invalid",
+            reason="begin a new CLI discovery period",
+        )
+
+        self.assertEqual(result["status"], "recorded")
+        period = result["period"]
+        self.assertEqual(period["reviewed_head"], HEAD_1)
+        self.assertEqual(period["current_head"], HEAD_2)
+        self.assertEqual(period["actor"], "operator@example.invalid")
+        self.assertEqual(period["baseline_checkpoints"], ["cli-checkpoint-1"])
+        self.assertEqual(period["baseline_source_run_ids"], ["cli-run-1"])
+        self.assertEqual(controller._state().allocations, {})
+        self.assertEqual(
+            ReviewController._default_period_progress(
+                controller._state(), 1, Channel.CLI, [checkpoint]
+            )["used"],
+            0,
+        )
+
+        retry = controller.decide_period_reset(
+            pr=1,
+            channel="cli",
+            head=HEAD_2,
+            checkpoint="cli-checkpoint-1",
+            actor="operator@example.invalid",
+            reason="begin a new CLI discovery period",
+        )
+        self.assertEqual(retry["status"], "already_recorded")
+        self.assertEqual(retry["period"]["period_id"], period["period_id"])
+
+    def test_period_reset_excludes_provider_admission_through_fresh_evidence_and_state_write(self):
+        for channel in ("hosted", "cli"):
+            with self.subTest(channel=channel):
+                checkpoint = self.allocation_evidence(
+                    checkpoint=f"{channel}-reset-checkpoint",
+                    source_run_id=f"{channel}-reset-run",
+                    channel=channel,
+                )
+                provider = AuditedEvidence({(1, channel): [checkpoint]})
+                controller = self.make(
+                    {1: pr(1, HEAD_1)},
+                    provider,
+                    heads={"feature-1": HEAD_1, "develop": BASE},
+                )
+                controller.set_stack([1])
+                original_update = controller.store.update
+                admission_started = threading.Event()
+                order = []
+                admissions = []
+
+                def concurrent_admission(
+                    selected_provider=provider,
+                    observed_order=order,
+                    started_event=admission_started,
+                ):
+                    with selected_provider.review_activity_gate:
+                        observed_order.append("provider_admitted")
+                        started_event.set()
+
+                def update_while_locked(
+                    mutate,
+                    *args,
+                    selected_provider=provider,
+                    selected_channel=channel,
+                    observed_order=order,
+                    started_event=admission_started,
+                    active_admissions=admissions,
+                    update=original_update,
+                    **kwargs,
+                ):
+                    self.assertTrue(selected_provider.review_period_lock_held)
+                    self.assertEqual(selected_provider.admission_history_reads, [(1, selected_channel, True)])
+                    observed_order.append("state_update")
+                    admission = threading.Thread(target=concurrent_admission)
+                    active_admissions.append(admission)
+                    admission.start()
+                    self.assertFalse(started_event.wait(0.05))
+                    updated = update(mutate, *args, **kwargs)
+                    self.assertTrue(selected_provider.review_period_lock_held)
+                    self.assertFalse(started_event.is_set())
+                    observed_order.append("state_updated")
+                    return updated
+
+                with patch.object(controller.store, "update", side_effect=update_while_locked):
+                    result = controller.decide_period_reset(
+                        pr=1,
+                        channel=channel,
+                        head=HEAD_1,
+                        checkpoint=f"{channel}-reset-checkpoint",
+                        actor="operator@example.invalid",
+                        reason=f"begin a new {channel} period",
+                    )
+
+                admissions[0].join(timeout=1)
+                self.assertFalse(admissions[0].is_alive())
+                self.assertEqual(result["status"], "recorded")
+                self.assertEqual(order, ["state_update", "state_updated", "provider_admitted"])
+
+    def test_live_evidence_reset_locks_follow_channel_order_and_are_thread_visible(self):
+        temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary_directory.cleanup)
+        common = Path(temporary_directory.name) / "common"
+        state_store = ControllerStateStore(common / "firemud" / "pr-review-stack.json")
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), state_store)
+
+        with patch("pr_review.runtime.evidence.git_common_dir", return_value=common):
+            for channel in ("hosted", "cli"):
+                with self.subTest(channel=channel), provider.review_period_reset_lock(1, channel):
+                    request_lock = hosted.default_trigger_record_path("owner/repo", 1, common).parent / "request.lock"
+                    repository_lock = (
+                        common / "firemud" / "hosted" / "owner_repo" / "repository.request.lock"
+                        if channel == "hosted"
+                        else common / "firemud" / "pr-review" / "cli.lock"
+                    )
+                    self.assertTrue(request_lock.exists())
+                    self.assertTrue(repository_lock.exists())
+                    self.assertFalse(provider._request_lock_is_held(request_lock))
+                    if channel == "cli":
+                        self.assertEqual(provider.repository_cli_lock_status(), "clear")
+
+                    other_thread_result = []
+
+                    def observe_request_lock(
+                        selected_provider=provider,
+                        selected_lock=request_lock,
+                        result=other_thread_result,
+                    ):
+                        result.append(selected_provider._request_lock_is_held(selected_lock))
+
+                    observer = threading.Thread(target=observe_request_lock)
+                    observer.start()
+                    observer.join(timeout=1)
+                    self.assertFalse(observer.is_alive())
+                    self.assertEqual(other_thread_result, [True])
+
+    def test_default_budget_is_rechecked_under_admission_mutation(self):
+        provider = AuditedEvidence()
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            provider,
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+        selected = controller._target("hosted")
+        provider[(1, "hosted")] = [
+            self.allocation_evidence(
+                checkpoint=f"hosted-useful-{index}",
+                accepted=1,
+                channel="hosted",
+                source_run_id=f"hosted-run-{index}",
+            )
+            for index in (1, 2)
+        ]
+        admitted = []
+
+        with self.assertRaisesRegex(_SelectionChanged, "budget was exhausted"):
+            controller._admit_review(
+                1,
+                "hosted",
+                lambda: admitted.append(1),
+                selection_inputs=selected.selection_inputs,
+            )
+
+        self.assertEqual(admitted, [])
+
+    def test_bounded_allocation_baseline_excludes_pending_capture_after_checkpoint_finalization(self):
+        pending = self.allocation_evidence(
+            checkpoint="pending-capture:cli-run-1",
+            channel="cli",
+            completed=False,
+            attributable=False,
+            anchored=False,
+            source_run_id="cli-run-1",
+        )
+        evidence = {
+            (1, "cli"): [pending, self.scope_timeline_evidence(1, "cli", HEAD_1)],
+        }
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            evidence,
+            heads={"feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+        controller.decide_allocation(
+            action="grant",
+            pr=1,
+            channel="cli",
+            head=HEAD_1,
+            min_additional_completed=2,
+            max_additional_completed=4,
+            reason="preserve the observed four-result allowance",
+        )
+        allocation = controller._state().allocations["1:cli"]
+        self.assertIn("cli-run-1", allocation.baseline_source_run_ids)
+
+        finalized = {
+            **pending,
+            "checkpoint": "cli-public-checkpoint-1",
+            "completed": True,
+            "attributable": True,
+            "anchored": True,
+            "corrected_state": True,
+            "accepted": 0,
+        }
+        snapshot = controller._bounded_allocation_evidence(
+            allocation,
+            [finalized, evidence[(1, "cli")][1]],
+        )
+
+        self.assertIsNone(snapshot["error"])
+        self.assertEqual(snapshot["results"], [])
+        self.assertEqual(allocation.max_additional_completed - len(snapshot["results"]), 4)
+        legacy_allocation = dataclasses.replace(allocation, baseline_source_run_ids=())
+        legacy_snapshot = controller._bounded_allocation_evidence(
+            legacy_allocation,
+            [finalized, evidence[(1, "cli")][1]],
+        )
+        self.assertIsNone(legacy_snapshot["error"])
+        self.assertEqual(legacy_snapshot["results"], [])
+
+    def test_period_reset_refuses_a_mismatched_head_and_preserves_explicit_stop(self):
+        checkpoint = self.allocation_evidence(
+            head=HEAD_1,
+            checkpoint="cli-checkpoint-1",
+            source_run_id="cli-run-1",
+        )
+        checkpoint["channel"] = "cli"
+        controller = self.make(
+            {1: pr(1, HEAD_2)},
+            {(1, "cli"): [checkpoint]},
+            heads={"feature-1": HEAD_2, "develop": BASE},
+            sqlite=True,
+        )
+        controller.set_stack([1])
+        stopped = ReviewAllocation(
+            pr=1,
+            channel="cli",
+            head=HEAD_2,
+            parent_identity="develop",
+            parent_head=BASE,
+            merge_base=BASE,
+            patch_id=f"patch-{HEAD_2[:4]}",
+            baseline_checkpoints=(),
+            reason="retain explicit stop",
+            stop_basis="direct_human",
+            stop_head=HEAD_2,
+            stop_parent_identity="develop",
+            stop_parent_head=BASE,
+            stop_reason="User stopped this channel",
+        )
+        controller.store.update(
+            lambda state: dataclasses.replace(state, allocations={"1:cli": stopped})
+        )
+        original = controller._state()
+
+        with self.assertRaisesRegex(ControllerError, "--head does not match"):
+            controller.decide_period_reset(
+                pr=1,
+                channel="cli",
+                head=HEAD_1,
+                checkpoint="cli-checkpoint-1",
+                actor="operator@example.invalid",
+                reason="wrong candidate",
+                replace_stop=True,
+            )
+        self.assertEqual(controller._state(), original)
+        with self.assertRaisesRegex(ControllerError, "explicit User stop"):
+            controller.decide_period_reset(
+                pr=1,
+                channel="cli",
+                head=HEAD_2,
+                checkpoint="cli-checkpoint-1",
+                actor="operator@example.invalid",
+                reason="new period",
+            )
+        self.assertEqual(controller._state(), original)
+
+        replaced = controller.decide_period_reset(
+            pr=1,
+            channel="cli",
+            head=HEAD_2,
+            checkpoint="cli-checkpoint-1",
+            actor="operator@example.invalid",
+            reason="new period after explicit resume",
+            replace_stop=True,
+        )
+        self.assertEqual(replaced["status"], "recorded")
+        self.assertEqual(replaced["superseded_allocation_identity"], "1:cli")
+        self.assertEqual(replaced["period"]["superseded_allocation"]["stop_reason"], "User stopped this channel")
+
     def test_hosted_preflight_deadline_covers_target_selection_before_adapter(self):
         controller = self.make({})
         adapter_calls = []
@@ -1863,7 +2264,7 @@ class ControllerTests(unittest.TestCase):
             stack.ReconciliationStatus.PATCH_CHANGED,
         )
         target = controller.status()["review_targets"]["hosted"]
-        self.assertEqual((target["pr"], target["status"]), (None, "COMPLETE"))
+        self.assertEqual((target["pr"], target["status"]), (1, "READY"))
 
         result = self.grant_judgment_hosted_review(controller)
 
@@ -1974,7 +2375,7 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(
             controller.status()["review_targets"]["hosted"]["status"],
-            "COMPLETE",
+            "READY",
         )
 
         self.grant_judgment_hosted_review(controller)
@@ -2390,7 +2791,7 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack([1])
 
         before = controller.status()
-        self.assertEqual(before["review_targets"]["hosted"]["status"], "COMPLETE")
+        self.assertEqual(before["review_targets"]["hosted"]["status"], "READY")
         self.assertTrue(before["review_targets"]["hosted"]["taper_complete"])
 
         controller.decide_allocation(
@@ -7329,6 +7730,18 @@ class ControllerTests(unittest.TestCase):
         controller.status()
         self.assertEqual(controller.git.test_merge_calls, [(BASE, HEAD_1), (BASE, HEAD_1)])
 
+    def _add_hosted_minimum_rounds(self, controller, evidence, pr_numbers):
+        for pr_number in pr_numbers:
+            rows = evidence.setdefault((pr_number, "hosted"), [])
+            rows.append(
+                self.review_evidence(
+                    controller,
+                    pr_number,
+                    "hosted",
+                    f"hosted-default-minimum-{pr_number}",
+                )
+            )
+
     def _enable_batch_status(self, controller, values, batch_values=None):
         selected = batch_values if batch_values is not None else values
         calls = []
@@ -7406,6 +7819,7 @@ class ControllerTests(unittest.TestCase):
             )
         )
         evidence[(1, "hosted")] = [self.review_evidence(controller, 1, "hosted", "hosted-dry")]
+        self._add_hosted_minimum_rounds(controller, evidence, [1])
         controller.decide_stop(pr=2, channel="hosted", reason="explicitly stop this channel")
         self._enable_batch_status(controller, values)
 
@@ -7581,6 +7995,7 @@ class ControllerTests(unittest.TestCase):
                 }
                 for round_number in range(1, 4)
             ]
+        self._add_hosted_minimum_rounds(controller, evidence, range(1, 5))
         self._enable_batch_status(controller, values)
         original_pull = controller.github.pull_request
 
@@ -7689,6 +8104,7 @@ class ControllerTests(unittest.TestCase):
         cli = self.review_evidence(controller, 1, "cli", "cli-1")
         evidence[(1, "hosted")] = [hosted]
         evidence[(1, "cli")] = [cli]
+        self._add_hosted_minimum_rounds(controller, evidence, [1])
         batch_calls = self._enable_batch_status(controller, values)
 
         report = controller.status_overview()
@@ -7707,6 +8123,7 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack(list(values))
         evidence[(1, "hosted")] = [self.review_evidence(controller, 1, "hosted", "hosted-dry")]
         evidence[(1, "cli")] = [self.review_evidence(controller, 1, "cli", "cli-first")]
+        self._add_hosted_minimum_rounds(controller, evidence, [1])
         useful = self.review_evidence(controller, 2, "hosted", "hosted-useful")
         useful.update({"raw": 1, "accepted": 1, "source_resolution_status": "pending"})
         evidence[(2, "hosted")] = [useful]
@@ -7742,6 +8159,7 @@ class ControllerTests(unittest.TestCase):
                 controller.set_stack(list(values))
                 evidence[(1, "hosted")] = [self.review_evidence(controller, 1, "hosted", "hosted-dry")]
                 evidence[(1, "cli")] = [self.review_evidence(controller, 1, "cli", "cli-first")]
+                self._add_hosted_minimum_rounds(controller, evidence, [1])
                 batch_values = dict(values)
                 values[2] = dataclasses.replace(values[2], state="CLOSED", merged=merged)
                 self._enable_batch_status(controller, values, batch_values=batch_values)
@@ -7771,6 +8189,7 @@ class ControllerTests(unittest.TestCase):
             sqlite=True,
         )
         evidence[(1, "hosted")] = [self.review_evidence(controller, 1, "hosted", "hosted-dry")]
+        self._add_hosted_minimum_rounds(controller, evidence, [1])
         active = self.allocation_evidence(
             checkpoint="cli-running",
             channel="cli",
@@ -8146,6 +8565,7 @@ class ControllerTests(unittest.TestCase):
                         "finding_only_hold": True,
                     },
                 ]
+                self._add_hosted_minimum_rounds(controller, evidence, [1])
                 evidence.audit.update(
                     unresolved_findings=["known finding"],
                     finding_only_findings=["known finding"],
@@ -9202,6 +9622,7 @@ class ControllerTests(unittest.TestCase):
                 self.review_evidence(controller, pr_number, "cli", f"cli-{pr_number}-{round_number}")
                 for round_number in range(1, 4)
             ]
+        self._add_hosted_minimum_rounds(controller, evidence, range(1, 5))
         batch_calls = self._enable_batch_status(controller, values)
         pull_calls = []
         original_pull = controller.github.pull_request
@@ -9254,6 +9675,7 @@ class ControllerTests(unittest.TestCase):
             evidence[(pr_number, "hosted")] = [
                 self.review_evidence(controller, pr_number, "hosted", f"hosted-{pr_number}")
             ]
+        self._add_hosted_minimum_rounds(controller, evidence, range(2, 5))
         self._enable_batch_status(controller, values)
 
         report = controller.status_overview()
@@ -9273,6 +9695,7 @@ class ControllerTests(unittest.TestCase):
                 {**hosted, "channel": "cli", "checkpoint": f"cli-{pr_number}-{round_number}"}
                 for round_number in range(1, 4)
             ]
+        self._add_hosted_minimum_rounds(controller, evidence, range(1, 49))
         self._enable_batch_status(controller, values)
         target_windows = []
         original_status_from_state = controller._status_from_state
@@ -9306,6 +9729,7 @@ class ControllerTests(unittest.TestCase):
                 {**hosted, "channel": "cli", "checkpoint": f"cli-{pr_number}-{round_number}"}
                 for round_number in range(1, 4)
             ]
+        self._add_hosted_minimum_rounds(controller, evidence, range(1, 9))
         batch_calls = self._enable_batch_status(controller, values)
         pull_calls = []
         original_pull = controller.github.pull_request
@@ -12165,7 +12589,7 @@ class ControllerTests(unittest.TestCase):
                 "patch_id": f"patch-{head[:4]}",
             }
 
-        hosted_history = [review(HEAD_2, "hosted-current")]
+        hosted_history = [review(HEAD_2, "hosted-current"), review(HEAD_2, "hosted-minimum")]
         accepted_cli_history = [
             review(HEAD_1, "cli-old-1"),
             review(HEAD_1, "cli-old-2"),
@@ -12511,6 +12935,7 @@ class ControllerTests(unittest.TestCase):
                 "patch_id": f"patch-{HEAD_3[:4]}",
             }
         ]
+        hosted_history.append({**hosted_history[0], "checkpoint": "hosted-descendant-minimum"})
         controller = self.make(
             {1: pr(1, HEAD_3)},
             {(1, "cli"): history, (1, "hosted"): hosted_history},
@@ -12574,7 +12999,7 @@ class ControllerTests(unittest.TestCase):
                 value["active_review"] = True
             return value
 
-        hosted_history = [review(HEAD_2, "hosted-current")]
+        hosted_history = [review(HEAD_2, "hosted-current"), review(HEAD_2, "hosted-minimum")]
         cli_history = [
             review(HEAD_1, "cli-one"),
             review(HEAD_1, "cli-two"),
@@ -12843,7 +13268,7 @@ class ControllerTests(unittest.TestCase):
         cases = (
             ("hosted", "retain", 2, "COMPLETE"),
             ("cli", "reopen", 3, "READY"),
-            ("hosted", "reopen", 2, "READY"),
+            ("hosted", "reopen", 2, "BUDGET_EXHAUSTED"),
             ("cli", "retain", 3, "COMPLETE"),
         )
         for channel, decision, count, expected_status in cases:
@@ -13050,7 +13475,7 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(result["policy_override"]["patch_id"], f"patch-{HEAD_1[:4]}")
         self.assertEqual(result["policy_override"]["head"], HEAD_1)
-        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "READY")
 
         with self.assertRaises(ControllerError):
             controller.decide_policy(
@@ -14312,6 +14737,7 @@ class ControllerTests(unittest.TestCase):
                     "parent_head": PARENT,
                     "merge_base": BASE,
                     "patch_id": "old-patch",
+                    "accepted": 0,
                 }
             ],
         }

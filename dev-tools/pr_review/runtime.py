@@ -13,10 +13,10 @@ import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Event
+from threading import Event, get_ident
 from typing import Any
 
 from . import evidence, github, hosted, sqlite_hosted_capture
@@ -173,6 +173,7 @@ class LiveEvidence:
         self._histories: dict[tuple[int, str], list[dict[str, Any]]] = {}
         self._review_activity_identities: dict[tuple[int, str], dict[str, dict[str, str]]] = {}
         self._records_histories: dict[int, dict[str, Any] | None] = {}
+        self._review_period_reset_lock_paths: dict[Path, int] = {}
 
     def _payload(self, pr: int) -> dict[str, Any]:
         if pr not in self._payloads:
@@ -311,10 +312,64 @@ class LiveEvidence:
         self._records_histories.pop(pr, None)
         return self.history(pr, channel)
 
-    @staticmethod
-    def _request_lock_is_held(path: Path) -> bool:
+    @contextmanager
+    def review_period_reset_lock(self, pr: int, channel: str):
+        """Exclude native Hosted admission and CLI execution through a period reset.
+
+        Preserve each provider's established global-lock-before-PR-lock order:
+        Hosted admission takes its repository lock before the PR request lock,
+        while CLI execution takes its repository lock before that same PR lock.
+        A reset takes the selected channel's repository lock and then the shared
+        PR request lock, refreshing evidence and persisting the decision before
+        releasing either lock.
+        """
+
+        if isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0:
+            raise ControllerError("review-period reset requires a positive PR number")
+        if channel not in {"hosted", "cli"}:
+            raise ControllerError("review-period reset channel must be hosted or cli")
+        try:
+            common = evidence.git_common_dir()
+        except Exception as error:
+            raise ControllerError("provider exclusion lock paths cannot be resolved for review-period reset") from error
+        repository_lock = (
+            common / "firemud" / "hosted" / self.repo.replace("/", "_") / "repository.request.lock"
+            if channel == "hosted"
+            else common / "firemud" / "pr-review" / "cli.lock"
+        )
+        request_lock = hosted.default_trigger_record_path(self.repo, pr, common).parent / "request.lock"
+        lock_paths = (repository_lock, request_lock)
+        with ExitStack() as locks:
+            for lock_path in lock_paths:
+                try:
+                    lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                    if lock_path.parent.is_symlink() or lock_path.is_symlink():
+                        raise OSError("provider exclusion lock path must not be a symlink")
+                    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+                    os.fchmod(descriptor, 0o600)
+                    locks.callback(os.close, descriptor)
+                    try:
+                        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError as error:
+                        raise ControllerError(
+                            "cannot reset a review period while provider admission or CLI execution is active"
+                        ) from error
+                    self._review_period_reset_lock_paths[lock_path] = get_ident()
+                    locks.callback(self._review_period_reset_lock_paths.pop, lock_path, None)
+                    locks.callback(fcntl.flock, descriptor, fcntl.LOCK_UN)
+                except ControllerError:
+                    raise
+                except OSError as error:
+                    raise ControllerError(
+                        "provider admission and execution exclusion cannot be verified for review-period reset"
+                    ) from error
+            yield
+
+    def _request_lock_is_held(self, path: Path) -> bool:
         """Check an existing request lock without creating or changing a file."""
 
+        if self._review_period_reset_lock_paths.get(path) == get_ident():
+            return False
         return LiveEvidence._request_lock_state(path) != "clear"
 
     @staticmethod
@@ -347,6 +402,8 @@ class LiveEvidence:
         if state_path.name != "pr-review-stack.json":
             return "unknown"
         cli_lock_path = state_path.parent.parent / "firemud" / "pr-review" / "cli.lock"
+        if self._review_period_reset_lock_paths.get(cli_lock_path) == get_ident():
+            return "clear"
         return self._request_lock_state(cli_lock_path)
 
     def active_review_targets(
@@ -2403,6 +2460,15 @@ class LiveEvidence:
                 "comment_id": checkpoint.comment_id,
                 "observed_at": checkpoint.created_at,
                 "checkpoint": str(checkpoint.comment_id or checkpoint.created_at),
+                "source_run_id": (
+                    checkpoint.run_id
+                    if channel == "cli"
+                    else f"hosted-review:{checkpoint.hosted_review_id}"
+                    if checkpoint.hosted_review_id is not None
+                    else f"hosted-review:{proof.get('review_id')}"
+                    if channel == "hosted" and isinstance(proof, Mapping) and proof.get("review_id") is not None
+                    else None
+                ),
                 "completed": completed,
                 "attributable": attributable,
                 "anchored": anchor_complete if completed else None,
@@ -2457,6 +2523,7 @@ class LiveEvidence:
                         "reviewed_head": candidate_sha,
                         "observed_at": capture.metadata.get("completed_at", ""),
                         "checkpoint": f"pending-capture:{run_id}",
+                        "source_run_id": run_id,
                         "completed": False,
                         "attributable": False,
                         "anchored": False,

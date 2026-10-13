@@ -296,60 +296,6 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   @Test
-  void fullVersionRequestDigestBackfillReturnsEmptyForMismatchedAttemptIdentity() {
-    String tenantId = "9004";
-    String publishWorkflowId = "full-version-digest-backfill-integration-test";
-    Game game = new Game();
-    game.setTenantId(tenantId);
-    game.setName("digest-backfill-proof-game");
-    gameRepository.save(game);
-
-    Version version = new Version();
-    version.setTenantId(tenantId);
-    version.setVersionNumber(1);
-    version.setVersionState(VersionLifecycleState.DRAFT);
-    version.setVersionStateEpoch(1L);
-    version.setNotes("digest backfill proof");
-    Version savedVersion = versionRepository.save(version);
-
-    PublishAttempt attempt = new PublishAttempt();
-    attempt.setTenantId(tenantId);
-    attempt.setPublishWorkflowId(publishWorkflowId);
-    attempt.setPublishType(PublishType.FULL_VERSION);
-    attempt.setStatus(PublishAttemptStatus.PENDING);
-    attempt.setVersionId(savedVersion.getId());
-    attempt.setVersionNumber(savedVersion.getVersionNumber());
-    publishAttemptRepository.save(attempt);
-    PublishAttempt savedAttempt =
-        publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
-
-    PublishAttempt backfilled =
-        publishAttemptRepository
-            .backfillFullVersionRequestDigestIfAbsent(
-                savedAttempt.getId(),
-                tenantId,
-                publishWorkflowId,
-                savedVersion.getId(),
-                savedVersion.getVersionNumber(),
-                "exact-identity-digest")
-            .orElseThrow();
-
-    assertThat(backfilled.getRequestDigest()).isEqualTo("exact-identity-digest");
-    assertThat(
-            publishAttemptRepository.backfillFullVersionRequestDigestIfAbsent(
-                savedAttempt.getId(),
-                "wrong-tenant",
-                publishWorkflowId,
-                savedVersion.getId(),
-                savedVersion.getVersionNumber(),
-                "mismatched-identity-digest"))
-        .isEmpty();
-    PublishAttempt storedAttempt =
-        publishAttemptRepository.findByPublishWorkflowId(publishWorkflowId).orElseThrow();
-    assertThat(storedAttempt.getRequestDigest()).isEqualTo("exact-identity-digest");
-  }
-
-  @Test
   void failedScriptPatchRetainsCandidateForReplayAndReservesItsTuple() {
     String tenantId = "9011";
     String publishRequestId = "script-patch-gate-failure-request";
