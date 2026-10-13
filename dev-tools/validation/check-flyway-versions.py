@@ -161,9 +161,10 @@ def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str
                 seen[item.version_key] = item
 
         previous = parent_grouped.get(project, [])
+        previous_paths = {item.path for item in previous}
         frontier = max((item.version_key for item in previous), default=None)
         for item in items:
-            if parent is not None and item.path not in parent and frontier is not None and item.version_key <= frontier:
+            if parent is not None and item.path not in previous_paths and frontier is not None and item.version_key <= frontier:
                 issues.append(f"services/{project}: new migration {item.path} (V{item.version_text}) "
                               f"must exceed effective parent frontier V{version_label(frontier)}")
 
@@ -210,6 +211,48 @@ def run_self_test() -> None:
     check("duplicate-only without a base", history, None, None)
     check("new low local", {**history, local + "V2__new.sql": b"-- new"}, history, "frontier V1002")
     check("forward local", {**history, local + "V1003__new.sql": b"-- new"}, history, None)
+
+    unadopted_parent = {
+        "services/example-service/build.gradle.kts": b"dependencies {}",
+        "services/example-service/src/main/resources/application.yml":
+            b"spring:\n  flyway:\n    locations: classpath:db/migration\n",
+        local + "V2000__init.sql": b"-- local\n",
+        shared + "V1000__saga_a.sql": b"-- shared a\n",
+        shared + "V1001__saga_b.sql": b"-- shared b\n",
+        shared + "V1002__saga_c.sql": b"-- shared c\n",
+    }
+    newly_adopted = {
+        **unadopted_parent,
+        "services/example-service/build.gradle.kts": wiring["services/example-service/build.gradle.kts"],
+        "services/example-service/src/main/resources/application.yml":
+            wiring["services/example-service/src/main/resources/application.yml"],
+    }
+    check("newly effective shared history below local frontier", newly_adopted, unadopted_parent, "frontier V2000")
+    check("unchanged non-adopter with raw shared history", unadopted_parent, unadopted_parent, None)
+
+    forward_parent = {path: data for path, data in unadopted_parent.items()
+                      if path != local + "V2000__init.sql"}
+    forward_parent[local + "V999__init.sql"] = b"-- local\n"
+    forward_adopted = {
+        **forward_parent,
+        "services/example-service/build.gradle.kts": wiring["services/example-service/build.gradle.kts"],
+        "services/example-service/src/main/resources/application.yml":
+            wiring["services/example-service/src/main/resources/application.yml"],
+        shared + "V1003__saga_forward.sql": b"-- forward shared\n",
+    }
+    check("newly effective shared history above local frontier", forward_adopted, forward_parent, None)
+
+    test_only_parent = {
+        **unadopted_parent,
+        "services/example-service/src/main/resources/application.yml": wiring["services/example-service/src/main/resources/application.yml"],
+    }
+    test_only_forward = {
+        **test_only_parent,
+        "services/example-service/build.gradle.kts": b'testImplementation(project(":common-saga"))',
+        local + "V2001__forward.sql": b"-- new local\n",
+    }
+    check("test-only saga dependency does not adopt shared migrations", test_only_forward, test_only_parent, None)
+
     advanced = {**history, local + "V1005__later.sql": b"-- later"}
     check("shared below adopter frontier", {**advanced, shared + "V1004__new.sql": b"-- new"}, advanced, "frontier V1005")
     check("forward shared", {**advanced, shared + "V1006__new.sql": b"-- new"}, advanced, None)

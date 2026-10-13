@@ -198,16 +198,17 @@ class RunOwnedPreseededActorAssignmentCapabilityTest {
                     new TrustManager[] {loadedTrustManager}, configuredFingerprint))
         .isInstanceOf(RunOwnedPreseededActorAssignmentCapability.InvalidCapabilityException.class);
 
+    assertThatThrownBy(
+            () ->
+                RunOwnedPreseededActorAssignmentCapability.fingerprintValidatedTrustRoot(
+                    List.of(trustedRoot, trustedRoot)))
+        .isInstanceOf(RunOwnedPreseededActorAssignmentCapability.InvalidCapabilityException.class);
+
     doThrow(new CertificateExpiredException()).when(trustedRoot).checkValidity();
     assertThatThrownBy(
             () ->
                 RunOwnedPreseededActorAssignmentCapability.fingerprintValidatedTrustRoot(
                     List.of(trustedRoot)))
-        .isInstanceOf(RunOwnedPreseededActorAssignmentCapability.InvalidCapabilityException.class);
-    assertThatThrownBy(
-            () ->
-                RunOwnedPreseededActorAssignmentCapability.fingerprintValidatedTrustRoot(
-                    List.of(trustedRoot, trustedRoot)))
         .isInstanceOf(RunOwnedPreseededActorAssignmentCapability.InvalidCapabilityException.class);
   }
 

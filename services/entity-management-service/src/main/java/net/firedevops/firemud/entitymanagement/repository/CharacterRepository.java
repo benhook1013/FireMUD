@@ -272,7 +272,8 @@ public class CharacterRepository {
         CHARACTERS
             .TENANT_ID
             .eq(tenantId)
-            .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq(ActorIdentityStatus.QUARANTINED.name())));
+            .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq(ActorIdentityStatus.QUARANTINED.name()))
+            .and(CHARACTERS.TENANT_UUID.isNull()));
   }
 
   /**

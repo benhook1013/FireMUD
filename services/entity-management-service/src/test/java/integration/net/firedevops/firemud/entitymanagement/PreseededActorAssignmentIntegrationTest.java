@@ -832,8 +832,7 @@ class PreseededActorAssignmentIntegrationTest {
                 entityTenantRowId, namespaceUuid.toString(), "Canonical Actor"))
         .isEmpty();
     assertThat(characterRepository.countByTenantId(entityTenantRowId)).isEqualTo(2);
-    assertThat(characterRepository.countQuarantinedByTenantId(entityTenantRowId))
-        .isEqualTo(quarantined ? 3 : 2);
+    assertThat(characterRepository.countQuarantinedByTenantId(entityTenantRowId)).isEqualTo(2);
     assertThat(inventoryEntryRepository.countByCharacterTenantId(entityTenantRowId)).isEqualTo(1);
     assertThat(characterEquipmentRepository.countByCharacterTenantId(entityTenantRowId))
         .isEqualTo(1);
