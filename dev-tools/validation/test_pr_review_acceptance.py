@@ -200,6 +200,22 @@ class AcceptanceCliTest(unittest.TestCase):
                         "parent_head": BASE,
                         "merge_base": BASE,
                         "patch_id": "patch-1",
+                    },
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "child_head": HEAD_1,
+                        "checkpoint": "hosted-complete-second",
+                        "completed": True,
+                        "attributable": True,
+                        "anchored": True,
+                        "corrected_state": True,
+                        "accepted": 0,
+                        "raw": 0,
+                        "parent_identity": "develop",
+                        "parent_head": BASE,
+                        "merge_base": BASE,
+                        "patch_id": "patch-1",
                     }
                 ]
                 payload["pull_requests"][1]["base_ref"] = actual_base_ref

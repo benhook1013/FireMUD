@@ -29,19 +29,41 @@ public final class RealmPolicySource {
 
   private RealmPolicySource() {}
 
+  /**
+   * One owner-authored mutation; the published snapshot continues to retain only effective rows.
+   */
+  public sealed interface Mutation permits Policy, Deletion {
+    UUID commitId();
+
+    UUID revisionId();
+
+    String logicalRevisionId();
+  }
+
   /** Original authored UUID and logical identity survive every inherited snapshot. */
   public record Policy(
-      UUID commitId, UUID revisionId, String logicalRevisionId, RealmEntryPolicy policy) {
+      UUID commitId, UUID revisionId, String logicalRevisionId, RealmEntryPolicy policy)
+      implements Mutation {
     public Policy {
       nonNil(commitId);
       nonNil(revisionId);
-      if (logicalRevisionId == null
-          || logicalRevisionId.isBlank()
-          || logicalRevisionId.length() > 128
-          || !StandardCharsets.UTF_8.newEncoder().canEncode(logicalRevisionId)) {
-        throw new IllegalArgumentException("Exact authored logical revision identity required");
-      }
+      requireLogicalRevisionId(logicalRevisionId);
       policy = RealmEntryPolicy.parseCanonical(policy.canonicalJson(), JSON);
+    }
+  }
+
+  /** Explicit deletion carries the exact authored identity and selector in the stored binding. */
+  public record Deletion(
+      UUID commitId, UUID revisionId, String logicalRevisionId, String worldSlug, String realmSlug)
+      implements Mutation {
+    public Deletion {
+      nonNil(commitId);
+      nonNil(revisionId);
+      requireLogicalRevisionId(logicalRevisionId);
+      if (!RealmEntryPolicy.isCanonicalSlug(worldSlug)
+          || !RealmEntryPolicy.isCanonicalSlug(realmSlug)) {
+        throw new IllegalArgumentException("Canonical policy deletion selectors required");
+      }
     }
   }
 
@@ -70,15 +92,52 @@ public final class RealmPolicySource {
         RealmEntryPolicy.parse(root.get("policy").toString(), JSON));
   }
 
-  public static List<Policy> effective(List<Policy> inherited, List<Policy> updates) {
+  /** Parses one closed owner mutation while preserving the established UPSERT policy parser. */
+  public static Mutation mutation(
+      DraftCommitBinding binding, DraftCommitBinding.RevisionPayload input) {
+    if (input.owner() != DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE) {
+      throw new IllegalArgumentException("Policy mutation belongs to Game Design control plane");
+    }
+    JsonNode root = tree(input.payload());
+    if (!RealmEntryPolicy.REVISION_KIND.equals(text(root, "revisionKind"))) {
+      throw new IllegalArgumentException("Unsupported Game Design owner revision kind");
+    }
+    if (!root.has("operation")) return revision(binding, input);
+
+    fields(root, "revisionKind", "logicalRevisionId", "operation", "worldSlug", "realmSlug");
+    if (!"DELETE".equals(text(root, "operation"))) {
+      throw new IllegalArgumentException("Unsupported realm policy mutation operation");
+    }
+    return new Deletion(
+        binding.commitId(),
+        input.revisionId(),
+        text(root, "logicalRevisionId"),
+        text(root, "worldSlug"),
+        text(root, "realmSlug"));
+  }
+
+  public static List<Policy> effective(List<Policy> inherited, List<? extends Mutation> updates) {
     Map<String, Policy> policies = new LinkedHashMap<>();
     for (Policy policy : draftOrdered(inherited)) policies.put(selector(policy), policy);
     var seen = new HashSet<String>();
-    for (Policy policy : updates) {
-      if (!seen.add(selector(policy))) {
+    for (Mutation mutation : updates) {
+      String selector = selector(mutation);
+      if (!seen.add(selector)) {
         throw new IllegalArgumentException("A commit repeats a policy selector");
       }
-      policies.put(selector(policy), policy);
+      if (mutation instanceof Policy policy) {
+        policies.put(selector, policy);
+      } else if (mutation instanceof Deletion deletion) {
+        Policy existing = policies.get(selector);
+        if (existing == null) {
+          throw new IllegalArgumentException("Cannot delete an absent policy selector");
+        }
+        if (!existing.logicalRevisionId().equals(deletion.logicalRevisionId())) {
+          throw new IllegalArgumentException(
+              "Policy deletion logical revision identity does not match its selector");
+        }
+        policies.remove(selector);
+      }
     }
     return draftOrdered(new ArrayList<>(policies.values()));
   }
@@ -191,6 +250,21 @@ public final class RealmPolicySource {
 
   private static String selector(Policy policy) {
     return policy.policy().worldSlug() + "/" + policy.policy().realmSlug();
+  }
+
+  private static String selector(Mutation mutation) {
+    if (mutation instanceof Policy policy) return selector(policy);
+    Deletion deletion = (Deletion) mutation;
+    return deletion.worldSlug() + "/" + deletion.realmSlug();
+  }
+
+  private static void requireLogicalRevisionId(String value) {
+    if (value == null
+        || value.isBlank()
+        || value.length() > 128
+        || !StandardCharsets.UTF_8.newEncoder().canEncode(value)) {
+      throw new IllegalArgumentException("Exact authored logical revision identity required");
+    }
   }
 
   private static void nonNil(UUID value) {

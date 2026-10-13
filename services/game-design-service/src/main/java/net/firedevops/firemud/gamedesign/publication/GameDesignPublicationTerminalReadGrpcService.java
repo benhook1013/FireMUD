@@ -64,6 +64,7 @@ public final class GameDesignPublicationTerminalReadGrpcService
       return;
     }
     final ReadResult result;
+    final ReadGameDesignPublicationTerminalResponse response;
     try {
       var operation = GameDesignPublicationOperation.fromStored(request.operationBytes());
       // readExact owns the independent read-only REPEATABLE_READ transaction and exact binding.
@@ -86,7 +87,9 @@ public final class GameDesignPublicationTerminalReadGrpcService
                     stored.orElseThrow().outcome()),
                 Optional.of(terminal));
       }
+      response = GameDesignPublicationTerminalReadGrpcCodec.toResponse(request, result);
     } catch (org.springframework.dao.DataAccessException
+        | org.springframework.transaction.TransactionException
         | org.jooq.exception.DataAccessException unavailable) {
       fail(observer, Status.UNAVAILABLE, "Publication terminal owner storage unavailable");
       return;
@@ -100,7 +103,7 @@ public final class GameDesignPublicationTerminalReadGrpcService
       fail(observer, Status.INTERNAL, "Publication terminal owner read failed");
       return;
     }
-    observer.onNext(GameDesignPublicationTerminalReadGrpcCodec.toResponse(request, result));
+    observer.onNext(response);
     observer.onCompleted();
   }
 

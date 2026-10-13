@@ -223,14 +223,6 @@ class VersionPublishCommandServiceImplTest {
     assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
     verify(publishAttemptRepository, never()).save(any(PublishAttempt.class));
     verify(authoredSelections, never()).reserve(any(PublishIntent.class));
-    verify(publishAttemptRepository, never())
-        .backfillFullVersionRequestDigestIfAbsent(
-            any(Long.class),
-            any(String.class),
-            any(String.class),
-            any(Long.class),
-            any(Integer.class),
-            any(String.class));
     verify(publishGateService, never())
         .collectFullVersionParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class));
@@ -369,14 +361,6 @@ class VersionPublishCommandServiceImplTest {
 
     assertEquals("SUCCEEDED", snapshot.status());
     verify(publishedReleaseBundleService).findPublishedReleaseBundle("tenant-1", 10L);
-    verify(publishAttemptRepository, never())
-        .backfillFullVersionRequestDigestIfAbsent(
-            any(Long.class),
-            any(String.class),
-            any(String.class),
-            any(Long.class),
-            any(Integer.class),
-            any(String.class));
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
     verify(versionAssetArtifactService, never()).findState(any(String.class), any(Long.class));
     verify(gameRepository, never()).findByTenantIdForUpdate(any(String.class));
@@ -513,14 +497,6 @@ class VersionPublishCommandServiceImplTest {
             new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId));
 
     assertEquals("SUCCEEDED", snapshot.status());
-    verify(publishAttemptRepository, never())
-        .backfillFullVersionRequestDigestIfAbsent(
-            any(Long.class),
-            any(String.class),
-            any(String.class),
-            any(Long.class),
-            any(Integer.class),
-            any(String.class));
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
     verify(versionAssetArtifactService, never()).findState(any(String.class), any(Long.class));
     verify(gameRepository, never()).findByTenantIdForUpdate(any(String.class));
@@ -551,14 +527,6 @@ class VersionPublishCommandServiceImplTest {
     assertEquals("FAILED", snapshot.status());
     assertEquals("PUBLISH_FAILED", snapshot.failureCode());
     assertEquals("legacy publish failure", snapshot.failureMessage());
-    verify(publishAttemptRepository, never())
-        .backfillFullVersionRequestDigestIfAbsent(
-            any(Long.class),
-            any(String.class),
-            any(String.class),
-            any(Long.class),
-            any(Integer.class),
-            any(String.class));
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
     verify(gameRepository, never()).findByTenantIdForUpdate(any(String.class));
     verify(publishAttemptService, never()).executeFullVersionTransaction(any());
@@ -601,14 +569,6 @@ class VersionPublishCommandServiceImplTest {
                     "tenant-1", "notes", "workflow-1", "legacy-random-workflow")));
 
     verify(publishAttemptRepository, never()).findByPublishWorkflowId(any(String.class));
-    verify(publishAttemptRepository, never())
-        .backfillFullVersionRequestDigestIfAbsent(
-            any(Long.class),
-            any(String.class),
-            any(String.class),
-            any(Long.class),
-            any(Integer.class),
-            any(String.class));
   }
 
   @Test
@@ -1284,14 +1244,6 @@ class VersionPublishCommandServiceImplTest {
         IllegalStateException.class,
         () -> reflectiveUnitHarnessReconcileSelectedPublicationMechanics(request));
 
-    verify(publishAttemptRepository, never())
-        .backfillFullVersionRequestDigestIfAbsent(
-            any(Long.class),
-            any(String.class),
-            any(String.class),
-            any(Long.class),
-            any(Integer.class),
-            any(String.class));
     assertEquals(fixture.reservation().selection().digest(), attempt.getRequestDigest());
   }
 
@@ -1306,14 +1258,6 @@ class VersionPublishCommandServiceImplTest {
         IllegalStateException.class,
         () -> reflectiveUnitHarnessReconcileSelectedPublicationMechanics(request));
 
-    verify(publishAttemptRepository, never())
-        .backfillFullVersionRequestDigestIfAbsent(
-            any(Long.class),
-            any(String.class),
-            any(String.class),
-            any(Long.class),
-            any(Integer.class),
-            any(String.class));
     assertEquals(fixture.reservation().selection().digest(), attempt.getRequestDigest());
   }
 
@@ -1682,14 +1626,6 @@ class VersionPublishCommandServiceImplTest {
                 new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
 
     verify(publishAttemptRepository).findByPublishWorkflowId(workflowId);
-    verify(publishAttemptRepository, never())
-        .backfillFullVersionRequestDigestIfAbsent(
-            any(Long.class),
-            any(String.class),
-            any(String.class),
-            any(Long.class),
-            any(Integer.class),
-            any(String.class));
     verify(gameRepository, never()).findByTenantIdForUpdate(any(String.class));
     verify(versionRepository, never()).findByTenantIdAndId(any(String.class), any(Long.class));
     verify(versionRepository, never()).save(any(Version.class));

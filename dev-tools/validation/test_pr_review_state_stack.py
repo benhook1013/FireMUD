@@ -273,7 +273,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertNotIn("baseline_checkpoint", allocation.to_dict())
         self.assertNotIn("max_additional_completed", allocation.to_dict())
 
-    def test_bounded_review_allocation_round_trips_without_changing_schema_v1(self):
+    def test_bounded_review_allocation_round_trips_in_state_model_two(self):
         allocation = ReviewAllocation(
             pr=2827,
             channel="hosted",
@@ -296,7 +296,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertTrue(restored.reopens_taper)
         state = ReviewState(ordered_prs=(2827,), allocations={allocation.identity: allocation})
         self.assertEqual(ReviewState.from_dict(state.to_dict()), state)
-        self.assertEqual(state.to_dict()["schema_version"], 1)
+        self.assertEqual(state.to_dict()["schema_version"], 2)
 
     def test_review_allocation_accepts_decision_time_bounds_without_a_pinned_checkpoint(self):
         allocation = ReviewAllocation(
@@ -462,6 +462,29 @@ class ReviewStateStackTest(unittest.TestCase):
 
         self.assertEqual(state.ordered_prs, (2849,))
         self.assertEqual(state.allocations, {})
+        self.assertEqual(state.schema_version, 2)
+        self.assertEqual(state.review_period_decisions, ())
+
+    def test_v1_json_read_is_nonmutating_until_the_next_successful_state_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "review-state.json"
+            legacy = {"schema_version": 1, "ordered_prs": [2849]}
+            original = json.dumps(legacy, separators=(",", ":")).encode("utf-8")
+            path.write_bytes(original)
+
+            status = state_module.controller_state_status(path)
+            loaded = StateStore(path).load()
+
+            self.assertTrue(status["compatible"])
+            self.assertEqual(status["state_schema_version"], 1)
+            self.assertEqual(loaded.schema_version, 2)
+            self.assertEqual(path.read_bytes(), original)
+
+            StateStore(path).update(lambda state: state)
+
+            persisted = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["schema_version"], 2)
+            self.assertEqual(persisted["ordered_prs"], [2849])
 
     def test_review_allocation_rejects_malformed_or_incomplete_records(self):
         base = {
@@ -553,7 +576,7 @@ class ReviewStateStackTest(unittest.TestCase):
             loaded = store.load()
             self.assertEqual(loaded, state)
             document = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(document["schema_version"], 1)
+            self.assertEqual(document["schema_version"], 2)
             self.assertEqual(document["policy_overrides"]["2838:hosted"]["head"], "h1")
             self.assertEqual(document["reconciliations"][0]["parent_head"], "parent-head")
             self.assertEqual(document["summary_dispositions"][0]["summary_id"], 71)

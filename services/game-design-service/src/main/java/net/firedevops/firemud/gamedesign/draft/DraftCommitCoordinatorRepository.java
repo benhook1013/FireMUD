@@ -335,11 +335,12 @@ public class DraftCommitCoordinatorRepository {
 
   /**
    * Advances the internal synchronized visibility record only from the complete exact APPLIED
-   * result vector. This storage primitive is intentionally not wired to an owner producer or read
-   * API; callers must validate each remote producer's authority before invoking it.
+   * result vector. This package-private storage primitive is intentionally not wired to an owner
+   * producer or read API; callers must validate each remote producer's authority before invoking
+   * it.
    */
   @Transactional(propagation = Propagation.MANDATORY, isolation = Isolation.READ_COMMITTED)
-  public VisibilityFence advanceVisibilityFence(
+  VisibilityFence advanceVisibilityFence(
       DraftCommitBinding binding, CoordinatorProof coordinatorProof) {
     requireWritableReadCommittedTransaction();
     Objects.requireNonNull(coordinatorProof, "coordinatorProof");
