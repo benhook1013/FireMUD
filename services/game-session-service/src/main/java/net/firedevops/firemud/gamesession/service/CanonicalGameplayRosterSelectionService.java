@@ -121,7 +121,7 @@ public final class CanonicalGameplayRosterSelectionService {
     try {
       ownerReference = rosterClient.readSelectedPreseededAssignment(snapshot, selectedContext);
     } catch (StatusRuntimeException failure) {
-      return new Denied(assignmentFailure(failure));
+      return new Denied(assignmentFailure(failure, expectedMenuIdentity != null));
     } catch (RuntimeException invalidOrUnavailable) {
       return new Denied(Denial.INVALID_ASSIGNMENT_PROOF);
     }
@@ -174,13 +174,14 @@ public final class CanonicalGameplayRosterSelectionService {
     return Denial.INVALID_ROSTER_PROOF;
   }
 
-  private static Denial assignmentFailure(StatusRuntimeException failure) {
+  private static Denial assignmentFailure(
+      StatusRuntimeException failure, boolean menuIdentitySupplied) {
     Status status = failure.getStatus();
     if (isTransient(status)) {
       return Denial.ASSIGNMENT_UNAVAILABLE;
     }
     if (status.getCode() == Status.Code.FAILED_PRECONDITION) {
-      return Denial.STALE_MENU_IDENTITY;
+      return menuIdentitySupplied ? Denial.STALE_MENU_IDENTITY : Denial.ROUTE_CHANGED;
     }
     return Denial.INVALID_ASSIGNMENT_PROOF;
   }

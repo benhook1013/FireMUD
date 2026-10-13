@@ -545,6 +545,33 @@ class CanonicalGameplayRosterSelectionServiceTest {
                 context(changedAssignment.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
                 null,
                 null),
+        CanonicalGameplayRosterSelectionService.Denial.ROUTE_CHANGED);
+
+    var changedAssignmentWithMenu = harness(twoActors());
+    doThrow(
+            Status.FAILED_PRECONDITION
+                .withDescription("snapshot changed or selected actor is absent")
+                .asRuntimeException())
+        .when(changedAssignmentWithMenu.stub())
+        .readSelectedPreseededAssignment(any());
+    var menuResult =
+        changedAssignmentWithMenu
+            .service()
+            .select(
+                context(changedAssignmentWithMenu.route(), "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                null,
+                null);
+    assertThat(menuResult)
+        .isInstanceOf(CanonicalGameplayRosterSelectionService.SelectionRequired.class);
+    var menuIdentity =
+        ((CanonicalGameplayRosterSelectionService.SelectionRequired) menuResult).menuIdentity();
+    assertDenied(
+        changedAssignmentWithMenu
+            .service()
+            .select(
+                context(changedAssignmentWithMenu.route(), "ffffffff-ffff-4fff-8fff-ffffffffffff"),
+                "1",
+                menuIdentity),
         CanonicalGameplayRosterSelectionService.Denial.STALE_MENU_IDENTITY);
 
     for (Status.Code code : List.of(Status.Code.PERMISSION_DENIED, Status.Code.INVALID_ARGUMENT)) {
