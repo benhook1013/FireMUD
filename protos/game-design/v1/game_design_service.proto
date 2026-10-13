@@ -124,8 +124,11 @@ message PublishVersionRequest {
   string tenant_id = 1;
   string notes = 2;
   string publish_request_id = 3;
-  // Complete together for new publication: the exact existing Draft selection.
-  // When all selection fields are empty, only a retained terminal legacy retry is eligible.
+  // Complete together for new publication: the exact existing Draft selection. When set,
+  // tenant_id, version_id, selected_commit_request_id, and selected_commit_id must be
+  // canonical lower-case non-nil UUIDs (tenant_id is the canonical tenant UUID, not the key).
+  // When all selection fields are empty, tenant_id is the legacy tenant key and only a
+  // retained terminal legacy retry is eligible.
   string version_id = 4;
   string expected_version_state_epoch = 5;
   string selected_commit_request_id = 6;

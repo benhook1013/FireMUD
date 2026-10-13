@@ -839,6 +839,9 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     var fixture = fixture();
     var sealed = new CountDownLatch(1);
     var releaseSeal = new CountDownLatch(1);
+    var attempting = new CountDownLatch(1);
+    var winnerPid = new AtomicInteger();
+    var loserPid = new AtomicInteger();
     try (var executor = Executors.newFixedThreadPool(2)) {
       var winner =
           executor.submit(
@@ -848,6 +851,11 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                       .executeWithoutResult(
                           status -> {
                             noPublicationInTransaction(fixture);
+                            winnerPid.set(
+                                java.util.Objects.requireNonNull(
+                                        fixture.dsl().fetchOne("SELECT pg_backend_pid()"),
+                                        "no-publication transaction must expose its PostgreSQL backend")
+                                    .get(0, Integer.class));
                             sealed.countDown();
                             await(releaseSeal);
                           }));
@@ -855,9 +863,41 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
       var loser =
           executor.submit(
               () -> {
-                assertThatThrownBy(() -> publish(fixture))
-                    .isInstanceOf(IllegalStateException.class);
+                fixture
+                    .write()
+                    .executeWithoutResult(
+                        status -> {
+                          loserPid.set(
+                              java.util.Objects.requireNonNull(
+                                      fixture.dsl().fetchOne("SELECT pg_backend_pid()"),
+                                      "late publisher transaction must expose its PostgreSQL backend")
+                                  .get(0, Integer.class));
+                          attempting.countDown();
+                          assertThatThrownBy(() -> publishInTransaction(fixture))
+                              .isInstanceOf(IllegalStateException.class);
+                        });
               });
+      assertThat(attempting.await(10, TimeUnit.SECONDS)).isTrue();
+      boolean observedBlock = false;
+      long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+      while (System.nanoTime() < deadline) {
+        var activity =
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT ? = ANY(pg_blocking_pids(pid)) AND wait_event_type = 'Lock' "
+                        + "AND query LIKE 'SELECT id FROM game WHERE tenant_id%' AS blocked "
+                        + "FROM pg_stat_activity WHERE pid = ?",
+                    winnerPid.get(), loserPid.get());
+        if (activity != null && Boolean.TRUE.equals(activity.get("blocked", Boolean.class))) {
+          observedBlock = true;
+          break;
+        }
+        Thread.sleep(25);
+      }
+      assertThat(observedBlock)
+          .as("late publisher backend blocked by no-publication winner on the game owner lock")
+          .isTrue();
       releaseSeal.countDown();
       winner.get(10, TimeUnit.SECONDS);
       loser.get(10, TimeUnit.SECONDS);

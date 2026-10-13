@@ -303,9 +303,6 @@ public class PublishedReleaseBundleRepository {
             persisted.getManifestSchemaVersion(), requested.getManifestSchemaVersion())
         || !Objects.equals(persisted.getArtifactDigestsJson(), requested.getArtifactDigestsJson())
         || !Objects.equals(
-            persisted.getWorldPublishedStartLocationEvidenceJson(),
-            requested.getWorldPublishedStartLocationEvidenceJson())
-        || !Objects.equals(
             persisted.getAttestationSchemaVersion(), requested.getAttestationSchemaVersion())
         || !Objects.equals(persisted.getPublishWorkflowId(), requested.getPublishWorkflowId())
         || persisted.getVersionNumber() != requested.getVersionNumber()
