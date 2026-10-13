@@ -454,25 +454,24 @@ public final class AssetSourceRepository {
     var target = reference.sourceBinding().target();
     var row =
         dsl.fetchOne(
-            "SELECT file_name, content_type, data FROM game_assets WHERE tenant_id = ? AND id = ?"
+            "SELECT file_name, content_type, 'sha256:' || encode(sha256(data), 'hex') AS digest, "
+                + "octet_length(data)::BIGINT AS byte_size FROM game_assets "
+                + "WHERE tenant_id = ? AND id = ? AND data IS NOT NULL"
                 + (lock ? " FOR UPDATE" : ""),
             target.gameDesignVersionTenantKey(),
             Long.parseLong(reference.assetRowId()));
-    if (row == null
-        || !reference.usageKey().equals(row.get("file_name", String.class))
-        || row.get("data", byte[].class) == null)
+    if (row == null || !reference.usageKey().equals(row.get("file_name", String.class)))
       throw new IllegalStateException("ASSET_SOURCE_EXACT_BYTES_UNAVAILABLE");
-    byte[] bytes = row.get("data", byte[].class);
     return new net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item(
         reference,
         row.get("content_type", String.class),
-        CommandSource.sha256(bytes),
-        bytes.length);
+        row.get("digest", String.class),
+        row.get("byte_size", Long.class));
   }
 
   private void verifyItems(AssetSnapshot snapshot) {
     for (var item : snapshot.items()) {
-      if (!item.equals(qualifyMetadata(item.reference())))
+      if (!item.equals(qualify(item.reference(), false)))
         throw new IllegalStateException("ASSET_SOURCE_BYTE_READBACK_CONFLICT");
       var r = item.reference();
       var row =
@@ -494,25 +493,6 @@ public final class AssetSourceRepository {
           || item.byteSize() != row.get("byte_size", Long.class))
         throw new IllegalStateException("ASSET_SOURCE_REVISION_READBACK_CONFLICT");
     }
-  }
-
-  private net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item qualifyMetadata(
-      AssetSource.Reference reference) {
-    var target = reference.sourceBinding().target();
-    var row =
-        dsl.fetchOne(
-            "SELECT file_name, content_type, 'sha256:' || encode(sha256(data), 'hex') AS digest, "
-                + "octet_length(data)::BIGINT AS byte_size FROM game_assets "
-                + "WHERE tenant_id = ? AND id = ? AND data IS NOT NULL",
-            target.gameDesignVersionTenantKey(),
-            Long.parseLong(reference.assetRowId()));
-    if (row == null || !reference.usageKey().equals(row.get("file_name", String.class)))
-      throw new IllegalStateException("ASSET_SOURCE_EXACT_BYTES_UNAVAILABLE");
-    return new net.firedevops.firemud.common.gamedesign.AssetSnapshot.Item(
-        reference,
-        row.get("content_type", String.class),
-        row.get("digest", String.class),
-        row.get("byte_size", Long.class));
   }
 
   private Record head(TargetProof target) {
