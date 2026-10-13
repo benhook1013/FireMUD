@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import hashlib
+import json
 import re
 import subprocess
 import time
@@ -617,6 +619,16 @@ def _source_run_identity(value: Any) -> str | None:
     return None
 
 
+def _with_period_source_fingerprint(value: Any, fingerprint: str) -> Any:
+    """Carry a raw observation fingerprint through non-mutating policy projections."""
+
+    if isinstance(value, Mapping):
+        return {**value, "period_source_fingerprint": fingerprint}
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {**dataclasses.asdict(value), "period_source_fingerprint": fingerprint}
+    return value
+
+
 def _allocation_reopens_selection(view: Mapping[str, Any]) -> bool:
     """Return whether an allocation keeps an otherwise complete channel open."""
 
@@ -773,16 +785,36 @@ class ReviewController:
         """
 
         history = self._cached_history(pr, channel, history_cache, phase_timings=phase_timings)
+        period = self._active_review_period(state, pr, channel)
+        fingerprint_period_history = period is not None and period.baseline_mode == "current_history"
         selected = set(reconciliation.legacy_transition_fingerprints.get(pr, {}).get(channel.value, ()))
         if not selected:
-            projected = [self._clear_untrusted_non_counting(value) for value in history]
+            projected = []
+            for value in history:
+                selected_value = self._clear_untrusted_non_counting(value)
+                if fingerprint_period_history:
+                    try:
+                        selected_value = _with_period_source_fingerprint(
+                            selected_value, observation_fingerprint(value)
+                        )
+                    except StateError:
+                        pass
+                projected.append(selected_value)
             return self._project_cli_hosted_ambiguity(channel, projected)
         projected: list[Any] = []
         for value in history:
             if observation_fingerprint(value) in selected:
-                projected.append(self._mark_non_counting(value))
+                selected_value = self._mark_non_counting(value)
             else:
-                projected.append(self._clear_untrusted_non_counting(value))
+                selected_value = self._clear_untrusted_non_counting(value)
+            if fingerprint_period_history:
+                try:
+                    selected_value = _with_period_source_fingerprint(
+                        selected_value, observation_fingerprint(value)
+                    )
+                except StateError:
+                    pass
+            projected.append(selected_value)
         return self._project_cli_hosted_ambiguity(channel, projected)
 
     def _cached_history(
@@ -7420,14 +7452,15 @@ class ReviewController:
 
         period = ReviewController._active_review_period(state, pr, channel)
         minimum = period.minimum_completed if period is not None else (
-            2 if channel == policy.Channel.HOSTED else 0
+            2 if channel == policy.Channel.HOSTED else 3
         )
-        maximum = period.maximum_completed if period is not None else (2 if channel == policy.Channel.HOSTED else 6)
+        maximum = period.maximum_completed if period is not None else (3 if channel == policy.Channel.HOSTED else 6)
         zero_useful_required = period.zero_useful_required if period is not None else (
             1 if channel == policy.Channel.HOSTED else 3
         )
         baseline_checkpoints = set(period.baseline_checkpoints if period else ())
         baseline_source_runs = set(period.baseline_source_run_ids if period else ())
+        baseline_observation_fingerprints = set(period.baseline_observation_fingerprints if period else ())
         completed: list[dict[str, Any]] = []
         in_flight: dict[str, str] = {}
         seen_checkpoints: set[str] = set(baseline_checkpoints)
@@ -7451,6 +7484,25 @@ class ReviewController:
                 if previous_head is not None and previous_head.casefold() != head.casefold():
                     return {"error": "an active review identity has conflicting captured heads"}
                 in_flight[request_id] = head
+                continue
+            period_source_fingerprint = _field(value, "period_source_fingerprint")
+            if (
+                not isinstance(period_source_fingerprint, str)
+                and period is not None
+                and period.baseline_mode == "current_history"
+                and baseline_observation_fingerprints
+            ):
+                try:
+                    period_source_fingerprint = observation_fingerprint(value)
+                except StateError:
+                    period_source_fingerprint = None
+            if period is not None and period.baseline_mode == "current_history" and (
+                (isinstance(source_run_id, str) and source_run_id in baseline_source_runs)
+                or (
+                    isinstance(period_source_fingerprint, str)
+                    and period_source_fingerprint in baseline_observation_fingerprints
+                )
+            ):
                 continue
             if (
                 _field(value, "correction") is True
@@ -7502,6 +7554,7 @@ class ReviewController:
             history,
             baseline_checkpoints=period.baseline_checkpoints if period else (),
             baseline_source_run_ids=period.baseline_source_run_ids if period else (),
+            baseline_observation_fingerprints=period.baseline_observation_fingerprints if period else (),
         )
         taper_complete = policy.taper_satisfied(
             channel,
@@ -8088,7 +8141,9 @@ class ReviewController:
         pr: int,
         channel: str,
         head: str,
-        checkpoint: str,
+        checkpoint: str | None = None,
+        current_history_baseline: bool = False,
+        baseline_id: str | None = None,
         actor: str,
         reason: str,
         replace_stop: bool = False,
@@ -8104,6 +8159,8 @@ class ReviewController:
                 channel=channel,
                 head=head,
                 checkpoint=checkpoint,
+                current_history_baseline=current_history_baseline,
+                baseline_id=baseline_id,
                 actor=actor,
                 reason=reason,
                 replace_stop=replace_stop,
@@ -8115,19 +8172,30 @@ class ReviewController:
         pr: int,
         channel: str,
         head: str,
-        checkpoint: str,
+        checkpoint: str | None,
+        current_history_baseline: bool,
+        baseline_id: str | None,
         actor: str,
         reason: str,
         replace_stop: bool,
     ) -> dict[str, Any]:
-        """Start one explicit default review period from an exact checkpoint."""
+        """Start one explicit default period from a checkpoint or current history snapshot."""
 
         try:
             selected = policy.Channel(channel)
         except ValueError as exc:
             raise ControllerError("review-period channel must be hosted or cli") from exc
-        if not isinstance(checkpoint, str) or not checkpoint.strip():
+        if not isinstance(current_history_baseline, bool):
+            raise ControllerError("current-history baseline selection must be boolean")
+        if current_history_baseline:
+            if checkpoint is not None:
+                raise ControllerError("choose either --checkpoint or --current-history-baseline")
+            if not isinstance(baseline_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,99}", baseline_id):
+                raise ControllerError("current-history reset requires a stable --baseline-id")
+        elif not isinstance(checkpoint, str) or not checkpoint.strip():
             raise ControllerError("review-period reset requires an exact stable checkpoint identity")
+        elif baseline_id is not None:
+            raise ControllerError("--baseline-id is valid only with --current-history-baseline")
         if not isinstance(actor, str) or not actor.strip() or len(actor) > 100:
             raise ControllerError("review-period reset requires an actor identity of at most 100 characters")
         if any(ord(character) < 0x20 for character in actor):
@@ -8149,13 +8217,29 @@ class ReviewController:
         )
 
         history_cache: dict[tuple[int, str], list[Any]] = {}
-        refresh_history = getattr(self._evidence_provider, "admission_history", None)
+        refresh_history = getattr(self._evidence_provider, "period_reset_history", None)
+        if not callable(refresh_history):
+            refresh_history = getattr(self._evidence_provider, "admission_history", None)
         if not callable(refresh_history):
             raise ControllerError("active provider evidence cannot be refreshed for review-period reset")
         try:
-            history_cache[(pr, selected.value)] = list(refresh_history(pr, selected.value))
+            raw_history = list(refresh_history(pr, selected.value))
+            history_cache[(pr, selected.value)] = raw_history
         except Exception as error:
             raise ControllerError("active provider evidence cannot be refreshed for review-period reset") from error
+        if current_history_baseline:
+            complete_markers = [item for item in raw_history if _field(item, "scope_timeline") is True]
+            if (
+                len(complete_markers) != 1
+                or _field(complete_markers[0], "scope_timeline_complete") is not True
+                or any(
+                    _field(item, "history_truncated") is True
+                    or _field(item, "history_complete") is False
+                    or _field(item, "capture_context_available") is False
+                    for item in raw_history
+                )
+            ):
+                raise ControllerError("complete retained provider history cannot be verified for period reset")
         try:
             live, reconciliation = self._reconciliation(
                 state,
@@ -8197,6 +8281,9 @@ class ReviewController:
             raise ControllerError("current candidate base identity changed during review-period reset")
         allowed_anchor_statuses = {
             stack.ReconciliationStatus.COHERENT,
+            # A reset changes only the channel's future counters. It does not
+            # reconcile stale ancestry or relax request/merge-readiness holds.
+            stack.ReconciliationStatus.PARENT_MOVED,
             stack.ReconciliationStatus.PATCH_CHANGED,
             stack.ReconciliationStatus.EQUIVALENT_HISTORY,
         }
@@ -8209,8 +8296,8 @@ class ReviewController:
                 remote_heads = self.git.remote_heads()
             except (ControllerError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
                 raise ControllerError("Hosted review-period head/base fences cannot be verified") from error
-            if not self._current_branches_match(state, live, reconciliation, pr, remote_heads):
-                raise ControllerError("Hosted review-period reset requires coherent current head and base refs")
+            if not self._period_reset_branches_match(state, live, reconciliation, pr, remote_heads):
+                raise ControllerError("Hosted review-period reset requires exact current head and base refs")
 
         history = self._policy_history(state, pr, selected, reconciliation, history_cache=history_cache)
         for value in history:
@@ -8240,67 +8327,118 @@ class ReviewController:
                 if lock_status != "clear":
                     raise ControllerError("cannot reset a review period while repository-wide CLI activity is active or uncertain")
 
-        matches = [
-            (index, value)
-            for index, value in enumerate(history)
-            if _field(value, "checkpoint", "checkpoint_id") == checkpoint
-            and _field(value, "correction") is not True
-            and _field(value, "non_counting") is not True
-        ]
-        if len(matches) != 1:
-            raise ControllerError("review-period checkpoint is missing or ambiguous in this channel's history")
-        baseline_index, reviewed = matches[0]
-        reviewed_head = _field(reviewed, "head", "reviewed_head")
-        reviewed_parent_identity = _field(reviewed, "parent_identity")
-        reviewed_parent_head = _field(reviewed, "parent_head", "parent_sha", "base_tip_sha")
-        reviewed_merge_base = _field(reviewed, "merge_base")
-        reviewed_patch_id = _field(reviewed, "patch_id", "patch_identity")
-        source_run_id = _source_run_identity(reviewed)
-        accepted = _field(reviewed, "accepted")
-        if not (
-            _field(reviewed, "pr") == pr
-            and _field(reviewed, "channel") in (None, selected.value)
-            and _field(reviewed, "completed") is True
-            and _field(reviewed, "attributable") is True
-            and _field(reviewed, "anchored") is True
-            and _field(reviewed, "provisional") is not True
-            and type(accepted) is int
-            and accepted >= 0
-            and isinstance(reviewed_head, str)
-            and re.fullmatch(r"[0-9a-fA-F]{40}", reviewed_head) is not None
-            and _field(reviewed, "child_head") == reviewed_head
-            and isinstance(reviewed_parent_identity, str)
-            and reviewed_parent_identity.strip()
-            and isinstance(reviewed_parent_head, str)
-            and re.fullmatch(r"[0-9a-fA-F]{40}", reviewed_parent_head) is not None
-            and isinstance(reviewed_merge_base, str)
-            and re.fullmatch(r"[0-9a-fA-F]{40}", reviewed_merge_base) is not None
-            and isinstance(reviewed_patch_id, str)
-            and reviewed_patch_id.strip()
-            and isinstance(source_run_id, str)
-            and source_run_id.strip()
-        ):
-            raise ControllerError("review-period checkpoint is not a stable completed attributable anchored result")
-
         baseline_checkpoints: list[str] = []
         baseline_source_run_ids: list[str] = []
-        seen_source_run_ids: dict[str, str] = {}
-        for value in history[: baseline_index + 1]:
-            prior_checkpoint = _field(value, "checkpoint", "checkpoint_id")
-            if isinstance(prior_checkpoint, str) and prior_checkpoint.strip() and prior_checkpoint not in baseline_checkpoints:
-                baseline_checkpoints.append(prior_checkpoint)
-            prior_source_run = _source_run_identity(value)
-            if prior_source_run is None:
-                continue
-            if prior_source_run in seen_source_run_ids:
-                prior_identity = seen_source_run_ids[prior_source_run]
-                if prior_identity != prior_checkpoint:
-                    raise ControllerError("review-period baseline contains an ambiguous source-run identity")
-                continue
-            seen_source_run_ids[prior_source_run] = prior_checkpoint if isinstance(prior_checkpoint, str) else ""
-            baseline_source_run_ids.append(prior_source_run)
-        if checkpoint not in baseline_checkpoints or source_run_id not in baseline_source_run_ids:
-            raise ControllerError("review-period checkpoint lacks a stable counter baseline identity")
+        baseline_observation_fingerprints: tuple[str, ...] = ()
+        baseline_history_digest: str | None = None
+        baseline_observation_count: int | None = None
+        if current_history_baseline:
+            reviewed_head = None
+            reviewed_parent_identity = None
+            reviewed_parent_head = None
+            reviewed_merge_base = None
+            reviewed_patch_id = None
+            seen_source_run_ids: dict[str, str] = {}
+            fingerprints: list[str] = []
+            for value in raw_history:
+                try:
+                    fingerprint = observation_fingerprint(value)
+                except StateError as error:
+                    raise ControllerError("retained provider history contains an unstable observation") from error
+                fingerprints.append(fingerprint)
+                if _field(value, "period_baseline_source_kind") == "native_attempt":
+                    native_attempt_id = _field(value, "period_baseline_source_id")
+                    if not isinstance(native_attempt_id, str) or not native_attempt_id.strip():
+                        raise ControllerError("retained native attempt history contains an unstable source ID")
+                    if native_attempt_id not in baseline_source_run_ids:
+                        baseline_source_run_ids.append(native_attempt_id)
+                # Audit representations share real sources with policy projections,
+                # but are not alternative policy results requiring identical payloads.
+                audit_source_ids = _field(value, "period_baseline_source_ids")
+                if audit_source_ids is not None:
+                    if not isinstance(audit_source_ids, list) or any(
+                        not isinstance(source_id, str) or not source_id.strip() for source_id in audit_source_ids
+                    ):
+                        raise ControllerError("retained provider history contains an unstable source ID")
+                    for source_id in audit_source_ids:
+                        if source_id not in baseline_source_run_ids:
+                            baseline_source_run_ids.append(source_id)
+                prior_source_run = _source_run_identity(value)
+                if prior_source_run is None:
+                    continue
+                if prior_source_run in seen_source_run_ids:
+                    if seen_source_run_ids[prior_source_run] != fingerprint:
+                        raise ControllerError("review-period baseline contains a conflicting source-run identity")
+                    continue
+                seen_source_run_ids[prior_source_run] = fingerprint
+                if prior_source_run not in baseline_source_run_ids:
+                    baseline_source_run_ids.append(prior_source_run)
+            baseline_observation_fingerprints = tuple(fingerprints)
+            baseline_observation_count = len(fingerprints)
+            encoded_fingerprints = json.dumps(
+                list(baseline_observation_fingerprints), ensure_ascii=True, separators=(",", ":")
+            ).encode("utf-8")
+            baseline_history_digest = hashlib.sha256(encoded_fingerprints).hexdigest()
+        else:
+            matches = [
+                (index, value)
+                for index, value in enumerate(history)
+                if _field(value, "checkpoint", "checkpoint_id") == checkpoint
+                and _field(value, "correction") is not True
+                and _field(value, "non_counting") is not True
+            ]
+            if len(matches) != 1:
+                raise ControllerError("review-period checkpoint is missing or ambiguous in this channel's history")
+            baseline_index, reviewed = matches[0]
+            reviewed_head = _field(reviewed, "head", "reviewed_head")
+            reviewed_parent_identity = _field(reviewed, "parent_identity")
+            reviewed_parent_head = _field(reviewed, "parent_head", "parent_sha", "base_tip_sha")
+            reviewed_merge_base = _field(reviewed, "merge_base")
+            reviewed_patch_id = _field(reviewed, "patch_id", "patch_identity")
+            source_run_id = _source_run_identity(reviewed)
+            accepted = _field(reviewed, "accepted")
+            if not (
+                _field(reviewed, "pr") == pr
+                and _field(reviewed, "channel") in (None, selected.value)
+                and _field(reviewed, "completed") is True
+                and _field(reviewed, "attributable") is True
+                and _field(reviewed, "anchored") is True
+                and _field(reviewed, "provisional") is not True
+                and type(accepted) is int
+                and accepted >= 0
+                and isinstance(reviewed_head, str)
+                and re.fullmatch(r"[0-9a-fA-F]{40}", reviewed_head) is not None
+                and _field(reviewed, "child_head") == reviewed_head
+                and isinstance(reviewed_parent_identity, str)
+                and reviewed_parent_identity.strip()
+                and isinstance(reviewed_parent_head, str)
+                and re.fullmatch(r"[0-9a-fA-F]{40}", reviewed_parent_head) is not None
+                and isinstance(reviewed_merge_base, str)
+                and re.fullmatch(r"[0-9a-fA-F]{40}", reviewed_merge_base) is not None
+                and isinstance(reviewed_patch_id, str)
+                and reviewed_patch_id.strip()
+                and isinstance(source_run_id, str)
+                and source_run_id.strip()
+            ):
+                raise ControllerError("review-period checkpoint is not a stable completed attributable anchored result")
+
+            seen_source_run_ids: dict[str, str] = {}
+            for value in history[: baseline_index + 1]:
+                prior_checkpoint = _field(value, "checkpoint", "checkpoint_id")
+                if isinstance(prior_checkpoint, str) and prior_checkpoint.strip() and prior_checkpoint not in baseline_checkpoints:
+                    baseline_checkpoints.append(prior_checkpoint)
+                prior_source_run = _source_run_identity(value)
+                if prior_source_run is None:
+                    continue
+                if prior_source_run in seen_source_run_ids:
+                    prior_identity = seen_source_run_ids[prior_source_run]
+                    if prior_identity != prior_checkpoint:
+                        raise ControllerError("review-period baseline contains an ambiguous source-run identity")
+                    continue
+                seen_source_run_ids[prior_source_run] = prior_checkpoint if isinstance(prior_checkpoint, str) else ""
+                baseline_source_run_ids.append(prior_source_run)
+            if checkpoint not in baseline_checkpoints or source_run_id not in baseline_source_run_ids:
+                raise ControllerError("review-period checkpoint lacks a stable counter baseline identity")
 
         try:
             latest_item = _live(self._require_github().pull_request(pr), pr)
@@ -8315,8 +8453,8 @@ class ReviewController:
         ):
             raise ControllerError("current candidate head or base changed during review-period reset")
 
-        minimum_completed = 2 if selected == policy.Channel.HOSTED else 0
-        maximum_completed = 2 if selected == policy.Channel.HOSTED else 6
+        minimum_completed = 2 if selected == policy.Channel.HOSTED else 3
+        maximum_completed = 3 if selected == policy.Channel.HOSTED else 6
         zero_useful_required = 1 if selected == policy.Channel.HOSTED else 3
         decision = ReviewPeriodDecision(
             pr=pr,
@@ -8342,27 +8480,42 @@ class ReviewController:
             actor=actor,
             reason=reason,
             recorded_at=datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            baseline_mode="current_history" if current_history_baseline else "checkpoint",
+            baseline_id=baseline_id if current_history_baseline else None,
+            baseline_complete=True if current_history_baseline else None,
+            baseline_history_digest=baseline_history_digest,
+            baseline_observation_count=baseline_observation_count,
+            baseline_observation_fingerprints=baseline_observation_fingerprints,
             superseded_allocation_identity=identity if observed_allocation is not None else None,
             superseded_allocation=observed_allocation,
         )
+
+        def same_period_reset_inputs(existing: ReviewPeriodDecision, requested: ReviewPeriodDecision) -> bool:
+            # Review-period policy bounds are recorded decision outputs. A
+            # later default-policy change must not invalidate a replay of the
+            # same reset identity and evidence snapshot.
+            existing_inputs = dataclasses.replace(
+                existing,
+                minimum_completed=requested.minimum_completed,
+                maximum_completed=requested.maximum_completed,
+                zero_useful_required=requested.zero_useful_required,
+                recorded_at=requested.recorded_at,
+                superseded_allocation_identity=None,
+                superseded_allocation=None,
+            )
+            requested_inputs = dataclasses.replace(
+                requested,
+                superseded_allocation_identity=None,
+                superseded_allocation=None,
+            )
+            return existing_inputs == requested_inputs
 
         existing_period = next(
             (item for item in state.review_period_decisions if item.period_id == decision.period_id),
             None,
         )
         if existing_period is not None:
-            existing_inputs = dataclasses.replace(
-                existing_period,
-                recorded_at=decision.recorded_at,
-                superseded_allocation_identity=None,
-                superseded_allocation=None,
-            )
-            requested_inputs = dataclasses.replace(
-                decision,
-                superseded_allocation_identity=None,
-                superseded_allocation=None,
-            )
-            if existing_inputs != requested_inputs:
+            if not same_period_reset_inputs(existing_period, decision):
                 raise ControllerError("this review-period identity was already recorded with different reset inputs")
             return {
                 "status": "already_recorded",
@@ -8383,18 +8536,7 @@ class ReviewController:
                 None,
             )
             if existing is not None:
-                existing_inputs = dataclasses.replace(
-                    existing,
-                    recorded_at=decision.recorded_at,
-                    superseded_allocation_identity=None,
-                    superseded_allocation=None,
-                )
-                requested_inputs = dataclasses.replace(
-                    decision,
-                    superseded_allocation_identity=None,
-                    superseded_allocation=None,
-                )
-                if existing_inputs != requested_inputs:
+                if not same_period_reset_inputs(existing, decision):
                     raise ControllerError("this review-period identity was already recorded with different reset inputs")
                 outcome["already_recorded"] = True
                 return current_state
@@ -8422,6 +8564,44 @@ class ReviewController:
             "period": recorded.to_dict(),
             "superseded_allocation_identity": recorded.superseded_allocation_identity,
         }
+
+    def _period_reset_branches_match(
+        self,
+        state: ReviewState,
+        live: Mapping[int, LivePullRequest],
+        reconciliation: stack.Reconciliation,
+        pr: int,
+        remote_heads: Mapping[str, str],
+    ) -> bool:
+        """Keep Hosted reset refs exact while allowing stale stack topology to remain held."""
+
+        try:
+            last = state.ordered_prs.index(pr)
+        except ValueError:
+            return False
+        for candidate in state.ordered_prs[: last + 1]:
+            item = live[candidate]
+            if item.merged:
+                continue
+            if (
+                reconciliation.status_for(candidate)
+                not in {stack.ReconciliationStatus.COHERENT, stack.ReconciliationStatus.PARENT_MOVED}
+                or item.state != "OPEN"
+                or item.mergeable != "MERGEABLE"
+                or not item.base_exists
+                or item.base_ref not in remote_heads
+            ):
+                return False
+            if _sha(remote_heads[item.base_ref], f"PR #{candidate} base branch") != item.base_tip:
+                return False
+            if item.head_ref:
+                if item.head_repository is None or item.head_repository.casefold() != self.repository.casefold():
+                    return False
+                if item.head_ref not in remote_heads:
+                    return False
+                if _sha(remote_heads[item.head_ref], f"PR #{candidate} head branch") != item.head:
+                    return False
+        return True
 
     def decide_stop(
         self,

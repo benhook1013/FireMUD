@@ -18,7 +18,7 @@ from fire_controller.jobs import (
     RevisionConflict,
 )
 from pr_review.sqlite_backup import BackupError, _validate_database
-from pr_review.sqlite_store import SqliteStateStore
+from pr_review.sqlite_store import WRITER_BUILD, SqliteStateStore
 
 
 class JobStoreTest(unittest.TestCase):
@@ -244,9 +244,9 @@ class JobStoreTest(unittest.TestCase):
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(
                 connection.execute(
-                    "SELECT data_model_version FROM controller_metadata WHERE singleton = 1"
+                    "SELECT data_model_version, min_writer_build FROM controller_metadata WHERE singleton = 1"
                 ).fetchone(),
-                (2,),
+                (3, WRITER_BUILD),
             )
             self.assertEqual(
                 connection.execute(

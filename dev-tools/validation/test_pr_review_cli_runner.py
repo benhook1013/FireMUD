@@ -284,6 +284,8 @@ class ReviewPeriodCliParserTests(unittest.TestCase):
             channel="hosted",
             head=HEAD,
             checkpoint="hosted-checkpoint-1",
+            current_history_baseline=False,
+            baseline_id=None,
             actor="operator@example.invalid",
             reason="begin a new default period",
             replace_stop=True,

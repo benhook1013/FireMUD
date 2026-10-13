@@ -632,21 +632,31 @@ def _parser() -> argparse.ArgumentParser:
         "period",
         help="record an explicit new default review-budget/taper period",
         description=(
-            "Reset one PR/channel from a stable attributable checkpoint and exact current candidate head. "
+        "Reset one PR/channel from a stable attributable checkpoint or explicit current-history baseline "
+        "and exact current candidate head. "
             "Prior review and finding history remains intact. An existing User stop requires --replace-stop."
         ),
     )
     period_commands = period.add_subparsers(dest="period_command", required=True)
     period_reset = period_commands.add_parser(
         "reset",
-        help="start a new default Hosted (2 rounds) or CLI (6 rounds) review period",
+        help="start a new default Hosted (2 minimum, 3 maximum) or CLI (3 minimum, 6 maximum) review period",
     )
     period_reset.add_argument("--pr", required=True, type=_positive_int)
     period_reset.add_argument("--channel", required=True, choices=("hosted", "cli"))
-    period_reset.add_argument(
+    period_reset_anchor = period_reset.add_mutually_exclusive_group(required=True)
+    period_reset_anchor.add_argument(
         "--checkpoint",
-        required=True,
         help="exact stable completed attributable checkpoint to use as the new period baseline",
+    )
+    period_reset_anchor.add_argument(
+        "--current-history-baseline",
+        action="store_true",
+        help="baseline the exact complete retained native history observed now; no history receives credit",
+    )
+    period_reset.add_argument(
+        "--baseline-id",
+        help="caller-stable reset decision key required with --current-history-baseline (not a provider ID)",
     )
     period_reset.add_argument(
         "--head",
@@ -2263,6 +2273,8 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 channel=args.channel,
                 head=args.head,
                 checkpoint=args.checkpoint,
+                current_history_baseline=args.current_history_baseline,
+                baseline_id=args.baseline_id,
                 actor=args.actor,
                 reason=args.reason,
                 replace_stop=args.replace_stop,

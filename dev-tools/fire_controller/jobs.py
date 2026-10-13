@@ -24,6 +24,7 @@ from typing import Any
 
 from pr_review.sqlite_review_records import _credential_location
 from pr_review.sqlite_store import (
+    INTERMEDIATE_DATA_MODEL_VERSION,
     PREVIOUS_DATA_MODEL_VERSION,
     SQLITE_SCHEMA_VERSION,
     WRITER_BUILD,
@@ -470,7 +471,12 @@ class JobStore:
         if (
             tuple(row[:2]) != (JOBS_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION)
             or isinstance(job_data_model, bool)
-            or job_data_model not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+            or job_data_model
+            not in {
+                PREVIOUS_DATA_MODEL_VERSION,
+                INTERMEDIATE_DATA_MODEL_VERSION,
+                ReviewState().schema_version,
+            }
             or job_data_model > controller_data_model
         ):
             raise JobsSchemaIncompatible("job metadata records incompatible schema versions")
@@ -1717,7 +1723,12 @@ class JobStore:
         if (
             tuple(row[:2]) != (JOBS_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION)
             or isinstance(job_data_model, bool)
-            or job_data_model not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+            or job_data_model
+            not in {
+                PREVIOUS_DATA_MODEL_VERSION,
+                INTERMEDIATE_DATA_MODEL_VERSION,
+                ReviewState().schema_version,
+            }
             or job_data_model > controller_data_model
         ):
             raise JobsSchemaIncompatible("job schema requires a different controller or data-model version")
