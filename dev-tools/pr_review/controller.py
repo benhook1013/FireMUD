@@ -8296,7 +8296,7 @@ class ReviewController:
                 remote_heads = self.git.remote_heads()
             except (ControllerError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
                 raise ControllerError("Hosted review-period head/base fences cannot be verified") from error
-            if not self._period_reset_branches_match(state, live, reconciliation, pr, remote_heads):
+            if not self._period_reset_branches_match(item, remote_heads):
                 raise ControllerError("Hosted review-period reset requires exact current head and base refs")
 
         history = self._policy_history(state, pr, selected, reconciliation, history_cache=history_cache)
@@ -8567,41 +8567,27 @@ class ReviewController:
 
     def _period_reset_branches_match(
         self,
-        state: ReviewState,
-        live: Mapping[int, LivePullRequest],
-        reconciliation: stack.Reconciliation,
-        pr: int,
+        item: LivePullRequest,
         remote_heads: Mapping[str, str],
     ) -> bool:
-        """Keep Hosted reset refs exact while allowing stale stack topology to remain held."""
+        """Fence only the reset target's actual refs, without granting request readiness."""
 
-        try:
-            last = state.ordered_prs.index(pr)
-        except ValueError:
+        if (
+            item.merged
+            or item.state != "OPEN"
+            or item.mergeable != "MERGEABLE"
+            or not item.base_exists
+            or item.base_ref not in remote_heads
+            or not item.head_ref
+            or item.head_ref not in remote_heads
+            or item.head_repository is None
+            or item.head_repository.casefold() != self.repository.casefold()
+        ):
             return False
-        for candidate in state.ordered_prs[: last + 1]:
-            item = live[candidate]
-            if item.merged:
-                continue
-            if (
-                reconciliation.status_for(candidate)
-                not in {stack.ReconciliationStatus.COHERENT, stack.ReconciliationStatus.PARENT_MOVED}
-                or item.state != "OPEN"
-                or item.mergeable != "MERGEABLE"
-                or not item.base_exists
-                or item.base_ref not in remote_heads
-            ):
-                return False
-            if _sha(remote_heads[item.base_ref], f"PR #{candidate} base branch") != item.base_tip:
-                return False
-            if item.head_ref:
-                if item.head_repository is None or item.head_repository.casefold() != self.repository.casefold():
-                    return False
-                if item.head_ref not in remote_heads:
-                    return False
-                if _sha(remote_heads[item.head_ref], f"PR #{candidate} head branch") != item.head:
-                    return False
-        return True
+        return (
+            _sha(remote_heads[item.base_ref], f"PR #{item.number} base branch") == item.base_tip
+            and _sha(remote_heads[item.head_ref], f"PR #{item.number} head branch") == item.head
+        )
 
     def decide_stop(
         self,
