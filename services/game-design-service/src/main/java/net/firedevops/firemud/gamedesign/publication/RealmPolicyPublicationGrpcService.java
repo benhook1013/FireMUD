@@ -17,6 +17,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DataAccessException;
 import org.springframework.grpc.server.service.GrpcService;
+import org.springframework.transaction.TransactionException;
 
 /** Protected read adapter; the owner-read opt-in condition controls runtime registration. */
 @GrpcService
@@ -73,7 +74,9 @@ public final class RealmPolicyPublicationGrpcService
         fail(observer, Status.NOT_FOUND, "Published realm policy selector not found");
         return;
       }
-    } catch (DataAccessException | org.jooq.exception.DataAccessException unavailable) {
+    } catch (DataAccessException
+        | org.jooq.exception.DataAccessException
+        | TransactionException unavailable) {
       fail(observer, Status.UNAVAILABLE, "Published realm policy owner storage unavailable");
       return;
     } catch (IllegalArgumentException | IllegalStateException inconsistent) {
@@ -128,7 +131,9 @@ public final class RealmPolicyPublicationGrpcService
       requireExactTarget(
           request.canonicalTenantId(), request.canonicalVersionId(), ownerSet.target());
       evidence = RealmPolicyPublishedEvidenceMapper.toShared(ownerSet);
-    } catch (DataAccessException | org.jooq.exception.DataAccessException unavailable) {
+    } catch (DataAccessException
+        | org.jooq.exception.DataAccessException
+        | TransactionException unavailable) {
       fail(observer, Status.UNAVAILABLE, "Published realm policy owner storage unavailable");
       return;
     } catch (IllegalArgumentException | IllegalStateException inconsistent) {

@@ -176,6 +176,15 @@ class RealmPolicyPublicationGrpcServiceTest {
     assertThat(callList(handler, request, peer).error).isEqualTo(Status.Code.UNAVAILABLE);
 
     when(owner.readPublishedSet(any(UUID.class), any(UUID.class)))
+        .thenThrow(
+            new org.springframework.transaction.CannotCreateTransactionException(
+                "ISOLATED transaction unavailable"));
+    assertThat(callList(handler, request, peer).error).isEqualTo(Status.Code.UNAVAILABLE);
+    var resolve = PublishedRealmEntryPolicyReadGrpcCodec.toRequest(resolveRequest(fixture, "main"));
+    assertThat(callResolve(handler, resolve, peer).error).isEqualTo(Status.Code.UNAVAILABLE);
+    verify(owner, org.mockito.Mockito.times(4)).readPublishedSet(any(UUID.class), any(UUID.class));
+
+    when(owner.readPublishedSet(any(UUID.class), any(UUID.class)))
         .thenThrow(new IllegalStateException("ISOLATED contradictory owner evidence"));
     assertThat(callList(handler, request, peer).error).isEqualTo(Status.Code.FAILED_PRECONDITION);
   }
