@@ -29,6 +29,47 @@ class StartSessionAccountRedemptionProjectionTest {
   }
 
   @Test
+  void exactLargeFencesRemainDistinctAcrossCurrentOwnerProjectionReplay() {
+    var baseline = CurrentAttemptTestData.tuple();
+    for (long fence :
+        new long[] {
+          9_007_199_254_740_991L, 9_007_199_254_740_992L, 9_007_199_254_740_993L, Long.MAX_VALUE
+        }) {
+      var original = withReservationFence(baseline, fence);
+      byte[] retained = StartSessionAccountRedemptionProjection.fromOriginalTuple(original);
+      assertThat(retained).containsExactly(original.canonicalBytes());
+      assertThat(
+              StartSessionAccountRedemptionProjection.decodeOwnerTuple(retained)
+                  .reservationClaimFence())
+          .isEqualTo(fence);
+      assertThatCode(
+              () ->
+                  StartSessionAccountRedemptionProjection.requireCurrentBinding(retained, original))
+          .doesNotThrowAnyException();
+      assertThat(StartSessionAccountRedemptionProjection.fromOriginalTuple(original))
+          .containsExactly(retained);
+
+      var changed = withReservationFence(baseline, fence == Long.MAX_VALUE ? fence - 1 : fence + 1);
+      assertThatThrownBy(
+              () ->
+                  StartSessionAccountRedemptionProjection.requireCurrentBinding(retained, changed))
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple withReservationFence(
+      StartSessionPostAuthorizationExecutionTuple original, long fence) {
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        original.preAuthorizationTuple(),
+        original.authenticatedWorkloadIdentity(),
+        original.authorizationReferenceFingerprint(),
+        original.reservationOwnerId(),
+        fence,
+        original.authorityEvidenceBundleBytes(),
+        original.bundleReference());
+  }
+
+  @Test
   void independentlyRetainedOwnerTupleRejectsSourceFenceAndLinearizationSubstitutions() {
     var original = CurrentAttemptTestData.tuple();
     byte[] ownerEvidence = original.canonicalBytes();
