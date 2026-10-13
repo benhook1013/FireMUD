@@ -306,17 +306,21 @@ public final class WorldAuthoredSourceIntakeGrpcService
           Status.INVALID_ARGUMENT
               .withDescription("Canonical World intake binding is required")
               .asRuntimeException());
+    } else if (hasUnavailableSqlState(exception)) {
+      responseObserver.onError(
+          Status.UNAVAILABLE
+              .withDescription("World intake is temporarily unavailable")
+              .asRuntimeException());
     } else if (exception instanceof DataAccessResourceFailureException
         || exception instanceof TransientDataAccessException) {
       responseObserver.onError(
           Status.UNAVAILABLE
               .withDescription("World intake is temporarily unavailable")
               .asRuntimeException());
-    } else if (exception instanceof DataAccessException) {
-      Status.Code code =
-          hasConnectionFailureSqlState(exception) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
+    } else if (exception instanceof DataAccessException
+        || exception instanceof org.jooq.exception.DataAccessException) {
       responseObserver.onError(
-          Status.fromCode(code)
+          Status.INTERNAL
               .withDescription("World intake storage could not complete the request")
               .asRuntimeException());
     } else if (exception instanceof IllegalStateException) {
@@ -332,11 +336,14 @@ public final class WorldAuthoredSourceIntakeGrpcService
     }
   }
 
-  private static boolean hasConnectionFailureSqlState(Throwable failure) {
+  private static boolean hasUnavailableSqlState(Throwable failure) {
     for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
       if (cause instanceof SQLException exception) {
         String sqlState = exception.getSQLState();
-        if (sqlState != null && sqlState.startsWith("08")) {
+        if (sqlState != null
+            && (sqlState.startsWith("08")
+                || "55P03".equals(sqlState)
+                || "40P01".equals(sqlState))) {
           return true;
         }
       }

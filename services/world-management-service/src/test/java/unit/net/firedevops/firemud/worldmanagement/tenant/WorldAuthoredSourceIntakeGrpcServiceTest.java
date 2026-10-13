@@ -12,6 +12,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -428,6 +429,45 @@ class WorldAuthoredSourceIntakeGrpcServiceTest {
   }
 
   @Test
+  void mapsLockTimeoutAndDeadlockSqlStatesToUnavailableButOtherSqlErrorsToInternal() {
+    Status lockTimeout =
+        intakeFailureStatus(
+            new org.jooq.exception.DataAccessException(
+                "jOOQ lock failure", new SQLException("lock detail", "55P03")));
+    assertThat(lockTimeout.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(lockTimeout.getDescription()).isEqualTo("World intake is temporarily unavailable");
+
+    Status deadlock =
+        intakeFailureStatus(
+            new org.springframework.jdbc.UncategorizedSQLException(
+                "World intake",
+                "LOCK TABLE region IN SHARE MODE",
+                new SQLException("deadlock detail", "40P01")));
+    assertThat(deadlock.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(deadlock.getDescription()).isEqualTo("World intake is temporarily unavailable");
+
+    Status serializationFailure =
+        intakeFailureStatus(
+            new org.springframework.dao.ConcurrencyFailureException(
+                "retryable serialization", new SQLException("serialization detail", "40001")));
+    assertThat(serializationFailure.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+
+    Status storageUnavailable =
+        intakeFailureStatus(
+            new DataAccessResourceFailureException(
+                "storage unavailable", new SQLException("shutdown detail", "57P01")));
+    assertThat(storageUnavailable.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+
+    Status unrelatedSqlError =
+        intakeFailureStatus(
+            new org.jooq.exception.DataAccessException(
+                "jOOQ constraint failure", new SQLException("constraint detail", "23505")));
+    assertThat(unrelatedSqlError.getCode()).isEqualTo(Status.Code.INTERNAL);
+    assertThat(unrelatedSqlError.getDescription())
+        .isEqualTo("World intake storage could not complete the request");
+  }
+
+  @Test
   void refusesToReturnAnOwnerReceiptWhoseBindingDoesNotMatch() {
     WorldAuthoredSourceIntakeReceipt changed = receipt(binding("other-world"), 9001L);
     when(intakeService.intake(
@@ -455,6 +495,27 @@ class WorldAuthoredSourceIntakeGrpcServiceTest {
             WORLD_SLUG,
             SOURCE_OPERATION_ID,
             SOURCE_DIGEST);
+  }
+
+  private Status intakeFailureStatus(RuntimeException failure) {
+    doThrow(failure)
+        .when(intakeService)
+        .intake(
+            1,
+            NAMESPACE,
+            INTAKE_REQUEST_ID,
+            TENANT_ID,
+            WORLD_SLUG,
+            SOURCE_OPERATION_ID,
+            SOURCE_DIGEST);
+    RecordingObserver<IntakeAuthoredWorldSourceResponse> observer = new RecordingObserver<>();
+
+    withGameDesign(() -> grpcService.intakeAuthoredWorldSource(intakeRequest(), observer));
+
+    assertThat(observer.error).isNotNull();
+    assertThat(observer.values).isEmpty();
+    assertThat(observer.completed).isFalse();
+    return Status.fromThrowable(observer.error);
   }
 
   private static IntakeRequest binding() {
