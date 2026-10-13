@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
@@ -14,6 +15,8 @@ import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.InitialConfigured;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
@@ -45,6 +48,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * PostgreSQL proof that the World handoff is bound to the original retained StartSession owner.
@@ -58,6 +62,7 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
       UUID.fromString("22222222-2222-4222-8222-222222222222");
   private static final String MIGRATION_LOCATION =
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
+  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -185,6 +190,64 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
         .isEqualTo(descriptorPinsBefore);
     assertThat(count(fixture, "game_session_canonical_instance_launch"))
         .isEqualTo(associationsBefore);
+  }
+
+  @Test
+  void historicalReadPreservesLegacyProjectionAndCurrentReadRejectsIt() throws Exception {
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.tuple(
+            "historical-original-association-legacy-projection");
+    Fixture fixture = fixture(tuple, Duration.ofSeconds(30));
+    OwnerBackedStarting starting = fixture.startWithOwnerPins(tuple);
+    byte[] legacyProjection = legacyProjection(tuple);
+    disableAttemptEvidenceImmutability(fixture);
+    disableSelectionPinImmutability(fixture);
+    try {
+      fixture
+          .dsl()
+          .execute(
+              "UPDATE game_session_start_session_operator_attempt "
+                  + "SET account_redemption_projection = ? "
+                  + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+              legacyProjection,
+              starting.startingInstance().launchAssociation().targetNamespace(),
+              starting.startingInstance().launchAssociation().controlPlaneRequestId());
+      fixture
+          .dsl()
+          .execute(
+              "UPDATE game_session_start_session_template_association_pin "
+                  + "SET account_redemption_projection_digest = ? "
+                  + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+              HistoricalOriginalStartSessionOwnerEvidence.sha256(legacyProjection),
+              starting.startingInstance().launchAssociation().targetNamespace(),
+              starting.startingInstance().launchAssociation().controlPlaneRequestId());
+    } finally {
+      enableSelectionPinImmutability(fixture);
+      enableAttemptEvidenceImmutability(fixture);
+    }
+
+    var historical = fixture.historicalRead(historicalRequest(starting)).orElseThrow();
+    assertThat(historical.accountRedemptionProjection()).containsExactly(legacyProjection);
+    assertThatThrownBy(
+            () -> fixture.read(selector(starting.startingInstance().launchAssociation())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Persisted original StartSession association evidence is malformed");
+    assertThat(
+            Objects.requireNonNull(
+                    fixture
+                        .dsl()
+                        .fetchOne(
+                            "SELECT account_redemption_projection FROM "
+                                + "game_session_start_session_operator_attempt "
+                                + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+                            starting.startingInstance().launchAssociation().targetNamespace(),
+                            starting
+                                .startingInstance()
+                                .launchAssociation()
+                                .controlPlaneRequestId()),
+                    "persisted historical owner attempt row is required")
+                .get("account_redemption_projection", byte[].class))
+        .containsExactly(legacyProjection);
   }
 
   @Test
@@ -341,6 +404,30 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
 
   private static int count(Fixture fixture, String tableName) {
     return fixture.dsl().fetchCount(DSL.table(DSL.name(tableName)));
+  }
+
+  private static byte[] legacyProjection(StartSessionPostAuthorizationExecutionTuple tuple) {
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
+    Map<String, Object> value =
+        Map.of(
+            "projectionSchemaId",
+            "accountStartSessionRedemptionProjection",
+            "projectionSchemaVersion",
+            "1",
+            "authorizationReferenceFingerprint",
+            tuple.authorizationReferenceFingerprint(),
+            "authorityEvidenceBundle",
+            bundle.jsonValue(),
+            "issuanceOperationId",
+            bundle.issuanceOperationId().toString(),
+            "issuanceFence",
+            Long.parseLong(tuple.issuanceFence()));
+    try {
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(value));
+    } catch (java.io.IOException malformed) {
+      throw new IllegalStateException("could not encode legacy projection fixture", malformed);
+    }
   }
 
   private static void disableAttemptEvidenceImmutability(Fixture fixture) {

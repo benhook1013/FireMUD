@@ -4,14 +4,12 @@ import java.sql.Connection;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import org.jooq.DSLContext;
@@ -20,7 +18,6 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Unregistered, non-activating durable reservation for one canonical StartSession owner attempt.
@@ -36,7 +33,6 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
       "game_session_start_session_operator_owner_fence_seq";
   private static final Pattern AUTHORIZATION_REFERENCE_FINGERPRINT =
       Pattern.compile("arfp/v1/[A-Za-z0-9_-]{1,64}/[0-9a-f]{64}");
-  private static final JsonMapper JSON = JsonMapper.builder().build();
   private static final Duration MAX_OWNER_CLAIM_LEASE = Duration.ofMinutes(5);
 
   private final DSLContext dsl;
@@ -198,12 +194,7 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
       throw new StaleStartSessionOperatorAttemptClaimException(
           "Original StartSession attempt has no attached Account projection");
     }
-    AccountRedemptionProjection expectedProjection = projectionFromTuple(decodedTuple);
-    if (!Arrays.equals(projection, expectedProjection.canonicalBytes())) {
-      throw new IllegalStateException(
-          "Attached Account projection differs from the exact current StartSession tuple");
-    }
-    requireProjectionMatches(decodedTuple, expectedProjection);
+    requireCurrentProjectionMatches(projection, decodedTuple);
     requireOriginalAuthorityUnexpired(decodedTuple);
     return current;
   }
@@ -262,12 +253,13 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
       throw new StaleStartSessionOperatorAttemptClaimException(
           "Historical StartSession owner attempt has no attached Account projection");
     }
-    AccountRedemptionProjection expectedProjection = projectionFromTuple(decodedTuple);
-    if (!Arrays.equals(storedProjection, expectedProjection.canonicalBytes())) {
+    try {
+      StartSessionAccountRedemptionProjection.requireHistoricalBinding(
+          storedProjection, decodedTuple);
+    } catch (IllegalArgumentException malformed) {
       throw new IllegalStateException(
-          "Persisted historical Account projection differs from its complete canonical tuple");
+          "Persisted historical Account projection differs from the exact tuple", malformed);
     }
-    requireProjectionMatches(decodedTuple, expectedProjection);
     return Optional.of(snapshot(row));
   }
 
@@ -303,13 +295,7 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
       throw new StaleStartSessionOperatorAttemptClaimException(
           "StartSession attempt has no attached Account projection and remains reconciliation-only");
     }
-    AccountRedemptionProjection expectedProjection = projectionFromTuple(tuple);
-    byte[] canonicalProjection = expectedProjection.canonicalBytes();
-    if (!Arrays.equals(storedProjection, canonicalProjection)) {
-      throw new IllegalStateException(
-          "Persisted Account redemption projection differs from its complete canonical tuple");
-    }
-    requireProjectionMatches(tuple, expectedProjection);
+    requireCurrentProjectionMatches(storedProjection, tuple);
 
     return new EvidenceContinuation(
         requiredText(row, "target_namespace"),
@@ -375,12 +361,7 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
           "Evidence continuation tuple is not the canonical original owner identity");
     }
     requireStoredProjectionColumnsMatch(row, tuple);
-    AccountRedemptionProjection expectedProjection = projectionFromTuple(tuple);
-    if (!Arrays.equals(currentProjection, expectedProjection.canonicalBytes())) {
-      throw new IllegalStateException(
-          "Evidence continuation Account projection is not canonical for its tuple");
-    }
-    requireProjectionMatches(tuple, expectedProjection);
+    requireCurrentProjectionMatches(currentProjection, tuple);
     return snapshot(row);
   }
 
@@ -468,31 +449,19 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
     }
   }
 
-  private static void requireProjectionMatches(
-      StartSessionPostAuthorizationExecutionTuple tuple, AccountRedemptionProjection projection) {
-    if (!tuple
-            .authorizationReferenceFingerprint()
-            .equals(projection.authorizationReferenceFingerprint())
-        || !Arrays.equals(
-            tuple.authorityEvidenceBundleBytes(), projection.authorityEvidenceBundleBytes())
-        || !StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes())
-            .issuanceOperationId()
-            .equals(projection.issuanceOperationId())
-        || parsePositiveFence(tuple.issuanceFence()) != projection.issuanceFence()) {
+  private static void requireCurrentProjectionMatches(
+      byte[] projection, StartSessionPostAuthorizationExecutionTuple tuple) {
+    try {
+      StartSessionAccountRedemptionProjection.requireCurrentBinding(projection, tuple);
+    } catch (IllegalArgumentException malformedOrLegacy) {
       throw new StartSessionOperatorAttemptConflictException(
-          "Account redemption projection is not bound to the exact post-authorization tuple");
+          "Account redemption projection is missing, legacy, malformed, or bound to another tuple");
     }
   }
 
-  private static AccountRedemptionProjection projectionFromTuple(
-      StartSessionPostAuthorizationExecutionTuple tuple) {
-    StartSessionAuthorityEvidenceBundle authority =
-        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
-    return new AccountRedemptionProjection(
-        tuple.authorizationReferenceFingerprint(),
-        tuple.authorityEvidenceBundleBytes(),
-        authority.issuanceOperationId(),
-        parsePositiveFence(tuple.issuanceFence()));
+  private static void requireProjectionMatches(
+      StartSessionPostAuthorizationExecutionTuple tuple, AccountRedemptionProjection projection) {
+    requireCurrentProjectionMatches(projection.originalAccountPostAuthorizationTuple(), tuple);
   }
 
   private static void requireClaimMatch(Record row, AttemptClaim claim) {
@@ -856,7 +825,8 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
       String authorizationReferenceFingerprint,
       byte[] authorityEvidenceBundleBytes,
       UUID issuanceOperationId,
-      long issuanceFence) {
+      long issuanceFence,
+      byte[] originalAccountPostAuthorizationTuple) {
     public AccountRedemptionProjection {
       if (authorizationReferenceFingerprint == null
           || !AUTHORIZATION_REFERENCE_FINGERPRINT
@@ -867,6 +837,11 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
       authorityEvidenceBundleBytes =
           Objects.requireNonNull(
                   authorityEvidenceBundleBytes, "authority evidence bundle is required")
+              .clone();
+      originalAccountPostAuthorizationTuple =
+          Objects.requireNonNull(
+                  originalAccountPostAuthorizationTuple,
+                  "independently returned Account owner tuple is required")
               .clone();
       Objects.requireNonNull(issuanceOperationId, "issuanceOperationId is required");
       if (issuanceOperationId.equals(NIL_UUID) || issuanceFence <= 0L) {
@@ -880,6 +855,18 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
         throw new IllegalArgumentException(
             "Account redemption response differs from its exact authority evidence bundle");
       }
+      StartSessionPostAuthorizationExecutionTuple ownerTuple =
+          StartSessionAccountRedemptionProjection.decodeOwnerTuple(
+              originalAccountPostAuthorizationTuple);
+      if (!Arrays.equals(ownerTuple.canonicalBytes(), originalAccountPostAuthorizationTuple)
+          || !ownerTuple
+              .authorizationReferenceFingerprint()
+              .equals(authorizationReferenceFingerprint)
+          || !Arrays.equals(ownerTuple.authorityEvidenceBundleBytes(), authorityEvidenceBundleBytes)
+          || !ownerTuple.issuanceFence().equals(Long.toString(issuanceFence))) {
+        throw new IllegalArgumentException(
+            "Account redemption projection fields differ from the independently returned tuple");
+      }
     }
 
     @Override
@@ -887,27 +874,13 @@ public final class GameSessionStartSessionOperatorAttemptRepository {
       return authorityEvidenceBundleBytes.clone();
     }
 
+    @Override
+    public byte[] originalAccountPostAuthorizationTuple() {
+      return originalAccountPostAuthorizationTuple.clone();
+    }
+
     public byte[] canonicalBytes() {
-      StartSessionAuthorityEvidenceBundle bundle =
-          StartSessionAuthorityEvidenceBundle.decode(authorityEvidenceBundleBytes);
-      Map<String, Object> projection = new LinkedHashMap<>();
-      projection.put("projectionSchemaId", "accountStartSessionRedemptionProjection");
-      projection.put("projectionSchemaVersion", "1");
-      projection.put("authorizationReferenceFingerprint", authorizationReferenceFingerprint);
-      projection.put("authorityEvidenceBundle", bundle.jsonValue());
-      projection.put("issuanceOperationId", issuanceOperationId.toString());
-      projection.put("issuanceFence", issuanceFence);
-      try {
-        byte[] bytes = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(projection));
-        if (bytes.length > StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES) {
-          throw new IllegalArgumentException(
-              "Account redemption projection exceeds its byte limit");
-        }
-        return bytes;
-      } catch (java.io.IOException exception) {
-        throw new IllegalStateException(
-            "could not encode Account redemption projection", exception);
-      }
+      return originalAccountPostAuthorizationTuple();
     }
   }
 

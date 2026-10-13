@@ -483,15 +483,8 @@ class AccountStartSessionWorldParticipationAcquisitionServiceTest {
 
   private static byte[] projection(
       StartSessionPostAuthorizationExecutionTuple tuple, Map<String, Object> additionalFields) {
-    var bundle = StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
     Map<String, Object> projection =
-        Map.of(
-            "projectionSchemaId", "accountStartSessionRedemptionProjection",
-            "projectionSchemaVersion", "1",
-            "authorizationReferenceFingerprint", tuple.authorizationReferenceFingerprint(),
-            "authorityEvidenceBundle", bundle.jsonValue(),
-            "issuanceOperationId", bundle.issuanceOperationId().toString(),
-            "issuanceFence", Long.parseLong(tuple.issuanceFence()));
+        JSON.readValue(tuple.canonicalJson(), new tools.jackson.core.type.TypeReference<>() {});
     if (additionalFields.isEmpty()) {
       try {
         return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(projection));

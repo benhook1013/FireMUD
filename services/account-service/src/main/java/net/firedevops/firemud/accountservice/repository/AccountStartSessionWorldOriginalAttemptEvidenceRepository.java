@@ -11,19 +11,17 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.StoredParticipation;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Request;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
-import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.gamesession.v1.ReadOriginalStartSessionCurrentAttemptResponse;
 import org.jooq.DSLContext;
@@ -32,7 +30,6 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Immutable storage for the exact observation of the original live Game Session StartSession
@@ -69,7 +66,6 @@ public class AccountStartSessionWorldOriginalAttemptEvidenceRepository {
           "original_response_digest");
   private static final Set<String> SOURCE_COLUMNS =
       Set.of("participation_id", "source_key", "source_evidence");
-  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   private final DSLContext dsl;
 
@@ -146,6 +142,12 @@ public class AccountStartSessionWorldOriginalAttemptEvidenceRepository {
     if (row == null) return Optional.empty();
     StoredEvidence stored = decodeStoredEvidence(row, locked);
     requireSameSemanticRequest(expectedRequest, stored.result().request());
+    try {
+      StartSessionAccountRedemptionProjection.requireCurrentBinding(
+          stored.result().accountRedemptionProjection(), expectedRequest.originalTuple());
+    } catch (IllegalArgumentException missingOwnerEvidence) {
+      throw unavailable();
+    }
     requireLeaseCurrent(stored.originalLeaseExpiresAt());
     return Optional.of(stored);
   }
@@ -353,7 +355,8 @@ public class AccountStartSessionWorldOriginalAttemptEvidenceRepository {
       Request echoedRequest =
           OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromRequest(response.getRequest());
       Result result =
-          OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(echoedRequest, response);
+          OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromRetainedHistoricalResponse(
+              echoedRequest, response);
       if (!Arrays.equals(
           OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(result).toByteArray(),
           responseBytes)) {
@@ -416,28 +419,9 @@ public class AccountStartSessionWorldOriginalAttemptEvidenceRepository {
   private static boolean accountProjectionMatches(
       StartSessionPostAuthorizationExecutionTuple tuple, byte[] projectionBytes) {
     try {
-      StartSessionAuthorityEvidenceBundle bundle =
-          StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
-      long issuanceFence = Long.parseLong(tuple.issuanceFence());
-      if (issuanceFence <= 0L) return false;
-      byte[] expected =
-          Rfc8785CanonicalJson.canonicalizeUtf8(
-              JSON.writeValueAsString(
-                  Map.of(
-                      "projectionSchemaId",
-                      "accountStartSessionRedemptionProjection",
-                      "projectionSchemaVersion",
-                      "1",
-                      "authorizationReferenceFingerprint",
-                      tuple.authorizationReferenceFingerprint(),
-                      "authorityEvidenceBundle",
-                      bundle.jsonValue(),
-                      "issuanceOperationId",
-                      bundle.issuanceOperationId().toString(),
-                      "issuanceFence",
-                      issuanceFence)));
-      return Arrays.equals(expected, projectionBytes);
-    } catch (IOException | RuntimeException malformed) {
+      StartSessionAccountRedemptionProjection.requireHistoricalBinding(projectionBytes, tuple);
+      return true;
+    } catch (RuntimeException malformed) {
       return false;
     }
   }

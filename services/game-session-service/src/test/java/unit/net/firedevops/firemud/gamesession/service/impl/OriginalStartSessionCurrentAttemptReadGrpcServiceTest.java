@@ -305,7 +305,8 @@ class OriginalStartSessionCurrentAttemptReadGrpcServiceTest {
             tuple.authorizationReferenceFingerprint(),
             tuple.authorityEvidenceBundleBytes(),
             authority.issuanceOperationId(),
-            Long.parseLong(tuple.issuanceFence()))
+            Long.parseLong(tuple.issuanceFence()),
+            tuple.canonicalBytes())
         .canonicalBytes();
   }
 

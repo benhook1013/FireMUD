@@ -259,13 +259,50 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
   }
 
   @Test
+  void exactLargeReservationFencesSurviveOwnerReservationAndProjectionReplay() {
+    for (long fence :
+        new long[] {
+          9_007_199_254_740_991L, 9_007_199_254_740_992L, 9_007_199_254_740_993L, Long.MAX_VALUE
+        }) {
+      Fixture fixture = fixture(Duration.ofSeconds(30));
+      StartSessionPostAuthorizationExecutionTuple tuple =
+          tuple(
+              "operator-attempt-large-fence-" + fence,
+              "exact fence replay",
+              RESERVATION_OWNER,
+              fence);
+      ReservationResult reserved = fixture.reserve(tuple);
+      AttemptClaim claim = reserved.claim().orElseThrow();
+      byte[] originalBytes = tuple.canonicalBytes();
+      AttemptSnapshot attached = fixture.attach(claim, projection(tuple));
+      AttemptSnapshot replayed = fixture.attach(claim, projection(tuple));
+
+      assertThat(replayed.postAuthorizationExecutionTuple()).containsExactly(originalBytes);
+      assertThat(replayed.accountRedemptionProjection())
+          .containsExactly(attached.accountRedemptionProjection());
+      assertThat(
+              StartSessionPostAuthorizationExecutionTuple.decode(
+                      replayed.postAuthorizationExecutionTuple())
+                  .reservationClaimFence())
+          .isEqualTo(fence);
+      assertThat(fixture.reserve(tuple).disposition())
+          .isEqualTo(ReservationDisposition.EXACT_REPLAY);
+      assertThat(fixture.attemptCount()).isEqualTo(1);
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances")))).isZero();
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
+          .isZero();
+    }
+  }
+
+  @Test
   void exactAccountProjectionAttachesOnceWhileFingerprintAndSourceSubstitutionsConflict() {
     Fixture fixture = fixture(Duration.ofSeconds(30));
     StartSessionPostAuthorizationExecutionTuple tuple = tuple("operator-attempt-projection");
     ReservationResult reservation = fixture.reserve(tuple);
     AttemptClaim claim = reservation.claim().orElseThrow();
     byte[] exactBundle = tuple.authorityEvidenceBundleBytes();
-    AccountRedemptionProjection exact = projection(FINGERPRINT, exactBundle, ISSUANCE_ID, 23L);
+    AccountRedemptionProjection exact =
+        projection(FINGERPRINT, exactBundle, ISSUANCE_ID, 23L, tuple);
 
     fixture.transactions.executeWithoutResult(
         status -> {
@@ -281,7 +318,12 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
         .containsExactly(attached.accountRedemptionProjection());
 
     AccountRedemptionProjection changedFingerprint =
-        projection("arfp/v1/other-key/" + "c".repeat(64), exactBundle, ISSUANCE_ID, 23L);
+        projection(
+            "arfp/v1/other-key/" + "c".repeat(64),
+            exactBundle,
+            ISSUANCE_ID,
+            23L,
+            tupleWithFingerprint(tuple, "arfp/v1/other-key/" + "c".repeat(64)));
     assertThatThrownBy(() -> fixture.attach(claim, changedFingerprint))
         .isInstanceOf(
             GameSessionStartSessionOperatorAttemptRepository
@@ -289,8 +331,10 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
 
     byte[] changedSourceBundle =
         bundle(tuple.preAuthorizationTuple(), "18", "sha256:" + "c".repeat(64));
+    StartSessionPostAuthorizationExecutionTuple changedSourceTuple =
+        tupleWithBundle(tuple, changedSourceBundle, "18");
     AccountRedemptionProjection changedSource =
-        projection(FINGERPRINT, changedSourceBundle, ISSUANCE_ID, 23L);
+        projection(FINGERPRINT, changedSourceBundle, ISSUANCE_ID, 23L, changedSourceTuple);
     assertThatThrownBy(() -> fixture.attach(claim, changedSource))
         .isInstanceOf(
             GameSessionStartSessionOperatorAttemptRepository
@@ -299,6 +343,77 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             fixture.dsl.fetchCount(
                 DSL.table(DSL.name("game_session_start_session_operator_attempt"))))
         .isEqualTo(1);
+  }
+
+  @Test
+  void attachmentRejectsSourceFenceAndLinearizationSubstitutionsIndependently() {
+    for (String[] referenceChange :
+        List.of(
+            new String[] {"24", "18446744073709551615"},
+            new String[] {"23", "18446744073709551614"})) {
+      Fixture fixture = fixture(Duration.ofSeconds(30));
+      StartSessionPostAuthorizationExecutionTuple tuple =
+          tuple(
+              "operator-attempt-reference-substitution-" + referenceChange[0] + referenceChange[1]);
+      AttemptClaim claim = fixture.reserve(tuple).claim().orElseThrow();
+      StartSessionPostAuthorizationExecutionTuple substituted =
+          tupleWithReference(tuple, referenceChange[0], referenceChange[1]);
+
+      assertThatThrownBy(() -> fixture.attach(claim, projection(substituted)))
+          .isInstanceOf(
+              GameSessionStartSessionOperatorAttemptRepository
+                  .StartSessionOperatorAttemptConflictException.class);
+      assertThat(fixture.reserve(tuple).snapshot().accountRedemptionProjection()).isNull();
+    }
+  }
+
+  @Test
+  void currentProjectionReadRejectsSourceFenceAndLinearizationSubstitutions() {
+    for (String[] referenceChange :
+        List.of(
+            new String[] {"24", "18446744073709551615"},
+            new String[] {"23", "18446744073709551614"})) {
+      Fixture fixture = fixture(Duration.ofSeconds(30));
+      StartSessionPostAuthorizationExecutionTuple tuple =
+          tuple(
+              "operator-attempt-current-reference-substitution-"
+                  + referenceChange[0]
+                  + referenceChange[1]);
+      AttemptClaim claim = fixture.reserve(tuple).claim().orElseThrow();
+      fixture.attach(claim, projection(tuple));
+      StartSessionPostAuthorizationExecutionTuple substituted =
+          tupleWithReference(tuple, referenceChange[0], referenceChange[1]);
+      replaceAttachedProjectionForFixture(fixture, tuple, projection(substituted).canonicalBytes());
+
+      assertThatThrownBy(() -> fixture.currentOriginalAttempt(currentAttemptRequest(tuple, claim)))
+          .isInstanceOf(
+              GameSessionStartSessionOperatorAttemptRepository
+                  .StartSessionOperatorAttemptConflictException.class);
+    }
+  }
+
+  @Test
+  void historicalReadKeepsLegacyProjectionBytesReadableWithoutGrantingCurrentUse() {
+    Fixture fixture = fixture(Duration.ofSeconds(30));
+    StartSessionPostAuthorizationExecutionTuple tuple =
+        tuple("operator-attempt-historical-legacy-projection");
+    AttemptClaim claim = fixture.reserve(tuple).claim().orElseThrow();
+    fixture.attach(claim, projection(tuple));
+    byte[] legacyProjection = legacyProjection(tuple);
+    replaceAttachedProjectionForFixture(fixture, tuple, legacyProjection);
+
+    AttemptSnapshot historical =
+        fixture.historical(tuple, claim.ownerAttemptId(), claim.ownerFence()).orElseThrow();
+    assertThat(historical.accountRedemptionProjection()).containsExactly(legacyProjection);
+    assertThat(
+            fixture
+                .ownerClaimRow(tuple.controlPlaneRequestId())
+                .get("account_redemption_projection", byte[].class))
+        .containsExactly(legacyProjection);
+    assertThatThrownBy(() -> fixture.currentOriginalAttempt(currentAttemptRequest(tuple, claim)))
+        .isInstanceOf(
+            GameSessionStartSessionOperatorAttemptRepository
+                .StartSessionOperatorAttemptConflictException.class);
   }
 
   @Test
@@ -313,7 +428,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
                 tuple.authorizationReferenceFingerprint(),
                 tuple.authorityEvidenceBundleBytes(),
                 ISSUANCE_ID,
-                23L));
+                23L,
+                tuple));
     Request request = currentAttemptRequest(tuple, claim);
     String before = fixture.ownerAttemptRowJson(tuple.controlPlaneRequestId());
 
@@ -358,7 +474,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             tuple.authorizationReferenceFingerprint(),
             tuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
-            23L));
+            23L,
+            tuple));
     String before = mismatched.ownerAttemptRowJson(tuple.controlPlaneRequestId());
     assertThatThrownBy(
             () ->
@@ -406,7 +523,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             expiredTuple.authorizationReferenceFingerprint(),
             expiredTuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
-            23L));
+            23L,
+            expiredTuple));
     Thread.sleep(750L);
     String expiredBefore = expired.ownerAttemptRowJson(expiredTuple.controlPlaneRequestId());
     assertThat(expired.leaseExpired(expiredTuple.controlPlaneRequestId())).isTrue();
@@ -436,7 +554,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             tuple.authorizationReferenceFingerprint(),
             tuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
-            23L));
+            23L,
+            tuple));
     String before = fixture.ownerAttemptRowJson(tuple.controlPlaneRequestId());
     assertThat(fixture.leaseExpired(tuple.controlPlaneRequestId())).isFalse();
 
@@ -467,7 +586,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
                 tuple.authorizationReferenceFingerprint(),
                 tuple.authorityEvidenceBundleBytes(),
                 ISSUANCE_ID,
-                23L));
+                23L,
+                tuple));
     Thread.sleep(750L);
 
     var before = fixture.ownerClaimRow(tuple.controlPlaneRequestId());
@@ -536,7 +656,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             tuple.authorizationReferenceFingerprint(),
             tuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
-            23L));
+            23L,
+            tuple));
 
     assertThatThrownBy(
             () ->
@@ -601,7 +722,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             corruptedTuple.authorizationReferenceFingerprint(),
             corruptedTuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
-            23L));
+            23L,
+            corruptedTuple));
     corrupted.dsl.execute(
         "ALTER TABLE game_session_start_session_operator_attempt "
             + "DISABLE TRIGGER game_session_start_session_operator_attempt_immutable");
@@ -643,7 +765,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             tuple.authorizationReferenceFingerprint(),
             tuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
-            23L));
+            23L,
+            tuple));
 
     EvidenceContinuation first = fixture.continueEvidence(tuple);
     EvidenceContinuation afterRestart = fixture.continueEvidence(tuple);
@@ -671,7 +794,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             expiringTuple.authorizationReferenceFingerprint(),
             expiringTuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
-            23L));
+            23L,
+            expiringTuple));
     Thread.sleep(750L);
 
     assertThatThrownBy(() -> expiring.continueEvidence(expiringTuple))
@@ -698,7 +822,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             tuple.authorizationReferenceFingerprint(),
             tuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
-            23L));
+            23L,
+            tuple));
 
     assertThat(fixture.validate(claim).phaseState()).isEqualTo("OWNER_EXECUTION_PENDING");
     assertThatThrownBy(() -> fixture.continueEvidence(tuple))
@@ -729,7 +854,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
             tuple.authorizationReferenceFingerprint(),
             tuple.authorityEvidenceBundleBytes(),
             ISSUANCE_ID,
-            23L));
+            23L,
+            tuple));
     var initialAssociation =
         GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.result(
             tuple,
@@ -984,8 +1110,112 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
   }
 
   private static AccountRedemptionProjection projection(
-      String fingerprint, byte[] bundle, UUID issuanceOperationId, long issuanceFence) {
-    return new AccountRedemptionProjection(fingerprint, bundle, issuanceOperationId, issuanceFence);
+      String fingerprint,
+      byte[] bundle,
+      UUID issuanceOperationId,
+      long issuanceFence,
+      StartSessionPostAuthorizationExecutionTuple ownerTuple) {
+    return new AccountRedemptionProjection(
+        fingerprint, bundle, issuanceOperationId, issuanceFence, ownerTuple.canonicalBytes());
+  }
+
+  private static AccountRedemptionProjection projection(
+      StartSessionPostAuthorizationExecutionTuple ownerTuple) {
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(ownerTuple.authorityEvidenceBundleBytes());
+    return projection(
+        ownerTuple.authorizationReferenceFingerprint(),
+        ownerTuple.authorityEvidenceBundleBytes(),
+        bundle.issuanceOperationId(),
+        Long.parseLong(ownerTuple.issuanceFence()),
+        ownerTuple);
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple tupleWithReference(
+      StartSessionPostAuthorizationExecutionTuple tuple, String sourceFence, String linearization) {
+    var reference = tuple.bundleReference();
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        tuple.preAuthorizationTuple(),
+        tuple.authenticatedWorkloadIdentity(),
+        tuple.authorizationReferenceFingerprint(),
+        tuple.reservationOwnerId(),
+        tuple.reservationClaimFence(),
+        tuple.authorityEvidenceBundleBytes(),
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            reference.bundleVersion(), reference.sourceVersion(), sourceFence, linearization));
+  }
+
+  private static byte[] legacyProjection(StartSessionPostAuthorizationExecutionTuple tuple) {
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
+    Map<String, Object> projection =
+        Map.of(
+            "projectionSchemaId",
+            "accountStartSessionRedemptionProjection",
+            "projectionSchemaVersion",
+            "1",
+            "authorizationReferenceFingerprint",
+            tuple.authorizationReferenceFingerprint(),
+            "authorityEvidenceBundle",
+            bundle.jsonValue(),
+            "issuanceOperationId",
+            bundle.issuanceOperationId().toString(),
+            "issuanceFence",
+            Long.parseLong(tuple.issuanceFence()));
+    try {
+      return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(projection));
+    } catch (IOException malformed) {
+      throw new IllegalStateException("could not encode legacy fixture projection", malformed);
+    }
+  }
+
+  private static void replaceAttachedProjectionForFixture(
+      Fixture fixture, StartSessionPostAuthorizationExecutionTuple tuple, byte[] projection) {
+    fixture.dsl.execute(
+        "ALTER TABLE game_session_start_session_operator_attempt "
+            + "DISABLE TRIGGER game_session_start_session_operator_attempt_immutable");
+    try {
+      fixture.dsl.execute(
+          "UPDATE game_session_start_session_operator_attempt "
+              + "SET account_redemption_projection = ? "
+              + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+          projection,
+          NAMESPACE,
+          tuple.controlPlaneRequestId());
+    } finally {
+      fixture.dsl.execute(
+          "ALTER TABLE game_session_start_session_operator_attempt "
+              + "ENABLE TRIGGER game_session_start_session_operator_attempt_immutable");
+    }
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple tupleWithFingerprint(
+      StartSessionPostAuthorizationExecutionTuple tuple, String fingerprint) {
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        tuple.preAuthorizationTuple(),
+        tuple.authenticatedWorkloadIdentity(),
+        fingerprint,
+        tuple.reservationOwnerId(),
+        tuple.reservationClaimFence(),
+        tuple.authorityEvidenceBundleBytes(),
+        tuple.bundleReference());
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple tupleWithBundle(
+      StartSessionPostAuthorizationExecutionTuple tuple, byte[] bundle, String sourceVersion) {
+    var reference = tuple.bundleReference();
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(
+        tuple.preAuthorizationTuple(),
+        tuple.authenticatedWorkloadIdentity(),
+        tuple.authorizationReferenceFingerprint(),
+        tuple.reservationOwnerId(),
+        tuple.reservationClaimFence(),
+        bundle,
+        new StartSessionAuthorityEvidenceBundle.BundleReference(
+            reference.bundleVersion(),
+            sourceVersion,
+            reference.sourceFence(),
+            reference.linearization()));
   }
 
   private static Request currentAttemptRequest(

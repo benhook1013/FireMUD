@@ -117,6 +117,49 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcServiceTest {
   }
 
   @Test
+  void exactSameNamespaceWorldAndAccountHandlersPreserveLegacyScalarProjectionBytes()
+      throws Exception {
+    Fixture fixture = fixture();
+    HistoricalOriginalStartSessionOwnerEvidence.Result original = fixture.result();
+    byte[] legacyProjection = legacyScalarProjection(original.originalTuple());
+    var retainedResult =
+        new HistoricalOriginalStartSessionOwnerEvidence.Result(
+            original.request(),
+            original.originalTuple(),
+            original.ownerAttemptId(),
+            original.ownerFence(),
+            legacyProjection,
+            original.firstSelection(),
+            original.descriptorPin(),
+            original.launchAssociation(),
+            original.templateAssociationRequestDigest(),
+            original.templateAssociationResponseDigest(),
+            original.descriptorPinRequestDigest(),
+            original.descriptorPinResponseDigest());
+    CanonicalGameInstanceLaunchAssociationRepository repository = mockRepository();
+    when(repository.readHistoricalOriginalStartSessionOwnerEvidence(fixture.request()))
+        .thenReturn(Optional.of(retainedResult));
+    var service =
+        new HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService(repository, NAMESPACE);
+
+    RecordingObserver<ReadHistoricalOriginalStartSessionOwnerEvidenceResponse> worldResponse =
+        invokeAs(service, fixture.wireRequest(), WORLD_SERVICE);
+    RecordingObserver<ReadHistoricalOriginalStartSessionOwnerEvidenceResponse> accountResponse =
+        invokeAs(service, fixture.wireRequest(), ACCOUNT_SERVICE);
+
+    assertThat(worldResponse.error()).isNull();
+    assertThat(accountResponse.error()).isNull();
+    assertThat(worldResponse.completed()).isTrue();
+    assertThat(accountResponse.completed()).isTrue();
+    assertThat(worldResponse.response().getAccountRedemptionProjection().toByteArray())
+        .containsExactly(legacyProjection);
+    assertThat(accountResponse.response().getAccountRedemptionProjection().toByteArray())
+        .containsExactly(legacyProjection);
+    verify(repository, times(2)).readHistoricalOriginalStartSessionOwnerEvidence(fixture.request());
+    verifyNoMoreInteractions(repository);
+  }
+
+  @Test
   void missingAndMalformedRetainedResultsFailWithoutSendingAResponse() throws Exception {
     Fixture fixture = fixture();
     CanonicalGameInstanceLaunchAssociationRepository repository = mockRepository();
@@ -401,7 +444,8 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcServiceTest {
                     tuple.authorizationReferenceFingerprint(),
                     tuple.authorityEvidenceBundleBytes(),
                     ISSUANCE_ID,
-                    23L)
+                    23L,
+                    tuple.canonicalBytes())
                 .canonicalBytes(),
             firstSelection,
             descriptorPin,
@@ -412,6 +456,27 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcServiceTest {
             HistoricalOriginalStartSessionOwnerEvidence.sha256(descriptorResponseWire));
     return new Fixture(
         request, result, HistoricalOriginalStartSessionOwnerEvidenceGrpcCodec.toRequest(request));
+  }
+
+  private static byte[] legacyScalarProjection(
+      StartSessionPostAuthorizationExecutionTuple originalTuple) throws IOException {
+    StartSessionAuthorityEvidenceBundle bundle =
+        StartSessionAuthorityEvidenceBundle.decode(originalTuple.authorityEvidenceBundleBytes());
+    return Rfc8785CanonicalJson.canonicalizeUtf8(
+        JSON.writeValueAsString(
+            Map.of(
+                "projectionSchemaId",
+                "accountStartSessionRedemptionProjection",
+                "projectionSchemaVersion",
+                "1",
+                "authorizationReferenceFingerprint",
+                originalTuple.authorizationReferenceFingerprint(),
+                "authorityEvidenceBundle",
+                bundle.jsonValue(),
+                "issuanceOperationId",
+                bundle.issuanceOperationId().toString(),
+                "issuanceFence",
+                Long.parseLong(originalTuple.issuanceFence()))));
   }
 
   private static AuthoredWorldSourceEvidence sourceEvidence(UUID tenant, String worldSlug) {

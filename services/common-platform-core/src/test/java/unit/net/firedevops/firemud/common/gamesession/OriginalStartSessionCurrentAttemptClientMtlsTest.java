@@ -55,8 +55,7 @@ class OriginalStartSessionCurrentAttemptClientMtlsTest {
   private static final String OTHER_CLIENT_URI =
       "spiffe://firemud/ns/world-runtime/sa/entity-management-service";
   private static final String STORE_PASSWORD = "test-only-store-password";
-  private static final byte[] PROJECTION =
-      "synthetic-attached-account-projection".getBytes(StandardCharsets.UTF_8);
+  private static final byte[] PROJECTION = CurrentAttemptTestData.tuple().canonicalBytes();
 
   @TempDir static Path tempDirectory;
 

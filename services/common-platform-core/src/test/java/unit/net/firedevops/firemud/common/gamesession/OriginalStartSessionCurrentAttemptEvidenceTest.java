@@ -29,21 +29,17 @@ class OriginalStartSessionCurrentAttemptEvidenceTest {
     byte[] tupleBytes = tuple.canonicalBytes();
     Request request = new Request(READ_ID, "world-runtime", tupleBytes, ATTEMPT, MUTATION, 8L);
     tupleBytes[0] ^= 0x7f;
-    byte[] projection =
-        "exact-account-projection".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    byte[] projection = tuple.canonicalBytes();
     Result result =
         new Result(request, java.time.Instant.parse("2030-01-01T00:00:00Z"), projection);
     projection[0] ^= 0x7f;
 
     assertThat(request.canonicalPostAuthorizationTuple()).containsExactly(tuple.canonicalBytes());
     assertThat(request.originalTuple().canonicalBytes()).containsExactly(tuple.canonicalBytes());
-    assertThat(result.accountRedemptionProjection())
-        .containsExactly(
-            "exact-account-projection".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    assertThat(result.accountRedemptionProjection()).containsExactly(tuple.canonicalBytes());
     assertThat(result.accountRedemptionProjectionDigest())
         .isEqualTo(
-            OriginalStartSessionCurrentAttemptEvidence.projectionDigest(
-                "exact-account-projection".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            OriginalStartSessionCurrentAttemptEvidence.projectionDigest(tuple.canonicalBytes()));
     assertThat(result.phaseState())
         .isEqualTo(OriginalStartSessionCurrentAttemptEvidence.PENDING_PHASE);
   }

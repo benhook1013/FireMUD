@@ -9,6 +9,7 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Association;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.ExactReplay;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.InitialConfigured;
@@ -257,6 +258,13 @@ public final class GameSessionStartSessionTemplateAssociationRepository {
     StartSessionPostAuthorizationExecutionTuple tuple =
         StartSessionPostAuthorizationExecutionTuple.decode(
             attempt.postAuthorizationExecutionTuple());
+    try {
+      StartSessionAccountRedemptionProjection.requireCurrentBinding(
+          attempt.accountRedemptionProjection(), tuple);
+    } catch (IllegalArgumentException malformedOrLegacy) {
+      throw new StaleStartSessionOperatorAttemptClaimException(
+          "Template association pin requires the exact current Account owner tuple");
+    }
     if (!Arrays.equals(tuple.canonicalBytes(), attempt.postAuthorizationExecutionTuple())
         || !tuple.controlPlaneRequestId().equals(attempt.controlPlaneRequestId())
         || !tuple
