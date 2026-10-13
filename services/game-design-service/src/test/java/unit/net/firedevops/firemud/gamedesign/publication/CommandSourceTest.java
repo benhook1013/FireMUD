@@ -86,14 +86,7 @@ class CommandSourceTest {
                 commit,
                 CommandSource.OperationKind.UPSERT,
                 "LOOK",
-                exactDefinition),
-            new CommandSource.Mutation(
-                "2",
-                UUID.randomUUID(),
-                commit,
-                CommandSource.OperationKind.DELETE,
-                "absent",
-                null));
+                exactDefinition));
 
     var result = CommandSource.replay(inherited, operations);
     assertThat(result).hasSize(1);
@@ -102,8 +95,26 @@ class CommandSourceTest {
     assertThat(result.getFirst().sourceCommitId()).isEqualTo(commit);
     assertThat(result.getFirst().sourceRevisionId()).isEqualTo(upsertRevision);
     assertThat(CommandSource.replay(inherited, List.of())).containsExactlyElementsOf(inherited);
-    assertThat(CommandSource.replay(result, List.of(operations.get(2))))
-        .containsExactlyElementsOf(result);
+    var delete =
+        new CommandSource.Mutation(
+            "2", UUID.randomUUID(), commit, CommandSource.OperationKind.DELETE, "LOOK", null);
+    assertThat(CommandSource.replay(result, List.of(delete))).isEmpty();
+    var absentDelete =
+        new CommandSource.Mutation(
+            "3", UUID.randomUUID(), commit, CommandSource.OperationKind.DELETE, "absent", null);
+    assertThatThrownBy(() -> CommandSource.replay(inherited, List.of(absentDelete)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Cannot delete an absent command definition key");
+    assertThatThrownBy(() -> CommandSource.replay(List.of(), List.of(absentDelete)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Cannot delete an absent command definition key");
+    var secondDelete =
+        new CommandSource.Mutation(
+            "1", UUID.randomUUID(), commit, CommandSource.OperationKind.DELETE, "look", null);
+    assertThatThrownBy(
+            () -> CommandSource.replay(inherited, List.of(operations.getFirst(), secondDelete)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Cannot delete an absent command definition key");
     assertThatThrownBy(
             () -> CommandSource.replay(inherited, List.of(operations.get(1), operations.get(0))))
         .isInstanceOf(IllegalArgumentException.class);
