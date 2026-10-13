@@ -148,7 +148,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     assertThat(pendingRows).hasSize(1);
     assertThat(retainedSources).hasSize(2);
 
-    Flyway upgrade = activationFlyway(fixture.dataSource(), "latest");
+    Flyway upgrade = activationFlyway(fixture.dataSource(), "1004");
     assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
     upgrade.validate();
     assertThat(fixture.dsl().fetch(retainedHistoryQuery).getValues(0, String.class))
@@ -475,6 +475,167 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
         .contains("account_start_session_admission_protection_sources")
         .contains("account_ss_admission_is_settled")
         .contains("account_start_session_activation_protection_settlements");
+  }
+
+  @Test
+  void malformedPreparingLifecycleCannotAcquireProtectionOrBlockSourceWriters() throws Exception {
+    Fixture fixture = fixture();
+    CurrentnessCase current = currentnessCase(fixture, Instant.now().plusSeconds(120));
+    Map<String, Object> request = readJson(current.requestBytes());
+    byte[] preparingBytes =
+        Base64.getDecoder().decode((String) request.get("preparingEvidenceBytesBase64"));
+    java.util.List<byte[]> malformed = new java.util.ArrayList<>();
+    Map<String, Object> extraOuter = readJson(preparingBytes);
+    extraOuter.put("extra", true);
+    malformed.add(jsonBytes(extraOuter));
+    for (String field :
+        new String[] {
+          "launchBindingBytesBase64",
+          "startLocation",
+          "runtimeRoomInstanceId",
+          "lifecycleEpoch",
+          "rowVersion",
+          "captureId",
+          "graphSha256",
+          "preparationInputDigest",
+          "operationalRegionAssignments"
+        }) {
+      Map<String, Object> missing = readJson(preparingBytes);
+      missing.remove(field);
+      malformed.add(jsonBytes(missing));
+      Map<String, Object> wrongType = readJson(preparingBytes);
+      wrongType.put(field, 1);
+      malformed.add(jsonBytes(wrongType));
+    }
+    for (Map.Entry<String, Object> change :
+        Map.<String, Object>ofEntries(
+                Map.entry("runtimeRoomInstanceId", "0"),
+                Map.entry("lifecycleEpoch", "01"),
+                Map.entry("rowVersion", "9223372036854775808"),
+                Map.entry("captureId", "00000000-0000-0000-0000-000000000000"),
+                Map.entry("graphSha256", "invalid"),
+                Map.entry("preparationInputDigest", "invalid"),
+                Map.entry("launchBindingBytesBase64", "%%%"),
+                Map.entry("startLocation", Map.of()),
+                Map.entry("operationalRegionAssignments", Map.of()))
+            .entrySet()) {
+      Map<String, Object> changed = readJson(preparingBytes);
+      changed.put(change.getKey(), change.getValue());
+      malformed.add(jsonBytes(changed));
+    }
+    for (Map.Entry<String, Object> change :
+        Map.<String, Object>ofEntries(
+                Map.entry("extra", true),
+                Map.entry("publicProduction", false),
+                Map.entry("playableStateScope", "ISOLATED"),
+                Map.entry("schemaVersion", 2),
+                Map.entry("readRequestId", "00000000-0000-0000-0000-000000000000"),
+                Map.entry("worldSlug", "INVALID"),
+                Map.entry("expectedDescriptorRequestDigest", "invalid"),
+                Map.entry("canonicalVersionId", 1))
+            .entrySet()) {
+      Map<String, Object> changed = readJson(preparingBytes);
+      @SuppressWarnings("unchecked")
+      Map<String, Object> changedRequest = (Map<String, Object>) changed.get("request");
+      changedRequest.put(change.getKey(), change.getValue());
+      malformed.add(jsonBytes(changed));
+    }
+    String preparingJson = new String(preparingBytes, StandardCharsets.UTF_8);
+    for (String value :
+        new String[] {
+          preparingJson.replace("\"schemaVersion\":1", "\"schemaVersion\":1e0"),
+          preparingJson.replace("\"schemaVersion\":1", "\"schemaVersion\":1e+0"),
+          preparingJson.replace("\"schemaVersion\":1", "\"schemaVersion\":0,\"schemaVersion\":1")
+        }) {
+      malformed.add(bytes(value));
+    }
+    Map<String, Object> oversizedRequestId = readJson(preparingBytes);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> oversizedLifecycleRequest =
+        (Map<String, Object>) oversizedRequestId.get("request");
+    // 128 Unicode code points occupy 129 Java UTF-16 units.
+    oversizedLifecycleRequest.put("controlPlaneRequestId", "a".repeat(127) + "\uD83D\uDE00");
+    byte[] oversizedRequestIdBytes = jsonBytes(oversizedRequestId);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transaction()
+                    .executeWithoutResult(
+                        status ->
+                            fixture
+                                .dsl()
+                                .execute(
+                                    "SELECT account_ss_activation_validate_lifecycle(?, 'PREPARING')",
+                                    oversizedRequestIdBytes)))
+        .hasMessageContaining("Activation lifecycle request text is invalid");
+    malformed.add(oversizedRequestIdBytes);
+    String sourceKey =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT source_key FROM account_start_session_world_participation_sources ORDER BY source_key LIMIT 1")
+            .get(0, String.class);
+    for (byte[] invalidPreparing : malformed) {
+      assertThatThrownBy(() -> WorldCanonicalInstanceLifecycleEvidence.fromStored(invalidPreparing))
+          .isInstanceOf(IllegalArgumentException.class);
+      Map<String, Object> changedRequest = readJson(current.requestBytes());
+      changedRequest.put(
+          "preparingEvidenceBytesBase64", Base64.getEncoder().encodeToString(invalidPreparing));
+      CurrentnessCase changed =
+          new CurrentnessCase(
+              jsonBytes(changedRequest),
+              current.operationIdentityBytes(),
+              current.operationIdentityDigest(),
+              current.ownerAttemptId(),
+              current.expiryText());
+      assertThatThrownBy(() -> acquireProtection(fixture, changed))
+          .isInstanceOf(RuntimeException.class)
+          .satisfies(
+              failure -> {
+                Throwable postgresFailure = failure;
+                while (postgresFailure.getCause() != null)
+                  postgresFailure = postgresFailure.getCause();
+                assertThat(postgresFailure)
+                    .isInstanceOfSatisfying(
+                        org.postgresql.util.PSQLException.class,
+                        sqlFailure ->
+                            assertThat(sqlFailure.getSQLState())
+                                .as(sqlFailure.getMessage())
+                                .isEqualTo("23514"));
+              });
+      assertThat(
+              fixture.dsl().fetchCount(DSL.table("account_start_session_activation_protections")))
+          .isZero();
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchCount(DSL.table("account_start_session_activation_protection_sources")))
+          .isZero();
+      fixture
+          .transaction()
+          .executeWithoutResult(
+              status ->
+                  fixture
+                      .dsl()
+                      .execute(
+                          "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                          sourceKey));
+    }
+    acquireProtection(fixture, current);
+    assertThat(fixture.dsl().fetchCount(DSL.table("account_start_session_activation_protections")))
+        .isEqualTo(1);
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .transaction()
+                    .executeWithoutResult(
+                        status ->
+                            fixture
+                                .dsl()
+                                .execute(
+                                    "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                                    sourceKey)))
+        .hasMessageContaining("Original StartSession activation protection remains pending");
   }
 
   @Test
