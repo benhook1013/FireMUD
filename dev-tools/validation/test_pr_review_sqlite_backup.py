@@ -326,6 +326,17 @@ class SqliteBackupTest(unittest.TestCase):
             backup_database(arbitrary, **self._backup_arguments())
         self.assertEqual(self.sftp_batches, [])
 
+    def test_backup_readback_rejects_model_two_with_weak_controller_writer_fence(self) -> None:
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE controller_metadata SET min_writer_build = 8 WHERE singleton = 1")
+        before = self.database.read_bytes()
+
+        with self.assertRaisesRegex(BackupError, "failed FireMUD SQLite schema or logical readback validation"):
+            sqlite_backup._validate_database(self.database, "source database")
+
+        self.assertEqual(self.database.read_bytes(), before)
+        self.assertEqual(self.sftp_batches, [])
+
     def test_secret_like_persisted_text_is_rejected_before_sftp(self) -> None:
         with sqlite3.connect(self.database) as connection:
             connection.execute(

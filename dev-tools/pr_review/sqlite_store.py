@@ -26,11 +26,82 @@ from typing import Any
 from .state import ReviewState, StateError, StateLockTimeout, _locked, sqlite_state_path
 
 SQLITE_SCHEMA_VERSION = 1
-WRITER_BUILD = 8
+WRITER_BUILD = 9
+PREVIOUS_DATA_MODEL_VERSION = 1
 STATUS_VERSION = 1
 CUTOVER_VERSION = 1
 _METADATA_TABLE = "controller_metadata"
 _STATE_TABLE = "review_state"
+
+
+def validate_controller_compatibility(
+    connection: sqlite3.Connection,
+    *,
+    writer_build: int = WRITER_BUILD,
+    query: Callable[[str], Any] | None = None,
+) -> int:
+    """Validate shared controller metadata and return its persisted model version."""
+
+    execute = query or connection.execute
+    schema_version = execute("PRAGMA user_version").fetchone()[0]
+    if isinstance(schema_version, bool) or schema_version != SQLITE_SCHEMA_VERSION:
+        raise StateError(f"unsupported SQLite review-state schema version: {schema_version}")
+    row = execute(
+        f"SELECT data_model_version, min_writer_build FROM {_METADATA_TABLE} WHERE singleton = 1"
+    ).fetchone()
+    if row is None:
+        raise StateError("SQLite review-state metadata is missing")
+    data_model_version, min_writer_build = row
+    supported_versions = {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+    if (
+        isinstance(data_model_version, bool)
+        or not isinstance(data_model_version, int)
+        or data_model_version not in supported_versions
+    ):
+        raise StateError(f"unsupported review-state data model version: {data_model_version}")
+    if isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0:
+        raise StateError("SQLite review-state minimum writer build is invalid")
+    if data_model_version >= 2 and min_writer_build < WRITER_BUILD:
+        raise StateError(f"model-2 SQLite review state requires a minimum writer build of {WRITER_BUILD}")
+    if isinstance(writer_build, bool) or not isinstance(writer_build, int) or writer_build <= 0:
+        raise StateError("SQLite review-state writer build is invalid")
+    required_build = max(min_writer_build, WRITER_BUILD if data_model_version >= 2 else 1)
+    if writer_build < required_build:
+        raise StateError(f"SQLite review state requires writer build {required_build}")
+    state_table = execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'review_state'"
+    ).fetchone()
+    if state_table is None:
+        raise StateError("SQLite review state table is missing")
+    return data_model_version
+
+
+def load_validated_controller_state(
+    connection: sqlite3.Connection,
+    *,
+    data_model_version: int,
+    query: Callable[[str], Any] | None = None,
+) -> ReviewState:
+    """Read one persisted state only when its payload matches controller metadata."""
+
+    execute = query or connection.execute
+    row = execute(f"SELECT state_json FROM {_STATE_TABLE} WHERE singleton = 1").fetchone()
+    if row is None or not isinstance(row[0], str):
+        raise StateError("SQLite review state is missing its validated state document")
+    try:
+        document = json.loads(row[0])
+    except json.JSONDecodeError as exc:
+        raise StateError("SQLite review state contains malformed JSON") from exc
+    if not isinstance(document, Mapping):
+        raise StateError("SQLite review state document must be an object")
+    payload_version = document.get("schema_version")
+    if (
+        isinstance(payload_version, bool)
+        or not isinstance(payload_version, int)
+        or payload_version != data_model_version
+    ):
+        raise StateError("SQLite review-state data model metadata does not match its state document")
+    return ReviewState.from_dict(document)
 
 
 def _atomic_exchange(first: Path, second: Path) -> None:
@@ -121,23 +192,14 @@ class SqliteStateStore:
             return ReviewState()
         try:
             with closing(self._connect_read_only(deadline=deadline)) as connection:
-                self._require_compatible(connection, deadline=deadline)
-                self._set_busy_timeout(connection, deadline)
-                row = connection.execute(f"SELECT state_json FROM {_STATE_TABLE} WHERE singleton = 1").fetchone()
+                expected_data_model = self._require_compatible(connection, deadline=deadline)
+                state = self._load_from_connection(connection, expected_data_model=expected_data_model)
         except sqlite3.DatabaseError as exc:
             if deadline is not None and self._is_sqlite_lock_error(exc):
                 raise StateLockTimeout("timed out waiting for SQLite review-state read lock") from exc
             raise StateError("cannot read SQLite review-state database") from exc
         self._check_deadline(deadline)
-        if row is None or not isinstance(row[0], str):
-            raise StateError("SQLite review state is missing its validated state document")
-        try:
-            document = json.loads(row[0])
-        except json.JSONDecodeError as exc:
-            raise StateError("SQLite review state contains malformed JSON") from exc
-        if not isinstance(document, Mapping):
-            raise StateError("SQLite review state document must be an object")
-        return ReviewState.from_dict(document)
+        return state
 
     def update(
         self,
@@ -178,10 +240,15 @@ class SqliteStateStore:
                 raise
             self._check_deadline(deadline)
             if created_identity is not None:
+                if self.writer_build < WRITER_BUILD:
+                    raise StateError(f"SQLite review state requires writer build {WRITER_BUILD}")
                 self._initialize(connection, self.writer_build)
+                expected_data_model = ReviewState().schema_version
             else:
-                self._require_compatible(connection, deadline=deadline)
-            current = self._load_from_connection(connection)
+                expected_data_model = self._require_compatible(connection, deadline=deadline)
+            current = self._load_from_connection(connection, expected_data_model=expected_data_model)
+            if self.writer_build < WRITER_BUILD:
+                raise StateError(f"SQLite review state requires writer build {WRITER_BUILD}")
             self._check_deadline(deadline)
             updated = mutate(current)
             if deadline is not None and deadline_active is not None and not deadline_active():
@@ -193,6 +260,14 @@ class SqliteStateStore:
                 self._check_deadline(deadline)
             if not isinstance(updated, ReviewState):
                 raise TypeError("mutate must return ReviewState")
+            if updated.schema_version >= 2:
+                if self.writer_build < WRITER_BUILD:
+                    raise StateError(f"SQLite review state requires writer build {WRITER_BUILD}")
+                connection.execute(
+                    f"UPDATE {_METADATA_TABLE} SET data_model_version = ?, "
+                    "min_writer_build = MAX(min_writer_build, ?) WHERE singleton = 1",
+                    (updated.schema_version, WRITER_BUILD),
+                )
             if any(
                 allocation.stop_basis == "direct_human"
                 and (
@@ -285,14 +360,25 @@ class SqliteStateStore:
                 base["min_writer_build"] = min_writer_build
                 if base["schema_version"] != SQLITE_SCHEMA_VERSION:
                     base["reason"] = f"unsupported SQLite schema version {base['schema_version']}"
-                elif data_model_version != ReviewState().schema_version:
+                elif (
+                    isinstance(data_model_version, bool)
+                    or not isinstance(data_model_version, int)
+                    or data_model_version not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+                ):
                     base["reason"] = f"unsupported review-state data model version {data_model_version}"
                 elif (
                     isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0
                 ):
                     base["reason"] = "minimum writer build metadata is invalid"
-                elif self.writer_build < min_writer_build:
-                    base["reason"] = f"database requires writer build {min_writer_build}"
+                elif data_model_version >= 2 and min_writer_build < WRITER_BUILD:
+                    base["reason"] = (
+                        f"model-2 SQLite review state requires a minimum writer build of {WRITER_BUILD}"
+                    )
+                elif self.writer_build < max(min_writer_build, WRITER_BUILD if data_model_version >= 2 else 1):
+                    base["reason"] = (
+                        f"database requires writer build "
+                        f"{max(min_writer_build, WRITER_BUILD if data_model_version >= 2 else 1)}"
+                    )
                 else:
                     base["compatible"] = True
                     base["reason"] = None
@@ -604,26 +690,11 @@ class SqliteStateStore:
         connection.execute("PRAGMA query_only = ON")
         return connection
 
-    def _require_compatible(self, connection: sqlite3.Connection, *, deadline: float | None = None) -> None:
-        schema_version = int(
-            self._compatibility_query(connection, "PRAGMA user_version", deadline=deadline).fetchone()[0]
-        )
-        if schema_version != SQLITE_SCHEMA_VERSION:
-            raise StateError(f"unsupported SQLite review-state schema version: {schema_version}")
-        row = self._compatibility_query(
-            connection,
-            f"SELECT data_model_version, min_writer_build FROM {_METADATA_TABLE} WHERE singleton = 1",
-            deadline=deadline,
-        ).fetchone()
-        if row is None:
-            raise StateError("SQLite review-state metadata is missing")
-        data_model_version, min_writer_build = row
-        if data_model_version != ReviewState().schema_version:
-            raise StateError(f"unsupported review-state data model version: {data_model_version}")
-        if isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0:
-            raise StateError("SQLite review-state minimum writer build is invalid")
-        if self.writer_build < min_writer_build:
-            raise StateError(f"SQLite review state requires writer build {min_writer_build}")
+    def _require_compatible(self, connection: sqlite3.Connection, *, deadline: float | None = None) -> int:
+        def query(statement: str) -> sqlite3.Cursor:
+            return self._compatibility_query(connection, statement, deadline=deadline)
+
+        return validate_controller_compatibility(connection, writer_build=self.writer_build, query=query)
 
     def _compatibility_query(
         self,
@@ -674,14 +745,5 @@ class SqliteStateStore:
         )
 
     @staticmethod
-    def _load_from_connection(connection: sqlite3.Connection) -> ReviewState:
-        row = connection.execute(f"SELECT state_json FROM {_STATE_TABLE} WHERE singleton = 1").fetchone()
-        if row is None or not isinstance(row[0], str):
-            raise StateError("SQLite review state is missing its validated state document")
-        try:
-            document = json.loads(row[0])
-        except json.JSONDecodeError as exc:
-            raise StateError("SQLite review state contains malformed JSON") from exc
-        if not isinstance(document, Mapping):
-            raise StateError("SQLite review state document must be an object")
-        return ReviewState.from_dict(document)
+    def _load_from_connection(connection: sqlite3.Connection, *, expected_data_model: int) -> ReviewState:
+        return load_validated_controller_state(connection, data_model_version=expected_data_model)

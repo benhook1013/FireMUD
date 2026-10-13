@@ -164,21 +164,9 @@ public class VersionPublishCommandServiceImpl {
       requireCanonicalOwnerPublicationCarrier(request);
       attempt = reserveDraftAttempt(request);
     }
-    if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
+    if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED
+        || attempt.getStatus() == PublishAttemptStatus.FAILED) {
       return replayTerminalAttempt(request, attempt);
-    }
-    if (attempt.getStatus() == PublishAttemptStatus.FAILED) {
-      // Failed legacy attempts may retain only terminal evidence after their draft was deleted.
-      // Validate their stable scope before entering the draft-dependent compatibility backfill.
-      validateTerminalFullVersionAttempt(attempt, request);
-      if (request.intent() != null) publishAttemptRepository.requireNoPublicationOperation(attempt);
-      return new PublishWorkflowSnapshot(
-          attempt.getVersionId() == null ? 0L : attempt.getVersionId(),
-          attempt.getVersionNumber(),
-          request.publishWorkflowId(),
-          "FAILED",
-          emptyIfNull(attempt.getFailureCode()),
-          emptyIfNull(attempt.getFailureMessage()));
     }
     requireSelectedIntent(request);
     validateFullVersionAttempt(attempt, request);

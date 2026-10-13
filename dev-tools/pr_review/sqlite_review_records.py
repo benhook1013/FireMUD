@@ -27,8 +27,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from .sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD
-from .state import FindingRoute, ReviewState, StateLockTimeout
+from .sqlite_store import (
+    PREVIOUS_DATA_MODEL_VERSION,
+    SQLITE_SCHEMA_VERSION,
+    WRITER_BUILD,
+    load_validated_controller_state,
+    validate_controller_compatibility,
+)
+from .state import FindingRoute, ReviewState, StateError, StateLockTimeout
 
 ReviewChannel = Literal["hosted", "cli", "manual", "subagent"]
 FindingDisposition = Literal["accepted", "routed", "rejected", "unresolved"]
@@ -670,7 +676,7 @@ class SqliteReviewRecords:
         try:
             with contextlib.closing(self._connect(read_only=False)) as connection:
                 connection.execute("BEGIN IMMEDIATE")
-                self._require_controller_compatible(connection)
+                controller_data_model_version = self._require_controller_compatible(connection)
                 tables = self._table_names(connection)
                 if _RECORDS_METADATA_TABLE in tables:
                     self._require_compatible(connection)
@@ -680,7 +686,7 @@ class SqliteReviewRecords:
                 partial = tables & _RECORDS_TABLES
                 if partial:
                     raise ReviewRecordsError("review-records schema is partial and cannot be bootstrapped")
-                self._create_schema(connection)
+                self._create_schema(connection, controller_data_model_version=controller_data_model_version)
                 self._raise_controller_writer_fence(connection)
                 connection.commit()
         except ReviewRecordsError:
@@ -5141,33 +5147,30 @@ class SqliteReviewRecords:
         connection: sqlite3.Connection,
         *,
         deadline: float | None = None,
-    ) -> None:
+    ) -> int:
         deadline = self._effective_deadline(deadline)
-        schema_version = int(
-            self._compatibility_query(connection, "PRAGMA user_version", deadline=deadline).fetchone()[0]
-        )
-        if schema_version != SQLITE_SCHEMA_VERSION:
-            raise RecordsSchemaIncompatible(f"unsupported controller SQLite schema version {schema_version}")
-        if "controller_metadata" not in self._table_names(connection, deadline=deadline):
-            raise RecordsSchemaIncompatible("controller SQLite metadata is missing")
         try:
-            row = self._compatibility_query(
+            def query(statement: str) -> sqlite3.Cursor:
+                return self._compatibility_query(connection, statement, deadline=deadline)
+
+            data_model_version = validate_controller_compatibility(
                 connection,
-                "SELECT data_model_version, min_writer_build FROM controller_metadata WHERE singleton = 1",
-                deadline=deadline,
-            ).fetchone()
+                writer_build=self.writer_build,
+                query=query,
+            )
+            load_validated_controller_state(
+                connection,
+                data_model_version=data_model_version,
+                query=query,
+            )
         except sqlite3.DatabaseError as exc:
             self._raise_hosted_deadline_if_expired(deadline, error=exc)
+            if self._is_sqlite_lock_error(exc):
+                raise
             raise RecordsSchemaIncompatible("controller SQLite metadata has an incompatible shape") from exc
-        if row is None:
-            raise RecordsSchemaIncompatible("controller SQLite metadata row is missing")
-        data_model_version, min_writer_build = row
-        if data_model_version != ReviewState().schema_version:
-            raise RecordsSchemaIncompatible(f"unsupported controller data-model version {data_model_version}")
-        if isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0:
-            raise RecordsSchemaIncompatible("controller SQLite minimum writer build metadata is invalid")
-        if self.writer_build < min_writer_build:
-            raise RecordsSchemaIncompatible(f"controller SQLite database requires writer build {min_writer_build}")
+        except StateError as exc:
+            raise RecordsSchemaIncompatible(f"controller SQLite database is incompatible: {exc}") from exc
+        return data_model_version
 
     @staticmethod
     def _raise_controller_writer_fence(connection: sqlite3.Connection) -> None:
@@ -5180,7 +5183,7 @@ class SqliteReviewRecords:
 
     def _require_compatible(self, connection: sqlite3.Connection, *, deadline: float | None = None) -> None:
         deadline = self._effective_deadline(deadline)
-        self._require_controller_compatible(connection, deadline=deadline)
+        controller_data_model = self._require_controller_compatible(connection, deadline=deadline)
         tables = self._table_names(connection, deadline=deadline)
         if _RECORDS_METADATA_TABLE not in tables:
             if tables & _RECORDS_TABLES:
@@ -5203,7 +5206,11 @@ class SqliteReviewRecords:
             raise RecordsSchemaIncompatible(f"unsupported review-records schema version {records_version}")
         if controller_version != SQLITE_SCHEMA_VERSION:
             raise RecordsSchemaIncompatible(f"review records require controller schema {controller_version}")
-        if data_model_version != ReviewState().schema_version:
+        if (
+            isinstance(data_model_version, bool)
+            or data_model_version not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+            or data_model_version > controller_data_model
+        ):
             raise RecordsSchemaIncompatible(f"review records require controller data model {data_model_version}")
         if isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0:
             raise RecordsSchemaIncompatible("review-records minimum writer build metadata is invalid")
@@ -5214,7 +5221,7 @@ class SqliteReviewRecords:
             raise RecordsSchemaIncompatible("review-records schema is incomplete")
 
     @staticmethod
-    def _create_schema(connection: sqlite3.Connection) -> None:
+    def _create_schema(connection: sqlite3.Connection, *, controller_data_model_version: int) -> None:
         connection.execute(
             "CREATE TABLE review_records_metadata ("
             "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
@@ -5300,7 +5307,7 @@ class SqliteReviewRecords:
         SqliteReviewRecords._create_historical_gap_schema(connection)
         connection.execute(
             "INSERT INTO review_records_metadata VALUES (1, ?, ?, ?, ?)",
-            (_RECORDS_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, ReviewState().schema_version, WRITER_BUILD),
+            (_RECORDS_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, controller_data_model_version, WRITER_BUILD),
         )
 
     @staticmethod

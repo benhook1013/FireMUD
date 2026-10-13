@@ -23,7 +23,14 @@ from pathlib import Path
 from typing import Any
 
 from pr_review.sqlite_review_records import _credential_location
-from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
+from pr_review.sqlite_store import (
+    PREVIOUS_DATA_MODEL_VERSION,
+    SQLITE_SCHEMA_VERSION,
+    WRITER_BUILD,
+    SqliteStateStore,
+    load_validated_controller_state,
+    validate_controller_compatibility,
+)
 from pr_review.state import ReviewState, StateError
 
 from .context import worker_alias
@@ -403,7 +410,7 @@ class JobStore:
         try:
             with closing(self._connect(read_only=False)) as connection:
                 connection.execute("BEGIN IMMEDIATE")
-                self._require_controller_compatible(connection)
+                controller_data_model = self._require_controller_compatible(connection)
                 tables = self._table_names(connection)
                 present = tables & set(_JOB_TABLES)
                 if present:
@@ -414,7 +421,7 @@ class JobStore:
                     self.validate(connection)
                     connection.commit()
                     return
-                self._create_schema(connection)
+                self._create_schema(connection, controller_data_model)
                 self.validate(connection)
                 connection.commit()
         except JobError:
@@ -431,7 +438,7 @@ class JobStore:
 
         if not isinstance(connection, sqlite3.Connection):
             raise TypeError("connection must be an sqlite3.Connection")
-        cls._require_controller_compatible_connection(connection)
+        controller_data_model = cls._require_controller_compatible_connection(connection)
         tables = cls._table_names(connection)
         missing = set(_JOB_TABLES) - tables
         if missing:
@@ -459,18 +466,14 @@ class JobStore:
         ).fetchone()
         if row is None:
             raise JobsSchemaIncompatible("job metadata row is missing")
-        if tuple(row) != (JOBS_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, ReviewState().schema_version):
+        job_data_model = row[2]
+        if (
+            tuple(row[:2]) != (JOBS_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION)
+            or isinstance(job_data_model, bool)
+            or job_data_model not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+            or job_data_model > controller_data_model
+        ):
             raise JobsSchemaIncompatible("job metadata records incompatible schema versions")
-        try:
-            state_row = connection.execute("SELECT state_json FROM review_state WHERE singleton = 1").fetchone()
-            if state_row is None:
-                raise JobsSchemaIncompatible("controller review state row is missing")
-            state_document = _loads(state_row[0], "controller review state")
-            if not isinstance(state_document, Mapping):
-                raise JobsSchemaIncompatible("controller review state is not an object")
-            ReviewState.from_dict(state_document)
-        except StateError as exc:
-            raise JobsSchemaIncompatible("controller review state is invalid") from exc
         invalid_primary = connection.execute(
             "SELECT id FROM jobs WHERE (is_primary NOT IN (0, 1)) "
             "OR (is_primary = 1 AND status IN ('parked', 'completed')) LIMIT 1"
@@ -1550,35 +1553,18 @@ class JobStore:
     def _require_controller_compatible_connection(
         connection: sqlite3.Connection,
         writer_build: int = WRITER_BUILD,
-    ) -> None:
+    ) -> int:
         try:
-            schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
-            if schema_version != SQLITE_SCHEMA_VERSION:
-                raise StateError(f"unsupported SQLite review-state schema version: {schema_version}")
-            row = connection.execute(
-                "SELECT data_model_version, min_writer_build FROM controller_metadata WHERE singleton = 1"
-            ).fetchone()
-            if row is None:
-                raise StateError("SQLite review-state metadata is missing")
-            data_model_version, min_writer_build = row
-            if data_model_version != ReviewState().schema_version:
-                raise StateError(f"unsupported review-state data model version: {data_model_version}")
-            if isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0:
-                raise StateError("SQLite review-state minimum writer build is invalid")
-            if writer_build < min_writer_build:
-                raise StateError(f"SQLite review state requires writer build {min_writer_build}")
-            state_table = connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'review_state'"
-            ).fetchone()
-            if state_table is None:
-                raise StateError("SQLite review state table is missing")
+            data_model_version = validate_controller_compatibility(connection, writer_build=writer_build)
+            load_validated_controller_state(connection, data_model_version=data_model_version)
+            return data_model_version
         except sqlite3.DatabaseError as exc:
             raise JobsSchemaIncompatible("controller SQLite metadata is incomplete or malformed") from exc
         except StateError as exc:
             raise JobsSchemaIncompatible(f"controller SQLite database is incompatible: {exc}") from exc
 
     @staticmethod
-    def _create_schema(connection: sqlite3.Connection) -> None:
+    def _create_schema(connection: sqlite3.Connection, controller_data_model: int) -> None:
         connection.execute(
             "CREATE TABLE job_metadata ("
             "singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
@@ -1650,7 +1636,7 @@ class JobStore:
         connection.execute(
             "INSERT INTO job_metadata(singleton, jobs_schema_version, controller_schema_version, controller_data_model_version) "
             "VALUES (1, ?, ?, ?)",
-            (JOBS_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, ReviewState().schema_version),
+            (JOBS_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, controller_data_model),
         )
 
     @contextmanager
@@ -1714,7 +1700,7 @@ class JobStore:
             raise JobsSchemaIncompatible("cannot open SQLite controller database") from exc
 
     def _require_compatible(self, connection: sqlite3.Connection) -> None:
-        self._require_controller_compatible_connection(connection, self.writer_build)
+        controller_data_model = self._require_controller_compatible_connection(connection, self.writer_build)
         tables = self._table_names(connection)
         present = tables & set(_JOB_TABLES)
         if not present:
@@ -1727,11 +1713,17 @@ class JobStore:
         ).fetchone()
         if row is None:
             raise JobsSchemaIncompatible("job metadata row is missing")
-        if tuple(row) != (JOBS_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, ReviewState().schema_version):
+        job_data_model = row[2]
+        if (
+            tuple(row[:2]) != (JOBS_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION)
+            or isinstance(job_data_model, bool)
+            or job_data_model not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+            or job_data_model > controller_data_model
+        ):
             raise JobsSchemaIncompatible("job schema requires a different controller or data-model version")
 
-    def _require_controller_compatible(self, connection: sqlite3.Connection) -> None:
-        self._require_controller_compatible_connection(connection, self.writer_build)
+    def _require_controller_compatible(self, connection: sqlite3.Connection) -> int:
+        return self._require_controller_compatible_connection(connection, self.writer_build)
 
     def _insert_job(self, connection: sqlite3.Connection, prepared: Mapping[str, Any]) -> dict[str, Any]:
         if prepared["primary"]:
