@@ -18,7 +18,7 @@ Current capability and proof gaps remain: Game Session's exact pin/epoch persist
 
 ### Authored-World Launch Boundary
 
-The canonical authored-world launch slice includes source-qualified ResolveLaunchDescriptor, exact independent GetLaunchDescriptor, and GetCompleteLaunchBinding returning descriptor and release-attestation evidence separately. Game Session's evidence-only preparation and focused proof sources are present, but validation is deferred until published A/B/C dependencies are integrated. Numeric launch selectors are non-authorizing.
+The canonical authored-world launch slice includes source-qualified ResolveLaunchDescriptor, exact independent GetLaunchDescriptor, and GetCompleteLaunchBinding returning descriptor and release-attestation evidence separately. Game Session's evidence-only preparation and focused proof sources are present; capability and proof gaps are recorded in the [implementation tracker](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#launch-activation-cutover-and-termination). Numeric launch selectors are non-authorizing.
 
 ## Responsibilities
 

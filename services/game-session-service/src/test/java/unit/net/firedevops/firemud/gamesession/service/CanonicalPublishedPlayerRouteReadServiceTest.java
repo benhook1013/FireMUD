@@ -1,9 +1,11 @@
 package unit.net.firedevops.firemud.gamesession.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +18,7 @@ import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.CanonicalGameplayRosterOwnerReadEvidence;
 import net.firedevops.firemud.common.world.PreseededActorAssignmentOwnerReadEvidence;
+import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.gamesession.client.GameDesignPublishedRealmPolicyClient;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionLaunchTarget;
@@ -27,9 +30,10 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCa
 import net.firedevops.firemud.gamesession.service.CanonicalPlayerRouteReadService;
 import net.firedevops.firemud.gamesession.service.CanonicalPublishedPlayerRouteReadService;
 import org.junit.jupiter.api.Test;
+import support.net.firedevops.firemud.gamesession.PublishedRealmPolicyEvidenceFixture;
 
 class CanonicalPublishedPlayerRouteReadServiceTest {
-  private static final String NAMESPACE = "gameplay";
+  private static final String NAMESPACE = "test";
   private static final UUID TENANT = uuid("11111111-1111-4111-8111-111111111111");
   private static final UUID REALM = uuid("22222222-2222-4222-8222-222222222222");
   private static final UUID PLAYABLE_NAMESPACE = uuid("33333333-3333-4333-8333-333333333333");
@@ -39,14 +43,48 @@ class CanonicalPublishedPlayerRouteReadServiceTest {
   private static final String SOURCE_DIGEST = "sha256:" + "a".repeat(64);
 
   @Test
-  void tenantSelectorOwnerReadRejectsChangedCanonicalSelectorOrCounterBeforeGameDesign() {
+  void tenantSelectorOwnerReadRejectsEachChangedCanonicalCounterBeforeGameDesign() {
     var f = fixture();
     when(f.routeReader().readCurrentTarget(TENANT)).thenReturn(f.route());
-    var request = exactRequest(999L, 0L, 0L);
-
-    assertThatThrownBy(() -> f.service().readCurrent(request))
-        .isInstanceOf(CanonicalPublishedPlayerRouteReadService.StaleAuthorityException.class);
+    for (var deltas :
+        java.util.List.of(
+            new long[] {1L, 0L, 0L}, new long[] {0L, 1L, 0L}, new long[] {0L, 0L, 1L})) {
+      assertThatThrownBy(
+              () -> f.service().readCurrent(exactRequest(deltas[0], deltas[1], deltas[2])))
+          .isInstanceOf(CanonicalPublishedPlayerRouteReadService.StaleAuthorityException.class);
+    }
     verify(f.policyClient(), never()).listPublishedRealmEntryPolicies(TENANT, VERSION);
+  }
+
+  @Test
+  void matchingCurrentRouteReadsAndReturnsCompleteOwnerPolicyEvidence() {
+    var f = fixture();
+    when(f.routeReader().readCurrentTarget(TENANT)).thenReturn(f.route());
+    var policies =
+        PublishedRealmPolicyEvidenceFixture.fixture(
+            TENANT,
+            VERSION,
+            19L,
+            42L,
+            "game-design-tenant-42",
+            "NEW_GAME_ROW",
+            3,
+            new PublishedRealmPolicyEvidenceFixture.PolicySpec(
+                "earth", "Earth", "main", "Main", true, true, "SHARED"));
+    when(f.release().commitId()).thenReturn(policies.set().sourceCommitId().toString());
+    when(f.release().publishWorkflowId()).thenReturn(policies.set().publishWorkflowId());
+    when(f.release().manifestHash()).thenReturn(policies.set().manifestHash());
+    when(f.release().versionStateEpoch()).thenReturn(policies.set().publicationVersionStateEpoch());
+    when(f.descriptor().versionStateEpoch())
+        .thenReturn(policies.set().publicationVersionStateEpoch());
+    when(f.policyClient().listPublishedRealmEntryPolicies(TENANT, VERSION))
+        .thenReturn(policies.set());
+
+    CanonicalGameplayRosterOwnerReadEvidence result =
+        f.service().readCurrent(exactRequest(0L, 0L, 0L));
+
+    assertThat(result.publishedPolicySetEvidence()).isEqualTo(policies.set());
+    verify(f.policyClient(), times(2)).listPublishedRealmEntryPolicies(TENANT, VERSION);
   }
 
   @Test
@@ -224,6 +262,28 @@ class CanonicalPublishedPlayerRouteReadServiceTest {
     when(route.gameInstanceId()).thenReturn(202L);
     when(route.runtimeVersionId()).thenReturn(303L);
     when(route.canonicalVersionId()).thenReturn(VERSION);
+    when(route.catalogRevision()).thenReturn(1L);
+    when(route.pointerVersion()).thenReturn(1L);
+    when(route.admissionPointerSnapshotDigest()).thenReturn("d".repeat(64));
+    when(route.activeWorldEpoch()).thenReturn(1L);
+    when(route.initialAdmissionRequestId()).thenReturn("first-open-operation-17");
+    when(route.initialAdmissionRequestDigest()).thenReturn("a".repeat(64));
+    when(route.initialAdmissionOriginKind())
+        .thenReturn(
+            net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind
+                .NO_PRIOR_POINTER);
+    when(route.expectedPriorPointerVersion()).thenReturn(null);
+    when(route.holdId()).thenReturn(uuid("99999999-9999-4999-8999-999999999999"));
+    when(route.holdFence()).thenReturn(uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"));
+    when(route.holdBindingDigest()).thenReturn(currentHoldRequest().holdBindingDigest());
+    when(route.auditEventId()).thenReturn(27L);
+    when(route.ownerProofDigest()).thenReturn("sha256:" + "f".repeat(64));
+    when(route.ownerProofOutcome())
+        .thenReturn(
+            net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof.Outcome
+                .COMMITTED);
+    when(route.positiveDurableAbort()).thenReturn(false);
+    when(route.ownerProofTerminalAt()).thenReturn(java.time.Instant.parse("2026-10-07T00:00:00Z"));
 
     when(catalog.targetNamespace()).thenReturn(NAMESPACE);
     when(catalog.tenantId()).thenReturn(TENANT);
@@ -250,6 +310,9 @@ class CanonicalPublishedPlayerRouteReadServiceTest {
     when(launch.runtimeVersionId()).thenReturn(303L);
     when(launch.canonicalVersionId()).thenReturn(VERSION);
     when(association.targetNamespace()).thenReturn(NAMESPACE);
+    when(association.gameSessionTenantId()).thenReturn(101L);
+    when(association.tenantAssociationOperationId())
+        .thenReturn(uuid("aeaeaeae-aeae-4eae-8eae-aeaeaeaeaeae"));
     when(association.canonicalTenantId()).thenReturn(TENANT);
     when(association.gameInstanceUuid()).thenReturn(INSTANCE);
     when(association.worldSlug()).thenReturn("earth");
@@ -260,6 +323,8 @@ class CanonicalPublishedPlayerRouteReadServiceTest {
         .thenReturn(CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.RUNNING);
     when(association.controlPlaneRequestId()).thenReturn("launch-request");
     when(association.launchDescriptorId()).thenReturn("launch-descriptor");
+    when(association.capturedStartingRowVersion()).thenReturn(1L);
+    when(association.currentRowVersion()).thenReturn(2L);
     when(association.launchBindingEvidence()).thenReturn(completeBinding);
     when(completeBinding.descriptor()).thenReturn(descriptor);
     when(completeBinding.releaseAttestation()).thenReturn(release);
@@ -279,6 +344,9 @@ class CanonicalPublishedPlayerRouteReadServiceTest {
     when(release.worldSlug()).thenReturn("earth");
     when(release.authoredWorldSourceOperationId()).thenReturn(SOURCE_OPERATION);
     when(release.authoredWorldSourceEvidenceDigest()).thenReturn(SOURCE_DIGEST);
+    when(release.commitId()).thenReturn("commit-id");
+    when(release.publishWorkflowId()).thenReturn("publish-workflow");
+    when(release.manifestHash()).thenReturn("sha256:" + "b".repeat(64));
     when(release.versionStateEpoch()).thenReturn(7L);
     when(release.publishedReleaseBundleRef()).thenReturn("bundle:exact");
 
@@ -298,6 +366,7 @@ class CanonicalPublishedPlayerRouteReadServiceTest {
         route,
         source,
         launch,
+        descriptor,
         release,
         service);
   }
@@ -319,6 +388,24 @@ class CanonicalPublishedPlayerRouteReadServiceTest {
         1L + catalogDelta,
         1L + pointerDelta,
         1L + epochDelta);
+  }
+
+  private static WorldCanonicalInitialAdmissionHold.Request currentHoldRequest() {
+    return new WorldCanonicalInitialAdmissionHold.Request(
+        NAMESPACE,
+        TENANT,
+        "earth",
+        REALM,
+        PLAYABLE_NAMESPACE,
+        "SHARED",
+        INSTANCE,
+        VERSION,
+        1L,
+        "first-open-operation-17",
+        "a".repeat(64),
+        WorldCanonicalInitialAdmissionHold.InitialAdmissionOrigin.NO_PRIOR_POINTER,
+        1L,
+        null);
   }
 
   private static PreseededActorAssignmentOwnerReadEvidence.Request assignmentRequest(
@@ -352,6 +439,7 @@ class CanonicalPublishedPlayerRouteReadServiceTest {
       CanonicalPlayableTarget route,
       AuthoredWorldSourceEvidence source,
       CanonicalInitialAdmissionLaunchTarget launch,
+      AuthoredWorldLaunchDescriptorEvidence descriptor,
       AuthoredWorldReleaseAttestationEvidence release,
       CanonicalPublishedPlayerRouteReadService service) {}
 }
