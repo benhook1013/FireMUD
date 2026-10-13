@@ -7,6 +7,7 @@ import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTER_FRIE
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.entitymanagement.entity.ActorIdentityStatus;
 import net.firedevops.firemud.entitymanagement.entity.CharacterFriend;
 import net.firedevops.firemud.entitymanagement.entity.CharacterFriendKey;
 import org.jooq.DSLContext;
@@ -67,7 +68,9 @@ public class CharacterFriendRepository {
                 .ID
                 .in(entity.getId().getCharacterId(), entity.getId().getFriendId())
                 .and(CHARACTERS.TENANT_ID.eq(entity.getTenantId()))
-                .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")));
+                .and(
+                    CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
+                        ActorIdentityStatus.OWNER_RESOLVED.name())));
     if (ownerResolvedCount != 2) {
       throw new IllegalStateException("FRIEND_ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
     }
@@ -103,7 +106,9 @@ public class CharacterFriendRepository {
                         .ID
                         .eq(CHARACTER_FRIEND.CHARACTER_ID)
                         .and(CHARACTERS.TENANT_ID.eq(CHARACTER_FRIEND.TENANT_ID))
-                        .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED"))));
+                        .and(
+                            CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
+                                ActorIdentityStatus.OWNER_RESOLVED.name()))));
     var ownerResolvedFriend =
         DSL.exists(
             dsl.selectOne()
@@ -113,7 +118,9 @@ public class CharacterFriendRepository {
                         .ID
                         .eq(CHARACTER_FRIEND.FRIEND_ID)
                         .and(CHARACTERS.TENANT_ID.eq(CHARACTER_FRIEND.TENANT_ID))
-                        .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED"))));
+                        .and(
+                            CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
+                                ActorIdentityStatus.OWNER_RESOLVED.name()))));
     return ownerResolvedCharacter.and(ownerResolvedFriend);
   }
 

@@ -35,6 +35,7 @@ import net.firedevops.firemud.entitymanagement.service.EquipmentSlotIncompatible
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
+import net.firedevops.firemud.entitymanagement.service.RuntimeInstanceCleanupHeldException;
 import net.firedevops.firemud.entitymanagement.service.RuntimeInstanceCleanupService;
 import net.firedevops.firemud.entitymanagement.v1.ActorConditionState;
 import net.firedevops.firemud.entitymanagement.v1.ActorResourceValue;
@@ -1827,6 +1828,14 @@ public class EntityManagementGrpcService
           .setDeletedItemStacks(result.deletedItemStacks())
           .setDeletedItemInstances(result.deletedItemInstances())
           .setDeletedContainerInstances(result.deletedContainerInstances());
+    } catch (RuntimeInstanceCleanupHeldException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "CleanupRuntimeInstance",
+              "FAILED_PRECONDITION",
+              ex.getMessage()));
     } catch (IllegalArgumentException ex) {
       builder.setError(
           GrpcAppErrors.error(

@@ -39,6 +39,7 @@ import net.firedevops.firemud.entitymanagement.service.EquipmentService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
 import net.firedevops.firemud.entitymanagement.service.PingService;
 import net.firedevops.firemud.entitymanagement.service.RoomEntityService;
+import net.firedevops.firemud.entitymanagement.service.RuntimeInstanceCleanupHeldException;
 import net.firedevops.firemud.entitymanagement.service.RuntimeInstanceCleanupService;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionRequest;
 import net.firedevops.firemud.entitymanagement.v1.ApplyActorConditionResponse;
@@ -1717,6 +1718,83 @@ class EntityManagementGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("tenantId must be positive", ref.get().getError().getMessage());
     verifyNoInteractions(runtimeInstanceCleanupService);
+  }
+
+  @Test
+  void cleanupRuntimeInstanceReturnsFailedPreconditionForKnownCleanupHold() {
+    RuntimeInstanceCleanupService cleanupService =
+        Mockito.mock(RuntimeInstanceCleanupService.class);
+    String holdMessage = "ENTITY_UNCLASSIFIED_OR_QUARANTINED_EVIDENCE_BLOCKS_CLEANUP: held";
+    Mockito.when(cleanupService.cleanupRuntimeInstance(1L, "GI-1", "term-1"))
+        .thenThrow(new RuntimeInstanceCleanupHeldException(holdMessage));
+
+    var response = invokeCleanupRuntimeInstance(cleanupService);
+
+    assertEquals("FAILED_PRECONDITION", response.getError().getCode());
+    assertEquals(holdMessage, response.getError().getMessage());
+  }
+
+  @Test
+  void cleanupRuntimeInstanceKeepsUnexpectedFailuresInternal() {
+    RuntimeInstanceCleanupService cleanupService =
+        Mockito.mock(RuntimeInstanceCleanupService.class);
+    Mockito.when(cleanupService.cleanupRuntimeInstance(1L, "GI-1", "term-1"))
+        .thenThrow(new IllegalStateException("unexpected"));
+
+    var response = invokeCleanupRuntimeInstance(cleanupService);
+
+    assertEquals("INTERNAL", response.getError().getCode());
+  }
+
+  private net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse
+      invokeCleanupRuntimeInstance(RuntimeInstanceCleanupService cleanupService) {
+    SessionContext.setContext(
+        "test-account", List.of(), Map.of(), true, "game-session-service", "test-instance");
+    try {
+      EntityManagementGrpcService service =
+          new EntityManagementGrpcService(
+              Mockito.mock(PingService.class),
+              Mockito.mock(CharacterService.class),
+              Mockito.mock(ActorStateService.class),
+              Mockito.mock(ActorConditionMutationService.class),
+              Mockito.mock(EntityDraftDesignDigestService.class),
+              Mockito.mock(EquipmentService.class),
+              Mockito.mock(InventoryService.class),
+              Mockito.mock(ContainerService.class),
+              Mockito.mock(RoomEntityService.class),
+              cleanupService,
+              effectReplayService(),
+              Mockito.mock(EntityUpgradeValidationService.class),
+              Mockito.mock(EntityTemplateReferenceService.class),
+              attestationService(),
+              new SimpleMeterRegistry(),
+              new EffectPayloadParser(new ObjectMapper()),
+              TEST_NAMESPACE);
+      AtomicReference<net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse>
+          ref = new AtomicReference<>();
+      service.cleanupRuntimeInstance(
+          net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceRequest.newBuilder()
+              .setTenantId("1")
+              .setGameInstanceId("GI-1")
+              .setTerminationRequestId("term-1")
+              .build(),
+          new StreamObserver<>() {
+            @Override
+            public void onNext(
+                net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse value) {
+              ref.set(value);
+            }
+
+            @Override
+            public void onError(Throwable t) {}
+
+            @Override
+            public void onCompleted() {}
+          });
+      return ref.get();
+    } finally {
+      SessionContext.clear();
+    }
   }
 
   @Test
