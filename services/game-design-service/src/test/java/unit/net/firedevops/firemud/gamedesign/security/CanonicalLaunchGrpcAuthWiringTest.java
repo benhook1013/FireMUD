@@ -133,9 +133,11 @@ class CanonicalLaunchGrpcAuthWiringTest {
     assertThat(resolve.dispatched()).isTrue();
     assertThat(resolve.closedStatus()).isNull();
     assertThat(resolve.response()).isNotNull();
+    assertThat(resolve.response().getError().getCode()).isNotEqualTo("PERMISSION_DENIED");
     assertThat(descriptorRead.dispatched()).isTrue();
     assertThat(descriptorRead.closedStatus()).isNull();
     assertThat(descriptorRead.response()).isNotNull();
+    assertThat(descriptorRead.response().getError().getCode()).isNotEqualTo("PERMISSION_DENIED");
     assertThat(completeRead.dispatched()).isTrue();
     assertThat(completeRead.closedStatus()).isNull();
     assertThat(completeRead.response()).isNotNull();

@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service;
 
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.util.Objects;
 import java.util.UUID;
@@ -298,12 +299,30 @@ public final class CanonicalPublishedPlayerRouteReadService {
       UUID canonicalTenantId, UUID canonicalVersionId) {
     try {
       return policyClient.listPublishedRealmEntryPolicies(canonicalTenantId, canonicalVersionId);
-    } catch (StatusRuntimeException | IllegalStateException unavailable) {
+    } catch (StatusRuntimeException failure) {
+      if (isTransient(failure.getStatus())) {
+        throw new GameDesignUnavailableException(
+            "Game Design policy transport is unavailable", failure);
+      }
+      if (failure.getStatus().getCode() == Status.Code.FAILED_PRECONDITION) {
+        throw new StaleAuthorityException("Game Design policy owner read is stale");
+      }
+      throw new InvalidAuthorityException("Game Design policy owner read was rejected", failure);
+    } catch (GameDesignPublishedRealmPolicyClient.UninitializedClientException unavailable) {
       throw new GameDesignUnavailableException(
           "Game Design policy transport is unavailable", unavailable);
+    } catch (GameDesignPublishedRealmPolicyClient.InvalidResponseException invalid) {
+      throw new InvalidAuthorityException("Game Design policy response is invalid", invalid);
     } catch (IllegalArgumentException rejected) {
       throw new InvalidAuthorityException("Game Design policy owner read was rejected", rejected);
     }
+  }
+
+  private static boolean isTransient(io.grpc.Status status) {
+    return switch (status.getCode()) {
+      case UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED, ABORTED -> true;
+      default -> false;
+    };
   }
 
   private PublishedRealmEntryPolicySetEvidence verifySet(
