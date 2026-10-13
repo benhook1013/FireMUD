@@ -14,6 +14,7 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.entitymanagement.entity.Character;
+import net.firedevops.firemud.entitymanagement.repository.ActorIdentityRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -72,6 +73,7 @@ class RetainedActorIdentityIntegrationTest {
   }
 
   @Autowired private CharacterRepository characterRepository;
+  @Autowired private ActorIdentityRepository actorIdentityRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private Flyway flyway;
 
@@ -206,14 +208,23 @@ class RetainedActorIdentityIntegrationTest {
                 namespaceUuid,
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
         .isEmpty();
-    Character resolved = characterRepository.findById(resolvedId).orElseThrow();
-    assertThat(resolved.getActorIdentity().characterUuid()).isEqualTo(resolvedActorUuid);
-    assertThat(resolved.getActorIdentity().accountUuid()).isEqualTo(accountUuid);
-    assertThat(resolved.getActorIdentity().tenantUuid()).isEqualTo(tenantUuid);
-    assertThat(resolved.getActorIdentity().playableStateNamespaceId()).isEqualTo(namespaceUuid);
-    assertThat(resolved.getActorIdentity().playableStateScope())
+    assertThat(characterRepository.findById(resolvedId)).isEmpty();
+    var resolved =
+        actorIdentityRepository
+            .findOwnerResolvedActor(
+                tenantUuid.toString(),
+                accountUuid.toString(),
+                namespaceUuid.toString(),
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+                resolvedActorUuid.toString())
+            .orElseThrow();
+    assertThat(resolved.characterUuid()).isEqualTo(resolvedActorUuid);
+    assertThat(resolved.accountUuid()).isEqualTo(accountUuid);
+    assertThat(resolved.tenantUuid()).isEqualTo(tenantUuid);
+    assertThat(resolved.playableStateNamespaceId()).isEqualTo(namespaceUuid);
+    assertThat(resolved.playableStateScope())
         .isEqualTo(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
-    assertThat(resolved.getActorIdentity().status().name()).isEqualTo("OWNER_RESOLVED");
+    assertThat(resolved.status().name()).isEqualTo("OWNER_RESOLVED");
     assertThat(
             characterRepository.findById(legacyId).orElseThrow().getActorIdentity().status().name())
         .isEqualTo("QUARANTINED");
