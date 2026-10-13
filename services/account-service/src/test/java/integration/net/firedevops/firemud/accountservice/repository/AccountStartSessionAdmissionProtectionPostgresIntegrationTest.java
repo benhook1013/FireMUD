@@ -33,6 +33,8 @@ import net.firedevops.firemud.common.world.GameSessionCanonicalInitialAdmissionO
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationInfo;
+import org.flywaydb.core.api.MigrationState;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -186,19 +188,12 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     source.setSchema(schema);
-    actualParentFlyway(source, "classpath:db/migration", "classpath:db/migration/saga").migrate();
-    actualParentFlyway(source, "classpath:db/migration", "classpath:db/migration/saga").validate();
+    Flyway current =
+        actualParentFlyway(source, "classpath:db/migration", "classpath:db/migration/saga");
+    current.migrate();
+    current.validate();
+    assertCurrentMigrationsInstalled(current);
     var dsl = DSL.using(source, SQLDialect.POSTGRES);
-    assertThat(
-            dsl.fetchSingle(
-                    "SELECT count(*) FROM flyway_schema_history_account_service WHERE version IS NOT NULL AND success")
-                .get(0, Long.class))
-        .isEqualTo(114L);
-    assertThat(
-            dsl.fetchSingle(
-                    "SELECT max(version::int) FROM flyway_schema_history_account_service WHERE version ~ '^[0-9]+$'")
-                .get(0, Integer.class))
-        .isEqualTo(1004);
     assertThat(
             dsl.fetchSingle(
                     "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND NOT t.tgisinternal AND t.tgenabled <> 'O'",
@@ -246,8 +241,11 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
     assertThat(checksums).hasSize(112);
     var capture = retainedPhysicalRows(parent, "account_start_session_authority_captures");
 
-    actualParentFlyway(parent, "classpath:db/migration", "classpath:db/migration/saga").migrate();
-    actualParentFlyway(parent, "classpath:db/migration", "classpath:db/migration/saga").validate();
+    Flyway current =
+        actualParentFlyway(parent, "classpath:db/migration", "classpath:db/migration/saga");
+    current.migrate();
+    current.validate();
+    assertCurrentMigrationsInstalled(current);
 
     assertThat(
             parent
@@ -262,23 +260,23 @@ class AccountStartSessionAdmissionProtectionPostgresIntegrationTest {
             parent
                 .dsl()
                 .fetchSingle(
-                    "SELECT count(*) FROM flyway_schema_history_account_service WHERE version IS NOT NULL AND success")
-                .get(0, Long.class))
-        .isEqualTo(114L);
-    assertThat(
-            parent
-                .dsl()
-                .fetchSingle(
-                    "SELECT max(version::int) FROM flyway_schema_history_account_service WHERE version ~ '^[0-9]+$'")
-                .get(0, Integer.class))
-        .isEqualTo(1004);
-    assertThat(
-            parent
-                .dsl()
-                .fetchSingle(
                     "SELECT to_regclass('account_start_session_admission_protections')::TEXT")
                 .get(0, String.class))
         .isNotNull();
+  }
+
+  private static void assertCurrentMigrationsInstalled(Flyway flyway) {
+    var migrations = flyway.info().all();
+    assertThat(migrations)
+        .isNotEmpty()
+        .allSatisfy(
+            migration ->
+                assertThat(migration.getState())
+                    .as(migration.getScript())
+                    .isEqualTo(MigrationState.SUCCESS));
+    assertThat(migrations)
+        .extracting(MigrationInfo::getVersion)
+        .contains(MigrationVersion.fromVersion("1003"), MigrationVersion.fromVersion("1004"));
   }
 
   private static Flyway actualParentFlyway(Fixture fixture, String... locations) {

@@ -148,7 +148,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     assertThat(pendingRows).hasSize(1);
     assertThat(retainedSources).hasSize(2);
 
-    Flyway upgrade = activationFlyway(fixture.dataSource(), "latest");
+    Flyway upgrade = activationFlyway(fixture.dataSource(), "1004");
     assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
     upgrade.validate();
     assertThat(fixture.dsl().fetch(retainedHistoryQuery).getValues(0, String.class))
