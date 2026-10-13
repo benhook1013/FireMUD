@@ -207,3 +207,13 @@ Entry format:
   - Observation: their JSON captures were approximately 251 KB and 172 KB, including check inventories and historical transition details; printing the complete selected response consumed substantial context despite requesting compact output.
   - Expected pattern: a compact selected-PR projection should retain identity, review obligations, required-check outcomes, routes and readiness reasons, with detailed inventories available separately. Until then, capture JSON and print only the fields needed for the current decision.
   - Current status: reported to Overseer for controller improvement; no controller implementation change was made in this lane.
+
+- `2026-10-13`: Follow-up to compact selected-PR output
+  - Outcome: Overseer identified the existing `reviews status --pr N --summary --json` projection, which retains the same safety result without ancestor rows or check inventories. `--compact` intentionally keeps the selected PR's detailed evidence; the earlier expectation conflated the two options.
+  - Expected pattern: use `--summary --json` for routine identity and readiness; use full status, history, and routes for needed finding/provenance drilldown. No missing projection or controller implementation defect is established by the earlier large capture.
+
+- `2026-10-13`: Workflow-run PR metadata is not frozen base provenance
+  - Context: after #3183 merged and #3156 was retargeted, an observer initially treated the associated `pull_requests[].base.sha` on an older workflow run as its original event base.
+  - Observation: that field reflected the new PR base, while the completed checkout log proved the run had merged the same head into the previous base. The initial exact-base claim was withdrawn.
+  - Expected pattern: attribute execution to immutable event/proof metadata or the actual checkout/merge log; qualify unchanged-source reuse separately. A current associated PR tuple does not rewrite historical execution provenance.
+  - Current status: the observer corrected its report; the front was reconciled and published on the merged develop parent for replacement CI. The post-retarget runtime/preview guards correctly refused stale test-merge parents.
