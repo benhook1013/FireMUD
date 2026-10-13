@@ -784,13 +784,15 @@ class WorldAuthoredSourceIntakeIntegrationTest {
     WorldAuthoredSourceIntakeReceipt receipt =
         intakeTransaction.execute(
             status -> {
-              dsl.fetchValue("SELECT set_config('lock_timeout', '250ms', true)", String.class);
+              dsl.fetchOne("SELECT set_config('lock_timeout', '250ms', true)");
               WorldAuthoredSourceIntakeReceipt accepted =
                   repository.acceptFresh(NAMESPACE, requestId, source);
               Integer activeTimeoutMillis =
-                  dsl.fetchValue(
-                      "SELECT setting::integer FROM pg_settings WHERE name = 'lock_timeout'",
-                      Integer.class);
+                  Objects.requireNonNull(
+                          dsl.fetchOne(
+                              "SELECT setting::integer FROM pg_settings WHERE name = 'lock_timeout'"),
+                          "PostgreSQL lock_timeout setting query returned no row")
+                      .get(0, Integer.class);
               assertThat(activeTimeoutMillis).isEqualTo(250);
               return accepted;
             });
