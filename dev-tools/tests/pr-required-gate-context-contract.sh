@@ -474,6 +474,7 @@ trap 'rm -rf "$tmp_dir"' EXIT
 smoke_clock_fixture="$tmp_dir/smoke-clock.js"
 python3 - "$ROOT_DIR" "$smoke_clock_fixture" <<'PY'
 from pathlib import Path
+import hashlib
 import re
 import sys
 import yaml
@@ -491,6 +492,33 @@ if overhead_minutes != 45 or int(job["timeout-minutes"]) < producer_minutes + ov
     raise SystemExit("Smoke polling must retain bounded scheduling overhead and five-minute job margin")
 if "const timeoutMs = (producerTimeoutMinutes + prerequisiteAndQueueAllowanceMinutes) * 60 * 1000;" not in script:
     raise SystemExit("Smoke polling deadline must use the checked producer and overhead authorities")
+fingerprint = re.search(r'const canonicalRuntimeWorkflowSha256 = "([0-9a-f]{64})";', script)
+expected = hashlib.sha256((root / ".github/workflows/runtime-images.yml").read_bytes()).hexdigest()
+if fingerprint is None or fingerprint[1] != expected:
+    raise SystemExit(
+        "Smoke Gate producer fingerprint is stale: after reviewing runtime-images.yml, update "
+        f"canonicalRuntimeWorkflowSha256 in smoke.yml to {expected} and rerun this contract."
+    )
+producer_job = producer["jobs"]["pr-local-smoke"]
+if producer_job["name"] != "PR Full-Stack Smoke (runtime-required=${{ needs.image-meta.outputs.runtime_smoke_required }})":
+    raise SystemExit("Native producer name must affirm runtime smoke scope")
+steps = producer_job["steps"]
+smoke_step = next(step for step in steps if step.get("id") == "runtime-smoke")
+cleanup_step = next(step for step in steps if step.get("id") == "runtime-cleanup")
+guard = steps[-1]
+if any(step.get("continue-on-error") not in (None, "false") for step in (smoke_step, cleanup_step, guard)):
+    raise SystemExit("Runtime smoke, cleanup, and terminal guard cannot ignore failures")
+if smoke_step["run"] != "bash ./dev-tools/verify-smoke-images.sh --keep-running":
+    raise SystemExit("Native smoke outcome must belong to the canonical smoke invocation")
+if guard["if"] != "${{ always() }}" or guard["name"] != "Require successful runtime smoke and authenticated cleanup":
+    raise SystemExit("Producer must finish with its mandatory always terminal guard")
+if guard["env"] != {
+    "RUNTIME_SMOKE_REQUIRED": "${{ needs.image-meta.outputs.runtime_smoke_required }}",
+    "RUNTIME_SMOKE_OUTCOME": "${{ steps.runtime-smoke.outcome }}",
+    "RUNTIME_CLEANUP_OUTCOME": "${{ steps.runtime-cleanup.outcome }}",
+}:
+    raise SystemExit("Terminal guard must consume native Actions outcomes, never command-written outputs")
+Path(sys.argv[2] + ".guard").write_text(guard["with"]["script"])
 Path(sys.argv[2]).write_text(script)
 PY
 
@@ -550,6 +578,124 @@ async function scenario(outcome, completedAtMinutes) {
   assert.equal(deadline.minutes, 90, "active producers cannot escape the total deadline");
   console.log("Smoke clock contract passed: late success, prompt failure, bounded cancellation and deadline");
 })().catch(error => { console.error(error); process.exitCode = 1; });
+NODE
+
+node - "$smoke_clock_fixture" "$ROOT_DIR/.github/workflows/runtime-images.yml" <<'NODE'
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const script = fs.readFileSync(process.argv[2], "utf8");
+const definition = fs.readFileSync(process.argv[3]);
+const guard = new Function("process", "core", fs.readFileSync(process.argv[2] + ".guard", "utf8"));
+for (const smoke of ["success", "failure", "skipped", "cancelled", "unknown", ""]) {
+  for (const cleanup of ["success", "failure", "skipped", "cancelled", "unknown", ""]) {
+    const failures = [];
+    guard({env: {RUNTIME_SMOKE_REQUIRED: "true", RUNTIME_SMOKE_OUTCOME: smoke, RUNTIME_CLEANUP_OUTCOME: cleanup}},
+      {setFailed: message => failures.push(message)});
+    assert.equal(failures.length === 0, smoke === "success" && cleanup === "success");
+  }
+}
+for (const required of ["false", "", "unknown"]) {
+  const failures = [];
+  guard({env: {RUNTIME_SMOKE_REQUIRED: required}}, {setFailed: message => failures.push(message)});
+  assert.equal(failures.length === 0, required === "false");
+}
+const execute = new Function("github", "context", "core", "Date", "setTimeout", "require", `return (async () => {\n${script}\n})()`);
+const head = "a".repeat(40), base = "b".repeat(40), merge = "c".repeat(40), defaultSha = "d".repeat(40);
+const repository = "example/firemud";
+const title = `Build Runtime Images secure-pr-artifact pr-42 base-${base} head-${head} merge-${merge} mode-required`;
+async function scenario(kind, event = "pull_request") {
+  let now = 1000, snapshots = 0, reads = 0;
+  const failures = [], refs = [];
+  const context = {repo: {owner: "example", repo: "firemud"}, sha: merge, payload: {
+    repository: {default_branch: "develop"},
+    pull_request: {number: 42, head: {sha: head, repo: {full_name: repository}},
+      base: {ref: "develop", sha: base}, created_at: "2026-09-01T00:00:00Z"},
+  }};
+  const source = {id: 42, workflow_id: 7, run_attempt: 1, repository: {full_name: repository},
+    head_repository: {full_name: repository}, path: ".github/workflows/runtime-images.yml",
+    event, head_sha: event === "pull_request" ? head : defaultSha, head_branch: "develop", display_title: title,
+    status: "completed", conclusion: "success", pull_requests: []};
+  const job = {id: 100, run_id: 42, run_attempt: 1, head_sha: source.head_sha,
+    check_run_url: `https://api.github.com/repos/${repository}/check-runs/100`,
+    name: "PR Full-Stack Smoke (runtime-required=true)", status: "completed", conclusion: "success", steps: []};
+  if (kind.startsWith("legacy")) job.name = "PR Full-Stack Smoke";
+  if (kind === "not-required") job.name = "PR Full-Stack Smoke (runtime-required=false)";
+  if (kind === "step-skipped") job.steps = [{name: "Run credential-free full-stack smoke", status: "completed", conclusion: "skipped"}];
+  if (kind === "legacy-positive") job.steps = [{name: "Run credential-free full-stack smoke", status: "completed", conclusion: "success"}];
+  const sourceMutations = {
+    "wrong-repository": {repository: {full_name: "other/repo"}},
+    "wrong-workflow": {workflow_id: 8}, "wrong-path": {path: ".github/workflows/fake.yml"},
+    "wrong-event": {event: "push"}, "wrong-head": {head_sha: "e".repeat(40)},
+    "wrong-head-repository": {head_repository: {full_name: "other/repo"}},
+    "wrong-title": {display_title: title + " unrelated"}, "wrong-source-attempt": {run_attempt: 2},
+    "wrong-dispatch-branch": {head_branch: "feature"},
+  };
+  const listRuns = async () => {}, listJobs = async () => {};
+  const github = {rest: {
+    pulls: {get: async () => {
+      reads += 1;
+      return {data: {state: "open", head: {sha: head}, base: {ref: kind === "stale-final" && reads > 3 ? "other" : "develop", sha: base}, merge_commit_sha: merge}};
+    }},
+    repos: {
+      getCommit: async ({ref}) => ({data: {sha: ref, parents: [{sha: kind === "bad-parents" ? defaultSha : base}, {sha: head}]}}),
+      getContent: async ({ref, path}) => {
+        refs.push(ref);
+        assert.equal(path, source.path);
+        if (kind === "unavailable-definition") throw Object.assign(new Error("definition unavailable"), {status: 404});
+        const bytes = kind === "changed-definition" ? Buffer.concat([definition, Buffer.from("\n# altered")]) : definition;
+        return {data: {type: "file", path, encoding: "base64", content: bytes.toString("base64"), size: bytes.length}};
+      },
+    },
+    actions: {
+      listWorkflowRuns: listRuns, listJobsForWorkflowRun: listJobs,
+      getWorkflow: async () => ({data: {id: 7, path: source.path, name: "Build Runtime Images"}}),
+      getWorkflowRun: async () => ({data: {...source, run_attempt: kind === "newer-attempt" ? 2 : 1}}),
+    },
+  }, request: async (route, input) => {
+    assert.equal(route, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}");
+    assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
+    return {data: {...source, ...(sourceMutations[kind] || {})}};
+  }, paginate: async (method, input) => {
+    if (method === listJobs) { snapshots += 1; return kind === "duplicate-jobs" ? [job, {...job, id: 101}] : [job]; }
+    assert.equal(method, "GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs");
+    assert.equal(input.run_id, 42); assert.equal(input.attempt_number, 1);
+    const mutations = {
+      "wrong-job": {id: 101}, "wrong-job-run": {run_id: 43}, "wrong-job-attempt": {run_attempt: 2},
+      "wrong-job-head": {head_sha: defaultSha}, "wrong-check-url": {check_run_url: "https://example.com/check"},
+      "failed-job": {conclusion: "failure"}, "pending-job": {status: "in_progress", conclusion: null},
+    };
+    return kind === "duplicate-attempt-jobs" ? [job, {...job, id: 101}] : [{...job, ...(mutations[kind] || {})}];
+  }};
+  github.paginate.iterator = async function* (method, input) {
+    assert.equal(method, listRuns);
+    if (event === "repository_dispatch" && input.event === "pull_request") {
+      yield {data: [{...source, event: "pull_request", head_sha: head, conclusion: "cancelled"}]}; return;
+    }
+    yield {data: [source]};
+  };
+  const clock = {now: () => now, parse: Date.parse};
+  await execute(github, context, {info: () => {}, warning: () => {}, setFailed: message => failures.push(message)},
+    clock, (callback, duration) => {now += duration; queueMicrotask(callback);}, require);
+  return {failures, refs, snapshots};
+}
+(async () => {
+  for (const event of ["pull_request", "repository_dispatch"]) {
+    const success = await scenario("success", event);
+    assert.deepEqual(success.failures, []);
+    assert.deepEqual(success.refs, [event === "pull_request" ? merge : defaultSha], "immutable definition must come from actual source event revision");
+  }
+  assert.deepEqual((await scenario("legacy-positive")).failures, []);
+  for (const kind of ["legacy-missing", "not-required", "step-skipped", "wrong-repository", "wrong-workflow",
+    "wrong-path", "wrong-event", "wrong-head", "wrong-head-repository", "wrong-title", "wrong-source-attempt",
+    "changed-definition", "unavailable-definition", "wrong-job", "wrong-job-run", "wrong-job-attempt", "wrong-job-head",
+    "wrong-check-url", "failed-job", "pending-job", "duplicate-jobs", "duplicate-attempt-jobs", "newer-attempt", "bad-parents"]) {
+    assert.equal((await scenario(kind)).failures.length, 1, `${kind} must not supply successful proof`);
+  }
+  assert.equal((await scenario("wrong-dispatch-branch", "repository_dispatch")).failures.length, 1);
+  const stale = await scenario("stale-final");
+  assert.deepEqual(stale.failures, [], "obsolete gate exits without publishing proof for changed base ref");
+  console.log("Smoke producer contract passed: native outcomes, exact immutable definition/attempt, legacy proof and fail-closed cases");
+})().catch(error => {console.error(error); process.exitCode = 1;});
 NODE
 
 cat >"$tmp_dir/gh" <<'EOF'
