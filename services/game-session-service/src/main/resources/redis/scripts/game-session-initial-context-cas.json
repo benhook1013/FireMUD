@@ -1,0 +1,55 @@
+{
+  "scriptId": "game-session.initial-context-cas.v1",
+  "resourcePath": "redis/lua/game-session-initial-context-cas.lua",
+  "sha256": "2843fae8ec73a57963d16ba840adab41613e6460858bd3f349fa012409b27c1f",
+  "owner": "game-session-service",
+  "principal": "gamesession_coord_app",
+  "role": "COORDINATION",
+  "keys": [
+    {
+      "name": "originalContext",
+      "ownedPrefix": "session:game:initial-context:v1:",
+      "hashTagDeclaration": "NOT_REQUIRED"
+    }
+  ],
+  "arguments": [
+    {
+      "name": "operation"
+    },
+    {
+      "name": "exactPriorContextUtf8OrEmptyForCreate"
+    },
+    {
+      "name": "exactDesiredContextUtf8"
+    }
+  ],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {
+      "code": "EXACT_CONTEXT_WRITTEN",
+      "category": "SUCCESS",
+      "effect": "MUTATING"
+    },
+    {
+      "code": "MISSING_OR_CHANGED_CONTEXT",
+      "category": "STALE",
+      "effect": "NON_MUTATING"
+    },
+    {
+      "code": "INVALID_ARGUMENTS",
+      "category": "VALIDATION_FAILURE",
+      "effect": "NON_MUTATING"
+    }
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "SESSION_LEASE_CACHE_OR_WAKE_UP",
+  "tailLossBehavior": "All scoped resets invalidate this tenantless family with declared global impact. CREATE_PENDING creates only the exact newly reserved original when its complete key is physically absent under current external qualification; it never adopts or overwrites existing, expiring, malformed, replaced, closed, or uncertain state. Install and closure never recreate missing state. Missing, changed, lost ACK or reset/restore ambiguity remains held. External recovery qualification excludes restore and promotion through closure continuation; neither SQL receipts nor absence reconstruct context.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [
+    {
+      "callerVersion": "v1",
+      "payloadVersion": "v1"
+    }
+  ],
+  "legacyPayloadShape": null
+}

@@ -261,6 +261,75 @@ class AcceptanceCliTest(unittest.TestCase):
                 ]
             )
 
+    def test_period_reset_accepts_one_checkpoint_or_current_history_baseline(self):
+        checkpoint = cli._parser().parse_args(
+            [
+                "decide",
+                "period",
+                "reset",
+                "--pr",
+                "1",
+                "--channel",
+                "cli",
+                "--checkpoint",
+                "checkpoint-1",
+                "--head",
+                HEAD_1,
+                "--actor",
+                "operator",
+                "--reason",
+                "checkpoint reset",
+            ]
+        )
+        self.assertEqual(checkpoint.checkpoint, "checkpoint-1")
+        self.assertFalse(checkpoint.current_history_baseline)
+
+        current_history = cli._parser().parse_args(
+            [
+                "decide",
+                "period",
+                "reset",
+                "--pr",
+                "1",
+                "--channel",
+                "cli",
+                "--current-history-baseline",
+                "--baseline-id",
+                "reset-key-1",
+                "--head",
+                HEAD_1,
+                "--actor",
+                "operator",
+                "--reason",
+                "history reset",
+            ]
+        )
+        self.assertIsNone(current_history.checkpoint)
+        self.assertTrue(current_history.current_history_baseline)
+        self.assertEqual(current_history.baseline_id, "reset-key-1")
+
+        with self.assertRaises(SystemExit):
+            cli._parser().parse_args(
+                [
+                    "decide",
+                    "period",
+                    "reset",
+                    "--pr",
+                    "1",
+                    "--channel",
+                    "cli",
+                    "--checkpoint",
+                    "checkpoint-1",
+                    "--current-history-baseline",
+                    "--head",
+                    HEAD_1,
+                    "--actor",
+                    "operator",
+                    "--reason",
+                    "invalid both modes",
+                ]
+            )
+
     def test_structured_routes_are_queryable_and_dispositions_close_target_work(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -372,6 +372,7 @@ PY
 _firemud_smoke_validate_initial_admission_capability() {
   local path="$1" operation_id="$2" game_session_leaf_sha256="$3"
   local world_management_leaf_sha256="$4" ca_sha256="$5"
+  local claim_digest="$FIREMUD_SMOKE_INITIAL_ADMISSION_CLAIM_DIGEST"
   local file_metadata
   if [[ -L "$path" || ! -f "$path" ]]; then
     _firemud_smoke_fail "initial-admission capability must be an existing regular non-symlink file."
@@ -385,7 +386,8 @@ _firemud_smoke_validate_initial_admission_capability() {
 
   if ! python3 - "$path" "$FIREMUD_SMOKE_RUN_ID" \
     "$FIREMUD_SMOKE_COMPOSE_PROJECT_NAME" "$operation_id" \
-    "$game_session_leaf_sha256" "$world_management_leaf_sha256" "$ca_sha256" <<'PY'
+    "$game_session_leaf_sha256" "$world_management_leaf_sha256" "$ca_sha256" \
+    "$claim_digest" <<'PY'
 import json
 import os
 import re
@@ -393,14 +395,14 @@ import stat
 import sys
 import uuid
 
-path, run_id, project_name, operation_id, game_session_leaf_sha256, world_management_leaf_sha256, ca_sha256 = sys.argv[1:]
+path, run_id, project_name, operation_id, game_session_leaf_sha256, world_management_leaf_sha256, ca_sha256, claim_digest = sys.argv[1:]
 allowed = {
     "schema", "runId", "composeProjectName", "operationId", "tenantId",
     "gameTemplateId", "ownerAccountId", "worldSlug", "worldDisplayName",
     "realmSlug", "realmDisplayName", "visible", "publicProductionRealm",
     "requiresCharacterSelection", "stateScope", "characterCreationPolicy",
     "gameSessionLeafSha256", "gameSessionUriSan", "worldManagementLeafSha256",
-    "worldManagementUriSan", "caCertificateSha256",
+    "worldManagementUriSan", "caCertificateSha256", "claimDigest",
 }
 
 def unique_object(pairs):
@@ -474,6 +476,7 @@ expected = {
     "worldManagementLeafSha256": world_management_leaf_sha256,
     "worldManagementUriSan": "spiffe://firemud/ns/dev/sa/world-management-service",
     "caCertificateSha256": ca_sha256,
+    "claimDigest": claim_digest,
 }
 safe_id = re.compile(r"[a-z0-9][a-z0-9-]{0,127}\Z")
 if not safe_id.fullmatch(run_id) or not safe_id.fullmatch(project_name):
@@ -607,12 +610,13 @@ ensure_run_owned_initial_admission_capability() {
   }
   if ! python3 - "$temporary" "$FIREMUD_SMOKE_RUN_ID" \
     "$FIREMUD_SMOKE_COMPOSE_PROJECT_NAME" "$operation_id" \
-    "$leaf_sha256" "$world_management_leaf_sha256" "$ca_sha256" <<'PY'
+    "$leaf_sha256" "$world_management_leaf_sha256" "$ca_sha256" \
+    "$FIREMUD_SMOKE_INITIAL_ADMISSION_CLAIM_DIGEST" <<'PY'
 import json
 import pathlib
 import sys
 
-path, run_id, project_name, operation_id, game_session_leaf_sha256, world_management_leaf_sha256, ca_sha256 = sys.argv[1:]
+path, run_id, project_name, operation_id, game_session_leaf_sha256, world_management_leaf_sha256, ca_sha256, claim_digest = sys.argv[1:]
 value = {
     "schema": "firemud.run-owned-initial-admission-fixture.v1",
     "runId": run_id,
@@ -635,6 +639,7 @@ value = {
     "worldManagementLeafSha256": world_management_leaf_sha256,
     "worldManagementUriSan": "spiffe://firemud/ns/dev/sa/world-management-service",
     "caCertificateSha256": ca_sha256,
+    "claimDigest": claim_digest,
 }
 with pathlib.Path(path).open("w", encoding="utf-8") as target:
     json.dump(value, target, indent=2)
@@ -826,6 +831,63 @@ stop_run_owned_compose_project() {
     _firemud_smoke_unlock
     return 1
   fi
+}
+
+# Proof wrappers share one local resource admission with nested jar builds.
+# A caller may retain the stack explicitly, but owns final authenticated teardown.
+initialize_run_owned_compose_proof() {
+  FIREMUD_SMOKE_KEEP_RUNNING=false
+  FIREMUD_SMOKE_PROOF_CLAIMED=false
+  case "$#:${1:-}" in
+    0:) ;;
+    1:--keep-running) FIREMUD_SMOKE_KEEP_RUNNING=true ;;
+    *) echo "Usage: ${0##*/} [--keep-running]" >&2; return 2 ;;
+  esac
+  if [[ -n "${FIREMUD_LOCAL_RESOURCE_SESSION_FD+x}" ]]; then
+    python3 "$ROOT_DIR/dev-tools/validation/gradle-run-supervisor.py" --verify-resource-session || return 1
+    # Persist the exact target before any expensive/destructive project work.
+    _firemud_smoke_context || return 1
+    if [[ "${COMPOSE_PROJECT_NAME:-}" != "$FIREMUD_SMOKE_EXPECTED_PROJECT" ]]; then
+      _firemud_smoke_fail "COMPOSE_PROJECT_NAME must exactly match $FIREMUD_SMOKE_EXPECTED_PROJECT."
+      return 1
+    fi
+    python3 "$ROOT_DIR/dev-tools/validation/gradle-run-supervisor.py" \
+      --register-runtime-project "$FIREMUD_SMOKE_EXPECTED_PROJECT" || return 1
+  elif [[ "${CI:-}" != true && "${CI:-}" != 1 ]]; then
+    exec bash "$ROOT_DIR/dev-tools/validation/run-locked-gradle.sh" \
+      --resource-session bash "$0" "$@"
+  fi
+}
+
+finish_run_owned_compose_proof() {
+  local proof_status="$1"
+  if [[ "${FIREMUD_SMOKE_PROOF_CLAIMED:-false}" != true ]]; then
+    return "$proof_status"
+  fi
+  if [[ "${FIREMUD_SMOKE_KEEP_RUNNING:-false}" == true ]]; then
+    echo "Run-owned stack retained explicitly; caller owns authenticated teardown with the original capability." >&2
+    return "$proof_status"
+  fi
+  if ! stop_run_owned_compose_project "${COMPOSE_FILES[@]}"; then
+    echo "Run-owned proof cleanup failed or remains unknown; ownership was not proven released." >&2
+    ((proof_status != 0)) || proof_status=1
+  fi
+  return "$proof_status"
+}
+
+cleanup_run_owned_compose_proof() {
+  local proof_status=$?
+  trap - EXIT
+  trap '' INT TERM HUP
+  finish_run_owned_compose_proof "$proof_status" || proof_status=$?
+  exit "$proof_status"
+}
+
+install_run_owned_compose_proof_traps() {
+  trap cleanup_run_owned_compose_proof EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

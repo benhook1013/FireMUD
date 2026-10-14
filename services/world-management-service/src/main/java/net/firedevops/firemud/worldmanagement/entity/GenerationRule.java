@@ -6,7 +6,7 @@ import lombok.Data;
 public class GenerationRule {
   private Long id;
   private Long tenantId;
-  private Long versionId = 1L;
+  private Long versionId;
   private String name;
   private String scopeType;
   private String scopeId;

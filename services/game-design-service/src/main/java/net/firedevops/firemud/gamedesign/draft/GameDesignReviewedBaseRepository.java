@@ -134,13 +134,18 @@ public final class GameDesignReviewedBaseRepository {
         || !reference.kind().name().equals(row.get("base_kind", String.class))
         || !reference.identity().equals(row.get("base_identity", java.util.UUID.class))
         || !reference.canonicalValue().equals(row.get("base_reference", String.class))
-        || !GameDesignReviewedBaseEvidence.SCHEMA.equals(
-            row.get("evidence_schema", String.class))) {
+        || !isSupportedSchema(row.get("evidence_schema", String.class))) {
       throw new IllegalArgumentException("REVIEWED_BASE_STORED_BINDING_CONFLICT");
+    }
+    String evidenceSchema = row.get("evidence_schema", String.class);
+    byte[] evidenceBytes = row.get("evidence_bytes", byte[].class);
+    if (!evidenceSchema.equals(
+        new DraftAuthorizationFenceBinding.FrameReader(evidenceBytes).text())) {
+      throw new IllegalArgumentException("REVIEWED_BASE_STORED_SCHEMA_CONFLICT");
     }
     var result =
         new ReviewedBaseReadback(
-            row.get("evidence_bytes", byte[].class), row.get("evidence_digest", String.class));
+            evidenceBytes, row.get("evidence_digest", String.class), evidenceSchema);
     return Optional.of(result);
   }
 
@@ -159,6 +164,20 @@ public final class GameDesignReviewedBaseRepository {
       throw new IllegalArgumentException("REVIEWED_BASE_STORED_BINDING_CONFLICT");
     }
     return retained;
+  }
+
+  /** Current writes require evidence framed with the asset-bound v2 schema. */
+  public ReviewedBaseReadback requireCurrentRetained(DraftCommitBinding binding) {
+    ReviewedBaseReadback retained = requireRetained(binding);
+    if (!GameDesignReviewedBaseEvidence.SCHEMA.equals(retained.schema())) {
+      throw new IllegalStateException("REVIEWED_BASE_ASSET_LINEAGE_UNAVAILABLE");
+    }
+    return retained;
+  }
+
+  private static boolean isSupportedSchema(String schema) {
+    return GameDesignReviewedBaseEvidence.SCHEMA.equals(schema)
+        || GameDesignReviewedBaseEvidence.HISTORICAL_SCHEMA.equals(schema);
   }
 
   private void lockDraft(TargetProof target) {
@@ -192,12 +211,22 @@ public final class GameDesignReviewedBaseRepository {
     }
   }
 
-  public record ReviewedBaseReadback(byte[] canonicalBytes, String digest) {
+  public record ReviewedBaseReadback(byte[] canonicalBytes, String digest, String schema) {
     public ReviewedBaseReadback {
       canonicalBytes = Objects.requireNonNull(canonicalBytes, "canonicalBytes").clone();
+      schema = Objects.requireNonNull(schema, "schema");
+      if (!isSupportedSchema(schema))
+        throw new IllegalArgumentException("Unsupported reviewed-base evidence schema");
+      if (!schema.equals(new DraftAuthorizationFenceBinding.FrameReader(canonicalBytes).text())) {
+        throw new IllegalArgumentException("REVIEWED_BASE_STORED_SCHEMA_CONFLICT");
+      }
       if (!DraftAuthorizationFenceBinding.digest(canonicalBytes).equals(digest)) {
         throw new IllegalArgumentException("REVIEWED_BASE_STORED_DIGEST_CONFLICT");
       }
+    }
+
+    public ReviewedBaseReadback(byte[] canonicalBytes, String digest) {
+      this(canonicalBytes, digest, GameDesignReviewedBaseEvidence.SCHEMA);
     }
 
     @Override

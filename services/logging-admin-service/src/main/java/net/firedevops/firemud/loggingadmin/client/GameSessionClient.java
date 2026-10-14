@@ -29,6 +29,7 @@ import net.firedevops.firemud.gamesession.v1.StopSessionRequest;
 import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
 import net.firedevops.firemud.loggingadmin.operator.StartSessionAuthorizationCoordinator.TransientOwnerExecutionHandoff;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** gRPC client for communicating with the Game Session Service. */
 @Component
@@ -91,12 +92,14 @@ public class GameSessionClient
    */
   public StartSessionOwnerHandoffResult authorizeStartSession(
       TransientOwnerExecutionHandoff handoff) {
+    requireNoAmbientSqlOrSynchronization();
     Objects.requireNonNull(handoff, "durable Logging owner handoff is required");
     StartSessionPostAuthorizationExecutionTuple tuple = handoff.postAuthorizationTuple();
     String reference = handoff.accountResponse().operatorAuthorizationReference();
     byte[] tupleBytes = tuple.canonicalBytes();
     if (tupleBytes.length == 0
         || tupleBytes.length > StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES
+        || reference == null
         || !OPAQUE_OPERATOR_REFERENCE.matcher(reference).matches()
         || !tuple
             .authenticatedWorkloadIdentity()
@@ -136,6 +139,14 @@ public class GameSessionClient
       throw new AmbiguousOwnerHandoffException(ambiguousTransportOutcome.getStatus().getCode());
     }
     return validateOwnerHandoffResponse(tuple, response);
+  }
+
+  private static void requireNoAmbientSqlOrSynchronization() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "Game Session owner handoff requires no ambient SQL or synchronization");
+    }
   }
 
   private void requireFileBackedMtls() {

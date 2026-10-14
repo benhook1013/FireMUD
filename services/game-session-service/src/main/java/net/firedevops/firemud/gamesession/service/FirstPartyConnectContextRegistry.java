@@ -7,5 +7,7 @@ public interface FirstPartyConnectContextRegistry {
 
   Optional<FirstPartyConnectContext> find(long sessionId);
 
+  FirstPartyConnectContext requireRetained(FirstPartyConnectContext context);
+
   void unregister(long sessionId);
 }

@@ -78,6 +78,49 @@ public final class CanonicalGameInstanceLaunchAssociationClient
     }
   }
 
+  /**
+   * Exact fixed-capability allocation read; caller supplies the independently verified run leaf.
+   */
+  public CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult readFixture(
+      CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureRequest request,
+      String expectedLeafSha256) {
+    Objects.requireNonNull(request);
+    if (!workloadNamespace.equals(request.targetNamespace())
+        || expectedLeafSha256 == null
+        || !expectedLeafSha256.matches("[0-9a-f]{64}"))
+      throw new IllegalArgumentException("Fixed fixture owner binding required");
+    if (org.springframework.transaction.support.TransactionSynchronizationManager
+            .isActualTransactionActive()
+        || org.springframework.transaction.support.TransactionSynchronizationManager
+            .isSynchronizationActive()) {
+      throw new IllegalStateException("Fixture owner reads require no ambient transaction");
+    }
+    String peer = "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service";
+    var response =
+        requireStub()
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .withCallCredentials(
+                new GrpcServerPeerIdentityCallCredentials(peer, expectedLeafSha256))
+            .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(peer, expectedLeafSha256))
+            .getRunOwnedFixtureLaunchAssociation(
+                CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toFixtureRequest(request));
+    CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult result;
+    try {
+      result =
+          CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureResponse(
+              request, response);
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalStateException(
+          "Game Session returned invalid run-owned fixture owner evidence", invalid);
+    }
+    if (!expectedLeafSha256.equals(
+        result.fixturePolicyRequest().capability().gameSessionLeafSha256())) {
+      throw new IllegalStateException(
+          "Fixture owner TLS leaf differs from its committed capability");
+    }
+    return result;
+  }
+
   @Override
   protected String configuredTarget(ServiceEndpointsProperties endpoints) {
     return endpoints.getGameSessionService();

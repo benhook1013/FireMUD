@@ -107,7 +107,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
       migrate(schema, dataSource);
       DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
       CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
-          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dsl);
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource);
       byte[] candidateRef = seedCandidateAndPreparedTransition(dsl, target, CandidateMismatch.NONE);
 
       markProvisional(dsl, target, candidateRef);
@@ -226,7 +226,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
       migrate(schema, dataSource);
       DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
       CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
-          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dsl);
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource);
       byte[] candidateRef = seedCandidateAndPreparedTransition(dsl, target, CandidateMismatch.NONE);
       assertThat(
               dsl.execute(
@@ -260,7 +260,7 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
       migrate(schema, dataSource);
       DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
       CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
-          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dsl);
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource);
 
       for (CandidateMismatch mismatch : CandidateMismatch.values()) {
         if (mismatch == CandidateMismatch.NONE) {
@@ -303,10 +303,10 @@ class CanonicalGameplayDecisionRuntimeFenceIntegrationTest {
       migrate(schema, dataSource);
       DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
       CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget target =
-          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dsl);
+          CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource);
       CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget otherSourceIntakeOwner =
           CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
-              dsl, UUID.randomUUID(), 2L, 24L, UUID.randomUUID());
+              dataSource, UUID.randomUUID());
 
       assertThat(
               insertLaunchPreparation(

@@ -31,28 +31,11 @@ class FriendServiceImplTest {
     characterRepository =
         Mockito.mock(net.firedevops.firemud.entitymanagement.repository.CharacterRepository.class);
     CharacterFriendMapper mapper = Mappers.getMapper(CharacterFriendMapper.class);
-    ScopedCharacterResolver resolver = Mockito.mock(ScopedCharacterResolver.class);
-    // These friend tests isolate relationship behavior after the playable-state scope guard;
-    // the fixture does not establish canonical owner provenance.
-    Mockito.when(
-            resolver.requireScopedCharacter(
-                Mockito.anyLong(),
-                Mockito.anyLong(),
-                Mockito.anyString(),
-                Mockito.any(PlayableStateScope.class)))
-        .thenAnswer(
-            invocation -> {
-              Long tenantId = invocation.getArgument(0);
-              Long characterId = invocation.getArgument(1);
-              String gameInstanceId = invocation.getArgument(2);
-              PlayableStateScope scope = invocation.getArgument(3);
-              String playableStateKey =
-                  new PlayableStateKeyResolver().resolve(gameInstanceId, scope);
-              return characterRepository
-                  .findByIdAndTenantIdAndPlayableStateKey(characterId, tenantId, playableStateKey)
-                  .orElseThrow(() -> new IllegalArgumentException("Character not found"));
-            });
-    service = new FriendServiceImpl(repository, mapper, resolver);
+    service =
+        new FriendServiceImpl(
+            repository,
+            mapper,
+            new ScopedCharacterResolver(characterRepository, new PlayableStateKeyResolver()));
   }
 
   @Test

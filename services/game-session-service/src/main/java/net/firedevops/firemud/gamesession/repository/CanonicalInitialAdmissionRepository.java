@@ -1,7 +1,6 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
-import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.ByteBuffer;
@@ -29,7 +28,6 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProo
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProof;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
-import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository.ExpectedClosedEvidence;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository.PreparedExpectedClosed;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -54,7 +52,6 @@ public class CanonicalInitialAdmissionRepository {
   private final GameSessionCanonicalRealmCatalogRepository catalogRepository;
   private final GameSessionCanonicalAdmissionPointerRepository pointerRepository;
   private final CanonicalGameInstanceLaunchAssociationRepository launchRepository;
-  private final GameplayAdmissionPointerEventRepository eventRepository;
 
   /** One exact current pointer row plus its validated owner result and GS-owned snapshot digest. */
   public record CurrentOpenSnapshot(
@@ -87,7 +84,7 @@ public class CanonicalInitialAdmissionRepository {
     this.catalogRepository = Objects.requireNonNull(catalogRepository, "catalogRepository");
     this.pointerRepository = Objects.requireNonNull(pointerRepository, "pointerRepository");
     this.launchRepository = Objects.requireNonNull(launchRepository, "launchRepository");
-    this.eventRepository = Objects.requireNonNull(eventRepository, "eventRepository");
+    Objects.requireNonNull(eventRepository, "eventRepository");
   }
 
   /** Persists the immutable request identity before remote World verification is attempted. */
@@ -189,8 +186,8 @@ public class CanonicalInitialAdmissionRepository {
   }
 
   /**
-   * Commits the first pointer, append-only audit and terminal owner result in one short
-   * transaction.
+   * Denies Human commit before pointer, audit, or terminal owner effects while Account protection
+   * remains unavailable.
    */
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public void commit(
@@ -200,80 +197,10 @@ public class CanonicalInitialAdmissionRepository {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(worldProof, "worldProof");
     worldProof.requireMatches(request);
-    requireWritableReadCommittedOwnerTransaction();
-    lockTarget(request);
-    if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
-      lockAllAdmissionRepresentationsForNoPrior();
-    }
-    CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
-    Attempt attempt = requireAttemptForUpdate(request);
-    CanonicalInitialAdmissionLaunchTarget launchTarget = lockLaunchTarget(request, true);
-    requireSameRequest(attempt, request, launchTarget);
-    requireRequestMatchesCatalogAndLaunch(request, catalog, launchTarget);
-    if (!PENDING.equals(attempt.status())) {
-      return;
-    }
-
-    ExpectedClosedEvidence closedOrigin = lockExpectedClosedOrigin(request, preparedExpectedClosed);
-    if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
-      pointerRepository.requireNoAdmissionPointerRepresentations(
-          request.targetNamespace(),
-          request.canonicalTenantId(),
-          request.realmId(),
-          request.worldSlug(),
-          catalog.realmSlug(),
-          launchTarget.association().gameSessionTenantId(),
-          launchTarget.gameInstanceId());
-    }
-
-    long pointerVersion =
-        request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER
-            ? 1L
-            : Math.addExact(request.expectedPriorPointerVersion(), 1L);
-    Instant committedAt = nextTimestamp(attempt.updatedAt());
-    long pointerId = writeOpenPointer(request, catalog, launchTarget, pointerVersion, committedAt);
-    long auditEventId =
-        eventRepository.appendCanonicalInitialAdmissionOpen(
-            request, catalog, launchTarget, pointerVersion, catalog.catalogRevision(), committedAt);
-    String proofDigest =
-        commitProofDigest(
-            attempt,
-            pointerVersion,
-            auditEventId,
-            committedAt,
-            closedOrigin == null ? null : closedOrigin.originalRequestId(),
-            closedOrigin == null ? null : closedOrigin.requestDigest(),
-            closedOrigin == null ? null : closedOrigin.auditEventId());
-    int updated =
-        dsl.execute(
-            "UPDATE "
-                + OPERATION_TABLE
-                + " SET status = 'COMMITTED', pointer_id = ?, pointer_version = ?, "
-                + "audit_event_id = ?, prior_pointer_request_id = ?, "
-                + "prior_pointer_request_digest = ?, prior_pointer_audit_event_id = ?, "
-                + "commit_proof_digest = ?, updated_at = CAST(? AS TIMESTAMPTZ), "
-                + "terminal_at = CAST(? AS TIMESTAMPTZ) "
-                + "WHERE target_namespace = ? AND initial_admission_request_id = ? AND status = 'PENDING'",
-            pointerId,
-            pointerVersion,
-            auditEventId,
-            closedOrigin == null ? null : closedOrigin.originalRequestId(),
-            closedOrigin == null ? null : closedOrigin.requestDigest(),
-            closedOrigin == null ? null : closedOrigin.auditEventId(),
-            proofDigest,
-            utc(committedAt),
-            utc(committedAt),
-            request.targetNamespace(),
-            request.initialAdmissionRequestId());
-    if (updated != 1) {
-      throw new CanonicalInitialAdmissionConflictException(
-          "Initial-admission attempt was concurrently terminalized before pointer commit");
-    }
+    throw unavailableHumanAdmissionProtection();
   }
 
-  /**
-   * Records a terminal local abort only while the exact expected prior authority is still current.
-   */
+  /** Denies Human abort before owner effects while Account terminal protection is unavailable. */
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public void abort(
       CanonicalInitialAdmissionRequest request,
@@ -281,62 +208,7 @@ public class CanonicalInitialAdmissionRepository {
       String reason) {
     Objects.requireNonNull(request, "request");
     requireText(reason, "reason", 500);
-    requireWritableReadCommittedOwnerTransaction();
-    lockTarget(request);
-    if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
-      lockAllAdmissionRepresentationsForNoPrior();
-    }
-    CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
-    Attempt attempt = requireAttemptForUpdate(request);
-    CanonicalInitialAdmissionLaunchTarget launchTarget = lockLaunchTarget(request, false);
-    requireSameRequest(attempt, request, launchTarget);
-    requireRequestMatchesCatalogAndLaunch(request, catalog, launchTarget);
-    if (!PENDING.equals(attempt.status())) {
-      return;
-    }
-
-    ExpectedClosedEvidence closedOrigin = lockExpectedClosedOrigin(request, preparedExpectedClosed);
-    if (closedOrigin == null) {
-      pointerRepository.requireNoAdmissionPointerRepresentations(
-          request.targetNamespace(),
-          request.canonicalTenantId(),
-          request.realmId(),
-          request.worldSlug(),
-          catalog.realmSlug(),
-          launchTarget.association().gameSessionTenantId(),
-          launchTarget.gameInstanceId());
-    }
-    Instant terminalAt = nextTimestamp(attempt.updatedAt());
-    String abortProofDigest =
-        abortProofDigest(
-            attempt,
-            reason,
-            terminalAt,
-            closedOrigin == null ? null : closedOrigin.originalRequestId(),
-            closedOrigin == null ? null : closedOrigin.requestDigest(),
-            closedOrigin == null ? null : closedOrigin.auditEventId());
-    int updated =
-        dsl.execute(
-            "UPDATE "
-                + OPERATION_TABLE
-                + " SET status = 'ABORTED', prior_pointer_request_id = ?, "
-                + "prior_pointer_request_digest = ?, prior_pointer_audit_event_id = ?, "
-                + "abort_proof_digest = ?, abort_reason = ?, updated_at = CAST(? AS TIMESTAMPTZ), "
-                + "terminal_at = CAST(? AS TIMESTAMPTZ) "
-                + "WHERE target_namespace = ? AND initial_admission_request_id = ? AND status = 'PENDING'",
-            closedOrigin == null ? null : closedOrigin.originalRequestId(),
-            closedOrigin == null ? null : closedOrigin.requestDigest(),
-            closedOrigin == null ? null : closedOrigin.auditEventId(),
-            abortProofDigest,
-            reason,
-            utc(terminalAt),
-            utc(terminalAt),
-            request.targetNamespace(),
-            request.initialAdmissionRequestId());
-    if (updated != 1) {
-      throw new CanonicalInitialAdmissionConflictException(
-          "Initial-admission attempt was concurrently terminalized before abort");
-    }
+    throw unavailableHumanAdmissionProtection();
   }
 
   /** Reads the exact durable result only after the owner transaction has committed. */
@@ -458,152 +330,25 @@ public class CanonicalInitialAdmissionRepository {
     requireNonNil(realmId, "realmId");
   }
 
+  /** No callable Account owner acquires and settles canonical Human terminal protection. */
+  public static CanonicalHumanAdmissionProtectionUnavailableException
+      unavailableHumanAdmissionProtection() {
+    return new CanonicalHumanAdmissionProtectionUnavailableException(
+        "Canonical Human initial admission requires unavailable Account terminal protection");
+  }
+
+  public static final class CanonicalHumanAdmissionProtectionUnavailableException
+      extends IllegalStateException {
+    public CanonicalHumanAdmissionProtectionUnavailableException(String message) {
+      super(message);
+    }
+  }
+
   private static void requireNonNil(UUID value, String label) {
     Objects.requireNonNull(value, label);
     if (new UUID(0L, 0L).equals(value)) {
       throw new IllegalArgumentException(label + " must be a non-nil UUID");
     }
-  }
-
-  private ExpectedClosedEvidence lockExpectedClosedOrigin(
-      CanonicalInitialAdmissionRequest request, PreparedExpectedClosed prepared) {
-    if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
-      if (prepared != null) {
-        throw new CanonicalInitialAdmissionConflictException(
-            "NO_PRIOR_POINTER cannot carry prepared CLOSED-origin evidence");
-      }
-      return null;
-    }
-    if (prepared == null) {
-      throw new CanonicalInitialAdmissionReconciliationRequiredException(
-          "EXPECT_CLOSED requires prepared original CLOSED owner evidence");
-    }
-    ExpectedClosedEvidence evidence = pointerRepository.lockExpectedClosed(prepared);
-    if (!evidence.targetNamespace().equals(request.targetNamespace())
-        || !evidence.canonicalTenantId().equals(request.canonicalTenantId())
-        || !evidence.realmId().equals(request.realmId())
-        || evidence.pointerVersion() != request.expectedPriorPointerVersion()
-        || evidence.catalogRevision() != request.expectedCatalogRevision()) {
-      throw new CanonicalInitialAdmissionReconciliationRequiredException(
-          "Locked original CLOSED authority does not match the tagged request origin");
-    }
-    return evidence;
-  }
-
-  private long writeOpenPointer(
-      CanonicalInitialAdmissionRequest request,
-      CanonicalRealmCatalogSnapshot catalog,
-      CanonicalInitialAdmissionLaunchTarget launchTarget,
-      long pointerVersion,
-      Instant updatedAt) {
-    CanonicalGameInstanceLaunchAssociation association = launchTarget.association();
-    if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
-      Record inserted =
-          dsl.fetchOne(
-              "INSERT INTO gameplay_admission_pointer ("
-                  + "world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
-                  + "game_instance_id, pointer_version, visible, requires_character_selection, "
-                  + "state_scope, character_creation_policy, last_updated_by, last_update_reason, "
-                  + "created_at, updated_at, public_production_realm, catalog_revision, realm_id, "
-                  + "playable_state_namespace_id, representation_version, target_namespace, "
-                  + "canonical_tenant_id, admission_state, canonical_game_instance_id, "
-                  + "canonical_version_id, runtime_version_id, initial_admission_request_id, "
-                  + "initial_admission_request_digest, initial_admission_origin_kind, "
-                  + "initial_admission_prior_pointer_version, initial_admission_active_epoch, "
-                  + "initial_admission_hold_id, initial_admission_hold_fence, "
-                  + "initial_admission_hold_binding_digest) "
-                  + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, 'game-session-canonical-initial-admission', "
-                  + "'World-held initial admission', ?, ?, ?, ?, ?, ?, 3, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                  + "RETURNING id",
-              catalog.worldSlug(),
-              catalog.realmSlug(),
-              catalog.sourceIntakeReceipt().source().worldDisplayName(),
-              catalog.realmDisplayName(),
-              association.gameSessionTenantId(),
-              launchTarget.gameInstanceId(),
-              pointerVersion,
-              catalog.visible(),
-              catalog.stateScope(),
-              catalog.characterCreationPolicy(),
-              toLocalDateTime(updatedAt),
-              toLocalDateTime(updatedAt),
-              catalog.publicProduction(),
-              catalog.catalogRevision(),
-              catalog.realmId(),
-              catalog.playableStateNamespaceId(),
-              request.targetNamespace(),
-              request.canonicalTenantId(),
-              request.canonicalGameInstanceId(),
-              request.canonicalVersionId(),
-              launchTarget.runtimeVersionId(),
-              request.initialAdmissionRequestId(),
-              request.requestDigest(),
-              request.originKind().name(),
-              request.expectedPriorPointerVersion(),
-              request.activeLifecycleEpoch(),
-              request.holdId(),
-              request.holdFence(),
-              request.holdBindingDigest());
-      if (inserted == null || inserted.get("id", Long.class) == null) {
-        throw new CanonicalInitialAdmissionConflictException(
-            "Canonical initial OPEN pointer insert returned no owner row");
-      }
-      return inserted.get("id", Long.class);
-    }
-
-    Record pointer =
-        dsl.fetchOne(
-            "UPDATE gameplay_admission_pointer SET world_slug = ?, realm_slug = ?, "
-                + "world_display_name = ?, realm_display_name = ?, tenant_id = ?, game_instance_id = ?, "
-                + "pointer_version = ?, visible = ?, requires_character_selection = NULL, "
-                + "state_scope = ?, character_creation_policy = ?, "
-                + "last_updated_by = 'game-session-canonical-initial-admission', "
-                + "last_update_reason = 'World-held initial admission', updated_at = ?, "
-                + "public_production_realm = ?, catalog_revision = ?, playable_state_namespace_id = ?, "
-                + "representation_version = 3, admission_state = 'OPEN', canonical_game_instance_id = ?, "
-                + "canonical_version_id = ?, runtime_version_id = ?, initial_admission_request_id = ?, "
-                + "initial_admission_request_digest = ?, initial_admission_origin_kind = ?, "
-                + "initial_admission_prior_pointer_version = ?, initial_admission_active_epoch = ?, "
-                + "initial_admission_hold_id = ?, initial_admission_hold_fence = ?, "
-                + "initial_admission_hold_binding_digest = ? "
-                + "WHERE representation_version = 2 AND target_namespace = ? "
-                + "AND canonical_tenant_id = ? AND realm_id = ? AND admission_state = 'CLOSED' "
-                + "AND pointer_version = ? AND catalog_revision = ? RETURNING id",
-            catalog.worldSlug(),
-            catalog.realmSlug(),
-            catalog.sourceIntakeReceipt().source().worldDisplayName(),
-            catalog.realmDisplayName(),
-            association.gameSessionTenantId(),
-            launchTarget.gameInstanceId(),
-            pointerVersion,
-            catalog.visible(),
-            catalog.stateScope(),
-            catalog.characterCreationPolicy(),
-            toLocalDateTime(updatedAt),
-            catalog.publicProduction(),
-            catalog.catalogRevision(),
-            catalog.playableStateNamespaceId(),
-            request.canonicalGameInstanceId(),
-            request.canonicalVersionId(),
-            launchTarget.runtimeVersionId(),
-            request.initialAdmissionRequestId(),
-            request.requestDigest(),
-            request.originKind().name(),
-            request.expectedPriorPointerVersion(),
-            request.activeLifecycleEpoch(),
-            request.holdId(),
-            request.holdFence(),
-            request.holdBindingDigest(),
-            request.targetNamespace(),
-            request.canonicalTenantId(),
-            request.realmId(),
-            request.expectedPriorPointerVersion(),
-            request.expectedCatalogRevision());
-    if (pointer == null || pointer.get("id", Long.class) == null) {
-      throw new CanonicalInitialAdmissionConflictException(
-          "Original CLOSED pointer changed before the initial OPEN CAS");
-    }
-    return pointer.get("id", Long.class);
   }
 
   private void verifyCommittedReadback(Attempt attempt) {
@@ -893,23 +638,6 @@ public class CanonicalInitialAdmissionRepository {
     return catalog;
   }
 
-  private CanonicalInitialAdmissionLaunchTarget readExactLaunchTarget(
-      CanonicalInitialAdmissionRequest request) {
-    CanonicalInitialAdmissionLaunchTarget target =
-        launchRepository
-            .readForInitialAdmission(
-                request.targetNamespace(),
-                request.canonicalTenantId(),
-                request.realmId(),
-                request.canonicalGameInstanceId())
-            .orElseThrow(
-                () ->
-                    new CanonicalInitialAdmissionReconciliationRequiredException(
-                        "Exact canonical launch association is unavailable for owner readback"));
-    requireRequestMatchesLaunch(request, target);
-    return target;
-  }
-
   private CanonicalRealmCatalogSnapshot lockCatalog(CanonicalInitialAdmissionRequest request) {
     CanonicalRealmCatalogSnapshot catalog =
         catalogRepository.lockInitialAdmissionTarget(
@@ -995,16 +723,6 @@ public class CanonicalInitialAdmissionRepository {
             + "game_session_canonical_closed_admission_pointer_request, "
             + "gameplay_initial_admission_bind_catalog, gameplay_initial_admission_bind_attempt "
             + "IN SHARE ROW EXCLUSIVE MODE");
-  }
-
-  private Attempt requireAttemptForUpdate(CanonicalInitialAdmissionRequest request) {
-    Attempt attempt =
-        findAttempt(request.targetNamespace(), request.initialAdmissionRequestId(), true);
-    if (attempt == null) {
-      throw new CanonicalInitialAdmissionReconciliationRequiredException(
-          "Initial-admission request was not durably reserved before owner proof or commit");
-    }
-    return attempt;
   }
 
   private void requireSameRequest(
@@ -1235,14 +953,6 @@ public class CanonicalInitialAdmissionRepository {
     } catch (NoSuchAlgorithmException exception) {
       throw new IllegalStateException("SHA-256 is unavailable", exception);
     }
-  }
-
-  private static Instant nextTimestamp(Instant previous) {
-    Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
-    if (previous != null && !now.isAfter(previous)) {
-      return previous.plus(1, ChronoUnit.MICROS);
-    }
-    return now;
   }
 
   private static OffsetDateTime utc(Instant instant) {

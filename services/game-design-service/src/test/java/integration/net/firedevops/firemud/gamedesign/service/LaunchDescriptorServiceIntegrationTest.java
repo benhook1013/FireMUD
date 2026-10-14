@@ -3,6 +3,8 @@ package integration.net.firedevops.firemud.gamedesign.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.file.Path;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.UUID;
@@ -47,6 +49,7 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -68,6 +71,7 @@ import tools.jackson.databind.ObjectMapper;
     classes = GameDesignServiceApplication.class,
     properties = {
       "spring.profiles.active=test",
+      "spring.config.import=file:src/main/resources/application.yml",
       "firemud.auth.jwt-secret=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "firemud.grpc.plaintext=true",
       "firemud.grpc.workload-namespace=launch-descriptor-test",
@@ -114,9 +118,46 @@ class LaunchDescriptorServiceIntegrationTest {
   @Autowired private PlatformTransactionManager transactionManager;
   @Autowired private DSLContext dsl;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private ConfigurableEnvironment environment;
 
   @Test
-  void legacyNumericResolveFailsClosedWithoutPersistingDescriptor() {
+  void legacyNumericResolveFailsClosedWithoutPersistingDescriptor() throws Exception {
+    assertThat(environment.getRequiredProperty("spring.application.name"))
+        .isEqualTo("game-design-service");
+    var applicationNameOrigin =
+        environment.getPropertySources().stream()
+            .filter(source -> source.containsProperty("spring.application.name"))
+            .map(
+                source ->
+                    org.springframework.boot.origin.OriginLookup.getOrigin(
+                        source, "spring.application.name"))
+            .filter(java.util.Objects::nonNull)
+            .findFirst()
+            .orElseThrow(
+                () -> new AssertionError("spring.application.name has no config data origin"));
+    while (applicationNameOrigin
+        instanceof org.springframework.boot.origin.PropertySourceOrigin wrapper) {
+      applicationNameOrigin =
+          java.util.Objects.requireNonNull(
+              wrapper.getOrigin(), "spring.application.name origin wrapper has no concrete parent");
+    }
+    assertThat(applicationNameOrigin)
+        .as("origin for spring.application.name: %s", applicationNameOrigin)
+        .isInstanceOf(org.springframework.boot.origin.TextResourceOrigin.class);
+    Path actualApplicationConfig =
+        java.util.Objects.requireNonNull(
+                ((org.springframework.boot.origin.TextResourceOrigin) applicationNameOrigin)
+                    .getResource())
+            .getFile()
+            .toPath()
+            .toRealPath();
+    Path expectedApplicationConfig = Path.of("src/main/resources/application.yml").toRealPath();
+    assertThat(actualApplicationConfig)
+        .withFailMessage(
+            "spring.application.name came from %s, expected GDS config %s",
+            actualApplicationConfig, expectedApplicationConfig)
+        .isEqualTo(expectedApplicationConfig);
+
     assertThatThrownBy(
             () ->
                 legacyLaunchDescriptorService.resolveLaunchDescriptor(
@@ -999,7 +1040,11 @@ class LaunchDescriptorServiceIntegrationTest {
             .defaultSchema(schema)
             .table(FLYWAY_TABLE)
             .placeholders(Map.of("serviceSchema", schema))
-            .locations("classpath:db/migration");
+            .locations(
+                "filesystem:"
+                    + java.nio.file.Path.of("src/main/resources/db/migration")
+                        .toAbsolutePath()
+                        .normalize());
     if (target != null) {
       configuration.target(target);
     }
@@ -1273,6 +1318,15 @@ class LaunchDescriptorServiceIntegrationTest {
         .isInstanceOf(DataAccessException.class);
 
     assertThatThrownBy(() -> jdbcTemplate.execute("TRUNCATE TABLE launch_descriptor"))
+        .isInstanceOf(DataAccessException.class)
+        .rootCause()
+        .satisfies(
+            failure -> {
+              assertThat(failure).isInstanceOf(SQLException.class);
+              assertThat(((SQLException) failure).getSQLState()).isEqualTo("0A000");
+            })
+        .hasMessageContaining("cannot truncate a table referenced in a foreign key constraint");
+    assertThatThrownBy(() -> jdbcTemplate.execute("TRUNCATE TABLE launch_descriptor CASCADE"))
         .isInstanceOf(DataAccessException.class)
         .rootCause()
         .hasMessageContaining("launch descriptors are immutable");

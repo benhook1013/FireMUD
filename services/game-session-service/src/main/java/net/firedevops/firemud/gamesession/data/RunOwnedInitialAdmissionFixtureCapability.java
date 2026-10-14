@@ -20,6 +20,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.smoke.RunOwnedFixtureImmutableFileReader;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
@@ -47,7 +48,8 @@ record RunOwnedInitialAdmissionFixtureCapability(
     String gameSessionUriSan,
     String caCertificateSha256,
     String worldManagementUriSan,
-    String worldManagementLeafSha256) {
+    String worldManagementLeafSha256,
+    String claimDigest) {
   public static final String CAPABILITY_SCHEMA =
       RunOwnedInitialAdmissionFixtureWireCodec.CAPABILITY_SCHEMA;
   public static final String GAME_SESSION_URI_SAN =
@@ -164,13 +166,15 @@ record RunOwnedInitialAdmissionFixtureCapability(
               parsedLaunchEvidence.publishedReleaseBundle(),
               parsedLaunchEvidence.versionAssetArtifactState(),
               parsedLaunchEvidence.versionState(),
-              parsedLaunchEvidence.launchDescriptor()));
+              parsedLaunchEvidence.launchDescriptor()),
+          parsed.creationEvidence(),
+          parsed.fixturePolicySeal());
     } catch (RuntimeException exception) {
       throw invalidSourceReceipt();
     }
   }
 
-  private static RunOwnedInitialAdmissionFixtureWireCodec.Capability toWireCapability(
+  static RunOwnedInitialAdmissionFixtureWireCodec.Capability toWireCapability(
       RunOwnedInitialAdmissionFixtureCapability capability) {
     return new RunOwnedInitialAdmissionFixtureWireCodec.Capability(
         CAPABILITY_SCHEMA,
@@ -193,7 +197,8 @@ record RunOwnedInitialAdmissionFixtureCapability(
         capability.gameSessionUriSan(),
         capability.caCertificateSha256(),
         capability.worldManagementUriSan(),
-        capability.worldManagementLeafSha256());
+        capability.worldManagementLeafSha256(),
+        capability.claimDigest());
   }
 
   static RunOwnedInitialAdmissionFixtureCapability parseAndValidate(
@@ -235,7 +240,8 @@ record RunOwnedInitialAdmissionFixtureCapability(
           parsed.gameSessionUriSan(),
           parsed.caCertificateSha256(),
           parsed.worldManagementUriSan(),
-          parsed.worldManagementLeafSha256());
+          parsed.worldManagementLeafSha256(),
+          parsed.claimDigest());
     } catch (RuntimeException exception) {
       throw invalidCapability();
     }
@@ -369,7 +375,9 @@ record RunOwnedInitialAdmissionFixtureCapability(
       String worldManagementUriSan,
       String worldManagementLeafSha256,
       AuthoredWorldSourceEvidence sourceEvidence,
-      LaunchReadEvidence launchReadEvidence) {}
+      LaunchReadEvidence launchReadEvidence,
+      FreshTenantCreationEvidence creationEvidence,
+      RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal fixturePolicySeal) {}
 
   record LaunchReadEvidence(
       String schema,

@@ -24,6 +24,15 @@ import org.springframework.transaction.support.TransactionTemplate;
  * active owner metadata does not itself authorize player access or expose a credential.
  */
 public final class AccountGameplayDelegationTokenRegistry {
+  /** Only a repository-produced durable intent permits original-token disposal. */
+  public AccountGameplayDelegationRedisClient.InitialLoginDisposalReceipt disposeInitialLogin(
+      net.firedevops.firemud.accountservice.repository.AccountInitialGameplayLoginDisposalRepository
+              .Intent
+          intent) {
+    requireNoAccountTransaction("Disposal intent must commit before registry mutation");
+    return coordinationRedis.disposeInitialLogin(intent);
+  }
+
   private static final long MAX_CLEANUP_MARGIN_MILLIS = 300_000L;
 
   private final AccountGameplayDelegationIssuanceRepository issuanceRepository;

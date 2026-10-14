@@ -29,7 +29,6 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDispositi
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
@@ -122,6 +121,36 @@ public class PlayCommandHandler {
     Objects.requireNonNull(sessionId, "sessionId must not be null");
     Objects.requireNonNull(command, "command must not be null");
 
+    Optional<Long> transportId =
+        net.firedevops.firemud.gamesession.service.SessionIdParsing.parse(sessionId)
+            .optionalValue();
+    if (transportId.isPresent()) {
+      try {
+        SessionContext retained =
+            sessionContextService.findBySessionId(transportId.orElseThrow()).orElse(null);
+        FirstPartyConnectContextResolution resolution =
+            FirstPartyConnectContextResolution.resolve(
+                transportId.orElseThrow(), retained, firstPartyConnectContextRegistry);
+        if (resolution.invalid()) {
+          return connectContextInvalidFailure("unknown", null);
+        }
+        if (resolution.connectContext().isPresent()) {
+          // Current canonical target is reread by resolution before legacy Account, roster or
+          // binding work.
+          return failure(
+              "FIRST_PARTY_AUTHORITY_UNAVAILABLE",
+              "First-party gameplay is unavailable",
+              "error.play.connect-context-invalid",
+              Map.of(),
+              "unknown",
+              null,
+              null,
+              null);
+        }
+      } catch (RuntimeException invalidOrUnavailable) {
+        return connectContextInvalidFailure("unknown", null);
+      }
+    }
     Optional<SessionContext> maybeContext =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     String tenantTag =
@@ -196,6 +225,17 @@ public class PlayCommandHandler {
                 ? Long.toString(context.bootstrapGameInstanceId())
                 : null);
       }
+      if (connectContextResolution.connectContext().isPresent()) {
+        return failure(
+            "FIRST_PARTY_AUTHORITY_UNAVAILABLE",
+            "First-party gameplay is unavailable",
+            "error.play.connect-context-invalid",
+            Map.of(),
+            tenantTag,
+            null,
+            null,
+            null);
+      }
       Optional<GameplayWorldCatalog.RealmView> maybeRealm =
           selection.explicitRealmSelector() != null
               ? gameplayWorldCatalog.resolveRealmForAdmission(
@@ -222,12 +262,6 @@ public class PlayCommandHandler {
       try (GameplayLoggingContext worldContext =
           GameplayLoggingContext.open(
               selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), null, null)) {
-        Optional<PlayCommandHandlingResult> connectScopeFailure =
-            validateFirstPartyConnectScope(
-                connectContextResolution, selectedWorld, selectedRealm, selectedTenantTag);
-        if (connectScopeFailure.isPresent()) {
-          return connectScopeFailure.get();
-        }
         Optional<PlayCommandHandlingResult> authorityFailure =
             validateRuntimeAdmission(context, selectedWorld, selectedRealm, selectedTenantTag, 0L);
         if (authorityFailure.isPresent()) {
@@ -319,7 +353,8 @@ public class PlayCommandHandler {
                   selectedRealm.pointerVersion(),
                   selectedRealm.stateScope(),
                   context.connectScopeId(),
-                  context.connectRequestId());
+                  context.connectRequestId(),
+                  context.firstPartyConnectContext());
           sessionContextService.save(updated);
           gameplayPresenceLifecycleService.registerConnected(updated);
           publishCommandEvent(updated, command);
@@ -370,42 +405,6 @@ public class PlayCommandHandler {
               null));
     }
     return Optional.empty();
-  }
-
-  private Optional<PlayCommandHandlingResult> validateFirstPartyConnectScope(
-      FirstPartyConnectContextResolution connectContextResolution,
-      GameplayWorldCatalog.WorldView selectedWorld,
-      GameplayWorldCatalog.RealmView selectedRealm,
-      String tenantTag) {
-    return connectContextResolution
-        .connectContext()
-        .flatMap(
-            connectContext -> {
-              if (!connectContext.hasCompleteRoutingScope()) {
-                return Optional.of(
-                    connectContextInvalidFailure(
-                        tenantTag, Long.toString(selectedRealm.gameInstanceId())));
-              }
-              if (!GameplayAdmissionPointerSnapshots.sameBootstrapRoute(
-                  connectContext,
-                  selectedRealm.tenantId(),
-                  selectedRealm.gameInstanceId(),
-                  selectedWorld.slug(),
-                  selectedRealm.slug(),
-                  selectedRealm.pointerVersion())) {
-                return Optional.of(
-                    failure(
-                        "CONNECT_SCOPE_MISMATCH",
-                        "Connect scope mismatch",
-                        "error.play.connect-scope-mismatch",
-                        Map.of(),
-                        tenantTag,
-                        Long.toString(selectedRealm.gameInstanceId()),
-                        null,
-                        null));
-              }
-              return Optional.empty();
-            });
   }
 
   private PlayCommandHandlingResult connectContextInvalidFailure(
@@ -1121,7 +1120,8 @@ public class PlayCommandHandler {
             requestedPointerVersion,
             null,
             context.connectScopeId(),
-            context.connectRequestId()));
+            context.connectRequestId(),
+            context.firstPartyConnectContext()));
     LOG.debug(
         "Cleared stale gameplay binding after denied reconnect-style PLAY for tenant {} session {} world {} realm {} reason {}",
         tenantTag,

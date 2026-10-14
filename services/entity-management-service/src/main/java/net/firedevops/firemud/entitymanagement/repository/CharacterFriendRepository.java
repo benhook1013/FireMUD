@@ -1,15 +1,13 @@
 package net.firedevops.firemud.entitymanagement.repository;
 
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.*;
-import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTERS;
 import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTER_FRIEND;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.util.Objects;
 import java.util.Optional;
-import net.firedevops.firemud.entitymanagement.entity.ActorIdentityStatus;
 import net.firedevops.firemud.entitymanagement.entity.CharacterFriend;
 import net.firedevops.firemud.entitymanagement.entity.CharacterFriendKey;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
@@ -29,7 +27,8 @@ public class CharacterFriendRepository {
   }
 
   public Page<CharacterFriend> findByIdCharacterId(Long characterId, Pageable pageable) {
-    var condition = CHARACTER_FRIEND.CHARACTER_ID.eq(characterId).and(ownerResolvedPair());
+    Condition condition =
+        CHARACTER_FRIEND.CHARACTER_ID.eq(characterId).and(legacyFriendEndpoints());
     long total = dsl.fetchCount(CHARACTER_FRIEND, condition);
     var content =
         dsl.selectFrom(CHARACTER_FRIEND)
@@ -42,7 +41,8 @@ public class CharacterFriendRepository {
   }
 
   public long countByTenantId(Long tenantId) {
-    return dsl.fetchCount(CHARACTER_FRIEND, CHARACTER_FRIEND.TENANT_ID.eq(tenantId));
+    return dsl.fetchCount(
+        CHARACTER_FRIEND, CHARACTER_FRIEND.TENANT_ID.eq(tenantId).and(legacyFriendEndpoints()));
   }
 
   public Optional<CharacterFriend> findById(CharacterFriendKey key) {
@@ -53,34 +53,40 @@ public class CharacterFriendRepository {
                     .CHARACTER_ID
                     .eq(key.getCharacterId())
                     .and(CHARACTER_FRIEND.FRIEND_ID.eq(key.getFriendId()))
-                    .and(ownerResolvedPair()))
+                    .and(legacyFriendEndpoints()))
             .fetchOne(this::toEntity));
   }
 
   public CharacterFriend save(CharacterFriend entity) {
-    if (Objects.equals(entity.getId().getCharacterId(), entity.getId().getFriendId())) {
-      throw new IllegalStateException("FRIEND_SELF_RELATIONSHIP_NOT_ALLOWED");
-    }
-    long ownerResolvedCount =
-        dsl.fetchCount(
-            CHARACTERS,
-            CHARACTERS
-                .ID
-                .in(entity.getId().getCharacterId(), entity.getId().getFriendId())
-                .and(CHARACTERS.TENANT_ID.eq(entity.getTenantId()))
-                .and(
-                    CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                        ActorIdentityStatus.OWNER_RESOLVED.name())));
-    if (ownerResolvedCount != 2) {
-      throw new IllegalStateException("FRIEND_ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
-    }
     if (findById(entity.getId()).isEmpty()) {
-      dsl.insertInto(CHARACTER_FRIEND)
-          .set(CHARACTER_FRIEND.CHARACTER_ID, entity.getId().getCharacterId())
-          .set(CHARACTER_FRIEND.FRIEND_ID, entity.getId().getFriendId())
-          .set(CHARACTER_FRIEND.TENANT_ID, entity.getTenantId())
-          .set(CHARACTER_FRIEND.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
-          .execute();
+      int inserted =
+          dsl.insertInto(
+                  CHARACTER_FRIEND,
+                  CHARACTER_FRIEND.CHARACTER_ID,
+                  CHARACTER_FRIEND.FRIEND_ID,
+                  CHARACTER_FRIEND.TENANT_ID,
+                  CHARACTER_FRIEND.CREATED_AT)
+              .select(
+                  dsl.select(
+                          DSL.val(entity.getId().getCharacterId(), CHARACTER_FRIEND.CHARACTER_ID),
+                          DSL.val(entity.getId().getFriendId(), CHARACTER_FRIEND.FRIEND_ID),
+                          DSL.val(entity.getTenantId(), CHARACTER_FRIEND.TENANT_ID),
+                          DSL.val(
+                              toLocalDateTime(entity.getCreatedAt()), CHARACTER_FRIEND.CREATED_AT))
+                      .where(
+                          CharacterRepository.legacyCharacterExists(
+                                  DSL.val(
+                                      entity.getId().getCharacterId(),
+                                      CHARACTER_FRIEND.CHARACTER_ID))
+                              .and(
+                                  CharacterRepository.legacyCharacterExists(
+                                      DSL.val(
+                                          entity.getId().getFriendId(),
+                                          CHARACTER_FRIEND.FRIEND_ID)))))
+              .execute();
+      if (inserted != 1) {
+        throw new IllegalStateException("Legacy friend endpoints are unavailable");
+      }
     }
     return entity;
   }
@@ -92,36 +98,13 @@ public class CharacterFriendRepository {
                 .CHARACTER_ID
                 .eq(key.getCharacterId())
                 .and(CHARACTER_FRIEND.FRIEND_ID.eq(key.getFriendId()))
-                .and(ownerResolvedPair()))
+                .and(legacyFriendEndpoints()))
         .execute();
   }
 
-  private org.jooq.Condition ownerResolvedPair() {
-    var ownerResolvedCharacter =
-        DSL.exists(
-            dsl.selectOne()
-                .from(CHARACTERS)
-                .where(
-                    CHARACTERS
-                        .ID
-                        .eq(CHARACTER_FRIEND.CHARACTER_ID)
-                        .and(CHARACTERS.TENANT_ID.eq(CHARACTER_FRIEND.TENANT_ID))
-                        .and(
-                            CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                                ActorIdentityStatus.OWNER_RESOLVED.name()))));
-    var ownerResolvedFriend =
-        DSL.exists(
-            dsl.selectOne()
-                .from(CHARACTERS)
-                .where(
-                    CHARACTERS
-                        .ID
-                        .eq(CHARACTER_FRIEND.FRIEND_ID)
-                        .and(CHARACTERS.TENANT_ID.eq(CHARACTER_FRIEND.TENANT_ID))
-                        .and(
-                            CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                                ActorIdentityStatus.OWNER_RESOLVED.name()))));
-    return ownerResolvedCharacter.and(ownerResolvedFriend);
+  private static Condition legacyFriendEndpoints() {
+    return CharacterRepository.legacyCharacterExists(CHARACTER_FRIEND.CHARACTER_ID)
+        .and(CharacterRepository.legacyCharacterExists(CHARACTER_FRIEND.FRIEND_ID));
   }
 
   private CharacterFriend toEntity(Record record) {

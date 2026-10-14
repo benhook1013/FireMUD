@@ -80,9 +80,14 @@ public final class AccountGameplayDelegationResponseRecoveryOwner {
 
       RecoveredCredential credential =
           accountTransaction.execute(
-              status ->
-                  responseEnvelopes.recoverCommittedResponse(
-                      requestId, expectedAccountId, caller, active));
+              status -> {
+                committedIssuanceOwner.requireOriginalRequestNotDisposed(requestId);
+                RecoveredCredential recovered =
+                    responseEnvelopes.recoverCommittedResponse(
+                        requestId, expectedAccountId, caller, active);
+                committedIssuanceOwner.requireOriginalRequestNotDisposed(requestId);
+                return recovered;
+              });
       if (credential == null) throw unavailable();
       return credential;
     } catch (IdempotencyConflictException | ResponseRecoveryExpiredException failure) {

@@ -218,7 +218,7 @@ public final class RedisSessionContextService implements SessionContextService {
     try {
       return Optional.ofNullable((SessionContext) redisTemplate.opsForValue().get(key));
     } catch (SerializationException | ClassCastException ex) {
-      return Optional.empty();
+      throw new IllegalStateException("Retained session context is unreadable", ex);
     }
   }
 

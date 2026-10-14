@@ -99,20 +99,28 @@ public final class CrossServiceAppHarness {
                     extraConfigClasses))
             .run(toCommandLineArgs(props));
     int boundGrpcPort = context.getBean(GrpcServerLifecycle.class).getPort();
-    int restartGrpcPort = grpcPort == 0 ? boundGrpcPort : grpcPort;
+    int boundHttpPort =
+        Objects.requireNonNull(((WebServerApplicationContext) context).getWebServer()).getPort();
+    Consumer<Map<String, Object>> restartCustomizer =
+        restartProps -> {
+          customizer.accept(restartProps);
+          restartProps.put("server.port", String.valueOf(boundHttpPort));
+          restartProps.put("spring.grpc.server.port", String.valueOf(boundGrpcPort));
+        };
     return new GameLogicHolder(
         context,
         boundGrpcPort,
+        boundHttpPort,
         worldEndpoint,
         entityEndpoint,
         socialEndpoint,
         () ->
             startGameLogic(
-                restartGrpcPort,
+                boundGrpcPort,
                 worldEndpoint,
                 entityEndpoint,
                 socialEndpoint,
-                customizer,
+                restartCustomizer,
                 extraConfigClasses));
   }
 
@@ -446,6 +454,7 @@ public final class CrossServiceAppHarness {
   public static final class GameLogicHolder {
     private final ConfigurableApplicationContext context;
     private final int grpcPort;
+    private final int httpPort;
     private final String worldEndpoint;
     private final String entityEndpoint;
     private final String socialEndpoint;
@@ -454,12 +463,14 @@ public final class CrossServiceAppHarness {
     GameLogicHolder(
         ConfigurableApplicationContext context,
         int grpcPort,
+        int httpPort,
         String worldEndpoint,
         String entityEndpoint,
         String socialEndpoint,
         Supplier<GameLogicHolder> restartAction) {
       this.context = context;
       this.grpcPort = grpcPort;
+      this.httpPort = httpPort;
       this.worldEndpoint = worldEndpoint;
       this.entityEndpoint = entityEndpoint;
       this.socialEndpoint = socialEndpoint;
@@ -468,6 +479,10 @@ public final class CrossServiceAppHarness {
 
     public int grpcPort() {
       return grpcPort;
+    }
+
+    public int httpPort() {
+      return httpPort;
     }
 
     public GameLogicHolder restart() {

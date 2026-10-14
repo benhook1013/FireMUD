@@ -235,3 +235,83 @@ Entry format:
   - Observation: the wrong class filter executed no tests and failed explicitly; the static tasks were reported `SKIPPED` despite a successful focused unit build. Neither result qualified the missing proof.
   - Expected pattern: read the class’s declared package before specifying a test filter, and verify task execution rather than equating build success with every requested check passing. Enable the repository’s canonical full-check property when selecting static tasks.
   - Current status: corrected package selection passed 50 focused unit cases; the subsequent runtime fix passed 58 selected unit cases. A separate canonical `-PfullCheck` run executed the required static checks successfully. No validation requirement was waived.
+
+- `2026-10-13`: Native Linux Docker proof can still invoke a Windows credential helper
+  - Context: the claimed Gameplay fresh-bootstrap run rebuilt all service jars and images successfully, then failed before startup while pulling public Redis images. WSL reported `UtilAcceptVsock` and `accept4` timeout errors followed by a Docker credential lookup failure.
+  - Observation: using the native Linux Docker socket does not select a separate client credential configuration. A run-scoped private client configuration can omit unavailable Windows credential helpers while preserving static registry settings and Compose plugin discovery; the global client configuration need not change.
+  - Current status: the required proof using packaged service artifacts passes both transports with the isolated configuration and pinned public images. This client failure establishes neither an application regression nor a cause for the earlier Testcontainers endpoint refusals.
+
+- `2026-10-14`: Qualify a receiving boundary from all current postimages and actual owner dependencies
+  - Context: the Document receiving reconstruction initially inventoried only the published delta and untracked additions, omitting modified tracked source. Treating additive storage guards as passive also missed the fresh-v2 callers and ordinary asset source owner required by current positive publication tests.
+  - Observation: the complete preserved delta had 84 paths, with a coherent 63-path Game Design boundary after inherited Account/process and separate Logging paths were accounted for. Current-owner proof required actual asset genesis, reviewed evidence and synchronized projection; decoding retained v1 history could not substitute for those callers. PostgreSQL's unnamed constraint identity also differed from jOOQ's H2 metadata emulation.
+  - Expected pattern: inventory committed, modified tracked and untracked postimages together, then reconcile actual imports and owner invariants on the selected parent. Keep retained-byte proof separate from current positive owner proof. Use targeted jOOQ ignore markers only for procedural or constraint blocks that do not change generated columns, with independent PostgreSQL upgrade and current-owner proof. Tie each proof count to its recorded postimage and parent; the historical counts here are examples, and current execution totals belong solely in the [owning implementation tracker](implementation-tracking/game-authoring-publishing-and-activation.md#coherent-owner-receiving-prerequisite).
+  - Current status: the 63-path Game Design receiver on the earlier preparation parent passed its canonical gate, including all 127 physical PostgreSQL cases without skips. This historical result does not establish genuine cross-service producer authority or packaged runtime proof. Current receiver totals and proof belong in the [owning implementation tracker](implementation-tracking/game-authoring-publishing-and-activation.md#coherent-owner-receiving-prerequisite).
+
+- `2026-10-14`: Fresh database proof needs a new run identity
+  - Context: a supplementary Gameplay fresh-bootstrap proof reused a previously completed run identity after canonical teardown.
+  - Observation: the run retained immutable authored-world source receipts while its PostgreSQL volume was rebuilt, so Game Design correctly rejected the new database owner evidence as conflicting with the old receipt. Reusing the ownership capability did not make the two database histories one proof.
+  - Expected pattern: allocate a new run ID and ownership token for a new fresh-database proof; preserve the prior receipt and use canonical run-owned teardown. Use the restart entrypoint when proving continuity of an existing deployment. Do not delete receipt evidence to make a reused fresh-bootstrap identity succeed or credit a setup failure as runtime proof.
+  - Current status: the reused-identity invocation failed and was canonically torn down; a unique-identity invocation rebuilt current jars and images, passed both WebSocket and Telnet player-flow baselines, and completed canonical teardown.
+
+- `2026-10-14`: Retain runtime ownership until teardown completes
+  - Context: a Gameplay source-built Compose proof passed both player-flow baselines, but its launcher generated the invocation token only in an ephemeral shell and did not include teardown before exiting.
+  - Observation: the wrapper left the owned project running, while its retained digest could no longer be matched with the lost token. Subsequent WSL memory and swap exhaustion coincided with local test timeouts; the contribution of other workloads was not established. An apparent WSL restart cleared swap and temporary logs but restarted the project's containers.
+  - Expected pattern: retain the invocation capability privately before launching, keep proof logs outside temporary storage when they must survive a restart, and include successful canonical teardown in the owned run boundary. A lost capability does not authorize rewriting ownership markers or reclaiming unrelated resources.
+  - Current status: Overseer verified bounded recovery and removed the completed project's containers and unused network, retaining volumes, backups and source. Normal serialized Gradle work resumed and the current Game Design checks passed; full local Compose remains paused while cleanup and whole-session ownership are corrected. Earlier successful transport proof remains attributed to its original source, and this recovery is not canonical full teardown or new-head packaged proof.
+
+- `2026-10-14`: Optional coverage upload can consume the validation job budget
+  - Context: the #3196 source Validation run completed its Game Design Gradle checks, runtime JAR and coverage artifact, then remained in the optional Codecov upload.
+  - Observation: the upload consumed the matrix job's 20-minute budget, cancelling the job and making the required Validation Gate red despite passing source checks. Metadata callbacks used a separate concurrency group and did not cause this cancellation; the slow upload's underlying cause remains unknown.
+  - Expected pattern: bound optional external uploads within the containing job's budget and preserve time for required proof artifacts. `continue-on-error` alone cannot protect against whole-job cancellation. Keep cancelled aggregate proof separate from successful individual checks.
+  - Current status: the Codecov step is bounded to two minutes with its existing failure tolerance retained. New-head cloud validation remains required to verify the workflow outcome.
+
+- `2026-10-14`: Wait for the database-owned expiry condition in lock-race proof
+  - Context: a canonical Game Session pin test established its real PostgreSQL INSERT lock wait, then expected a finite owner lease to have expired after a fixed host sleep.
+  - Observation: the database still reported the lease live after the sleep, so the intended post-expiry race was not established.
+  - Expected pattern: retain the original finite lease and exact blocker, poll the same PostgreSQL expiry predicate used by the owner within a bounded deadline, then release the lock and assert refusal without mutation. Do not change the lease, renew authority, weaken the refusal assertion or infer clock skew from the failed sleep assumption.
+  - Current status: the test now waits for the database-owned expiry condition; current physical qualification remains required.
+
+- `2026-10-14`: Hold asynchronous recovery until failure-state assertions finish
+  - Context: the TLS certificate watcher callback-failure test signalled its first attempt before the watcher recorded an unhealthy state. A successful retry could restore health before the test observed that state.
+  - Expected pattern: gate the successful test callback until the existing unhealthy-state and aggregate-health assertions finish, release the gate in `finally`, then verify retry and recovered health. Preserve the production retry policy and every failure/recovery assertion.
+  - Current status: the test-only latch correction passed the full 486-case Common unit suite and static checks. The separate PostgreSQL refusal and cleanup chronology remains unexplained under the existing local PostgreSQL availability observation; later passing proof does not identify that cause.
+
+- 2026-10-14: Use explicit shell failure propagation for dependent proof and publication steps.
+  - Observation: a multiline Bash execution continued to stage and commit after an auxiliary Python count assertion failed because the shell did not enable `errexit`. The actual gate passed 11 PostgreSQL cases; the failed assertion used a preliminary count of 10. The committed code remained qualified, but the command sequence did not enforce its intended dependency.
+  - Guidance: use `set -euo pipefail` or separate sequential tool calls when a proof assertion must succeed before staging, committing or publishing. Read actual result counts before pinning them; an overall shell exit code can otherwise hide an earlier failure.
+  - Current status: the [#3211](https://github.com/benhook1013/FireMUD/pull/3211) result was checked against the actual XML, corrected to 11 passing cases, and subsequent dependent commands use explicit failure propagation.
+
+- `2026-10-14`: Review-period bookkeeping must not contend for provider execution locks
+  - Context: the Overseer reported that Gameplay's three concurrent metadata reset batches encountered active-provider errors during the native rollout, with no actual provider active.
+  - Observation: reset-versus-reset global lock contention was reported as provider activity, and network/full-stack refresh made local counter bookkeeping slow and coupled to unrelated source readiness.
+  - Expected pattern: snapshot retained completed native results and append the channel period in one local SQLite transaction; preserve provider reservations and enforce external evidence only at ordinary review/status admission.
+  - Current status: local transactional implementation is prepared; installed-selector promotion and live rollout verification remain pending with the owning orchestrator.
+  - Reconsideration trigger: verify concurrent metadata batches after coordinated version-matched selector promotion.
+
+- `2026-10-14`: Transfer terminal-owned work at a native command boundary
+  - Context: a replacement subagent could not attach to the main agent’s existing execution session; the tools returned an unknown process ID even though the main agent could still observe its running batch.
+  - Expected pattern: keep one execution owner, finish the current native command without cancellation, then resume only the missing stable operation keys from the canonical store in the new owner’s terminal. An execution-session ID does not transfer process ownership across agent contexts. Use the same boundary to drain incompatible database writers before coordinated selector promotion.
+  - Evidence limits: completion counts and rollout timings remain in the owning controller job. This handoff does not replace the separate concurrent-reset reconsideration trigger above.
+
+- `2026-10-14`: Verify user-visible rendering against installed controller input
+  - Observation: Root deployed the numeric review-limit renderer before the matching controller fields were installed. Formatter tests passed, but interim live queue rows showed `Limits not reported`.
+  - Expected pattern: pair rendering changes with the version-matched controller input and verify the actual endpoint before claiming the related user-facing outcome is complete. This is a reusable verification lesson, not an additional approval gate or lifecycle policy.
+  - Recovery: coordinated controller promotion and actual-endpoint verification restored numeric limits; the owning controller job retains the rollout details.
+
+- 2026-10-15: Administrative review settings share a dispatch boundary with provider-backed commands. When removing latency from one setting command, inspect the neighbouring stop/allocation/reset dispatch family and prove each actual entrypoint with Git, GitHub and subprocess access forbidden; method-only fixtures can preserve legacy behavior while missing expensive controller construction. Retain evidence-bound consumption as a separate operation rather than weakening request admission.
+
+- `2026-10-14`: Native fix attribution needs the exact requested postimage
+  - Context: Gameplay recorded a requested AA-1.3 tracker-row repair as fixed after its nearby narrative and migration proof passed, while the named row still lacked the migration anchors.
+  - Observation: the next CLI review exposed the unchanged row. Documentation hygiene checks had passed because they do not verify that a requested semantic target changed. The original native fix record therefore overstated its proof.
+  - Expected pattern: inspect the exact requested row or declaration before recording an accepted-fix resolution; verify its named anchors instead of relying on a nearby paragraph or a broad substring replacement.
+  - Current status: the exact row is corrected and verified. An immutable audited resolution correction points to the published repair while retaining the original wrong attribution; the User and Overseer were informed.
+
+- `2026-10-15`: Diagnose effective migration guards before proposing repairs. A World APPLIED diagnosis read V1012 without following V1014, which had already replaced the six-populated-family predicate with complete explicit counts and owner-proved zeros. Before declaring a migration defect, locate every later replacement of the function or trigger and assess the effective guard at the pinned receiving head, including related mapping/receipt constraints. Preserve immutable migration history and propose a new forward repair only for a demonstrated current gap; a historical definition alone is not live behavior.
+
+- `2026-10-14`: Follow typed construction before accepting a missing validation finding.
+  - Context: A CLI finding claimed World accepted non-STARTING fixture allocations.
+  - Observation: Main initially accepted it after reading the codec and client but missed the shared result constructor's existing STARTING requirement; the attempted negative fixture failed before reaching World.
+  - Recovery: The redundant production guard was removed, the decision was corrected in the immutable controller audit, and the public checkpoint correction preserves the original review credit. Focused wire-response rejection proof verifies the actual transitive boundary.
+  - Expected pattern: Follow the complete typed construction path before adjudicating an absent check. A local consumer need not repeat an invariant already enforced by every constructible input; retained findings and changed code alone are not fix proof.
+
+- `2026-10-15`: Check subclass lifecycle locks when relying on a shared client. The World terminal completion client called its shared watcher shutdown from a synchronized override, undoing the base class’s deliberate monitor release while draining callbacks. Integration inspection found the same mechanism already corrected in the canonical launch client. Keep only the local closed/initialized update under the client monitor and drain outside it; qualify the actual override with a queued-callback shutdown test. The queued-callback shutdown case passes in the fresh 546-case Common gate, including monitor release, exact peer binding, closed-client refusal and one shutdown per constructed channel. This source finding does not establish that an earlier runtime failed for that reason.

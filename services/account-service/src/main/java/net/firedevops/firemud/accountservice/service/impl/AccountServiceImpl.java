@@ -103,6 +103,7 @@ import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayCanonicalLoginOwner.CredentialVerification;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
@@ -147,6 +148,8 @@ public class AccountServiceImpl implements AccountService {
   private static final UUID NIL_ACCOUNT_UUID = new UUID(0L, 0L);
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
   private static final JsonMapper AUDIT_JSON = JsonMapper.builder().build();
+
+  private String gameplayDecoyPasswordVerifier;
 
   private final AccountRepository accountRepository;
   private final AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
@@ -1160,179 +1163,8 @@ public class AccountServiceImpl implements AccountService {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
     ConnectScopeContext scopeContext = requireConnectScopeContext(request.connectScopeId());
     validateConnectScopeAgainstBootstrap(bootstrapContext, scopeContext);
-    Optional<
-            net.firedevops.firemud.accountservice.service.session.SessionService.ConnectTokenReplay>
-        cachedReplay =
-            sessionService.getConnectTokenReplay(
-                scopeContext.tenantId(),
-                bootstrapContext.accountId(),
-                request.connectScopeId(),
-                request.requestId());
-    if (cachedReplay.isPresent()) {
-      var replay = cachedReplay.orElseThrow();
-      if (replay.success()) {
-        logger.info(
-            "Replayed connect-token attempt for account {} tenant {} world {} realm {} requestId {}",
-            bootstrapContext.accountId(),
-            scopeContext.tenantId(),
-            scopeContext.worldSlug(),
-            scopeContext.realmSlug(),
-            request.requestId());
-        return replayedConnectTokenResult(replay.result());
-      }
-      logger.info(
-          "Replayed failed connect-token attempt for account {} tenant {} world {} realm {} requestId {} code {}",
-          bootstrapContext.accountId(),
-          scopeContext.tenantId(),
-          scopeContext.worldSlug(),
-          scopeContext.realmSlug(),
-          request.requestId(),
-          replay.errorCode());
-      throw new AuthenticationException(replay.errorCode(), replay.errorMessage());
-    }
-    try {
-      return issueConnectTokenFresh(bootstrapContext, scopeContext, request);
-    } catch (AuthenticationException ex) {
-      if (!"AUTH_UNAVAILABLE".equals(ex.getCode())
-          && !"ENTITLEMENT_UNAVAILABLE".equals(ex.getCode())) {
-        sessionService.storeConnectTokenReplay(
-            scopeContext.tenantId(),
-            bootstrapContext.accountId(),
-            request.connectScopeId(),
-            request.requestId(),
-            new net.firedevops.firemud.accountservice.service.session.SessionService
-                .ConnectTokenReplay(false, null, ex.getCode(), ex.getMessage()),
-            remainingConnectScopeReplayTtl(scopeContext));
-      }
-      throw ex;
-    }
-  }
-
-  private ConnectTokenResult issueConnectTokenFresh(
-      BootstrapContext bootstrapContext,
-      ConnectScopeContext scopeContext,
-      ConnectTokenRequest request) {
-    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(scopeContext);
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
-    if (!entitlements.gameplayAvailable()) {
-      throw new AuthenticationException(
-          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
-    }
-    RuntimeMembershipDto membership =
-        getTenantMembershipForRuntime(
-            bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
-
-    if (membership.membershipExists()
-        && !"ACTIVE".equals(membership.membershipLifecycleState())
-        && !"INACTIVE".equals(membership.membershipLifecycleState())) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Membership authority requires reconciliation");
-    }
-    if (membership.membershipExists()
-        && "INACTIVE".equals(membership.membershipLifecycleState())
-        && isPublicProductionRealm(realm)) {
-      if (!entitlements.allowPublicJoin()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            "Public joining is not allowed for the selected game");
-      }
-      throw new AuthenticationException(
-          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
-    }
-    if (membership.membershipExists() && !membership.gameplayAdmissionAllowed()) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
-    }
-
-    if (!membership.membershipExists()) {
-      if (!isPublicProductionRealm(realm)) {
-        throw new AuthenticationException(
-            "NON_PUBLIC_ENROLLMENT_REQUIRED",
-            "Existing game membership is required for this non-public realm");
-      }
-      if (!entitlements.allowPublicJoin()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            "Public joining is not allowed for the selected game");
-      }
-      throw new AuthenticationException(
-          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
-    }
-
-    String jti =
-        stableId(
-            "gameplay-connect",
-            bootstrapContext.accountId(),
-            scopeContext.tenantId(),
-            scopeContext.gameInstanceId(),
-            scopeContext.realmSlug(),
-            request.requestId());
-    long issuedAt = System.currentTimeMillis();
-    long expiresAt = issuedAt + tokenProperties.getConnectTokenExpirationMs();
-    String connectToken =
-        mintToken(
-            String.valueOf(bootstrapContext.accountId()),
-            tokenProperties.getConnectTokenExpirationMs(),
-            Map.of(
-                "aud",
-                "gameplay-connect",
-                "accountId",
-                bootstrapContext.accountId(),
-                "tenantId",
-                scopeContext.tenantId(),
-                "gameInstanceId",
-                scopeContext.gameInstanceId(),
-                "pointerVersion",
-                scopeContext.pointerVersion(),
-                "realmSlug",
-                scopeContext.realmSlug(),
-                "worldSlug",
-                scopeContext.worldSlug(),
-                "connectScopeId",
-                request.connectScopeId(),
-                "requestId",
-                request.requestId(),
-                "jti",
-                jti));
-    sessionService.storeSession(
-        scopeContext.tenantId(),
-        bootstrapContext.accountId(),
-        connectToken,
-        tokenProperties.getConnectTokenExpirationMs());
-    ConnectTokenResult result =
-        new ConnectTokenResult(
-            bootstrapContext.accountId(),
-            scopeContext.tenantId(),
-            scopeContext.gameInstanceId(),
-            scopeContext.realmSlug(),
-            request.connectScopeId(),
-            connectToken,
-            jti,
-            request.requestId(),
-            Instant.ofEpochMilli(issuedAt).toString(),
-            Instant.ofEpochMilli(expiresAt).toString(),
-            false);
-    sessionService.storeConnectTokenReplay(
-        scopeContext.tenantId(),
-        bootstrapContext.accountId(),
-        request.connectScopeId(),
-        request.requestId(),
-        new net.firedevops.firemud.accountservice.service.session.SessionService.ConnectTokenReplay(
-            true, result, "", ""),
-        Math.min(
-            tokenProperties.getConnectTokenExpirationMs(),
-            remainingConnectScopeReplayTtl(scopeContext)));
-    logger.info(
-        "Issued connect token for account {} tenant {} world {} realm {} gameInstance {} requestId {} jti {}",
-        bootstrapContext.accountId(),
-        scopeContext.tenantId(),
-        scopeContext.worldSlug(),
-        scopeContext.realmSlug(),
-        scopeContext.gameInstanceId(),
-        request.requestId(),
-        jti);
-    return result;
+    throw new AuthenticationException(
+        "AUTH_UNAVAILABLE", "Canonical gameplay connect-token authority is unavailable");
   }
 
   @Override
@@ -1945,12 +1777,6 @@ public class AccountServiceImpl implements AccountService {
     return currentRealm;
   }
 
-  private long remainingConnectScopeReplayTtl(ConnectScopeContext scopeContext) {
-    long remainingMs =
-        scopeContext.connectScopeExpiresAt().toEpochMilli() - System.currentTimeMillis();
-    return Math.max(1L, remainingMs);
-  }
-
   private Optional<Account> findAccountForAuthentication(String usernameOrEmail) {
     Optional<Account> emailMatch =
         accountRepository.findByEmail(EmailCanonicalization.normalize(usernameOrEmail));
@@ -2002,6 +1828,113 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
+  /** Internal primary-credential hook for the unregistered canonical gameplay LOGIN owner. */
+  @Transactional(
+      propagation = org.springframework.transaction.annotation.Propagation.MANDATORY,
+      noRollbackFor = AuthenticationException.class)
+  public CredentialVerification verifyGameplayPrimaryCredential(
+      Account lockedAccount, String secret) {
+    requireWritableGameplayCredentialTransaction();
+    requireAuthenticationPersistedIdentity(lockedAccount);
+    GameplayCredentialVerificationWork work = new GameplayCredentialVerificationWork(secret);
+    PrimaryAuthentication authentication;
+    try {
+      authentication = authenticateAccountIdentity(lockedAccount, secret, true, work);
+    } finally {
+      work.complete();
+    }
+    authentication
+        .emailLoginChallenge()
+        .ifPresent(
+            challenge -> {
+              if (challenge.getId() == null
+                  || challenge.getId() <= 0L
+                  || !lockedAccount.getId().equals(challenge.getAccountId())) {
+                throw new IllegalStateException("Exact login challenge ownership is required");
+              }
+            });
+    return new CredentialVerification(
+        authentication.account().getAccountUuid(),
+        authentication.emailLoginChallenge().map(AccountEmailLoginChallenge::getId).orElse(null));
+  }
+
+  /** Non-authorizing equivalent KDF work with process-local, randomly generated decoy evidence. */
+  public void verifyAbsentGameplayPrimaryCredential(String secret) {
+    new GameplayCredentialVerificationWork(secret).complete();
+  }
+
+  private synchronized String gameplayDecoyPasswordVerifier() {
+    if (gameplayDecoyPasswordVerifier == null) {
+      char[] material = new char[64];
+      try {
+        for (int index = 0; index < material.length; index++) {
+          material[index] = (char) ('!' + EMAIL_LOGIN_OTP_RANDOM.nextInt(94));
+        }
+        gameplayDecoyPasswordVerifier = hashPassword(material);
+      } finally {
+        java.util.Arrays.fill(material, '\0');
+      }
+    }
+    return gameplayDecoyPasswordVerifier;
+  }
+
+  private final class GameplayCredentialVerificationWork {
+    private final String secret;
+    private final String decoyVerifier;
+    private int completedVerifications;
+
+    private GameplayCredentialVerificationWork(String secret) {
+      this.secret = secret == null ? "" : secret;
+      this.decoyVerifier = gameplayDecoyPasswordVerifier();
+    }
+
+    private boolean verify(String verifier) {
+      try {
+        return verifyPassword(secret, verifier);
+      } finally {
+        completedVerifications++;
+      }
+    }
+
+    private void complete() {
+      while (completedVerifications < 2) {
+        verify(decoyVerifier);
+      }
+    }
+  }
+
+  /** Consumes only the verified challenge after the LOGIN owner creates its PENDING operation. */
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+  public void consumeGameplayPrimaryCredential(
+      Account lockedAccount, CredentialVerification verification) {
+    requireWritableGameplayCredentialTransaction();
+    requireAuthenticationPersistedIdentity(lockedAccount);
+    if (verification == null || !lockedAccount.getAccountUuid().equals(verification.accountId())) {
+      throw new IllegalStateException("Exact verified Account identity is required");
+    }
+    if (verification.oneTimeChallengeId() == null) {
+      return;
+    }
+    accountEmailLoginChallengeRepository.lockAccountChallenge(lockedAccount.getId());
+    AccountEmailLoginChallenge challenge =
+        accountEmailLoginChallengeRepository
+            .findByAccountId(lockedAccount.getId())
+            .orElseThrow(
+                () -> new IllegalStateException("Verified login challenge is unavailable"));
+    if (!lockedAccount.getId().equals(challenge.getAccountId())
+        || !verification.oneTimeChallengeId().equals(challenge.getId())) {
+      throw new IllegalStateException("Exact verified login challenge ownership is required");
+    }
+    accountEmailLoginChallengeRepository.delete(challenge);
+  }
+
+  private void requireWritableGameplayCredentialTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException("Writable Account LOGIN transaction required");
+    }
+  }
+
   private PrimaryAuthentication authenticateAccountIdentity(
       String username, String password, boolean allowEmailLoginOtp) {
     Optional<Account> accountOpt = findAccountForAuthentication(username);
@@ -2015,18 +1948,33 @@ public class AccountServiceImpl implements AccountService {
 
   private PrimaryAuthentication authenticateAccountIdentity(
       Account account, String password, boolean allowEmailLoginOtp) {
+    return authenticateAccountIdentity(account, password, allowEmailLoginOtp, null);
+  }
+
+  private PrimaryAuthentication authenticateAccountIdentity(
+      Account account,
+      String password,
+      boolean allowEmailLoginOtp,
+      GameplayCredentialVerificationWork work) {
     Optional<AccountEmailLoginChallenge> emailLoginChallenge = Optional.empty();
     if (allowEmailLoginOtp && allowsEmailLoginOtp(account)) {
       accountEmailLoginChallengeRepository.lockAccountChallenge(account.getId());
       emailLoginChallenge = activeEmailLoginChallenge(account);
     }
     if (emailLoginChallenge
-        .filter(challenge -> matchesEmailLoginOtp(challenge, password))
+        .filter(
+            challenge ->
+                work == null
+                    ? matchesEmailLoginOtp(challenge, password)
+                    : work.verify(challenge.getCodeHash()))
         .isPresent()) {
       requireAuthenticationEligible(account);
       return new PrimaryAuthentication(account, emailLoginChallenge);
     }
-    if (!allowsPassword(account) || !verifyPassword(password, account.getPasswordHash())) {
+    if (!allowsPassword(account)
+        || !(work == null
+            ? verifyPassword(password, account.getPasswordHash())
+            : work.verify(account.getPasswordHash()))) {
       emailLoginChallenge.ifPresent(
           challenge -> recordFailedEmailLoginAttempt(challenge, LocalDateTime.now()));
       throw new AuthenticationException(
@@ -3140,12 +3088,22 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private String hashPassword(String password) {
-    Argon2 argon2 = Argon2Factory.create();
-    char[] chars = password.toCharArray();
+    return hashPassword(password.toCharArray());
+  }
+
+  private String hashPassword(char[] chars) {
+    Argon2 argon2 = null;
     try {
+      argon2 = Argon2Factory.create();
       return argon2.hash(2, 65536, 1, chars);
     } finally {
-      argon2.wipeArray(chars);
+      try {
+        if (argon2 != null) {
+          argon2.wipeArray(chars);
+        }
+      } finally {
+        java.util.Arrays.fill(chars, '\0');
+      }
     }
   }
 
@@ -3221,21 +3179,6 @@ public class AccountServiceImpl implements AccountService {
       String realmSlug,
       long membershipVersion,
       String requestId) {}
-
-  private ConnectTokenResult replayedConnectTokenResult(ConnectTokenResult result) {
-    return new ConnectTokenResult(
-        result.accountId(),
-        result.tenantId(),
-        result.gameInstanceId(),
-        result.realmSlug(),
-        result.connectScopeId(),
-        result.connectToken(),
-        result.jti(),
-        result.requestId(),
-        result.issuedAt(),
-        result.expiresAt(),
-        true);
-  }
 
   private RuntimeRealmTarget readRuntimeRealmTarget(
       net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {

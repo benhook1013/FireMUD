@@ -171,6 +171,10 @@ public class AccountGameplayTokenIdentityFenceRepository {
   }
 
   private AccountGameplayTokenIdentityFence requireExact(TokenIdentity identity, boolean lock) {
+    if (dsl.fetchOne(
+            "SELECT request_id FROM account_initial_gameplay_login_disposals WHERE request_id = ?",
+            identity.issuanceRequestId())
+        != null) throw new TokenRevokedException();
     Record row =
         dsl.fetchOne(
             "SELECT "

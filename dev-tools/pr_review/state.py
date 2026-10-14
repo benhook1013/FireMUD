@@ -21,8 +21,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 PREVIOUS_SCHEMA_VERSION = 1
+INTERMEDIATE_SCHEMA_VERSION = 2
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
 FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 
@@ -713,9 +714,9 @@ class ReviewAllocation:
 
     pr: int
     channel: str
-    head: str
-    parent_identity: str
-    parent_head: str
+    head: str | None
+    parent_identity: str | None
+    parent_head: str | None
     merge_base: str | None
     patch_id: str | None
     baseline_checkpoints: tuple[str, ...]
@@ -741,21 +742,58 @@ class ReviewAllocation:
     max_additional_completed: int | None = None
     reopens_taper: bool = False
     baseline_source_run_ids: tuple[str, ...] = ()
+    administrative_local: bool = False
+    administrative_recorded_at: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
             raise StateError("review allocation PR must be a positive integer")
         if self.channel not in {"hosted", "cli"}:
             raise StateError("review allocation channel must be hosted or cli")
+        if not isinstance(self.administrative_local, bool):
+            raise StateError("administrative-local provenance must be boolean")
+        if self.administrative_local:
+            try:
+                recorded = datetime.fromisoformat(self.administrative_recorded_at.replace("Z", "+00:00"))
+                if recorded.tzinfo is None or recorded.utcoffset() is None:
+                    raise ValueError
+            except (AttributeError, TypeError, ValueError) as exc:
+                raise StateError("local administrative decisions require a recording timestamp") from exc
+            if any(
+                value is not None for value in (self.parent_identity, self.parent_head, self.merge_base, self.patch_id)
+            ):
+                raise StateError("local administrative decisions cannot claim verified anchor facts")
+            if self.handoff_checkpoint is not None or self.stop_basis == "allocated":
+                raise StateError("local administrative decisions cannot claim completed handoff proof")
+            if any(
+                value is not None
+                for value in (
+                    self.stop_checkpoint,
+                    self.stop_reviewed_head,
+                    self.stop_reviewed_patch_id,
+                    self.stop_parent_identity,
+                    self.stop_parent_head,
+                    self.stop_merge_base,
+                    self.stop_patch_id,
+                )
+            ):
+                raise StateError("local administrative stops cannot claim verified review or anchor facts")
+            if self.stop_basis is not None and self.stop_head != self.head:
+                raise StateError("local administrative stop head must match caller audit metadata")
+        elif self.administrative_recorded_at is not None:
+            raise StateError("administrative recording timestamp requires local provenance")
         for name in ("head", "parent_head", "merge_base"):
             value = getattr(self, name)
-            if name == "merge_base" and value is None:
+            if value is None and (
+                name == "merge_base"
+                or (self.administrative_local and (name == "parent_head" or self.stop_basis == "direct_human"))
+            ):
                 continue
             if not isinstance(value, str) or not EXACT_SHA.fullmatch(value):
                 raise StateError(f"review allocation {name} must be an exact SHA")
         for name in ("parent_identity", "patch_id", "reason"):
             value = getattr(self, name)
-            if name == "patch_id" and value is None:
+            if value is None and (name == "patch_id" or (self.administrative_local and name == "parent_identity")):
                 continue
             if not isinstance(value, str) or not value.strip():
                 raise StateError(f"review allocation {name} must be a non-empty string")
@@ -829,7 +867,11 @@ class ReviewAllocation:
             no_reviewed_checkpoint = self.stop_basis == "direct_human" and all(
                 value is None for value in reviewed_values
             )
-            required_stop_values = (self.stop_head, self.stop_parent_identity, self.stop_parent_head, self.stop_reason)
+            required_stop_values = (
+                (self.stop_reason,)
+                if self.administrative_local
+                else (self.stop_head, self.stop_parent_identity, self.stop_parent_head, self.stop_reason)
+            )
             if self.stop_basis == "allocated":
                 required_stop_values += (self.stop_merge_base, self.stop_patch_id)
             if not all(isinstance(value, str) and value.strip() for value in required_stop_values) or (
@@ -842,6 +884,8 @@ class ReviewAllocation:
             ):
                 raise StateError("review allocation stop patch identity must be a non-empty string")
             for name in ("stop_reviewed_head", "stop_head", "stop_parent_head", "stop_merge_base"):
+                if self.administrative_local and getattr(self, name) is None:
+                    continue
                 if name == "stop_reviewed_head" and no_reviewed_checkpoint:
                     continue
                 if name == "stop_merge_base" and self.stop_basis == "direct_human" and self.stop_merge_base is None:
@@ -907,6 +951,9 @@ class ReviewAllocation:
             "retained_ambiguous_reason": self.retained_ambiguous_reason,
             "baseline_source_run_ids": list(self.baseline_source_run_ids),
         }
+        if self.administrative_local:
+            value["administrative_local"] = True
+            value["administrative_recorded_at"] = self.administrative_recorded_at
         if self.baseline_checkpoint is not None:
             value["baseline_checkpoint"] = self.baseline_checkpoint
         if self.min_additional_completed is not None:
@@ -920,6 +967,8 @@ class ReviewAllocation:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> ReviewAllocation:
         allowed = {
+            "administrative_local",
+            "administrative_recorded_at",
             "pr",
             "channel",
             "head",
@@ -975,6 +1024,8 @@ class ReviewAllocation:
             raise StateError("allocation baseline source-run identities must be a JSON array")
         try:
             return cls(
+                administrative_local=value.get("administrative_local", False),
+                administrative_recorded_at=value.get("administrative_recorded_at"),
                 pr=value["pr"],
                 channel=value["channel"],
                 head=value["head"],
@@ -1016,19 +1067,19 @@ class ReviewPeriodDecision:
 
     pr: int
     channel: str
-    checkpoint: str
-    reviewed_head: str
-    reviewed_parent_identity: str
-    reviewed_parent_head: str
-    reviewed_merge_base: str
-    reviewed_patch_id: str
+    checkpoint: str | None
+    reviewed_head: str | None
+    reviewed_parent_identity: str | None
+    reviewed_parent_head: str | None
+    reviewed_merge_base: str | None
+    reviewed_patch_id: str | None
     current_head: str
-    current_base_ref: str
-    current_base_tip: str
-    current_parent_identity: str
-    current_parent_head: str
-    current_merge_base: str
-    current_patch_id: str
+    current_base_ref: str | None
+    current_base_tip: str | None
+    current_parent_identity: str | None
+    current_parent_head: str | None
+    current_merge_base: str | None
+    current_patch_id: str | None
     baseline_checkpoints: tuple[str, ...]
     baseline_source_run_ids: tuple[str, ...]
     minimum_completed: int
@@ -1037,6 +1088,14 @@ class ReviewPeriodDecision:
     actor: str
     reason: str
     recorded_at: str
+    completion_cutoff: str | None = None
+    replace_stop: bool = False
+    baseline_mode: str = "checkpoint"
+    baseline_id: str | None = None
+    baseline_complete: bool | None = None
+    baseline_history_digest: str | None = None
+    baseline_observation_count: int | None = None
+    baseline_observation_fingerprints: tuple[str, ...] = ()
     superseded_allocation_identity: str | None = None
     superseded_allocation: ReviewAllocation | None = None
 
@@ -1045,30 +1104,98 @@ class ReviewPeriodDecision:
             raise StateError("review-period PR must be a positive integer")
         if self.channel not in {"hosted", "cli"}:
             raise StateError("review-period channel must be hosted or cli")
-        if not isinstance(self.checkpoint, str) or not self.checkpoint.strip():
-            raise StateError("review-period reset requires an exact checkpoint identity")
+        if self.baseline_mode not in {"checkpoint", "current_history", "native_history"}:
+            raise StateError("review-period baseline mode is invalid")
+        if self.baseline_mode == "checkpoint":
+            if not isinstance(self.checkpoint, str) or not self.checkpoint.strip():
+                raise StateError("review-period reset requires an exact checkpoint identity")
+            if any(
+                not isinstance(getattr(self, name), str) or not getattr(self, name).strip()
+                for name in ("reviewed_parent_identity", "reviewed_patch_id")
+            ):
+                raise StateError("checkpoint review-period reset requires its exact reviewed anchor")
+            if any(
+                not isinstance(getattr(self, name), str) or not EXACT_SHA.fullmatch(getattr(self, name))
+                for name in ("reviewed_head", "reviewed_parent_head", "reviewed_merge_base")
+            ):
+                raise StateError("checkpoint review-period reset requires exact reviewed SHAs")
+            if self.checkpoint not in self.baseline_checkpoints:
+                raise StateError("review-period baseline must include its exact checkpoint")
+            if any(
+                value is not None
+                for value in (
+                    self.baseline_id,
+                    self.baseline_history_digest,
+                    self.baseline_observation_count,
+                    self.baseline_complete,
+                )
+            ) or self.baseline_observation_fingerprints:
+                raise StateError("checkpoint review-period reset cannot contain a native-history baseline")
+        else:
+            if (self.checkpoint is not None and self.baseline_mode != "native_history") or any(
+                getattr(self, name) is not None
+                for name in (
+                    "reviewed_head",
+                    "reviewed_parent_identity",
+                    "reviewed_parent_head",
+                    "reviewed_merge_base",
+                    "reviewed_patch_id",
+                )
+            ):
+                raise StateError("current-history period reset cannot claim a reviewed checkpoint or anchor")
+            if (
+                not isinstance(self.baseline_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,99}", self.baseline_id)
+            ):
+                raise StateError("current-history period reset requires a stable baseline ID")
+            if not isinstance(self.baseline_history_digest, str) or not FINGERPRINT.fullmatch(
+                self.baseline_history_digest
+            ):
+                raise StateError("current-history period reset requires an exact history digest")
+            if self.baseline_complete is not True:
+                raise StateError("current-history period reset requires a complete retained-history snapshot")
+            if (
+                isinstance(self.baseline_observation_count, bool)
+                or not isinstance(self.baseline_observation_count, int)
+                or self.baseline_observation_count < 0
+                or len(self.baseline_observation_fingerprints) != self.baseline_observation_count
+            ):
+                raise StateError("current-history period reset has an invalid observation count")
+            if any(
+                not isinstance(value, str) or not FINGERPRINT.fullmatch(value)
+                for value in self.baseline_observation_fingerprints
+            ):
+                raise StateError("current-history baseline fingerprints must be exact SHA-256 values")
+            digest_payload = json.dumps(
+                list(self.baseline_observation_fingerprints),
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            if hashlib.sha256(digest_payload).hexdigest() != self.baseline_history_digest:
+                raise StateError("current-history period digest does not match its observation fingerprints")
+        if not isinstance(self.replace_stop, bool):
+            raise StateError("review-period replace-stop must be boolean")
         for name in (
-            "reviewed_head",
-            "reviewed_parent_head",
-            "reviewed_merge_base",
             "current_head",
             "current_base_tip",
             "current_parent_head",
             "current_merge_base",
         ):
+            if self.baseline_mode == "native_history" and name != "current_head" and getattr(self, name) is None:
+                continue
             if not isinstance(getattr(self, name), str) or not EXACT_SHA.fullmatch(getattr(self, name)):
                 raise StateError(f"review-period {name} must be an exact SHA")
-        if not isinstance(self.current_base_ref, str) or not self.current_base_ref.strip():
+        if self.baseline_mode != "native_history" and (not isinstance(self.current_base_ref, str) or not self.current_base_ref.strip()):
             raise StateError("review-period current base ref must be non-empty")
         for name in (
-            "reviewed_parent_identity",
-            "reviewed_patch_id",
             "current_parent_identity",
             "current_patch_id",
             "actor",
             "reason",
         ):
             value = getattr(self, name)
+            if self.baseline_mode == "native_history" and name in {"current_parent_identity", "current_patch_id"} and value is None:
+                continue
             if not isinstance(value, str) or not value.strip():
                 raise StateError(f"review-period {name.replace('_', ' ')} must be non-empty")
         if len(self.actor) > 100 or any(ord(character) < 0x20 for character in self.actor):
@@ -1079,8 +1206,6 @@ class ReviewPeriodDecision:
             not isinstance(value, str) or not value.strip() for value in self.baseline_checkpoints
         ):
             raise StateError("review-period baseline checkpoints must be non-empty strings")
-        if self.checkpoint not in self.baseline_checkpoints:
-            raise StateError("review-period baseline must include its exact checkpoint")
         if len(set(self.baseline_checkpoints)) != len(self.baseline_checkpoints):
             raise StateError("review-period baseline checkpoints must be unique")
         if not isinstance(self.baseline_source_run_ids, tuple) or any(
@@ -1106,6 +1231,15 @@ class ReviewPeriodDecision:
             raise StateError("review-period decision time must include a timezone")
         if recorded.utcoffset() is None or recorded.utcoffset().total_seconds() != 0:
             raise StateError("review-period decision time must be UTC")
+        if self.baseline_mode == "native_history":
+            try:
+                cutoff = datetime.fromisoformat(self.completion_cutoff.replace("Z", "+00:00"))
+            except (AttributeError, ValueError) as exc:
+                raise StateError("native-history period requires a source completion cutoff") from exc
+            if cutoff.tzinfo is None or cutoff.utcoffset().total_seconds() != 0 or cutoff > recorded:
+                raise StateError("native-history completion cutoff must be UTC and no later than decision time")
+        elif self.completion_cutoff is not None or self.replace_stop:
+            raise StateError("legacy review periods cannot contain native-history semantics")
         if self.superseded_allocation is None:
             if self.superseded_allocation_identity is not None:
                 raise StateError("review-period superseded allocation identity requires its snapshot")
@@ -1119,6 +1253,14 @@ class ReviewPeriodDecision:
 
     @property
     def period_id(self) -> str:
+        if self.baseline_mode in {"current_history", "native_history"}:
+            identity = json.dumps(
+                {"pr": self.pr, "channel": self.channel, "baseline_id": self.baseline_id},
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            return hashlib.sha256(identity.encode("utf-8")).hexdigest()
         identity = json.dumps(
             {
                 "pr": self.pr,
@@ -1144,7 +1286,7 @@ class ReviewPeriodDecision:
         return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "period_id": self.period_id,
             "pr": self.pr,
             "channel": self.channel,
@@ -1174,6 +1316,31 @@ class ReviewPeriodDecision:
                 self.superseded_allocation.to_dict() if self.superseded_allocation is not None else None
             ),
         }
+        if self.baseline_mode in {"current_history", "native_history"}:
+            for name in (
+                "checkpoint",
+                "reviewed_head",
+                "reviewed_parent_identity",
+                "reviewed_parent_head",
+                "reviewed_merge_base",
+                "reviewed_patch_id",
+            ):
+                result.pop(name)
+            if self.baseline_mode == "native_history":
+                result["checkpoint"] = self.checkpoint
+                result["replace_stop"] = self.replace_stop
+                result["completion_cutoff"] = self.completion_cutoff
+            result.update(
+                {
+                    "baseline_mode": self.baseline_mode,
+                    "baseline_id": self.baseline_id,
+                    "baseline_complete": self.baseline_complete,
+                    "baseline_history_digest": self.baseline_history_digest,
+                    "baseline_observation_count": self.baseline_observation_count,
+                    "baseline_observation_fingerprints": list(self.baseline_observation_fingerprints),
+                }
+            )
+        return result
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> ReviewPeriodDecision:
@@ -1202,16 +1369,26 @@ class ReviewPeriodDecision:
             "actor",
             "reason",
             "recorded_at",
+            "completion_cutoff",
+            "replace_stop",
+            "baseline_mode",
+            "baseline_id",
+            "baseline_complete",
+            "baseline_history_digest",
+            "baseline_observation_count",
+            "baseline_observation_fingerprints",
             "superseded_allocation_identity",
             "superseded_allocation",
         }
         checkpoints = value.get("baseline_checkpoints")
         source_runs = value.get("baseline_source_run_ids")
+        observation_fingerprints = value.get("baseline_observation_fingerprints", [])
         superseded = value.get("superseded_allocation")
         if (
             set(value) - allowed
             or not isinstance(checkpoints, list)
             or not isinstance(source_runs, list)
+            or not isinstance(observation_fingerprints, list)
             or (superseded is not None and not isinstance(superseded, Mapping))
         ):
             raise StateError("review-period decision contains fields outside its private schema")
@@ -1219,12 +1396,12 @@ class ReviewPeriodDecision:
             result = cls(
                 pr=value["pr"],
                 channel=value["channel"],
-                checkpoint=value["checkpoint"],
-                reviewed_head=value["reviewed_head"],
-                reviewed_parent_identity=value["reviewed_parent_identity"],
-                reviewed_parent_head=value["reviewed_parent_head"],
-                reviewed_merge_base=value["reviewed_merge_base"],
-                reviewed_patch_id=value["reviewed_patch_id"],
+                checkpoint=value.get("checkpoint"),
+                reviewed_head=value.get("reviewed_head"),
+                reviewed_parent_identity=value.get("reviewed_parent_identity"),
+                reviewed_parent_head=value.get("reviewed_parent_head"),
+                reviewed_merge_base=value.get("reviewed_merge_base"),
+                reviewed_patch_id=value.get("reviewed_patch_id"),
                 current_head=value["current_head"],
                 current_base_ref=value["current_base_ref"],
                 current_base_tip=value["current_base_tip"],
@@ -1240,13 +1417,21 @@ class ReviewPeriodDecision:
                 actor=value["actor"],
                 reason=value["reason"],
                 recorded_at=value["recorded_at"],
+                completion_cutoff=value.get("completion_cutoff"),
+                replace_stop=value.get("replace_stop", False),
+                baseline_mode=value.get("baseline_mode", "checkpoint"),
+                baseline_id=value.get("baseline_id"),
+                baseline_complete=value.get("baseline_complete"),
+                baseline_history_digest=value.get("baseline_history_digest"),
+                baseline_observation_count=value.get("baseline_observation_count"),
+                baseline_observation_fingerprints=tuple(observation_fingerprints),
                 superseded_allocation_identity=value.get("superseded_allocation_identity"),
                 superseded_allocation=ReviewAllocation.from_dict(superseded) if superseded is not None else None,
             )
         except KeyError as exc:
             raise StateError("review-period decision is missing a required field") from exc
         if value.get("period_id") != result.period_id:
-            raise StateError("review-period ID does not match its exact checkpoint and anchor")
+            raise StateError("review-period ID does not match its reset identity")
         return result
 
 
@@ -1353,7 +1538,7 @@ class ReviewState:
         if (
             isinstance(data_model_version, bool)
             or not isinstance(data_model_version, int)
-            or data_model_version not in (PREVIOUS_SCHEMA_VERSION, SCHEMA_VERSION)
+            or data_model_version not in (PREVIOUS_SCHEMA_VERSION, INTERMEDIATE_SCHEMA_VERSION, SCHEMA_VERSION)
         ):
             raise StateError("state has an unsupported schema version")
         raw_overrides = value.get("policy_overrides", {})
@@ -1370,8 +1555,8 @@ class ReviewState:
             "baseline_source_run_ids" in item for item in raw_allocations.values()
         ):
             raise StateError("schema v1 allocation cannot contain source-run baseline identities")
-        if data_model_version == SCHEMA_VERSION and "review_period_decisions" not in value:
-            raise StateError("schema v2 state is missing review-period decisions")
+        if data_model_version in (INTERMEDIATE_SCHEMA_VERSION, SCHEMA_VERSION) and "review_period_decisions" not in value:
+            raise StateError(f"schema v{data_model_version} state is missing review-period decisions")
         raw_routes = value.get("routes", [])
         if not isinstance(raw_routes, list) or any(not isinstance(item, Mapping) for item in raw_routes):
             raise StateError("routes must be an array of objects")
@@ -1575,6 +1760,7 @@ def _cutover_sqlite_store(path: Path, *, deadline: float | None = None) -> tuple
 
     from .sqlite_store import (
         CUTOVER_VERSION,
+        INTERMEDIATE_DATA_MODEL_VERSION,
         PREVIOUS_DATA_MODEL_VERSION,
         SQLITE_SCHEMA_VERSION,
         SqliteStateStore,
@@ -1631,7 +1817,11 @@ def _cutover_sqlite_store(path: Path, *, deadline: float | None = None) -> tuple
         raise StateError("SQLite cutover marker does not match database metadata")
     marker_state_version = marker.get("state_schema_version")
     database_state_version = status.get("data_model_version")
-    supported_state_versions = {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+    supported_state_versions = {
+        PREVIOUS_DATA_MODEL_VERSION,
+        INTERMEDIATE_DATA_MODEL_VERSION,
+        ReviewState().schema_version,
+    }
     if (
         isinstance(marker_state_version, bool)
         or marker_state_version not in supported_state_versions

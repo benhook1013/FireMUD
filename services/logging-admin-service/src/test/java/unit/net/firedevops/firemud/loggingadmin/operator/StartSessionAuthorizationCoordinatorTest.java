@@ -14,7 +14,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
-import java.io.IOException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -22,8 +21,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -45,10 +46,11 @@ import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorization
 import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorizationReservationService.State;
 import net.firedevops.firemud.loggingadmin.repository.StartSessionPreAuthorizationReservationRepository;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
-import tools.jackson.databind.json.JsonMapper;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class StartSessionAuthorizationCoordinatorTest {
   private static final UUID TENANT_ID = UUID.fromString("9f8f06b4-36e5-4d11-9c2a-5adfd7f41531");
@@ -65,12 +67,11 @@ class StartSessionAuthorizationCoordinatorTest {
       UUID.fromString("89da7d84-12f5-4cf8-b69b-30ba8eb115a4");
   private static final Instant NOW = Instant.parse("2026-10-09T00:00:00Z");
   private static final long NOW_MILLIS = NOW.toEpochMilli();
-  private static final String CONTROL_UI_TOKEN = "operator-control-ui-secret";
+  private static final String CONTROL_UI_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.c2ln";
   private static final String OPAQUE_REFERENCE = "r".repeat(43);
   private static final String FINGERPRINT = "arfp/v1/test-key/" + "b".repeat(64);
   private static final String LOGGING_IDENTITY =
       "spiffe://firemud/ns/world-runtime/sa/logging-admin-service";
-  private static final JsonMapper JSON = JsonMapper.builder().build();
 
   private final StartSessionPreAuthorizationReservationRepository repository =
       mock(StartSessionPreAuthorizationReservationRepository.class);
@@ -79,12 +80,25 @@ class StartSessionAuthorizationCoordinatorTest {
           repository, Clock.fixed(NOW, ZoneOffset.UTC));
   private final StartSessionOperatorAuthorizationClient accountClient =
       mock(StartSessionOperatorAuthorizationClient.class);
+  private final AtomicReference<AuthorizedSnapshot> exactReadback = new AtomicReference<>();
   private final StartSessionAuthorizationCoordinator coordinator =
-      new StartSessionAuthorizationCoordinator(reservations, accountClient);
+      new StartSessionAuthorizationCoordinator("world-runtime", reservations, accountClient);
+
+  @BeforeEach
+  void setAuthenticatedTenantAdminContext() {
+    SessionContext.setContext(
+        ACTOR_ID.toString(),
+        List.of(),
+        Map.of(TENANT_ID.toString(), List.of("tenantAdmin")),
+        false,
+        null,
+        null);
+  }
 
   @AfterEach
   void clearAuthenticatedContext() {
     SessionContext.clear();
+    TransactionSynchronizationManager.clear();
   }
 
   @Test
@@ -134,7 +148,12 @@ class StartSessionAuthorizationCoordinatorTest {
         .isEqualTo(LOGGING_IDENTITY);
     assertThat(duplicate.progress()).isEqualTo(Progress.ALREADY_IN_PROGRESS);
     assertThat(duplicate.handoff()).isNull();
+    assertThat(duplicate.authorizedReadback()).isPresent();
     assertThat(first.toString())
+        .doesNotContain(CONTROL_UI_TOKEN)
+        .doesNotContain(OPAQUE_REFERENCE)
+        .doesNotContain(FINGERPRINT);
+    assertThat(duplicate.toString())
         .doesNotContain(CONTROL_UI_TOKEN)
         .doesNotContain(OPAQUE_REFERENCE)
         .doesNotContain(FINGERPRINT);
@@ -149,6 +168,19 @@ class StartSessionAuthorizationCoordinatorTest {
     ArgumentCaptor<UUID> handoffId = ArgumentCaptor.forClass(UUID.class);
     InOrder persistenceOrder = inOrder(accountClient, repository);
     persistenceOrder
+        .verify(repository)
+        .acquire(eq(tuple), any(UUID.class), eq(NOW_MILLIS), eq(NOW_MILLIS + 30_000L));
+    persistenceOrder
+        .verify(repository)
+        .markAuthorizationPending(
+            eq(tuple),
+            eq(tuple.mutationDigest()),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(1L),
+            eq(NOW_MILLIS));
+    persistenceOrder
         .verify(accountClient)
         .issueHuman(
             eq(shared(tuple)),
@@ -158,6 +190,14 @@ class StartSessionAuthorizationCoordinatorTest {
             currentOwner.capture(),
             eq(1L));
     assertThat(originalOwner.getValue()).isEqualTo(currentOwner.getValue());
+    verify(accountClient, org.mockito.Mockito.times(1))
+        .issueHuman(
+            eq(shared(tuple)),
+            eq(CONTROL_UI_TOKEN),
+            any(UUID.class),
+            eq(1L),
+            any(UUID.class),
+            eq(1L));
     verify(accountClient, never()).recover(any(), any(), anyLong(), any(), anyLong());
     persistenceOrder
         .verify(repository)
@@ -176,6 +216,12 @@ class StartSessionAuthorizationCoordinatorTest {
         .doesNotContain(CONTROL_UI_TOKEN);
     assertThat(persistedTuple.getValue())
         .isEqualTo(first.handoff().postAuthorizationTuple().canonicalJson());
+    assertThat(
+            StartSessionPostAuthorizationExecutionTuple.decode(
+                    persistedTuple.getValue().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                .canonicalBytes())
+        .containsExactly(first.handoff().postAuthorizationTuple().canonicalBytes());
+    persistenceOrder.verify(repository).findAuthorizedExact(eq(tuple));
     persistenceOrder
         .verify(repository)
         .beginOwnerExecution(
@@ -192,6 +238,299 @@ class StartSessionAuthorizationCoordinatorTest {
   }
 
   @Test
+  void rejectsAmbientTransactionAndSynchronizationBeforeReservationWork() {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-ambient-sql");
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      assertThatThrownBy(
+              () ->
+                  coordinator.begin(
+                      tuple.controlPlaneRequestId(), tuple.action(), CONTROL_UI_TOKEN))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("no ambient SQL or synchronization");
+    } finally {
+      TransactionSynchronizationManager.clear();
+    }
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      assertThatThrownBy(() -> coordinator.issueHuman(tuple, CONTROL_UI_TOKEN))
+          .isInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(() -> coordinator.recover(tuple))
+          .isInstanceOf(IllegalStateException.class);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+      TransactionSynchronizationManager.clear();
+    }
+    verifyNoInteractions(repository, accountClient);
+  }
+
+  @Test
+  void nullReferenceAndWrongWorkloadCannotCompleteOrHandoff() throws Exception {
+    for (String caseName : List.of("null-reference", "wrong-workload")) {
+      StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-" + caseName);
+      stubInitialReservation(tuple);
+      when(accountClient.issueHuman(
+              eq(shared(tuple)),
+              anyString(),
+              any(UUID.class),
+              anyLong(),
+              any(UUID.class),
+              anyLong()))
+          .thenAnswer(
+              invocation -> {
+                AuthorizationReference response =
+                    authorizationReference(
+                        tuple,
+                        (UUID) invocation.getArgument(2),
+                        ((Number) invocation.getArgument(3)).longValue());
+                if (caseName.equals("null-reference")) {
+                  when(response.operatorAuthorizationReference()).thenReturn(null);
+                } else {
+                  when(response.authenticatedLoggingWorkloadIdentity())
+                      .thenReturn("spiffe://firemud/ns/other/sa/logging-admin-service");
+                }
+                return response;
+              });
+      Result result = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
+      assertThat(result.progress()).isEqualTo(Progress.AUTHORIZATION_OUTCOME_UNKNOWN);
+      assertThat(result.pendingReason())
+          .contains(StartSessionAuthorizationCoordinator.PendingReason.ACCOUNT_RESPONSE_INVALID);
+      assertThat(result.handoff()).isNull();
+      verify(repository, never())
+          .completeAuthorization(
+              eq(tuple), anyString(), any(), anyLong(), any(), anyLong(), anyString(), anyLong());
+      verify(repository, never())
+          .beginOwnerExecution(
+              eq(tuple),
+              anyString(),
+              any(),
+              anyLong(),
+              any(),
+              anyLong(),
+              anyString(),
+              any(),
+              anyLong());
+    }
+  }
+
+  @Test
+  void recoveryFailureKeepsOriginalPendingClaimAndDoesNotIssueReplacement() {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-recovery-unavailable");
+    Snapshot pending = snapshot(tuple, State.AUTHORIZATION_PENDING, 1L, 3L);
+    when(repository.acquireRecoveryClaim(
+            eq(tuple), any(UUID.class), eq(NOW_MILLIS), eq(NOW_MILLIS + 30_000L)))
+        .thenReturn(
+            Optional.of(
+                new StartSessionPreAuthorizationReservationRepository.RecoveryClaimResult(
+                    pending, ORIGINAL_OWNER)));
+    when(accountClient.recover(
+            eq(shared(tuple)), eq(ORIGINAL_OWNER), eq(1L), any(UUID.class), eq(3L)))
+        .thenThrow(Status.UNAVAILABLE.asRuntimeException());
+    Result result = coordinator.recover(tuple);
+    assertThat(result.progress()).isEqualTo(Progress.AUTHORIZATION_OUTCOME_UNKNOWN);
+    assertThat(result.pendingReason())
+        .contains(
+            StartSessionAuthorizationCoordinator.PendingReason.ACCOUNT_RECOVERY_OUTCOME_UNKNOWN);
+    assertThat(result.snapshot()).isEqualTo(pending);
+    assertThat(result.handoff()).isNull();
+    verify(accountClient, never())
+        .issueHuman(any(), anyString(), any(), anyLong(), any(), anyLong());
+    verify(repository, never())
+        .completeAuthorization(
+            any(), anyString(), any(), anyLong(), any(), anyLong(), anyString(), anyLong());
+  }
+
+  @Test
+  void namespaceJwtAndHumanTenantAdminGuardsRunBeforeStorage() {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-input-guards");
+    StartSessionOperatorAction action = tuple.action();
+    StartSessionOperatorAction wrongNamespaceAction =
+        new StartSessionOperatorAction(
+            action.actionFamilySchemaId(),
+            action.actionFamilySchemaVersion(),
+            new StartSessionOperatorAction.Scope(TENANT_ID, "other-runtime"),
+            action.target(),
+            action.expectedVersion(),
+            action.mutation(),
+            action.auditReason());
+
+    assertThatThrownBy(
+            () ->
+                coordinator.begin(
+                    tuple.controlPlaneRequestId(), wrongNamespaceAction, CONTROL_UI_TOKEN))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("configured workload namespace");
+    assertThatThrownBy(() -> coordinator.begin(tuple.controlPlaneRequestId(), action, "not-a-jwt"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("JWT envelope is malformed");
+    assertThatThrownBy(
+            () ->
+                coordinator.begin(
+                    tuple.controlPlaneRequestId(), action, CONTROL_UI_TOKEN + ".extra"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("JWT envelope is malformed");
+
+    SessionContext.setContext(
+        ACTOR_ID.toString(),
+        List.of(),
+        Map.of(TENANT_ID.toString(), List.of("moderator")),
+        false,
+        null,
+        null);
+    assertThatThrownBy(
+            () -> coordinator.begin(tuple.controlPlaneRequestId(), action, CONTROL_UI_TOKEN))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("tenantAdmin authority");
+
+    verifyNoInteractions(repository, accountClient);
+  }
+
+  @Test
+  void beginAcceptsCanonicalCompactThreeSegmentJwtEnvelope() {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-valid-jwt-envelope");
+    Snapshot pending = snapshot(tuple, State.AUTHORIZATION_PENDING, 1L, 1L);
+    when(repository.acquire(eq(tuple), any(UUID.class), eq(NOW_MILLIS), eq(NOW_MILLIS + 30_000L)))
+        .thenReturn(
+            new StartSessionPreAuthorizationReservationRepository.AcquireResult(pending, false));
+    when(repository.findAuthorizedExact(eq(tuple))).thenReturn(Optional.empty());
+
+    Result result =
+        coordinator.begin(tuple.controlPlaneRequestId(), tuple.action(), CONTROL_UI_TOKEN);
+
+    assertThat(CONTROL_UI_TOKEN.split("\\.", -1)).hasSize(3);
+    assertThat(result.progress()).isEqualTo(Progress.ALREADY_IN_PROGRESS);
+    verify(repository)
+        .acquire(eq(tuple), any(UUID.class), eq(NOW_MILLIS), eq(NOW_MILLIS + 30_000L));
+    verify(accountClient, never())
+        .issueHuman(any(), anyString(), any(), anyLong(), any(), anyLong());
+  }
+
+  @Test
+  void changedTupleForExistingRequestConflictsWithoutAccountCall() {
+    StartSessionPreAuthorizationReservationTuple requested = tuple("coordinator-tuple-conflict");
+    StartSessionOperatorAction action = requested.action();
+    StartSessionOperatorAction changedAction =
+        new StartSessionOperatorAction(
+            action.actionFamilySchemaId(),
+            action.actionFamilySchemaVersion(),
+            action.scope(),
+            new StartSessionOperatorAction.Target(92L, action.target().ownerAccountId()),
+            action.expectedVersion(),
+            action.mutation(),
+            action.auditReason());
+    StartSessionPreAuthorizationReservationTuple conflicting =
+        StartSessionPreAuthorizationReservationTuple.fromCurrentTenantAdmin(
+            requested.controlPlaneRequestId(), changedAction);
+    Snapshot existing = snapshot(conflicting, State.AUTHORIZATION_PENDING, 1L, 1L);
+    when(repository.acquire(
+            eq(requested), any(UUID.class), eq(NOW_MILLIS), eq(NOW_MILLIS + 30_000L)))
+        .thenReturn(
+            new StartSessionPreAuthorizationReservationRepository.AcquireResult(existing, false));
+
+    assertThatThrownBy(() -> coordinator.issueHuman(requested, CONTROL_UI_TOKEN))
+        .isInstanceOf(
+            StartSessionPreAuthorizationReservationService.IdempotencyConflictException.class);
+
+    verify(accountClient, never())
+        .issueHuman(any(), anyString(), any(), anyLong(), any(), anyLong());
+    verify(repository, never())
+        .markAuthorizationPending(
+            any(), anyString(), any(), anyLong(), any(), anyLong(), anyLong());
+  }
+
+  @Test
+  void productionReservationMutationRemainsDeniedByDefault() {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-default-denial");
+    StartSessionPreAuthorizationReservationService productionDefault =
+        new StartSessionPreAuthorizationReservationService(repository);
+
+    assertThatThrownBy(() -> productionDefault.acquire(tuple))
+        .isInstanceOf(UnsupportedOperationException.class)
+        .hasMessageContaining("disabled for production construction");
+
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void missingIndependentAuthorizedReadbackLeavesAuthorizationUnknownAndDoesNotHandoff()
+      throws Exception {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-readback-missing");
+    stubInitialReservation(tuple);
+    when(accountClient.issueHuman(
+            eq(shared(tuple)), anyString(), any(UUID.class), anyLong(), any(UUID.class), anyLong()))
+        .thenAnswer(
+            invocation ->
+                authorizationReference(
+                    tuple,
+                    (UUID) invocation.getArgument(2),
+                    ((Number) invocation.getArgument(3)).longValue()));
+    stubAuthorizationEnrichment(tuple, true, true);
+    when(repository.findAuthorizedExact(eq(tuple))).thenReturn(Optional.empty());
+
+    Result result = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
+
+    assertThat(result.progress()).isEqualTo(Progress.AUTHORIZATION_OUTCOME_UNKNOWN);
+    assertThat(result.pendingReason())
+        .contains(
+            StartSessionAuthorizationCoordinator.PendingReason.AUTHORIZATION_READBACK_MISMATCH);
+    assertThat(result.snapshot().state()).isEqualTo(State.AUTHORIZED);
+    assertThat(result.handoff()).isNull();
+    verify(repository, never())
+        .beginOwnerExecution(
+            any(), anyString(), any(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
+  }
+
+  @Test
+  void conflictingIndependentAuthorizedReadbackCannotAdvanceOwnerPending() throws Exception {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-readback-conflict");
+    stubInitialReservation(tuple);
+    when(accountClient.issueHuman(
+            eq(shared(tuple)), anyString(), any(UUID.class), anyLong(), any(UUID.class), anyLong()))
+        .thenAnswer(
+            invocation ->
+                authorizationReference(
+                    tuple,
+                    (UUID) invocation.getArgument(2),
+                    ((Number) invocation.getArgument(3)).longValue()));
+    stubAuthorizationEnrichment(tuple, true, true);
+    when(repository.findAuthorizedExact(eq(tuple)))
+        .thenAnswer(
+            invocation -> {
+              AuthorizedSnapshot exact = exactReadback.get();
+              Snapshot snapshot = exact.reservationSnapshot();
+              Snapshot substituted =
+                  new Snapshot(
+                      snapshot.tuple(),
+                      snapshot.mutationDigest(),
+                      snapshot.phase(),
+                      snapshot.state(),
+                      snapshot.reservationClaimFence(),
+                      snapshot.claimFence(),
+                      snapshot.claimExpiresAtEpochMillis() + 1L,
+                      snapshot.claimState(),
+                      snapshot.claimPurpose());
+              return Optional.of(
+                  new AuthorizedSnapshot(
+                      substituted,
+                      exact.postAuthorizationTuple(),
+                      exact.reservationOwnerId(),
+                      exact.currentClaimOwnerId(),
+                      exact.handoff()));
+            });
+
+    Result result = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
+
+    assertThat(result.progress()).isEqualTo(Progress.AUTHORIZATION_OUTCOME_UNKNOWN);
+    assertThat(result.pendingReason())
+        .contains(
+            StartSessionAuthorizationCoordinator.PendingReason.AUTHORIZATION_READBACK_MISMATCH);
+    assertThat(result.handoff()).isNull();
+    verify(repository, never())
+        .beginOwnerExecution(
+            any(), anyString(), any(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
+  }
+
+  @Test
   void recoveryUsesOriginalOwnerAndFreshFenceAndNeverCallsIssue() throws Exception {
     StartSessionPreAuthorizationReservationTuple tuple = tuple("coordinator-recovery");
     Snapshot pending = snapshot(tuple, State.AUTHORIZATION_PENDING, 1L, 3L);
@@ -203,7 +542,12 @@ class StartSessionAuthorizationCoordinatorTest {
                     pending, ORIGINAL_OWNER)));
     when(accountClient.recover(
             eq(shared(tuple)), eq(ORIGINAL_OWNER), eq(1L), any(UUID.class), eq(3L)))
-        .thenAnswer(invocation -> authorizationReference(tuple, ORIGINAL_OWNER, 1L));
+        .thenAnswer(
+            invocation ->
+                authorizationReference(
+                    tuple,
+                    (UUID) invocation.getArgument(1),
+                    ((Number) invocation.getArgument(2)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
 
     Result result = coordinator.recover(tuple);
@@ -341,7 +685,12 @@ class StartSessionAuthorizationCoordinatorTest {
                     pending, ORIGINAL_OWNER)));
     when(accountClient.recover(
             eq(shared(tuple)), eq(ORIGINAL_OWNER), eq(1L), any(UUID.class), eq(3L)))
-        .thenAnswer(invocation -> authorizationReference(tuple, ORIGINAL_OWNER, 1L));
+        .thenAnswer(
+            invocation ->
+                authorizationReference(
+                    tuple,
+                    (UUID) invocation.getArgument(1),
+                    ((Number) invocation.getArgument(2)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
     GameSessionClient ownerClient = mock(GameSessionClient.class);
     StartSessionOwnerHandoffResult ownerEcho = ownerEcho(tuple);
@@ -391,6 +740,7 @@ class StartSessionAuthorizationCoordinatorTest {
             eq(duplicateTuple), any(UUID.class), eq(NOW_MILLIS), eq(NOW_MILLIS + 30_000L)))
         .thenReturn(
             new StartSessionPreAuthorizationReservationRepository.AcquireResult(pending, false));
+    when(repository.findAuthorizedExact(eq(duplicateTuple))).thenReturn(Optional.empty());
     StartSessionPreAuthorizationReservationTuple unavailableTuple =
         tuple("coordinator-dispatch-unavailable");
     when(repository.acquireRecoveryClaim(
@@ -504,7 +854,9 @@ class StartSessionAuthorizationCoordinatorTest {
         .thenAnswer(
             invocation ->
                 authorizationReference(
-                    tuple, invocation.getArgument(2), invocation.getArgument(3)));
+                    tuple,
+                    (UUID) invocation.getArgument(2),
+                    ((Number) invocation.getArgument(3)).longValue()));
     stubAuthorizationEnrichment(tuple, true, true);
     when(repository.beginOwnerExecution(
             eq(tuple),
@@ -520,9 +872,14 @@ class StartSessionAuthorizationCoordinatorTest {
             new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
                 tuple.controlPlaneRequestId()));
 
-    assertThatThrownBy(() -> coordinator.issueHuman(tuple, CONTROL_UI_TOKEN))
-        .isInstanceOf(
-            StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
+    Result result = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
+
+    assertThat(result.progress()).isEqualTo(Progress.AUTHORIZATION_OUTCOME_UNKNOWN);
+    assertThat(result.pendingReason())
+        .contains(
+            StartSessionAuthorizationCoordinator.PendingReason
+                .OWNER_PENDING_TRANSITION_OUTCOME_UNKNOWN);
+    assertThat(result.handoff()).isNull();
     verify(repository)
         .completeAuthorization(
             eq(tuple),
@@ -553,7 +910,8 @@ class StartSessionAuthorizationCoordinatorTest {
     Snapshot pending = snapshot(tuple, State.AUTHORIZATION_PENDING, 1L, 1L);
     when(repository.acquire(eq(tuple), any(UUID.class), eq(NOW_MILLIS), eq(NOW_MILLIS + 30_000L)))
         .thenReturn(
-            new StartSessionPreAuthorizationReservationRepository.AcquireResult(reserved, true));
+            new StartSessionPreAuthorizationReservationRepository.AcquireResult(reserved, true),
+            new StartSessionPreAuthorizationReservationRepository.AcquireResult(pending, false));
     when(repository.markAuthorizationPending(
             eq(tuple),
             eq(tuple.mutationDigest()),
@@ -567,9 +925,17 @@ class StartSessionAuthorizationCoordinatorTest {
     when(accountClient.issueHuman(
             eq(shared(tuple)), anyString(), any(UUID.class), anyLong(), any(UUID.class), anyLong()))
         .thenThrow(Status.UNAVAILABLE.asRuntimeException());
+    when(repository.findAuthorizedExact(eq(tuple))).thenReturn(Optional.empty());
 
-    assertThatThrownBy(() -> coordinator.issueHuman(tuple, CONTROL_UI_TOKEN))
-        .isInstanceOf(io.grpc.StatusRuntimeException.class);
+    Result first = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
+    Result duplicate = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
+
+    assertThat(first.progress()).isEqualTo(Progress.AUTHORIZATION_OUTCOME_UNKNOWN);
+    assertThat(first.pendingReason())
+        .contains(
+            StartSessionAuthorizationCoordinator.PendingReason.ACCOUNT_ISSUANCE_OUTCOME_UNKNOWN);
+    assertThat(first.snapshot().state()).isEqualTo(State.AUTHORIZATION_PENDING);
+    assertThat(duplicate.progress()).isEqualTo(Progress.ALREADY_IN_PROGRESS);
 
     verify(repository, never())
         .completeAuthorization(
@@ -578,6 +944,9 @@ class StartSessionAuthorizationCoordinatorTest {
         .beginOwnerExecution(
             any(), anyString(), any(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
     verify(accountClient, never()).recover(any(), any(), anyLong(), any(), anyLong());
+    verify(accountClient, org.mockito.Mockito.times(1))
+        .issueHuman(
+            eq(shared(tuple)), anyString(), any(UUID.class), anyLong(), any(UUID.class), anyLong());
   }
 
   @Test
@@ -594,8 +963,11 @@ class StartSessionAuthorizationCoordinatorTest {
                     (UUID) invocation.getArgument(2),
                     ((Number) invocation.getArgument(3)).longValue()));
 
-    assertThatThrownBy(() -> coordinator.issueHuman(tuple, CONTROL_UI_TOKEN))
-        .isInstanceOf(IllegalArgumentException.class);
+    Result invalidAccountResult = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
+
+    assertThat(invalidAccountResult.progress()).isEqualTo(Progress.AUTHORIZATION_OUTCOME_UNKNOWN);
+    assertThat(invalidAccountResult.pendingReason())
+        .contains(StartSessionAuthorizationCoordinator.PendingReason.ACCOUNT_RESPONSE_INVALID);
     verify(repository, never())
         .completeAuthorization(
             any(), anyString(), any(), anyLong(), any(), anyLong(), anyString(), anyLong());
@@ -631,12 +1003,77 @@ class StartSessionAuthorizationCoordinatorTest {
             new StartSessionPreAuthorizationReservationService.StaleReservationClaimException(
                 staleTuple.controlPlaneRequestId()));
 
-    assertThatThrownBy(() -> coordinator.issueHuman(staleTuple, CONTROL_UI_TOKEN))
-        .isInstanceOf(
-            StartSessionPreAuthorizationReservationService.StaleReservationClaimException.class);
+    Result staleCompletion = coordinator.issueHuman(staleTuple, CONTROL_UI_TOKEN);
+    assertThat(staleCompletion.progress()).isEqualTo(Progress.AUTHORIZATION_OUTCOME_UNKNOWN);
+    assertThat(staleCompletion.pendingReason())
+        .contains(
+            StartSessionAuthorizationCoordinator.PendingReason.LOCAL_COMPLETION_OUTCOME_UNKNOWN);
     verify(repository, never())
         .beginOwnerExecution(
             any(), anyString(), any(), anyLong(), any(), anyLong(), anyString(), any(), anyLong());
+  }
+
+  @Test
+  void sourceFenceAndLinearizationMismatchesNeverReachLoggingCompletion() throws Exception {
+    List<StartSessionAuthorityEvidenceBundle.BundleReference> alteredTupleReferences =
+        List.of(
+            new StartSessionAuthorityEvidenceBundle.BundleReference(
+                StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+                "17",
+                "25",
+                "18446744073709551615"),
+            new StartSessionAuthorityEvidenceBundle.BundleReference(
+                StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+                "17",
+                "24",
+                "18446744073709551614"));
+    int caseNumber = 0;
+    for (var alteredReference : alteredTupleReferences) {
+      StartSessionPreAuthorizationReservationTuple tuple =
+          tuple("coordinator-capture-reference-mismatch-" + caseNumber++);
+      stubInitialReservation(tuple);
+      when(accountClient.issueHuman(
+              eq(shared(tuple)),
+              anyString(),
+              any(UUID.class),
+              anyLong(),
+              any(UUID.class),
+              anyLong()))
+          .thenAnswer(
+              invocation ->
+                  authorizationReference(
+                      tuple,
+                      (UUID) invocation.getArgument(2),
+                      ((Number) invocation.getArgument(3)).longValue(),
+                      alteredReference));
+
+      Result result = coordinator.issueHuman(tuple, CONTROL_UI_TOKEN);
+
+      assertThat(result.progress()).isEqualTo(Progress.AUTHORIZATION_OUTCOME_UNKNOWN);
+      assertThat(result.pendingReason())
+          .contains(StartSessionAuthorizationCoordinator.PendingReason.ACCOUNT_RESPONSE_INVALID);
+      verify(repository, never())
+          .completeAuthorization(
+              eq(tuple),
+              eq(tuple.mutationDigest()),
+              any(UUID.class),
+              eq(1L),
+              any(UUID.class),
+              eq(1L),
+              anyString(),
+              eq(NOW_MILLIS));
+      verify(repository, never())
+          .beginOwnerExecution(
+              eq(tuple),
+              eq(tuple.mutationDigest()),
+              any(UUID.class),
+              eq(1L),
+              any(UUID.class),
+              eq(1L),
+              anyString(),
+              any(UUID.class),
+              eq(NOW_MILLIS));
+    }
   }
 
   private void stubInitialReservation(StartSessionPreAuthorizationReservationTuple tuple) {
@@ -661,6 +1098,7 @@ class StartSessionAuthorizationCoordinatorTest {
       StartSessionPreAuthorizationReservationTuple tuple,
       boolean transitioned,
       boolean mayDispatch) {
+    exactReadback.set(null);
     when(repository.completeAuthorization(
             eq(tuple),
             eq(tuple.mutationDigest()),
@@ -693,12 +1131,15 @@ class StartSessionAuthorizationCoordinatorTest {
                       currentOwner.equals(reservationOwner) && currentFence == reservationFence
                           ? ClaimPurpose.ORIGINAL
                           : ClaimPurpose.AUTHORIZATION_RECOVERY);
-              return new StartSessionPreAuthorizationReservationRepository
-                  .AuthorizationTransitionResult(
+              AuthorizedSnapshot authorizedSnapshot =
                   new AuthorizedSnapshot(
-                      authorized, postTuple, reservationOwner, currentOwner, null),
-                  transitioned);
+                      authorized, postTuple, reservationOwner, currentOwner, null);
+              exactReadback.set(authorizedSnapshot);
+              return new StartSessionPreAuthorizationReservationRepository
+                  .AuthorizationTransitionResult(authorizedSnapshot, transitioned);
             });
+    when(repository.findAuthorizedExact(eq(tuple)))
+        .thenAnswer(invocation -> Optional.ofNullable(exactReadback.get()));
     when(repository.beginOwnerExecution(
             eq(tuple),
             eq(tuple.mutationDigest()),
@@ -733,26 +1174,39 @@ class StartSessionAuthorizationCoordinatorTest {
                       currentOwner.equals(reservationOwner) && currentFence == reservationFence
                           ? ClaimPurpose.ORIGINAL
                           : ClaimPurpose.AUTHORIZATION_RECOVERY);
-              return new StartSessionPreAuthorizationReservationRepository
-                  .OwnerExecutionTransitionResult(
+              AuthorizedSnapshot ownerPendingSnapshot =
                   new AuthorizedSnapshot(
                       ownerPending,
                       postTuple,
                       reservationOwner,
                       currentOwner,
-                      new OwnerExecutionHandoff(handoffId)),
-                  mayDispatch);
+                      new OwnerExecutionHandoff(handoffId));
+              exactReadback.set(ownerPendingSnapshot);
+              return new StartSessionPreAuthorizationReservationRepository
+                  .OwnerExecutionTransitionResult(ownerPendingSnapshot, mayDispatch);
             });
   }
 
   private static AuthorizationReference authorizationReference(
-      StartSessionPreAuthorizationReservationTuple tuple, UUID reservationOwner, long claimFence)
+      StartSessionPreAuthorizationReservationTuple tuple,
+      UUID reservationOwner,
+      long reservationFence)
+      throws Exception {
+    return authorizationReference(tuple, reservationOwner, reservationFence, bundleReference());
+  }
+
+  private static AuthorizationReference authorizationReference(
+      StartSessionPreAuthorizationReservationTuple tuple,
+      UUID reservationOwner,
+      long reservationFence,
+      StartSessionAuthorityEvidenceBundle.BundleReference tupleReference)
       throws Exception {
     AuthorizationReference response = mock(AuthorizationReference.class);
     when(response.operatorAuthorizationReference()).thenReturn(OPAQUE_REFERENCE);
     when(response.authorizationReferenceFingerprint()).thenReturn(FINGERPRINT);
     when(response.expiresAt()).thenReturn(NOW.plusSeconds(300));
-    when(response.authorityEvidenceBundle()).thenReturn(bundleBytes(tuple, NOW.plusSeconds(300)));
+    byte[] bundle = bundleBytes(tuple, NOW.plusSeconds(300));
+    when(response.authorityEvidenceBundle()).thenReturn(bundle);
     when(response.bundleReference()).thenReturn(bundleReference());
     when(response.authenticatedLoggingWorkloadIdentity()).thenReturn(LOGGING_IDENTITY);
     when(response.postAuthorizationTuple())
@@ -762,9 +1216,9 @@ class StartSessionAuthorizationCoordinatorTest {
                 LOGGING_IDENTITY,
                 FINGERPRINT,
                 reservationOwner,
-                claimFence,
-                bundleBytes(tuple, NOW.plusSeconds(300)),
-                bundleReference()));
+                reservationFence,
+                bundle,
+                tupleReference));
     return response;
   }
 
@@ -783,82 +1237,30 @@ class StartSessionAuthorizationCoordinatorTest {
   }
 
   private static byte[] bundleBytes(
-      StartSessionPreAuthorizationReservationTuple tuple, Instant expiresAt) throws IOException {
-    String tenantId = TENANT_ID.toString();
-    Map<String, Object> projection =
-        Map.of(
-            "sourceType",
-            "ACCOUNT",
-            "sourceEvidenceId",
+      StartSessionPreAuthorizationReservationTuple tuple, Instant expiresAt) {
+    return StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(
+        shared(tuple),
+        new Values(
+            ISSUANCE_ID,
             "sha256:" + "a".repeat(64),
-            "sourceEvidenceVersion",
             "17",
-            "projectionStatus",
             "CURRENT",
-            "evaluatedAt",
-            NOW.toString(),
-            "expiresAt",
-            expiresAt.toString());
-    Map<String, Object> authority =
-        Map.of(
-            "issuerAuthGeneration", 1L,
-            "accountAuthorityGeneration", 2L,
-            "tenantAuthorityGeneration", Map.of(tenantId, 3L),
-            "membershipAuthorityGeneration", Map.of(tenantId, 4L),
-            "privateRealmGrantVersions", List.of());
-    Map<String, Object> evidence =
-        Map.of(
-            "evidenceType",
-            StartSessionAuthorityEvidenceBundle.HUMAN_EVIDENCE_TYPE,
-            "actorAccountId",
-            ACTOR_ID.toString(),
-            "controlUiTokenJti",
-            TOKEN_JTI.toString(),
-            "role",
-            "tenantAdmin",
-            "accountGeneration",
+            NOW,
+            expiresAt,
+            1L,
+            2L,
+            3L,
+            4L,
+            5L,
+            23L,
+            TOKEN_JTI,
             "2",
-            "tenantGeneration",
-            "3");
-    Map<String, Object> bundle =
-        Map.of(
-            "bundleVersion",
-            StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
-            "authorityScope",
-            Map.of(
-                "scope", Map.of("tenantId", tenantId, "targetNamespace", "world-runtime"),
-                "actionFamily", tuple.actionFamily(),
-                "applicableAccountId", ACTOR_ID.toString(),
-                "applicableTenantId", tenantId),
-            "accountProjectionEvidence",
-            projection,
-            "issuanceOperationIdentity",
-            Map.of(
-                "issuanceOperationId", ISSUANCE_ID.toString(),
-                "controlPlaneRequestId", tuple.controlPlaneRequestId(),
-                "actionFamilyRequestIdentity",
-                    Map.of(
-                        "requestIdentityKind",
-                        "controlPlaneRequestId",
-                        "requestId",
-                        tuple.controlPlaneRequestId()),
-                "mutationDigest", tuple.mutationDigest()),
-            "issuanceKind",
-            "human_operator",
-            "authorityTuple",
-            authority,
-            "membershipVersion",
-            Map.of(tenantId, 5L),
-            "issuanceFence",
-            "23",
-            "issuanceEvidence",
-            evidence);
-    return Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(bundle));
+            "3"));
   }
 
   private static StartSessionAuthorityEvidenceBundle.BundleReference bundleReference() {
     return new StartSessionAuthorityEvidenceBundle.BundleReference(
-        StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "23", "18446744073709551615");
+        StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "24", "18446744073709551615");
   }
 
   private static Snapshot snapshot(

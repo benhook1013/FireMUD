@@ -56,6 +56,7 @@ game:
   tick-max-commands: 50
   logic:
     default-room-id: "R-1021"
+    readiness-url: ${GAME_LOGIC_READINESS_URL:http://game-logic-service:8080/actuator/health/readiness}
 firemud:
   start-session-operator-authorization:
     enabled: false
@@ -132,6 +133,7 @@ firemud:
       force-internal-service-outbound: true
       public-methods:
         - game_session.v1.GameSessionService/Ping
+        - game_session.v1.GameSessionControlPlaneService/GetRunOwnedFixtureLaunchAssociation
         - game_session.v1.CanonicalGameplayRosterOwnerReadService/GetCanonicalGameplayRosterOwnerRead
         - game_session.v1.CanonicalGameplayRosterOwnerReadService/GetPreseededActorAssignmentOwnerRead
         - game_session.v1.GameSessionService/AuthorizeStartSession

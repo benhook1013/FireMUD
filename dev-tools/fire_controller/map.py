@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from pr_review.sqlite_store import (
+    INTERMEDIATE_DATA_MODEL_VERSION,
     PREVIOUS_DATA_MODEL_VERSION,
     SQLITE_SCHEMA_VERSION,
     WRITER_BUILD,
@@ -524,7 +525,12 @@ class WorkstreamStore:
             metadata is None
             or tuple(metadata[:2]) != (MAP_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION)
             or isinstance(map_data_model, bool)
-            or map_data_model not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+            or map_data_model
+            not in {
+                PREVIOUS_DATA_MODEL_VERSION,
+                INTERMEDIATE_DATA_MODEL_VERSION,
+                ReviewState().schema_version,
+            }
             or map_data_model > controller_data_model
         ):
             raise JobsSchemaIncompatible("project-map metadata records incompatible schema versions")
@@ -1067,7 +1073,12 @@ class WorkstreamStore:
             row is None
             or tuple(row[:2]) != (MAP_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION)
             or isinstance(map_data_model, bool)
-            or map_data_model not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+            or map_data_model
+            not in {
+                PREVIOUS_DATA_MODEL_VERSION,
+                INTERMEDIATE_DATA_MODEL_VERSION,
+                ReviewState().schema_version,
+            }
             or map_data_model > controller_data_model
         ):
             raise JobsSchemaIncompatible("project-map schema requires a different controller data model")

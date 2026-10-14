@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
 from .stack import ReconciliationStatus
-from .state import Judgment, PolicyOverride, ReviewState
+from .state import Judgment, PolicyOverride, ReviewState, StateError, observation_fingerprint
 
 
 class Channel(str, Enum):
@@ -64,7 +65,9 @@ class Evidence:
     active_review: bool = False
     active_reservation: bool = False
     finding_only_hold: bool = False
+    verified_completed_at: str | None = None
     source_run_id: str | None = None
+    period_source_fingerprint: str | None = None
 
     @classmethod
     def from_value(cls, value: Evidence | Mapping[str, Any]) -> Evidence:
@@ -78,6 +81,11 @@ class Evidence:
             "run_id": "source_run_id",
         }
         data = {aliases.get(key, key): item for key, item in value.items()}
+        if "period_source_fingerprint" not in data:
+            try:
+                data["period_source_fingerprint"] = observation_fingerprint(value)
+            except StateError:
+                data["period_source_fingerprint"] = None
         return cls(**{field.name: data[field.name] for field in dataclasses.fields(cls) if field.name in data})
 
 
@@ -202,6 +210,18 @@ def taper_satisfied(
     return reached
 
 
+def completed_after_period(item: Evidence, period: Any) -> bool:
+    """Only verified source completion can earn credit in a local native period."""
+    if period.baseline_mode != "native_history":
+        return True
+    try:
+        completed = datetime.fromisoformat(item.verified_completed_at.replace("Z", "+00:00"))
+        cutoff = datetime.fromisoformat(period.completion_cutoff.replace("Z", "+00:00"))
+        return completed.tzinfo is not None and completed.utcoffset() is not None and completed > cutoff
+    except (AttributeError, ValueError, TypeError):
+        return False
+
+
 def fresh_taper_history(
     state: ReviewState,
     channel: Channel | str,
@@ -209,6 +229,7 @@ def fresh_taper_history(
     *,
     baseline_checkpoints: Iterable[str] = (),
     baseline_source_run_ids: Iterable[str] = (),
+    baseline_observation_fingerprints: Iterable[str] = (),
 ) -> list[Evidence]:
     """Return only review evidence eligible for the current fresh taper.
 
@@ -250,12 +271,46 @@ def fresh_taper_history(
         else:
             relevant = relevant[matches[0] + 1 :]
 
+    allocation = state.allocations.get(f"{pr}:{selected.value}")
+    if allocation is not None and allocation.administrative_local and allocation.reopens_taper:
+        cutoff = datetime.fromisoformat(allocation.administrative_recorded_at.replace("Z", "+00:00"))
+        fresh = []
+        for item in relevant:
+            try:
+                completed = datetime.fromisoformat(item.verified_completed_at.replace("Z", "+00:00"))
+                if completed.tzinfo is not None and completed > cutoff:
+                    fresh.append(item)
+            except (AttributeError, TypeError, ValueError):
+                pass
+        relevant = fresh
+
+    period = next((period for period in reversed(state.review_period_decisions)
+                   if period.pr == pr and period.channel == selected.value), None)
+    if period is not None and period.baseline_mode == "native_history":
+        baseline_checkpoints = (*baseline_checkpoints, *period.baseline_checkpoints)
+        baseline_source_run_ids = (*baseline_source_run_ids, *period.baseline_source_run_ids)
     baseline = set(baseline_checkpoints)
     if baseline:
         relevant = [item for item in relevant if item.checkpoint not in baseline]
     source_runs = set(baseline_source_run_ids)
     if source_runs:
         relevant = [item for item in relevant if item.source_run_id not in source_runs]
+    observation_fingerprints = set(baseline_observation_fingerprints)
+    if observation_fingerprints:
+        relevant = [item for item in relevant if item.period_source_fingerprint not in observation_fingerprints]
+    period = next((period for period in reversed(state.review_period_decisions)
+                   if period.pr == pr and period.channel == selected.value), None)
+    if period is not None:
+        relevant = [item for item in relevant if completed_after_period(item, period)]
+        if period.baseline_mode == "native_history":
+            seen = set()
+            unique = []
+            for item in relevant:
+                identity = item.source_run_id or item.checkpoint
+                if identity not in seen:
+                    unique.append(item)
+                    seen.add(identity)
+            relevant = unique
     return relevant
 
 
@@ -266,6 +321,7 @@ def taper_satisfied_for_state(
     *,
     baseline_checkpoints: Iterable[str] = (),
     baseline_source_run_ids: Iterable[str] = (),
+    baseline_observation_fingerprints: Iterable[str] = (),
 ) -> bool:
     """Evaluate taper after any exact human-reopen or allocation baseline."""
 
@@ -276,6 +332,7 @@ def taper_satisfied_for_state(
         history,
         baseline_checkpoints=baseline_checkpoints,
         baseline_source_run_ids=baseline_source_run_ids,
+        baseline_observation_fingerprints=baseline_observation_fingerprints,
     )
     return taper_satisfied(selected, values, required_taper(state, selected, values))
 

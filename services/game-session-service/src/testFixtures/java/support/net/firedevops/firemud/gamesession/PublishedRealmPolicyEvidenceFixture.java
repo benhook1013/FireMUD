@@ -46,6 +46,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProo
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
 import net.firedevops.firemud.gamesession.dto.CanonicalPublishedPlayerRoute;
+import net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -146,7 +147,11 @@ public final class PublishedRealmPolicyEvidenceFixture {
     var world =
         new WorldPublishedStartLocationEvidence(
             worldRequest, receipt, committed.fullBinding(), committed.result());
-    var operation = new GameDesignPublicationOperationBinding(selectionAccount(selection), world);
+    var account = selectionAccount(selection);
+    // Explicit stipulated consumer input; this fixture does not execute World's inventory producer.
+    var operation =
+        new GameDesignPublicationOperationBinding(
+            account, world, IsolatedWorldPublicationInventoryFixtures.stipulated(account, world));
     var release = release(operation, versionNumber);
     var terminal =
         new GameDesignPublicationTerminalEvidence(

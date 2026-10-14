@@ -43,6 +43,9 @@ case "$SMOKE_MUTATION_EXTENSION" in
     ;;
 esac
 
+initialize_run_owned_compose_proof "$@"
+install_run_owned_compose_proof_traps
+
 bash "$ENSURE_ENV_SCRIPT"
 COMPOSE_SERVICES=()
 if [[ -n "$FIREMUD_SMOKE_COMPOSE_SERVICES" ]]; then
@@ -52,7 +55,7 @@ if [[ -n "$FIREMUD_SMOKE_COMPOSE_SERVICES" ]]; then
     fi
   done <<<"$FIREMUD_SMOKE_COMPOSE_SERVICES"
 else
-  if ! compose_services_output="$(FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT=/tmp/firemud-compose-grpc-mtls-config-only docker compose "${COMPOSE_FILES[@]}" config --services)"; then
+  if ! compose_services_output="$(FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT=/tmp/firemud-compose-grpc-mtls-config-only FIREMUD_SMOKE_AUTHORED_WORLD_SOURCE_RECEIPT_DIR_HOST_PATH=/tmp/firemud-compose-authored-world-source-config-only docker compose "${COMPOSE_FILES[@]}" config --services)"; then
     echo "Docker Compose service discovery failed." >&2
     exit 1
   fi
@@ -97,6 +100,7 @@ if [[ "$FIREMUD_SMOKE_VALIDATE_ONLY" == "1" ]]; then
 fi
 
 claim_run_owned_compose_project
+FIREMUD_SMOKE_PROOF_CLAIMED=true
 export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
 bash "$ENSURE_CERTS_SCRIPT" --compose-mtls "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
 ensure_run_owned_initial_admission_capability "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" create-or-verify

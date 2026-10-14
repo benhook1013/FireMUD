@@ -18,8 +18,9 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as review_cli
 from pr_review import runtime
-from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD
-from pr_review.state import ControllerStateStore, ReviewState, StateStore
+from pr_review.sqlite_review_records import SqliteReviewRecords
+from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
+from pr_review.state import ControllerStateStore, ReviewAllocation, ReviewState, StateStore
 
 
 class SqliteControllerEntrypointTest(unittest.TestCase):
@@ -106,6 +107,131 @@ class SqliteControllerEntrypointTest(unittest.TestCase):
 
         self.assertIsInstance(controller.store, ControllerStateStore)
         self.assertEqual(controller.store.path.name, "pr-review-stack.json")
+
+    def test_actual_period_reset_dispatch_uses_local_sqlite_without_external_calls(self) -> None:
+        common = self.root / ".git"
+        common.mkdir()
+        selected = common / "firemud" / "pr-review-stack.json"
+        StateStore(selected).save(ReviewState(ordered_prs=(42,)))
+        SqliteStateStore.migrate_legacy_json(selected, selected.with_suffix(".sqlite3"))
+        store = ControllerStateStore(selected)._active_store()
+        SqliteReviewRecords(store.path).bootstrap()
+        arguments = ["decide", "period", "reset", "--pr", "42", "--channel", "cli", "--head", "a" * 40,
+                     "--current-history-baseline", "--baseline-id", "actual-dispatch", "--actor", "operator",
+                     "--reason", "authorized renewal", "--json"]
+        with (patch.object(Path, "cwd", return_value=self.root),
+              patch.object(review_cli, "default_controller", side_effect=AssertionError("network controller")),
+              patch.object(review_cli.github, "infer_repo", side_effect=AssertionError("GitHub lookup")),
+              patch.object(review_cli.github, "repository_metadata", side_effect=AssertionError("GitHub metadata")),
+              patch.object(subprocess, "run", side_effect=AssertionError("external process"))):
+            first_status, first_stdout, first_stderr = self._run_cli(arguments)
+            replay_status, replay_stdout, replay_stderr = self._run_cli(arguments)
+            explicit_status, explicit_stdout, explicit_stderr = self._run_cli(
+                [*arguments, "--database", str(store.path)])
+        self.assertEqual(first_status, 0, first_stderr)
+        self.assertEqual(replay_status, 0, replay_stderr)
+        self.assertEqual(explicit_status, 0, explicit_stderr)
+        first, replay, explicit = map(json.loads, (first_stdout, replay_stdout, explicit_stdout))
+        self.assertEqual(first["status"], "recorded")
+        self.assertEqual(replay["status"], "already_recorded")
+        self.assertEqual(first["period"], replay["period"])
+        self.assertEqual(first["period"], explicit["period"])
+        self.assertEqual(len(store.load().review_period_decisions), 1)
+
+    def test_actual_stop_and_allocation_dispatch_forbid_git_github_and_subprocess(self) -> None:
+        common_directory = self.root / ".git"
+        common_directory.mkdir()
+        selected = common_directory / "firemud" / "pr-review-stack.json"
+        StateStore(selected).save(ReviewState(ordered_prs=(42,)))
+        SqliteStateStore.migrate_legacy_json(selected, selected.with_suffix(".sqlite3"))
+        store = ControllerStateStore(selected)._active_store()
+        database = store.path
+        SqliteReviewRecords(database).bootstrap()
+        common = ["--database", str(database), "--pr", "42", "--channel", "cli", "--reason", "human policy", "--json"]
+
+        def run(*arguments):
+            status, stdout, stderr = self._run_cli([*arguments, *common])
+            self.assertEqual(status, 0, stderr)
+            return json.loads(stdout)
+
+        with (
+            patch.object(review_cli, "default_controller", side_effect=AssertionError("live controller")),
+            patch.object(review_cli.github, "infer_repo", side_effect=AssertionError("GitHub lookup")),
+            patch.object(review_cli.github, "repository_metadata", side_effect=AssertionError("GitHub metadata")),
+            patch.object(subprocess, "run", side_effect=AssertionError("external process")),
+        ):
+            stop = run("decide", "stop")
+            self.assertIsNone(stop["reviewed_head"])
+            self.assertIsNone(stop["allocation"]["stop_parent_head"])
+            renewed = run("decide", "allocation", "renew", "--head", "a" * 40, "--exact-additional-completed", "2")
+            self.assertEqual(renewed["allocation"]["min_additional_completed"], 2)
+            run("decide", "allocation", "cancel", "--head", "b" * 40)
+            granted = run("decide", "allocation", "grant", "--head", "c" * 40, "--max-additional-completed", "1")
+            self.assertIsNone(granted["allocation"]["parent_identity"])
+            self.assertTrue(granted["allocation"]["administrative_local"])
+            with self.assertRaises(SystemExit) as invalid:
+                self._run_cli(
+                    ["decide", "allocation", "renew", "--head", "d" * 40, "--max-additional-completed", "0", *common]
+                )
+            self.assertEqual(invalid.exception.code, 2)
+            with patch.object(Path, "cwd", return_value=self.root):
+                status, stdout, stderr = self._run_cli(
+                    [
+                        "decide",
+                        "stop",
+                        "--pr",
+                        "42",
+                        "--channel",
+                        "cli",
+                        "--reason",
+                        "close capped discovery",
+                        "--head",
+                        "d" * 40,
+                        "--json",
+                    ]
+                )
+            self.assertEqual(status, 0, stderr)
+            stopped_cap = json.loads(stdout)
+            self.assertEqual(stopped_cap["stop_basis"], "direct_human")
+            self.assertIsNone(stopped_cap["reviewed_head"])
+            self.assertIsNone(stopped_cap["allocation"]["stop_parent_head"])
+        self.assertEqual(store.load().allocations["42:cli"].head, "d" * 40)
+        with self.assertRaisesRegex(ValueError, "writer build 12"):
+            SqliteStateStore(database, writer_build=11).load()
+
+    def test_noncanonical_evidence_bound_and_legacy_consumption_database_refuse_before_provider_reads(self):
+        common_directory = self.root / ".git"
+        common_directory.mkdir()
+        selected = common_directory / "firemud" / "pr-review-stack.json"
+        StateStore(selected).save(ReviewState(ordered_prs=(42,)))
+        SqliteStateStore.migrate_legacy_json(selected, selected.with_suffix(".sqlite3"))
+        other = SqliteStateStore(self.root / "other.sqlite3")
+        other.update(lambda _: ReviewState(ordered_prs=(42,)))
+        arguments = ["decide", "stop", "--database", str(other.path), "--pr", "42", "--channel", "cli",
+                     "--reason", "human stop", "--json"]
+        with (patch.object(Path, "cwd", return_value=self.root),
+              patch.object(review_cli, "default_controller", side_effect=AssertionError("provider reads")),
+              patch.object(subprocess, "run", side_effect=AssertionError("external process"))):
+            result, _, stderr = self._run_cli([*arguments, "--checkpoint", "exact-evidence"])
+            self.assertEqual(result, 2)
+            self.assertIn("canonical controller database", stderr)
+            previous = ReviewAllocation(pr=42, channel="cli", head="a" * 40, parent_identity="develop",
+                parent_head="b" * 40, merge_base="b" * 40, patch_id="patch", baseline_checkpoints=(), reason="legacy")
+            other.update(lambda state: dataclasses.replace(state, allocations={"42:cli": previous}))
+            result, _, stderr = self._run_cli(arguments)
+            self.assertEqual(result, 2)
+            self.assertIn("canonical controller database", stderr)
+        self.assertEqual(other.load().allocations["42:cli"], previous)
+        canonical = ControllerStateStore(selected)._active_store()
+        sentinel = object()
+        with (patch.object(Path, "cwd", return_value=self.root),
+              patch.object(review_cli, "default_controller", return_value=sentinel) as factory,
+              patch.object(subprocess, "run", side_effect=AssertionError("external process"))):
+            arguments[arguments.index(str(other.path))] = str(canonical.path)
+            args = review_cli._parser().parse_args([*arguments, "--checkpoint", "exact-evidence"])
+            chosen, _ = review_cli._controller(args)
+        self.assertIs(chosen, sentinel)
+        factory.assert_called_once_with()
 
     def test_stack_show_reads_the_migrated_store_without_github(self) -> None:
         StateStore(self.state_path).save(ReviewState(ordered_prs=(2828, 2879)))

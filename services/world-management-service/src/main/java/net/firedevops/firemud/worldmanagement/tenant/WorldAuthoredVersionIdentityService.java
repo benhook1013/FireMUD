@@ -7,9 +7,11 @@ import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -70,6 +72,91 @@ public final class WorldAuthoredVersionIdentityService {
       long gameDesignVersionId,
       UUID readRequestId) {
     requireAuthenticatedGameDesignCaller();
+    return associateInternal(
+        targetNamespace,
+        canonicalTenantId,
+        worldSlug,
+        sourceOperationId,
+        sourceEvidenceDigest,
+        expectedCanonicalVersionId,
+        gameDesignVersionId,
+        readRequestId,
+        null,
+        null);
+  }
+
+  /**
+   * Reads and retains the exact canonical Version already committed by the trusted run-owned launch
+   * fixture. The typed provider carrier is required; raw selectors cannot use this owner path or
+   * bypass the ordinary authenticated Game Design entry point.
+   */
+  public WorldAuthoredVersionIdentityReceipt associateRunOwnedFixture(
+      RunOwnedWorldLaunchEvidence fixtureEvidence, WorldAuthoredSourceIntakeReceipt sourceReceipt) {
+    Objects.requireNonNull(fixtureEvidence, "fixtureEvidence");
+    fixtureEvidence.requireFixedGameSessionPeer();
+    Objects.requireNonNull(sourceReceipt, "sourceReceipt");
+    requireNoAmbientTransaction();
+    if (SessionContext.hasAuthenticatedCallerContext()) {
+      throw new SecurityException(
+          "Run-owned fixture Version identity rejects authenticated end-user caller context");
+    }
+
+    var trustedSource = fixtureEvidence.sourceReceipt().sourceEvidence();
+    var gs = fixtureEvidence.gameSessionAssociation();
+    if (gs == null
+        || !workloadNamespace.equals(trustedSource.targetNamespace())
+        || !sourceReceipt.source().equals(trustedSource)
+        || !sourceReceipt.targetNamespace().equals(workloadNamespace)
+        || !sourceReceipt.canonicalTenantId().equals(trustedSource.canonicalTenantId())
+        || !sourceReceipt.worldSlug().equals(trustedSource.worldSlug())
+        || !sourceReceipt.sourceOperationId().equals(trustedSource.operationId())
+        || !sourceReceipt.sourceEvidenceDigest().equals(trustedSource.evidenceDigest())
+        || !fixtureEvidence
+            .fixtureProvenanceDigest()
+            .equals(fixtureEvidence.sourceReceipt().fixturePolicySeal().evidenceDigest())
+        || !gs.fixturePolicySeal().equals(fixtureEvidence.sourceReceipt().fixturePolicySeal())
+        || !gs.canonicalTenantId().equals(trustedSource.canonicalTenantId())
+        || !gs.canonicalVersionId()
+            .toString()
+            .equals(
+                fixtureEvidence
+                    .sourceReceipt()
+                    .launchReadEvidence()
+                    .publishedReleaseBundle()
+                    .getCanonicalVersionId())
+        || fixtureEvidence
+                .sourceReceipt()
+                .launchReadEvidence()
+                .publishedReleaseBundle()
+                .getVersionId()
+            != fixtureEvidence.launchDescriptor().versionId()) {
+      throw new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
+          "Run-owned fixture evidence differs from the exact source, Version, or Game Session owner binding");
+    }
+    return associateInternal(
+        workloadNamespace,
+        trustedSource.canonicalTenantId(),
+        trustedSource.worldSlug(),
+        trustedSource.operationId(),
+        trustedSource.evidenceDigest(),
+        gs.canonicalVersionId(),
+        fixtureEvidence.launchDescriptor().versionId(),
+        UUID.randomUUID(),
+        sourceReceipt,
+        fixtureEvidence);
+  }
+
+  private WorldAuthoredVersionIdentityReceipt associateInternal(
+      String targetNamespace,
+      UUID canonicalTenantId,
+      String worldSlug,
+      UUID sourceOperationId,
+      String sourceEvidenceDigest,
+      UUID expectedCanonicalVersionId,
+      long gameDesignVersionId,
+      UUID readRequestId,
+      WorldAuthoredSourceIntakeReceipt expectedSourceReceipt,
+      RunOwnedWorldLaunchEvidence expectedFixtureEvidence) {
     requireNoAmbientTransaction();
     validateRequest(
         targetNamespace,
@@ -84,6 +171,10 @@ public final class WorldAuthoredVersionIdentityService {
     WorldAuthoredSourceIntakeReceipt sourceReceipt =
         readExactSourceIntake(
             canonicalTenantId, worldSlug, sourceOperationId, sourceEvidenceDigest);
+    if (expectedSourceReceipt != null && !expectedSourceReceipt.equals(sourceReceipt)) {
+      throw new WorldAuthoredVersionIdentityRepository.RegistrationConflictException(
+          "Run-owned fixture Version identity differs from the exact committed World source receipt");
+    }
     requireFreshReadRequestId(readRequestId, expectedCanonicalVersionId, sourceReceipt);
 
     Optional<WorldAuthoredVersionIdentityReceipt> prior =
@@ -91,7 +182,11 @@ public final class WorldAuthoredVersionIdentityService {
             workloadNamespace, canonicalTenantId, worldSlug, expectedCanonicalVersionId);
     if (prior.isPresent()) {
       return requireSameIdentity(
-          prior.orElseThrow(), sourceReceipt, expectedCanonicalVersionId, gameDesignVersionId);
+          prior.orElseThrow(),
+          sourceReceipt,
+          expectedCanonicalVersionId,
+          gameDesignVersionId,
+          expectedFixtureEvidence);
     }
     Optional<WorldAuthoredVersionIdentityReceipt> priorByGameDesignVersion =
         repository.readByGameDesignVersion(
@@ -101,7 +196,8 @@ public final class WorldAuthoredVersionIdentityService {
           priorByGameDesignVersion.orElseThrow(),
           sourceReceipt,
           expectedCanonicalVersionId,
-          gameDesignVersionId);
+          gameDesignVersionId,
+          expectedFixtureEvidence);
     }
 
     AuthoredWorldVersionStateEvidence.Request currentRequest =
@@ -124,6 +220,9 @@ public final class WorldAuthoredVersionIdentityService {
           "Game Design source-qualified Version identity evidence is unavailable or invalid",
           exception);
     }
+    if (expectedFixtureEvidence != null) {
+      requireFixtureVersionStateMatches(expectedFixtureEvidence, current);
+    }
     requireCurrentEvidence(current, currentRequest, sourceReceipt, expectedCanonicalVersionId);
 
     WorldAuthoredVersionIdentityReceipt accepted;
@@ -142,7 +241,8 @@ public final class WorldAuthoredVersionIdentityService {
             committed.orElseThrow(),
             sourceReceipt,
             expectedCanonicalVersionId,
-            gameDesignVersionId);
+            gameDesignVersionId,
+            expectedFixtureEvidence);
       }
       Optional<WorldAuthoredVersionIdentityReceipt> claimedSelector =
           repository.readByGameDesignVersion(
@@ -156,7 +256,8 @@ public final class WorldAuthoredVersionIdentityService {
             claimedSelector.orElseThrow(),
             sourceReceipt,
             expectedCanonicalVersionId,
-            gameDesignVersionId);
+            gameDesignVersionId,
+            expectedFixtureEvidence);
       }
       throw ownerFailure;
     }
@@ -164,7 +265,12 @@ public final class WorldAuthoredVersionIdentityService {
       throw new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
           "World owner transaction returned no Version identity receipt");
     }
-    requireSameIdentity(accepted, sourceReceipt, expectedCanonicalVersionId, gameDesignVersionId);
+    requireSameIdentity(
+        accepted,
+        sourceReceipt,
+        expectedCanonicalVersionId,
+        gameDesignVersionId,
+        expectedFixtureEvidence);
 
     Optional<WorldAuthoredVersionIdentityReceipt> committed =
         repository.readByCanonicalVersion(
@@ -178,7 +284,12 @@ public final class WorldAuthoredVersionIdentityService {
         sourceReceipt,
         readExactSourceIntake(
             canonicalTenantId, worldSlug, sourceOperationId, sourceEvidenceDigest));
-    requireSameIdentity(readback, sourceReceipt, expectedCanonicalVersionId, gameDesignVersionId);
+    requireSameIdentity(
+        readback,
+        sourceReceipt,
+        expectedCanonicalVersionId,
+        gameDesignVersionId,
+        expectedFixtureEvidence);
     if (!accepted.equals(readback)) {
       throw new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
           "World Version identity changed during independent commit readback");
@@ -186,11 +297,36 @@ public final class WorldAuthoredVersionIdentityService {
     return readback;
   }
 
+  private static void requireFixtureVersionStateMatches(
+      RunOwnedWorldLaunchEvidence fixtureEvidence, AuthoredWorldVersionStateEvidence current) {
+    if (current == null) {
+      throw new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
+          "Game Design returned no current Version state for the sealed run-owned fixture");
+    }
+    var expected = fixtureEvidence.sourceReceipt().launchReadEvidence().versionState();
+    if (current.versionState() != expected.getVersionState()
+        || current.versionStateEpoch() != expected.getVersionStateEpoch()
+        || current.request().versionId() != fixtureEvidence.launchDescriptor().versionId()
+        || !current
+            .canonicalVersionId()
+            .toString()
+            .equals(
+                fixtureEvidence
+                    .sourceReceipt()
+                    .launchReadEvidence()
+                    .publishedReleaseBundle()
+                    .getCanonicalVersionId())) {
+      throw new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
+          "Current Game Design Version state differs from the exact sealed fixture snapshot");
+    }
+  }
+
   private WorldAuthoredVersionIdentityReceipt requireSameIdentity(
       WorldAuthoredVersionIdentityReceipt receipt,
       WorldAuthoredSourceIntakeReceipt sourceReceipt,
       UUID expectedCanonicalVersionId,
-      long gameDesignVersionId) {
+      long gameDesignVersionId,
+      RunOwnedWorldLaunchEvidence expectedFixtureEvidence) {
     if (!receipt.targetNamespace().equals(workloadNamespace)
         || !receipt.sourceIntakeReceipt().equals(sourceReceipt)
         || !receipt.canonicalTenantId().equals(sourceReceipt.canonicalTenantId())
@@ -199,6 +335,9 @@ public final class WorldAuthoredVersionIdentityService {
         || receipt.gameDesignVersionId() != gameDesignVersionId) {
       throw new WorldAuthoredVersionIdentityRepository.RegistrationConflictException(
           "World Version identity scope, source intake, or selector conflicts with its first claim");
+    }
+    if (expectedFixtureEvidence != null) {
+      requireFixtureVersionStateMatches(expectedFixtureEvidence, receipt.versionStateEvidence());
     }
     return receipt;
   }

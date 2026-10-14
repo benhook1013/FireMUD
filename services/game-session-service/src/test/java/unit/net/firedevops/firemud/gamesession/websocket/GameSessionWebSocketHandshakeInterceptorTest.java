@@ -49,4 +49,33 @@ class GameSessionWebSocketHandshakeInterceptorTest {
     interceptor.beforeHandshake(request, response, null, attributes);
     return attributes;
   }
+
+  @Test
+  void firstPartyHandoffDoesNotTreatRawRoutingHeadersAsLogicalAuthority() {
+    MockHttpServletRequest servlet = new MockHttpServletRequest("GET", "/ws/game");
+    servlet.addHeader(GameSessionWebSocketHandshakeInterceptor.TRANSPORT_SESSION_HEADER, "12345");
+    servlet.addHeader(
+        GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_HEADER, "signed-context");
+    servlet.addHeader(GameSessionWebSocketHandshakeInterceptor.TENANT_HEADER, "999");
+    servlet.addHeader(GameSessionWebSocketHandshakeInterceptor.GAME_INSTANCE_HEADER, "888");
+    servlet.addHeader(GameSessionWebSocketHandshakeInterceptor.WORLD_SLUG_HEADER, "untrusted");
+    servlet.addHeader(GameSessionWebSocketHandshakeInterceptor.REALM_SLUG_HEADER, "untrusted");
+    servlet.addHeader(GameSessionWebSocketHandshakeInterceptor.POINTER_VERSION_HEADER, "777");
+    Map<String, Object> attributes = new HashMap<>();
+    interceptor.beforeHandshake(
+        new ServletServerHttpRequest(servlet),
+        new ServletServerHttpResponse(new MockHttpServletResponse()),
+        null,
+        attributes);
+    assertThat(attributes)
+        .containsEntry(
+            GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web");
+    assertThat(attributes)
+        .doesNotContainKeys(
+            GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+            GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+            GameSessionWebSocketHandshakeInterceptor.WORLD_SLUG_ATTR,
+            GameSessionWebSocketHandshakeInterceptor.REALM_SLUG_ATTR,
+            GameSessionWebSocketHandshakeInterceptor.POINTER_VERSION_ATTR);
+  }
 }

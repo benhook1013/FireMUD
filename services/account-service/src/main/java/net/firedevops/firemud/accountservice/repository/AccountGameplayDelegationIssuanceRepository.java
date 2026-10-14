@@ -1672,6 +1672,7 @@ public class AccountGameplayDelegationIssuanceRepository {
   }
 
   private Record selectByRequestId(UUID requestId, boolean lock) {
+    requireOriginalRequestNotDisposed(requestId);
     return dsl.fetchOne(
         "SELECT * FROM " + TABLE + " WHERE request_id = ?" + (lock ? " FOR UPDATE" : ""),
         requestId);
@@ -1681,6 +1682,17 @@ public class AccountGameplayDelegationIssuanceRepository {
     dsl.fetch(
         "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
         "account-gameplay-delegation-request/" + requestId);
+    requireOriginalRequestNotDisposed(requestId);
+  }
+
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void requireOriginalRequestNotDisposed(UUID requestId) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive())
+      throw new StorageUnavailableException();
+    if (dsl.fetchOne(
+            "SELECT request_id FROM account_initial_gameplay_login_disposals WHERE request_id = ?",
+            requestId)
+        != null) throw new IdempotencyConflictException();
   }
 
   private static void requireRequestId(UUID value) {

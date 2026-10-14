@@ -9,6 +9,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository.OwnerStatus;
 import org.jooq.DSLContext;
@@ -125,7 +126,8 @@ public final class CommandSourceRepository {
     exactCommit(binding);
     List<CommandSource.Mutation> mutations = CommandSource.mutations(binding);
     boolean policyMutation = CommandSource.hasRealmPolicyRevision(binding);
-    requireCompleteControlPlaneScopes(binding, mutations, policyMutation);
+    boolean assetMutation = !AssetSource.mutations(binding).isEmpty();
+    requireCompleteControlPlaneScopes(binding, mutations, policyMutation, assetMutation);
     Optional<CommandApplication> existing = application(binding);
     if (existing.isPresent()) return existing;
     if (mutations.isEmpty()) return Optional.empty();
@@ -217,7 +219,10 @@ public final class CommandSourceRepository {
     String sourceEpoch = head.get("source_epoch", String.class);
     List<CommandSource.Mutation> mutations = CommandSource.mutations(binding);
     requireCompleteControlPlaneScopes(
-        binding, mutations, CommandSource.hasRealmPolicyRevision(binding));
+        binding,
+        mutations,
+        CommandSource.hasRealmPolicyRevision(binding),
+        !AssetSource.mutations(binding).isEmpty());
     List<CommandSource.Definition> definitions;
     if (!mutations.isEmpty()) {
       CommandApplication applied =
@@ -541,21 +546,26 @@ public final class CommandSourceRepository {
   private void requireCompleteControlPlaneScopes(
       DraftCommitBinding binding,
       List<CommandSource.Mutation> commandMutations,
-      boolean policyMutation) {
+      boolean policyMutation,
+      boolean assetMutation) {
     List<DraftCommitBinding.AffectedUnit> units =
         binding.affectedUnits(Owner.GAME_DESIGN_CONTROL_PLANE);
     List<DraftCommitBinding.AffectedUnit> commands =
         units.stream().filter(this::isCommandScope).toList();
     List<DraftCommitBinding.AffectedUnit> policies =
         units.stream().filter(this::isPolicyScope).toList();
+    List<DraftCommitBinding.AffectedUnit> assets =
+        units.stream().filter(AssetSourceRepository::isScope).toList();
     if (commands.size() != (commandMutations.isEmpty() ? 0 : 1)
         || policies.size() != (policyMutation ? 1 : 0)
-        || commands.size() + policies.size() != units.size()) {
+        || assets.size() != (assetMutation ? 1 : 0)
+        || commands.size() + policies.size() + assets.size() != units.size()) {
       throw new IllegalArgumentException(
           "Complete supported Game Design control-plane scopes are required");
     }
     if (!commands.isEmpty()) requireScopeTarget(commands.getFirst(), binding.target());
     if (!policies.isEmpty()) requireScopeTarget(policies.getFirst(), binding.target());
+    if (!assets.isEmpty()) requireScopeTarget(assets.getFirst(), binding.target());
   }
 
   private boolean isCommandScope(DraftCommitBinding.AffectedUnit unit) {

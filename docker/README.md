@@ -42,19 +42,52 @@ Canonical smoke/bootstrap proof:
 export FIREMUD_SMOKE_RUN_ID="local-$(date +%s)-$$"
 export COMPOSE_PROJECT_NAME="firemud-smoke-${FIREMUD_SMOKE_RUN_ID}"
 export FIREMUD_SMOKE_OWNERSHIP_TOKEN="$(openssl rand -hex 32)"
-dev-tools/verify-fresh-bootstrap.sh
-dev-tools/verify-restart-state.sh
+# Run the fresh/bootstrap restart chain in the single owning resource session below.
 
+
+```
+
+These entrypoints run the read-only `LOGIN` -> `PLAY` -> `LOOK` baseline over both transports. The fresh-bootstrap and restart-state chain below intentionally reuses the same explicit run ID/project and ownership token; image smoke uses a separate run ID/project and a fresh token. By default each wrapper performs authenticated teardown before returning, including on proof failure or a handled signal. `--keep-running` explicitly retains the stack and claim for authenticated manual inspection/direct teardown; the caller must retain the original token and perform final owner-guarded teardown. Restart preserves volumes during its proof, while its default final cleanup disposes the run-owned deployment. Successful probes with failed or ambiguous cleanup are an overall failure; an earlier failed-proof status remains the primary exit status. A retained live project prevents admission to a new expensive proof session, even with its original capability; continuation proofs must stay within the original owning resource session. Do not use keep mode to park completed automated stacks.
+
+The owner-guarded `stop_run_owned_compose_project` helper in [`run-owned-compose.sh`](../dev-tools/smoke/run-owned-compose.sh) is the cleanup path. It requires the original run ID, Compose project name, and capability, plus the same Compose files (including the smoke-image override and matching tag for image smoke). It performs the guarded `down -v` and releases the marker only after project resources are absent. Do not remove the marker manually. The helper stores only a capability digest in its private marker; local runs derive that digest from the ownership token.
+
+Automated local chains that need a retained intermediate stack must run within one resource session, covering builds, startup, probes, and final cleanup. The same session admits nested Gradle without releasing its user-wide lock. With the run identity and token exported as above, run from the repository root:
+
+```bash
+bash dev-tools/validation/run-locked-gradle.sh --resource-session bash -e -c '
+  source dev-tools/smoke/run-owned-compose.sh
+  cleanup() {
+    status=$?
+    trap - EXIT
+    trap "" INT TERM HUP
+    if ! stop_run_owned_compose_project \
+      -f docker/docker-compose.yml \
+      -f docker/docker-compose.override.yml \
+      -f docker/docker-compose.grpc-mtls.override.yml; then
+      ((status != 0)) || status=1
+    fi
+    exit "$status"
+  }
+  trap cleanup EXIT
+  trap "exit 130" INT
+  trap "exit 143" TERM
+  trap "exit 129" HUP
+  bash dev-tools/verify-fresh-bootstrap.sh --keep-running
+  bash dev-tools/verify-restart-state.sh --keep-running
+'
+```
+
+The session lock serializes other local Gradle and runtime proof sessions across worktrees through teardown. Exact project IDs also remain in the existing resource metadata after the session exits or its owner dies. Subsequent local admission performs bounded read-only checks for only those projects; running or unavailable container state blocks heavy work. After original-capability teardown or scoped recovery, an ordinary retry automatically clears the resource hold when containers are stopped or absent. Retained volumes/networks alone do not block heavy admission, while failed full teardown still retains the separate smoke ownership marker and failed cleanup disposition. It cannot guarantee Docker cleanup after SIGKILL, WSL shutdown, or daemon unavailability. Unknown cleanup retains the ownership fence and requires owner recovery; never reconstruct the token from the marker or reclaim an unmarked deployment. Hosted CI may explicitly retain a stack for its bounded post-proof log inspection and existing final authenticated teardown.
+
+For a separate disposable image proof, choose a new identity and token:
+
+```bash
 export FIREMUD_SMOKE_RUN_ID="local-image-$(date +%s)-$$"
 export COMPOSE_PROJECT_NAME="firemud-smoke-${FIREMUD_SMOKE_RUN_ID}"
 export FIREMUD_SMOKE_OWNERSHIP_TOKEN="$(openssl rand -hex 32)"
 # Placeholder only: replace with the published full commit SHA before running.
 SMOKE_IMAGE_TAG=0123456789abcdef0123456789abcdef01234567 dev-tools/verify-smoke-images.sh
 ```
-
-These entrypoints run the read-only `LOGIN` -> `PLAY` -> `LOOK` baseline over both transports. The fresh-bootstrap and restart-state commands above intentionally reuse the same explicit run ID/project and ownership token; image smoke uses a separate run ID/project and a fresh token. A successful wrapper leaves its stack and ownership claim running so a matching restart or separately authorized smoke leg can reuse it.
-
-The owner-guarded `stop_run_owned_compose_project` helper in [`run-owned-compose.sh`](../dev-tools/smoke/run-owned-compose.sh) is the cleanup path. It requires the original run ID, Compose project name, and capability, plus the same Compose files (including the smoke-image override and matching tag for image smoke). It performs the guarded `down -v` and releases the marker only after project resources are absent. Do not remove the marker manually. The helper stores only a capability digest in its private marker; local runs derive that digest from the ownership token.
 
 The 40-hex value shown above is a placeholder, not a usable image tag. Obtain a tested, published commit-SHA tag from [Build Runtime Images](../.github/workflows/runtime-images.yml), or the immutable `pr-merge-<merge SHA>` tag for an exact PR merge, then pass it as `SMOKE_IMAGE_TAG`. The image smoke script requires a non-empty tag but does not itself prove the tag's source or validation lineage.
 
@@ -64,7 +97,7 @@ The PR Full-Stack Smoke job also sets `SMOKE_MINIO_LOCAL_ONLY=true` after buildi
 
 Do not request mutating parity through these entrypoints; the wrappers reject `SMOKE_MUTATION_EXTENSION=true` until independent transport state exists. Do not treat `docker/docker-compose.smoke-images.override.yml` as a standalone ad hoc compose file. Its contract is to be driven through the explicit ID/project binding defined in [Testing: player-flow smoke and reset boundaries](../design/architecture/system-architecture-testing.md#player-flow-smoke-and-reset-boundaries), with `SMOKE_IMAGE_TAG=<tag>` passed to `dev-tools/verify-smoke-images.sh`; the script writes the required local env override and runs the baseline smoke flow.
 
-Fresh-bootstrap and image smoke intentionally use guarded `down -v` teardown for their claimed Compose project, deleting that project's `postgres-data`, `redis-coord-data`, and `minio-data` volumes. Restart-state and `devDown` preserve named volumes. This disposes a test deployment; it is not authority to reset Coordination Redis. Follow the owning [Redis reset and recovery](../design/architecture/system-architecture-redis-reset-and-recovery.md) contract for reset questions.
+Fresh-bootstrap and image smoke intentionally use guarded `down -v` teardown for their claimed Compose project, deleting that project's `postgres-data`, `redis-coord-data`, and `minio-data` volumes. Restart-state preserves named volumes during restart; its default final proof cleanup disposes them, while explicit `--keep-running` retains them. `devDown` preserves named volumes. This disposes a test deployment; it is not authority to reset Coordination Redis. Follow the owning [Redis reset and recovery](../design/architecture/system-architecture-redis-reset-and-recovery.md) contract for reset questions.
 
 Gradle-managed local prebuilt-image stack:
 

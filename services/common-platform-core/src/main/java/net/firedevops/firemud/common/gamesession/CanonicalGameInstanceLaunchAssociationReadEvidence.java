@@ -1,10 +1,13 @@
 package net.firedevops.firemud.common.gamesession;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 
 /**
@@ -18,6 +21,142 @@ public final class CanonicalGameInstanceLaunchAssociationReadEvidence {
   private static final Pattern DIGEST = Pattern.compile("sha256:[0-9a-f]{64}");
 
   private CanonicalGameInstanceLaunchAssociationReadEvidence() {}
+
+  /** Fixed fixture owner selector: wire construction grants no fixture authority. */
+  public record FixtureRequest(
+      UUID readRequestId,
+      String targetNamespace,
+      UUID fixtureOperationId,
+      String expectedFixturePolicyEvidenceDigest) {
+    public FixtureRequest {
+      requireNonNil(readRequestId, "readRequestId");
+      requireNonNil(fixtureOperationId, "fixtureOperationId");
+      if (readRequestId.equals(fixtureOperationId)
+          || !GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
+        throw new IllegalArgumentException("Independent fixture owner read identity required");
+      }
+      requireDigest(expectedFixturePolicyEvidenceDigest, "expectedFixturePolicyEvidenceDigest");
+    }
+  }
+
+  /** Exact fixture allocation and immutable owner readback, never a Human release attestation. */
+  public record FixtureResult(
+      FixtureRequest request,
+      long gameSessionTenantId,
+      long gameInstanceId,
+      UUID canonicalTenantId,
+      UUID gameInstanceUuid,
+      UUID canonicalVersionId,
+      UUID canonicalRealmId,
+      UUID playableStateNamespaceId,
+      long catalogRevision,
+      CurrentGameInstanceStatus currentGameInstanceStatus,
+      long currentRowVersion,
+      byte[] fixturePolicyRequestBytes,
+      RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal fixturePolicySeal) {
+    public FixtureResult {
+      Objects.requireNonNull(request);
+      Objects.requireNonNull(fixturePolicySeal);
+      requireNonNil(canonicalTenantId, "canonicalTenantId");
+      requireNonNil(gameInstanceUuid, "gameInstanceUuid");
+      requireNonNil(canonicalVersionId, "canonicalVersionId");
+      requireNonNil(canonicalRealmId, "canonicalRealmId");
+      requireNonNil(playableStateNamespaceId, "playableStateNamespaceId");
+      Objects.requireNonNull(currentGameInstanceStatus);
+      if (gameSessionTenantId <= 0
+          || gameInstanceId <= 0
+          || catalogRevision <= 0
+          || currentRowVersion < 0) {
+        throw new IllegalArgumentException(
+            "Fixture allocation contains invalid private keys or fences");
+      }
+      fixturePolicyRequestBytes = Objects.requireNonNull(fixturePolicyRequestBytes).clone();
+      if (currentGameInstanceStatus != CurrentGameInstanceStatus.STARTING) {
+        throw new IllegalArgumentException(
+            "Fixture launch association read requires the current STARTING snapshot");
+      }
+      var decoded =
+          RunOwnedInitialAdmissionFixtureWireCodec.parseFixturePolicyRequestBytes(
+              fixturePolicyRequestBytes);
+      var cap = decoded.capability();
+      if (!request.targetNamespace().equals(decoded.sourceEvidence().targetNamespace())
+          || !request.fixtureOperationId().toString().equals(cap.operationId())
+          || !request.fixtureOperationId().equals(fixturePolicySeal.operationId())
+          || !request
+              .expectedFixturePolicyEvidenceDigest()
+              .equals(fixturePolicySeal.evidenceDigest())
+          || !RunOwnedInitialAdmissionFixtureWireCodec.FIXTURE_POLICY_SEAL_SCHEMA.equals(
+              fixturePolicySeal.schema())
+          || !RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_OWNER_SERVICE.equals(
+              fixturePolicySeal.ownerService())
+          || !RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestDigest(
+                  cap,
+                  decoded.creationEvidence(),
+                  decoded.sourceEvidence(),
+                  decoded.launchReadEvidence())
+              .equals(fixturePolicySeal.requestDigest())
+          || !RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+                  fixturePolicySeal.operationId(), fixturePolicySeal.requestDigest())
+              .equals(fixturePolicySeal.evidenceDigest())
+          || !canonicalTenantId.equals(decoded.sourceEvidence().canonicalTenantId())
+          || !canonicalTenantId
+              .toString()
+              .equals(decoded.launchReadEvidence().publishedReleaseBundle().getCanonicalTenantId())
+          || !canonicalVersionId
+              .toString()
+              .equals(
+                  decoded.launchReadEvidence().publishedReleaseBundle().getCanonicalVersionId())) {
+        throw new IllegalArgumentException(
+            "Fixture allocation differs from complete immutable owner provenance");
+      }
+    }
+
+    @Override
+    public byte[] fixturePolicyRequestBytes() {
+      return fixturePolicyRequestBytes.clone();
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      if (!(other instanceof FixtureResult value)) return false;
+      return request.equals(value.request)
+          && gameSessionTenantId == value.gameSessionTenantId
+          && gameInstanceId == value.gameInstanceId
+          && canonicalTenantId.equals(value.canonicalTenantId)
+          && gameInstanceUuid.equals(value.gameInstanceUuid)
+          && canonicalVersionId.equals(value.canonicalVersionId)
+          && canonicalRealmId.equals(value.canonicalRealmId)
+          && playableStateNamespaceId.equals(value.playableStateNamespaceId)
+          && catalogRevision == value.catalogRevision
+          && currentGameInstanceStatus == value.currentGameInstanceStatus
+          && currentRowVersion == value.currentRowVersion
+          && fixturePolicySeal.equals(value.fixturePolicySeal)
+          && Arrays.equals(fixturePolicyRequestBytes, value.fixturePolicyRequestBytes);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(
+          request,
+          gameSessionTenantId,
+          gameInstanceId,
+          canonicalTenantId,
+          gameInstanceUuid,
+          canonicalVersionId,
+          canonicalRealmId,
+          playableStateNamespaceId,
+          catalogRevision,
+          currentGameInstanceStatus,
+          currentRowVersion,
+          fixturePolicySeal,
+          Arrays.hashCode(fixturePolicyRequestBytes));
+    }
+
+    public RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicyRequest fixturePolicyRequest() {
+      return RunOwnedInitialAdmissionFixtureWireCodec.parseFixturePolicyRequestBytes(
+          fixturePolicyRequestBytes);
+    }
+  }
 
   /** Separate transient read identity and the complete immutable association selector. */
   public record Request(

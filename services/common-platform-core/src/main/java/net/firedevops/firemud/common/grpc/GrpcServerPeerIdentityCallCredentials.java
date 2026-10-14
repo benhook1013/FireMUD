@@ -9,8 +9,18 @@ import java.util.concurrent.Executor;
 /** Authenticates the exact server workload before gRPC releases request headers or body. */
 public final class GrpcServerPeerIdentityCallCredentials extends CallCredentials {
   private final String expectedPeerUri;
+  private final String expectedLeafSha256;
 
   public GrpcServerPeerIdentityCallCredentials(String expectedPeerUri) {
+    this(expectedPeerUri, null);
+  }
+
+  /** Pins an actual run-owned leaf in addition to the authenticated workload identity. */
+  public GrpcServerPeerIdentityCallCredentials(String expectedPeerUri, String expectedLeafSha256) {
+    if (expectedLeafSha256 != null && !expectedLeafSha256.matches("[0-9a-f]{64}")) {
+      throw new IllegalArgumentException("Exact lowerhex server leaf fingerprint required");
+    }
+    this.expectedLeafSha256 = expectedLeafSha256;
     this.expectedPeerUri =
         GrpcPeerIdentity.parseUri(expectedPeerUri)
             .map(GrpcPeerIdentity::uri)
@@ -28,8 +38,12 @@ public final class GrpcServerPeerIdentityCallCredentials extends CallCredentials
             : requestInfo.getTransportAttrs().get(Grpc.TRANSPORT_ATTR_SSL_SESSION);
     boolean exactPeer =
         GrpcPeerIdentity.fromSslSession(sslSession)
-            .map(peer -> expectedPeerUri.equals(peer.uri()))
-            .orElse(false);
+                .map(peer -> expectedPeerUri.equals(peer.uri()))
+                .orElse(false)
+            && (expectedLeafSha256 == null
+                || GrpcPeerCertificateEvidence.fromSslSession(sslSession)
+                    .filter(certificate -> expectedLeafSha256.equals(certificate.leafSha256()))
+                    .isPresent());
     if (!exactPeer) {
       applier.fail(
           Status.UNAUTHENTICATED.withDescription(

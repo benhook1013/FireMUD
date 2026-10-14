@@ -28,5 +28,7 @@ dependencies {
     implementation(libs.aws.sdk.s3)
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
+    add("integrationTestImplementation", project(":game-session-service"))
+    add("integrationTestImplementation", project(":world-management-service"))
     testImplementation(libs.bouncycastle.pkix)
 }

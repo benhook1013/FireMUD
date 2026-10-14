@@ -58,7 +58,8 @@ public class StartSessionOperatorAuthorizationConfiguration {
   @Bean
   public StartSessionAuthorizationCoordinator startSessionAuthorizationCoordinator(
       StartSessionPreAuthorizationReservationService reservations,
-      StartSessionOperatorAuthorizationClient accountClient) {
-    return new StartSessionAuthorizationCoordinator(reservations, accountClient);
+      StartSessionOperatorAuthorizationClient accountClient,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    return new StartSessionAuthorizationCoordinator(workloadNamespace, reservations, accountClient);
   }
 }

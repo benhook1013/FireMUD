@@ -6,6 +6,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
+    inputs:
+      flyway_base_sha:
+        description: Full immutable commit SHA of the receiving parent to compare Flyway history against
+        required: true
+        type: string
 
 run-name: CI — Validation ${{ github.event_name == 'pull_request' && format('pr-{0} base-{1} head-{2}', github.event.pull_request.number, github.event.pull_request.base.sha, github.event.pull_request.head.sha) || github.ref_name }}
 
@@ -553,6 +558,27 @@ jobs:
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Fetch exact Flyway parent
+        env:
+          FLYWAY_BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.flyway_base_sha || github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          FLYWAY_EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [[ "$FLYWAY_BASE_SHA" == "0000000000000000000000000000000000000000" && "$FLYWAY_EVENT_NAME" != "workflow_dispatch" ]]; then
+            exit 0
+          fi
+          if [[ ! "$FLYWAY_BASE_SHA" =~ ^[[:xdigit:]]{40}$ || "$FLYWAY_BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            echo "Flyway parent requires a full nonzero immutable 40-character SHA" >&2
+            exit 1
+          fi
+          if ! git cat-file -e "${FLYWAY_BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$FLYWAY_BASE_SHA"
+          fi
+          resolved_sha="$(git rev-parse --verify "${FLYWAY_BASE_SHA}^{commit}")"
+          if [[ "${resolved_sha,,}" != "${FLYWAY_BASE_SHA,,}" ]]; then
+            echo "Flyway base SHA did not resolve to the requested commit" >&2
+            exit 1
+          fi
+
       - name: ⚙️ Set Up Java
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
@@ -573,6 +599,8 @@ jobs:
           cache-read-only: false
 
       - name: 🧪 Check Flyway Migration Versions
+        env:
+          FIREMUD_FLYWAY_BASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.flyway_base_sha || github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: ./gradlew checkFlywayVersions
 
   grpc-transport-config-sanity-checks:
@@ -962,8 +990,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # Account and World PostgreSQL proofs can run close to 20 minutes before Gradle post-job cleanup.
-    timeout-minutes: ${{ (matrix.module == 'account-service' || matrix.module == 'world-management-service') && 30 || 20 }}
+    # Account, World and Game Session proofs can run close to 20 minutes before Gradle post-job cleanup.
+    timeout-minutes: ${{ (matrix.module == 'account-service' || matrix.module == 'world-management-service' || matrix.module == 'game-session-service') && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -1053,6 +1081,8 @@ jobs:
 
       - name: ☂️ Upload Coverage to Codecov
         continue-on-error: true
+        # Optional coverage upload must leave time for required proof artifacts.
+        timeout-minutes: 2
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           use_oidc: true

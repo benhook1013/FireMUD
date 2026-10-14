@@ -510,6 +510,10 @@ class PreseededActorAssignmentServiceTest {
             request.expectedTarget());
 
     String digest = PreseededActorAssignmentIntentDigest.compute(request, baseline);
+    assertThat(digest)
+        .isEqualTo("59f2041020ab6231ec26fe838bb70b25df509bfd0fa7f4bc78fe85575a1286b8");
+    assertThat(PreseededActorAssignmentIntentDigest.compute(request, changedScope))
+        .isEqualTo("89b56ed7c981e381017285ef4916928e2e357413f11cf909fb6e07f848f86b5c");
     assertThat(PreseededActorAssignmentIntentDigest.compute(request, reevaluated))
         .isEqualTo(digest);
     assertThat(PreseededActorAssignmentIntentDigest.compute(request, changedCatalog))

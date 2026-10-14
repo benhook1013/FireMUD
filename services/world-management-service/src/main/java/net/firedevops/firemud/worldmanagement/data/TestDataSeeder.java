@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.data;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.RoomExit;
@@ -9,6 +10,8 @@ import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -23,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
     havingValue = "true",
     matchIfMissing = false)
 @RequiredArgsConstructor
+@Slf4j
 public class TestDataSeeder implements ApplicationRunner {
   private static final long DEMO_TENANT_ID = 1L;
   private static final long DEMO_VERSION_ID = 1L;
@@ -41,10 +45,25 @@ public class TestDataSeeder implements ApplicationRunner {
   private final ZoneRepository zoneRepository;
   private final RoomRepository roomRepository;
   private final RoomExitRepository roomExitRepository;
+  private final WorldDesignPublicationFenceRepository publicationFenceRepository;
+
+  @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:false}")
+  private boolean runOwnedFixtureMode;
 
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
+    if (runOwnedFixtureMode) {
+      log.warn(
+          "RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE: fixture runtime seeding skipped until World-owned materialization is available");
+      return;
+    }
+    try {
+      publicationFenceRepository.lockExistingOpenByPrivateKeys(DEMO_TENANT_ID, DEMO_VERSION_ID);
+    } catch (WorldDesignPublicationFenceRepository.ConflictException exception) {
+      throw new WorldDesignPublicationFenceRepository.ConflictException(
+          "DEMO_WORLD_SEEDING_UNAVAILABLE: " + exception.getMessage());
+    }
     ensureDemoTopology();
   }
 

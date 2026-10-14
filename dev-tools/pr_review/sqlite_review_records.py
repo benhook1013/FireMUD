@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .sqlite_store import (
+    INTERMEDIATE_DATA_MODEL_VERSION,
     PREVIOUS_DATA_MODEL_VERSION,
     SQLITE_SCHEMA_VERSION,
     WRITER_BUILD,
@@ -1903,6 +1904,48 @@ class SqliteReviewRecords:
             return snapshots
 
     @staticmethod
+    def _cli_source_decision_history(
+        connection: sqlite3.Connection, run_id: str, finding_id: str, source_pr: int
+    ) -> list[dict[str, Any]]:
+        """Reproduce every exact source transition, rather than trusting the last correction."""
+        originals = connection.execute(
+            "SELECT decision_id, decision, target_pr, actor, reason, decided_at, decision_pr "
+            "FROM decisions WHERE run_id = ? AND finding_id = ? AND decision_scope = 'source'",
+            (run_id, finding_id),
+        ).fetchall()
+        corrections = connection.execute(
+            "SELECT correction_id, decision, target_pr, actor, reason, decided_at, supersedes_id "
+            "FROM source_decision_corrections WHERE run_id = ? AND finding_id = ? ORDER BY sequence",
+            (run_id, finding_id),
+        ).fetchall()
+        if len(originals) > 1 or (corrections and len(originals) != 1):
+            raise ReviewRecordsError("CLI source correction has no unique original decision")
+        history: list[dict[str, Any]] = []
+        for ordinal, row in enumerate([*originals, *corrections]):
+            identifier, decision, target, actor, reason, at, prior = row
+            _safe_identifier(identifier, "source decision ID", maximum=200)
+            if any(event["decision_id"] == identifier for event in history):
+                raise ReviewRecordsError("CLI source audit decision identity is repeated")
+            _bounded_text(actor, "source decision actor", maximum=100)
+            _bounded_text(reason, "source decision reason", maximum=300)
+            if not isinstance(at, str):
+                raise ReviewRecordsError("CLI source decision time is missing")
+            _timestamp(at, "source decision time")
+            if ordinal == 0:
+                if prior != source_pr or decision not in {"accepted", "routed", "rejected"}:
+                    raise ReviewRecordsError("CLI original decision conflicts with its source")
+                if decision != "routed" and target is not None:
+                    raise ReviewRecordsError("CLI original decision has conflicting route evidence")
+            elif (prior != history[-1]["decision_id"] or decision not in {"accepted", "rejected"}
+                  or history[-1]["decision"] not in {"accepted", "rejected"} or target is not None
+                  or datetime.fromisoformat(at.replace("Z", "+00:00"))
+                  < datetime.fromisoformat(history[-1]["decided_at"].replace("Z", "+00:00"))):
+                raise ReviewRecordsError("CLI source correction does not reproduce its exact prior decision")
+            history.append({"decision_id": identifier, "decision": decision, "reason": reason,
+                            "decided_at": at})
+        return history
+
+    @staticmethod
     def _cli_capture_snapshot(
         connection: sqlite3.Connection, attempt_id: str, *, source_pr: int
     ) -> dict[str, Any] | None:
@@ -1980,20 +2023,22 @@ class SqliteReviewRecords:
         rows = connection.execute(
             "SELECT f.source_finding_key, o.disposition, d.decision, d.reason, c.decision, c.reason, o.title, o.detail, "
             "(SELECT COUNT(*) FROM decisions d2 WHERE d2.run_id = o.run_id "
-            "AND d2.finding_id = o.finding_id AND d2.decision_scope = 'source') "
+            "AND d2.finding_id = o.finding_id AND d2.decision_scope = 'source'), f.finding_id "
             "FROM finding_observations o JOIN findings f USING (finding_id) "
             "LEFT JOIN decisions d ON d.run_id = o.run_id AND d.finding_id = o.finding_id "
             "AND d.decision_scope = 'source' "
             "LEFT JOIN source_decision_corrections c ON c.sequence = ("
             "SELECT MAX(sequence) FROM source_decision_corrections "
             "WHERE run_id = o.run_id AND finding_id = o.finding_id) "
-            "WHERE o.run_id = ? ORDER BY f.source_finding_key",
-            (attempt_id,),
+            "WHERE o.run_id = ? AND o.source_pr = ? AND o.source_channel = 'cli' "
+            "AND f.source_pr = ? AND f.source_channel = 'cli' ORDER BY f.source_finding_key",
+            (attempt_id, source_pr, source_pr),
         ).fetchall()
         observations: list[dict[str, Any]] = []
+        decision_history: dict[int, list[dict[str, Any]]] = {}
         decisions: dict[int, tuple[str, str]] = {}
         prefix = f"cli-run:{attempt_id}:finding:"
-        for key, disposition, decision, reason, correction, correction_reason, title, detail, decision_count in rows:
+        for key, disposition, decision, reason, correction, correction_reason, title, detail, decision_count, finding_id in rows:
             if not isinstance(key, str) or not key.startswith(prefix) or not key[len(prefix) :].isdigit():
                 raise ReviewRecordsError("CLI source finding has an invalid finding key")
             suffix = key[len(prefix) :]
@@ -2006,8 +2051,12 @@ class SqliteReviewRecords:
                 raise ReviewRecordsError("CLI source finding has duplicate decisions")
             if correction is not None and decision_count != 1:
                 raise ReviewRecordsError("CLI source correction has no exact original decision")
+            history = SqliteReviewRecords._cli_source_decision_history(connection, attempt_id, finding_id, source_pr)
+            decision_history[index] = history
             effective_decision = correction or decision
             effective_reason = correction_reason if correction is not None else reason
+            if history and (history[-1]["decision"], history[-1]["reason"]) != (effective_decision, effective_reason):
+                raise ReviewRecordsError("CLI source audit history conflicts with effective decisions")
             if disposition == "unresolved":
                 if effective_decision is not None:
                     raise ReviewRecordsError("unresolved CLI source finding has a stored decision")
@@ -2034,6 +2083,11 @@ class SqliteReviewRecords:
             )
         if len(observations) != run[7] or sorted(item["index"] for item in observations) != list(range(1, run[7] + 1)):
             raise ReviewRecordsError("CLI SQL source findings do not match the stored run count")
+        correction_count = connection.execute(
+            "SELECT COUNT(*) FROM source_decision_corrections WHERE run_id = ?", (attempt_id,),
+        ).fetchone()[0]
+        if correction_count != sum(max(0, len(events) - 1) for events in decision_history.values()):
+            raise ReviewRecordsError("CLI source corrections have no exact observed finding association")
         accepted = sum(item["disposition"] == "accepted" for item in observations)
         routed = sum(item["disposition"] == "routed" for item in observations)
         if (run[8], run[9]) != (accepted, routed):
@@ -2070,6 +2124,7 @@ class SqliteReviewRecords:
             "artifact_redactions": artifact_redactions,
             "observations": observations,
             "decisions": decisions,
+            "decision_history": decision_history,
             "provider_origin": origin,
         }
 
@@ -3141,6 +3196,8 @@ class SqliteReviewRecords:
 
                 if not isinstance(source_checkpoint, Checkpoint) or not isinstance(source_repository, str):
                     raise ReviewRecordsError("source checkpoint binding requires parsed checkpoint and repository")
+                if source_checkpoint.accepted != accepted_count:
+                    return "pending"
                 provider_ids = (
                     (source_checkpoint.run_id, f"run:{source_checkpoint.run_id}")
                     if source_channel == "cli"
@@ -3196,6 +3253,18 @@ class SqliteReviewRecords:
                 ).fetchone()
                 if associated is None:
                     return None
+            if (source_channel == "cli" and source_checkpoint is not None
+                    and run is not None and not origins):
+                # Native publication counts remain immutable; audited corrections
+                # determine today's obligations only after the original binding proves.
+                try:
+                    from .evidence import _cli_capture_from_sql
+                    snapshot = self._cli_capture_snapshot(connection, run_id, source_pr=source_pr)
+                    if snapshot is not None:
+                        _cli_capture_from_sql(snapshot, source_repository, source_pr, source_checkpoint)
+                        accepted_count = snapshot["run"]["counts"]["accepted"]
+                except (ReviewRecordsError, ValueError, TypeError, KeyError):
+                    return "pending"
             if (
                 run is None
                 or run[0] != source_pr
@@ -3836,6 +3905,56 @@ class SqliteReviewRecords:
             "resolution_pr": resolution_pr,
             "outcome": outcome,
         }
+
+    def native_completion_time(
+        self, attempt_id: str, *, source_pr: int, _connection: sqlite3.Connection | None = None
+    ) -> str | None:
+        """Source completion proved by the retained native capture, never import clocks."""
+        from . import evidence, hosted
+        from .sqlite_hosted_capture import _terminal_event
+
+        with (contextlib.closing(self._connect(read_only=True)) if _connection is None
+              else contextlib.nullcontext(_connection)) as connection:
+            if _connection is None:
+                connection.execute("BEGIN")
+            self._require_compatible(connection)
+            row = connection.execute(
+                "SELECT channel, candidate_sha, state, finished_at, provider_review_id, metadata_json "
+                "FROM review_attempts WHERE attempt_id = ? AND source_pr = ?", (attempt_id, source_pr)
+            ).fetchone()
+            if row is None or row[2] != "completed":
+                return None
+            try:
+                if row[0] == "cli":
+                    snapshot = self._cli_capture_snapshot(connection, attempt_id, source_pr=source_pr)
+                    repository = snapshot["attempt"]["metadata"]["repository"]
+                    capture = evidence._cli_capture_from_sql(snapshot, repository, source_pr)
+                    at = capture.verified_completed_at
+                elif row[0] == "hosted":
+                    artifacts = self.attempt_artifacts(attempt_id, _connection=connection)
+                    metadata = json.loads(artifacts["metadata"])
+                    record = metadata["trigger_record"]
+                    comments = json.loads(artifacts["hosted_comments"])
+                    pull = {"number": source_pr, "headRefOid": row[1],
+                            "reviews": {"nodes": json.loads(artifacts["hosted_review"])},
+                            "comments": {"nodes": comments["comments"]},
+                            "reviewThreads": {"nodes": comments["review_threads"]}}
+                    payload = {"data": {"repository": {"pullRequest": pull}}}
+                    result = hosted.trigger_state(metadata["repository"], source_pr, payload, record)
+                    if result.state != "completed" or not result.attributed or str(result.response_id) != row[4]:
+                        return None
+                    # A missing provider event cannot fall back to observation time.
+                    if result.duration_seconds is None or not hosted.parse_timestamp(result.response_created_at):
+                        return None
+                    at, _, _ = _terminal_event(result, pull, observed_at=None)
+                    if hosted.parse_timestamp(at) != hosted.parse_timestamp(row[3]):
+                        return None
+                else:
+                    return None
+                parsed = hosted.parse_timestamp(at)
+                return parsed.isoformat().replace("+00:00", "Z") if parsed else None
+            except (KeyError, TypeError, ValueError, ReviewRecordsError, evidence.EvidenceError):
+                return None
 
     def history(
         self,
@@ -5208,7 +5327,12 @@ class SqliteReviewRecords:
             raise RecordsSchemaIncompatible(f"review records require controller schema {controller_version}")
         if (
             isinstance(data_model_version, bool)
-            or data_model_version not in {PREVIOUS_DATA_MODEL_VERSION, ReviewState().schema_version}
+            or data_model_version
+            not in {
+                PREVIOUS_DATA_MODEL_VERSION,
+                INTERMEDIATE_DATA_MODEL_VERSION,
+                ReviewState().schema_version,
+            }
             or data_model_version > controller_data_model
         ):
             raise RecordsSchemaIncompatible(f"review records require controller data model {data_model_version}")

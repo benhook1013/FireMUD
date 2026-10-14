@@ -210,6 +210,8 @@ FIREMUD_SERVICES_GAME_LOGIC_SERVICE=game-logic-service:6565
 FIREMUD_SERVICES_LOGGING_ADMIN_SERVICE=logging-admin-service:6565
 ```
 
+Game Session separately consumes the non-secret `GAME_LOGIC_READINESS_URL` as `game.logic.readiness-url`. Its local default is `http://game-logic-service:8080/actuator/health/readiness`; the production profile requires an explicit binding and remains unready when absent. Kustomize supplies it through `firemud-config` in `k8s/base/firemud-db-env.yaml`; hosted Helm supplies it through `previewStack.sharedConfig` in `k8s/helm/firemud/values-hosted-shared.example.yaml`. It is an HTTP URL, not a `ServiceEndpointsProperties` gRPC override. URL constraints and readiness behavior are owned by [Game Session Operations](../microservices/game-session-service/operations.md#readiness-and-liveness), with local binding details in [Game Session Configuration](../microservices/game-session-service/configuration.md).
+
 Player-facing environments (`hobby-self-hosted`, staging, production) must treat these overrides as exceptional. The compliant default is to leave them unset and use in-environment Kubernetes DNS/service discovery. If any `FIREMUD_SERVICES_*` override is required in a player-facing environment, deployment preflight must validate it against `design/operations/environments/<environment>/expected-bindings.yaml`; undeclared overrides or values that resolve into another environment boundary must fail deployment.
 
 ---
@@ -318,3 +320,7 @@ Operational scripts like `dev-tools/restores/restore-cluster.sh` use an optional
 - `../system-architecture-redis.md` – Redis architecture hub.
 - `../system-architecture-authentication.md` – Authentication and authorization flows.
 - `../system-architecture-redis-usage-and-profiles.md` – How Redis roles and profiles are wired in different environments.
+
+### Initial LOGIN context Coordination policy
+
+Before the [initial-context adapter](../system-architecture-redis-usage-and-profiles.md#initial-login-context-acknowledgement-policy) can be registered, protected environment delivery must supply the dedicated Game Session Coordination endpoint and principal custody, exact binding identity, explicitly selected single-node/no-failover or replicated profile, replica AOF minimum and positive bounded acknowledgement timeout. The local AOF minimum is one. These are required owner policy inputs, not currently registered environment variables or automatic fallbacks; generic `firemud.redis.*` wiring and Account configuration cannot supply them implicitly. Delivery must also bind the existing external recovery/maintenance qualification to the same exact protected endpoint/profile identity. Missing or withdrawn inputs deny mutation and retirement continuation. Current controlled loopback fixtures establish neither deployed TLS/ACL custody nor this delivery.

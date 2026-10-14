@@ -2,16 +2,97 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProof;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 
 class CanonicalInitialAdmissionRepositoryTest {
+  @Test
+  void incompleteHumanCommitAndAbortDenyBeforeAnyOwnerStorageInteraction() {
+    var dsl = mock(DSLContext.class);
+    var catalog = mock(GameSessionCanonicalRealmCatalogRepository.class);
+    var pointers = mock(GameSessionCanonicalAdmissionPointerRepository.class);
+    var launches = mock(CanonicalGameInstanceLaunchAssociationRepository.class);
+    var events = mock(GameplayAdmissionPointerEventRepository.class);
+    var repository =
+        new CanonicalInitialAdmissionRepository(dsl, catalog, pointers, launches, events);
+    var prior = committedProof();
+    String digest =
+        CanonicalInitialAdmissionRequest.computeRequestDigest(
+            prior.targetNamespace(),
+            prior.canonicalTenantId(),
+            prior.worldSlug(),
+            prior.realmId(),
+            prior.playableStateNamespaceId(),
+            prior.playableStateScope(),
+            prior.canonicalGameInstanceId(),
+            prior.canonicalVersionId(),
+            prior.activeLifecycleEpoch(),
+            prior.expectedCatalogRevision(),
+            prior.originKind(),
+            prior.expectedPriorPointerVersion(),
+            prior.initialAdmissionRequestId());
+    var request =
+        new CanonicalInitialAdmissionRequest(
+            prior.targetNamespace(),
+            prior.canonicalTenantId(),
+            prior.worldSlug(),
+            prior.realmId(),
+            prior.playableStateNamespaceId(),
+            prior.playableStateScope(),
+            prior.canonicalGameInstanceId(),
+            prior.canonicalVersionId(),
+            prior.activeLifecycleEpoch(),
+            prior.expectedCatalogRevision(),
+            prior.originKind(),
+            prior.expectedPriorPointerVersion(),
+            prior.initialAdmissionRequestId(),
+            digest,
+            prior.holdId(),
+            prior.holdFence(),
+            prior.holdBindingDigest());
+    var world =
+        new CanonicalInitialAdmissionWorldProof(
+            request.initialAdmissionRequestId(),
+            digest,
+            request.targetNamespace(),
+            request.canonicalTenantId(),
+            request.worldSlug(),
+            request.realmId(),
+            request.playableStateNamespaceId(),
+            request.playableStateScope(),
+            request.canonicalGameInstanceId(),
+            request.canonicalVersionId(),
+            "ACTIVE",
+            request.activeLifecycleEpoch(),
+            request.originKind(),
+            request.expectedCatalogRevision(),
+            request.expectedPriorPointerVersion(),
+            request.holdId(),
+            request.holdFence(),
+            request.holdBindingDigest());
+    assertThatThrownBy(() -> repository.commit(request, world, null))
+        .isInstanceOf(
+            CanonicalInitialAdmissionRepository
+                .CanonicalHumanAdmissionProtectionUnavailableException.class)
+        .hasMessageContaining("Account terminal protection");
+    assertThatThrownBy(() -> repository.abort(request, null, "Missing protection"))
+        .isInstanceOf(
+            CanonicalInitialAdmissionRepository
+                .CanonicalHumanAdmissionProtectionUnavailableException.class);
+    verifyNoInteractions(dsl, catalog, pointers, launches, events);
+  }
+
   @Test
   void pointerAndAuditVersionsUseValueEqualityBeyondLongCache() {
     Long attemptVersion = Long.valueOf(129L);
@@ -102,7 +183,7 @@ class CanonicalInitialAdmissionRepositoryTest {
     fields.put("canonical_game_instance_id", uuid(4));
     fields.put("canonical_version_id", uuid(5));
     fields.put("initial_admission_request_id", "initial-admission-request");
-    fields.put("initial_admission_request_digest", "a".repeat(64));
+    fields.put("initial_admission_request_digest", requestDigest());
     fields.put("initial_admission_origin_kind", "NO_PRIOR_POINTER");
     fields.put("initial_admission_prior_pointer_version", null);
     fields.put("initial_admission_active_epoch", 82L);
@@ -115,11 +196,28 @@ class CanonicalInitialAdmissionRepositoryTest {
     return fields;
   }
 
+  private static String requestDigest() {
+    return CanonicalInitialAdmissionRequest.computeRequestDigest(
+        "gameplay",
+        uuid(1),
+        "demo-world",
+        uuid(2),
+        uuid(3),
+        "SHARED",
+        uuid(4),
+        uuid(5),
+        82L,
+        41L,
+        OriginKind.NO_PRIOR_POINTER,
+        null,
+        "initial-admission-request");
+  }
+
   private static CanonicalInitialAdmissionOwnerProof committedProof() {
     return new CanonicalInitialAdmissionOwnerProof(
         CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED,
         "initial-admission-request",
-        "a".repeat(64),
+        requestDigest(),
         "gameplay",
         uuid(1),
         "demo-world",

@@ -104,7 +104,7 @@ Routine internal gameplay delegation uses concrete mTLS workload identity, metho
 
 Every gameplay workload certificate must resolve to one approved service identity. Consumers reject a generic internal-service claim, an unknown certificate identity, a caller not allowlisted for the exact RPC, missing context scope, or context that does not match the request and owning domain data. Mutation replay remains governed by command/effect/request idempotency.
 
-Compromise response revokes or replaces the affected workload certificate, removes its method permissions, and audits calls made under that identity. Account JWT and Gateway connect-context keys retain their separate rotation contracts. Administrative and financial operations use their own control-plane and payment security boundaries rather than introducing gameplay-wide per-action signatures.
+Compromise response revokes or replaces the affected workload certificate, removes its method permissions, and audits calls made under that identity. Account JWT and the dedicated Gateway connect-context signing keys retain separate namespaces and rotation contracts; the envelope contract is owned by [Authentication and authorization](./system-architecture-authentication.md#gateway-to-game-session-connect-context-normative). Administrative and financial operations use their own control-plane and payment security boundaries rather than introducing gameplay-wide per-action signatures.
 
 ---
 

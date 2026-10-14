@@ -388,7 +388,7 @@ class SqliteStateStoreTest(unittest.TestCase):
 
         self.assertEqual(current.status()["min_writer_build"], WRITER_BUILD)
         self.assertEqual(current.status()["data_model_version"], 1)
-        self.assertEqual(current.load().schema_version, 2)
+        self.assertEqual(current.load().schema_version, 3)
         with sqlite3.connect(database) as connection:
             self.assertEqual(
                 connection.execute(
@@ -589,7 +589,7 @@ class SqliteStateStoreTest(unittest.TestCase):
 
         self.assertTrue(current.status()["compatible"])
         self.assertTrue(older_reader.status()["compatible"])
-        self.assertEqual(current.load().schema_version, 2)
+        self.assertEqual(current.load().schema_version, 3)
         self.assertEqual(older_reader.load().ordered_prs, (42,))
         with sqlite3.connect(database) as connection:
             self.assertEqual(
@@ -613,16 +613,16 @@ class SqliteStateStoreTest(unittest.TestCase):
 
         updated = current.update(lambda state: state)
 
-        self.assertEqual(updated.schema_version, 2)
-        self.assertEqual(current.status()["data_model_version"], 2)
+        self.assertEqual(updated.schema_version, 3)
+        self.assertEqual(current.status()["data_model_version"], 3)
         self.assertEqual(current.status()["min_writer_build"], WRITER_BUILD)
         with sqlite3.connect(database) as connection:
             self.assertEqual(
                 connection.execute("SELECT data_model_version, min_writer_build FROM controller_metadata").fetchone(),
-                (2, WRITER_BUILD),
+                (3, WRITER_BUILD),
             )
             persisted_state = json.loads(connection.execute("SELECT state_json FROM review_state").fetchone()[0])
-            self.assertEqual(persisted_state["schema_version"], 2)
+            self.assertEqual(persisted_state["schema_version"], 3)
         self.assertFalse(older_reader.status()["compatible"])
         with self.assertRaisesRegex(StateError, f"requires writer build {WRITER_BUILD}"):
             older_reader.load()
@@ -635,7 +635,7 @@ class SqliteStateStoreTest(unittest.TestCase):
         current = SqliteStateStore(database)
         older = SqliteStateStore(database, writer_build=8)
         self.assertTrue(current.status()["compatible"])
-        self.assertEqual(current.load().schema_version, 2)
+        self.assertEqual(current.load().schema_version, 3)
         self.assertFalse(older.status()["compatible"])
         with self.assertRaisesRegex(StateError, "requires writer build 9"):
             older.load()
@@ -646,11 +646,57 @@ class SqliteStateStoreTest(unittest.TestCase):
             )
             self.assertEqual(connection.execute("SELECT state_json FROM review_state").fetchone()[0], original_state_json)
 
+    def test_v2_sqlite_reads_do_not_write_and_first_mutation_upgrades_writer_fence(self) -> None:
+        database = self.root / "legacy-v2.sqlite3"
+        current = SqliteStateStore(database)
+        current.update(lambda state: dataclasses.replace(state, ordered_prs=(42,)))
+        with sqlite3.connect(database) as connection:
+            document = json.loads(connection.execute("SELECT state_json FROM review_state").fetchone()[0])
+            document["schema_version"] = 2
+            connection.execute(
+                "UPDATE controller_metadata SET data_model_version = 2, min_writer_build = 9 WHERE singleton = 1"
+            )
+            connection.execute(
+                "UPDATE review_state SET state_json = ? WHERE singleton = 1",
+                (json.dumps(document, separators=(",", ":")),),
+            )
+        before = database.read_bytes()
+        old_writer = SqliteStateStore(database, writer_build=9)
+
+        self.assertTrue(current.status()["compatible"])
+        self.assertTrue(old_writer.status()["compatible"])
+        self.assertEqual(current.load().ordered_prs, (42,))
+        self.assertEqual(database.read_bytes(), before)
+
+        current.update(lambda state: state)
+
+        self.assertEqual(current.status()["data_model_version"], 3)
+        self.assertEqual(current.status()["min_writer_build"], WRITER_BUILD)
+        self.assertFalse(old_writer.status()["compatible"])
+        with self.assertRaisesRegex(StateError, f"requires writer build {WRITER_BUILD}"):
+            old_writer.load()
+        with sqlite3.connect(database) as connection:
+            self.assertEqual(
+                connection.execute("SELECT data_model_version, min_writer_build FROM controller_metadata").fetchone(),
+                (3, WRITER_BUILD),
+            )
+            persisted = json.loads(connection.execute("SELECT state_json FROM review_state").fetchone()[0])
+            self.assertEqual(persisted["schema_version"], 3)
+
     def test_model_two_rejects_a_minimum_writer_fence_below_nine_on_read_and_status(self) -> None:
         database = self.root / "model-two-weak-fence.sqlite3"
         store = SqliteStateStore(database)
         store.update(lambda state: state)
         with sqlite3.connect(database) as connection:
+            document = json.loads(connection.execute("SELECT state_json FROM review_state").fetchone()[0])
+            document["schema_version"] = 2
+            connection.execute(
+                "UPDATE controller_metadata SET data_model_version = 2, min_writer_build = 9 WHERE singleton = 1"
+            )
+            connection.execute(
+                "UPDATE review_state SET state_json = ? WHERE singleton = 1",
+                (json.dumps(document, separators=(",", ":")),),
+            )
             connection.execute("UPDATE controller_metadata SET min_writer_build = 8 WHERE singleton = 1")
         before = database.read_bytes()
 

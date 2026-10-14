@@ -109,7 +109,11 @@ class GameTenantCreationRepositoryIntegrationTest {
         .defaultSchema(schema)
         .table("flyway_schema_history_game_design_service")
         .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
+        .locations(
+            "filesystem:"
+                + java.nio.file.Path.of("src/main/resources/db/migration")
+                    .toAbsolutePath()
+                    .normalize())
         .load()
         .migrate();
 

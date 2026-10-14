@@ -8,6 +8,7 @@ import java.util.List;
 import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -30,36 +31,59 @@ public class ActorResourceStateRepository {
                 .eq(tenantId)
                 .and(ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY.eq(playableStateKey))
                 .and(ACTOR_RESOURCE_STATES.CHARACTER_ID.eq(characterId))
-                .and(
-                    JooqEntityManagementRepositorySupport.ownerResolvedActorExists(
-                        dsl, ACTOR_RESOURCE_STATES.CHARACTER_ID, ACTOR_RESOURCE_STATES.TENANT_ID)))
+                .and(CharacterRepository.legacyCharacterExists(ACTOR_RESOURCE_STATES.CHARACTER_ID)))
         .orderBy(ACTOR_RESOURCE_STATES.STAT_KEY.asc())
         .fetch(this::toEntity);
   }
 
   public ActorResourceState save(ActorResourceState entity) {
-    JooqEntityManagementRepositorySupport.requireOwnerResolvedActor(
-        dsl, entity.getTenantId(), entity.getCharacterId());
     if (entity.getId() == null) {
       Long id =
-          dsl.insertInto(ACTOR_RESOURCE_STATES)
-              .set(ACTOR_RESOURCE_STATES.TENANT_ID, entity.getTenantId())
-              .set(ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY, entity.getPlayableStateKey())
-              .set(ACTOR_RESOURCE_STATES.CHARACTER_ID, entity.getCharacterId())
-              .set(ACTOR_RESOURCE_STATES.STAT_KEY, entity.getStatKey())
-              .set(ACTOR_RESOURCE_STATES.CURRENT_VALUE, entity.getCurrentValue())
-              .set(ACTOR_RESOURCE_STATES.MAX_VALUE, entity.getMaxValue())
-              .set(ACTOR_RESOURCE_STATES.BASE_VALUE, entity.getBaseValue())
-              .set(ACTOR_RESOURCE_STATES.SOURCE_TYPE, entity.getSourceType())
-              .set(ACTOR_RESOURCE_STATES.SOURCE_ID, entity.getSourceId())
-              .set(ACTOR_RESOURCE_STATES.CREATED_AT, toOffsetDateTime(entity.getCreatedAt()))
-              .set(ACTOR_RESOURCE_STATES.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
+          dsl.insertInto(
+                  ACTOR_RESOURCE_STATES,
+                  ACTOR_RESOURCE_STATES.TENANT_ID,
+                  ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY,
+                  ACTOR_RESOURCE_STATES.CHARACTER_ID,
+                  ACTOR_RESOURCE_STATES.STAT_KEY,
+                  ACTOR_RESOURCE_STATES.CURRENT_VALUE,
+                  ACTOR_RESOURCE_STATES.MAX_VALUE,
+                  ACTOR_RESOURCE_STATES.BASE_VALUE,
+                  ACTOR_RESOURCE_STATES.SOURCE_TYPE,
+                  ACTOR_RESOURCE_STATES.SOURCE_ID,
+                  ACTOR_RESOURCE_STATES.CREATED_AT,
+                  ACTOR_RESOURCE_STATES.UPDATED_AT)
+              .select(
+                  dsl.select(
+                          DSL.val(entity.getTenantId(), ACTOR_RESOURCE_STATES.TENANT_ID),
+                          DSL.val(
+                              entity.getPlayableStateKey(),
+                              ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY),
+                          DSL.val(entity.getCharacterId(), ACTOR_RESOURCE_STATES.CHARACTER_ID),
+                          DSL.val(entity.getStatKey(), ACTOR_RESOURCE_STATES.STAT_KEY),
+                          DSL.val(entity.getCurrentValue(), ACTOR_RESOURCE_STATES.CURRENT_VALUE),
+                          DSL.val(entity.getMaxValue(), ACTOR_RESOURCE_STATES.MAX_VALUE),
+                          DSL.val(entity.getBaseValue(), ACTOR_RESOURCE_STATES.BASE_VALUE),
+                          DSL.val(entity.getSourceType(), ACTOR_RESOURCE_STATES.SOURCE_TYPE),
+                          DSL.val(entity.getSourceId(), ACTOR_RESOURCE_STATES.SOURCE_ID),
+                          DSL.val(
+                              toOffsetDateTime(entity.getCreatedAt()),
+                              ACTOR_RESOURCE_STATES.CREATED_AT),
+                          DSL.val(
+                              toOffsetDateTime(entity.getUpdatedAt()),
+                              ACTOR_RESOURCE_STATES.UPDATED_AT))
+                      .where(
+                          CharacterRepository.legacyCharacterExists(
+                              DSL.val(
+                                  entity.getCharacterId(), ACTOR_RESOURCE_STATES.CHARACTER_ID))))
               .returningResult(ACTOR_RESOURCE_STATES.ID)
               .fetchOne(ACTOR_RESOURCE_STATES.ID);
+      if (id == null) {
+        throw new IllegalStateException("Legacy resource character is unavailable");
+      }
       entity.setId(id);
       return entity;
     }
-    int updatedRows =
+    int updated =
         dsl.update(ACTOR_RESOURCE_STATES)
             .set(ACTOR_RESOURCE_STATES.CURRENT_VALUE, entity.getCurrentValue())
             .set(ACTOR_RESOURCE_STATES.MAX_VALUE, entity.getMaxValue())
@@ -72,17 +96,12 @@ public class ActorResourceStateRepository {
                 ACTOR_RESOURCE_STATES
                     .ID
                     .eq(entity.getId())
-                    .and(ACTOR_RESOURCE_STATES.TENANT_ID.eq(entity.getTenantId()))
-                    .and(ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY.eq(entity.getPlayableStateKey()))
-                    .and(ACTOR_RESOURCE_STATES.CHARACTER_ID.eq(entity.getCharacterId()))
                     .and(
-                        JooqEntityManagementRepositorySupport.ownerResolvedActorExists(
-                            dsl,
-                            ACTOR_RESOURCE_STATES.CHARACTER_ID,
-                            ACTOR_RESOURCE_STATES.TENANT_ID)))
+                        CharacterRepository.legacyCharacterExists(
+                            ACTOR_RESOURCE_STATES.CHARACTER_ID)))
             .execute();
-    if (updatedRows != 1) {
-      throw new IllegalStateException("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
+    if (updated != 1) {
+      throw new IllegalStateException("Legacy resource row is unavailable");
     }
     entity.setVersion(entity.getVersion() + 1);
     return entity;

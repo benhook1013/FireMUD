@@ -6,11 +6,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.google.protobuf.UnknownFieldSet;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Outcome;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
@@ -30,6 +32,15 @@ public class WorldDraftTerminalReadGrpcCodecTest {
   private static final UUID TENANT_ID = uuid("11111111-1111-4111-8111-111111111111");
   private static final UUID VERSION_ID = uuid("22222222-2222-4222-8222-222222222222");
   private static final UUID REVISION_ID = uuid("66666666-6666-4666-8666-666666666666");
+  private static final List<String> INBOUND_SOURCE_FAMILIES =
+      List.of(
+          "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT",
+          "WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT",
+          "WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION",
+          "WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING",
+          "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK",
+          "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE",
+          "WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING");
   private static final tools.jackson.databind.ObjectMapper JSON =
       new tools.jackson.databind.ObjectMapper();
 
@@ -372,6 +383,233 @@ public class WorldDraftTerminalReadGrpcCodecTest {
                 .canonicalBytes())
         .containsExactly(committed.canonicalBytes());
   }
+
+  @Test
+  void exactDeclaredV3CarrierRoundTripsWithItsOriginalEmptyInboundClosure() throws Exception {
+    var fixture = graph3Fixture(ignored -> {}, ignored -> {}, "3", true, true);
+    var response =
+        WorldDraftTerminalReadGrpcCodec.toResponse(
+            fixture.request(), Optional.of(fixture.readback()));
+
+    assertThat(response.getStatus())
+        .isEqualTo(WorldDraftTerminalReadStatus.WORLD_DRAFT_TERMINAL_READ_STATUS_COMMITTED);
+    assertThat(
+            WorldDraftTerminalReadGrpcCodec.fromResponse(fixture.request(), response)
+                .ownerReadback()
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(fixture.readback().canonicalBytes());
+  }
+
+  @Test
+  void graph3RequiresExplicitMatchingOriginalClosureAndRejectsProfileMixing() throws Exception {
+    for (Graph3Fixture fixture :
+        List.of(
+            graph3Fixture(ignored -> {}, ignored -> {}, "3", false, true),
+            graph3Fixture(ignored -> {}, ignored -> {}, "3", true, false),
+            graph3Fixture(ignored -> {}, ignored -> {}, "2", true, true))) {
+      assertGraph3Rejected(fixture);
+    }
+
+    var changedGraphClosure =
+        graph3Fixture(
+            ignored -> {},
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) familyCounts(closure).get(0))
+                    .put("count", 1),
+            "3",
+            true,
+            true);
+    assertGraph3Rejected(changedGraphClosure);
+
+    assertGraph3Rejected(
+        graph3Fixture(
+            ignored -> {},
+            ignored -> {},
+            declaration ->
+                declaration.put(
+                    "tenantId", uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").toString()),
+            ignored -> {},
+            "3",
+            true,
+            true));
+    assertGraph3Rejected(
+        graph3Fixture(
+            ignored -> {},
+            ignored -> {},
+            ignored -> {},
+            graph ->
+                graph.put(
+                    "canonicalVersionId", uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa").toString()),
+            "3",
+            true,
+            true));
+  }
+
+  @Test
+  void graph3RejectsMalformedOriginalAndAppliedInboundClosureVectors() throws Exception {
+    List<Consumer<tools.jackson.databind.node.ObjectNode>> invalidClosures =
+        List.of(
+            closure -> closure.put("schemaVersion", 2),
+            closure -> familyCounts(closure).remove(6),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) familyCounts(closure).get(1))
+                    .put("family", familyCounts(closure).get(0).get("family").textValue()),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) familyCounts(closure).get(0))
+                    .remove("count"),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) familyCounts(closure).get(0))
+                    .put("count", "0"),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) familyCounts(closure).get(0))
+                    .put("count", 1),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) familyCounts(closure).get(0))
+                    .put("family", "WORLD_INBOUND_SOURCE_FAMILY_UNKNOWN"),
+            WorldDraftTerminalReadGrpcCodecTest::reverseFirstTwoInboundFamilies,
+            closure -> closure.set("members", JSON.createArrayNode()));
+
+    for (Consumer<tools.jackson.databind.node.ObjectNode> change : invalidClosures) {
+      assertGraph3Rejected(graph3Fixture(change, ignored -> {}, "3", true, true));
+      assertGraph3Rejected(graph3Fixture(ignored -> {}, change, "3", true, true));
+    }
+  }
+
+  private static Graph3Fixture graph3Fixture(
+      Consumer<tools.jackson.databind.node.ObjectNode> changeSourceClosure,
+      Consumer<tools.jackson.databind.node.ObjectNode> changeGraphClosure,
+      String graphSchemaVersion,
+      boolean includeSourceClosure,
+      boolean includeGraphClosure)
+      throws Exception {
+    return graph3Fixture(
+        changeSourceClosure,
+        changeGraphClosure,
+        ignored -> {},
+        ignored -> {},
+        graphSchemaVersion,
+        includeSourceClosure,
+        includeGraphClosure);
+  }
+
+  private static Graph3Fixture graph3Fixture(
+      Consumer<tools.jackson.databind.node.ObjectNode> changeSourceClosure,
+      Consumer<tools.jackson.databind.node.ObjectNode> changeGraphClosure,
+      Consumer<tools.jackson.databind.node.ObjectNode> changeSourceDeclaration,
+      Consumer<tools.jackson.databind.node.ObjectNode> changeGraphHeader,
+      String graphSchemaVersion,
+      boolean includeSourceClosure,
+      boolean includeGraphClosure)
+      throws Exception {
+    var baseRequest = AuthoringFixtures.freshGraphRequest();
+    var baseAccount = baseRequest.accountBinding();
+    var baseDraft =
+        DraftCommitBinding.fromStored(
+            new String(baseAccount.gameDesignBinding(), StandardCharsets.UTF_8),
+            baseAccount.inputDigest());
+    List<RevisionPayload> revisions = new ArrayList<>();
+    for (RevisionPayload revision : baseDraft.revisions()) {
+      var mutation = object(revision.payload().getBytes(StandardCharsets.UTF_8));
+      if (mutation.has("freshGraphDeclaration")) {
+        var declaration =
+            (tools.jackson.databind.node.ObjectNode) mutation.get("freshGraphDeclaration");
+        if (includeSourceClosure) {
+          var closure = emptyInboundSourceClosure();
+          changeSourceClosure.accept(closure);
+          declaration.set("inboundSourceClosure", closure);
+        } else {
+          declaration.remove("inboundSourceClosure");
+        }
+        changeSourceDeclaration.accept(declaration);
+        revisions.add(
+            new RevisionPayload(
+                revision.revisionOrder(),
+                revision.revisionId(),
+                revision.owner(),
+                JSON.writeValueAsString(mutation)));
+      } else {
+        revisions.add(revision);
+      }
+    }
+    DraftCommitBinding draft =
+        DraftCommitBinding.create(
+            baseDraft.target(),
+            baseDraft.requestId(),
+            baseDraft.commitId(),
+            baseDraft.baseCommitId(),
+            revisions,
+            baseDraft.affectedUnits());
+    var request =
+        new WorldDraftTerminalReadEvidence.Request(
+            baseRequest.schemaVersion(),
+            baseRequest.targetNamespace(),
+            baseRequest.readRequestId(),
+            AuthoringFixtures.accountBinding(draft));
+    var generated = AuthoringFixtures.committedFreshGraphReadback(request);
+    var result = object(generated.result());
+    var originalGraph =
+        object(Base64.getDecoder().decode(result.get("graphBytesBase64").textValue()));
+    var graph = JSON.createObjectNode();
+    graph.put("schemaVersion", graphSchemaVersion);
+    graph.put("canonicalTenantId", originalGraph.get("canonicalTenantId").textValue());
+    graph.put("canonicalVersionId", originalGraph.get("canonicalVersionId").textValue());
+    if (includeGraphClosure) {
+      var closure = emptyInboundSourceClosure();
+      changeGraphClosure.accept(closure);
+      graph.set("inboundSourceClosure", closure);
+    }
+    graph.set("rows", originalGraph.get("rows"));
+    changeGraphHeader.accept(graph);
+    byte[] graphBytes = JSON.writeValueAsBytes(graph);
+    String graphDigest = sha256(graphBytes);
+    result.put("graphBytesBase64", Base64.getEncoder().encodeToString(graphBytes));
+    result.put("graphDigest", graphDigest);
+    var receipt = AuthoringFixtures.receipt(request, draft, graphDigest);
+    byte[] receiptBytes = canonical(receipt);
+    result.put("startLocationReceiptBase64", Base64.getEncoder().encodeToString(receiptBytes));
+    result.put("startLocationReceiptDigest", receipt.get("receiptDigest").textValue());
+    return new Graph3Fixture(request, readbackWithResult(generated, canonical(result)));
+  }
+
+  private static tools.jackson.databind.node.ObjectNode emptyInboundSourceClosure() {
+    var closure = JSON.createObjectNode();
+    closure.put("schemaVersion", 1);
+    var counts = closure.putArray("familyCounts");
+    for (String family : INBOUND_SOURCE_FAMILIES) {
+      var entry = counts.addObject();
+      entry.put("family", family);
+      entry.put("count", 0);
+    }
+    return closure;
+  }
+
+  private static tools.jackson.databind.node.ArrayNode familyCounts(
+      tools.jackson.databind.node.ObjectNode closure) {
+    return (tools.jackson.databind.node.ArrayNode) closure.get("familyCounts");
+  }
+
+  private static void reverseFirstTwoInboundFamilies(
+      tools.jackson.databind.node.ObjectNode closure) {
+    var counts = familyCounts(closure);
+    var first = counts.get(0).deepCopy();
+    var second = counts.get(1).deepCopy();
+    counts.set(0, second);
+    counts.set(1, first);
+  }
+
+  private static void assertGraph3Rejected(Graph3Fixture fixture) {
+    assertThatThrownBy(
+            () ->
+                WorldDraftTerminalReadGrpcCodec.toResponse(
+                    fixture.request(), Optional.of(fixture.readback())))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("invalid or substituted canonical APPLIED result");
+  }
+
+  private record Graph3Fixture(
+      WorldDraftTerminalReadEvidence.Request request,
+      DraftAuthorizationFenceBinding.OwnerReadback readback) {}
 
   @Test
   void v2RejectsMalformedOrDigestSubstitutedOriginalOwnerGraphBytes() throws Exception {

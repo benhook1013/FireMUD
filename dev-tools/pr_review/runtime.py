@@ -13,10 +13,10 @@ import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Event, get_ident
+from threading import Event
 from typing import Any
 
 from . import evidence, github, hosted, sqlite_hosted_capture
@@ -142,6 +142,9 @@ class LiveGitHub:
             is_draft=value["isDraft"],
         )
 
+    def period_reset_ref_identity(self, number: int) -> dict[str, Any]:
+        return github.fetch_period_reset_ref_identity(self.repo, number)
+
     # cli_runner.GitHubReader
     def pull_request_files(self, number: int) -> Sequence[str]:
         values = github.fetch_api_endpoint(f"repos/{self.repo}/pulls/{number}/files?per_page=100")
@@ -173,7 +176,6 @@ class LiveEvidence:
         self._histories: dict[tuple[int, str], list[dict[str, Any]]] = {}
         self._review_activity_identities: dict[tuple[int, str], dict[str, dict[str, str]]] = {}
         self._records_histories: dict[int, dict[str, Any] | None] = {}
-        self._review_period_reset_lock_paths: dict[Path, int] = {}
 
     def _payload(self, pr: int) -> dict[str, Any]:
         if pr not in self._payloads:
@@ -304,72 +306,29 @@ class LiveEvidence:
             self._complete_payloads.add(pr)
 
     def admission_history(self, pr: int, channel: str) -> Sequence[dict[str, Any]]:
-        """Refresh one capped channel after execution exclusion, before state mutation."""
+        """Refresh unchanged policy-compatible history for ordinary admission."""
 
         self._payloads.pop(pr, None)
         self._complete_payloads.discard(pr)
         self._histories.pop((pr, channel), None)
         self._records_histories.pop(pr, None)
-        return self.history(pr, channel)
-
-    @contextmanager
-    def review_period_reset_lock(self, pr: int, channel: str):
-        """Exclude native Hosted admission and CLI execution through a period reset.
-
-        Preserve each provider's established global-lock-before-PR-lock order:
-        Hosted admission takes its repository lock before the PR request lock,
-        while CLI execution takes its repository lock before that same PR lock.
-        A reset takes the selected channel's repository lock and then the shared
-        PR request lock, refreshing evidence and persisting the decision before
-        releasing either lock.
-        """
-
-        if isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0:
-            raise ControllerError("review-period reset requires a positive PR number")
-        if channel not in {"hosted", "cli"}:
-            raise ControllerError("review-period reset channel must be hosted or cli")
-        try:
-            common = evidence.git_common_dir()
-        except Exception as error:
-            raise ControllerError("provider exclusion lock paths cannot be resolved for review-period reset") from error
-        repository_lock = (
-            common / "firemud" / "hosted" / self.repo.replace("/", "_") / "repository.request.lock"
-            if channel == "hosted"
-            else common / "firemud" / "pr-review" / "cli.lock"
-        )
-        request_lock = hosted.default_trigger_record_path(self.repo, pr, common).parent / "request.lock"
-        lock_paths = (repository_lock, request_lock)
-        with ExitStack() as locks:
-            for lock_path in lock_paths:
-                try:
-                    lock_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-                    if lock_path.parent.is_symlink() or lock_path.is_symlink():
-                        raise OSError("provider exclusion lock path must not be a symlink")
-                    descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-                    os.fchmod(descriptor, 0o600)
-                    locks.callback(os.close, descriptor)
-                    try:
-                        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    except BlockingIOError as error:
-                        raise ControllerError(
-                            "cannot reset a review period while provider admission or CLI execution is active"
-                        ) from error
-                    self._review_period_reset_lock_paths[lock_path] = get_ident()
-                    locks.callback(self._review_period_reset_lock_paths.pop, lock_path, None)
-                    locks.callback(fcntl.flock, descriptor, fcntl.LOCK_UN)
-                except ControllerError:
-                    raise
-                except OSError as error:
-                    raise ControllerError(
-                        "provider admission and execution exclusion cannot be verified for review-period reset"
-                    ) from error
-            yield
+        self.prefetch_history_payloads((pr,))
+        history = list(self.history(pr, channel))
+        complete_markers = [item for item in history if item.get("scope_timeline") is True]
+        if len(complete_markers) != 1 or complete_markers[0].get("scope_timeline_complete") is not True:
+            raise ControllerError("complete retained provider history cannot be verified for admission")
+        if any(
+            item.get("history_truncated") is True
+            or item.get("history_complete") is False
+            or item.get("capture_context_available") is False
+            for item in history
+        ):
+            raise ControllerError("retained provider history is incomplete or truncated for admission")
+        return history
 
     def _request_lock_is_held(self, path: Path) -> bool:
         """Check an existing request lock without creating or changing a file."""
 
-        if self._review_period_reset_lock_paths.get(path) == get_ident():
-            return False
         return LiveEvidence._request_lock_state(path) != "clear"
 
     @staticmethod
@@ -402,8 +361,6 @@ class LiveEvidence:
         if state_path.name != "pr-review-stack.json":
             return "unknown"
         cli_lock_path = state_path.parent.parent / "firemud" / "pr-review" / "cli.lock"
-        if self._review_period_reset_lock_paths.get(cli_lock_path) == get_ident():
-            return "clear"
         return self._request_lock_state(cli_lock_path)
 
     def active_review_targets(
@@ -984,7 +941,7 @@ class LiveEvidence:
                     or item.get("correction") is True
                     or item.get("non_counting") is True
                     or type(item.get("accepted")) is not int
-                    or item["accepted"] <= 0
+                    or item["accepted"] < 0
                 ):
                     continue
                 label = f"{channel} accepted-finding source proof: {item.get('checkpoint')}"
@@ -1653,6 +1610,14 @@ class LiveEvidence:
                     and checkpoint_author.casefold() == trigger_author.casefold()
                     and not github.is_coderabbit_login(checkpoint_author)
                 ):
+                    proof["verified_completed_at"] = None
+                    if state.duration_seconds is not None and hosted.parse_timestamp(state.response_created_at) is not None:
+                        try:
+                            proof["verified_completed_at"] = sqlite_hosted_capture._terminal_event(
+                                state, payload["data"]["repository"]["pullRequest"], observed_at=None
+                            )[0]
+                        except sqlite_hosted_capture.HostedCaptureError:
+                            pass
                     return record, proof
         return None
 
@@ -2449,9 +2414,14 @@ class LiveEvidence:
                 anchor = dict(record["anchor"])
             source_resolution_status = (
                 self._source_resolution_status(pr, channel, checkpoint, exact_head)
-                if checkpoint.accepted > 0 and not checkpoint.correction
+                if (checkpoint.accepted > 0 or (channel == "cli" and completed)) and not checkpoint.correction
                 else None
             )
+            if (channel == "cli" and capture is not None and capture.checkpoint_decisions is not None
+                    and source_resolution_status is None):
+                # Corrected native attribution cannot fall back to legacy ancestry
+                # when its durable effective-finding resolver is unavailable.
+                source_resolution_status = "unavailable"
             anchor_complete = self._anchor_complete(anchor)
             value = {
                 "pr": pr,
@@ -2459,6 +2429,11 @@ class LiveEvidence:
                 "reviewed_head": exact_head,
                 "comment_id": checkpoint.comment_id,
                 "observed_at": checkpoint.created_at,
+                "verified_completed_at": (
+                    capture.verified_completed_at
+                    if channel == "cli" and completed and capture is not None
+                    else proof.get("verified_completed_at") if channel == "hosted" and completed else None
+                ),
                 "checkpoint": str(checkpoint.comment_id or checkpoint.created_at),
                 "source_run_id": (
                     checkpoint.run_id

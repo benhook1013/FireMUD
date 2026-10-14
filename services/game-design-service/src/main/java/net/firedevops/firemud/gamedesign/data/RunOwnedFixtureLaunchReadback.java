@@ -51,6 +51,8 @@ public class RunOwnedFixtureLaunchReadback {
   private final VersionService versionService;
   private final VersionAssetArtifactService artifactService;
   private final LaunchDescriptorService launchDescriptorService;
+  private final net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
+      creationRepository;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -64,7 +66,9 @@ public class RunOwnedFixtureLaunchReadback {
       GameAuthoredWorldSourceRepository sourceRepository,
       VersionService versionService,
       VersionAssetArtifactService artifactService,
-      LaunchDescriptorService launchDescriptorService) {
+      LaunchDescriptorService launchDescriptorService,
+      net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
+          creationRepository) {
     this.gameRepository = gameRepository;
     this.templateRepository = templateRepository;
     this.versionRepository = versionRepository;
@@ -73,6 +77,7 @@ public class RunOwnedFixtureLaunchReadback {
     this.versionService = versionService;
     this.artifactService = artifactService;
     this.launchDescriptorService = launchDescriptorService;
+    this.creationRepository = creationRepository;
   }
 
   @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
@@ -114,6 +119,98 @@ public class RunOwnedFixtureLaunchReadback {
     }
     return readback;
   }
+
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence readCommittedCreation(
+      net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence captured) {
+    var committed =
+        creationRepository
+            .read(captured.creationRequestId(), captured.targetNamespace())
+            .orElseThrow(
+                () -> new IllegalStateException("Committed fixture creation receipt unavailable"));
+    if (!captured.equals(committed)) {
+      throw new IllegalStateException(
+          "Committed fixture creation differs from its original operation");
+    }
+    return committed;
+  }
+
+  /**
+   * Qualifies the immutable receipt through committed owners without resolving or writing a
+   * descriptor.
+   */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public CommittedReceipt readCommittedReceipt(
+      net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt
+          receipt) {
+    readCommittedCreation(receipt.creationEvidence());
+    var source = receipt.sourceEvidence();
+    var committed =
+        sourceRepository
+            .read(
+                source.operationId(),
+                source.canonicalTenantId(),
+                source.worldSlug(),
+                source.targetNamespace())
+            .orElseThrow(() -> new IllegalStateException("Committed fixture source unavailable"));
+    if (!source.equals(committed)) {
+      throw new IllegalStateException("Immutable fixture receipt differs from committed source");
+    }
+    var launch = receipt.launchReadEvidence();
+    Snapshot current =
+        snapshot(
+            source.sourceGameRowId(),
+            launch.gameTemplateId(),
+            launch.versionState().getVersionId(),
+            committed);
+    if (!current.bundleProto().equals(launch.publishedReleaseBundle())
+        || !current.artifactProto().equals(launch.versionAssetArtifactState())
+        || !current.versionProto().equals(launch.versionState())) {
+      throw new IllegalStateException(
+          "Immutable fixture receipt differs from committed launch snapshots");
+    }
+    var request =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            source.targetNamespace(),
+            receipt.fixtureOperationId(),
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest(),
+            launch.gameTemplateId(),
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null);
+    var expected =
+        net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec
+            .fromLaunchDescriptorMessage(request, launch.launchDescriptor());
+    UUID readRequestId;
+    do {
+      readRequestId = UUID.randomUUID();
+    } while (readRequestId.equals(request.authoredWorldSourceOperationId())
+        || readRequestId.toString().equals(request.controlPlaneRequestId()));
+    ResolvedLaunchDescriptorDto descriptor =
+        launchDescriptorService.getLaunchDescriptor(
+            readRequestId,
+            request.canonicalTenantId(),
+            request.worldSlug(),
+            request.controlPlaneRequestId(),
+            expected.requestDigest(),
+            expected.resultDigest());
+    if (!expected.equals(descriptor.authoredWorldBinding())) {
+      throw new IllegalStateException(
+          "Immutable fixture receipt differs from committed descriptor");
+    }
+    requireDescriptorMatchesSnapshot(descriptor, request, current);
+    return new CommittedReceipt(current, descriptor);
+  }
+
+  public record CommittedReceipt(Snapshot snapshot, ResolvedLaunchDescriptorDto descriptor) {}
 
   /** Resolves and independently reads the committed descriptor outside the seeder transaction. */
   @Transactional(propagation = Propagation.NOT_SUPPORTED)

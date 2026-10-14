@@ -525,7 +525,7 @@ public final class RunOwnedPreseededActorAssignmentCapability {
     }
     String parsed = value.textValue();
     if (parsed.isBlank()
-        || parsed.length() > 256
+        || parsed.length() > 1024
         || !parsed.equals(parsed.trim())
         || parsed.indexOf('\n') >= 0
         || parsed.indexOf('\r') >= 0) {

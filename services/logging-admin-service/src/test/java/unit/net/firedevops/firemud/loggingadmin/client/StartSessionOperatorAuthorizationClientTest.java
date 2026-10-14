@@ -50,6 +50,7 @@ import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReserv
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
 class StartSessionOperatorAuthorizationClientTest {
@@ -325,6 +326,7 @@ class StartSessionOperatorAuthorizationClientTest {
                 valid.getBundleReference().toBuilder().setUnknownFields(unknownFields()).build())
             .build());
     assertRejected(tuple, valid.toBuilder().setExpiresAt(timestamp(NOW.plusSeconds(301))).build());
+    assertRejected(tuple, valid.toBuilder().setExpiresAt(timestamp(NOW)).build());
     assertRejected(tuple, valid.toBuilder().setExpiresAt(timestamp(NOW.minusSeconds(1))).build());
 
     RecoverOperatorAuthorizationReferenceResponse validRecovery =
@@ -432,6 +434,95 @@ class StartSessionOperatorAuthorizationClientTest {
       assertThat(failure).isInstanceOf(StatusRuntimeException.class);
       assertThat(((StatusRuntimeException) failure).getStatus().getCode())
           .isEqualTo(Status.Code.UNAVAILABLE);
+    }
+  }
+
+  @Test
+  void deniesIssueAndRecoverBeforeAccountUnderSqlOrSynchronization() throws Exception {
+    var stub =
+        mock(
+            StartSessionOperatorAuthorizationServiceGrpc
+                .StartSessionOperatorAuthorizationServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("client-no-ambient-transaction");
+
+    try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
+      TransactionSynchronizationManager.setActualTransactionActive(true);
+      try {
+        assertThatThrownBy(
+                () ->
+                    client.issueHuman(
+                        tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("no ambient SQL or synchronization");
+      } finally {
+        TransactionSynchronizationManager.clear();
+      }
+
+      TransactionSynchronizationManager.initSynchronization();
+      try {
+        assertThatThrownBy(() -> client.recover(tuple, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("no ambient SQL or synchronization");
+      } finally {
+        TransactionSynchronizationManager.clearSynchronization();
+        TransactionSynchronizationManager.clear();
+      }
+
+      verify(stub, never()).issueHumanOperatorAuthorizationReference(any());
+      verify(stub, never()).recoverOperatorAuthorizationReference(any());
+    }
+  }
+
+  @Test
+  void rejectsExpiredRecoveryWithoutReplacementIssuance() throws Exception {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("client-expired-recovery");
+    var stub =
+        mock(
+            StartSessionOperatorAuthorizationServiceGrpc
+                .StartSessionOperatorAuthorizationServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    Instant expired = NOW.minusSeconds(1);
+    RecoverOperatorAuthorizationReferenceResponse response =
+        recoverResponse(tuple, expired, bundleBytes(tuple, NOW.minusSeconds(2), expired));
+    when(stub.recoverOperatorAuthorizationReference(any())).thenReturn(response);
+    try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
+      assertThatThrownBy(() -> client.recover(tuple, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("expired");
+      verify(stub, never()).issueHumanOperatorAuthorizationReference(any());
+    }
+  }
+
+  @Test
+  void issueAndRecoverAcceptAccountLifetimeUnderLocalClockSkew() throws Exception {
+    StartSessionPreAuthorizationReservationTuple tuple = tuple("client-account-clock-ahead");
+    Instant accountEvaluatedAt = NOW.plusSeconds(120);
+    Instant accountExpiry = accountEvaluatedAt.plusSeconds(300);
+    byte[] bundle = bundleBytes(tuple, accountEvaluatedAt, accountExpiry);
+    var stub =
+        mock(
+            StartSessionOperatorAuthorizationServiceGrpc
+                .StartSessionOperatorAuthorizationServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.issueHumanOperatorAuthorizationReference(any()))
+        .thenReturn(issueResponse(tuple, accountExpiry, bundle));
+    when(stub.recoverOperatorAuthorizationReference(any()))
+        .thenReturn(recoverResponse(tuple, accountExpiry, bundle));
+
+    try (TestClient client = new TestClient(stub, fileBackedTlsProperties())) {
+      StartSessionOperatorAuthorizationClient.AuthorizationReference issued =
+          client.issueHuman(tuple, CONTROL_UI_TOKEN, RESERVATION_OWNER, 9L, CLAIM_OWNER, 11L);
+      StartSessionOperatorAuthorizationClient.AuthorizationReference recovered =
+          client.recover(tuple, RESERVATION_OWNER, 9L, CLAIM_OWNER, 12L);
+
+      assertThat(accountExpiry).isAfter(NOW.plusSeconds(300));
+      assertThat(issued.expiresAt()).isEqualTo(accountExpiry);
+      assertThat(recovered.expiresAt()).isEqualTo(accountExpiry);
+      assertThat(issued.authorityEvidenceBundle()).containsExactly(bundle);
+      assertThat(recovered.authorityEvidenceBundle()).containsExactly(bundle);
+      verify(stub).issueHumanOperatorAuthorizationReference(any());
+      verify(stub).recoverOperatorAuthorizationReference(any());
     }
   }
 
@@ -557,6 +648,12 @@ class StartSessionOperatorAuthorizationClientTest {
 
   private static byte[] bundleBytes(
       StartSessionPreAuthorizationReservationTuple tuple, Instant expiry) throws Exception {
+    return bundleBytes(tuple, NOW, expiry);
+  }
+
+  private static byte[] bundleBytes(
+      StartSessionPreAuthorizationReservationTuple tuple, Instant evaluatedAt, Instant expiry)
+      throws Exception {
     String tenantId = TENANT_ID.toString();
     Map<String, Object> projection =
         Map.of(
@@ -569,7 +666,7 @@ class StartSessionOperatorAuthorizationClientTest {
             "projectionStatus",
             "CURRENT",
             "evaluatedAt",
-            NOW.toString(),
+            evaluatedAt.toString(),
             "expiresAt",
             expiry.toString());
     Map<String, Object> authority =

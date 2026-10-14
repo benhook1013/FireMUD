@@ -19,6 +19,7 @@ from fire_controller.map import (
     WorkstreamStore,
     editorial_mapping,
 )
+from fire_controller.web import public_jobs
 from pr_review.sqlite_backup import BackupError, _validate_database, create_snapshot, restore_snapshot
 from pr_review.sqlite_review_records import SqliteReviewRecords
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
@@ -170,7 +171,7 @@ class WorkstreamStoreTests(unittest.TestCase):
                 connection.execute(
                     "SELECT data_model_version FROM controller_metadata WHERE singleton = 1"
                 ).fetchone(),
-                (2,),
+            (3,),
             )
             self.assertEqual(
                 connection.execute(
@@ -463,36 +464,50 @@ class WorkstreamStoreTests(unittest.TestCase):
             self.assertEqual(self.database.read_bytes(), source_before)
             self.assertFalse(destination.exists())
 
-    def test_v1_controller_provenance_survives_read_and_upgrades_only_on_state_write(self):
-        state_path = self.root / "legacy-review-state.json"
+    def test_controller_provenance_survives_read_and_upgrades_only_on_state_write(self):
+        for model_version in (1, 2):
+            with self.subTest(model_version=model_version):
+                self._assert_controller_provenance_survives_read_and_upgrades_only_on_state_write(model_version)
+
+    def _assert_controller_provenance_survives_read_and_upgrades_only_on_state_write(self, model_version):
+        state_path = self.root / f"legacy-review-state-model-{model_version}.json"
         database = state_path.with_suffix(".sqlite3")
         SqliteStateStore(database).update(lambda _: ReviewState())
-        JobStore(database).bootstrap()
+        jobs = JobStore(database)
+        jobs.bootstrap()
+        jobs.create("retained-job", "General", "Retained job", brief="Private brief remains available to its owner")
         InboxStore(database).bootstrap()
-        WorkstreamStore(database).bootstrap()
+        workstreams = WorkstreamStore(database)
+        workstreams.bootstrap()
+        workstreams.import_site(self.status_source, self.progress_source, apply=True)
         records = SqliteReviewRecords(database)
         records.bootstrap()
 
         legacy_state = ReviewState().to_dict()
-        legacy_state["schema_version"] = 1
-        legacy_state.pop("review_period_decisions")
+        legacy_state["schema_version"] = model_version
+        if model_version == 1:
+            legacy_state.pop("review_period_decisions")
         with sqlite3.connect(database) as connection:
             connection.execute(
-                "UPDATE controller_metadata SET data_model_version = 1, min_writer_build = 9 WHERE singleton = 1"
+                "UPDATE controller_metadata SET data_model_version = ?, min_writer_build = 9 WHERE singleton = 1",
+                (model_version,),
             )
             connection.execute(
                 "UPDATE review_state SET state_json = ? WHERE singleton = 1",
                 (json.dumps(legacy_state, separators=(",", ":")),),
             )
             connection.execute(
-                "UPDATE job_metadata SET controller_data_model_version = 1 WHERE singleton = 1"
+                "UPDATE job_metadata SET controller_data_model_version = ? WHERE singleton = 1",
+                (model_version,),
             )
             connection.execute(
-                "UPDATE map_metadata SET controller_data_model_version = 1 WHERE singleton = 1"
+                "UPDATE map_metadata SET controller_data_model_version = ? WHERE singleton = 1",
+                (model_version,),
             )
             connection.execute(
-                "UPDATE review_records_metadata SET controller_data_model_version = 1, min_writer_build = 9 "
-                "WHERE singleton = 1"
+                "UPDATE review_records_metadata SET controller_data_model_version = ?, min_writer_build = 9 "
+                "WHERE singleton = 1",
+                (model_version,),
             )
 
         state_path.mkdir(mode=0o700)
@@ -502,7 +517,7 @@ class WorkstreamStoreTests(unittest.TestCase):
             "cutover_version": 1,
             "database": str(database.resolve()),
             "sqlite_schema_version": SQLITE_SCHEMA_VERSION,
-            "state_schema_version": 1,
+            "state_schema_version": model_version,
             "min_writer_build": 9,
         }
         marker.write_text(json.dumps(marker_document, sort_keys=True, separators=(",", ":")) + "\n")
@@ -512,14 +527,32 @@ class WorkstreamStoreTests(unittest.TestCase):
         controller = ControllerStateStore(state_path)
 
         self.assertEqual(controller.load(), ReviewState())
-        with self.assertRaisesRegex(StateError, f"requires writer build {WRITER_BUILD}"):
+        with self.assertRaisesRegex(StateError, "requires writer build 9"):
             SqliteStateStore(database, writer_build=8).load()
         with sqlite3.connect(database) as connection:
+            self.assertEqual(connection.execute("PRAGMA user_version").fetchone(), (1,))
             JobStore.validate(connection)
             InboxStore.validate(connection)
             WorkstreamStore.validate(connection)
         self.assertEqual(records.history(42)["runs"], [])
-        _validate_database(database, "v1 shared-controller fixture")
+        self.assertEqual([item["name"] for item in jobs.list()], ["retained-job"])
+        self.assertEqual(public_jobs(jobs.list())[0]["title"], "Retained job")
+        self.assertNotIn("brief", public_jobs(jobs.list())[0])
+        self.assertEqual(workstreams.list(self.editorial)["workstreams"][0]["id"], "shared-foundations")
+        _validate_database(database, f"model-{model_version} shared-controller fixture")
+
+        snapshot = self.root / f"model-{model_version}.snapshot.sqlite3"
+        restored = self.root / f"model-{model_version}.restored.sqlite3"
+        create_snapshot(database, snapshot)
+        restore_snapshot(snapshot, restored)
+        _validate_database(restored, f"model-{model_version} restored fixture")
+        self.assertEqual(SqliteStateStore(restored).load(), ReviewState())
+        self.assertEqual([item["name"] for item in JobStore(restored).list()], ["retained-job"])
+        self.assertEqual(
+            WorkstreamStore(restored).list(self.editorial)["workstreams"][0]["id"], "shared-foundations"
+        )
+        self.assertEqual(SqliteReviewRecords(restored).history(42)["runs"], [])
+
         self.assertEqual(database.read_bytes(), database_before)
         self.assertEqual(marker.read_bytes(), marker_before)
 
@@ -532,33 +565,33 @@ class WorkstreamStoreTests(unittest.TestCase):
                 connection.execute(
                     "SELECT data_model_version, min_writer_build FROM controller_metadata WHERE singleton = 1"
                 ).fetchone(),
-                (2, WRITER_BUILD),
+                (3, WRITER_BUILD),
             )
             self.assertEqual(
                 connection.execute(
                     "SELECT controller_data_model_version FROM job_metadata WHERE singleton = 1"
                 ).fetchone(),
-                (1,),
+                (model_version,),
             )
             self.assertEqual(
                 connection.execute(
                     "SELECT controller_data_model_version FROM map_metadata WHERE singleton = 1"
                 ).fetchone(),
-                (1,),
+                (model_version,),
             )
             self.assertEqual(
                 connection.execute(
                     "SELECT controller_data_model_version, min_writer_build "
                     "FROM review_records_metadata WHERE singleton = 1"
                 ).fetchone(),
-                (1, 9),
+                (model_version, 9),
             )
             JobStore.validate(connection)
             InboxStore.validate(connection)
             WorkstreamStore.validate(connection)
         self.assertEqual(records.history(42)["runs"], [])
         self.assertEqual(ControllerStateStore(state_path).load().ordered_prs, (42,))
-        _validate_database(database, "v2 state with retained v1 provenance")
+        _validate_database(database, f"model-3 state with retained model-{model_version} provenance")
         with self.assertRaisesRegex(StateError, f"requires writer build {WRITER_BUILD}"):
             SqliteStateStore(database, writer_build=8).load()
 

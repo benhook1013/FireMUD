@@ -10,6 +10,7 @@ import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -33,10 +34,7 @@ public class ActorActiveConditionRepository {
                 .and(ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY.eq(playableStateKey))
                 .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(characterId))
                 .and(
-                    JooqEntityManagementRepositorySupport.ownerResolvedActorExists(
-                        dsl,
-                        ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID,
-                        ACTOR_ACTIVE_CONDITIONS.TENANT_ID))
+                    CharacterRepository.legacyCharacterExists(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID))
                 .and(
                     ACTOR_ACTIVE_CONDITIONS
                         .EXPIRES_AT
@@ -64,42 +62,72 @@ public class ActorActiveConditionRepository {
                     .eq(tenantId)
                     .and(ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY.eq(playableStateKey))
                     .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(characterId))
-                    .and(
-                        JooqEntityManagementRepositorySupport.ownerResolvedActorExists(
-                            dsl,
-                            ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID,
-                            ACTOR_ACTIVE_CONDITIONS.TENANT_ID))
                     .and(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE.eq(sourceType))
-                    .and(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID.eq(sourceId)))
+                    .and(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID.eq(sourceId))
+                    .and(
+                        CharacterRepository.legacyCharacterExists(
+                            ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)))
             .orderBy(ACTOR_ACTIVE_CONDITIONS.ID.asc())
             .limit(1)
             .fetchOne(this::toEntity));
   }
 
   public ActorActiveCondition save(ActorActiveCondition entity) {
-    JooqEntityManagementRepositorySupport.requireOwnerResolvedActor(
-        dsl, entity.getTenantId(), entity.getCharacterId());
     if (entity.getId() == null) {
       Long id =
-          dsl.insertInto(ACTOR_ACTIVE_CONDITIONS)
-              .set(ACTOR_ACTIVE_CONDITIONS.TENANT_ID, entity.getTenantId())
-              .set(ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY, entity.getPlayableStateKey())
-              .set(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID, entity.getCharacterId())
-              .set(ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY, entity.getConditionKey())
-              .set(ACTOR_ACTIVE_CONDITIONS.STACK_COUNT, entity.getStackCount())
-              .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE, entity.getSourceType())
-              .set(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID, entity.getSourceId())
-              .set(ACTOR_ACTIVE_CONDITIONS.STARTED_AT, toOffsetDateTime(entity.getStartedAt()))
-              .set(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT, toOffsetDateTime(entity.getExpiresAt()))
-              .set(ACTOR_ACTIVE_CONDITIONS.EFFECT_PAYLOAD_JSON, entity.getEffectPayloadJson())
-              .set(ACTOR_ACTIVE_CONDITIONS.CREATED_AT, toOffsetDateTime(entity.getCreatedAt()))
-              .set(ACTOR_ACTIVE_CONDITIONS.UPDATED_AT, toOffsetDateTime(entity.getUpdatedAt()))
+          dsl.insertInto(
+                  ACTOR_ACTIVE_CONDITIONS,
+                  ACTOR_ACTIVE_CONDITIONS.TENANT_ID,
+                  ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY,
+                  ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID,
+                  ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY,
+                  ACTOR_ACTIVE_CONDITIONS.STACK_COUNT,
+                  ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE,
+                  ACTOR_ACTIVE_CONDITIONS.SOURCE_ID,
+                  ACTOR_ACTIVE_CONDITIONS.STARTED_AT,
+                  ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT,
+                  ACTOR_ACTIVE_CONDITIONS.EFFECT_PAYLOAD_JSON,
+                  ACTOR_ACTIVE_CONDITIONS.CREATED_AT,
+                  ACTOR_ACTIVE_CONDITIONS.UPDATED_AT)
+              .select(
+                  dsl.select(
+                          DSL.val(entity.getTenantId(), ACTOR_ACTIVE_CONDITIONS.TENANT_ID),
+                          DSL.val(
+                              entity.getPlayableStateKey(),
+                              ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY),
+                          DSL.val(entity.getCharacterId(), ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID),
+                          DSL.val(entity.getConditionKey(), ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY),
+                          DSL.val(entity.getStackCount(), ACTOR_ACTIVE_CONDITIONS.STACK_COUNT),
+                          DSL.val(entity.getSourceType(), ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE),
+                          DSL.val(entity.getSourceId(), ACTOR_ACTIVE_CONDITIONS.SOURCE_ID),
+                          DSL.val(
+                              toOffsetDateTime(entity.getStartedAt()),
+                              ACTOR_ACTIVE_CONDITIONS.STARTED_AT),
+                          DSL.val(
+                              toOffsetDateTime(entity.getExpiresAt()),
+                              ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT),
+                          DSL.val(
+                              entity.getEffectPayloadJson(),
+                              ACTOR_ACTIVE_CONDITIONS.EFFECT_PAYLOAD_JSON),
+                          DSL.val(
+                              toOffsetDateTime(entity.getCreatedAt()),
+                              ACTOR_ACTIVE_CONDITIONS.CREATED_AT),
+                          DSL.val(
+                              toOffsetDateTime(entity.getUpdatedAt()),
+                              ACTOR_ACTIVE_CONDITIONS.UPDATED_AT))
+                      .where(
+                          CharacterRepository.legacyCharacterExists(
+                              DSL.val(
+                                  entity.getCharacterId(), ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID))))
               .returningResult(ACTOR_ACTIVE_CONDITIONS.ID)
               .fetchOne(ACTOR_ACTIVE_CONDITIONS.ID);
+      if (id == null) {
+        throw new IllegalStateException("Legacy condition character is unavailable");
+      }
       entity.setId(id);
       return entity;
     }
-    int updatedRows =
+    int updated =
         dsl.update(ACTOR_ACTIVE_CONDITIONS)
             .set(ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY, entity.getConditionKey())
             .set(ACTOR_ACTIVE_CONDITIONS.STACK_COUNT, entity.getStackCount())
@@ -114,18 +142,12 @@ public class ActorActiveConditionRepository {
                 ACTOR_ACTIVE_CONDITIONS
                     .ID
                     .eq(entity.getId())
-                    .and(ACTOR_ACTIVE_CONDITIONS.TENANT_ID.eq(entity.getTenantId()))
                     .and(
-                        ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY.eq(entity.getPlayableStateKey()))
-                    .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(entity.getCharacterId()))
-                    .and(
-                        JooqEntityManagementRepositorySupport.ownerResolvedActorExists(
-                            dsl,
-                            ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID,
-                            ACTOR_ACTIVE_CONDITIONS.TENANT_ID)))
+                        CharacterRepository.legacyCharacterExists(
+                            ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)))
             .execute();
-    if (updatedRows != 1) {
-      throw new IllegalStateException("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
+    if (updated != 1) {
+      throw new IllegalStateException("Legacy condition row is unavailable");
     }
     entity.setVersion(entity.getVersion() + 1);
     return entity;
@@ -139,10 +161,8 @@ public class ActorActiveConditionRepository {
                 .isNotNull()
                 .and(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT.le(toOffsetDateTime(now)))
                 .and(
-                    JooqEntityManagementRepositorySupport.ownerResolvedActorExists(
-                        dsl,
-                        ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID,
-                        ACTOR_ACTIVE_CONDITIONS.TENANT_ID)))
+                    CharacterRepository.legacyCharacterExists(
+                        ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)))
         .execute();
   }
 

@@ -497,6 +497,63 @@ class GameLogicGrpcServiceTest {
   }
 
   @Test
+  void resolveLookRejectsInternalProbeBeforeAggregation() {
+    var attestations =
+        new GameplaySessionAttestationService(
+            new net.firedevops.firemud.common.security.JwtUtil(
+                "test-secret-123456789012345678901234567890", 3_600_000L));
+    var look = Mockito.mock(LookAggregationService.class);
+    var dispatcher = new EventDispatcher();
+    var commands =
+        new CommandServiceImpl(
+            new DefaultCommandParser(),
+            new SimpleCommandProcessor(dispatcher, new NoOpScriptingHook()));
+    var service =
+        new GameLogicGrpcService(
+            new PingServiceImpl(),
+            commands,
+            look,
+            Mockito.mock(CommunicationAggregationService.class),
+            Mockito.mock(MoveAggregationService.class),
+            Mockito.mock(ItemRuntimeService.class),
+            mockDigestService(),
+            attestations,
+            new SimpleMeterRegistry());
+    var result = new AtomicReference<LookResult>();
+
+    service.resolveLook(
+        LookRequest.newBuilder()
+            .setTenantId("22")
+            .setSessionId("41")
+            .setCharacterId("123")
+            .setRoomInstance(
+                RoomInstanceRef.newBuilder()
+                    .setTenantId("22")
+                    .setGameInstanceId("1")
+                    .setRoomInstanceId("R-1021"))
+            .setSessionAttestation(attestations.issueInternalProbeAttestation("22", "1", "R-1021"))
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(LookResult value) {
+            result.set(value);
+          }
+
+          @Override
+          public void onError(Throwable error) {
+            fail(error);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("SESSION_ATTESTATION_INVALID", result.get().getError().getCode());
+    assertTrue(result.get().getError().getMessage().contains("type is unsupported"));
+    Mockito.verifyNoInteractions(look);
+  }
+
+  @Test
   void resolveLookReturnsErrorDetailInsteadOfTransportError() {
     PingService pingService = new PingServiceImpl();
     var dispatcher = new EventDispatcher();

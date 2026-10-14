@@ -3,14 +3,36 @@ package integration.net.firedevops.firemud.accountservice.repository;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.util.Properties;
+import net.firedevops.firemud.accountservice.repository.AccountGameplayDelegationIssuanceRepository;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.PostgreSQLContainer;
 
 /** Test-only PostgreSQL fixture backed by a disposable Testcontainers database. */
 public final class AccountPostgresIntegrationFixture {
+  /**
+   * Typed Account issuance fixture composition using the actual DataSource transaction manager.
+   * This honors MANDATORY owner writes and standalone REQUIRES_NEW read-only proof reads; it does
+   * not wrap signers, Redis operations or protected-workload authentication in a SQL transaction.
+   */
+  public static AccountGameplayDelegationIssuanceRepository transactionalIssuanceOwner(
+      AccountGameplayDelegationIssuanceRepository target, PlatformTransactionManager manager) {
+    TransactionInterceptor transactions = new TransactionInterceptor();
+    transactions.setTransactionManager(manager);
+    transactions.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
+    ProxyFactory owner = new ProxyFactory(target);
+    owner.setProxyTargetClass(true);
+    owner.addAdvice(transactions);
+    return (AccountGameplayDelegationIssuanceRepository)
+        owner.getProxy(AccountGameplayDelegationIssuanceRepository.class.getClassLoader());
+  }
+
   private final PostgreSQLContainer<?> container;
   private final boolean requireDurablePrimary;
   private boolean started;

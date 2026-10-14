@@ -63,8 +63,40 @@ public final class GameDesignPublicationOperationService {
                     }));
   }
 
+  /** Independently resolves the complete retained owner identity, never a workflow-only result. */
+  public Optional<GameDesignPublicationOperationRepository.Readback> readExact(
+      String tenant, String workflow, long version, String selectionDigest) {
+    requireIndependent();
+    if (tenant == null
+        || tenant.isBlank()
+        || workflow == null
+        || workflow.isBlank()
+        || version <= 0
+        || selectionDigest == null
+        || !selectionDigest.matches("sha256:[0-9a-f]{64}")) {
+      throw new IllegalArgumentException("Complete publication owner scope required");
+    }
+    return read.execute(
+        status ->
+            repository
+                .read(workflow)
+                .map(
+                    result -> {
+                      var operation = result.operation();
+                      if (!tenant.equals(operation.tenantKey())
+                          || !workflow.equals(operation.workflowId())
+                          || version != operation.versionId()
+                          || !selectionDigest.equals(operation.selectionDigest())) {
+                        throw new IllegalArgumentException(
+                            "PUBLICATION_OPERATION_IDENTITY_CONFLICT");
+                      }
+                      return result;
+                    }));
+  }
+
   private static void requireIndependent() {
-    if (TransactionSynchronizationManager.isActualTransactionActive())
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive())
       throw new IllegalStateException("Independent publication read/write boundary required");
   }
 }

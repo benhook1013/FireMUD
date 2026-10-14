@@ -83,6 +83,9 @@ public class TestDataSeeder implements ApplicationRunner {
   private final VersionAssetArtifactRepository versionAssetArtifactRepository;
   private final RunOwnedFixtureLaunchReadback launchReadback;
   private final ObjectMapper objectMapper;
+  private final net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
+      creationRepository;
+  private final RunOwnedFixturePolicyProducer fixturePolicyProducer;
 
   @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:false}")
   private boolean initialAdmissionFixtureEnabled;
@@ -139,6 +142,17 @@ public class TestDataSeeder implements ApplicationRunner {
       seedRetainedBaselineRuntime();
       return;
     }
+    FixtureCapability verifiedCapability =
+        initialAdmissionFixtureEnabled ? loadFixtureCapability() : null;
+    net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence creation =
+        verifiedCapability == null
+            ? null
+            : creationRepository.createCandidate(
+                FIXTURE_NAMESPACE,
+                verifiedCapability.operationId(),
+                DEMO_TENANT_ID,
+                "Demo Game",
+                "Seed game");
     Game game = gameRepository.findByTenantId(DEMO_TENANT_ID);
     if (game == null) {
       game = new Game();
@@ -243,7 +257,7 @@ public class TestDataSeeder implements ApplicationRunner {
     }
 
     if (initialAdmissionFixtureEnabled) {
-      registerRunOwnedAuthoredWorldSource(game, template, version);
+      registerRunOwnedAuthoredWorldSource(game, template, version, verifiedCapability, creation);
     }
   }
 
@@ -469,8 +483,11 @@ public class TestDataSeeder implements ApplicationRunner {
   }
 
   private void registerRunOwnedAuthoredWorldSource(
-      Game game, GameTemplate template, Version version) {
-    FixtureCapability capability = loadFixtureCapability();
+      Game game,
+      GameTemplate template,
+      Version version,
+      FixtureCapability capability,
+      net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence creation) {
     if (!Objects.equals(template.getId(), capability.gameTemplateId())) {
       throw new IllegalStateException(
           "Run-owned fixture capability does not name the persisted default template");
@@ -503,12 +520,33 @@ public class TestDataSeeder implements ApplicationRunner {
         new TransactionSynchronization() {
           @Override
           public void afterCommit() {
-            publishCommittedSourceReceipt(capability, captured);
+            publishCommittedSourceReceipt(capability, creation, captured);
           }
         });
   }
 
   private FixtureCapability loadFixtureCapability() {
+    return verifyFixtureConfiguration(
+        workloadNamespace,
+        fixtureRunId,
+        fixtureComposeProjectName,
+        fixtureCapabilityPath,
+        fixtureReceiptPath,
+        gameSessionLeafCertPath,
+        worldManagementLeafCertPath,
+        caCertPath);
+  }
+
+  /** The producer and fixed read adapters share the exact immutable configuration verifier. */
+  static FixtureCapability verifyFixtureConfiguration(
+      String workloadNamespace,
+      String fixtureRunId,
+      String fixtureComposeProjectName,
+      String fixtureCapabilityPath,
+      String fixtureReceiptPath,
+      String gameSessionLeafCertPath,
+      String worldManagementLeafCertPath,
+      String caCertPath) {
     if (!FIXTURE_NAMESPACE.equals(workloadNamespace)
         || !safeFixtureId(fixtureRunId)
         || !safeFixtureId(fixtureComposeProjectName)
@@ -531,7 +569,8 @@ public class TestDataSeeder implements ApplicationRunner {
     }
     if (!fixtureRunId.equals(capability.runId())
         || !fixtureComposeProjectName.equals(capability.composeProjectName())
-        || capability.tenantId() != 1L) {
+        || capability.tenantId() != 1L
+        || capability.ownerAccountId() != 1L) {
       throw new IllegalStateException(
           "Run-owned fixture capability does not match the configured Game Design scope");
     }
@@ -557,11 +596,15 @@ public class TestDataSeeder implements ApplicationRunner {
         gameSessionLeafDigest,
         FIXTURE_WORLD_MANAGEMENT_URI_SAN,
         worldManagementLeafDigest,
-        caDigest);
+        caDigest,
+        capability);
   }
 
   private void publishCommittedSourceReceipt(
-      FixtureCapability capability, RunOwnedFixtureLaunchReadback.Snapshot captured) {
+      FixtureCapability capability,
+      net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence creation,
+      RunOwnedFixtureLaunchReadback.Snapshot captured) {
+    var committedCreation = launchReadback.readCommittedCreation(creation);
     RunOwnedFixtureLaunchReadback.Snapshot verifiedBeforeResolve =
         launchReadback.readCommittedOutcome(captured);
     AuthoredWorldSourceEvidence capturedSource = verifiedBeforeResolve.sourceEvidence();
@@ -588,7 +631,16 @@ public class TestDataSeeder implements ApplicationRunner {
         launchReadback.readCommittedOutcome(captured);
     launchReadback.requireDescriptorMatchesSnapshot(
         resolvedDescriptor, launchRequest, committedAfterResolve);
-    byte[] receipt = serializeFixtureReceipt(capability, committedAfterResolve, resolvedDescriptor);
+    var fixturePolicySeal =
+        fixturePolicyProducer.sealAndRead(
+            capability, committedCreation, committedAfterResolve, resolvedDescriptor);
+    byte[] receipt =
+        serializeFixtureReceipt(
+            capability,
+            committedCreation,
+            fixturePolicySeal,
+            committedAfterResolve,
+            resolvedDescriptor);
     if (receipt.length == 0 || receipt.length > MAX_FIXTURE_FILE_BYTES) {
       throw new IllegalStateException("Run-owned authored-world receipt exceeds its 16 KiB bound");
     }
@@ -634,6 +686,8 @@ public class TestDataSeeder implements ApplicationRunner {
 
   private byte[] serializeFixtureReceipt(
       FixtureCapability capability,
+      net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence creation,
+      RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal fixturePolicySeal,
       RunOwnedFixtureLaunchReadback.Snapshot snapshot,
       ResolvedLaunchDescriptorDto launchDescriptor) {
     AuthoredWorldSourceEvidence source = snapshot.sourceEvidence();
@@ -664,6 +718,8 @@ public class TestDataSeeder implements ApplicationRunner {
     envelope.put("worldManagementLeafSha256", capability.worldManagementLeafSha256());
     envelope.put("caCertificateSha256", capability.caCertificateSha256());
     envelope.put("sourceEvidence", sourceEvidence);
+    envelope.put("creationEvidence", creation);
+    envelope.put("fixturePolicySeal", fixturePolicySeal);
     Map<String, Object> launchReadEvidence = new LinkedHashMap<>();
     launchReadEvidence.put("schema", "firemud.run-owned-v1-launch-read-evidence.v1");
     launchReadEvidence.put("gameTemplateId", snapshot.gameTemplateId());
@@ -700,7 +756,7 @@ public class TestDataSeeder implements ApplicationRunner {
     }
   }
 
-  private byte[] readBoundedImmutableFile(Path path, String fileDescription) {
+  private static byte[] readBoundedImmutableFile(Path path, String fileDescription) {
     return RunOwnedFixtureImmutableFileReader.readBoundedImmutableFile(
         path,
         MAX_FIXTURE_FILE_BYTES,
@@ -708,7 +764,7 @@ public class TestDataSeeder implements ApplicationRunner {
             new IllegalStateException("Run-owned fixture " + fileDescription + " file is invalid"));
   }
 
-  private X509Certificate readCertificate(Path path) {
+  private static X509Certificate readCertificate(Path path) {
     try {
       byte[] bytes = readBoundedImmutableFile(path, "TLS certificate");
       return (X509Certificate)
@@ -720,7 +776,7 @@ public class TestDataSeeder implements ApplicationRunner {
     }
   }
 
-  private void requireCertificatePins(
+  private static void requireCertificatePins(
       X509Certificate gameSessionCertificate,
       X509Certificate worldManagementCertificate,
       X509Certificate caCertificate,
@@ -743,7 +799,7 @@ public class TestDataSeeder implements ApplicationRunner {
         "World Management");
   }
 
-  private void requireRecipientCertificatePins(
+  private static void requireRecipientCertificatePins(
       X509Certificate recipientCertificate,
       X509Certificate caCertificate,
       String expectedLeafDigest,
@@ -779,19 +835,19 @@ public class TestDataSeeder implements ApplicationRunner {
     }
   }
 
-  private String sha256(byte[] bytes) throws Exception {
+  private static String sha256(byte[] bytes) throws Exception {
     return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
   }
 
-  private boolean safeFixtureId(String value) {
+  private static boolean safeFixtureId(String value) {
     return value != null && value.matches("[a-z0-9][a-z0-9-]{0,127}");
   }
 
-  private boolean absolutePath(String value) {
+  private static boolean absolutePath(String value) {
     return value != null && !value.isBlank() && Path.of(value).isAbsolute();
   }
 
-  private boolean validCapabilityPath(String value) {
+  private static boolean validCapabilityPath(String value) {
     if (!absolutePath(value)) {
       return false;
     }
@@ -800,7 +856,7 @@ public class TestDataSeeder implements ApplicationRunner {
         && "run-owned-initial-admission-capability.json".equals(fileName.toString());
   }
 
-  private boolean validReceiptPath(String value) {
+  private static boolean validReceiptPath(String value) {
     if (!absolutePath(value)) {
       return false;
     }
@@ -815,11 +871,59 @@ public class TestDataSeeder implements ApplicationRunner {
         && "run-owned-authored-world-source".equals(parentName.toString());
   }
 
-  private record FixtureCapability(
-      UUID operationId,
-      long gameTemplateId,
-      String gameSessionLeafSha256,
-      String worldManagementUriSan,
-      String worldManagementLeafSha256,
-      String caCertificateSha256) {}
+  /** Created only after local fixed-capability and mounted TLS validation. */
+  static final class FixtureCapability {
+    private final UUID operationId;
+    private final long gameTemplateId;
+    private final String gameSessionLeafSha256;
+    private final String worldManagementUriSan;
+    private final String worldManagementLeafSha256;
+    private final String caCertificateSha256;
+    private final RunOwnedInitialAdmissionFixtureWireCodec.Capability wire;
+
+    private FixtureCapability(
+        UUID operationId,
+        long gameTemplateId,
+        String gameSessionLeafSha256,
+        String worldManagementUriSan,
+        String worldManagementLeafSha256,
+        String caCertificateSha256,
+        RunOwnedInitialAdmissionFixtureWireCodec.Capability wire) {
+      this.operationId = operationId;
+      this.gameTemplateId = gameTemplateId;
+      this.gameSessionLeafSha256 = gameSessionLeafSha256;
+      this.worldManagementUriSan = worldManagementUriSan;
+      this.worldManagementLeafSha256 = worldManagementLeafSha256;
+      this.caCertificateSha256 = caCertificateSha256;
+      this.wire = wire;
+    }
+
+    UUID operationId() {
+      return operationId;
+    }
+
+    long gameTemplateId() {
+      return gameTemplateId;
+    }
+
+    String gameSessionLeafSha256() {
+      return gameSessionLeafSha256;
+    }
+
+    String worldManagementUriSan() {
+      return worldManagementUriSan;
+    }
+
+    String worldManagementLeafSha256() {
+      return worldManagementLeafSha256;
+    }
+
+    String caCertificateSha256() {
+      return caCertificateSha256;
+    }
+
+    RunOwnedInitialAdmissionFixtureWireCodec.Capability wire() {
+      return wire;
+    }
+  }
 }

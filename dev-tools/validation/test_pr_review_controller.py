@@ -18,6 +18,7 @@ import time
 import unittest
 from collections.abc import Mapping
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from subprocess import CompletedProcess
 from types import SimpleNamespace
@@ -70,6 +71,7 @@ from pr_review.state import (
     ReviewAllocation,
     ReviewState,
     StackReconciliationDecision,
+    StateError,
     StateStore,
     SummaryFindingDisposition,
     observation_fingerprint,
@@ -167,6 +169,17 @@ class FakeGitHub:
 
     def pull_request(self, number):
         return self.values[number]
+
+    def period_reset_ref_identity(self, number):
+        item = self.values[number]
+        return {
+            "number": number, "state": item.state,
+            "mergedAt": "2026-10-14T00:00:00Z" if item.merged else None,
+            "headRefName": item.head_ref, "headRefOid": item.head,
+            "headRepository": {"nameWithOwner": item.head_repository},
+            "baseRefName": item.base_ref, "baseRefOid": item.base_tip,
+            "baseRef": {"name": item.base_ref, "target": {"oid": item.base_tip}},
+        }
 
 
 class AuditedEvidence(dict):
@@ -390,13 +403,18 @@ class ControllerTests(unittest.TestCase):
 
         hosted_used = [
             self.allocation_evidence(checkpoint=f"hosted-useful-{index}", accepted=1)
-            for index in (1, 2)
+            for index in (1, 2, 3)
         ]
         progress = ReviewController._default_period_progress(state, 1, Channel.HOSTED, hosted_used)
-        self.assertEqual(progress["used"], 2)
+        self.assertEqual(progress["used"], 3)
         self.assertEqual(progress["minimum_remaining"], 0)
         self.assertTrue(progress["budget_exhausted"])
         self.assertFalse(progress["taper_complete"])
+        cli_default = ReviewController._default_period_progress(state, 1, Channel.CLI, [])
+        self.assertEqual(
+            (cli_default["minimum"], cli_default["maximum"], cli_default["minimum_remaining"]),
+            (3, 6, 3),
+        )
         closed = select_review_target(
             state,
             Channel.HOSTED,
@@ -444,159 +462,343 @@ class ControllerTests(unittest.TestCase):
         independent_cli = select_review_target(state, Channel.CLI, [1], {1: []})
         self.assertEqual(independent_cli.target, 1)
 
-    def test_period_reset_uses_stable_checkpoint_and_separate_current_head_then_is_idempotent(self):
-        checkpoint = self.allocation_evidence(
-            head=HEAD_1,
-            checkpoint="cli-checkpoint-1",
-            source_run_id="cli-run-1",
-        )
-        checkpoint["channel"] = "cli"
-        controller = self.make(
-            {1: pr(1, HEAD_2)},
-            {(1, "cli"): [checkpoint]},
-            heads={"feature-1": HEAD_2, "develop": BASE},
-        )
+    def local_period_controller(self, channel="cli"):
+        controller = self.make({1: pr(1, HEAD_2)}, {}, heads={}, sqlite=True)
         controller.set_stack([1])
+        records = SqliteReviewRecords(controller.store.path)
+        records.bootstrap()
+        records.start_attempt(attempt_id="old", source_pr=1, channel=channel, candidate_sha=HEAD_1,
+                              started_at="2026-10-01T00:00:00Z")
+        records.complete_attempt_run("old", finish={"state": "completed", "finished_at": "2026-10-01T00:00:01Z",
+            "checkpoint_id": "old-checkpoint", "provider_review_id": "99" if channel == "hosted" else None},
+            run={"run_id": "old", "source_pr": 1, "channel": channel, "source_head": HEAD_1,
+                 "findings": [FindingObservation("finding:old", "Old finding")],
+                 "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z"})
+        records.start_attempt(attempt_id="active", source_pr=1, channel=channel, candidate_sha=HEAD_1,
+                              started_at="2026-10-01T00:01:00Z")
+        return controller, records
 
-        result = controller.decide_period_reset(
-            pr=1,
-            channel="cli",
-            head=HEAD_2,
-            checkpoint="cli-checkpoint-1",
-            actor="operator@example.invalid",
-            reason="begin a new CLI discovery period",
-        )
+    def local_period_reset(self, controller, channel="cli", **changes):
+        inputs = {"pr": 1, "channel": channel, "head": HEAD_3, "current_history_baseline": True,
+                  "baseline_id": "local-period", "actor": "operator", "reason": "authorized renewal"}
+        inputs.update(changes)
+        return controller.decide_period_reset(**inputs)
 
-        self.assertEqual(result["status"], "recorded")
-        period = result["period"]
-        self.assertEqual(period["reviewed_head"], HEAD_1)
-        self.assertEqual(period["current_head"], HEAD_2)
-        self.assertEqual(period["actor"], "operator@example.invalid")
-        self.assertEqual(period["baseline_checkpoints"], ["cli-checkpoint-1"])
-        self.assertEqual(period["baseline_source_run_ids"], ["cli-run-1"])
-        self.assertEqual(controller._state().allocations, {})
-        self.assertEqual(
-            ReviewController._default_period_progress(
-                controller._state(), 1, Channel.CLI, [checkpoint]
-            )["used"],
-            0,
-        )
-
-        retry = controller.decide_period_reset(
-            pr=1,
-            channel="cli",
-            head=HEAD_2,
-            checkpoint="cli-checkpoint-1",
-            actor="operator@example.invalid",
-            reason="begin a new CLI discovery period",
-        )
-        self.assertEqual(retry["status"], "already_recorded")
-        self.assertEqual(retry["period"]["period_id"], period["period_id"])
-
-    def test_period_reset_excludes_provider_admission_through_fresh_evidence_and_state_write(self):
+    def test_local_settings_snapshot_completed_native_results_and_preserve_active_capture(self):
         for channel in ("hosted", "cli"):
             with self.subTest(channel=channel):
-                checkpoint = self.allocation_evidence(
-                    checkpoint=f"{channel}-reset-checkpoint",
-                    source_run_id=f"{channel}-reset-run",
-                    channel=channel,
-                )
-                provider = AuditedEvidence({(1, channel): [checkpoint]})
-                controller = self.make(
-                    {1: pr(1, HEAD_1)},
-                    provider,
-                    heads={"feature-1": HEAD_1, "develop": BASE},
-                )
-                controller.set_stack([1])
-                original_update = controller.store.update
-                admission_started = threading.Event()
-                order = []
-                admissions = []
-
-                def concurrent_admission(
-                    selected_provider=provider,
-                    observed_order=order,
-                    started_event=admission_started,
-                ):
-                    with selected_provider.review_activity_gate:
-                        observed_order.append("provider_admitted")
-                        started_event.set()
-
-                def update_while_locked(
-                    mutate,
-                    *args,
-                    selected_provider=provider,
-                    selected_channel=channel,
-                    observed_order=order,
-                    started_event=admission_started,
-                    active_admissions=admissions,
-                    update=original_update,
-                    **kwargs,
-                ):
-                    self.assertTrue(selected_provider.review_period_lock_held)
-                    self.assertEqual(selected_provider.admission_history_reads, [(1, selected_channel, True)])
-                    observed_order.append("state_update")
-                    admission = threading.Thread(target=concurrent_admission)
-                    active_admissions.append(admission)
-                    admission.start()
-                    self.assertFalse(started_event.wait(0.05))
-                    updated = update(mutate, *args, **kwargs)
-                    self.assertTrue(selected_provider.review_period_lock_held)
-                    self.assertFalse(started_event.is_set())
-                    observed_order.append("state_updated")
-                    return updated
-
-                with patch.object(controller.store, "update", side_effect=update_while_locked):
-                    result = controller.decide_period_reset(
+                source, records = self.local_period_controller(channel)
+                controller = ReviewController(store=source.store)
+                before = records.history(1, include_display=False)
+                with patch.object(subprocess, "run", side_effect=AssertionError("external process")):
+                    granted = controller.decide_allocation(
+                        action="grant",
                         pr=1,
                         channel=channel,
-                        head=HEAD_1,
-                        checkpoint=f"{channel}-reset-checkpoint",
-                        actor="operator@example.invalid",
-                        reason=f"begin a new {channel} period",
+                        head=HEAD_3,
+                        reason="human allowance",
+                        exact_additional_completed=2,
                     )
-
-                admissions[0].join(timeout=1)
-                self.assertFalse(admissions[0].is_alive())
-                self.assertEqual(result["status"], "recorded")
-                self.assertEqual(order, ["state_update", "state_updated", "provider_admitted"])
-
-    def test_live_evidence_reset_locks_follow_channel_order_and_are_thread_visible(self):
-        temporary_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary_directory.cleanup)
-        common = Path(temporary_directory.name) / "common"
-        state_store = ControllerStateStore(common / "firemud" / "pr-review-stack.json")
-        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), state_store)
-
-        with patch("pr_review.runtime.evidence.git_common_dir", return_value=common):
-            for channel in ("hosted", "cli"):
-                with self.subTest(channel=channel), provider.review_period_reset_lock(1, channel):
-                    request_lock = hosted.default_trigger_record_path("owner/repo", 1, common).parent / "request.lock"
-                    repository_lock = (
-                        common / "firemud" / "hosted" / "owner_repo" / "repository.request.lock"
-                        if channel == "hosted"
-                        else common / "firemud" / "pr-review" / "cli.lock"
+                    allocation = controller._state().allocations[f"1:{channel}"]
+                    self.assertTrue(allocation.administrative_local)
+                    self.assertIsNone(allocation.parent_head)
+                    self.assertIsNone(allocation.parent_identity)
+                    self.assertIn("old", allocation.baseline_source_run_ids)
+                    self.assertNotIn("active", allocation.baseline_source_run_ids)
+                    self.assertFalse(allocation.reopens_taper)
+                    self.assertEqual(granted["allocation"]["min_additional_completed"], 2)
+                    after = (
+                        hosted.parse_timestamp(allocation.administrative_recorded_at) + timedelta(seconds=1)
+                    ).isoformat()
+                    rows = [
+                        self.allocation_evidence(
+                            checkpoint="late-old", channel=channel, source_run_id="old", verified_completed_at=after
+                        ),
+                        self.allocation_evidence(checkpoint="unknown", channel=channel, source_run_id="unknown"),
+                        self.allocation_evidence(
+                            checkpoint="active-finished",
+                            channel=channel,
+                            source_run_id="active",
+                            verified_completed_at=after,
+                        ),
+                    ]
+                    progress = controller._bounded_allocation_evidence(
+                        allocation, [*rows, self.scope_timeline_evidence(channel=channel)]
                     )
-                    self.assertTrue(request_lock.exists())
-                    self.assertTrue(repository_lock.exists())
-                    self.assertFalse(provider._request_lock_is_held(request_lock))
-                    if channel == "cli":
-                        self.assertEqual(provider.repository_cli_lock_status(), "clear")
+                    self.assertIsNone(progress["error"])
+                    self.assertEqual([row["checkpoint"] for row in progress["results"]], ["active-finished"])
+                    with self.assertRaisesRegex(ControllerError, "already exists"):
+                        controller.decide_allocation(
+                            action="grant",
+                            pr=1,
+                            channel=channel,
+                            head=HEAD_3,
+                            reason="duplicate",
+                            exact_additional_completed=2,
+                        )
+                    stopped = controller.decide_stop(pr=1, channel=channel, reason="human stop")
+                    self.assertIsNone(stopped["reviewed_head"])
+                    self.assertIsNone(stopped["stop_head"])
+                    self.assertEqual(stopped["stop_basis"], "direct_human")
+                    with self.assertRaisesRegex(ControllerError, "already stopped"):
+                        controller.decide_stop(pr=1, channel=channel, reason="duplicate stop")
+                self.assertEqual(records.history(1, include_display=False), before)
+                self.assertEqual(ReviewState.from_dict(controller._state().to_dict()), controller._state())
 
-                    other_thread_result = []
+    def test_concurrent_local_grants_cannot_replace_each_other(self):
+        source, records = self.local_period_controller()
+        controller = ReviewController(store=source.store)
+        snapshot = controller._state()
+        barrier = threading.Barrier(2)
+        outcomes = []
 
-                    def observe_request_lock(
-                        selected_provider=provider,
-                        selected_lock=request_lock,
-                        result=other_thread_result,
-                    ):
-                        result.append(selected_provider._request_lock_is_held(selected_lock))
+        def read_before_decision():
+            barrier.wait(timeout=5)
+            return snapshot
 
-                    observer = threading.Thread(target=observe_request_lock)
-                    observer.start()
-                    observer.join(timeout=1)
-                    self.assertFalse(observer.is_alive())
-                    self.assertEqual(other_thread_result, [True])
+        def grant():
+            try:
+                outcomes.append(
+                    controller.decide_allocation(
+                        action="grant",
+                        pr=1,
+                        channel="cli",
+                        head=HEAD_3,
+                        reason="concurrent allowance",
+                        exact_additional_completed=1,
+                    )
+                )
+            except ControllerError as error:
+                outcomes.append(str(error))
+
+        with patch.object(controller, "_state", side_effect=read_before_decision):
+            workers = [threading.Thread(target=grant) for _ in range(2)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(timeout=10)
+                self.assertFalse(worker.is_alive())
+        self.assertEqual(sum(isinstance(result, dict) for result in outcomes), 1)
+        self.assertEqual(sum(isinstance(result, str) and "concurrently" in result for result in outcomes), 1)
+        self.assertEqual(
+            next(item for item in records.history(1)["attempts"] if item["attempt_id"] == "active")["state"], "started"
+        )
+
+    def test_local_allocation_snapshots_completion_race_and_refuses_stale_decision(self):
+        source, records = self.local_period_controller()
+        controller = ReviewController(store=source.store)
+        original_update = source.store.update
+        def completion_wins(mutate, **kwargs):
+            records.complete_attempt_run(
+                "active",
+                finish={
+                    "state": "completed",
+                    "finished_at": "2026-10-01T00:02:00Z",
+                    "checkpoint_id": "race-checkpoint",
+                },
+                run={
+                    "run_id": "active",
+                    "source_pr": 1,
+                    "channel": "cli",
+                    "source_head": HEAD_1,
+                    "findings": [],
+                    "started_at": "2026-10-01T00:01:00Z",
+                    "finished_at": "2026-10-01T00:02:00Z",
+                },
+            )
+            return original_update(mutate, **kwargs)
+        with patch.object(source.store, "update", side_effect=completion_wins):
+            controller.decide_allocation(
+                action="grant", pr=1, channel="cli", head=HEAD_3, reason="human cap", max_additional_completed=2
+            )
+        saved = controller._state().allocations["1:cli"]
+        self.assertIn("active", saved.baseline_source_run_ids)
+        self.assertEqual(records.history(1)["attempts"][1]["finished_at"], "2026-10-01T00:02:00Z")
+        before = controller._state()
+        with self.assertRaisesRegex(ControllerError, "concurrently"):
+            controller._decide_local_allocation(
+                action="renew",
+                pr=1,
+                channel="cli",
+                head=HEAD_3,
+                reason="stale",
+                checkpoint=None,
+                minimum=1,
+                maximum=1,
+                fresh_taper=False,
+                observed_state=dataclasses.replace(before, ordered_prs=(1, 2)),
+                previous=saved,
+            )
+        self.assertEqual(controller._state(), before)
+
+    def test_local_period_reset_is_transactional_without_external_calls_and_preserves_records(self):
+        for channel in ("cli", "hosted"):
+            with self.subTest(channel=channel):
+                controller, records = self.local_period_controller(channel)
+                before = records.history(1, include_display=False)
+                original_history = records.history
+                transactions = []
+                def history_in_transaction(*args, transactions=transactions, original_history=original_history, **kwargs):
+                    connection = kwargs["_connection"]
+                    self.assertTrue(connection.in_transaction)
+                    self.assertEqual(connection.execute("SELECT count(*) FROM review_runs").fetchone()[0], 1)
+                    transactions.append(True)
+                    return original_history(*args, **kwargs)
+                with (patch.object(SqliteReviewRecords, "history", side_effect=history_in_transaction),
+                      patch.object(controller, "_require_github", side_effect=AssertionError("external call")),
+                      patch.object(controller, "_cached_history", side_effect=AssertionError("external call"))):
+                    result = self.local_period_reset(controller, channel)
+                self.assertEqual(transactions, [True])
+                self.assertEqual(result["period"]["current_head"], HEAD_3)
+                self.assertIsNone(result["period"]["current_base_tip"])
+                self.assertIsNone(result["period"]["current_parent_identity"])
+                self.assertEqual(result["period"]["baseline_mode"], "native_history")
+                self.assertIn("old", result["period"]["baseline_source_run_ids"])
+                self.assertNotIn("active", result["period"]["baseline_source_run_ids"])
+                self.assertEqual(records.history(1, include_display=False), before)
+
+    def test_local_period_replay_has_no_clock_or_history_and_changed_inputs_refuse(self):
+        controller, _ = self.local_period_controller()
+        first = self.local_period_reset(controller)
+        with (patch("pr_review.controller.datetime", side_effect=AssertionError("new clock")),
+              patch.object(SqliteReviewRecords, "history", side_effect=AssertionError("new snapshot"))):
+            replay = self.local_period_reset(controller)
+            self.assertEqual(replay["period"], first["period"])
+            self.assertEqual(replay["status"], "already_recorded")
+            for changes in ({"head": HEAD_2}, {"reason": "changed"}, {"actor": "other"}, {"replace_stop": True}):
+                with self.subTest(changes=changes), self.assertRaisesRegex(ControllerError, "different reset inputs"):
+                    self.local_period_reset(controller, **changes)
+
+    def test_legacy_current_history_key_replay_returns_original_without_restarting_period(self):
+        controller, _ = self.local_period_controller()
+        self.local_period_reset(controller)
+        period = controller._state().review_period_decisions[-1]
+        legacy = dataclasses.replace(period, baseline_mode="current_history", completion_cutoff=None,
+            current_base_ref="develop", current_base_tip=BASE, current_parent_identity="develop",
+            current_parent_head=BASE, current_merge_base=BASE, current_patch_id="legacy-patch")
+        controller.store.update(lambda state: dataclasses.replace(state, review_period_decisions=(legacy,)))
+        with (patch("pr_review.controller.datetime", side_effect=AssertionError("new clock")),
+              patch.object(SqliteReviewRecords, "history", side_effect=AssertionError("new snapshot"))):
+            replay = self.local_period_reset(controller)
+        self.assertEqual(replay["status"], "already_recorded")
+        self.assertEqual(replay["period"], legacy.to_dict())
+        self.assertEqual(controller._state().review_period_decisions, (legacy,))
+        result = self.allocation_evidence(checkpoint="legacy-new", source_run_id="legacy-new")
+        self.assertEqual(ReviewController._default_period_progress(controller._state(), 1, Channel.CLI, [result])["used"], 1)
+
+    def test_local_period_writer_fence_and_logical_roundtrip(self):
+        controller, _ = self.local_period_controller()
+        self.local_period_reset(controller)
+        before = controller.store.path.read_bytes()
+        old_writer = SqliteStateStore(controller.store.path, writer_build=10)
+        with self.assertRaisesRegex(StateError, "writer build 12"):
+            old_writer.update(lambda state: state)
+        self.assertEqual(controller.store.path.read_bytes(), before)
+        state = controller._state()
+        self.assertEqual(ReviewState.from_dict(state.to_dict()), state)
+
+    def test_local_period_completion_cutoff_filters_budget_and_taper_but_preserves_active(self):
+        controller, _ = self.local_period_controller()
+        self.local_period_reset(controller)
+        period = controller._state().review_period_decisions[-1]
+        cutoff = hosted.parse_timestamp(period.completion_cutoff)
+        after = (cutoff + timedelta(seconds=1)).isoformat()
+        before = (cutoff - timedelta(seconds=1)).isoformat()
+        rows = [self.allocation_evidence(checkpoint="published-old", source_run_id="old", verified_completed_at=after),
+                self.allocation_evidence(checkpoint="late-historical", source_run_id="late", verified_completed_at=before),
+                self.allocation_evidence(checkpoint="unknown", source_run_id="unknown", observed_at=after),
+                self.allocation_evidence(checkpoint="new", source_run_id="active", verified_completed_at=after)]
+        progress = ReviewController._default_period_progress(controller._state(), 1, Channel.CLI, rows)
+        self.assertEqual(progress["used"], 1)
+        self.assertEqual([item.source_run_id for item in progress["taper_history"]], ["active"])
+        active = {"pr": 1, "channel": "cli", "head": HEAD_1, "attempt_id": "active", "checkpoint": "trigger:active", "active_review": True}
+        self.assertEqual(ReviewController._default_period_progress(controller._state(), 1, Channel.CLI, [active])["in_flight"], 1)
+        completed = ReviewController._default_period_progress(controller._state(), 1, Channel.CLI, [active, rows[-1]])
+        self.assertEqual(completed["used"], 1)
+        self.assertEqual(completed["in_flight"], 0)
+        duplicate = ReviewController._default_period_progress(controller._state(), 1, Channel.CLI, [rows[-1], rows[-1]])
+        self.assertEqual(duplicate["used"], 1)
+
+    def test_local_period_explicit_stop_replacement_and_other_channel_preservation(self):
+        controller, _ = self.local_period_controller()
+        stopped = ReviewAllocation(pr=1, channel="cli", head=HEAD_2, parent_identity="develop", parent_head=BASE,
+            merge_base=BASE, patch_id="patch",
+            baseline_checkpoints=(), reason="retain stop", stop_basis="direct_human", stop_head=HEAD_2,
+            stop_parent_identity="develop", stop_parent_head=BASE, stop_reason="User stopped")
+        other = dataclasses.replace(stopped, channel="hosted")
+        controller.store.update(lambda state: dataclasses.replace(state, allocations={"1:cli": stopped, "1:hosted": other}))
+        with self.assertRaisesRegex(ControllerError, "explicit User stop"):
+            self.local_period_reset(controller)
+        result = self.local_period_reset(controller, replace_stop=True)
+        self.assertEqual(result["period"]["superseded_allocation"], stopped.to_dict())
+        self.assertEqual(controller._state().allocations, {"1:hosted": other})
+        with self.assertRaisesRegex(ControllerError, "requires an existing explicit User stop"):
+            self.local_period_reset(controller, baseline_id="second", replace_stop=True)
+
+    def test_local_period_checkpoint_requires_verified_retained_native_boundary(self):
+        controller, _ = self.local_period_controller()
+        inputs = {"current_history_baseline": False, "baseline_id": None, "checkpoint": "old-checkpoint"}
+        with self.assertRaisesRegex(ControllerError, "verified source completion boundary"):
+            self.local_period_reset(controller, **inputs)
+        with patch.object(SqliteReviewRecords, "native_completion_time", return_value="2026-10-01T00:00:01Z"):
+            result = self.local_period_reset(controller, **inputs)
+        self.assertEqual(result["period"]["completion_cutoff"], "2026-10-01T00:00:01Z")
+        self.assertNotEqual(result["period"]["completion_cutoff"], result["period"]["recorded_at"])
+        with self.assertRaisesRegex(ControllerError, "exact retained completed native attempt"):
+            self.local_period_reset(controller, **{**inputs, "checkpoint": "missing"})
+
+    def test_status_default_period_reports_checked_limits_before_and_after_closure(self):
+        for channel, count, accepted, minimum, maximum, channel_status in (
+            ("hosted", 1, 0, 2, 3, "READY"),
+            ("cli", 2, 0, 3, 6, "READY"),
+            ("hosted", 3, 1, 2, 3, "BUDGET_EXHAUSTED"),
+            ("cli", 3, 0, 3, 6, "COMPLETE"),
+        ):
+            with self.subTest(channel=channel, count=count, accepted=accepted):
+                rows = [self.allocation_evidence(checkpoint=f"result-{index}", channel=channel,
+                                                source_run_id=f"run-{index}", accepted=accepted)
+                        for index in range(count)]
+                controller = self.make({1: pr(1, HEAD_1)}, {(1, channel): rows}, heads={"feature-1": HEAD_1})
+                controller.set_stack([1])
+                row = controller.status()["prs"][0]
+                rule = row["review_progress"][channel]["rule"]
+                self.assertEqual(row["channels"][channel], channel_status)
+                self.assertEqual((rule["minimum"], rule["maximum"], rule["completed"]), (minimum, maximum, count))
+                self.assertEqual(rule["required_remaining"], max(0, minimum - count))
+                self.assertEqual(rule["maximum_remaining"], maximum - count)
+                self.assertEqual(rule["in_flight"], 0)
+                self.assertEqual(rule["request_slots_remaining"], maximum - count)
+
+    def test_windowed_unchecked_default_limits_use_saved_period_without_credit(self):
+        values, heads = _stacked_prs(6)
+        provider = CountingEvidence()
+        controller = self.make(values, provider, heads=heads, sqlite=True)
+        controller.set_stack(list(values))
+        SqliteReviewRecords(controller.store.path).bootstrap()
+        controller.decide_period_reset(pr=5, channel="cli", head=values[5].head,
+            current_history_baseline=True, baseline_id="tail-limits", actor="operator", reason="renew")
+        period = dataclasses.replace(controller.store.load().review_period_decisions[-1], minimum_completed=1,
+                                     maximum_completed=9)
+        controller.store.update(lambda state: dataclasses.replace(state, review_period_decisions=(period,)))
+        self._enable_batch_status(controller, values)
+        report = controller.status_overview()
+        for number, channel, minimum, maximum in ((5, "cli", 1, 9), (6, "cli", 3, 6), (5, "hosted", 2, 3)):
+            row = next(row for row in report["prs"] if row["pr"] == number)
+            rule = row["review_progress"][channel]["rule"]
+            self.assertEqual((rule["minimum"], rule["maximum"]), (minimum, maximum))
+            for field in ("completed", "required_remaining", "maximum_remaining", "in_flight", "request_slots_remaining"):
+                self.assertIsNone(rule[field], field)
+        self.assertFalse(any(number in {5, 6} for number, _ in provider.history_reads))
+
+    def test_default_period_progress_error_keeps_limits_and_unknown_counters(self):
+        state = ReviewState(ordered_prs=(1,))
+        view = ReviewController._default_period_view(state, 1, Channel.CLI, {"error": "ambiguous completion"})
+        progress = ReviewController._review_progress_view(None, view, [], "READY")
+        self.assertEqual(progress["status"], "UNSTABLE")
+        self.assertEqual((progress["rule"]["minimum"], progress["rule"]["maximum"]), (3, 6))
+        self.assertIsNone(progress["rule"]["completed"])
+        self.assertIsNone(progress["rule"]["required_remaining"])
+        self.assertIsNone(progress["rule"]["maximum_remaining"])
 
     def test_default_budget_is_rechecked_under_admission_mutation(self):
         provider = AuditedEvidence()
@@ -614,7 +816,7 @@ class ControllerTests(unittest.TestCase):
                 channel="hosted",
                 source_run_id=f"hosted-run-{index}",
             )
-            for index in (1, 2)
+            for index in (1, 2, 3)
         ]
         admitted = []
 
@@ -682,76 +884,6 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertIsNone(legacy_snapshot["error"])
         self.assertEqual(legacy_snapshot["results"], [])
-
-    def test_period_reset_refuses_a_mismatched_head_and_preserves_explicit_stop(self):
-        checkpoint = self.allocation_evidence(
-            head=HEAD_1,
-            checkpoint="cli-checkpoint-1",
-            source_run_id="cli-run-1",
-        )
-        checkpoint["channel"] = "cli"
-        controller = self.make(
-            {1: pr(1, HEAD_2)},
-            {(1, "cli"): [checkpoint]},
-            heads={"feature-1": HEAD_2, "develop": BASE},
-            sqlite=True,
-        )
-        controller.set_stack([1])
-        stopped = ReviewAllocation(
-            pr=1,
-            channel="cli",
-            head=HEAD_2,
-            parent_identity="develop",
-            parent_head=BASE,
-            merge_base=BASE,
-            patch_id=f"patch-{HEAD_2[:4]}",
-            baseline_checkpoints=(),
-            reason="retain explicit stop",
-            stop_basis="direct_human",
-            stop_head=HEAD_2,
-            stop_parent_identity="develop",
-            stop_parent_head=BASE,
-            stop_reason="User stopped this channel",
-        )
-        controller.store.update(
-            lambda state: dataclasses.replace(state, allocations={"1:cli": stopped})
-        )
-        original = controller._state()
-
-        with self.assertRaisesRegex(ControllerError, "--head does not match"):
-            controller.decide_period_reset(
-                pr=1,
-                channel="cli",
-                head=HEAD_1,
-                checkpoint="cli-checkpoint-1",
-                actor="operator@example.invalid",
-                reason="wrong candidate",
-                replace_stop=True,
-            )
-        self.assertEqual(controller._state(), original)
-        with self.assertRaisesRegex(ControllerError, "explicit User stop"):
-            controller.decide_period_reset(
-                pr=1,
-                channel="cli",
-                head=HEAD_2,
-                checkpoint="cli-checkpoint-1",
-                actor="operator@example.invalid",
-                reason="new period",
-            )
-        self.assertEqual(controller._state(), original)
-
-        replaced = controller.decide_period_reset(
-            pr=1,
-            channel="cli",
-            head=HEAD_2,
-            checkpoint="cli-checkpoint-1",
-            actor="operator@example.invalid",
-            reason="new period after explicit resume",
-            replace_stop=True,
-        )
-        self.assertEqual(replaced["status"], "recorded")
-        self.assertEqual(replaced["superseded_allocation_identity"], "1:cli")
-        self.assertEqual(replaced["period"]["superseded_allocation"]["stop_reason"], "User stopped this channel")
 
     def test_hosted_preflight_deadline_covers_target_selection_before_adapter(self):
         controller = self.make({})
@@ -1190,6 +1322,31 @@ class ControllerTests(unittest.TestCase):
             controller.run_hosted()
         self.assertEqual(attempted, [1])
         self.assertEqual(admitted, [])
+
+    def test_corrected_native_obligations_hold_original_zero_and_preserve_allocation_counts(self):
+        history = {(1, "cli"): [self.allocation_evidence(checkpoint="baseline", channel="cli")]}
+        controller = self.grant_bounded_allocation(channel="cli", evidence=history, checkpoint="baseline",
+                                                    minimum=4, cap=4, fresh_taper=True)
+        for index in range(4):
+            history[(1, "cli")].append({**self.allocation_evidence(checkpoint=f"original-{index}", channel="cli"),
+                                        "raw": 2, "accepted": 2, "source_resolution_status": "resolved"})
+        progress = controller.status()["prs"][0]["allocations"]["cli"]
+        self.assertEqual(progress["completed_count"], 4)
+        self.assertEqual(progress["remaining"], 0)
+        self.assertFalse(progress["taper_complete"])
+        latest = history[(1, "cli")][-1]
+        # A rejected original becoming accepted must hold even with original accepted0.
+        for item in history[(1, "cli")][1:]:
+            item["accepted"] = 0
+        for proof in ("finding_pending", "pending", "unavailable"):
+            latest["source_resolution_status"] = proof
+            self.assertTrue(controller._accepted_findings_pending(latest, HEAD_1))
+            progress = controller.status()["prs"][0]["allocations"]["cli"]
+            self.assertEqual(progress["completed_count"], 4)
+            self.assertIn(progress["status"], {"CAP_FINDINGS_PENDING", "CAP_EXHAUSTED_PENDING", "HELD"})
+        latest["source_resolution_status"] = "resolved"
+        self.assertFalse(controller._accepted_findings_pending(latest, HEAD_1))
+        self.assertEqual(controller.status()["prs"][0]["allocations"]["cli"]["completed_count"], 4)
 
     def test_allocation_counts_survive_head_parent_and_merge_base_movement(self):
         for bounded in (False, True):
@@ -2304,6 +2461,66 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(evidence[(1, "hosted")][0]["checkpoint"], "hosted-old-head")
         self.assertGreaterEqual(len(evidence.stop_audit_calls), 3)
 
+    def stopped_count_fixture(self, rows):
+        history = {(1, "cli"): [self.allocation_evidence(checkpoint="baseline", channel="cli")]}
+        controller = self.grant_bounded_allocation(channel="cli", evidence=history, checkpoint="baseline",
+                                                    minimum=4, cap=4, sqlite=True)
+        history[(1, "cli")].extend(rows)
+        state = controller.store.load()
+        allocation = dataclasses.replace(state.allocations["1:cli"], stop_basis="direct_human",
+            stop_checkpoint="administrative-stop", stop_reviewed_head=HEAD_1,
+            stop_reviewed_patch_id=f"patch-{HEAD_1[:4]}", stop_head=HEAD_1,
+            stop_parent_identity="develop", stop_parent_head=BASE, stop_merge_base=BASE,
+            stop_patch_id=f"patch-{HEAD_1[:4]}", stop_reason="Human stopped discovery")
+        controller.store.update(lambda value: dataclasses.replace(value, allocations={**value.allocations, "1:cli": allocation}))
+        return controller, history, allocation
+
+    def test_stopped_bounded_allocation_counts_four_reviews_not_stop_checkpoint(self):
+        rows = [self.allocation_evidence(checkpoint=f"completed-{index}", channel="cli",
+                                        source_run_id=f"run.completed{index}") for index in range(4)]
+        controller, _, allocation = self.stopped_count_fixture(rows)
+        report = controller.status()["prs"][0]
+        view = report["allocations"]["cli"]
+        self.assertEqual(view["completed_count"], 4)
+        self.assertEqual(view["status"], "STOPPED")
+        self.assertEqual(view["stop_checkpoint"], "administrative-stop")
+        self.assertEqual(view["stop_reason"], "Human stopped discovery")
+        self.assertEqual(report["channels"]["cli"], "HUMAN_STOPPED")
+        progress = report["review_progress"]["cli"]
+        self.assertEqual(progress["rule"]["completed"], 4)
+        self.assertEqual((progress["rule"]["minimum"], progress["rule"]["maximum"]), (4, 4))
+        self.assertEqual(progress["rule"]["required_remaining"], 0)
+        self.assertEqual(progress["status"], "HUMAN_STOPPED")
+        self.assertEqual(progress["label"], "Stopped")
+        self.assertEqual(progress["rule"]["kind"], "human_stop")
+        self.assertEqual(progress["rule"]["label"], "Human stop")
+        self.assertEqual(controller.store.load().allocations["1:cli"], allocation)
+
+    def test_stopped_bounded_allocation_preserves_partial_zero_and_unknown_counts(self):
+        cases = (
+            ([], 0, False),
+            ([self.allocation_evidence(checkpoint="partial", channel="cli", completed=False)], 0, False),
+            ([self.allocation_evidence(checkpoint="unanchored", channel="cli", anchored=False)], 0, False),
+            ([self.allocation_evidence(checkpoint="valid", channel="cli"),
+              self.allocation_evidence(checkpoint="correction", channel="cli", correction=True)], 1, False),
+            ([self.allocation_evidence(checkpoint="valid", channel="cli")], None, True),
+            ([self.allocation_evidence(checkpoint="bad-anchor", channel="cli", parent_head="unknown")], None, False),
+        )
+        for rows, expected, missing_timeline in cases:
+            with self.subTest(expected=expected, missing_timeline=missing_timeline):
+                controller, history, allocation = self.stopped_count_fixture(rows)
+                if missing_timeline:
+                    history[(1, "cli")] = [row for row in history[(1, "cli")] if not row.get("scope_timeline")]
+                report = controller.status()["prs"][0]
+                self.assertEqual(report["allocations"]["cli"]["completed_count"], expected)
+                self.assertEqual(report["allocations"]["cli"]["status"], "STOPPED")
+                self.assertEqual(report["channels"]["cli"], "HUMAN_STOPPED")
+                self.assertEqual(report["review_progress"]["cli"]["rule"]["completed"], expected)
+                self.assertEqual(report["review_progress"]["cli"]["rule"]["label"], "Human stop")
+                self.assertEqual(controller.store.load().allocations["1:cli"], allocation)
+                durable = controller._durable_stop_allocations(controller.store.load(), 1)["cli"]
+                self.assertIsNone(durable["completed_count"])
+
     def test_bounded_hosted_extra_review_preserves_existing_taper_history(self):
         controller, _ = self.hosted_judgment_allocation_fixture(sqlite=True)
 
@@ -2382,6 +2599,56 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
         self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_3)
+
+    def test_local_fresh_hosted_allocation_uses_live_anchor_and_still_audits_findings(self):
+        controller, evidence = self.hosted_judgment_allocation_fixture(sqlite=True)
+        SqliteReviewRecords(controller.store.path).bootstrap()
+        local = ReviewController(store=controller.store)
+        with patch.object(subprocess, "run", side_effect=AssertionError("administrative process")):
+            local.decide_allocation(action="grant", pr=1, channel="hosted", head=HEAD_1,
+                reason="fresh human taper", min_additional_completed=1, max_additional_completed=1, fresh_taper=True)
+        allocation = local._state().allocations["1:hosted"]
+        self.assertIsNone(allocation.parent_head)
+        self.assertEqual(allocation.head, HEAD_1)
+        self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
+        self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_3)
+        self.assertTrue(evidence.stop_audit_calls)
+        self.assertEqual(controller.store.load().allocations["1:hosted"], allocation)
+        evidence.audit["unresolved_findings"] = ["thread:77"]
+        self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "HELD")
+        with self.assertRaisesRegex(ControllerError, "unresolved actionable"):
+            controller.resolve_hosted_target()
+        evidence.audit["unresolved_findings"] = []
+        controller.git.heads["develop"] = PARENT
+        self.assertNotEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
+        self.assertEqual(controller.store.load().allocations["1:hosted"], allocation)
+
+    def test_local_allocation_scope_markers_require_proven_source_order_before_decision(self):
+        source, _ = self.local_period_controller()
+        local = ReviewController(store=source.store)
+        local.decide_allocation(action="grant", pr=1, channel="cli", head=HEAD_3,
+            reason="renew after scope change", min_additional_completed=1, max_additional_completed=2)
+        allocation = local._state().allocations["1:cli"]
+        cutoff = hosted.parse_timestamp(allocation.administrative_recorded_at)
+        before = (cutoff - timedelta(seconds=1)).isoformat()
+        after = (cutoff + timedelta(seconds=1)).isoformat()
+        marker = {"pr": 1, "channel": "cli", "kind": "scope_change", "scope_changed": True,
+            "checkpoint": "scope-change:77", "comment_id": 77, "created_at": before,
+            "updated_at": before, "observed_at": before, "completed": False, "attributable": False,
+            "non_counting": True, "accepted": 0}
+        timeline = self.scope_timeline_evidence(channel="cli")
+        snapshot = local._bounded_allocation_evidence(allocation, [marker, timeline])
+        self.assertIsNone(snapshot["error"])
+        self.assertEqual(snapshot["results"], [])
+        for changes in ({"updated_at": after, "observed_at": after},
+                        {"updated_at": allocation.administrative_recorded_at,
+                         "observed_at": allocation.administrative_recorded_at},
+                        {"created_at": None}, {"updated_at": ""},
+                        {"observed_at": after}, {"comment_id": None},
+                        {"scope_change_malformed": True}, {"kind": "scope_change_malformed"}):
+            with self.subTest(changes=changes):
+                self.assertIsNotNone(local._bounded_allocation_evidence(allocation,
+                    [{**marker, **changes}, timeline])["error"])
 
     def test_hosted_cross_channel_reopen_leaves_ready_decisions_unchanged(self):
         controller, evidence = self.hosted_judgment_allocation_fixture()
@@ -9471,7 +9738,8 @@ class ControllerTests(unittest.TestCase):
                         self._enable_batch_status(controller, values)
                         report = controller.status_overview()
                         row = report["prs"][0]["allocations"]["hosted"]
-                        self.assertEqual(row["status"], "CAP_FINDINGS_PENDING" if accepted else "CAP_TAPERED_PENDING")
+                        # Explicit effective source proof holds regardless of original accepted count.
+                        self.assertEqual(row["status"], "CAP_FINDINGS_PENDING")
                         self.assertFalse(row["finding_only_pending"])
                         self.assertFalse(row["request_preparation_only"])
                         self.assertEqual(report["review_fronts"]["hosted"]["pr"], 1)
@@ -10062,6 +10330,12 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("READY", tail["channels"].values())
         self.assertNotIn("COMPLETE", tail["channels"].values())
         self.assertTrue(all(pr_number <= 4 for pr_number, _ in evidence.history_reads))
+        for channel, limits in (("hosted", (2, 3)), ("cli", (3, 6))):
+            rule = tail["review_progress"][channel]["rule"]
+            self.assertEqual((rule["minimum"], rule["maximum"]), limits)
+            self.assertIsNone(rule["completed"])
+            self.assertIsNone(rule["required_remaining"])
+            self.assertIsNone(rule["maximum_remaining"])
 
     def test_status_overview_preserves_tail_stop_when_saved_parent_moves(self):
         values, heads = _stacked_prs(5)
@@ -13268,7 +13542,7 @@ class ControllerTests(unittest.TestCase):
         cases = (
             ("hosted", "retain", 2, "COMPLETE"),
             ("cli", "reopen", 3, "READY"),
-            ("hosted", "reopen", 2, "BUDGET_EXHAUSTED"),
+            ("hosted", "reopen", 2, "READY"),
             ("cli", "retain", 3, "COMPLETE"),
         )
         for channel, decision, count, expected_status in cases:
@@ -15547,7 +15821,7 @@ class ReviewProgressPresentationTests(unittest.TestCase):
         view = {
             "status": "CAP_ACTIVE",
             "minimum_additional_completed": 0,
-            "maximum_additional_completed": 2,
+            "maximum_additional_completed": 3,
             "completed_count": 0,
             "in_flight": 1,
             "remaining": 1,
@@ -15558,7 +15832,7 @@ class ReviewProgressPresentationTests(unittest.TestCase):
     def test_maximum_includes_running_round_without_changing_request_slots(self):
         value = self.project(history=[{"active_review": True}])
         self.assertEqual(value["label"], "Reviewing")
-        self.assertEqual(value["rule"]["label"], "Maximum 2 rounds remaining")
+        self.assertEqual(value["rule"]["label"], "Maximum 3 rounds remaining")
         self.assertEqual(value["rule"]["request_slots_remaining"], 1)
         self.assertEqual(value["rule"]["in_flight"], 1)
         self.assertIn("before the maximum", value["rule"]["description"])
@@ -15570,20 +15844,24 @@ class ReviewProgressPresentationTests(unittest.TestCase):
         )
         self.assertEqual(exact["rule"]["label"], "1 required round remaining")
         differing = self.project(view={"minimum_additional_completed": 1})
-        self.assertEqual(differing["rule"]["label"], "1 required round remaining · Maximum 2 rounds remaining")
+        self.assertEqual(differing["rule"]["label"], "1 required round remaining · Maximum 3 rounds remaining")
 
     def test_completion_stop_and_non_ancestry_blockers(self):
         cases = [
             ({"status": "STOPPED"}, "READY", "Stopped", "Human stop"),
-            ({"status": "CAP_TAPERED"}, "READY", "Review complete", "Taper met · Maximum 2 rounds"),
+            ({"status": "CAP_TAPERED"}, "READY", "Review complete", "Taper met · Maximum 3 rounds"),
             (
-                {"status": "CAP_AUDITED_STOP", "minimum_additional_completed": 2},
+                {
+                    "status": "CAP_AUDITED_STOP",
+                    "minimum_additional_completed": 2,
+                    "maximum_additional_completed": 2,
+                },
                 "READY",
                 "Review complete",
                 "Required rounds complete",
             ),
-            ({}, "RATE_LIMITED", "Cooldown active", "Maximum 2 rounds remaining"),
-            ({}, "HELD", "Pending adjudication", "Maximum 2 rounds remaining"),
+            ({}, "RATE_LIMITED", "Cooldown active", "Maximum 3 rounds remaining"),
+            ({}, "HELD", "Pending adjudication", "Maximum 3 rounds remaining"),
         ]
         for view, status, label, rule in cases:
             with self.subTest(label=label):
@@ -15594,13 +15872,19 @@ class ReviewProgressPresentationTests(unittest.TestCase):
     def test_unchecked_retains_configuration_but_not_counters(self):
         value = self.project(checked=False)
         self.assertEqual(value["label"], "Progress not checked")
-        self.assertEqual(value["rule"]["label"], "Maximum 2 rounds configured")
+        self.assertEqual(value["rule"]["label"], "Maximum 3 rounds configured")
         for field in ("completed", "maximum_remaining", "in_flight", "request_slots_remaining"):
             self.assertIsNone(value["rule"][field])
         normal = ReviewController._review_progress_view(None, {}, [], "NOT_CHECKED", checked=False)
         self.assertEqual(normal["rule"]["label"], "Normal taper")
         retained = self.project(
-            "COMPLETE", checked=False, view={"status": "CAP_AUDITED_STOP", "minimum_additional_completed": 2}
+            "COMPLETE",
+            checked=False,
+            view={
+                "status": "CAP_AUDITED_STOP",
+                "minimum_additional_completed": 2,
+                "maximum_additional_completed": 2,
+            },
         )
         self.assertEqual(retained["rule"]["label"], "Required rounds complete")
         self.assertIsNone(retained["rule"]["completed"])
@@ -15657,7 +15941,7 @@ class ReviewProgressPresentationTests(unittest.TestCase):
                     }
                 )
                 self.assertEqual(progress["label"], label)
-                self.assertEqual(progress["rule"]["label"], "Maximum 2 rounds remaining")
+                self.assertEqual(progress["rule"]["label"], "Maximum 3 rounds remaining")
         progress = self.project()
         ReviewController._present_review_turns(
             {
@@ -15686,7 +15970,7 @@ class ReviewProgressPresentationTests(unittest.TestCase):
         ReviewController._present_review_turns(report)
         self.assertEqual(progress["label"], "Needs review")
         self.assertNotIn("waiting_for_pr", progress)
-        self.assertEqual(progress["rule"]["label"], "Maximum 2 rounds remaining")
+        self.assertEqual(progress["rule"]["label"], "Maximum 3 rounds remaining")
 
     def test_ancestry_request_status_and_original_evidence_are_unchanged(self):
         factory = ControllerTests()
@@ -15699,7 +15983,8 @@ class ReviewProgressPresentationTests(unittest.TestCase):
         result = controller.status()["prs"][0]
         self.assertEqual(result["channels"]["hosted"], "PARENT_MOVED")
         self.assertEqual(result["review_progress"]["hosted"]["label"], "Needs review")
-        self.assertEqual(result["review_progress"]["hosted"]["rule"]["label"], "Normal taper")
+        self.assertEqual(result["review_progress"]["hosted"]["rule"]["minimum"], 2)
+        self.assertEqual(result["review_progress"]["hosted"]["rule"]["maximum"], 3)
         self.assertTrue(row["parent_moved"])
 
 

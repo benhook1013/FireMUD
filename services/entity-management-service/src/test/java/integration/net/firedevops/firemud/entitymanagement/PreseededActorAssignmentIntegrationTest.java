@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -20,9 +21,25 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.account.RuntimeAccountIdentityEvidence;
+import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
+import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
+import net.firedevops.firemud.entitymanagement.entity.Character;
+import net.firedevops.firemud.entitymanagement.entity.CharacterFriend;
+import net.firedevops.firemud.entitymanagement.entity.CharacterFriendKey;
+import net.firedevops.firemud.entitymanagement.repository.ActorActiveConditionRepository;
+import net.firedevops.firemud.entitymanagement.repository.ActorResourceStateRepository;
+import net.firedevops.firemud.entitymanagement.repository.CharacterEquipmentRepository;
+import net.firedevops.firemud.entitymanagement.repository.CharacterFriendRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
+import net.firedevops.firemud.entitymanagement.repository.InventoryEntryRepository;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterEntryPolicy;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterExecutionContext;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterOwnerEvidence;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterReadRequest;
+import net.firedevops.firemud.entitymanagement.service.CanonicalGameplayRosterTarget;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentExpectedTarget;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentOwnerEvidence;
+import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentReceipt;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentReceiptRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentRequest;
 import net.firedevops.firemud.entitymanagement.service.PreseededActorAssignmentResult;
@@ -40,11 +57,15 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.dao.DataAccessException;
+import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -81,7 +102,13 @@ class PreseededActorAssignmentIntegrationTest {
   }
 
   @Autowired private CharacterRepository characterRepository;
+  @Autowired private CharacterFriendRepository characterFriendRepository;
+  @Autowired private ActorResourceStateRepository actorResourceStateRepository;
+  @Autowired private ActorActiveConditionRepository actorActiveConditionRepository;
+  @Autowired private InventoryEntryRepository inventoryEntryRepository;
+  @Autowired private CharacterEquipmentRepository characterEquipmentRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
@@ -97,14 +124,42 @@ class PreseededActorAssignmentIntegrationTest {
   }
 
   @Test
+  void receiptLockRequiresCallerOwnedWritableTransactionThroughRepositoryProxy() {
+    UUID absentActor = UUID.randomUUID();
+    assertThatThrownBy(
+            () ->
+                characterRepository.lockCurrentPreseededActorAssignmentReceipt(
+                    assignmentUuid, accountUuid, absentActor, "a".repeat(64)))
+        .isInstanceOf(IllegalTransactionStateException.class);
+
+    TransactionTemplate writable = new TransactionTemplate(transactionManager);
+    Optional<PreseededActorAssignmentReceipt> absentReceipt =
+        writable.execute(
+            ignored ->
+                characterRepository.lockCurrentPreseededActorAssignmentReceipt(
+                    assignmentUuid, accountUuid, absentActor, "a".repeat(64)));
+    assertThat(absentReceipt).isEmpty();
+
+    TransactionTemplate readOnly = new TransactionTemplate(transactionManager);
+    readOnly.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                readOnly.execute(
+                    ignored ->
+                        characterRepository.lockCurrentPreseededActorAssignmentReceipt(
+                            assignmentUuid, accountUuid, absentActor, "a".repeat(64))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("writable hold transaction");
+  }
+
+  @Test
   void postgresMigrationInstallsAndEnforcesDeferredAssignmentForeignKeys() {
     assign(
         assignmentUuid,
         accountUuid,
         4L,
         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-        "Assigned Actor",
-        "a");
+        "Assigned Actor");
 
     UUID missingCharacterUuid = UUID.randomUUID();
     UUID invalidOperationUuid = UUID.randomUUID();
@@ -436,24 +491,21 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "a");
+            "Assigned Actor");
     PreseededActorAssignmentResult retry =
         assign(
             assignmentUuid,
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "a");
+            "Assigned Actor");
     PreseededActorAssignmentResult changedIntent =
         assign(
             assignmentUuid,
             accountUuid,
             5L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "b");
+            "Assigned Actor");
 
     assertThat(first.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
     assertThat(retry).isEqualTo(first);
@@ -497,8 +549,7 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "a");
+            "Assigned Actor");
     var evidence =
         evidence(assignmentUuid, accountUuid, 4L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     var expectedTarget =
@@ -621,6 +672,437 @@ class PreseededActorAssignmentIntegrationTest {
   }
 
   @Test
+  void numericTenantCollisionKeepsCanonicalActorOutOfLegacyReadersAndWriters() {
+    assertNumericTenantCollisionKeepsCanonicalActorOutOfLegacyReadersAndWriters(false);
+  }
+
+  @Test
+  void numericTenantCollisionKeepsQuarantinedCanonicalActorOutOfLegacyReadersAndWriters() {
+    assertNumericTenantCollisionKeepsCanonicalActorOutOfLegacyReadersAndWriters(true);
+  }
+
+  private void assertNumericTenantCollisionKeepsCanonicalActorOutOfLegacyReadersAndWriters(
+      boolean quarantined) {
+    PreseededActorAssignmentResult assigned =
+        assign(
+            assignmentUuid,
+            accountUuid,
+            4L,
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+            "Canonical Actor");
+    Long entityTenantRowId =
+        jdbcTemplate.queryForObject(
+            "SELECT entity_tenant_row_id FROM entity_tenant_identities "
+                + "WHERE canonical_tenant_uuid = ?",
+            Long.class,
+            tenantUuid);
+    Long canonicalCharacterId =
+        jdbcTemplate.queryForObject(
+            "SELECT id FROM characters WHERE character_uuid = ?",
+            Long.class,
+            assigned.characterUuid());
+    if (quarantined) {
+      jdbcTemplate.update(
+          "UPDATE characters SET actor_identity_status = 'QUARANTINED', "
+              + "actor_identity_quarantine_reason = 'AMBIGUOUS_ACCOUNT_NAMESPACE' WHERE id = ?",
+          canonicalCharacterId);
+    }
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT tenant_uuid FROM characters WHERE id = ?",
+                UUID.class,
+                canonicalCharacterId))
+        .isEqualTo(tenantUuid);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT actor_identity_status FROM characters WHERE id = ?",
+                String.class,
+                canonicalCharacterId))
+        .isEqualTo(quarantined ? "QUARANTINED" : "OWNER_RESOLVED");
+    Long legacyCharacterId =
+        jdbcTemplate.queryForObject(
+            "INSERT INTO characters (account_id, name, tenant_id, playable_state_key) "
+                + "VALUES (23, 'Legacy Actor', ?, 'shared-live') RETURNING id",
+            Long.class,
+            entityTenantRowId);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT tenant_uuid IS NULL AND actor_identity_status = 'QUARANTINED' "
+                    + "FROM characters WHERE id = ?",
+                Boolean.class,
+                legacyCharacterId))
+        .isTrue();
+    Long itemId =
+        jdbcTemplate.queryForObject(
+            "INSERT INTO items (name, tenant_id) VALUES ('Legacy Item', ?) RETURNING id",
+            Long.class,
+            entityTenantRowId);
+    for (Long characterId : List.of(canonicalCharacterId, legacyCharacterId)) {
+      jdbcTemplate.update(
+          "INSERT INTO inventory (character_id, item_id, quantity) VALUES (?, ?, 1)",
+          characterId,
+          itemId);
+      jdbcTemplate.update(
+          "INSERT INTO character_equipment (character_id, slot, item_id) "
+              + "VALUES (?, 'hand', ?)",
+          characterId,
+          itemId);
+    }
+    Long legacyFriendId =
+        jdbcTemplate.queryForObject(
+            "INSERT INTO characters (account_id, name, tenant_id, playable_state_key) "
+                + "VALUES (24, 'Legacy Friend', ?, 'shared-live') RETURNING id",
+            Long.class,
+            entityTenantRowId);
+    jdbcTemplate.update(
+        "INSERT INTO character_friend (character_id, friend_id, tenant_id) VALUES (?, ?, ?)",
+        legacyCharacterId,
+        legacyFriendId,
+        entityTenantRowId);
+    jdbcTemplate.update(
+        "INSERT INTO character_friend (character_id, friend_id, tenant_id) VALUES (?, ?, ?)",
+        canonicalCharacterId,
+        legacyFriendId,
+        entityTenantRowId);
+    jdbcTemplate.update(
+        "INSERT INTO character_friend (character_id, friend_id, tenant_id) VALUES (?, ?, ?)",
+        legacyCharacterId,
+        canonicalCharacterId,
+        entityTenantRowId);
+    Long canonicalResourceId =
+        jdbcTemplate.queryForObject(
+            "INSERT INTO actor_resource_states "
+                + "(tenant_id, playable_state_key, character_id, stat_key, current_value) "
+                + "VALUES (?, ?, ?, 'focus', 5) RETURNING id",
+            Long.class,
+            entityTenantRowId,
+            namespaceUuid.toString(),
+            canonicalCharacterId);
+    Long legacyResourceId =
+        jdbcTemplate.queryForObject(
+            "INSERT INTO actor_resource_states "
+                + "(tenant_id, playable_state_key, character_id, stat_key, current_value) "
+                + "VALUES (?, 'shared-live', ?, 'focus', 7) RETURNING id",
+            Long.class,
+            entityTenantRowId,
+            legacyCharacterId);
+    Instant expiry = Instant.parse("2030-01-01T00:00:00Z");
+    Long canonicalConditionId =
+        jdbcTemplate.queryForObject(
+            "INSERT INTO actor_active_conditions "
+                + "(tenant_id, playable_state_key, character_id, condition_key, source_type, "
+                + "source_id, expires_at) VALUES (?, ?, ?, 'shielded', 'fixture', 'canonical', ?) "
+                + "RETURNING id",
+            Long.class,
+            entityTenantRowId,
+            namespaceUuid.toString(),
+            canonicalCharacterId,
+            java.time.OffsetDateTime.ofInstant(expiry, java.time.ZoneOffset.UTC));
+    Long legacyConditionId =
+        jdbcTemplate.queryForObject(
+            "INSERT INTO actor_active_conditions "
+                + "(tenant_id, playable_state_key, character_id, condition_key, source_type, "
+                + "source_id, expires_at) VALUES (?, 'shared-live', ?, 'shielded', 'fixture', "
+                + "'legacy', ?) RETURNING id",
+            Long.class,
+            entityTenantRowId,
+            legacyCharacterId,
+            java.time.OffsetDateTime.ofInstant(expiry, java.time.ZoneOffset.UTC));
+
+    assertThat(characterRepository.findById(canonicalCharacterId)).isEmpty();
+    assertThat(characterRepository.findWithInventoryById(canonicalCharacterId)).isEmpty();
+    assertThat(characterRepository.findByIdAndTenantId(canonicalCharacterId, entityTenantRowId))
+        .isEmpty();
+    assertThat(
+            characterRepository.findByIdAndTenantIdAndPlayableStateKey(
+                canonicalCharacterId, entityTenantRowId, namespaceUuid.toString()))
+        .isEmpty();
+    assertThat(
+            characterRepository.findByTenantIdAndAccountIdAndPlayableStateKey(
+                entityTenantRowId, 23L, namespaceUuid.toString(), Pageable.unpaged()))
+        .isEmpty();
+    assertThat(
+            characterRepository.findByTenantIdAndPlayableStateKeyAndNameIgnoreCase(
+                entityTenantRowId, namespaceUuid.toString(), "Canonical Actor"))
+        .isEmpty();
+    assertThat(characterRepository.countByTenantId(entityTenantRowId)).isEqualTo(2);
+    assertThat(characterRepository.countQuarantinedByTenantId(entityTenantRowId)).isEqualTo(2);
+    assertThat(inventoryEntryRepository.countByCharacterTenantId(entityTenantRowId)).isEqualTo(1);
+    assertThat(characterEquipmentRepository.countByCharacterTenantId(entityTenantRowId))
+        .isEqualTo(1);
+    assertThat(
+            inventoryEntryRepository.findByIdCharacterId(canonicalCharacterId, Pageable.unpaged()))
+        .isEmpty();
+    assertThat(
+            inventoryEntryRepository.findByIdCharacterIdAndCharacterTenantId(
+                canonicalCharacterId, entityTenantRowId, Pageable.unpaged()))
+        .isEmpty();
+    assertThat(
+            characterEquipmentRepository.findByIdCharacterIdAndCharacterTenantId(
+                canonicalCharacterId, entityTenantRowId, Pageable.unpaged()))
+        .isEmpty();
+
+    Character legacy = characterRepository.findById(legacyCharacterId).orElseThrow();
+    assertThat(legacy.getName()).isEqualTo("Legacy Actor");
+    assertThat(characterRepository.findWithInventoryById(legacyCharacterId)).isPresent();
+    assertThat(characterRepository.findByIdAndTenantId(legacyCharacterId, entityTenantRowId))
+        .isPresent();
+    assertThat(
+            characterRepository.findByTenantIdAndAccountIdAndPlayableStateKey(
+                entityTenantRowId, 23L, "shared-live", Pageable.unpaged()))
+        .hasSize(1);
+    assertThat(
+            inventoryEntryRepository.findByIdCharacterIdAndCharacterTenantId(
+                legacyCharacterId, entityTenantRowId, Pageable.unpaged()))
+        .hasSize(1);
+    assertThat(
+            characterEquipmentRepository.findByIdCharacterIdAndCharacterTenantId(
+                legacyCharacterId, entityTenantRowId, Pageable.unpaged()))
+        .hasSize(1);
+    legacy.setName("Updated Legacy Actor");
+    assertThat(characterRepository.save(legacy).getName()).isEqualTo("Updated Legacy Actor");
+
+    CharacterFriendKey legacyFriendKey = new CharacterFriendKey();
+    legacyFriendKey.setCharacterId(legacyCharacterId);
+    legacyFriendKey.setFriendId(legacyFriendId);
+    CharacterFriendKey canonicalFriendKey = new CharacterFriendKey();
+    canonicalFriendKey.setCharacterId(canonicalCharacterId);
+    canonicalFriendKey.setFriendId(legacyFriendId);
+    CharacterFriendKey canonicalTargetKey = new CharacterFriendKey();
+    canonicalTargetKey.setCharacterId(legacyCharacterId);
+    canonicalTargetKey.setFriendId(canonicalCharacterId);
+    assertThat(characterFriendRepository.countByTenantId(entityTenantRowId)).isEqualTo(1);
+    assertThat(characterFriendRepository.findByIdCharacterId(legacyCharacterId, Pageable.unpaged()))
+        .hasSize(1);
+    assertThat(characterFriendRepository.findById(legacyFriendKey)).isPresent();
+    assertThat(characterFriendRepository.findById(canonicalFriendKey)).isEmpty();
+    assertThat(characterFriendRepository.findById(canonicalTargetKey)).isEmpty();
+    CharacterFriend forbiddenFriend = new CharacterFriend();
+    forbiddenFriend.setId(canonicalFriendKey);
+    forbiddenFriend.setTenantId(entityTenantRowId);
+    forbiddenFriend.setCreatedAt(Instant.now());
+    assertThatThrownBy(() -> characterFriendRepository.save(forbiddenFriend))
+        .isInstanceOf(IllegalStateException.class);
+    forbiddenFriend.setId(canonicalTargetKey);
+    assertThatThrownBy(() -> characterFriendRepository.save(forbiddenFriend))
+        .isInstanceOf(IllegalStateException.class);
+    characterFriendRepository.deleteById(canonicalFriendKey);
+    characterFriendRepository.deleteById(canonicalTargetKey);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM character_friend WHERE character_id = ? OR friend_id = ?",
+                Integer.class,
+                canonicalCharacterId,
+                canonicalCharacterId))
+        .isEqualTo(2);
+    characterFriendRepository.deleteById(legacyFriendKey);
+    assertThat(characterFriendRepository.countByTenantId(entityTenantRowId)).isZero();
+    CharacterFriend restoredLegacyFriend = new CharacterFriend();
+    restoredLegacyFriend.setId(legacyFriendKey);
+    restoredLegacyFriend.setTenantId(entityTenantRowId);
+    restoredLegacyFriend.setCreatedAt(Instant.now());
+    assertThat(characterFriendRepository.save(restoredLegacyFriend)).isNotNull();
+
+    assertThat(
+            actorResourceStateRepository
+                .findByTenantIdAndPlayableStateKeyAndCharacterIdOrderByStatKeyAsc(
+                    entityTenantRowId, namespaceUuid.toString(), canonicalCharacterId))
+        .isEmpty();
+    ActorResourceState legacyResource =
+        actorResourceStateRepository
+            .findByTenantIdAndPlayableStateKeyAndCharacterIdOrderByStatKeyAsc(
+                entityTenantRowId, "shared-live", legacyCharacterId)
+            .getFirst();
+    legacyResource.setCurrentValue(8L);
+    actorResourceStateRepository.save(legacyResource);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT current_value FROM actor_resource_states WHERE id = ?",
+                Long.class,
+                legacyResourceId))
+        .isEqualTo(8L);
+    ActorResourceState canonicalResourceWrite = new ActorResourceState();
+    canonicalResourceWrite.setId(canonicalResourceId);
+    canonicalResourceWrite.setCharacterId(legacyCharacterId);
+    canonicalResourceWrite.setCurrentValue(99L);
+    assertThatThrownBy(() -> actorResourceStateRepository.save(canonicalResourceWrite))
+        .isInstanceOf(IllegalStateException.class);
+    ActorResourceState addedLegacyResource = new ActorResourceState();
+    addedLegacyResource.setTenantId(entityTenantRowId);
+    addedLegacyResource.setPlayableStateKey("shared-live");
+    addedLegacyResource.setCharacterId(legacyCharacterId);
+    addedLegacyResource.setStatKey("new-focus");
+    addedLegacyResource.setCurrentValue(11L);
+    Long addedLegacyResourceId = actorResourceStateRepository.save(addedLegacyResource).getId();
+    assertThat(addedLegacyResourceId).isNotNull();
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT current_value FROM actor_resource_states WHERE id = ?",
+                Long.class,
+                addedLegacyResourceId))
+        .isEqualTo(11L);
+    canonicalResourceWrite.setId(null);
+    canonicalResourceWrite.setTenantId(entityTenantRowId);
+    canonicalResourceWrite.setCharacterId(canonicalCharacterId);
+    canonicalResourceWrite.setPlayableStateKey(namespaceUuid.toString());
+    canonicalResourceWrite.setStatKey("new-focus");
+    assertThatThrownBy(() -> actorResourceStateRepository.save(canonicalResourceWrite))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT current_value FROM actor_resource_states WHERE id = ?",
+                Long.class,
+                canonicalResourceId))
+        .isEqualTo(5L);
+
+    Instant beforeExpiry = Instant.parse("2026-01-01T00:00:00Z");
+    assertThat(
+            actorActiveConditionRepository.findActiveForCharacter(
+                entityTenantRowId, namespaceUuid.toString(), canonicalCharacterId, beforeExpiry))
+        .isEmpty();
+    assertThat(
+            actorActiveConditionRepository
+                .findFirstByTenantIdAndPlayableStateKeyAndCharacterIdAndSourceTypeAndSourceIdOrderByIdAsc(
+                    entityTenantRowId,
+                    namespaceUuid.toString(),
+                    canonicalCharacterId,
+                    "fixture",
+                    "canonical"))
+        .isEmpty();
+    ActorActiveCondition legacyCondition =
+        actorActiveConditionRepository
+            .findActiveForCharacter(
+                entityTenantRowId, "shared-live", legacyCharacterId, beforeExpiry)
+            .getFirst();
+    legacyCondition.setStackCount(2);
+    actorActiveConditionRepository.save(legacyCondition);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT stack_count FROM actor_active_conditions WHERE id = ?",
+                Integer.class,
+                legacyConditionId))
+        .isEqualTo(2);
+    ActorActiveCondition canonicalConditionWrite = new ActorActiveCondition();
+    canonicalConditionWrite.setId(canonicalConditionId);
+    canonicalConditionWrite.setCharacterId(legacyCharacterId);
+    canonicalConditionWrite.setStackCount(9);
+    assertThatThrownBy(() -> actorActiveConditionRepository.save(canonicalConditionWrite))
+        .isInstanceOf(IllegalStateException.class);
+    ActorActiveCondition addedLegacyCondition = new ActorActiveCondition();
+    addedLegacyCondition.setTenantId(entityTenantRowId);
+    addedLegacyCondition.setPlayableStateKey("shared-live");
+    addedLegacyCondition.setCharacterId(legacyCharacterId);
+    addedLegacyCondition.setConditionKey("new-shield");
+    addedLegacyCondition.setSourceType("fixture");
+    addedLegacyCondition.setSourceId("new-legacy");
+    addedLegacyCondition.setExpiresAt(expiry.plusSeconds(60));
+    Long addedLegacyConditionId = actorActiveConditionRepository.save(addedLegacyCondition).getId();
+    assertThat(addedLegacyConditionId).isNotNull();
+    assertThat(
+            actorActiveConditionRepository
+                .findFirstByTenantIdAndPlayableStateKeyAndCharacterIdAndSourceTypeAndSourceIdOrderByIdAsc(
+                    entityTenantRowId, "shared-live", legacyCharacterId, "fixture", "new-legacy"))
+        .isPresent();
+    canonicalConditionWrite.setId(null);
+    canonicalConditionWrite.setTenantId(entityTenantRowId);
+    canonicalConditionWrite.setCharacterId(canonicalCharacterId);
+    canonicalConditionWrite.setPlayableStateKey(namespaceUuid.toString());
+    canonicalConditionWrite.setConditionKey("new-shield");
+    canonicalConditionWrite.setSourceType("fixture");
+    assertThatThrownBy(() -> actorActiveConditionRepository.save(canonicalConditionWrite))
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(actorActiveConditionRepository.deleteExpired(expiry.plusSeconds(1))).isEqualTo(1);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM actor_active_conditions WHERE id = ?",
+                Integer.class,
+                addedLegacyConditionId))
+        .isEqualTo(1);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM actor_active_conditions WHERE id = ?",
+                Integer.class,
+                canonicalConditionId))
+        .isEqualTo(1);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM actor_active_conditions WHERE id = ?",
+                Integer.class,
+                legacyConditionId))
+        .isZero();
+
+    Character canonicalIdWrite = new Character();
+    canonicalIdWrite.setId(canonicalCharacterId);
+    canonicalIdWrite.setTenantId(entityTenantRowId);
+    canonicalIdWrite.setAccountId(23L);
+    canonicalIdWrite.setPlayableStateKey(namespaceUuid.toString());
+    canonicalIdWrite.setName("Changed Canonical Actor");
+    assertThatThrownBy(() -> characterRepository.save(canonicalIdWrite))
+        .isInstanceOf(java.util.NoSuchElementException.class);
+    assertThat(
+            jdbcTemplate.queryForObject(
+                "SELECT name FROM characters WHERE id = ?", String.class, canonicalCharacterId))
+        .isEqualTo("Canonical Actor");
+
+    PreseededActorAssignmentOwnerEvidence owner =
+        evidence(assignmentUuid, accountUuid, 4L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    assertThat(
+            characterRepository
+                .readPreseededActorAssignmentReceipt(
+                    new PreseededActorAssignmentReceiptRequest(
+                        assignmentUuid,
+                        accountUuid,
+                        assigned.characterUuid(),
+                        assigned.intentDigest(),
+                        assignmentRequest(owner).expectedTarget()))
+                .isPresent())
+        .isEqualTo(!quarantined);
+    CanonicalGameplayRosterTarget rosterTarget =
+        new CanonicalGameplayRosterTarget(
+            tenantUuid,
+            realmUuid,
+            "world",
+            "realm",
+            UUID.randomUUID(),
+            4L,
+            1L,
+            1L,
+            owner.canonicalVersionUuid(),
+            owner.frozenPolicyDigest(),
+            owner.publishedReleaseBundleRef(),
+            "5".repeat(64),
+            owner.publishedOwnerProofDigest(),
+            namespaceUuid,
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+            CanonicalGameplayRosterEntryPolicy.PRESEEDED_ONLY);
+    UUID rosterRequestUuid = UUID.randomUUID();
+    CanonicalGameplayRosterReadRequest rosterRequest =
+        new CanonicalGameplayRosterReadRequest(
+            rosterRequestUuid,
+            accountUuid,
+            rosterTarget,
+            new CanonicalGameplayRosterExecutionContext(
+                accountUuid,
+                tenantUuid,
+                namespaceUuid,
+                rosterTarget.gameInstanceUuid(),
+                null,
+                UUID.randomUUID(),
+                realmUuid,
+                rosterRequestUuid,
+                PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+    assertThat(
+            characterRepository
+                .captureCanonicalGameplayRosterSnapshot(
+                    rosterRequest,
+                    new CanonicalGameplayRosterOwnerEvidence(
+                        rosterRequestUuid, accountUuid, rosterTarget, Instant.now()))
+                .actors())
+        .extracting(actor -> actor.characterUuid())
+        .containsExactly(quarantined ? new UUID[0] : new UUID[] {assigned.characterUuid()});
+  }
+
+  @Test
   void selectedAssignmentReadRequiresExactOwnerTargetAndCurrentActorProvenance() {
     PreseededActorAssignmentResult assigned =
         assign(
@@ -628,8 +1110,7 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Selected Actor",
-            "a");
+            "Selected Actor");
     var ownerEvidence =
         evidence(assignmentUuid, accountUuid, 4L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     var expectedTarget = assignmentRequest(ownerEvidence).expectedTarget();
@@ -739,32 +1220,28 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "a");
+            "Assigned Actor");
     PreseededActorAssignmentResult changedAccount =
         assign(
             assignmentUuid,
             secondAccountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "b");
+            "Assigned Actor");
     PreseededActorAssignmentResult changedScope =
         assign(
             assignmentUuid,
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
-            "Assigned Actor",
-            "c");
+            "Assigned Actor");
     PreseededActorAssignmentResult changedPayload =
         assign(
             assignmentUuid,
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Renamed Actor",
-            "d");
+            "Renamed Actor");
 
     assertThat(original.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
     assertConflictWithoutActorDisclosure(changedAccount);
@@ -794,16 +1271,14 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "a");
+            "Assigned Actor");
     PreseededActorAssignmentResult second =
         assign(
             secondAssignmentUuid,
             secondAccountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "b");
+            "Assigned Actor");
 
     assertThat(first.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
     assertThat(second.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
@@ -848,8 +1323,7 @@ class PreseededActorAssignmentIntegrationTest {
                     accountUuid,
                     4L,
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                    "Concurrent Actor",
-                    "a");
+                    "Concurrent Actor");
               });
       Future<PreseededActorAssignmentResult> second =
           executor.submit(
@@ -863,8 +1337,7 @@ class PreseededActorAssignmentIntegrationTest {
                     accountUuid,
                     4L,
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                    "Concurrent Actor",
-                    "b");
+                    "Concurrent Actor");
               });
 
       assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
@@ -893,8 +1366,7 @@ class PreseededActorAssignmentIntegrationTest {
                   accountUuid,
                   4L,
                   PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                  "Concurrent Actor",
-                  "retry"))
+                  "Concurrent Actor"))
           .isEqualTo(loser);
       assertThat(
               jdbcTemplate.queryForObject(
@@ -938,8 +1410,7 @@ class PreseededActorAssignmentIntegrationTest {
                     accountUuid,
                     4L,
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                    "Assigned Actor",
-                    "a"))
+                    "Assigned Actor"))
         .isInstanceOf(RuntimeException.class);
 
     assertThat(
@@ -963,8 +1434,7 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "a");
+            "Assigned Actor");
 
     assertThatThrownBy(
             () ->
@@ -994,8 +1464,7 @@ class PreseededActorAssignmentIntegrationTest {
                 accountUuid,
                 4L,
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                "Assigned Actor",
-                "a"))
+                "Assigned Actor"))
         .isEqualTo(assigned);
   }
 
@@ -1004,8 +1473,7 @@ class PreseededActorAssignmentIntegrationTest {
       UUID actorAccountUuid,
       long catalogRevision,
       PlayableStateScope scope,
-      String displayName,
-      String digestFirstHexDigit) {
+      String displayName) {
     PreseededActorAssignmentOwnerEvidence target =
         evidence(operationUuid, actorAccountUuid, catalogRevision, scope);
     PreseededActorAssignmentRequest request = assignmentRequest(target, displayName);

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamedesign.draft;
 
 import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -10,6 +11,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.gamedesign.entity.PublishAttempt;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
@@ -69,6 +71,17 @@ public final class IsolatedPublicationOwnerSetup {
     return retain(dsl, target, draftEpoch, notes, false);
   }
 
+  /**
+   * Explicit pre-V56 owner history fixture. The real coordinator, selection, attempt and operation
+   * writes retain original v1 framing; enabled storage guards reject this method after V56.
+   * Stipulated upstream values never provide historical inventory or fresh v2 authority.
+   */
+  public static GameDesignPublicationOperation retainHistoricalV1PreV56(
+      DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch) throws Exception {
+    return retain(
+        dsl, target, draftEpoch, "ISOLATED retained pre-V56 owner history", false, null, true);
+  }
+
   /** Actual source inheritance precedes selection; only the remote owner inputs are isolated. */
   public static GameDesignPublicationOperation retainSourceBacked(
       DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch) throws Exception {
@@ -106,11 +119,31 @@ public final class IsolatedPublicationOwnerSetup {
   public static GameDesignPublicationOperation retainFrozenSourceBacked(
       DSLContext dsl, DraftCommitBinding.TargetProof target, long draftEpoch, String notes)
       throws Exception {
-    String authoredPolicyCommit = retainPublicProductionPolicy(dsl, target);
+    return retainFrozenSourceBacked(dsl, target, draftEpoch, notes, List.of());
+  }
+
+  /** Actual owner rows must already exist before the reviewed policy/asset source commit. */
+  public static GameDesignPublicationOperation retainFrozenSourceBacked(
+      DSLContext dsl,
+      DraftCommitBinding.TargetProof target,
+      long draftEpoch,
+      String notes,
+      List<OrdinaryAsset> ordinaryAssets)
+      throws Exception {
+    String authoredPolicyCommit = retainPublicProductionPolicy(dsl, target, ordinaryAssets);
     GameDesignPublicationOperation operation =
         retain(dsl, target, draftEpoch, notes, true, authoredPolicyCommit);
     new GameDesignPublicationOperationRepository(dsl).reserveSourceBacked(operation);
     return operation;
+  }
+
+  /** Fixture input from an actual same-tenant game_assets row, not publication authority. */
+  public record OrdinaryAsset(long assetRowId, String usageKey) {
+    public OrdinaryAsset {
+      if (assetRowId <= 0 || usageKey == null || usageKey.isBlank()) {
+        throw new IllegalArgumentException("Exact ordinary asset row and usage key are required");
+      }
+    }
   }
 
   private static GameDesignPublicationOperation retain(
@@ -130,6 +163,18 @@ public final class IsolatedPublicationOwnerSetup {
       String notes,
       boolean captureSources,
       String sourceBaseReference)
+      throws Exception {
+    return retain(dsl, target, draftEpoch, notes, captureSources, sourceBaseReference, false);
+  }
+
+  private static GameDesignPublicationOperation retain(
+      DSLContext dsl,
+      DraftCommitBinding.TargetProof target,
+      long draftEpoch,
+      String notes,
+      boolean captureSources,
+      String sourceBaseReference,
+      boolean historicalV1)
       throws Exception {
     var sources = new GameDesignSourceRepository(dsl);
     var reviewed = new GameDesignReviewedBaseRepository(dsl);
@@ -184,6 +229,7 @@ public final class IsolatedPublicationOwnerSetup {
     var proof = new DraftCommitCoordinatorRepository.CoordinatorProof(draft, List.of(outcome));
     if (captureSources) {
       coordinator.advanceSourceVisibilityFence(draft, proof);
+      sources.captureSynchronized(draft);
     } else {
       coordinator.advanceVisibilityFence(draft, proof);
     }
@@ -201,11 +247,14 @@ public final class IsolatedPublicationOwnerSetup {
                     draft.commitId(),
                     draft.digest()))
             .selection();
+    var selectedBinding =
+        AuthoredDraftPublishSelectionBinding.fromStored(
+            selection.canonicalJson(), selection.digest());
     var operation =
-        IsolatedPublicationOperationFixtures.forSelection(
-            AuthoredDraftPublishSelectionBinding.fromStored(
-                selection.canonicalJson(), selection.digest()),
-            seed.world());
+        historicalV1
+            ? IsolatedPublicationOperationFixtures.historicalV1ForSelection(
+                selectedBinding, seed.world())
+            : IsolatedPublicationOperationFixtures.forSelection(selectedBinding, seed.world());
     var attempt = new PublishAttempt();
     attempt.setTenantId(target.gameDesignVersionTenantKey());
     attempt.setPublishWorkflowId(operation.workflowId());
@@ -227,36 +276,56 @@ public final class IsolatedPublicationOwnerSetup {
   }
 
   private static String retainPublicProductionPolicy(
-      DSLContext dsl, DraftCommitBinding.TargetProof target) {
+      DSLContext dsl, DraftCommitBinding.TargetProof target, List<OrdinaryAsset> ordinaryAssets) {
     var sources = new GameDesignSourceRepository(dsl);
     var genesis = sources.readGenesis(target).orElseThrow();
     String baseReference = "genesis:" + genesis.policy().receiptId();
+    var revisions = new ArrayList<RevisionPayload>();
+    revisions.add(
+        new RevisionPayload(
+            "0",
+            UUID.randomUUID(),
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            "{\"revisionKind\":\"REALM_ENTRY_POLICY\","
+                + "\"logicalRevisionId\":\"isolated-finalizer-main\","
+                + "\"policy\":{\"schemaVersion\":1,\"worldSlug\":\"world\","
+                + "\"worldDisplayName\":\"World\",\"realmSlug\":\"main\","
+                + "\"realmDisplayName\":\"Main\",\"visible\":true,"
+                + "\"publicProduction\":true,\"stateScope\":\"SHARED\","
+                + "\"entryPolicy\":\"PRESEEDED_ONLY\"}}"));
+    var affected = new ArrayList<AffectedUnit>();
+    affected.add(
+        new AffectedUnit(
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            RealmPolicySource.SCOPE,
+            target.canonicalVersionId().toString(),
+            RealmPolicySource.SCOPE,
+            "effective",
+            "0"));
+    for (OrdinaryAsset asset : List.copyOf(ordinaryAssets)) {
+      revisions.add(
+          new RevisionPayload(
+              Integer.toString(revisions.size()),
+              UUID.randomUUID(),
+              Owner.GAME_DESIGN_CONTROL_PLANE,
+              AssetSource.upsertPayload(
+                  Long.toString(asset.assetRowId()),
+                  asset.usageKey(),
+                  AssetSource.Requiredness.REQUIRED)));
+    }
+    if (!ordinaryAssets.isEmpty()) {
+      affected.add(
+          new AffectedUnit(
+              Owner.GAME_DESIGN_CONTROL_PLANE,
+              AssetSource.SCOPE,
+              target.canonicalVersionId().toString(),
+              AssetSource.SCOPE,
+              AssetSource.SCOPE_ID,
+              "0"));
+    }
     var binding =
         DraftCommitBinding.create(
-            target,
-            UUID.randomUUID(),
-            UUID.randomUUID(),
-            baseReference,
-            List.of(
-                new RevisionPayload(
-                    "0",
-                    UUID.randomUUID(),
-                    Owner.GAME_DESIGN_CONTROL_PLANE,
-                    "{\"revisionKind\":\"REALM_ENTRY_POLICY\","
-                        + "\"logicalRevisionId\":\"isolated-finalizer-main\","
-                        + "\"policy\":{\"schemaVersion\":1,\"worldSlug\":\"world\","
-                        + "\"worldDisplayName\":\"World\",\"realmSlug\":\"main\","
-                        + "\"realmDisplayName\":\"Main\",\"visible\":true,"
-                        + "\"publicProduction\":true,\"stateScope\":\"SHARED\","
-                        + "\"entryPolicy\":\"PRESEEDED_ONLY\"}}")),
-            List.of(
-                new AffectedUnit(
-                    Owner.GAME_DESIGN_CONTROL_PLANE,
-                    RealmPolicySource.SCOPE,
-                    target.canonicalVersionId().toString(),
-                    RealmPolicySource.SCOPE,
-                    "effective",
-                    "0")));
+            target, UUID.randomUUID(), UUID.randomUUID(), baseReference, revisions, affected);
     var reviewed = new GameDesignReviewedBaseRepository(dsl);
     sources.claimReviewed(
         binding, reviewed.resolve(target, DraftBaseReference.parse(baseReference)));
@@ -268,6 +337,7 @@ public final class IsolatedPublicationOwnerSetup {
         binding,
         new DraftCommitCoordinatorRepository.CoordinatorProof(
             binding, List.of(applied.ownerOutcome())));
+    sources.captureSynchronized(binding);
     coordinator.releaseApplicationSlot(binding);
     return binding.commitId().toString();
   }

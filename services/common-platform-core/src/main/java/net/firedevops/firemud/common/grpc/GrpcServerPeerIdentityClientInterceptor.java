@@ -14,8 +14,19 @@ import io.grpc.Status;
 /** Rejects response content unless its TLS session proves one exact server workload URI. */
 public final class GrpcServerPeerIdentityClientInterceptor implements ClientInterceptor {
   private final String expectedPeerUri;
+  private final String expectedLeafSha256;
 
   public GrpcServerPeerIdentityClientInterceptor(String expectedPeerUri) {
+    this(expectedPeerUri, null);
+  }
+
+  /** Pins an actual run-owned leaf in addition to the authenticated workload identity. */
+  public GrpcServerPeerIdentityClientInterceptor(
+      String expectedPeerUri, String expectedLeafSha256) {
+    if (expectedLeafSha256 != null && !expectedLeafSha256.matches("[0-9a-f]{64}")) {
+      throw new IllegalArgumentException("Exact lowerhex server leaf fingerprint required");
+    }
+    this.expectedLeafSha256 = expectedLeafSha256;
     this.expectedPeerUri =
         GrpcPeerIdentity.parseUri(expectedPeerUri)
             .map(GrpcPeerIdentity::uri)
@@ -45,9 +56,16 @@ public final class GrpcServerPeerIdentityClientInterceptor implements ClientInte
                 }
                 verified =
                     GrpcPeerIdentity.fromSslSession(
-                            call.getAttributes().get(Grpc.TRANSPORT_ATTR_SSL_SESSION))
-                        .filter(peer -> expectedPeerUri.equals(peer.uri()))
-                        .isPresent();
+                                call.getAttributes().get(Grpc.TRANSPORT_ATTR_SSL_SESSION))
+                            .filter(peer -> expectedPeerUri.equals(peer.uri()))
+                            .isPresent()
+                        && (expectedLeafSha256 == null
+                            || GrpcPeerCertificateEvidence.fromSslSession(
+                                    call.getAttributes().get(Grpc.TRANSPORT_ATTR_SSL_SESSION))
+                                .filter(
+                                    certificate ->
+                                        expectedLeafSha256.equals(certificate.leafSha256()))
+                                .isPresent());
                 if (!verified) {
                   closed = true;
                   listener.onClose(

@@ -1,5 +1,6 @@
 import dataclasses
 import fcntl
+import hashlib
 import json
 import multiprocessing
 import sys
@@ -29,6 +30,7 @@ from pr_review.state import (
     LegacyEvidenceTransition,
     PolicyOverride,
     ReviewAllocation,
+    ReviewPeriodDecision,
     ReviewState,
     StackReconciliationDecision,
     StateError,
@@ -296,7 +298,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertTrue(restored.reopens_taper)
         state = ReviewState(ordered_prs=(2827,), allocations={allocation.identity: allocation})
         self.assertEqual(ReviewState.from_dict(state.to_dict()), state)
-        self.assertEqual(state.to_dict()["schema_version"], 2)
+        self.assertEqual(state.to_dict()["schema_version"], 3)
 
     def test_review_allocation_accepts_decision_time_bounds_without_a_pinned_checkpoint(self):
         allocation = ReviewAllocation(
@@ -462,7 +464,7 @@ class ReviewStateStackTest(unittest.TestCase):
 
         self.assertEqual(state.ordered_prs, (2849,))
         self.assertEqual(state.allocations, {})
-        self.assertEqual(state.schema_version, 2)
+        self.assertEqual(state.schema_version, 3)
         self.assertEqual(state.review_period_decisions, ())
 
     def test_v1_json_read_is_nonmutating_until_the_next_successful_state_write(self):
@@ -477,14 +479,113 @@ class ReviewStateStackTest(unittest.TestCase):
 
             self.assertTrue(status["compatible"])
             self.assertEqual(status["state_schema_version"], 1)
-            self.assertEqual(loaded.schema_version, 2)
+            self.assertEqual(loaded.schema_version, 3)
             self.assertEqual(path.read_bytes(), original)
 
             StateStore(path).update(lambda state: state)
 
             persisted = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(persisted["schema_version"], 2)
+            self.assertEqual(persisted["schema_version"], 3)
             self.assertEqual(persisted["ordered_prs"], [2849])
+
+    def test_v2_json_state_and_checkpoint_period_decode_without_read_rewrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "review-state-v2.json"
+            legacy = ReviewState(ordered_prs=(2849,)).to_dict()
+            legacy["schema_version"] = 2
+            original = json.dumps(legacy, separators=(",", ":")).encode("utf-8")
+            path.write_bytes(original)
+
+            loaded = StateStore(path).load()
+
+            self.assertEqual(loaded.schema_version, 3)
+            self.assertEqual(loaded.ordered_prs, (2849,))
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_current_history_period_is_audited_without_review_anchor_fields(self):
+        fingerprints = ("a" * 64, "b" * 64)
+        digest = hashlib.sha256(
+            json.dumps(list(fingerprints), ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        decision = ReviewPeriodDecision(
+            pr=2849,
+            channel="cli",
+            checkpoint=None,
+            reviewed_head=None,
+            reviewed_parent_identity=None,
+            reviewed_parent_head=None,
+            reviewed_merge_base=None,
+            reviewed_patch_id=None,
+            current_head="a" * 40,
+            current_base_ref="develop",
+            current_base_tip="b" * 40,
+            current_parent_identity="develop",
+            current_parent_head="b" * 40,
+            current_merge_base="c" * 40,
+            current_patch_id="current-patch",
+            baseline_checkpoints=(),
+            baseline_source_run_ids=("native-run-1",),
+            minimum_completed=0,
+            maximum_completed=6,
+            zero_useful_required=3,
+            actor="operator",
+            reason="begin future-only accounting",
+            recorded_at="2026-10-13T00:00:00Z",
+            baseline_mode="current_history",
+            baseline_id="reset-key-1",
+            baseline_complete=True,
+            baseline_history_digest=digest,
+            baseline_observation_count=len(fingerprints),
+            baseline_observation_fingerprints=fingerprints,
+        )
+
+        serialized = decision.to_dict()
+        self.assertNotIn("checkpoint", serialized)
+        self.assertNotIn("reviewed_head", serialized)
+        self.assertNotIn("reviewed_parent_head", serialized)
+        restored = ReviewPeriodDecision.from_dict(serialized)
+        self.assertEqual(restored, decision)
+        self.assertEqual(restored.period_id, decision.period_id)
+
+    def test_v2_period_decision_defaults_to_checkpoint_mode(self):
+        checkpoint = {
+            "pr": 2849,
+            "channel": "cli",
+            "checkpoint": "old-checkpoint",
+            "reviewed_head": "a" * 40,
+            "reviewed_parent_identity": "develop",
+            "reviewed_parent_head": "b" * 40,
+            "reviewed_merge_base": "c" * 40,
+            "reviewed_patch_id": "reviewed-patch",
+            "current_head": "d" * 40,
+            "current_base_ref": "develop",
+            "current_base_tip": "b" * 40,
+            "current_parent_identity": "develop",
+            "current_parent_head": "b" * 40,
+            "current_merge_base": "c" * 40,
+            "current_patch_id": "current-patch",
+            "baseline_checkpoints": ["old-checkpoint"],
+            "baseline_source_run_ids": ["old-run"],
+            "minimum_completed": 0,
+            "maximum_completed": 6,
+            "zero_useful_required": 3,
+            "actor": "operator",
+            "reason": "existing checkpoint baseline",
+            "recorded_at": "2026-10-13T00:00:00Z",
+            "superseded_allocation_identity": None,
+            "superseded_allocation": None,
+        }
+        checkpoint_inputs = {
+            **checkpoint,
+            "baseline_checkpoints": tuple(checkpoint["baseline_checkpoints"]),
+            "baseline_source_run_ids": tuple(checkpoint["baseline_source_run_ids"]),
+        }
+        restored = ReviewPeriodDecision.from_dict(
+            {**checkpoint, "period_id": ReviewPeriodDecision(**checkpoint_inputs).period_id}
+        )
+
+        self.assertEqual(restored.baseline_mode, "checkpoint")
+        self.assertEqual(restored.checkpoint, "old-checkpoint")
 
     def test_review_allocation_rejects_malformed_or_incomplete_records(self):
         base = {
@@ -576,7 +677,7 @@ class ReviewStateStackTest(unittest.TestCase):
             loaded = store.load()
             self.assertEqual(loaded, state)
             document = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(document["schema_version"], 2)
+            self.assertEqual(document["schema_version"], 3)
             self.assertEqual(document["policy_overrides"]["2838:hosted"]["head"], "h1")
             self.assertEqual(document["reconciliations"][0]["parent_head"], "parent-head")
             self.assertEqual(document["summary_dispositions"][0]["summary_id"], 71)

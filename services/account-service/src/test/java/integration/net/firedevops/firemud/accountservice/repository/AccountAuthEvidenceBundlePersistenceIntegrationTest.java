@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.spy;
 
+import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -72,7 +73,8 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
   }
 
   @Test
-  void forwardCheckpointRepairRetainsV84OwnersAndCapturesZeroAndPositiveEvidence() {
+  void forwardCheckpointRepairRetainsV84OwnersAndCapturesZeroAndPositiveEvidence()
+      throws Exception {
     TestContext context = newTestContext(MigrationVersion.fromVersion("153"));
     DSLContext dsl = context.dsl();
     Account account = createAccount(context);
@@ -83,7 +85,7 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
         new AccountAuthoritySourceEvidenceRepository(dsl, authorities, outbox);
     AccountAuthEvidenceBundleRepository bundles =
         new AccountAuthEvidenceBundleRepository(dsl, authorities, outbox);
-    PendingIntent zero = preparePending(context, sources, account.getAccountUuid());
+    PendingIntent zero = prepareHistoricalBoundV153(context, sources, account.getAccountUuid());
     Map<String, List<Map<String, Object>>> before = retainedOwnerRows(dsl);
 
     // Stock V84 cannot produce a historical bundle: its insert guard calls a nonexistent
@@ -223,23 +225,144 @@ class AccountAuthEvidenceBundlePersistenceIntegrationTest {
 
   private static PendingIntent preparePending(
       TestContext context, AccountAuthoritySourceEvidenceRepository sources, UUID accountId) {
-    long now = Math.floorDiv(System.currentTimeMillis(), 1000L);
-    PendingIntent pending =
-        new PendingIntent(
-            UUID.randomUUID(),
-            UUID.randomUUID(),
-            CALLER_WORKLOAD,
-            UUID.randomUUID(),
-            UUID.randomUUID(),
-            now,
-            now,
-            now + 120L,
-            authoritySnapshot(currentSnapshot(context, sources, accountId)),
-            AccountGameplayCredentialRequestBindingFixture.binding());
+    PendingIntent pending = pendingIntent(context, sources, accountId);
     AccountGameplayDelegationIssuanceRepository issuance =
         new AccountGameplayDelegationIssuanceRepository(context.dsl(), sources);
     inTransaction(context, () -> issuance.beginPending(pending));
     return pending;
+  }
+
+  private static PendingIntent pendingIntent(
+      TestContext context, AccountAuthoritySourceEvidenceRepository sources, UUID accountId) {
+    long now = Math.floorDiv(System.currentTimeMillis(), 1000L);
+    return new PendingIntent(
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        CALLER_WORKLOAD,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        now,
+        now,
+        now + 120L,
+        authoritySnapshot(currentSnapshot(context, sources, accountId)),
+        AccountGameplayCredentialRequestBindingFixture.binding());
+  }
+
+  /**
+   * Original V153 keyed intent plus its permitted one-way SQL binding, with every guard enabled.
+   * Current issuance owners require V1005 and must not prepare historical-schema rows. The bounded
+   * candidate bytes here are retained SQL metadata fixtures, not signer/registry authority or a
+   * usable credential; this test proves bundle migration/capture and exact row retention only.
+   */
+  private static PendingIntent prepareHistoricalBoundV153(
+      TestContext context, AccountAuthoritySourceEvidenceRepository sources, UUID accountId)
+      throws Exception {
+    PendingIntent pending = pendingIntent(context, sources, accountId);
+    var authority = pending.authoritySnapshot();
+    var binding = pending.credentialRequestBinding();
+    String digest = AccountGameplayDelegationIssuanceRepository.requestDigest(pending);
+    byte[] tuple =
+        canonicalBytes(
+            GameSessionAccountDelegationProfile.authorityTuple(
+                authority.issuerGeneration(),
+                authority.accountGeneration(),
+                authority.accountSecurityCutoff()));
+    byte[] sourceVersions = canonicalBytes(authority.sourceVersions());
+    String tokenHash = "cd".repeat(32);
+    byte[] candidate =
+        canonicalBytes(
+            Map.of(
+                "schemaVersion",
+                "historical-bound-sql-fixture-v153",
+                "operationId",
+                pending.operationId().toString(),
+                "requestId",
+                pending.requestId().toString(),
+                "requestDigest",
+                digest,
+                "accountId",
+                accountId.toString(),
+                "jti",
+                pending.tokenJti().toString(),
+                "tokenHash",
+                tokenHash,
+                "kid",
+                "historical-sql-fixture",
+                "signerGeneration",
+                "1"));
+    inTransaction(
+        context,
+        () -> {
+          int inserted =
+              context
+                  .dsl()
+                  .execute(
+                      "INSERT INTO account_gameplay_delegation_issuance_operations "
+                          + "(operation_id, request_id, account_uuid, caller_workload, caller_context_id, "
+                          + "request_digest_version, request_digest, credential_request_digest_version, "
+                          + "credential_digest_key_id, credential_request_digest, token_jti, token_generation, "
+                          + "issued_at_epoch_second, not_before_epoch_second, expires_at_epoch_second, "
+                          + "authority_issuer_generation, authority_issuer_source_version, "
+                          + "authority_account_generation, authority_account_source_version, issuance_fence, "
+                          + "issuance_fence_source_version, authority_tuple_canonical_bytes, "
+                          + "membership_version_canonical_bytes, authority_source_versions_canonical_bytes) "
+                          + "VALUES (?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                      pending.operationId(),
+                      pending.requestId(),
+                      accountId,
+                      pending.callerWorkload(),
+                      pending.callerContextId(),
+                      digest,
+                      binding.digestSchemaVersion(),
+                      binding.digestKeyId(),
+                      binding.credentialRequestDigest(),
+                      pending.tokenJti(),
+                      pending.issuedAtEpochSecond(),
+                      pending.notBeforeEpochSecond(),
+                      pending.expiresAtEpochSecond(),
+                      authority.issuerGeneration(),
+                      authority.issuerSourceVersion(),
+                      authority.accountGeneration(),
+                      authority.accountSourceVersion(),
+                      authority.issuanceFence(),
+                      authority.issuanceFenceSourceVersion(),
+                      tuple,
+                      "{}".getBytes(StandardCharsets.US_ASCII),
+                      sourceVersions);
+          assertThat(inserted).isEqualTo(1);
+          assertThat(
+                  context
+                      .dsl()
+                      .execute(
+                          "UPDATE account_gameplay_delegation_issuance_operations SET token_hash = ?, signer_kid = ?, "
+                              + "signer_generation = ?, pending_registry_candidate_bytes = ? WHERE request_id = ? AND status = 'PENDING'",
+                          tokenHash,
+                          "historical-sql-fixture",
+                          "1",
+                          candidate,
+                          pending.requestId()))
+              .isEqualTo(1);
+          var row =
+              Objects.requireNonNull(
+                  context
+                      .dsl()
+                      .fetchOne(
+                          "SELECT token_hash, pending_registry_candidate_bytes, credential_request_digest_version "
+                              + "FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
+                          pending.requestId()));
+          assertThat(row.get("token_hash", String.class)).isEqualTo(tokenHash);
+          assertThat(row.get("pending_registry_candidate_bytes", byte[].class))
+              .containsExactly(candidate);
+          assertThat(row.get("credential_request_digest_version", Short.class))
+              .isEqualTo((short) 1);
+          return null;
+        });
+    return pending;
+  }
+
+  private static byte[] canonicalBytes(Object value) throws Exception {
+    JsonMapper json = JsonMapper.builder().build();
+    return Rfc8785CanonicalJson.canonicalizeUtf8(json.writeValueAsString(value));
   }
 
   private static Map<String, List<Map<String, Object>>> retainedOwnerRows(DSLContext dsl) {

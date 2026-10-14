@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import integration.net.firedevops.firemud.gamesession.repository.CanonicalHumanPublicationOwnerTestFixtures;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -36,6 +37,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSou
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchPreparationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
@@ -100,8 +102,9 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
             fixture.dsl.fetchCount(
                 DSL.table(DSL.name("game_session_canonical_launch_preparation"))))
         .isZero();
-    IntakeReceipt source = java.util.Objects.requireNonNull(fixture.preV24Source);
-    CanonicalRealmCatalogSnapshot catalog = java.util.Objects.requireNonNull(fixture.preV24Catalog);
+    fixture.requireHistoricalRowsRetained();
+    IntakeReceipt source = fixture.registerFreshSource();
+    CanonicalRealmCatalogSnapshot catalog = fixture.createCatalog(source);
     assertThat(
             fixture.sourceRepository.read(
                 source.operationId(), TENANT, source.source().worldSlug(), NAMESPACE))
@@ -158,6 +161,7 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
                     RETAINED_TENANT_ID)
                 .get("playable_state_namespace_id", UUID.class))
         .isEqualTo(RETAINED_SHARED_NAMESPACE_ID);
+    fixture.requireHistoricalRowsRetained();
     verify(syntheticGameDesign, times(1)).resolve(any());
     verify(syntheticGameDesign, times(1)).get(any(GetRequest.class));
   }
@@ -634,27 +638,41 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
       preV24Source =
           java.util.Objects.requireNonNull(
               transactions.execute(
-                  status -> sourceRepository.register(INTAKE_REQUEST, freshSource())));
-      CreateCanonicalRealmCatalogRequest catalogRequest =
-          new CreateCanonicalRealmCatalogRequest(
-              CATALOG_REQUEST,
-              NAMESPACE,
-              TENANT,
-              preV24Source.operationId(),
-              "violet-realm",
-              "Violet Realm",
-              true,
-              true,
-              "SHARED",
-              "explicit-policy-v1",
-              null,
-              null);
-      var preparedCatalog = catalogRepository.prepareInitialPublicProduction(catalogRequest);
-      preV24Catalog =
-          java.util.Objects.requireNonNull(
-              transactions.execute(
-                  status -> catalogRepository.createInitialPublicProduction(preparedCatalog)));
+                  status -> sourceRepository.register(uuid(977), historicalSource())));
+      preV24Catalog = seedHistoricalCatalog(transactionalDsl, transactions, preV24Source);
     }
+    String historicalCatalogBefore =
+        preV24Catalog == null
+            ? null
+            : historicalProjection(
+                transactionalDsl,
+                "game_session_canonical_realm_catalog",
+                "creation_request_id",
+                preV24Catalog.creationRequestId());
+    String historicalSourceBefore =
+        preV24Source == null
+            ? null
+            : historicalProjection(
+                transactionalDsl,
+                "game_session_authored_world_source_intake",
+                "operation_id",
+                preV24Source.operationId());
+    String historicalNamespaceBefore =
+        preV24Source == null
+            ? null
+            : historicalProjection(
+                transactionalDsl,
+                "gameplay_tenant_shared_playable_state_namespace",
+                "canonical_tenant_id",
+                preV24Source.source().canonicalTenantId());
+    String historicalBindingBefore =
+        preV24Source == null
+            ? null
+            : historicalProjection(
+                transactionalDsl,
+                "game_session_authored_world_tenant_source_binding",
+                "canonical_tenant_id",
+                preV24Source.source().canonicalTenantId());
 
     Flyway.configure()
         .dataSource(dataSource)
@@ -678,7 +696,11 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
         transactionManager,
         transactions,
         preV24Source,
-        preV24Catalog);
+        preV24Catalog,
+        historicalCatalogBefore,
+        historicalSourceBefore,
+        historicalNamespaceBefore,
+        historicalBindingBefore);
   }
 
   private static AuthoredWorldSourceEvidence freshSource() {
@@ -720,6 +742,206 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
         evidenceDigest);
   }
 
+  /** Literal V23 owner rows are retained history, never complete current policy authority. */
+  private static AuthoredWorldSourceEvidence historicalSource() {
+    UUID tenant = uuid(970);
+    UUID registration = uuid(971);
+    UUID operation = uuid(972);
+    String requestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            NAMESPACE,
+            registration,
+            tenant,
+            "historical-tenant",
+            "historical-world",
+            "Historical World");
+    return new AuthoredWorldSourceEvidence(
+        1,
+        NAMESPACE,
+        registration,
+        operation,
+        requestDigest,
+        tenant,
+        "historical-tenant",
+        "historical-world",
+        "Historical World",
+        971L,
+        "historical-gds-key",
+        "NEW_GAME_ROW",
+        AuthoredWorldSourceDigest.evidenceDigest(
+            NAMESPACE,
+            registration,
+            operation,
+            requestDigest,
+            tenant,
+            "historical-tenant",
+            "historical-world",
+            "Historical World",
+            971L,
+            "historical-gds-key",
+            "NEW_GAME_ROW"));
+  }
+
+  private static CanonicalRealmCatalogSnapshot seedHistoricalCatalog(
+      DSLContext dsl, TransactionTemplate transactions, IntakeReceipt intake) {
+    var source = intake.source();
+    UUID request = uuid(976);
+    UUID realm = uuid(974);
+    UUID namespace = uuid(973);
+    String requestDigest =
+        historicalDigest(
+            "game-session-canonical-realm-catalog-request/v1",
+            "1",
+            request.toString(),
+            NAMESPACE,
+            source.canonicalTenantId().toString(),
+            intake.operationId().toString(),
+            intake.intakeRequestId().toString(),
+            intake.requestDigest(),
+            intake.receiptDigest(),
+            "1",
+            source.registrationRequestId().toString(),
+            source.operationId().toString(),
+            source.requestDigest(),
+            source.canonicalTenantId().toString(),
+            source.tenantSlug(),
+            source.worldSlug(),
+            source.worldDisplayName(),
+            Long.toString(source.sourceGameRowId()),
+            source.sourceGameTenantKey(),
+            source.provenanceKind(),
+            source.evidenceDigest(),
+            "historical-realm",
+            "Historical Realm",
+            "true",
+            "true",
+            "SHARED",
+            "PRESEEDED_ONLY",
+            "ABSENT",
+            "ABSENT");
+    String receiptDigest =
+        historicalDigest(
+            "game-session-canonical-realm-catalog-receipt/v1",
+            "1",
+            NAMESPACE,
+            source.canonicalTenantId().toString(),
+            request.toString(),
+            requestDigest,
+            realm.toString(),
+            namespace.toString(),
+            "1",
+            intake.operationId().toString(),
+            intake.receiptDigest());
+    java.util.Map<String, Object> columns = new java.util.LinkedHashMap<>();
+    columns.put("target_namespace", NAMESPACE);
+    columns.put("canonical_tenant_id", source.canonicalTenantId());
+    columns.put("tenant_slug", source.tenantSlug());
+    columns.put("world_slug", source.worldSlug());
+    columns.put("realm_id", realm);
+    columns.put("realm_slug", "historical-realm");
+    columns.put("realm_display_name", "Historical Realm");
+    columns.put("visible", true);
+    columns.put("public_production", true);
+    columns.put("state_scope", "SHARED");
+    columns.put("playable_state_namespace_id", namespace);
+    columns.put("character_creation_policy", "PRESEEDED_ONLY");
+    columns.put("catalog_revision", 1L);
+    columns.put("creation_request_id", request);
+    columns.put("request_digest", requestDigest);
+    columns.put("receipt_digest", receiptDigest);
+    columns.put("source_intake_operation_id", intake.operationId());
+    columns.put("source_intake_schema_version", 1);
+    columns.put("source_intake_request_id", intake.intakeRequestId());
+    columns.put("source_intake_request_digest", intake.requestDigest());
+    columns.put("source_intake_receipt_digest", intake.receiptDigest());
+    columns.put("source_schema_version", 1);
+    columns.put("source_registration_request_id", source.registrationRequestId());
+    columns.put("source_operation_id", source.operationId());
+    columns.put("source_request_digest", source.requestDigest());
+    columns.put("source_world_display_name", source.worldDisplayName());
+    columns.put("source_game_row_id", source.sourceGameRowId());
+    columns.put("source_game_tenant_key", source.sourceGameTenantKey());
+    columns.put("source_provenance_kind", source.provenanceKind());
+    columns.put("source_evidence_digest", source.evidenceDigest());
+    transactions.executeWithoutResult(
+        status -> {
+          java.util.Map<String, Object> namespaceColumns = new java.util.LinkedHashMap<>();
+          namespaceColumns.put("target_namespace", NAMESPACE);
+          namespaceColumns.put("canonical_tenant_id", source.canonicalTenantId());
+          namespaceColumns.put("playable_state_namespace_id", namespace);
+          columns.forEach(
+              (name, value) -> {
+                if (name.startsWith("source_") && !name.equals("source_world_display_name")) {
+                  namespaceColumns.put(name, value);
+                }
+              });
+          dsl.execute(
+              "INSERT INTO gameplay_tenant_shared_playable_state_namespace ("
+                  + String.join(",", namespaceColumns.keySet())
+                  + ") VALUES ("
+                  + String.join(",", java.util.Collections.nCopies(namespaceColumns.size(), "?"))
+                  + ")",
+              namespaceColumns.values().toArray());
+          dsl.execute(
+              "INSERT INTO game_session_canonical_realm_catalog ("
+                  + String.join(",", columns.keySet())
+                  + ") VALUES ("
+                  + String.join(",", java.util.Collections.nCopies(columns.size(), "?"))
+                  + ")",
+              columns.values().toArray());
+        });
+    return new CanonicalRealmCatalogSnapshot(
+        NAMESPACE,
+        source.canonicalTenantId(),
+        source.tenantSlug(),
+        source.worldSlug(),
+        realm,
+        "historical-realm",
+        "Historical Realm",
+        true,
+        true,
+        "SHARED",
+        namespace,
+        "PRESEEDED_ONLY",
+        1L,
+        request,
+        requestDigest,
+        receiptDigest,
+        intake);
+  }
+
+  private static String historicalProjection(
+      DSLContext dsl, String table, String selector, UUID identity) {
+    return requiredRecord(
+            dsl,
+            "SELECT xmin::text || '/' || (to_jsonb(owner_row) "
+                + "- 'complete_policy_set_evidence' - 'fixture_policy_request_bytes' - 'fixture_policy_seal_operation_id' "
+                + "- 'fixture_policy_seal_request_digest' - 'fixture_policy_seal_evidence_digest')::text AS retained "
+                + "FROM "
+                + table
+                + " owner_row WHERE "
+                + selector
+                + " = ?",
+            identity)
+        .get("retained", String.class);
+  }
+
+  private static String historicalDigest(String... fields) {
+    try {
+      var hash = java.security.MessageDigest.getInstance("SHA-256");
+      for (String value : fields) {
+        byte[] bytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        hash.update(
+            Integer.toString(bytes.length).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        hash.update((byte) ':');
+        hash.update(bytes);
+      }
+      return "sha256:" + java.util.HexFormat.of().formatHex(hash.digest());
+    } catch (java.security.NoSuchAlgorithmException unavailable) {
+      throw new IllegalStateException(unavailable);
+    }
+  }
+
   private static Record requiredRecord(DSLContext dsl, String sql, Object... bindings) {
     return java.util.Objects.requireNonNull(
         dsl.fetchOne(sql, bindings), "Expected owner evidence row is missing");
@@ -742,7 +964,55 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
       DataSourceTransactionManager transactionManager,
       TransactionTemplate transactions,
       IntakeReceipt preV24Source,
-      CanonicalRealmCatalogSnapshot preV24Catalog) {
+      CanonicalRealmCatalogSnapshot preV24Catalog,
+      String historicalCatalogBefore,
+      String historicalSourceBefore,
+      String historicalNamespaceBefore,
+      String historicalBindingBefore) {
+    void requireHistoricalRowsRetained() {
+      assertThat(
+              historicalProjection(
+                  dsl,
+                  "game_session_canonical_realm_catalog",
+                  "creation_request_id",
+                  preV24Catalog.creationRequestId()))
+          .isEqualTo(historicalCatalogBefore);
+      assertThat(
+              historicalProjection(
+                  dsl,
+                  "game_session_authored_world_source_intake",
+                  "operation_id",
+                  preV24Source.operationId()))
+          .isEqualTo(historicalSourceBefore);
+      assertThat(
+              historicalProjection(
+                  dsl,
+                  "gameplay_tenant_shared_playable_state_namespace",
+                  "canonical_tenant_id",
+                  preV24Source.source().canonicalTenantId()))
+          .isEqualTo(historicalNamespaceBefore);
+      assertThat(
+              historicalProjection(
+                  dsl,
+                  "game_session_authored_world_tenant_source_binding",
+                  "canonical_tenant_id",
+                  preV24Source.source().canonicalTenantId()))
+          .isEqualTo(historicalBindingBefore);
+      assertThat(
+              requiredRecord(
+                      dsl,
+                      "SELECT complete_policy_set_evidence FROM "
+                          + "game_session_canonical_realm_catalog WHERE creation_request_id = ?",
+                      preV24Catalog.creationRequestId())
+                  .get("complete_policy_set_evidence", byte[].class))
+          .isNull();
+      assertThatThrownBy(
+              () -> catalogRepository.readByRequest(NAMESPACE, preV24Catalog.creationRequestId()))
+          .isInstanceOf(
+              GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException.class)
+          .hasMessage("Exactly one complete catalog policy provenance required");
+    }
+
     IntakeReceipt registerFreshSource() {
       IntakeReceipt receipt =
           transactions.execute(status -> sourceRepository.register(INTAKE_REQUEST, freshSource()));
@@ -761,10 +1031,29 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
               true,
               true,
               "SHARED",
-              "explicit-policy-v1",
+              "PRESEEDED_ONLY",
               null,
               null);
-      var prepared = catalogRepository.prepareInitialPublicProduction(request);
+      transactions.execute(
+          status ->
+              new GameSessionFreshTenantAssociationRepository(dsl)
+                  .associateFresh(
+                      uuid(980),
+                      NAMESPACE,
+                      source,
+                      CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
+                          source.source())));
+      var policy =
+          CanonicalHumanPublicationOwnerTestFixtures.publishedSet(
+              request,
+              source.source(),
+              uuid(981),
+              515L,
+              "controlled-publish-launch-preparation",
+              "synthetic-published-release-616",
+              "generation-config-1",
+              4L);
+      var prepared = catalogRepository.prepareInitialPublicProduction(request, policy);
       CanonicalRealmCatalogSnapshot created =
           transactions.execute(status -> catalogRepository.createInitialPublicProduction(prepared));
       return java.util.Objects.requireNonNull(created);

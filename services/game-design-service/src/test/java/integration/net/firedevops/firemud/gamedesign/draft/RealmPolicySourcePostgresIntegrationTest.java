@@ -60,8 +60,12 @@ class RealmPolicySourcePostgresIntegrationTest {
     var fixture = freshFixture();
     var genesis = fixture.sources().readGenesis(fixture.target()).orElseThrow();
     assertThat(genesis.policy().receiptId()).isEqualTo(genesis.command().receiptId());
+    assertThat(genesis.asset().receiptId()).isNotEqualTo(genesis.policy().receiptId());
+    assertThat(genesis.asset().target()).isEqualTo(fixture.target());
     assertThat(genesis.policy().creationTransactionId())
         .isEqualTo(genesis.command().creationTransactionId());
+    assertThat(genesis.asset().creationTransactionId())
+        .isEqualTo(genesis.policy().creationTransactionId());
     assertThat(fixture.reads().readGenesis(fixture.target())).contains(genesis.policy());
     assertThat(fixture.coordinator().readVisibilityFence(fixture.target())).isEmpty();
     assertThat(fixture.dsl().fetchCount(DSL.table("game_design_realm_policy_snapshot"))).isZero();
@@ -78,6 +82,15 @@ class RealmPolicySourcePostgresIntegrationTest {
     synchronize(fixture, first, applied);
     assertThat(fixture.reads().readSnapshot(fixture.target(), first.commitId()).orElseThrow())
         .isEqualTo(applied.snapshot());
+    assertThat(
+            fixture
+                .sources()
+                .readSynchronized(fixture.target(), first.commitId())
+                .orElseThrow()
+                .asset()
+                .items())
+        .isEmpty();
+    assertThat(fixture.dsl().fetchCount(DSL.table("version_asset"))).isZero();
   }
 
   @Test
@@ -1019,7 +1032,11 @@ class RealmPolicySourcePostgresIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
+        .locations(
+            "filesystem:"
+                + java.nio.file.Path.of("src/main/resources/db/migration")
+                    .toAbsolutePath()
+                    .normalize())
         .table("flyway_schema_history_game_design_service")
         .load()
         .migrate();
@@ -1193,7 +1210,11 @@ class RealmPolicySourcePostgresIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
+        .locations(
+            "filesystem:"
+                + java.nio.file.Path.of("src/main/resources/db/migration")
+                    .toAbsolutePath()
+                    .normalize())
         .table("flyway_schema_history_game_design_service")
         .target(target)
         .load()

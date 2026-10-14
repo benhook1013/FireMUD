@@ -7,7 +7,8 @@ import org.springframework.web.socket.WebSocketSession;
 public interface ActiveTransportSessionRegistry {
   void register(long sessionId, WebSocketSession session);
 
-  void unregister(long sessionId, WebSocketSession session);
+  /** Returns true only when this exact currently registered transport was atomically removed. */
+  boolean unregister(long sessionId, WebSocketSession session);
 
   Optional<WebSocketSession> find(long sessionId);
 }

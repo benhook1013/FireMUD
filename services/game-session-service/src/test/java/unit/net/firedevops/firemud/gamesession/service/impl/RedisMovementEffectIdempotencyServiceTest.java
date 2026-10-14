@@ -45,23 +45,26 @@ class RedisMovementEffectIdempotencyServiceTest {
 
   @Test
   void applyPreservesRoutingBundleWhenUpdatingRoom() {
+    var retainedContext =
+        new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture().context();
     SessionContext current =
         new SessionContext(
-            41L,
-            22L,
-            "123",
-            "demo@example.com",
-            7001L,
-            "demo",
-            1L,
-            "R-1021",
-            "jwt-token",
-            "en-NZ",
-            1L,
-            "demo",
-            "production",
-            7L,
-            "SHARED");
+                41L,
+                22L,
+                "123",
+                "demo@example.com",
+                7001L,
+                "demo",
+                1L,
+                "R-1021",
+                "jwt-token",
+                "en-NZ",
+                1L,
+                "demo",
+                "production",
+                7L,
+                "SHARED")
+            .withFirstPartyConnectContext(retainedContext);
     when(valueOperations.get("sessionctx:22:41:context")).thenReturn(current);
     when(valueOperations.get("sessionctx:22:41:movement-effect:tfx-1")).thenReturn(null);
 
@@ -71,6 +74,7 @@ class RedisMovementEffectIdempotencyServiceTest {
     SessionContext updated = result.context();
     assertNotNull(updated);
     assertEquals("R-2045", updated.roomInstanceId());
+    assertEquals(retainedContext, updated.firstPartyConnectContext());
     assertEquals("demo", updated.worldSlug());
     assertEquals("production", updated.realmSlug());
     assertEquals(7L, updated.pointerVersion());

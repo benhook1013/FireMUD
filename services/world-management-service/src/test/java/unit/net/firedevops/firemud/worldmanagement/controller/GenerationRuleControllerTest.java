@@ -47,7 +47,7 @@ class GenerationRuleControllerTest {
     when(generationRuleService.listRules(eq(1L), any(Pageable.class)))
         .thenReturn(
             new PageImpl<>(
-                List.of(new GenerationRuleDto(7L, 1L, "room", "ZONE_SUBTREE", "12", "{}"))));
+                List.of(new GenerationRuleDto(7L, 1L, 7L, "room", "ZONE_SUBTREE", "12", "{}"))));
 
     mockMvc
         .perform(get("/generation/rules").param("tenantId", "1"))
@@ -64,7 +64,8 @@ class GenerationRuleControllerTest {
         .perform(
             post("/generation/rules")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"id\":7,\"tenantId\":1,\"name\":\"room\",\"value\":\"{}\"}"))
+                .content(
+                    "{\"id\":7,\"tenantId\":1,\"versionId\":7,\"name\":\"room\",\"value\":\"{}\"}"))
         .andExpect(status().isForbidden());
   }
 

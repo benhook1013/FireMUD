@@ -44,6 +44,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Repository
@@ -148,16 +149,24 @@ public class CharacterRepository {
     this.dsl = dsl;
   }
 
+  static Condition legacyCharacterExists(Field<Long> characterId) {
+    return DSL.exists(
+        DSL.selectOne()
+            .from(CHARACTERS)
+            .where(CHARACTERS.ID.eq(characterId).and(legacyCharacterRow())));
+  }
+
+  static Condition legacyCharacterRow() {
+    return CHARACTERS
+        .ACTOR_IDENTITY_STATUS
+        .ne(ActorIdentityStatus.OWNER_RESOLVED.name())
+        .and(CHARACTERS.TENANT_UUID.isNull());
+  }
+
   public Optional<Character> findWithInventoryById(Long id) {
     Character character =
         dsl.selectFrom(CHARACTERS)
-            .where(
-                CHARACTERS
-                    .ID
-                    .eq(id)
-                    .and(
-                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                            ActorIdentityStatus.OWNER_RESOLVED.name())))
+            .where(CHARACTERS.ID.eq(id).and(legacyCharacterRow()))
             .fetchOne(this::toEntity);
     if (character == null) {
       return Optional.empty();
@@ -168,6 +177,7 @@ public class CharacterRepository {
                     INVENTORY.CHARACTER_ID,
                     INVENTORY.ITEM_ID,
                     INVENTORY.QUANTITY,
+                    INVENTORY.VERSION,
                     ITEMS.ID,
                     ITEMS.TENANT_ID,
                     ITEMS.VERSION_ID,
@@ -192,13 +202,7 @@ public class CharacterRepository {
   public Optional<Character> findById(Long id) {
     return Optional.ofNullable(
         dsl.selectFrom(CHARACTERS)
-            .where(
-                CHARACTERS
-                    .ID
-                    .eq(id)
-                    .and(
-                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                            ActorIdentityStatus.OWNER_RESOLVED.name())))
+            .where(CHARACTERS.ID.eq(id).and(legacyCharacterRow()))
             .fetchOne(this::toEntity));
   }
 
@@ -210,9 +214,7 @@ public class CharacterRepository {
                     .ID
                     .eq(id)
                     .and(CHARACTERS.TENANT_ID.eq(tenantId))
-                    .and(
-                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                            ActorIdentityStatus.OWNER_RESOLVED.name())))
+                    .and(legacyCharacterRow()))
             .fetchOne(this::toEntity));
   }
 
@@ -226,9 +228,7 @@ public class CharacterRepository {
                     .eq(id)
                     .and(CHARACTERS.TENANT_ID.eq(tenantId))
                     .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
-                    .and(
-                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                            ActorIdentityStatus.OWNER_RESOLVED.name())))
+                    .and(legacyCharacterRow()))
             .fetchOne(this::toEntity));
   }
 
@@ -240,7 +240,7 @@ public class CharacterRepository {
             .eq(tenantId)
             .and(CHARACTERS.ACCOUNT_ID.eq(accountId))
             .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
-            .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq(ActorIdentityStatus.OWNER_RESOLVED.name()));
+            .and(legacyCharacterRow());
     long total = dsl.fetchCount(CHARACTERS, condition);
     var content =
         dsl.selectFrom(CHARACTERS)
@@ -264,15 +264,13 @@ public class CharacterRepository {
                     .eq(tenantId)
                     .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
                     .and(DSL.lower(CHARACTERS.NAME).eq(name.toLowerCase()))
-                    .and(
-                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                            ActorIdentityStatus.OWNER_RESOLVED.name())))
+                    .and(legacyCharacterRow()))
             .limit(1)
             .fetchOne(this::toEntity));
   }
 
   public long countByTenantId(Long tenantId) {
-    return dsl.fetchCount(CHARACTERS, CHARACTERS.TENANT_ID.eq(tenantId));
+    return dsl.fetchCount(CHARACTERS, CHARACTERS.TENANT_ID.eq(tenantId).and(legacyCharacterRow()));
   }
 
   public long countQuarantinedByTenantId(Long tenantId) {
@@ -281,7 +279,8 @@ public class CharacterRepository {
         CHARACTERS
             .TENANT_ID
             .eq(tenantId)
-            .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq(ActorIdentityStatus.QUARANTINED.name())));
+            .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq(ActorIdentityStatus.QUARANTINED.name()))
+            .and(CHARACTERS.TENANT_UUID.isNull()));
   }
 
   /**
@@ -735,7 +734,7 @@ public class CharacterRepository {
    * Callers use this only inside the same writable transaction that records an applicability hold,
    * so actor changes either win first and invalidate the receipt or observe the durable hold.
    */
-  @Transactional
+  @Transactional(propagation = Propagation.MANDATORY)
   public Optional<PreseededActorAssignmentReceipt> lockCurrentPreseededActorAssignmentReceipt(
       UUID assignmentUuid, UUID canonicalAccountUuid, UUID characterUuid, String intentDigest) {
     if (!org.springframework.transaction.support.TransactionSynchronizationManager
@@ -836,11 +835,7 @@ public class CharacterRepository {
   }
 
   private long requireEntityTenantRow(UUID tenantUuid) {
-    dsl.insertInto(TENANT_IDENTITIES)
-        .set(CANONICAL_TENANT_UUID, tenantUuid)
-        .onConflict(CANONICAL_TENANT_UUID)
-        .doNothing()
-        .execute();
+    ensureEntityTenantRow(tenantUuid);
     Long rowId =
         dsl.select(ENTITY_TENANT_ROW_ID)
             .from(TENANT_IDENTITIES)
@@ -851,6 +846,30 @@ public class CharacterRepository {
       throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ENTITY_TENANT_MAPPING_UNAVAILABLE");
     }
     return rowId;
+  }
+
+  private long requireEntityTenantRowForRoster(UUID tenantUuid) {
+    ensureEntityTenantRow(tenantUuid);
+    // Assignment's FOR UPDATE still excludes this reader while the immutable mapping stays stable.
+    Long rowId =
+        dsl.select(ENTITY_TENANT_ROW_ID)
+            .from(TENANT_IDENTITIES)
+            .where(CANONICAL_TENANT_UUID.eq(tenantUuid))
+            .forKeyShare()
+            .fetchOne(ENTITY_TENANT_ROW_ID);
+    if (rowId == null || rowId <= 0L) {
+      throw new IllegalStateException(
+          "CANONICAL_GAMEPLAY_ROSTER_ENTITY_TENANT_MAPPING_UNAVAILABLE");
+    }
+    return rowId;
+  }
+
+  private void ensureEntityTenantRow(UUID tenantUuid) {
+    dsl.insertInto(TENANT_IDENTITIES)
+        .set(CANONICAL_TENANT_UUID, tenantUuid)
+        .onConflict(CANONICAL_TENANT_UUID)
+        .doNothing()
+        .execute();
   }
 
   private boolean hasOwnerResolvedAccountNamespace(PreseededActorAssignmentOwnerEvidence evidence) {
@@ -975,7 +994,7 @@ public class CharacterRepository {
 
     CanonicalGameplayRosterTarget target = ownerEvidence.target();
     lockCanonicalRosterNamespace(target);
-    requireEntityTenantRow(target.tenantUuid());
+    requireEntityTenantRowForRoster(target.tenantUuid());
 
     List<CanonicalGameplayRosterActor> currentActors =
         readCurrentCanonicalRoster(request.canonicalAccountUuid(), target);
@@ -1105,6 +1124,7 @@ public class CharacterRepository {
         .doNothing()
         .execute();
 
+    // Assignment takes FOR UPDATE on this row before actor insertion.
     String enrolledScope =
         dsl.select(ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_SCOPE)
             .from(ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES)
@@ -1115,7 +1135,7 @@ public class CharacterRepository {
                     .and(
                         ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_NAMESPACE_ID.eq(
                             target.playableStateNamespaceId())))
-            .forUpdate()
+            .forShare()
             .fetchOne(ENTITY_PLAYABLE_STATE_NAMESPACE_SCOPES.PLAYABLE_STATE_SCOPE);
     if (!target.playableStateScope().name().equals(enrolledScope)) {
       throw new IllegalStateException("CANONICAL_GAMEPLAY_ROSTER_NAMESPACE_SCOPE_MISMATCH");
@@ -1296,37 +1316,27 @@ public class CharacterRepository {
               .set(CHARACTERS.VERSION, entity.getVersion())
               .returningResult(CHARACTERS.ID)
               .fetchOne(CHARACTERS.ID);
-      return findStoredById(id).orElseThrow();
+      return findById(id).orElseThrow();
     }
-    int updatedRows =
-        dsl.update(CHARACTERS)
-            .set(CHARACTERS.TENANT_ID, entity.getTenantId())
-            .set(CHARACTERS.ACCOUNT_ID, entity.getAccountId())
-            .set(CHARACTERS.PLAYABLE_STATE_KEY, entity.getPlayableStateKey())
-            .set(CHARACTERS.NAME, entity.getName())
-            .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())
-            .set(CHARACTERS.LEVEL, entity.getLevel())
-            .set(CHARACTERS.EXPERIENCE, entity.getExperience())
-            .set(CHARACTERS.STRENGTH, entity.getStrength())
-            .set(CHARACTERS.AGILITY, entity.getAgility())
-            .set(CHARACTERS.INTELLIGENCE, entity.getIntelligence())
-            .set(CHARACTERS.STAMINA, entity.getStamina())
-            .set(CHARACTERS.HEALTH, entity.getHealth())
-            .set(CHARACTERS.MANA, entity.getMana())
-            .set(CHARACTERS.LAST_LOGIN_AT, toLocalDateTime(entity.getLastLoginAt()))
-            .set(CHARACTERS.VERSION, entity.getVersion() + 1)
-            .where(
-                CHARACTERS
-                    .ID
-                    .eq(entity.getId())
-                    .and(CHARACTERS.TENANT_ID.eq(entity.getTenantId()))
-                    .and(
-                        CHARACTERS.ACTOR_IDENTITY_STATUS.eq(
-                            ActorIdentityStatus.OWNER_RESOLVED.name())))
-            .execute();
-    if (updatedRows != 1) {
-      throw new IllegalStateException("CHARACTER_IDENTITY_NOT_OWNER_RESOLVED");
-    }
+    dsl.update(CHARACTERS)
+        .set(CHARACTERS.TENANT_ID, entity.getTenantId())
+        .set(CHARACTERS.ACCOUNT_ID, entity.getAccountId())
+        .set(CHARACTERS.PLAYABLE_STATE_KEY, entity.getPlayableStateKey())
+        .set(CHARACTERS.NAME, entity.getName())
+        .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())
+        .set(CHARACTERS.LEVEL, entity.getLevel())
+        .set(CHARACTERS.EXPERIENCE, entity.getExperience())
+        .set(CHARACTERS.STRENGTH, entity.getStrength())
+        .set(CHARACTERS.AGILITY, entity.getAgility())
+        .set(CHARACTERS.INTELLIGENCE, entity.getIntelligence())
+        .set(CHARACTERS.STAMINA, entity.getStamina())
+        .set(CHARACTERS.HEALTH, entity.getHealth())
+        .set(CHARACTERS.MANA, entity.getMana())
+        .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())
+        .set(CHARACTERS.LAST_LOGIN_AT, toLocalDateTime(entity.getLastLoginAt()))
+        .set(CHARACTERS.VERSION, entity.getVersion() + 1)
+        .where(CHARACTERS.ID.eq(entity.getId()).and(legacyCharacterRow()))
+        .execute();
     return findById(entity.getId()).orElseThrow();
   }
 
@@ -1362,11 +1372,6 @@ public class CharacterRepository {
     character.setLastLoginAt(toInstant(record.get(CHARACTERS.LAST_LOGIN_AT)));
     character.setVersion(record.get(CHARACTERS.VERSION));
     return character;
-  }
-
-  private Optional<Character> findStoredById(Long id) {
-    return Optional.ofNullable(
-        dsl.selectFrom(CHARACTERS).where(CHARACTERS.ID.eq(id)).fetchOne(this::toEntity));
   }
 
   private net.firedevops.firemud.entitymanagement.v1.PlayableStateScope scopeFrom(String value) {
