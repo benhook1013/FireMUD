@@ -399,10 +399,10 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             .as("literal migration %s", artifact.getKey())
             .isEqualTo(artifact.getValue());
       }
-    assertThat(versions(dsl)).hasSize(76);
+    assertThat(versions(dsl)).hasSize(77);
     assertThat(versions(dsl).subList(34, 40))
         .containsExactly("1003", "1004", "1005", "1006", "1007", "1007.1");
-    assertThat(versions(dsl).subList(40, 76)).containsExactlyElementsOf(remainingVersions());
+    assertThat(versions(dsl).subList(40, 77)).containsExactlyElementsOf(remainingVersions());
     var configured =
         migration(dataSource("world_management_service"), "world_management_service", null);
     assertThat(configured.getConfiguration().isOutOfOrder()).isFalse();
@@ -734,7 +734,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   @Test
-  void installed34ThroughParent40ToLatest76RetainsRowsXminAndStableLegacyUpdates()
+  void installed34ThroughParent40ToLatest77RetainsRowsXminAndStableLegacyUpdates()
       throws Exception {
     String schema = "world_fixture_upgrade_" + UUID.randomUUID().toString().replace("-", "");
     var source = dataSource(schema);
@@ -920,8 +920,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       full.migrate();
       full.validate();
       assertThat(full.getConfiguration().isOutOfOrder()).isFalse();
-      assertThat(versions(connection)).hasSize(76);
-      assertThat(versions(connection).subList(40, 76))
+      assertThat(versions(connection)).hasSize(77);
+      assertThat(versions(connection).subList(40, 77))
           .containsExactlyElementsOf(remainingVersions());
       assertThat(history(connection).subList(0, 40)).isEqualTo(parentHistory);
       assertThat(history(connection).subList(0, 75)).isEqualTo(historyAt75);
@@ -929,9 +929,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
         assertThat(retainedRows(connection, schema, entry.getKey(), entry.getValue()))
             .as("all original values and xmin for %s", entry.getKey())
             .containsAll(originalRows.get(entry.getKey()));
-      var rowsAt76 = new LinkedHashMap<>(allRows(connection));
-      rowsAt76.remove(HISTORY);
-      assertThat(rowsAt76).as("all retained row values and xmin across V1042").isEqualTo(rowsAt75);
+      var rowsAt77 = new LinkedHashMap<>(allRows(connection));
+      rowsAt77.remove(HISTORY);
+      assertThat(rowsAt77)
+          .as("all retained row values and xmin across V1042.1")
+          .isEqualTo(rowsAt75);
       assertThat(sourceOwner.read("dev", intakeRequest)).contains(intake);
       assertThat(
               versionOwner.readByCanonicalVersion(
@@ -996,7 +998,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       rowsAfterLegacyRollback.remove(HISTORY);
       assertThat(rowsAfterLegacyRollback)
           .as("all retained row values and xmin after legacy rollback")
-          .isEqualTo(rowsAt76);
+          .isEqualTo(rowsAt77);
       // No current Human protection is fabricated. Literal pre-extension legacy and owner
       // receipts are retained; a historical canonical Human association requires a separate donor.
     } finally {
@@ -1732,7 +1734,9 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   private static List<String> remainingVersions() {
-    return remainingVersionsThrough(1042);
+    List<String> versions = new ArrayList<>(remainingVersionsThrough(1042));
+    versions.add("1042.1");
+    return List.copyOf(versions);
   }
 
   private static List<String> remainingVersionsThrough(int latestWorldVersion) {

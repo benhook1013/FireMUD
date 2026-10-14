@@ -717,7 +717,7 @@ class TestDataSeederIntegrationTest {
                     "SELECT count(*) AS count FROM flyway_schema_history "
                         + "WHERE success AND type='SQL' AND version IS NOT NULL")
                 .get("count", Long.class))
-        .isEqualTo(76L);
+        .isEqualTo(worldDatabase.versionedSqlMigrationCount());
     assertThat(
             worldDatabase
                 .dsl()
@@ -1269,28 +1269,36 @@ class TestDataSeederIntegrationTest {
             container.getJdbcUrl(), container.getUsername(), container.getPassword());
     dataSource.setDriverClassName("org.postgresql.Driver");
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations(
-            "filesystem:"
-                + Path.of("..", service, "src/main/resources/db/migration")
-                    .toAbsolutePath()
-                    .normalize(),
-            "filesystem:"
-                + Path.of("../common-saga/src/main/resources/db/migration/saga")
-                    .toAbsolutePath()
-                    .normalize())
-        .load()
-        .migrate();
+    Flyway ownerFlyway =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations(
+                "filesystem:"
+                    + Path.of("..", service, "src/main/resources/db/migration")
+                        .toAbsolutePath()
+                        .normalize(),
+                "filesystem:"
+                    + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                        .toAbsolutePath()
+                        .normalize())
+            .load();
+    ownerFlyway.migrate();
+    long versionedSqlMigrationCount =
+        java.util.Arrays.stream(ownerFlyway.info().all())
+            .filter(migration -> migration.getVersion() != null)
+            .filter(migration -> "SQL".equals(migration.getType().name()))
+            .count();
     return new ComposedOwnerDatabase(
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES),
-        new DataSourceTransactionManager(dataSource));
+        new DataSourceTransactionManager(dataSource),
+        versionedSqlMigrationCount);
   }
 
-  private record ComposedOwnerDatabase(DSLContext dsl, PlatformTransactionManager transactions) {}
+  private record ComposedOwnerDatabase(
+      DSLContext dsl, PlatformTransactionManager transactions, long versionedSqlMigrationCount) {}
 
   private static GrpcChannelFactory composedChannelFactory(
       java.util.List<ManagedChannel> channels) {
