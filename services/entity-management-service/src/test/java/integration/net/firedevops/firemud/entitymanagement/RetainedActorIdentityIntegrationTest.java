@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -16,9 +17,12 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
 import net.firedevops.firemud.entitymanagement.entity.Character;
+import net.firedevops.firemud.entitymanagement.entity.CharacterFriend;
+import net.firedevops.firemud.entitymanagement.entity.CharacterFriendKey;
 import net.firedevops.firemud.entitymanagement.repository.ActorActiveConditionRepository;
 import net.firedevops.firemud.entitymanagement.repository.ActorIdentityRepository;
 import net.firedevops.firemud.entitymanagement.repository.ActorResourceStateRepository;
+import net.firedevops.firemud.entitymanagement.repository.CharacterFriendRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -81,6 +85,7 @@ class RetainedActorIdentityIntegrationTest {
   @Autowired private ActorActiveConditionRepository conditionRepository;
   @Autowired private ActorResourceStateRepository resourceRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private CharacterFriendRepository friendRepository;
   @Autowired private Flyway flyway;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
@@ -187,6 +192,67 @@ class RetainedActorIdentityIntegrationTest {
     assertThat(resources.getFirst().getMaxValue()).isNull();
     assertThat(resources.getFirst().getBaseValue()).isNull();
     assertThat(resources.getFirst().getSourceId()).isNull();
+  }
+
+  @Test
+  void legacyFriendInsertUsesGeneratedColumnTypesAndRejectsOwnerResolvedEndpoints() {
+    Character character = new Character();
+    character.setTenantId(tenantId);
+    character.setAccountId(accountId);
+    character.setPlayableStateKey("instance:" + instanceId);
+    character.setName("Legacy friend source");
+    character = characterRepository.save(character);
+
+    Character friendActor = new Character();
+    friendActor.setTenantId(tenantId);
+    friendActor.setAccountId(accountId);
+    friendActor.setPlayableStateKey("instance:" + instanceId);
+    friendActor.setName("Legacy friend target");
+    friendActor = characterRepository.save(friendActor);
+
+    Instant createdAt = Instant.parse("2026-10-15T12:34:56Z");
+    CharacterFriendKey friendKey = new CharacterFriendKey();
+    friendKey.setCharacterId(character.getId());
+    friendKey.setFriendId(friendActor.getId());
+    CharacterFriend friend = new CharacterFriend();
+    friend.setId(friendKey);
+    friend.setTenantId(tenantId);
+    friend.setCreatedAt(createdAt);
+
+    friendRepository.save(friend);
+
+    CharacterFriend readBack = friendRepository.findById(friendKey).orElseThrow();
+    assertThat(readBack.getId().getCharacterId()).isEqualTo(character.getId());
+    assertThat(readBack.getId().getFriendId()).isEqualTo(friendActor.getId());
+    assertThat(readBack.getTenantId()).isEqualTo(tenantId);
+    assertThat(readBack.getCreatedAt()).isEqualTo(createdAt);
+    assertThat(friendRepository.countByTenantId(tenantId)).isEqualTo(1L);
+
+    insertNamespace(tenantUuid, namespaceUuid, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    long ownerResolvedId =
+        insertActor(
+            "Owner-resolved friend endpoint",
+            UUID.randomUUID(),
+            accountUuid,
+            tenantUuid,
+            namespaceUuid,
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+            "shared-live",
+            "OWNER_RESOLVED",
+            null,
+            accountId,
+            tenantId);
+    CharacterFriendKey rejectedKey = new CharacterFriendKey();
+    rejectedKey.setCharacterId(character.getId());
+    rejectedKey.setFriendId(ownerResolvedId);
+    CharacterFriend rejectedFriend = new CharacterFriend();
+    rejectedFriend.setId(rejectedKey);
+    rejectedFriend.setTenantId(tenantId);
+    rejectedFriend.setCreatedAt(createdAt);
+
+    assertThatThrownBy(() -> friendRepository.save(rejectedFriend))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Legacy friend endpoints are unavailable");
   }
 
   @Test

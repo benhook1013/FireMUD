@@ -159,8 +159,7 @@ class PreseededActorAssignmentIntegrationTest {
         accountUuid,
         4L,
         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-        "Assigned Actor",
-        "a");
+        "Assigned Actor");
 
     UUID missingCharacterUuid = UUID.randomUUID();
     UUID invalidOperationUuid = UUID.randomUUID();
@@ -492,24 +491,21 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "a");
+            "Assigned Actor");
     PreseededActorAssignmentResult retry =
         assign(
             assignmentUuid,
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "a");
+            "Assigned Actor");
     PreseededActorAssignmentResult changedIntent =
         assign(
             assignmentUuid,
             accountUuid,
             5L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "b");
+            "Assigned Actor");
 
     assertThat(first.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
     assertThat(retry).isEqualTo(first);
@@ -553,8 +549,7 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "a");
+            "Assigned Actor");
     var evidence =
         evidence(assignmentUuid, accountUuid, 4L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     var expectedTarget =
@@ -694,8 +689,7 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Canonical Actor",
-            "a");
+            "Canonical Actor");
     Long entityTenantRowId =
         jdbcTemplate.queryForObject(
             "SELECT entity_tenant_row_id FROM entity_tenant_identities "
@@ -1116,8 +1110,7 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Selected Actor",
-            "a");
+            "Selected Actor");
     var ownerEvidence =
         evidence(assignmentUuid, accountUuid, 4L, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     var expectedTarget = assignmentRequest(ownerEvidence).expectedTarget();
@@ -1227,32 +1220,28 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "a");
+            "Assigned Actor");
     PreseededActorAssignmentResult changedAccount =
         assign(
             assignmentUuid,
             secondAccountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "b");
+            "Assigned Actor");
     PreseededActorAssignmentResult changedScope =
         assign(
             assignmentUuid,
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
-            "Assigned Actor",
-            "c");
+            "Assigned Actor");
     PreseededActorAssignmentResult changedPayload =
         assign(
             assignmentUuid,
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Renamed Actor",
-            "d");
+            "Renamed Actor");
 
     assertThat(original.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
     assertConflictWithoutActorDisclosure(changedAccount);
@@ -1282,16 +1271,14 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "a");
+            "Assigned Actor");
     PreseededActorAssignmentResult second =
         assign(
             secondAssignmentUuid,
             secondAccountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "b");
+            "Assigned Actor");
 
     assertThat(first.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
     assertThat(second.outcome()).isEqualTo(PreseededActorAssignmentResult.Outcome.ASSIGNED);
@@ -1336,8 +1323,7 @@ class PreseededActorAssignmentIntegrationTest {
                     accountUuid,
                     4L,
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                    "Concurrent Actor",
-                    "a");
+                    "Concurrent Actor");
               });
       Future<PreseededActorAssignmentResult> second =
           executor.submit(
@@ -1351,8 +1337,7 @@ class PreseededActorAssignmentIntegrationTest {
                     accountUuid,
                     4L,
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                    "Concurrent Actor",
-                    "b");
+                    "Concurrent Actor");
               });
 
       assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
@@ -1381,8 +1366,7 @@ class PreseededActorAssignmentIntegrationTest {
                   accountUuid,
                   4L,
                   PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                  "Concurrent Actor",
-                  "retry"))
+                  "Concurrent Actor"))
           .isEqualTo(loser);
       assertThat(
               jdbcTemplate.queryForObject(
@@ -1426,8 +1410,7 @@ class PreseededActorAssignmentIntegrationTest {
                     accountUuid,
                     4L,
                     PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                    "Assigned Actor",
-                    "a"))
+                    "Assigned Actor"))
         .isInstanceOf(RuntimeException.class);
 
     assertThat(
@@ -1451,8 +1434,7 @@ class PreseededActorAssignmentIntegrationTest {
             accountUuid,
             4L,
             PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-            "Assigned Actor",
-            "a");
+            "Assigned Actor");
 
     assertThatThrownBy(
             () ->
@@ -1482,8 +1464,7 @@ class PreseededActorAssignmentIntegrationTest {
                 accountUuid,
                 4L,
                 PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-                "Assigned Actor",
-                "a"))
+                "Assigned Actor"))
         .isEqualTo(assigned);
   }
 
@@ -1492,8 +1473,7 @@ class PreseededActorAssignmentIntegrationTest {
       UUID actorAccountUuid,
       long catalogRevision,
       PlayableStateScope scope,
-      String displayName,
-      String digestFirstHexDigit) {
+      String displayName) {
     PreseededActorAssignmentOwnerEvidence target =
         evidence(operationUuid, actorAccountUuid, catalogRevision, scope);
     PreseededActorAssignmentRequest request = assignmentRequest(target, displayName);

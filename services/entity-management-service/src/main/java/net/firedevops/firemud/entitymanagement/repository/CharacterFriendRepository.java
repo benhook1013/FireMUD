@@ -68,16 +68,21 @@ public class CharacterFriendRepository {
                   CHARACTER_FRIEND.CREATED_AT)
               .select(
                   dsl.select(
-                          DSL.val(entity.getId().getCharacterId()),
-                          DSL.val(entity.getId().getFriendId()),
-                          DSL.val(entity.getTenantId()),
-                          DSL.val(toLocalDateTime(entity.getCreatedAt())))
+                          DSL.val(entity.getId().getCharacterId(), CHARACTER_FRIEND.CHARACTER_ID),
+                          DSL.val(entity.getId().getFriendId(), CHARACTER_FRIEND.FRIEND_ID),
+                          DSL.val(entity.getTenantId(), CHARACTER_FRIEND.TENANT_ID),
+                          DSL.val(
+                              toLocalDateTime(entity.getCreatedAt()), CHARACTER_FRIEND.CREATED_AT))
                       .where(
                           CharacterRepository.legacyCharacterExists(
-                                  DSL.val(entity.getId().getCharacterId()))
+                                  DSL.val(
+                                      entity.getId().getCharacterId(),
+                                      CHARACTER_FRIEND.CHARACTER_ID))
                               .and(
                                   CharacterRepository.legacyCharacterExists(
-                                      DSL.val(entity.getId().getFriendId())))))
+                                      DSL.val(
+                                          entity.getId().getFriendId(),
+                                          CHARACTER_FRIEND.FRIEND_ID)))))
               .execute();
       if (inserted != 1) {
         throw new IllegalStateException("Legacy friend endpoints are unavailable");
