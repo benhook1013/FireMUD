@@ -3633,6 +3633,8 @@ class ReviewController:
             "retained_ambiguous_fingerprints": list(allocation.retained_ambiguous_fingerprints),
             "checkpoint": allocation.stop_checkpoint,
             "accepted": None,
+            # A stop checkpoint is an administrative anchor, not review credit.
+            "completed_count": None,
         }
 
     def _durable_stop_allocations(self, state: ReviewState, pr: int) -> dict[str, dict[str, Any]]:
@@ -4748,7 +4750,14 @@ class ReviewController:
             )
             minimum = 1 if default_one_result else allocation.min_additional_completed
             maximum = 1 if default_one_result else allocation.max_additional_completed
-            completed_count = view.get("completed_count", view.get("used", 1 if view.get("checkpoint") else 0))
+            if allocation.stop_basis is not None:
+                completed_count = (
+                    len(bounded_snapshot["results"])
+                    if projection_current and bounded_snapshot["error"] is None
+                    else None
+                )
+            else:
+                completed_count = view.get("completed_count", view.get("used", 1 if view.get("checkpoint") else 0))
             view.setdefault("min_additional_completed", minimum)
             view.setdefault("minimum_additional_completed", minimum)
             view.setdefault("max_additional_completed", maximum)
@@ -6225,11 +6234,11 @@ class ReviewController:
             label = "Taper met" + (f" · Maximum {rounds(maximum)}" if maximum is not None else "")
         if allocation_status == "DEFAULT_BUDGET_EXHAUSTED":
             label = "Review-period budget reached"
-        elif maximum_remaining == 0:
+        elif allocation_status != "STOPPED" and maximum_remaining == 0:
             label = "Required rounds complete" if minimum == maximum else "Maximum reached"
             if status in {"READY", "MISSING_EVIDENCE"}:
                 progress_label = "Needs stop decision"
-        elif minimum and required_remaining == 0 and maximum is None:
+        elif allocation_status != "STOPPED" and minimum and required_remaining == 0 and maximum is None:
             label = "Required rounds complete · Normal taper"
         if active or reserved:
             status, progress_label = "HELD", "Reviewing" if active else "Request reserved"
