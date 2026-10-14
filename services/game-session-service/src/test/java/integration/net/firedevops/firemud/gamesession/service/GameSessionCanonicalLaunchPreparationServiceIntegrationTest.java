@@ -789,7 +789,7 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
     UUID realm = uuid(974);
     UUID namespace = uuid(973);
     String requestDigest =
-        historicalDigest(
+        CanonicalHumanPublicationOwnerTestFixtures.historicalDigest(
             "game-session-canonical-realm-catalog-request/v1",
             "1",
             request.toString(),
@@ -820,7 +820,7 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
             "ABSENT",
             "ABSENT");
     String receiptDigest =
-        historicalDigest(
+        CanonicalHumanPublicationOwnerTestFixtures.historicalDigest(
             "game-session-canonical-realm-catalog-receipt/v1",
             "1",
             NAMESPACE,
@@ -924,22 +924,6 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
                 + " = ?",
             identity)
         .get("retained", String.class);
-  }
-
-  private static String historicalDigest(String... fields) {
-    try {
-      var hash = java.security.MessageDigest.getInstance("SHA-256");
-      for (String value : fields) {
-        byte[] bytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        hash.update(
-            Integer.toString(bytes.length).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
-        hash.update((byte) ':');
-        hash.update(bytes);
-      }
-      return "sha256:" + java.util.HexFormat.of().formatHex(hash.digest());
-    } catch (java.security.NoSuchAlgorithmException unavailable) {
-      throw new IllegalStateException(unavailable);
-    }
   }
 
   private static Record requiredRecord(DSLContext dsl, String sql, Object... bindings) {
