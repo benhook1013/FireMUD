@@ -207,14 +207,12 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
           () ->
               fixture.transactions.executeWithoutResult(
                   status ->
-                      fixture.initialAdmissionRepository.commit(
-                          request, testWorldProof(request), null)));
+                      fixture.initialAdmissionRepository.commit(request, testWorldProof(request))));
       assertHumanProtectionUnavailable(
           () ->
               fixture.transactions.executeWithoutResult(
                   status ->
-                      fixture.initialAdmissionRepository.abort(
-                          request, null, "Missing protection")));
+                      fixture.initialAdmissionRepository.abort(request, "Missing protection")));
       assertThat(attemptProjection(fixture, request)).isEqualTo(before);
       assertThat(
               fixture.initialAdmissionRepository.read(
@@ -337,17 +335,12 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     assertHumanProtectionUnavailable(
         () -> fixture.initialAdmissionRepository.reserve(firstOpenRequest));
     assertNoAttemptAndNoPending(fixture, firstOpenRequest);
-    var preparedExpectedClosed =
-        fixture.pointerRepository.prepareExpectedClosedForRealm(
-            NAMESPACE, TENANT, catalog.realmId(), 1L, catalog.catalogRevision());
     assertHumanProtectionUnavailable(
         () ->
             fixture.initialAdmissionRepository.commit(
-                firstOpenRequest, testWorldProof(firstOpenRequest), preparedExpectedClosed));
+                firstOpenRequest, testWorldProof(firstOpenRequest)));
     assertHumanProtectionUnavailable(
-        () ->
-            fixture.initialAdmissionRepository.abort(
-                firstOpenRequest, preparedExpectedClosed, "Missing protection"));
+        () -> fixture.initialAdmissionRepository.abort(firstOpenRequest, "Missing protection"));
     assertThat(pointerAndAuditProjection(fixture)).isEqualTo(closedBefore);
     assertNoAttemptAndNoPending(fixture, firstOpenRequest);
     assertThat(
@@ -391,9 +384,9 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     for (int retry = 0; retry < 2; retry++) {
       assertHumanProtectionUnavailable(() -> fixture.initialAdmissionRepository.reserve(request));
       assertHumanProtectionUnavailable(
-          () -> fixture.initialAdmissionRepository.abort(request, null, "World hold expired"));
+          () -> fixture.initialAdmissionRepository.abort(request, "World hold expired"));
       assertHumanProtectionUnavailable(
-          () -> fixture.initialAdmissionRepository.commit(request, testWorldProof(request), null));
+          () -> fixture.initialAdmissionRepository.commit(request, testWorldProof(request)));
       assertNoAttemptAndNoPending(fixture, request);
       assertThat(
               fixture.initialAdmissionRepository.read(
@@ -727,13 +720,11 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     .intoArray())
             .containsOnlyNulls();
         assertHumanProtectionUnavailable(
-            () ->
-                predecessor.initialAdmissionRepository.commit(
-                    request, testWorldProof(request), null));
+            () -> predecessor.initialAdmissionRepository.commit(request, testWorldProof(request)));
         assertHumanProtectionUnavailable(
             () ->
                 predecessor.initialAdmissionRepository.abort(
-                    request, null, "Current Human retry remains unprotected"));
+                    request, "Current Human retry remains unprotected"));
         assertThatThrownBy(
                 () ->
                     predecessor.transactions.executeWithoutResult(
@@ -1536,8 +1527,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     CanonicalGameInstanceLaunchAssociationRepository launchRepository =
         new CanonicalGameInstanceLaunchAssociationRepository(dsl, NAMESPACE);
     CanonicalInitialAdmissionRepository initialAdmissionRepository =
-        new CanonicalInitialAdmissionRepository(
-            dsl, catalogRepository, pointerRepository, launchRepository, eventRepository);
+        new CanonicalInitialAdmissionRepository(dsl, catalogRepository, pointerRepository);
     return new Fixture(
         dsl,
         transactionManager,

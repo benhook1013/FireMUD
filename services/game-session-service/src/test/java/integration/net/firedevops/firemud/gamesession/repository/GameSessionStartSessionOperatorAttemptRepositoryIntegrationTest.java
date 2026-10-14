@@ -108,56 +108,12 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
       // These rows use the V34.3 predecessor shape and make no current-producer claim.
       PriorRuntime target = seedV34_3PriorRuntime(dataSource, dsl);
       // Later migrations add nullable columns, so compare all V23/V26 fields plus xmin directly.
-      var catalogEvidenceBefore =
-          dsl.fetchOne(
-              "SELECT row_to_json(ROW(catalog.target_namespace, catalog.canonical_tenant_id,"
-                  + " catalog.tenant_slug, catalog.world_slug, catalog.realm_id,"
-                  + " catalog.realm_slug, catalog.realm_display_name, catalog.visible,"
-                  + " catalog.public_production, catalog.state_scope,"
-                  + " catalog.playable_state_namespace_id, catalog.character_creation_policy,"
-                  + " catalog.catalog_revision, catalog.creation_request_id,"
-                  + " catalog.request_digest, catalog.receipt_digest,"
-                  + " catalog.source_intake_operation_id, catalog.source_intake_schema_version,"
-                  + " catalog.source_intake_request_id, catalog.source_intake_request_digest,"
-                  + " catalog.source_intake_receipt_digest, catalog.source_schema_version,"
-                  + " catalog.source_registration_request_id, catalog.source_operation_id,"
-                  + " catalog.source_request_digest, catalog.source_world_display_name,"
-                  + " catalog.source_game_row_id, catalog.source_game_tenant_key,"
-                  + " catalog.source_provenance_kind, catalog.source_evidence_digest,"
-                  + " catalog.created_at))::text AS original_columns, catalog.xmin::text AS xmin"
-                  + " FROM game_session_canonical_realm_catalog catalog"
-                  + " WHERE target_namespace = ? AND canonical_tenant_id = ?",
-              target.targetNamespace(),
-              target.canonicalTenantId());
-      var launchEvidenceBefore =
-          dsl.fetchOne(
-              "SELECT row_to_json(ROW(launch.target_namespace, launch.control_plane_request_id,"
-                  + " launch.game_session_tenant_id, launch.canonical_tenant_id,"
-                  + " launch.tenant_association_operation_id, launch.tenant_association_request_id,"
-                  + " launch.tenant_source_schema_version, launch.tenant_source_target_namespace,"
-                  + " launch.tenant_source_request_id, launch.tenant_source_canonical_tenant_id,"
-                  + " launch.tenant_source_game_row_id, launch.tenant_source_game_tenant_key,"
-                  + " launch.tenant_source_provenance_kind, launch.tenant_association_kind,"
-                  + " launch.game_instance_id, launch.game_instance_uuid, launch.canonical_realm_id,"
-                  + " launch.world_slug, launch.playable_state_namespace_id,"
-                  + " launch.playable_state_scope, launch.public_production,"
-                  + " launch.captured_starting_row_version, launch.game_template_id,"
-                  + " launch.launch_descriptor_id, launch.version_id, launch.release_bundle_id,"
-                  + " launch.generation_config_revision, launch.version_state_epoch,"
-                  + " launch.complete_launch_binding_evidence, launch.captured_at))::text"
-                  + " AS original_columns, launch.xmin::text AS xmin"
-                  + " FROM game_session_canonical_instance_launch launch"
-                  + " WHERE target_namespace = ? AND control_plane_request_id = ?",
-              target.targetNamespace(),
-              target.controlPlaneRequestId());
-      assertThat(launchEvidenceBefore).isNotNull();
-      String originalLaunchColumnsBefore =
-          launchEvidenceBefore.get("original_columns", String.class);
-      String launchXminBefore = launchEvidenceBefore.get("xmin", String.class);
-      assertThat(catalogEvidenceBefore).isNotNull();
-      String originalCatalogColumnsBefore =
-          catalogEvidenceBefore.get("original_columns", String.class);
-      String catalogXminBefore = catalogEvidenceBefore.get("xmin", String.class);
+      PredecessorSnapshot catalogEvidenceBefore = catalogPredecessorSnapshot(dsl, target);
+      PredecessorSnapshot launchEvidenceBefore = launchPredecessorSnapshot(dsl, target);
+      String originalLaunchColumnsBefore = launchEvidenceBefore.originalColumns();
+      String launchXminBefore = launchEvidenceBefore.xmin();
+      String originalCatalogColumnsBefore = catalogEvidenceBefore.originalColumns();
+      String catalogXminBefore = catalogEvidenceBefore.xmin();
       assertThat(originalCatalogColumnsBefore).isNotBlank();
       assertThat(catalogXminBefore).isNotBlank();
       assertThat(originalLaunchColumnsBefore).isNotBlank();
@@ -187,56 +143,12 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
                           + " ORDER BY installed_rank")
                   .getValues("version", String.class))
           .containsExactly("35", "37", "38");
-      var catalogEvidenceAfter =
-          dsl.fetchOne(
-              "SELECT row_to_json(ROW(catalog.target_namespace, catalog.canonical_tenant_id,"
-                  + " catalog.tenant_slug, catalog.world_slug, catalog.realm_id,"
-                  + " catalog.realm_slug, catalog.realm_display_name, catalog.visible,"
-                  + " catalog.public_production, catalog.state_scope,"
-                  + " catalog.playable_state_namespace_id, catalog.character_creation_policy,"
-                  + " catalog.catalog_revision, catalog.creation_request_id,"
-                  + " catalog.request_digest, catalog.receipt_digest,"
-                  + " catalog.source_intake_operation_id, catalog.source_intake_schema_version,"
-                  + " catalog.source_intake_request_id, catalog.source_intake_request_digest,"
-                  + " catalog.source_intake_receipt_digest, catalog.source_schema_version,"
-                  + " catalog.source_registration_request_id, catalog.source_operation_id,"
-                  + " catalog.source_request_digest, catalog.source_world_display_name,"
-                  + " catalog.source_game_row_id, catalog.source_game_tenant_key,"
-                  + " catalog.source_provenance_kind, catalog.source_evidence_digest,"
-                  + " catalog.created_at))::text AS original_columns, catalog.xmin::text AS xmin"
-                  + " FROM game_session_canonical_realm_catalog catalog"
-                  + " WHERE target_namespace = ? AND canonical_tenant_id = ?",
-              target.targetNamespace(),
-              target.canonicalTenantId());
-      assertThat(catalogEvidenceAfter).isNotNull();
-      assertThat(catalogEvidenceAfter.get("original_columns", String.class))
-          .isEqualTo(originalCatalogColumnsBefore);
-      assertThat(catalogEvidenceAfter.get("xmin", String.class)).isEqualTo(catalogXminBefore);
-      var launchEvidenceAfter =
-          dsl.fetchOne(
-              "SELECT row_to_json(ROW(launch.target_namespace, launch.control_plane_request_id,"
-                  + " launch.game_session_tenant_id, launch.canonical_tenant_id,"
-                  + " launch.tenant_association_operation_id, launch.tenant_association_request_id,"
-                  + " launch.tenant_source_schema_version, launch.tenant_source_target_namespace,"
-                  + " launch.tenant_source_request_id, launch.tenant_source_canonical_tenant_id,"
-                  + " launch.tenant_source_game_row_id, launch.tenant_source_game_tenant_key,"
-                  + " launch.tenant_source_provenance_kind, launch.tenant_association_kind,"
-                  + " launch.game_instance_id, launch.game_instance_uuid, launch.canonical_realm_id,"
-                  + " launch.world_slug, launch.playable_state_namespace_id,"
-                  + " launch.playable_state_scope, launch.public_production,"
-                  + " launch.captured_starting_row_version, launch.game_template_id,"
-                  + " launch.launch_descriptor_id, launch.version_id, launch.release_bundle_id,"
-                  + " launch.generation_config_revision, launch.version_state_epoch,"
-                  + " launch.complete_launch_binding_evidence, launch.captured_at))::text"
-                  + " AS original_columns, launch.xmin::text AS xmin"
-                  + " FROM game_session_canonical_instance_launch launch"
-                  + " WHERE target_namespace = ? AND control_plane_request_id = ?",
-              target.targetNamespace(),
-              target.controlPlaneRequestId());
-      assertThat(launchEvidenceAfter).isNotNull();
-      assertThat(launchEvidenceAfter.get("original_columns", String.class))
-          .isEqualTo(originalLaunchColumnsBefore);
-      assertThat(launchEvidenceAfter.get("xmin", String.class)).isEqualTo(launchXminBefore);
+      PredecessorSnapshot catalogEvidenceAfter = catalogPredecessorSnapshot(dsl, target);
+      assertThat(catalogEvidenceAfter.originalColumns()).isEqualTo(originalCatalogColumnsBefore);
+      assertThat(catalogEvidenceAfter.xmin()).isEqualTo(catalogXminBefore);
+      PredecessorSnapshot launchEvidenceAfter = launchPredecessorSnapshot(dsl, target);
+      assertThat(launchEvidenceAfter.originalColumns()).isEqualTo(originalLaunchColumnsBefore);
+      assertThat(launchEvidenceAfter.xmin()).isEqualTo(launchXminBefore);
 
       assertConstraintsReady(
           dsl,
@@ -292,6 +204,62 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
     } finally {
       dropSchema(schema);
     }
+  }
+
+  private static PredecessorSnapshot catalogPredecessorSnapshot(
+      DSLContext dsl, PriorRuntime target) {
+    org.jooq.Record row =
+        dsl.fetchOne(
+            "SELECT row_to_json(ROW(catalog.target_namespace, catalog.canonical_tenant_id,"
+                + " catalog.tenant_slug, catalog.world_slug, catalog.realm_id,"
+                + " catalog.realm_slug, catalog.realm_display_name, catalog.visible,"
+                + " catalog.public_production, catalog.state_scope,"
+                + " catalog.playable_state_namespace_id, catalog.character_creation_policy,"
+                + " catalog.catalog_revision, catalog.creation_request_id,"
+                + " catalog.request_digest, catalog.receipt_digest,"
+                + " catalog.source_intake_operation_id, catalog.source_intake_schema_version,"
+                + " catalog.source_intake_request_id, catalog.source_intake_request_digest,"
+                + " catalog.source_intake_receipt_digest, catalog.source_schema_version,"
+                + " catalog.source_registration_request_id, catalog.source_operation_id,"
+                + " catalog.source_request_digest, catalog.source_world_display_name,"
+                + " catalog.source_game_row_id, catalog.source_game_tenant_key,"
+                + " catalog.source_provenance_kind, catalog.source_evidence_digest,"
+                + " catalog.created_at))::text AS original_columns, catalog.xmin::text AS xmin"
+                + " FROM game_session_canonical_realm_catalog catalog"
+                + " WHERE target_namespace = ? AND canonical_tenant_id = ?",
+            target.targetNamespace(),
+            target.canonicalTenantId());
+    Objects.requireNonNull(row, "retained predecessor catalog row");
+    return new PredecessorSnapshot(
+        row.get("original_columns", String.class), row.get("xmin", String.class));
+  }
+
+  private static PredecessorSnapshot launchPredecessorSnapshot(
+      DSLContext dsl, PriorRuntime target) {
+    org.jooq.Record row =
+        dsl.fetchOne(
+            "SELECT row_to_json(ROW(launch.target_namespace, launch.control_plane_request_id,"
+                + " launch.game_session_tenant_id, launch.canonical_tenant_id,"
+                + " launch.tenant_association_operation_id, launch.tenant_association_request_id,"
+                + " launch.tenant_source_schema_version, launch.tenant_source_target_namespace,"
+                + " launch.tenant_source_request_id, launch.tenant_source_canonical_tenant_id,"
+                + " launch.tenant_source_game_row_id, launch.tenant_source_game_tenant_key,"
+                + " launch.tenant_source_provenance_kind, launch.tenant_association_kind,"
+                + " launch.game_instance_id, launch.game_instance_uuid, launch.canonical_realm_id,"
+                + " launch.world_slug, launch.playable_state_namespace_id,"
+                + " launch.playable_state_scope, launch.public_production,"
+                + " launch.captured_starting_row_version, launch.game_template_id,"
+                + " launch.launch_descriptor_id, launch.version_id, launch.release_bundle_id,"
+                + " launch.generation_config_revision, launch.version_state_epoch,"
+                + " launch.complete_launch_binding_evidence, launch.captured_at))::text"
+                + " AS original_columns, launch.xmin::text AS xmin"
+                + " FROM game_session_canonical_instance_launch launch"
+                + " WHERE target_namespace = ? AND control_plane_request_id = ?",
+            target.targetNamespace(),
+            target.controlPlaneRequestId());
+    Objects.requireNonNull(row, "retained predecessor launch row");
+    return new PredecessorSnapshot(
+        row.get("original_columns", String.class), row.get("xmin", String.class));
   }
 
   private static PriorRuntime seedV34_3PriorRuntime(
@@ -654,6 +622,8 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
         target.publishedReleaseBundleRef(),
         target.canonicalVersionId().toString());
   }
+
+  private record PredecessorSnapshot(String originalColumns, String xmin) {}
 
   private record PriorRuntime(
       String targetNamespace,
