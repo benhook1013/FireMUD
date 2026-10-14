@@ -328,6 +328,46 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     assertThat(qualification.active).isFalse();
   }
 
+  @Test
+  void createPendingIsCreateOnlyAndUsesPhysicalAcknowledgementAndIndependentReadback()
+      throws Exception {
+    var original = coordinates();
+    own(original);
+    var provider = new TracedProvider(writer);
+    var client = client(provider, new ControlledAuthority(), 1);
+    var expected = InitialGameplayLoginContextState.pending(original);
+
+    assertThat(client.createPending(original).orElseThrow().encode())
+        .containsExactly(expected.encode());
+    byte[] created = admin.get(key(original));
+    assertThat(created).containsExactly(expected.encode());
+    assertThat(admin.pexpiretime(key(original))).isEqualTo(-1L);
+
+    assertThat(client.createPending(original)).isEmpty();
+    assertThat(admin.get(key(original))).containsExactly(created);
+    assertThat(provider.traces.get(0))
+        .containsSubsequence("aclWhoami", "evalsha", "WAITAOF", "close");
+    assertThat(provider.traces.get(1)).containsSubsequence("aclWhoami", "get", "close");
+  }
+
+  @Test
+  void createPendingNeverAdoptsOrOverwritesAnExistingExpiringPhysicalValue() throws Exception {
+    var original = coordinates();
+    own(original);
+    byte[] malformed = ascii("{existing-unqualified-value}");
+    admin.set(key(original), malformed);
+    admin.pexpire(key(original), 60_000);
+    long originalExpiry = admin.pexpiretime(key(original));
+
+    assertThat(
+            client(new TracedProvider(writer), new ControlledAuthority(), 1)
+                .createPending(original))
+        .isEmpty();
+
+    assertThat(admin.get(key(original))).containsExactly(malformed);
+    assertThat(admin.pexpiretime(key(original))).isPositive().isEqualTo(originalExpiry);
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {

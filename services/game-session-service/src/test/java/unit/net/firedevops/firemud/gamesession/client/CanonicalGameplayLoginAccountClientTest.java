@@ -35,6 +35,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -87,7 +88,7 @@ class CanonicalGameplayLoginAccountClientTest {
     try (var client = client(server, Duration.ofSeconds(5), verifier)) {
       client.initialize();
       var original = request();
-      assertDecision(client, original);
+      assertDecision(client, original, () -> true);
       assertThat(starts.get()).isEqualTo(1);
       assertThat(requests).hasSize(1);
       assertThat(requests.getFirst().equals(original)).isTrue();
@@ -113,7 +114,7 @@ class CanonicalGameplayLoginAccountClientTest {
     var verifier = mock(AccountAsymmetricJwtVerifier.class);
     try (var client = client(server, Duration.ofSeconds(5), verifier)) {
       client.initialize();
-      assertThatThrownBy(() -> client.authenticate(request()))
+      assertThatThrownBy(() -> client.authenticate(request(), () -> true))
           .isInstanceOfSatisfying(
               StatusRuntimeException.class,
               error ->
@@ -168,13 +169,60 @@ class CanonicalGameplayLoginAccountClientTest {
             verifier)) {
       client.initialize();
       var original = request();
-      assertDecision(client, original);
+      assertDecision(client, original, () -> true);
       assertThat(starts.get()).isEqualTo(2);
       assertThat(requests).hasSize(2);
       assertThat(deadlines).hasSize(2);
       assertThat(deadlines.getFirst() == deadlines.get(1)).isTrue();
       assertThat(requests.stream().allMatch(original::equals)).isTrue();
       verifyNoInteractions(verifier);
+    } finally {
+      server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+    }
+  }
+
+  @Test
+  void custodyLossAfterFirstAmbiguousDispatchPreventsThePermittedRetry() throws Exception {
+    AtomicInteger starts = new AtomicInteger();
+    List<AuthenticateRequest> requests = new CopyOnWriteArrayList<>();
+    Server server = startServer(pki.accountServer(), starts, requests, 1, Status.UNAVAILABLE);
+    AtomicBoolean custodyCurrent = new AtomicBoolean(true);
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setAccountService("localhost:" + server.getPort());
+    var customizer =
+        new BlockingGrpcStubCustomizer() {
+          @Override
+          public <T extends io.grpc.stub.AbstractStub<T>> T customize(T stub) {
+            return stub.withInterceptors(
+                new io.grpc.ClientInterceptor() {
+                  @Override
+                  public <ReqT, RespT> io.grpc.ClientCall<ReqT, RespT> interceptCall(
+                      io.grpc.MethodDescriptor<ReqT, RespT> method,
+                      io.grpc.CallOptions options,
+                      io.grpc.Channel next) {
+                    custodyCurrent.set(false);
+                    return next.newCall(method, options);
+                  }
+                });
+          }
+        };
+    try (var client =
+        new CanonicalGameplayLoginAccountClient(
+            endpoints,
+            pki.clientProperties(temporaryDirectory),
+            new GrpcChannelFactory(),
+            customizer,
+            "test",
+            Clock.systemUTC(),
+            Duration.ofSeconds(5),
+            mock(AccountAsymmetricJwtVerifier.class))) {
+      client.initialize();
+      assertThatThrownBy(() -> client.authenticate(request(), custodyCurrent::get))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              error -> assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.CANCELLED));
+      assertThat(starts.get()).isEqualTo(1);
+      assertThat(requests).hasSize(1);
     } finally {
       server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
     }
@@ -188,7 +236,7 @@ class CanonicalGameplayLoginAccountClientTest {
     try (var client =
         client(server, Duration.ofSeconds(5), mock(AccountAsymmetricJwtVerifier.class))) {
       client.initialize();
-      assertThatThrownBy(() -> client.authenticate(request()))
+      assertThatThrownBy(() -> client.authenticate(request(), () -> true))
           .isInstanceOfSatisfying(
               StatusRuntimeException.class,
               error -> {
@@ -209,7 +257,7 @@ class CanonicalGameplayLoginAccountClientTest {
     try (var client =
         client(server, Duration.ofSeconds(5), mock(AccountAsymmetricJwtVerifier.class))) {
       client.initialize();
-      assertThatThrownBy(() -> client.authenticate(request()))
+      assertThatThrownBy(() -> client.authenticate(request(), () -> true))
           .isInstanceOfSatisfying(
               StatusRuntimeException.class,
               error -> assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
@@ -233,7 +281,7 @@ class CanonicalGameplayLoginAccountClientTest {
               .withDeadline(Deadline.after(-1, TimeUnit.NANOSECONDS), scheduler)) {
         expired.run(
             () ->
-                assertThatThrownBy(() -> client.authenticate(request()))
+                assertThatThrownBy(() -> client.authenticate(request(), () -> true))
                     .isInstanceOfSatisfying(
                         StatusRuntimeException.class,
                         error ->
@@ -250,7 +298,7 @@ class CanonicalGameplayLoginAccountClientTest {
                           GameplayLoginTransportClass
                               .GAMEPLAY_LOGIN_TRANSPORT_CLASS_FIRST_PARTY_WEB))
               .build();
-      assertThatThrownBy(() -> client.authenticate(invalid))
+      assertThatThrownBy(() -> client.authenticate(invalid, () -> true))
           .isInstanceOf(CanonicalGameplayLoginResult.InvalidResultException.class);
       assertThat(starts.get()).isZero();
       assertThat(requests).isEmpty();
@@ -286,7 +334,7 @@ class CanonicalGameplayLoginAccountClientTest {
             Clock.systemUTC(),
             Duration.ofSeconds(5),
             mock(AccountAsymmetricJwtVerifier.class))) {
-      assertThatThrownBy(() -> uninitialized.authenticate(request()))
+      assertThatThrownBy(() -> uninitialized.authenticate(request(), () -> true))
           .isInstanceOfSatisfying(
               StatusRuntimeException.class,
               error -> assertThat(error.getStatus().getCode()).isEqualTo(Status.Code.UNAVAILABLE));
@@ -577,8 +625,10 @@ class CanonicalGameplayLoginAccountClientTest {
   }
 
   private static void assertDecision(
-      CanonicalGameplayLoginAccountClient client, AuthenticateRequest request) {
-    assertThatThrownBy(() -> client.authenticate(request))
+      CanonicalGameplayLoginAccountClient client,
+      AuthenticateRequest request,
+      java.util.function.BooleanSupplier custodyCurrent) {
+    assertThatThrownBy(() -> client.authenticate(request, custodyCurrent))
         .isInstanceOfSatisfying(
             CanonicalGameplayLoginResult.CredentialDecisionException.class,
             decision ->

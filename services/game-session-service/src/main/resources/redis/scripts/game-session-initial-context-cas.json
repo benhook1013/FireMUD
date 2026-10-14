@@ -1,7 +1,7 @@
 {
   "scriptId": "game-session.initial-context-cas.v1",
   "resourcePath": "redis/lua/game-session-initial-context-cas.lua",
-  "sha256": "d5cf30a901eb31d19934ed77cad41dc78c6b70d98afa735e651c2319585cea0b",
+  "sha256": "2843fae8ec73a57963d16ba840adab41613e6460858bd3f349fa012409b27c1f",
   "owner": "game-session-service",
   "principal": "gamesession_coord_app",
   "role": "COORDINATION",
@@ -17,7 +17,7 @@
       "name": "operation"
     },
     {
-      "name": "exactPriorContextUtf8"
+      "name": "exactPriorContextUtf8OrEmptyForCreate"
     },
     {
       "name": "exactDesiredContextUtf8"
@@ -43,7 +43,7 @@
   ],
   "resetSensitivity": "CLUSTER",
   "lossClass": "SESSION_LEASE_CACHE_OR_WAKE_UP",
-  "tailLossBehavior": "All scoped resets invalidate this tenantless family with declared global impact. Missing, changed, lost ACK or reset/restore ambiguity remains held. External recovery qualification excludes restore and promotion through closure continuation; neither SQL receipts nor absence reconstruct context.",
+  "tailLossBehavior": "All scoped resets invalidate this tenantless family with declared global impact. CREATE_PENDING creates only the exact newly reserved original when its complete key is physically absent under current external qualification; it never adopts or overwrites existing, expiring, malformed, replaced, closed, or uncertain state. Install and closure never recreate missing state. Missing, changed, lost ACK or reset/restore ambiguity remains held. External recovery qualification excludes restore and promotion through closure continuation; neither SQL receipts nor absence reconstruct context.",
   "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
   "supportedCoexistence": [
     {

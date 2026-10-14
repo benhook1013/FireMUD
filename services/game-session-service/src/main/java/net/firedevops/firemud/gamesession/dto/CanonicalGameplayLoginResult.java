@@ -33,7 +33,7 @@ import tools.jackson.databind.json.JsonMapper;
  * aggregate validation are non-admitting: no context CAS, ACTIVE/currentness lease, Redis writer,
  * orphan retirement or authenticated public-ingress authority is supplied by this value.
  */
-public final class CanonicalGameplayLoginResult {
+public final class CanonicalGameplayLoginResult implements AutoCloseable {
   // Each projection is contained in Account's bounded 8 KiB initial owner bundle.
   private static final int MAX_CHECKPOINT_PROJECTION_BYTES = 8 * 1024;
   private static final JsonMapper JSON =
@@ -63,6 +63,8 @@ public final class CanonicalGameplayLoginResult {
           GameSessionAccountDelegationJwtProfileValidator::validateInitialClaims);
   private final byte[] compactJwt;
   private final NonSecretEvidence evidence;
+  private final Object lifecycleMutex = new Object();
+  private boolean closed;
 
   private CanonicalGameplayLoginResult(byte[] compactJwt, NonSecretEvidence evidence) {
     this.compactJwt = compactJwt.clone();
@@ -280,7 +282,21 @@ public final class CanonicalGameplayLoginResult {
   }
 
   public byte[] compactJwtBytes() {
-    return compactJwt.clone();
+    synchronized (lifecycleMutex) {
+      if (closed) throw new IllegalStateException("Canonical LOGIN private result is closed");
+      return compactJwt.clone();
+    }
+  }
+
+  /** Ends this invocation's owned compact-token custody and overwrites its private byte array. */
+  @Override
+  public void close() {
+    synchronized (lifecycleMutex) {
+      if (!closed) {
+        Arrays.fill(compactJwt, (byte) 0);
+        closed = true;
+      }
+    }
   }
 
   public NonSecretEvidence evidence() {
