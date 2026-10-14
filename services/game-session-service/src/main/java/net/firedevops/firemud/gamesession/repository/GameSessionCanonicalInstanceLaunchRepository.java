@@ -44,6 +44,7 @@ public final class GameSessionCanonicalInstanceLaunchRepository {
     this.workloadNamespace = workloadNamespace;
     this.catalogRepository = Objects.requireNonNull(catalogRepository, "catalogRepository");
     this.writeTransaction = new TransactionTemplate(transactionManager);
+    this.writeTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     this.writeTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     this.readTransaction = new TransactionTemplate(transactionManager);
     this.readTransaction.setReadOnly(true);
