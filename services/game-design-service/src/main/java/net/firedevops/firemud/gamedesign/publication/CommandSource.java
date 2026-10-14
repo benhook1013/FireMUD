@@ -17,6 +17,7 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.command.CommandEffectDeclarationConstraints;
 import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -157,7 +158,8 @@ public final class CommandSource {
       }
       String revisionKind = payload.path("revisionKind").asText();
       if (REALM_POLICY_REVISION_KIND.equals(revisionKind)
-          || AssetSource.REVISION_KIND.equals(revisionKind)) continue;
+          || AssetSource.REVISION_KIND.equals(revisionKind)
+          || GameplayRuleSource.REVISION_KIND.equals(revisionKind)) continue;
       if (!REVISION_KIND.equals(revisionKind)) {
         throw new IllegalArgumentException("Unsupported Game Design command source revision kind");
       }
@@ -207,7 +209,8 @@ public final class CommandSource {
       if (REALM_POLICY_REVISION_KIND.equals(revisionKind)) {
         found = true;
       } else if (!REVISION_KIND.equals(revisionKind)
-          && !AssetSource.REVISION_KIND.equals(revisionKind)) {
+          && !AssetSource.REVISION_KIND.equals(revisionKind)
+          && !GameplayRuleSource.REVISION_KIND.equals(revisionKind)) {
         throw new IllegalArgumentException("Unsupported Game Design command source revision kind");
       }
     }

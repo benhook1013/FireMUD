@@ -31,8 +31,17 @@ dependencies {
     implementation(libs.aws.sdk.s3)
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
-    add("crossServiceTestCompileOnly", libs.spotbugs.annotations)
     add("crossServiceTestImplementation", project(":game-session-service"))
-    add("crossServiceTestImplementation", project(":world-management-service"))
+    add(
+        "crossServiceTestImplementation",
+        project(mapOf("path" to ":world-management-service", "configuration" to "worldClassesProof"))
+    )
+    add(
+        "crossServiceTestImplementation",
+        project(mapOf("path" to ":account-service", "configuration" to "accountOriginalOrderProof"))
+    )
+    testImplementation(testFixtures(project(":common-platform-core")))
+    add("crossServiceTestCompileOnly", libs.spotbugs.annotations)
+    add("crossServiceTestImplementation", "io.grpc:grpc-util:${libs.versions.grpc.get()}")
     testImplementation(libs.bouncycastle.pkix)
 }
