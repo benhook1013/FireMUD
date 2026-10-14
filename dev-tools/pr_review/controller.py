@@ -8589,24 +8589,13 @@ class ReviewController:
             patch_id = self.git.patch_identity(merge_base, item.head)
         except (ControllerError, OSError, ValueError, subprocess.SubprocessError):
             merge_base, patch_id = None, None
-        parent_link = None
-        try:
-            _, reconciliation = self._reconciliation(state, evidence_prs=set())
-            parent_link = reconciliation.links.get(pr)
-        except (
-            ControllerError,
-            KeyError,
-            OSError,
-            RuntimeError,
-            TypeError,
-            ValueError,
-            subprocess.SubprocessError,
-        ):
-            pass
+        # A human stop changes discovery eligibility only. The live PR's
+        # actual base is sufficient audit context; a full-stack reconciliation
+        # would add latency and make this independent decision topology-bound.
         current = AnchorFacts(
             pr,
             item.head,
-            parent_link.identity if parent_link is not None else item.base_ref,
+            item.base_ref,
             item.base_tip,
             merge_base,
             patch_id,
@@ -8616,9 +8605,15 @@ class ReviewController:
         basis = previous.stop_basis if previous is not None and previous.stop_basis is not None else "direct_human"
         if acknowledge_over_ceiling and basis != "direct_human":
             raise ControllerError("over-ceiling acknowledgment is available only to a direct human stop")
+        needs_complete_histories = bool(retained_fingerprint_values) or acknowledge_over_ceiling
+        history_channels = (
+            (policy.Channel.HOSTED, policy.Channel.CLI)
+            if needs_complete_histories
+            else (selected,)
+        )
         histories = {
             selected_channel: _history(self._evidence_provider, pr, selected_channel)
-            for selected_channel in (policy.Channel.HOSTED, policy.Channel.CLI)
+            for selected_channel in history_channels
         }
         history = histories[selected]
         # A prior result is optional audit context. Never label an active or
