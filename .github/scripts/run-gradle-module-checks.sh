@@ -66,11 +66,12 @@ has_substantive_failure() {
       name = task
       sub(/^.*:/, "", name)
 
-      is_test = name ~ /(^|[A-Za-z0-9])(test|Test)[A-Za-z0-9]*$/
+      is_compile = name ~ /^compile[A-Z][A-Za-z0-9]*$/
+      is_test = !is_compile && name ~ /(^|[A-Za-z0-9])(test|Test)[A-Za-z0-9]*$/
       # buildSrc compiles the build logic during Gradle setup, not the target
       # module sources whose successful execution must remain unretried.
       is_build_logic = task ~ /^:buildSrc(:|$)/
-      is_compile = !is_build_logic && name ~ /^compile[A-Z][A-Za-z0-9]*$/
+      is_compile = !is_build_logic && is_compile
       if (!is_test && !is_compile) {
         next
       }
@@ -164,10 +165,17 @@ classify_failure_body() {
       if (line ~ /^See the complete report at file:.*configuration-cache\//) {
         next
       }
+      if (line ~ /^\[Incubating\] Problems report is available at: file:.*\/build\/reports\/problems\/problems-report\.html$/ ||
+          line == "Deprecated Gradle features were used in this build, making it incompatible with Gradle 10." ||
+          line == "You can use \047--warning-mode all\047 to show the individual deprecation warnings and determine if they come from your own scripts or plugins." ||
+          line == "For more on this, please refer to https://docs.gradle.org/9.8.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation." ||
+          line ~ /^[0-9]+ actionable tasks: [0-9]+ executed, [0-9]+ from cache$/) {
+        next
+      }
 
       if (line ~ /^> Could not resolve all (artifacts|files) for configuration .+\.$/) {
         resolver_roots++
-        if (line ~ /compileClasspath/) {
+        if (line ~ /(compileClasspath|testCompileClasspath|integrationTestCompileClasspath)/) {
           compile_classpath_roots++
         }
         next
@@ -193,7 +201,7 @@ classify_failure_body() {
           line ~ /^> SocketTimeoutException/ ||
           line ~ /^Received status code (429|5[0-9][0-9]) from server/ ||
           line ~ /^Retry-After: .+$/ ||
-          line ~ /^There are [0-9]+ more failures with identical causes\.$/) {
+          line ~ /^(> )?There are [0-9]+ more failures with identical causes\.$/) {
         if (line ~ /^Received status code /) {
           transient++
         }

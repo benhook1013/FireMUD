@@ -95,20 +95,44 @@ new_case netty-reset
 # shellcheck disable=SC2016
 write_wrapper 'if [[ "$call_count" -eq 1 ]]; then
   cat <<"LOG"
+> Task :buildSrc:checkKotlinGradlePluginConfigurationErrors SKIPPED
 > Task :buildSrc:compileKotlin FROM-CACHE
 > Task :buildSrc:compileJava NO-SOURCE
+> Task :buildSrc:compileGroovy NO-SOURCE
+> Task :buildSrc:pluginDescriptors
+> Task :buildSrc:processResources
+> Task :buildSrc:classes
+> Task :buildSrc:jar
 FAILURE: Build failed with an exception.
+
 * What went wrong:
 1 problem was found storing the configuration cache.
 - Task `:load-testing:compileJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type '\''org.gradle.api.internal.artifacts.configurations.DefaultResolvableConfiguration'\''
-See the complete report at file:///tmp/configuration-cache/report
+
+See the complete report at file:///tmp/firemud-gradle/build/reports/configuration-cache/55dsxnjhf0f7e758w7006zyz/3tzsi60zc8z4y1sxqe2cppdh9/configuration-cache-report.html
+
+[Incubating] Problems report is available at: file:///tmp/firemud-gradle/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '\''--warning-mode all'\'' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.8.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+4 actionable tasks: 3 executed, 1 from cache
 Configuration cache state could not be cached: field `classpath` of task `:load-testing:compileJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type '\''org.gradle.api.internal.artifacts.configurations.DefaultResolvableConfiguration'\''
-> Could not resolve all files for configuration ':load-testing:compileClasspath'.
-> Could not resolve io.netty:netty-codec-socks:4.2.18.Final.
-> Could not GET '\''https://repo.maven.apache.org/maven2/io/netty/netty-codec-socks/4.2.18.Final/netty-codec-socks-4.2.18.Final.pom'\''.
-> Connection reset
+> Could not resolve all files for configuration '\'':load-testing:compileClasspath'\''.
+   > Could not resolve io.netty:netty-codec-socks:4.2.18.Final.
+     Required by:
+         project '\'':load-testing'\'' > org.springframework.boot:spring-boot-dependencies:4.1.1
+      > Could not resolve io.netty:netty-codec-socks:4.2.18.Final.
+         > Could not get resource '\''https://repo.maven.apache.org/maven2/io/netty/netty-codec-socks/4.2.18.Final/netty-codec-socks-4.2.18.Final.pom'\''.
+            > Could not GET '\''https://repo.maven.apache.org/maven2/io/netty/netty-codec-socks/4.2.18.Final/netty-codec-socks-4.2.18.Final.pom'\''.
+               > Got socket exception during request. It might be caused by SSL misconfiguration
+                  > Connection reset
+> There are 3 more failures with identical causes.
+
 * Try:
-> Run with --stacktrace option for details.
+> Run with --stacktrace option to get the stack trace.
 BUILD FAILED in 48s
 LOG
   exit 1
@@ -128,18 +152,82 @@ new_case absent-pinned-artifact
 # shellcheck disable=SC2016
 write_wrapper 'if [[ "$call_count" -eq 1 ]]; then
   cat <<"LOG"
+> Task :buildSrc:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :buildSrc:pluginDescriptors
+> Task :buildSrc:processResources
 > Task :buildSrc:compileKotlin
 > Task :buildSrc:compileJava NO-SOURCE
+> Task :buildSrc:compileGroovy NO-SOURCE
+> Task :buildSrc:classes
+> Task :buildSrc:jar
 FAILURE: Build failed with an exception.
+
 * What went wrong:
-1 problem was found storing the configuration cache.
 Configuration cache state could not be cached: field `classpath` of task `:common-data-runtime:compileJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type '\''org.gradle.api.internal.artifacts.configurations.DefaultResolvableConfiguration'\''
-> Could not resolve all files for configuration :common-data-runtime:compileClasspath.
-> Could not find spring-boot-starter-jdbc-4.1.1.jar (org.springframework.boot:spring-boot-starter-jdbc:4.1.1).
-  Searched in the following locations:
-    - https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-starter-jdbc/4.1.1/spring-boot-starter-jdbc-4.1.1.jar
+> Could not resolve all files for configuration '\'':common-data-runtime:compileClasspath'\''.
+   > Could not find spring-boot-starter-jdbc-4.1.1.jar (org.springframework.boot:spring-boot-starter-jdbc:4.1.1).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-starter-jdbc/4.1.1/spring-boot-starter-jdbc-4.1.1.jar
+   > Could not find spring-boot-starter-data-redis-4.1.1.jar (org.springframework.boot:spring-boot-starter-data-redis:4.1.1).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-starter-data-redis/4.1.1/spring-boot-starter-data-redis-4.1.1.jar
+   > Could not find spring-boot-jdbc-4.1.1.jar (org.springframework.boot:spring-boot-jdbc:4.1.1).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-jdbc/4.1.1/spring-boot-jdbc-4.1.1.jar
+   > Could not find spring-boot-data-redis-4.1.1.jar (org.springframework.boot:spring-boot-data-redis:4.1.1).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-data-redis/4.1.1/spring-boot-data-redis-4.1.1.jar
+   > Could not find spring-boot-sql-4.1.1.jar (org.springframework.boot:spring-boot-sql:4.1.1).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-sql/4.1.1/spring-boot-sql-4.1.1.jar
+   > Could not find spring-boot-transaction-4.1.1.jar (org.springframework.boot:spring-boot-transaction:4.1.1).
+
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-transaction/4.1.1/spring-boot-transaction-4.1.1.jar
+   > Could not find spring-boot-data-commons-4.1.1.jar (org.springframework.boot:spring-boot-data-commons:4.1.1).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-data-commons/4.1.1/spring-boot-data-commons-4.1.1.jar
+   > Could not find spring-boot-persistence-4.1.1.jar (org.springframework.boot:spring-boot-persistence:4.1.1).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/boot/spring-boot-persistence/4.1.1/spring-boot-persistence-4.1.1.jar
+   > Could not find spring-data-redis-4.1.1.jar (org.springframework.data:spring-data-redis:4.1.1).
+1 problem was found storing the configuration cache.
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/data/spring-data-redis/4.1.1/spring-data-redis-4.1.1.jar
+   > Could not find spring-data-keyvalue-4.1.1.jar (org.springframework.data:spring-data-keyvalue:4.1.1).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/data/spring-data-keyvalue/4.1.1/spring-data-keyvalue-4.1.1.jar
+   > Could not find spring-context-support-7.0.9.jar (org.springframework:spring-context-support:7.0.9).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/spring-context-support/7.0.9/spring-context-support-7.0.9.jar
+   > Could not find lettuce-core-7.5.2.RELEASE.jar (io.lettuce:lettuce-core:7.5.2.RELEASE).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/io/lettuce/lettuce-core/7.5.2.RELEASE/lettuce-core-7.5.2.RELEASE.jar
+   > Could not find spring-data-commons-4.1.1.jar (org.springframework.data:spring-data-commons:4.1.1).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/data/spring-data-commons/4.1.1/spring-data-commons-4.1.1.jar
+   > Could not find spring-messaging-7.0.9.jar (org.springframework:spring-messaging:7.0.9).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/spring-messaging/7.0.9/spring-messaging-7.0.9.jar
+   > Could not find spring-jdbc-7.0.9.jar (org.springframework:spring-jdbc:7.0.9).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/spring-jdbc/7.0.9/spring-jdbc-7.0.9.jar
+   > Could not find spring-tx-7.0.9.jar (org.springframework:spring-tx:7.0.9).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/spring-tx/7.0.9/spring-tx-7.0.9.jar
+- Task `:common-data-runtime:compileJava` of type `org.gradle.api.tasks.compile.JavaCompile`: error writing value of type '\''org.gradle.api.internal.artifacts.configurations.DefaultResolvableConfiguration'\''
+   > Could not find spring-oxm-7.0.9.jar (org.springframework:spring-oxm:7.0.9).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/org/springframework/spring-oxm/7.0.9/spring-oxm-7.0.9.jar
+   > Could not find HikariCP-7.0.2.jar (com.zaxxer:HikariCP:7.0.2).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/com/zaxxer/HikariCP/7.0.2/HikariCP-7.0.2.jar
+   > Could not find redis-authx-core-0.1.1-beta2.jar (redis.clients.authentication:redis-authx-core:0.1.1-beta2).
+     Searched in the following locations:
+         https://repo.maven.apache.org/maven2/redis/clients/authentication/redis-authx-core/0.1.1-beta2/redis-authx-core-0.1.1-beta2.jar
+
 * Try:
-> Run with --stacktrace option for details.
+> Run with --stacktrace option to get the stack trace.
 BUILD FAILED in 4s
 LOG
   exit 1
@@ -383,6 +471,78 @@ echo refreshed-compile-classpath; exit 0'
 run_case common-web-support 0
 assert_call_count 2
 assert_output_contains "Execution failed for task ':common-web-support:compileJava'."
+
+# Compile test source tasks are compile inputs, not test execution tasks; both
+# source sets may retry only when their matching compile classpath is unresolved.
+run_compile_input_case() {
+  local case_name="$1"
+  local task_name="$2"
+  local configuration="$3"
+
+  new_case "$case_name"
+  # shellcheck disable=SC2016
+  write_wrapper "if [[ \"\$call_count\" -eq 1 ]]; then
+cat <<'LOG'
+> Task :common-web-support:${task_name} FAILED
+FAILURE: Build failed with an exception.
+* What went wrong:
+Execution failed for task ':common-web-support:${task_name}'.
+> Could not resolve all files for configuration ':common-web-support:${configuration}'.
+> Could not find org.example:test-fixture:1.2.3.
+  Searched in the following locations:
+    https://repo.maven.apache.org/maven2/org/example/test-fixture/1.2.3/test-fixture-1.2.3.pom
+* Try:
+> Run with --stacktrace option for details.
+BUILD FAILED in 1s
+LOG
+exit 1
+fi
+echo compile-input-refreshed; exit 0"
+  run_case common-web-support 0
+  assert_call_count 2
+  assert_output_contains "Execution failed for task ':common-web-support:${task_name}'."
+}
+
+run_compile_input_case test-source-input-resolution compileTestJava testCompileClasspath
+run_compile_input_case integration-test-source-input-resolution compileIntegrationTestJava integrationTestCompileClasspath
+
+# A compiler diagnostic from test-source compilation and a completed compile
+# task both remain final failures, even with dependency-shaped output present.
+new_case test-source-compiler-failure
+write_wrapper 'cat <<"LOG"
+> Task :common-web-support:compileTestJava FAILED
+error: cannot find symbol
+FAILURE: Build failed with an exception.
+* What went wrong:
+Execution failed for task '\'':common-web-support:compileTestJava'\''.
+> Could not resolve all files for configuration '\'':common-web-support:testCompileClasspath'\''.
+> Could not find org.example:test-fixture:1.2.3.
+  Searched in the following locations:
+    https://repo.maven.apache.org/maven2/org/example/test-fixture/1.2.3/test-fixture-1.2.3.pom
+* Try:
+> Run with --stacktrace option for details.
+BUILD FAILED in 1s
+LOG
+exit 1'
+run_case common-web-support 1
+assert_no_retry
+
+new_case completed-test-source-compile
+write_wrapper 'cat <<"LOG"
+> Task :common-web-support:compileTestJava
+FAILURE: Build failed with an exception.
+* What went wrong:
+> Could not resolve all files for configuration '\'':common-web-support:testCompileClasspath'\''.
+> Could not find org.example:test-fixture:1.2.3.
+  Searched in the following locations:
+    https://repo.maven.apache.org/maven2/org/example/test-fixture/1.2.3/test-fixture-1.2.3.pom
+* Try:
+> Run with --stacktrace option for details.
+BUILD FAILED in 1s
+LOG
+exit 1'
+run_case common-web-support 1
+assert_no_retry
 
 # Retry failure is the final check result; the first attempt remains in output.
 new_case second-attempt-failure
