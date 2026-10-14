@@ -2516,6 +2516,31 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(attempted, [1])
         self.assertEqual(admitted, [])
 
+    def test_corrected_native_obligations_hold_original_zero_and_preserve_allocation_counts(self):
+        history = {(1, "cli"): [self.allocation_evidence(checkpoint="baseline", channel="cli")]}
+        controller = self.grant_bounded_allocation(channel="cli", evidence=history, checkpoint="baseline",
+                                                    minimum=4, cap=4, fresh_taper=True)
+        for index in range(4):
+            history[(1, "cli")].append({**self.allocation_evidence(checkpoint=f"original-{index}", channel="cli"),
+                                        "raw": 2, "accepted": 2, "source_resolution_status": "resolved"})
+        progress = controller.status()["prs"][0]["allocations"]["cli"]
+        self.assertEqual(progress["completed_count"], 4)
+        self.assertEqual(progress["remaining"], 0)
+        self.assertFalse(progress["taper_complete"])
+        latest = history[(1, "cli")][-1]
+        # A rejected original becoming accepted must hold even with original accepted0.
+        for item in history[(1, "cli")][1:]:
+            item["accepted"] = 0
+        for proof in ("finding_pending", "pending", "unavailable"):
+            latest["source_resolution_status"] = proof
+            self.assertTrue(controller._accepted_findings_pending(latest, HEAD_1))
+            progress = controller.status()["prs"][0]["allocations"]["cli"]
+            self.assertEqual(progress["completed_count"], 4)
+            self.assertIn(progress["status"], {"CAP_FINDINGS_PENDING", "CAP_EXHAUSTED_PENDING", "HELD"})
+        latest["source_resolution_status"] = "resolved"
+        self.assertFalse(controller._accepted_findings_pending(latest, HEAD_1))
+        self.assertEqual(controller.status()["prs"][0]["allocations"]["cli"]["completed_count"], 4)
+
     def test_allocation_counts_survive_head_parent_and_merge_base_movement(self):
         for bounded in (False, True):
             with self.subTest(bounded=bounded):
@@ -10796,7 +10821,8 @@ class ControllerTests(unittest.TestCase):
                         self._enable_batch_status(controller, values)
                         report = controller.status_overview()
                         row = report["prs"][0]["allocations"]["hosted"]
-                        self.assertEqual(row["status"], "CAP_FINDINGS_PENDING" if accepted else "CAP_TAPERED_PENDING")
+                        # Explicit effective source proof holds regardless of original accepted count.
+                        self.assertEqual(row["status"], "CAP_FINDINGS_PENDING")
                         self.assertFalse(row["finding_only_pending"])
                         self.assertFalse(row["request_preparation_only"])
                         self.assertEqual(report["review_fronts"]["hosted"]["pr"], 1)

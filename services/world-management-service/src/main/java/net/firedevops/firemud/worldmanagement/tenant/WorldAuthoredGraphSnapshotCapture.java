@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Internal-only World graph snapshot capture. Captured rows are representation evidence, not
@@ -34,6 +35,7 @@ import tools.jackson.databind.ObjectMapper;
  */
 public class WorldAuthoredGraphSnapshotCapture {
   private static final int WORLD_DIGEST_SCHEMA_VERSION = 3;
+  private static final ObjectMapper STABLE_JSON = JsonMapper.builder().build();
 
   private static final Table<?> REVISION_LEDGER = table("world_design_revision_ledger");
 
@@ -57,7 +59,6 @@ public class WorldAuthoredGraphSnapshotCapture {
   private final WorldAuthoredGraphReader graphReader;
   private final WorldDraftDesignDigestService draftDigestService;
   private final WorldAuthoredGraphSnapshotRepository snapshotRepository;
-  private final ObjectMapper objectMapper;
 
   @SuppressFBWarnings(
       value = "CT_CONSTRUCTOR_THROW",
@@ -66,15 +67,13 @@ public class WorldAuthoredGraphSnapshotCapture {
   public WorldAuthoredGraphSnapshotCapture(
       DSLContext dsl,
       WorldDraftDesignDigestService draftDigestService,
-      WorldAuthoredGraphSnapshotRepository snapshotRepository,
-      ObjectMapper objectMapper) {
+      WorldAuthoredGraphSnapshotRepository snapshotRepository) {
     this.dsl = Objects.requireNonNull(dsl, "dsl must not be null");
     this.graphReader = new WorldAuthoredGraphReader(dsl);
     this.draftDigestService =
         Objects.requireNonNull(draftDigestService, "draftDigestService must not be null");
     this.snapshotRepository =
         Objects.requireNonNull(snapshotRepository, "snapshotRepository must not be null");
-    this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
   }
 
   /**
@@ -110,7 +109,7 @@ public class WorldAuthoredGraphSnapshotCapture {
     String revisionEvidenceJson = captureOwnerRevisionEvidence(request, provenance);
     WorldAuthoredGraph graph =
         graphReader.readAndValidateGraph(provenance.localTenantKey(), provenance.localVersionKey());
-    byte[] graphBytes = graph.encode(objectMapper);
+    byte[] graphBytes = graph.encode(STABLE_JSON);
     WorldDraftDesignDigest currentDigest =
         draftDigestService.getDraftDesignDigest(
             Long.toString(provenance.localTenantKey()),
@@ -205,7 +204,7 @@ public class WorldAuthoredGraphSnapshotCapture {
     return writeJson(evidence);
   }
 
-  private String encodeTuples(List<OwnedAffectedTuple> tuples) {
+  static String encodeTuples(List<OwnedAffectedTuple> tuples) {
     List<LinkedHashMap<String, Object>> values = new ArrayList<>();
     for (OwnedAffectedTuple tuple : tuples) {
       LinkedHashMap<String, Object> item = new LinkedHashMap<>();
@@ -249,17 +248,17 @@ public class WorldAuthoredGraphSnapshotCapture {
     return sha256(writeJsonBytes(binding));
   }
 
-  private String writeJson(Object value) {
+  private static String writeJson(Object value) {
     try {
-      return objectMapper.writeValueAsString(value);
+      return STABLE_JSON.writeValueAsString(value);
     } catch (Exception exception) {
       throw new SnapshotConflictException("World authored graph evidence could not be encoded");
     }
   }
 
-  private byte[] writeJsonBytes(Object value) {
+  private static byte[] writeJsonBytes(Object value) {
     try {
-      return objectMapper.writeValueAsBytes(value);
+      return STABLE_JSON.writeValueAsBytes(value);
     } catch (Exception exception) {
       throw new SnapshotConflictException("World authored graph bytes could not be encoded");
     }

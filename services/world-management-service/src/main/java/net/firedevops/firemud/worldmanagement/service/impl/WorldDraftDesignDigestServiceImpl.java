@@ -7,7 +7,6 @@ import java.security.NoSuchAlgorithmException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.TreeMap;
 import java.util.UUID;
 import net.firedevops.firemud.common.security.RequestIdValidation;
@@ -44,15 +43,13 @@ public final class WorldDraftDesignDigestServiceImpl implements WorldDraftDesign
       RoomRepository roomRepository,
       RoomExitRepository roomExitRepository,
       GenerationRuleRepository generationRuleRepository,
-      WorldEntitySpawnBindingRepository worldEntitySpawnBindingRepository,
-      ObjectMapper objectMapper) {
+      WorldEntitySpawnBindingRepository worldEntitySpawnBindingRepository) {
     this.regionRepository = regionRepository;
     this.zoneRepository = zoneRepository;
     this.roomRepository = roomRepository;
     this.roomExitRepository = roomExitRepository;
     this.generationRuleRepository = generationRuleRepository;
     this.worldEntitySpawnBindingRepository = worldEntitySpawnBindingRepository;
-    Objects.requireNonNull(objectMapper, "objectMapper");
     // Schema serialization must not inherit application-wide pretty-printing or map-order options.
     this.objectMapper = new ObjectMapper();
   }

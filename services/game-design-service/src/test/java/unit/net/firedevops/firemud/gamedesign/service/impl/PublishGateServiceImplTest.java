@@ -68,7 +68,7 @@ class PublishGateServiceImplTest {
             any(PublicationDigestRequestBinding.class)))
         .thenReturn(
             new PublishParticipantDigestDto(
-                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null));
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null));
     when(entityManagementClient.getDraftDesignDigestForVersion(
             any(PublicationDigestRequestBinding.class)))
         .thenReturn(
@@ -120,7 +120,7 @@ class PublishGateServiceImplTest {
     List<PublishParticipantDigestDto> digests =
         List.of(
             new PublishParticipantDigestDto(
-                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null),
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null),
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
             new PublishParticipantDigestDto(
@@ -140,7 +140,7 @@ class PublishGateServiceImplTest {
   }
 
   @Test
-  void fullVersionGateFailsClosedForUnsupportedSchema() {
+  void fullVersionGateRejectsObsoleteWorldDigestSchema() {
     VersionDto version =
         new VersionDto(
             7L,
@@ -157,7 +157,7 @@ class PublishGateServiceImplTest {
     List<PublishParticipantDigestDto> digests =
         List.of(
             new PublishParticipantDigestDto(
-                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null),
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null),
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
             new PublishParticipantDigestDto(
@@ -171,6 +171,7 @@ class PublishGateServiceImplTest {
         assertThrows(
             PublishGateFailureException.class, () -> service.assertGatePassed(version, digests));
     assertEquals(PublishGateFailureCode.UNSUPPORTED_DIGEST_SCHEMA, thrown.failureCode());
+    assertTrue(thrown.getMessage().contains("WORLD_MANAGEMENT"));
   }
 
   @Test
@@ -191,7 +192,7 @@ class PublishGateServiceImplTest {
     List<PublishParticipantDigestDto> digests =
         List.of(
             new PublishParticipantDigestDto(
-                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null),
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null),
             new PublishParticipantDigestDto(
                 "AUTOMATION_SCRIPTING", "7", "version:7", "digest-script", 5, null, null),
             new PublishParticipantDigestDto(
@@ -227,7 +228,7 @@ class PublishGateServiceImplTest {
     List<PublishParticipantDigestDto> digests =
         List.of(
             new PublishParticipantDigestDto(
-                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null),
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null),
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
             new PublishParticipantDigestDto(
@@ -316,9 +317,9 @@ class PublishGateServiceImplTest {
     List<PublishParticipantDigestDto> digests =
         List.of(
             new PublishParticipantDigestDto(
-                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null),
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null),
             new PublishParticipantDigestDto(
-                "WORLD_MANAGEMENT", "7", "version:7", "digest-world-2", 2, null, null),
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world-2", 3, null, null),
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),
             new PublishParticipantDigestDto(
@@ -353,7 +354,7 @@ class PublishGateServiceImplTest {
     List<PublishParticipantDigestDto> digests =
         java.util.Arrays.asList(
             new PublishParticipantDigestDto(
-                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 2, null, null),
+                "WORLD_MANAGEMENT", "7", "version:7", "digest-world", 3, null, null),
             null,
             new PublishParticipantDigestDto(
                 "ENTITY_MANAGEMENT", "7", "version:7", "digest-entity", 1, null, null),

@@ -30,7 +30,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Actual guarded six-family component storage; explicitly unwired, with private keys. */
 public class WorldDraftTopologyCommitRepository {
-  private static final ObjectMapper OWNER_BINDING_JSON = JsonMapper.builder().build();
+  private static final ObjectMapper STABLE_JSON = JsonMapper.builder().build();
 
   private final DSLContext dsl;
   private final WorldDesignPublicationFenceRepository fence;
@@ -56,8 +56,7 @@ public class WorldDraftTopologyCommitRepository {
   }
 
   static String ownerBindingJson(WorldDesignPublicationFenceEvidence.OwnerBinding ownerBinding) {
-    return OWNER_BINDING_JSON.writeValueAsString(
-        Objects.requireNonNull(ownerBinding, "ownerBinding"));
+    return STABLE_JSON.writeValueAsString(Objects.requireNonNull(ownerBinding, "ownerBinding"));
   }
 
   /** Caller already holds the exact shared V25 FROZEN owner lock; no writer is entered. */
@@ -104,7 +103,7 @@ public class WorldDraftTopologyCommitRepository {
             "SELECT world_store_guarded_uuid_topology(?::jsonb, ?::jsonb, ?::jsonb)",
             ownerJson,
             plan.binding().canonicalJson(),
-            mapper.writeValueAsString(executionRevisions(plan)))
+            STABLE_JSON.writeValueAsString(executionRevisions(plan)))
         .fetch();
     byte[] graph = readAndVerifyGraph(plan, owner.localTenantKey(), owner.localVersionKey());
     byte[] result = encodeResult(plan, graph);
@@ -401,7 +400,7 @@ public class WorldDraftTopologyCommitRepository {
         throw new ConflictException("World UUID association has no actual allocated row");
       }
       JsonNode actual = mapper.readTree(row.get("content_json", String.class));
-      JsonNode expected = mapper.valueToTree(expectedContent(node, keys, tenant, version));
+      JsonNode expected = STABLE_JSON.valueToTree(expectedContent(node, keys, tenant, version));
       if (!sameContent(actual, expected)) {
         throw new ConflictException("World allocated row differs from every exact payload field");
       }
@@ -471,7 +470,7 @@ public class WorldDraftTopologyCommitRepository {
     graph.put("canonicalTenantId", plan.graph().tenantId().toString());
     graph.put("canonicalVersionId", plan.graph().versionId().toString());
     graph.put("rows", rows);
-    return mapper.writeValueAsBytes(graph);
+    return STABLE_JSON.writeValueAsBytes(graph);
   }
 
   static Map<String, Object> expectedContent(
@@ -600,7 +599,7 @@ public class WorldDraftTopologyCommitRepository {
                   return after;
                 })
             .toList());
-    return mapper.writeValueAsBytes(result);
+    return STABLE_JSON.writeValueAsBytes(result);
   }
 
   private void requireTransaction() {
