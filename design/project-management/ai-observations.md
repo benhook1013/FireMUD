@@ -242,3 +242,5 @@ Entry format:
   - Expected pattern: snapshot retained completed native results and append the channel period in one local SQLite transaction; preserve provider reservations and enforce external evidence only at ordinary review/status admission.
   - Current status: local transactional implementation is prepared; installed-selector promotion and live rollout verification remain pending with the owning orchestrator.
   - Reconsideration trigger: verify concurrent metadata batches after coordinated version-matched selector promotion.
+
+- 2026-10-15: Administrative review settings share a dispatch boundary with provider-backed commands. When removing latency from one setting command, inspect the neighbouring stop/allocation/reset dispatch family and prove each actual entrypoint with Git, GitHub and subprocess access forbidden; method-only fixtures can preserve legacy behavior while missing expensive controller construction. Retain evidence-bound consumption as a separate operation rather than weakening request admission.

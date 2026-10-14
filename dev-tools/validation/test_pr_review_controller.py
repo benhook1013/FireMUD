@@ -484,6 +484,153 @@ class ControllerTests(unittest.TestCase):
         inputs.update(changes)
         return controller.decide_period_reset(**inputs)
 
+    def test_local_settings_snapshot_completed_native_results_and_preserve_active_capture(self):
+        for channel in ("hosted", "cli"):
+            with self.subTest(channel=channel):
+                source, records = self.local_period_controller(channel)
+                controller = ReviewController(store=source.store)
+                before = records.history(1, include_display=False)
+                with patch.object(subprocess, "run", side_effect=AssertionError("external process")):
+                    granted = controller.decide_allocation(
+                        action="grant",
+                        pr=1,
+                        channel=channel,
+                        head=HEAD_3,
+                        reason="human allowance",
+                        exact_additional_completed=2,
+                    )
+                    allocation = controller._state().allocations[f"1:{channel}"]
+                    self.assertTrue(allocation.administrative_local)
+                    self.assertIsNone(allocation.parent_head)
+                    self.assertIsNone(allocation.parent_identity)
+                    self.assertIn("old", allocation.baseline_source_run_ids)
+                    self.assertNotIn("active", allocation.baseline_source_run_ids)
+                    self.assertFalse(allocation.reopens_taper)
+                    self.assertEqual(granted["allocation"]["min_additional_completed"], 2)
+                    after = (
+                        hosted.parse_timestamp(allocation.administrative_recorded_at) + timedelta(seconds=1)
+                    ).isoformat()
+                    rows = [
+                        self.allocation_evidence(
+                            checkpoint="late-old", channel=channel, source_run_id="old", verified_completed_at=after
+                        ),
+                        self.allocation_evidence(checkpoint="unknown", channel=channel, source_run_id="unknown"),
+                        self.allocation_evidence(
+                            checkpoint="active-finished",
+                            channel=channel,
+                            source_run_id="active",
+                            verified_completed_at=after,
+                        ),
+                    ]
+                    progress = controller._bounded_allocation_evidence(
+                        allocation, [*rows, self.scope_timeline_evidence(channel=channel)]
+                    )
+                    self.assertIsNone(progress["error"])
+                    self.assertEqual([row["checkpoint"] for row in progress["results"]], ["active-finished"])
+                    with self.assertRaisesRegex(ControllerError, "already exists"):
+                        controller.decide_allocation(
+                            action="grant",
+                            pr=1,
+                            channel=channel,
+                            head=HEAD_3,
+                            reason="duplicate",
+                            exact_additional_completed=2,
+                        )
+                    stopped = controller.decide_stop(pr=1, channel=channel, reason="human stop")
+                    self.assertIsNone(stopped["reviewed_head"])
+                    self.assertIsNone(stopped["stop_head"])
+                    self.assertEqual(stopped["stop_basis"], "direct_human")
+                    with self.assertRaisesRegex(ControllerError, "already stopped"):
+                        controller.decide_stop(pr=1, channel=channel, reason="duplicate stop")
+                self.assertEqual(records.history(1, include_display=False), before)
+                self.assertEqual(ReviewState.from_dict(controller._state().to_dict()), controller._state())
+
+    def test_concurrent_local_grants_cannot_replace_each_other(self):
+        source, records = self.local_period_controller()
+        controller = ReviewController(store=source.store)
+        snapshot = controller._state()
+        barrier = threading.Barrier(2)
+        outcomes = []
+
+        def read_before_decision():
+            barrier.wait(timeout=5)
+            return snapshot
+
+        def grant():
+            try:
+                outcomes.append(
+                    controller.decide_allocation(
+                        action="grant",
+                        pr=1,
+                        channel="cli",
+                        head=HEAD_3,
+                        reason="concurrent allowance",
+                        exact_additional_completed=1,
+                    )
+                )
+            except ControllerError as error:
+                outcomes.append(str(error))
+
+        with patch.object(controller, "_state", side_effect=read_before_decision):
+            workers = [threading.Thread(target=grant) for _ in range(2)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(timeout=10)
+                self.assertFalse(worker.is_alive())
+        self.assertEqual(sum(isinstance(result, dict) for result in outcomes), 1)
+        self.assertEqual(sum(isinstance(result, str) and "concurrently" in result for result in outcomes), 1)
+        self.assertEqual(
+            next(item for item in records.history(1)["attempts"] if item["attempt_id"] == "active")["state"], "started"
+        )
+
+    def test_local_allocation_snapshots_completion_race_and_refuses_stale_decision(self):
+        source, records = self.local_period_controller()
+        controller = ReviewController(store=source.store)
+        original_update = source.store.update
+        def completion_wins(mutate, **kwargs):
+            records.complete_attempt_run(
+                "active",
+                finish={
+                    "state": "completed",
+                    "finished_at": "2026-10-01T00:02:00Z",
+                    "checkpoint_id": "race-checkpoint",
+                },
+                run={
+                    "run_id": "active",
+                    "source_pr": 1,
+                    "channel": "cli",
+                    "source_head": HEAD_1,
+                    "findings": [],
+                    "started_at": "2026-10-01T00:01:00Z",
+                    "finished_at": "2026-10-01T00:02:00Z",
+                },
+            )
+            return original_update(mutate, **kwargs)
+        with patch.object(source.store, "update", side_effect=completion_wins):
+            controller.decide_allocation(
+                action="grant", pr=1, channel="cli", head=HEAD_3, reason="human cap", max_additional_completed=2
+            )
+        saved = controller._state().allocations["1:cli"]
+        self.assertIn("active", saved.baseline_source_run_ids)
+        self.assertEqual(records.history(1)["attempts"][1]["finished_at"], "2026-10-01T00:02:00Z")
+        before = controller._state()
+        with self.assertRaisesRegex(ControllerError, "concurrently"):
+            controller._decide_local_allocation(
+                action="renew",
+                pr=1,
+                channel="cli",
+                head=HEAD_3,
+                reason="stale",
+                checkpoint=None,
+                minimum=1,
+                maximum=1,
+                fresh_taper=False,
+                observed_state=dataclasses.replace(before, ordered_prs=(1, 2)),
+                previous=saved,
+            )
+        self.assertEqual(controller._state(), before)
+
     def test_local_period_reset_is_transactional_without_external_calls_and_preserves_records(self):
         for channel in ("cli", "hosted"):
             with self.subTest(channel=channel):
@@ -544,7 +691,7 @@ class ControllerTests(unittest.TestCase):
         self.local_period_reset(controller)
         before = controller.store.path.read_bytes()
         old_writer = SqliteStateStore(controller.store.path, writer_build=10)
-        with self.assertRaisesRegex(StateError, "writer build 11"):
+        with self.assertRaisesRegex(StateError, "writer build 12"):
             old_writer.update(lambda state: state)
         self.assertEqual(controller.store.path.read_bytes(), before)
         state = controller._state()
@@ -2452,6 +2599,56 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
         self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_3)
+
+    def test_local_fresh_hosted_allocation_uses_live_anchor_and_still_audits_findings(self):
+        controller, evidence = self.hosted_judgment_allocation_fixture(sqlite=True)
+        SqliteReviewRecords(controller.store.path).bootstrap()
+        local = ReviewController(store=controller.store)
+        with patch.object(subprocess, "run", side_effect=AssertionError("administrative process")):
+            local.decide_allocation(action="grant", pr=1, channel="hosted", head=HEAD_1,
+                reason="fresh human taper", min_additional_completed=1, max_additional_completed=1, fresh_taper=True)
+        allocation = local._state().allocations["1:hosted"]
+        self.assertIsNone(allocation.parent_head)
+        self.assertEqual(allocation.head, HEAD_1)
+        self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
+        self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_3)
+        self.assertTrue(evidence.stop_audit_calls)
+        self.assertEqual(controller.store.load().allocations["1:hosted"], allocation)
+        evidence.audit["unresolved_findings"] = ["thread:77"]
+        self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "HELD")
+        with self.assertRaisesRegex(ControllerError, "unresolved actionable"):
+            controller.resolve_hosted_target()
+        evidence.audit["unresolved_findings"] = []
+        controller.git.heads["develop"] = PARENT
+        self.assertNotEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
+        self.assertEqual(controller.store.load().allocations["1:hosted"], allocation)
+
+    def test_local_allocation_scope_markers_require_proven_source_order_before_decision(self):
+        source, _ = self.local_period_controller()
+        local = ReviewController(store=source.store)
+        local.decide_allocation(action="grant", pr=1, channel="cli", head=HEAD_3,
+            reason="renew after scope change", min_additional_completed=1, max_additional_completed=2)
+        allocation = local._state().allocations["1:cli"]
+        cutoff = hosted.parse_timestamp(allocation.administrative_recorded_at)
+        before = (cutoff - timedelta(seconds=1)).isoformat()
+        after = (cutoff + timedelta(seconds=1)).isoformat()
+        marker = {"pr": 1, "channel": "cli", "kind": "scope_change", "scope_changed": True,
+            "checkpoint": "scope-change:77", "comment_id": 77, "created_at": before,
+            "updated_at": before, "observed_at": before, "completed": False, "attributable": False,
+            "non_counting": True, "accepted": 0}
+        timeline = self.scope_timeline_evidence(channel="cli")
+        snapshot = local._bounded_allocation_evidence(allocation, [marker, timeline])
+        self.assertIsNone(snapshot["error"])
+        self.assertEqual(snapshot["results"], [])
+        for changes in ({"updated_at": after, "observed_at": after},
+                        {"updated_at": allocation.administrative_recorded_at,
+                         "observed_at": allocation.administrative_recorded_at},
+                        {"created_at": None}, {"updated_at": ""},
+                        {"observed_at": after}, {"comment_id": None},
+                        {"scope_change_malformed": True}, {"kind": "scope_change_malformed"}):
+            with self.subTest(changes=changes):
+                self.assertIsNotNone(local._bounded_allocation_evidence(allocation,
+                    [{**marker, **changes}, timeline])["error"])
 
     def test_hosted_cross_channel_reopen_leaves_ready_decisions_unchanged(self):
         controller, evidence = self.hosted_judgment_allocation_fixture()
