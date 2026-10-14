@@ -5,6 +5,7 @@ package world_management.v1;
 import "entity-management/v1/entity_management_service.proto";
 import "shared/v1/errors.proto";
 import "shared/v1/instance_refs.proto";
+import "world-management/v1/world_canonical_instance_lifecycle_read.proto";
 
 option java_package = "net.firedevops.firemud.worldmanagement.v1";
 option java_multiple_files = true;
@@ -45,6 +46,12 @@ service WorldAuthoredSourceIntakeService {
       returns (ReadAuthoredWorldSourceIntakeByIdResponse);
 }
 
+// Explicitly unwired Game Session-to-World canonical launch preparation transport.
+service WorldCanonicalInstancePreparationService {
+  rpc PrepareCanonicalWorldInstance(PrepareCanonicalWorldInstanceRequest)
+      returns (PrepareCanonicalWorldInstanceResponse);
+}
+
 // Explicitly unwired Account-authenticated read of one original StartSession World terminal.
 service WorldStartSessionExecutionTerminalReadService {
   rpc ReadWorldStartSessionExecutionTerminal(
@@ -70,6 +77,36 @@ message ReadWorldStartSessionExecutionTerminalResponse {
   string read_request_id = 1;
   // The only result is the existing closed WorldStartSessionExecutionTerminal carrier.
   bytes canonical_terminal_bytes = 2;
+}
+
+// Exact original Game Session StartSession owner operation. Account participation identity,
+// currentness, lease observation and source projection are returned only by Account.
+message OriginalStartSessionOperationInput {
+  bytes original_post_authorization_tuple = 1;
+  string game_session_owner_mutation_id = 2;
+  string game_session_owner_attempt_id = 3;
+  int64 game_session_owner_fence = 4;
+}
+
+// The committed Game Session launch-association selector and separate original operation input.
+message PrepareCanonicalWorldInstanceRequest {
+  string read_request_id = 1;
+  string target_namespace = 2;
+  string canonical_tenant_id = 3;
+  string world_slug = 4;
+  string game_instance_uuid = 5;
+  string control_plane_request_id = 6;
+  string launch_descriptor_id = 7;
+  string expected_descriptor_request_digest = 8;
+  string expected_descriptor_result_digest = 9;
+  string expected_release_attestation_evidence_digest = 10;
+  OriginalStartSessionOperationInput original_start_session_operation = 11;
+}
+
+message PrepareCanonicalWorldInstanceResponse {
+  PrepareCanonicalWorldInstanceRequest request = 1;
+  ReadWorldCanonicalInstanceLifecycleResponse lifecycle = 2;
+  shared.v1.ErrorDetail error = 3;
 }
 
 message IntakeAuthoredWorldSourceRequest {
