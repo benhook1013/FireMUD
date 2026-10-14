@@ -1,0 +1,23 @@
+{
+  "scriptId": "account.initial-gameplay-login-dispose.v1",
+  "resourcePath": "redis/lua/account-initial-gameplay-login-dispose.lua",
+  "sha256": "28d884981592e4ba1902c87d4abdad61d7417e14ab495595ea033f05fd9eb5ec",
+  "owner": "account-service",
+  "principal": "account_coord_app",
+  "role": "COORDINATION",
+  "keys": [{"name": "tokenRecord", "ownedPrefix": "session:auth:token:", "hashTagDeclaration": "NOT_REQUIRED"}],
+  "arguments": [{"name": "exactCanonicalPendingRecordUtf8"}, {"name": "exactCanonicalActiveRecordUtf8"}, {"name": "exactDisposalTombstoneUtf8"}],
+  "category": "SESSION_CAS",
+  "outcomes": [
+    {"code": "DISPOSAL_TOMBSTONE_WRITTEN", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "EXACT_DISPOSAL_REASSERTED", "category": "SUCCESS", "effect": "MUTATING"},
+    {"code": "CONFLICTING_REGISTRY_RECORD", "category": "STALE", "effect": "NON_MUTATING"},
+    {"code": "INVALID_ARGUMENTS", "category": "VALIDATION_FAILURE", "effect": "NON_MUTATING"}
+  ],
+  "resetSensitivity": "CLUSTER",
+  "lossClass": "SESSION_LEASE_CACHE_OR_WAKE_UP",
+  "tailLossBehavior": "SQL original-request disposal guards prohibit issuance and recovery. Exact retries reassert and durably read back the denied original-token tombstone; missing Redis bytes do not prove disposal.",
+  "compatibilityLevel": "REQUIRES_CLUSTER_RESET",
+  "supportedCoexistence": [{"callerVersion": "v1", "payloadVersion": "v1"}],
+  "legacyPayloadShape": null
+}

@@ -20,7 +20,8 @@ public final class AccountGameplayDelegationRedisScriptContribution
     "/redis/scripts/account-game-session-delegation-activate-committed.json",
     "/redis/scripts/account-game-session-delegation-authority-project-issuer.json",
     "/redis/scripts/account-selected-tenant-generation-projection.json",
-    "/redis/scripts/account-selected-membership-generation-projection.json"
+    "/redis/scripts/account-selected-membership-generation-projection.json",
+    "/redis/scripts/account-initial-gameplay-login-dispose.json"
   };
   private static final JsonMapper JSON =
       JsonMapper.builder()
@@ -56,7 +57,7 @@ public final class AccountGameplayDelegationRedisScriptContribution
         }
         descriptors.add(descriptor);
       }
-      if (descriptors.size() != 5
+      if (descriptors.size() != 6
           || !descriptors.stream()
               .map(RedisScriptDescriptor::scriptId)
               .toList()
@@ -66,7 +67,8 @@ public final class AccountGameplayDelegationRedisScriptContribution
                       AccountGameplayDelegationRedisClient.ACTIVE_TRANSITION_SCRIPT_ID,
                       AccountGameplayDelegationRedisClient.ISSUER_PROJECTION_SCRIPT_ID,
                       AccountGameplayDelegationRedisClient.TENANT_PROJECTION_SCRIPT_ID,
-                      AccountGameplayDelegationRedisClient.MEMBERSHIP_PROJECTION_SCRIPT_ID))) {
+                      AccountGameplayDelegationRedisClient.MEMBERSHIP_PROJECTION_SCRIPT_ID,
+                      AccountGameplayDelegationRedisClient.INITIAL_LOGIN_DISPOSAL_SCRIPT_ID))) {
         throw new IllegalStateException("Account Redis descriptor identities are invalid");
       }
       return List.copyOf(descriptors);

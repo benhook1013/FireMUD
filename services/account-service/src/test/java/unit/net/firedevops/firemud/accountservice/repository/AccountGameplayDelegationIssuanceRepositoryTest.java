@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -208,6 +209,10 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
   private static final UUID JTI = UUID.fromString("2921ba03-bf74-49ac-b24b-a9255f5de308");
   private static final Instant NOW = Instant.parse("2027-01-15T12:00:00Z");
   private static final JsonMapper JSON = JsonMapper.builder().build();
+  private static final String DISPOSAL_GUARD_SELECT =
+      "SELECT request_id FROM account_initial_gameplay_login_disposals WHERE request_id = ?";
+  private static final String OPERATION_SELECT_PREFIX =
+      "SELECT * FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?";
 
   @AfterEach
   void clearTransactionContext() {
@@ -283,10 +288,7 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
         operationRecord(intent, AccountGameplayDelegationIssuanceRepository.requestDigest(intent));
     when(committedWithoutProof.get("status", String.class)).thenReturn("COMMITTED");
     when(committedWithoutProof.get("token_hash", String.class)).thenReturn("a".repeat(64));
-    when(dsl.fetchOne(
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.any(Object[].class)))
-        .thenReturn(committedWithoutProof, committedWithoutProof);
+    stubOriginalOperationRows(dsl, committedWithoutProof, committedWithoutProof);
     when(sources.readCurrentIssuerAccountSources(
             GameSessionAccountDelegationProfile.ISSUER, ACCOUNT_ID))
         .thenReturn(current);
@@ -459,10 +461,7 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
     String digest = AccountGameplayDelegationIssuanceRepository.requestDigest(intent);
     Record preliminary = operationRecord(intent, digest);
     Record locked = operationRecord(intent, digest);
-    when(dsl.fetchOne(
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.any(Object[].class)))
-        .thenReturn(preliminary, locked);
+    stubOriginalOperationRows(dsl, preliminary, locked);
     when(sources.readCurrentIssuerAccountSources(
             GameSessionAccountDelegationProfile.ISSUER, ACCOUNT_ID))
         .thenReturn(current);
@@ -486,6 +485,7 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
     assertThat(result.evidenceBundle()).isEqualTo(bundle);
     assertThat(result.toString()).doesNotContain(REQUEST_ID.toString(), JTI.toString());
     var order = inOrder(dsl, sources, bundles);
+    order.verify(dsl).fetchOne(DISPOSAL_GUARD_SELECT, REQUEST_ID);
     order
         .verify(dsl)
         .fetchOne(
@@ -501,6 +501,7 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
     order
         .verify(sources)
         .readCurrentIssuerAccountSources(GameSessionAccountDelegationProfile.ISSUER, ACCOUNT_ID);
+    order.verify(dsl).fetchOne(DISPOSAL_GUARD_SELECT, REQUEST_ID);
     order
         .verify(dsl)
         .fetchOne(
@@ -523,10 +524,7 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
     String digest = AccountGameplayDelegationIssuanceRepository.requestDigest(intent);
     Record preliminary = operationRecord(intent, digest);
     Record locked = operationRecord(intent, digest);
-    when(dsl.fetchOne(
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.any(Object[].class)))
-        .thenReturn(preliminary, locked);
+    stubOriginalOperationRows(dsl, preliminary, locked);
     when(sources.readCurrentIssuerAccountSources(
             GameSessionAccountDelegationProfile.ISSUER, ACCOUNT_ID))
         .thenReturn(current);
@@ -558,10 +556,7 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
     String digest = AccountGameplayDelegationIssuanceRepository.requestDigest(intent);
     Record preliminary = operationRecord(intent, digest);
     Record locked = operationRecord(intent, digest);
-    when(dsl.fetchOne(
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.any(Object[].class)))
-        .thenReturn(preliminary, locked);
+    stubOriginalOperationRows(dsl, preliminary, locked);
     when(sources.readCurrentIssuerAccountSources(
             GameSessionAccountDelegationProfile.ISSUER, ACCOUNT_ID))
         .thenReturn(current);
@@ -580,6 +575,39 @@ class AccountGameplayDelegationIssuanceRepositoryTest {
         .isInstanceOf(
             AccountGameplayDelegationIssuanceRepository.PendingCandidateUnavailableException.class);
     verify(bundles).readStoredNonAuthorizingValue(OPERATION_ID);
+  }
+
+  @Test
+  void actualOriginalDisposalGuardDeniesBeforeReadingSigningIdentityOrAuthority() {
+    DSLContext dsl = mock(DSLContext.class);
+    AccountAuthoritySourceEvidenceRepository sources =
+        mock(AccountAuthoritySourceEvidenceRepository.class);
+    AccountAuthEvidenceBundleRepository bundles = mock(AccountAuthEvidenceBundleRepository.class);
+    when(dsl.fetchOne(DISPOSAL_GUARD_SELECT, REQUEST_ID)).thenReturn(mock(Record.class));
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    TransactionSynchronizationManager.setCurrentTransactionReadOnly(false);
+    var repository =
+        new AccountGameplayDelegationIssuanceRepository(
+            dsl, sources, bundles, Clock.fixed(NOW, ZoneOffset.UTC));
+    assertThatThrownBy(() -> repository.readPendingSigningIdentity(REQUEST_ID))
+        .isInstanceOf(
+            AccountGameplayDelegationIssuanceRepository.IdempotencyConflictException.class);
+    verify(dsl, never())
+        .fetchOne(
+            org.mockito.ArgumentMatchers.startsWith(OPERATION_SELECT_PREFIX),
+            org.mockito.ArgumentMatchers.eq(REQUEST_ID));
+    verifyNoInteractions(sources, bundles);
+  }
+
+  private static void stubOriginalOperationRows(DSLContext dsl, Record preliminary, Record locked) {
+    when(dsl.fetchOne(DISPOSAL_GUARD_SELECT, REQUEST_ID)).thenReturn(null);
+    when(dsl.fetchOne(
+            "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE", ACCOUNT_ID))
+        .thenReturn(mock(Record.class));
+    when(dsl.fetchOne(
+            org.mockito.ArgumentMatchers.startsWith(OPERATION_SELECT_PREFIX),
+            org.mockito.ArgumentMatchers.eq(REQUEST_ID)))
+        .thenReturn(preliminary, locked);
   }
 
   private static PendingIntent intent(AccountAuthoritySnapshot authority) {

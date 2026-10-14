@@ -12,6 +12,8 @@ service AccountService {
   rpc Ping(PingRequest) returns (PingResponse);
   rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
   rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse);
+  // Exact original Game Session mTLS caller; lifecycle disposal only, never credential recovery.
+  rpc RetireInitialGameplayLogin(RetireInitialGameplayLoginRequest) returns (RetireInitialGameplayLoginResponse);
   rpc RequestEmailLoginOtp(RequestEmailLoginOtpRequest) returns (RequestEmailLoginOtpResponse);
   rpc VerifyEmailLoginOtp(VerifyEmailLoginOtpRequest) returns (AuthenticateResponse);
   rpc GetTenantMembershipForRuntime(GetTenantMembershipForRuntimeRequest) returns (GetTenantMembershipForRuntimeResponse);
@@ -103,6 +105,44 @@ message CreateAccountResponse {
   shared.v1.ErrorDetail error = 2;
 }
 
+message InitialGameplayLoginTokenWitness {
+  string token_jti = 1;
+  string token_sha256 = 2;
+  int64 token_generation = 3;
+  int64 issuance_fence = 4;
+}
+
+message RetireInitialGameplayLoginRequest {
+  string request_id = 1;
+  string caller_context_id = 2;
+  // Optional, but if present all fields must match Account's original stored identity.
+  InitialGameplayLoginTokenWitness token_witness = 3;
+}
+
+enum InitialGameplayLoginDisposalDisposition {
+  INITIAL_GAMEPLAY_LOGIN_DISPOSAL_DISPOSITION_UNSPECIFIED = 0;
+  INITIAL_GAMEPLAY_LOGIN_DISPOSAL_DISPOSITION_PENDING = 1;
+  INITIAL_GAMEPLAY_LOGIN_DISPOSAL_DISPOSITION_RETIRED = 2;
+  // No registry-bound/exposed usable issuance exists or can later be created for this attempt.
+  // This does not claim that transient token bytes were never signed.
+  INITIAL_GAMEPLAY_LOGIN_DISPOSAL_DISPOSITION_NO_TOKEN = 3;
+}
+
+enum InitialGameplayLoginDisposalProofKind {
+  INITIAL_GAMEPLAY_LOGIN_DISPOSAL_PROOF_KIND_UNSPECIFIED = 0;
+  INITIAL_GAMEPLAY_LOGIN_DISPOSAL_PROOF_KIND_PHYSICAL_TOKEN_DENIAL = 1;
+  INITIAL_GAMEPLAY_LOGIN_DISPOSAL_PROOF_KIND_NO_ISSUANCE_BINDING = 2;
+}
+
+message RetireInitialGameplayLoginResponse {
+  string request_id = 1;
+  string caller_context_id = 2;
+  string disposal_operation_id = 3;
+  InitialGameplayLoginDisposalDisposition disposition = 4;
+  // PENDING uses UNSPECIFIED; each terminal disposition requires its exact proof variant.
+  InitialGameplayLoginDisposalProofKind proof_kind = 5;
+}
+
 message AuthenticateRequest {
   reserved 1;
   reserved "tenant_id";
@@ -110,12 +150,41 @@ message AuthenticateRequest {
   reserved "username";
   string password = 3;
   string email = 4;
+  string request_id = 5;
+  GameplayLoginSourceContext source_context = 6;
+}
+
+// Credential-bearing LOGIN accepts only the authenticated TCP Proxy branch.
+// FIRST_PARTY_WEB remains bootstrap-backed and cannot present credentials here.
+enum GameplayLoginTransportClass {
+  GAMEPLAY_LOGIN_TRANSPORT_CLASS_UNSPECIFIED = 0;
+  GAMEPLAY_LOGIN_TRANSPORT_CLASS_TRUSTED_TCP_PROXY = 1;
+  GAMEPLAY_LOGIN_TRANSPORT_CLASS_FIRST_PARTY_WEB = 2;
+}
+
+message GameplayLoginSourceContext {
+  string caller_context_id = 1;
+  string canonical_client_address = 2;
+  GameplayLoginTransportClass transport_class = 3;
 }
 
 message AuthenticateResponse {
   string auth_token = 1;
   string account_id = 2;
   shared.v1.ErrorDetail error = 3;
+  string request_id = 4;
+  string caller_context_id = 5;
+  string token_jti = 6;
+  string token_sha256 = 7;
+  string token_profile = 8;
+  int64 issued_at_epoch_second = 9;
+  int64 not_before_epoch_second = 10;
+  int64 expires_at_epoch_second = 11;
+  string token_generation = 12;
+  string issuance_fence = 13;
+  bytes authority_tuple_canonical_json = 14;
+  bytes outbox_checkpoints_canonical_json = 15;
+  bytes outbox_source_event_evidence_canonical_json = 16;
 }
 
 message RequestEmailLoginOtpRequest {

@@ -320,3 +320,7 @@ Operational scripts like `dev-tools/restores/restore-cluster.sh` use an optional
 - `../system-architecture-redis.md` – Redis architecture hub.
 - `../system-architecture-authentication.md` – Authentication and authorization flows.
 - `../system-architecture-redis-usage-and-profiles.md` – How Redis roles and profiles are wired in different environments.
+
+### Initial LOGIN context Coordination policy
+
+Before the [initial-context adapter](../system-architecture-redis-usage-and-profiles.md#initial-login-context-acknowledgement-policy) can be registered, protected environment delivery must supply the dedicated Game Session Coordination endpoint and principal custody, exact binding identity, explicitly selected single-node/no-failover or replicated profile, replica AOF minimum and positive bounded acknowledgement timeout. The local AOF minimum is one. These are required owner policy inputs, not currently registered environment variables or automatic fallbacks; generic `firemud.redis.*` wiring and Account configuration cannot supply them implicitly. Delivery must also bind the existing external recovery/maintenance qualification to the same exact protected endpoint/profile identity. Missing or withdrawn inputs deny mutation and retirement continuation. Current controlled loopback fixtures establish neither deployed TLS/ACL custody nor this delivery.

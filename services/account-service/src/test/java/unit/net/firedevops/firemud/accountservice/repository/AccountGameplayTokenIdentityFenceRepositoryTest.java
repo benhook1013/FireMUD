@@ -3,9 +3,12 @@ package unit.net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -23,6 +26,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountGameplayTokenIdentityFenceRepositoryTest {
+  private static final String DISPOSAL_GUARD_SELECT =
+      "SELECT request_id FROM account_initial_gameplay_login_disposals WHERE request_id = ?";
+  private static final String TOKEN_SELECT_PREFIX =
+      "SELECT account_uuid, operation_id, issuance_request_id, token_hash, token_jti, ";
   private static final TokenIdentity IDENTITY =
       new TokenIdentity(
           UUID.randomUUID(),
@@ -68,7 +75,7 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
     Record account = mock(Record.class);
     Record source = mock(Record.class);
     Record token = tokenRow(State.ACTIVE);
-    when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(account, token, source);
+    stubOwnerRows(dsl, account, token, source);
     transaction();
     var fence =
         new AccountGameplayTokenIdentityFenceRepository(dsl).requireActiveForUpdate(IDENTITY);
@@ -80,6 +87,7 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
         .fetchOne(
             "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
             IDENTITY.accountId());
+    ordered.verify(dsl).fetchOne(DISPOSAL_GUARD_SELECT, IDENTITY.issuanceRequestId());
     ordered
         .verify(dsl)
         .fetchOne(
@@ -110,7 +118,7 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
     DSLContext dsl = mock(DSLContext.class);
     Record account = mock(Record.class);
     Record token = tokenRow(State.ACTIVE);
-    when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(account, token, null);
+    stubOwnerRows(dsl, account, token, null);
     transaction();
     assertThatThrownBy(
             () ->
@@ -124,7 +132,7 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
     DSLContext dsl = mock(DSLContext.class);
     Record account = mock(Record.class);
     Record token = tokenRow(State.ACTIVE);
-    when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(account, token);
+    stubOwnerRows(dsl, account, token, null);
     transaction();
     TokenIdentity changedNbf =
         new TokenIdentity(
@@ -150,7 +158,7 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
       Record account = mock(Record.class);
       Record token = tokenRow(state);
       Record source = mock(Record.class);
-      when(dsl.fetchOne(anyString(), any(Object[].class))).thenReturn(account, token, source);
+      stubOwnerRows(dsl, account, token, source);
       transaction();
       assertThatThrownBy(
               () ->
@@ -158,6 +166,39 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
                       .requireActiveForUpdate(IDENTITY))
           .isInstanceOf(TokenRevokedException.class);
     }
+  }
+
+  @Test
+  void actualOriginalDisposalGuardDeniesBeforeReadingAnActiveTokenFence() {
+    DSLContext dsl = mock(DSLContext.class);
+    stubOwnerRows(dsl, mock(Record.class), tokenRow(State.ACTIVE), mock(Record.class));
+    when(dsl.fetchOne(DISPOSAL_GUARD_SELECT, IDENTITY.issuanceRequestId()))
+        .thenReturn(mock(Record.class));
+    transaction();
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayTokenIdentityFenceRepository(dsl)
+                    .requireActiveForUpdate(IDENTITY))
+        .isInstanceOf(TokenRevokedException.class);
+    verify(dsl, never()).fetchOne(startsWith(TOKEN_SELECT_PREFIX), eq(IDENTITY.operationId()));
+    verify(dsl, never())
+        .fetchOne(
+            startsWith("SELECT operation_id FROM account_gameplay_delegation_issuance_operations "),
+            any(Object[].class));
+  }
+
+  private static void stubOwnerRows(DSLContext dsl, Record account, Record token, Record source) {
+    when(dsl.fetchOne(
+            "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
+            IDENTITY.accountId()))
+        .thenReturn(account);
+    when(dsl.fetchOne(DISPOSAL_GUARD_SELECT, IDENTITY.issuanceRequestId())).thenReturn(null);
+    when(dsl.fetchOne(startsWith(TOKEN_SELECT_PREFIX), eq(IDENTITY.operationId())))
+        .thenReturn(token);
+    when(dsl.fetchOne(
+            startsWith("SELECT operation_id FROM account_gameplay_delegation_issuance_operations "),
+            any(Object[].class)))
+        .thenReturn(source);
   }
 
   @Test

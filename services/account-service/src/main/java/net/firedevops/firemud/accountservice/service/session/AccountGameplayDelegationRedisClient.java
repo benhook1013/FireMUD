@@ -49,6 +49,123 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * protected binding and is not established by this helper.
  */
 public final class AccountGameplayDelegationRedisClient {
+  public static final String INITIAL_LOGIN_DISPOSAL_SCRIPT_ID =
+      "account.initial-gameplay-login-dispose.v1";
+
+  /** Durable exact-token disposal, independent of expiry, signing keys and current authority. */
+  public InitialLoginDisposalReceipt disposeInitialLogin(
+      net.firedevops.firemud.accountservice.repository.AccountInitialGameplayLoginDisposalRepository
+              .Intent
+          intent) {
+    Objects.requireNonNull(intent, "Durable initial LOGIN disposal intent required");
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || intent.tokenHash() == null
+        || !TOKEN_HASH.matcher(intent.tokenHash()).matches()) throw unavailable();
+    byte[] pending = intent.pendingBytes();
+    byte[] tombstone = intent.tombstoneBytes();
+    if (!boundedRegistryRecord(pending)
+        || tombstone == null
+        || tombstone.length == 0
+        || tombstone.length > 4096) throw unavailable();
+    var record = GameSessionAccountDelegationRegistryRecord.decode(pending, maxRecordBytes);
+    if (!"pending".equals(record.state())
+        || !intent.requestId().toString().equals(record.requestId())
+        || !intent.tokenHash().equals(record.tokenHash())) throw unavailable();
+    String activeText =
+        new String(pending, StandardCharsets.UTF_8)
+            .replace("\"registryVersion\":1", "\"registryVersion\":2")
+            .replace("\"state\":\"pending\"", "\"state\":\"active\"");
+    byte[] active = activeText.getBytes(StandardCharsets.UTF_8);
+    RedisScriptDescriptor descriptor = scriptCatalog.require(INITIAL_LOGIN_DISPOSAL_SCRIPT_ID);
+    if (!INITIAL_LOGIN_DISPOSAL_SCRIPT_ID.equals(descriptor.scriptId())
+        || !"account-service".equals(descriptor.owner())
+        || !REQUIRED_ACL_IDENTITY.equals(descriptor.principal())
+        || descriptor.role() != RedisScriptDescriptor.RedisRole.COORDINATION
+        || descriptor.category() != ScriptCategory.SESSION_CAS
+        || !canonicalSharedDescriptorMetadata(descriptor)
+        || !"redis/lua/account-initial-gameplay-login-dispose.lua".equals(descriptor.resourcePath())
+        || descriptor.keys().size() != 1
+        || !"tokenRecord".equals(descriptor.keys().getFirst().name())
+        || !TOKEN_KEY_PREFIX.equals(descriptor.keys().getFirst().ownedPrefix())
+        || descriptor.keys().getFirst().hashTagDeclaration() != HashTagDeclaration.NOT_REQUIRED
+        || !argumentNames(descriptor)
+            .equals(
+                List.of(
+                    "exactCanonicalPendingRecordUtf8",
+                    "exactCanonicalActiveRecordUtf8",
+                    "exactDisposalTombstoneUtf8"))) throw unavailable();
+    byte[] source = readScriptSource(descriptor);
+    if (!descriptor.sha256().equals(sha256(source))) throw unavailable();
+    StatefulRedisConnection<byte[], byte[]> connection;
+    try {
+      connection = connectionProvider.openPinnedConnection();
+    } catch (RuntimeException failure) {
+      throw unavailable();
+    }
+    if (connection == null) throw unavailable();
+    try {
+      RedisCommands<byte[], byte[]> commands = requirePinnedCommands(connection);
+      requireAccountAclIdentity(commands);
+      String loaded = commands.scriptLoad(source);
+      if (!sha1(source).equals(loaded)) throw unavailable();
+      byte[] key = ascii(TOKEN_KEY_PREFIX + intent.tokenHash());
+      Long outcome =
+          commands.evalsha(
+              loaded, ScriptOutputType.INTEGER, new byte[][] {key}, pending, active, tombstone);
+      if (outcome == null || (outcome != 0L && outcome != 1L)) throw unavailable();
+      Acknowledgement ack = requireDurabilityAcknowledgement(commands);
+      if (!Arrays.equals(tombstone, commands.get(key))
+          || !Long.valueOf(-1L).equals(commands.pttl(key))) throw unavailable();
+      return new InitialLoginDisposalReceipt(
+          intent.tokenHash(), sha256(tombstone), ack.localAofCount(), ack.replicaAofCount());
+    } catch (RuntimeException failure) {
+      throw unavailable();
+    } finally {
+      try {
+        connection.close();
+      } catch (RuntimeException failure) {
+        throw unavailable();
+      }
+    }
+  }
+
+  /** Only the pinned mutation/ack/readback boundary constructs this receipt. */
+  public static final class InitialLoginDisposalReceipt {
+    private final String tokenHash;
+    private final String tombstoneSha256;
+    private final long localAofCount;
+    private final long replicaAofCount;
+
+    private InitialLoginDisposalReceipt(
+        String tokenHash, String tombstoneSha256, long local, long replica) {
+      this.tokenHash = tokenHash;
+      this.tombstoneSha256 = tombstoneSha256;
+      this.localAofCount = local;
+      this.replicaAofCount = replica;
+    }
+
+    public String tokenHash() {
+      return tokenHash;
+    }
+
+    public String tombstoneSha256() {
+      return tombstoneSha256;
+    }
+
+    public long localAofCount() {
+      return localAofCount;
+    }
+
+    public long replicaAofCount() {
+      return replicaAofCount;
+    }
+
+    @Override
+    public String toString() {
+      return "InitialLoginDisposalReceipt[redacted]";
+    }
+  }
+
   public static final String SCRIPT_ID = "account.game-session-delegation-pending-register.v1";
   public static final String ISSUER_PROJECTION_SCRIPT_ID =
       "account.game-session-delegation-authority-project-issuer.v1";

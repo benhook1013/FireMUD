@@ -22,6 +22,11 @@ import org.springframework.transaction.support.TransactionTemplate;
  * signer/trust and the exact original committed issuance are reread around recovery activation.
  */
 public final class AccountGameplayDelegationCommittedIssuanceOwner {
+  /** Shared original-request guard checked inside response recovery's Account transaction. */
+  void requireOriginalRequestNotDisposed(UUID requestId) {
+    issuanceRepository.requireOriginalRequestNotDisposed(requestId);
+  }
+
   private final AccountGameplayDelegationIssuanceRepository issuanceRepository;
   private final AccountGameplayDelegationSigner signer;
   private final AccountGameplayDelegationTokenRegistry tokenRegistry;

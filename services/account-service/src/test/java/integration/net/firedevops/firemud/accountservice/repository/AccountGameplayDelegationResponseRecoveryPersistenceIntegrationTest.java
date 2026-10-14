@@ -1,5 +1,6 @@
 package integration.net.firedevops.firemud.accountservice.repository;
 
+import static integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture.transactionalIssuanceOwner;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -114,7 +115,9 @@ class AccountGameplayDelegationResponseRecoveryPersistenceIntegrationTest {
     AccountAuthEvidenceBundleRepository bundles =
         new AccountAuthEvidenceBundleRepository(dsl, authorities, outbox);
     AccountGameplayDelegationIssuanceRepository issuance =
-        new AccountGameplayDelegationIssuanceRepository(dsl, sources, bundles);
+        transactionalIssuanceOwner(
+            new AccountGameplayDelegationIssuanceRepository(dsl, sources, bundles),
+            context.manager());
     IssuerAccountSourceSnapshot snapshot = currentSnapshot(context, sources, accountId);
     PendingIntent intent = intent(accountId, authoritySnapshot(snapshot));
     inTransaction(context, () -> issuance.beginPending(intent));

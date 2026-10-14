@@ -103,6 +103,7 @@ import net.firedevops.firemud.accountservice.service.NotificationService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.accountservice.service.session.AccountGameplayCanonicalLoginOwner.CredentialVerification;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
@@ -147,6 +148,8 @@ public class AccountServiceImpl implements AccountService {
   private static final UUID NIL_ACCOUNT_UUID = new UUID(0L, 0L);
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
   private static final JsonMapper AUDIT_JSON = JsonMapper.builder().build();
+
+  private String gameplayDecoyPasswordVerifier;
 
   private final AccountRepository accountRepository;
   private final AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
@@ -2002,6 +2005,113 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
+  /** Internal primary-credential hook for the unregistered canonical gameplay LOGIN owner. */
+  @Transactional(
+      propagation = org.springframework.transaction.annotation.Propagation.MANDATORY,
+      noRollbackFor = AuthenticationException.class)
+  public CredentialVerification verifyGameplayPrimaryCredential(
+      Account lockedAccount, String secret) {
+    requireWritableGameplayCredentialTransaction();
+    requireAuthenticationPersistedIdentity(lockedAccount);
+    GameplayCredentialVerificationWork work = new GameplayCredentialVerificationWork(secret);
+    PrimaryAuthentication authentication;
+    try {
+      authentication = authenticateAccountIdentity(lockedAccount, secret, true, work);
+    } finally {
+      work.complete();
+    }
+    authentication
+        .emailLoginChallenge()
+        .ifPresent(
+            challenge -> {
+              if (challenge.getId() == null
+                  || challenge.getId() <= 0L
+                  || !lockedAccount.getId().equals(challenge.getAccountId())) {
+                throw new IllegalStateException("Exact login challenge ownership is required");
+              }
+            });
+    return new CredentialVerification(
+        authentication.account().getAccountUuid(),
+        authentication.emailLoginChallenge().map(AccountEmailLoginChallenge::getId).orElse(null));
+  }
+
+  /** Non-authorizing equivalent KDF work with process-local, randomly generated decoy evidence. */
+  public void verifyAbsentGameplayPrimaryCredential(String secret) {
+    new GameplayCredentialVerificationWork(secret).complete();
+  }
+
+  private synchronized String gameplayDecoyPasswordVerifier() {
+    if (gameplayDecoyPasswordVerifier == null) {
+      char[] material = new char[64];
+      try {
+        for (int index = 0; index < material.length; index++) {
+          material[index] = (char) ('!' + EMAIL_LOGIN_OTP_RANDOM.nextInt(94));
+        }
+        gameplayDecoyPasswordVerifier = hashPassword(material);
+      } finally {
+        java.util.Arrays.fill(material, '\0');
+      }
+    }
+    return gameplayDecoyPasswordVerifier;
+  }
+
+  private final class GameplayCredentialVerificationWork {
+    private final String secret;
+    private final String decoyVerifier;
+    private int completedVerifications;
+
+    private GameplayCredentialVerificationWork(String secret) {
+      this.secret = secret == null ? "" : secret;
+      this.decoyVerifier = gameplayDecoyPasswordVerifier();
+    }
+
+    private boolean verify(String verifier) {
+      try {
+        return verifyPassword(secret, verifier);
+      } finally {
+        completedVerifications++;
+      }
+    }
+
+    private void complete() {
+      while (completedVerifications < 2) {
+        verify(decoyVerifier);
+      }
+    }
+  }
+
+  /** Consumes only the verified challenge after the LOGIN owner creates its PENDING operation. */
+  @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+  public void consumeGameplayPrimaryCredential(
+      Account lockedAccount, CredentialVerification verification) {
+    requireWritableGameplayCredentialTransaction();
+    requireAuthenticationPersistedIdentity(lockedAccount);
+    if (verification == null || !lockedAccount.getAccountUuid().equals(verification.accountId())) {
+      throw new IllegalStateException("Exact verified Account identity is required");
+    }
+    if (verification.oneTimeChallengeId() == null) {
+      return;
+    }
+    accountEmailLoginChallengeRepository.lockAccountChallenge(lockedAccount.getId());
+    AccountEmailLoginChallenge challenge =
+        accountEmailLoginChallengeRepository
+            .findByAccountId(lockedAccount.getId())
+            .orElseThrow(
+                () -> new IllegalStateException("Verified login challenge is unavailable"));
+    if (!lockedAccount.getId().equals(challenge.getAccountId())
+        || !verification.oneTimeChallengeId().equals(challenge.getId())) {
+      throw new IllegalStateException("Exact verified login challenge ownership is required");
+    }
+    accountEmailLoginChallengeRepository.delete(challenge);
+  }
+
+  private void requireWritableGameplayCredentialTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException("Writable Account LOGIN transaction required");
+    }
+  }
+
   private PrimaryAuthentication authenticateAccountIdentity(
       String username, String password, boolean allowEmailLoginOtp) {
     Optional<Account> accountOpt = findAccountForAuthentication(username);
@@ -2015,18 +2125,33 @@ public class AccountServiceImpl implements AccountService {
 
   private PrimaryAuthentication authenticateAccountIdentity(
       Account account, String password, boolean allowEmailLoginOtp) {
+    return authenticateAccountIdentity(account, password, allowEmailLoginOtp, null);
+  }
+
+  private PrimaryAuthentication authenticateAccountIdentity(
+      Account account,
+      String password,
+      boolean allowEmailLoginOtp,
+      GameplayCredentialVerificationWork work) {
     Optional<AccountEmailLoginChallenge> emailLoginChallenge = Optional.empty();
     if (allowEmailLoginOtp && allowsEmailLoginOtp(account)) {
       accountEmailLoginChallengeRepository.lockAccountChallenge(account.getId());
       emailLoginChallenge = activeEmailLoginChallenge(account);
     }
     if (emailLoginChallenge
-        .filter(challenge -> matchesEmailLoginOtp(challenge, password))
+        .filter(
+            challenge ->
+                work == null
+                    ? matchesEmailLoginOtp(challenge, password)
+                    : work.verify(challenge.getCodeHash()))
         .isPresent()) {
       requireAuthenticationEligible(account);
       return new PrimaryAuthentication(account, emailLoginChallenge);
     }
-    if (!allowsPassword(account) || !verifyPassword(password, account.getPasswordHash())) {
+    if (!allowsPassword(account)
+        || !(work == null
+            ? verifyPassword(password, account.getPasswordHash())
+            : work.verify(account.getPasswordHash()))) {
       emailLoginChallenge.ifPresent(
           challenge -> recordFailedEmailLoginAttempt(challenge, LocalDateTime.now()));
       throw new AuthenticationException(
@@ -3140,12 +3265,22 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private String hashPassword(String password) {
-    Argon2 argon2 = Argon2Factory.create();
-    char[] chars = password.toCharArray();
+    return hashPassword(password.toCharArray());
+  }
+
+  private String hashPassword(char[] chars) {
+    Argon2 argon2 = null;
     try {
+      argon2 = Argon2Factory.create();
       return argon2.hash(2, 65536, 1, chars);
     } finally {
-      argon2.wipeArray(chars);
+      try {
+        if (argon2 != null) {
+          argon2.wipeArray(chars);
+        }
+      } finally {
+        java.util.Arrays.fill(chars, '\0');
+      }
     }
   }
 

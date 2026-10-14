@@ -315,6 +315,11 @@ entitlement_contract:
   capacity_commitment_required_when_implemented: true
   capacity_mutation_without_commit: fail_closed
 required_live_check_vocabulary:
+  - original_caller_binding
+  - original_request_context_binding
+  - optional_complete_original_token_witness_match
+  - durable_disposal_guard
+  - exact_registry_disposal_postconditions
   # Captured in a private delegation and compared by the receiving owner.
   - account_generation
   - account_owned_wallet_customer_mapping
@@ -2674,6 +2679,33 @@ routes:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
     credential_source_context: required_trusted_server_derived
     delegated_subject: none_before_authentication
+  - service: account-service
+    route: RetireInitialGameplayLogin
+    scope: account
+    classification: internal_workload
+    auth_path: exact_mtls_workload
+    issued_token_state: none
+    accepted_token_profiles: []
+    token_type: none
+    token_issuer: none
+    token_audience: none
+    method_policy: exact_declared_route
+    allowed_callers:
+      any_of: [game-session-service]
+    mtls_callers:
+      any_of: ["spiffe://firemud/ns/{namespace}/sa/game-session-service"]
+    delegated_subject: original_account_operation_resolved_by_account
+    request_binding: exact_original_requestId_callerContextId_and_authenticated_original_workload
+    required_live_checks: [original_caller_binding, original_request_context_binding, optional_complete_original_token_witness_match, durable_disposal_guard, exact_registry_disposal_postconditions]
+    mutation_contract: account_owned_original_login_disposal_only
+    response_contract: secret_free_lifecycle_disposal_evidence_only_no_credentials_context_or_admission
+    canonical_errors:
+      any_of: [INVALID_ARGUMENT, PERMISSION_DENIED, IDEMPOTENCY_CONFLICT, AUTH_UNAVAILABLE]
+    implementation_status:
+      known_drift:
+        - canonical_disposal_receiver_and_owner_are_unregistered_source_only
+        - no_row_and_unbound_disposal_remain_guarded_pending_without_protected_retained_binding_history_and_restore_qualification
+        - runtime_activation_and_authenticated_transport_proof_remain_unavailable
   - service: account-service
     route: RefreshGameplayServiceToken
     scope: tenant
