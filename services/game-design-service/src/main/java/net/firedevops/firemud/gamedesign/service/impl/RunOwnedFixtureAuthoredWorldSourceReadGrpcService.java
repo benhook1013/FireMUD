@@ -38,7 +38,12 @@ public final class RunOwnedFixtureAuthoredWorldSourceReadGrpcService
       StreamObserver<ResolveAuthoredWorldSourceResponse> observer) {
     try {
       var receipt = authorization.authorizeSource(request);
-      var expected = AuthoredWorldSourceGrpcCodec.fromReadRequest(namespace, request);
+      final AuthoredWorldSourceGrpcCodec.ReadRequest expected;
+      try {
+        expected = AuthoredWorldSourceGrpcCodec.fromReadRequest(namespace, request);
+      } catch (IllegalArgumentException invalidRequest) {
+        throw new RunOwnedFixtureOwnerReadAuthorization.RequestDecodingException(invalidRequest);
+      }
       kernel.resolveAuthoredWorldSource(
           request,
           new StreamObserver<>() {
@@ -77,15 +82,23 @@ public final class RunOwnedFixtureAuthoredWorldSourceReadGrpcService
           Status.PERMISSION_DENIED
               .withDescription("Fixed World fixture read denied")
               .asRuntimeException());
-    } catch (IllegalArgumentException invalid) {
+    } catch (RunOwnedFixtureOwnerReadAuthorization.RequestDecodingException invalid) {
       observer.onError(
           Status.INVALID_ARGUMENT
               .withDescription("Closed fixture source request required")
               .asRuntimeException());
-    } catch (RuntimeException unavailable) {
+    } catch (IllegalArgumentException invalid) {
       observer.onError(
           Status.FAILED_PRECONDITION
-              .withDescription("Committed fixture authority unavailable")
+              .withDescription("Committed fixture authority does not match the request")
+              .asRuntimeException());
+    } catch (RuntimeException failure) {
+      Status storageStatus = AuthoredWorldSourceReadGrpcService.storageFailureStatus(failure);
+      observer.onError(
+          (storageStatus != null
+                  ? storageStatus
+                  : Status.FAILED_PRECONDITION.withDescription(
+                      "Committed fixture authority unavailable"))
               .asRuntimeException());
     }
   }

@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.data;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.file.Path;
 import java.util.Objects;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -74,7 +75,12 @@ public class RunOwnedFixtureOwnerReadAuthorization {
   public SourceReceipt authorizeSource(ResolveAuthoredWorldSourceRequest wire) {
     var trusted = authenticatedConfiguration();
     SourceReceipt receipt = receipt(trusted);
-    var request = AuthoredWorldSourceGrpcCodec.fromReadRequest(namespace, wire);
+    final AuthoredWorldSourceGrpcCodec.ReadRequest request;
+    try {
+      request = AuthoredWorldSourceGrpcCodec.fromReadRequest(namespace, wire);
+    } catch (IllegalArgumentException invalidRequest) {
+      throw new RequestDecodingException(invalidRequest);
+    }
     var source = receipt.sourceEvidence();
     if (!request.targetNamespace().equals(source.targetNamespace())
         || !request.operationId().equals(source.operationId())
@@ -89,7 +95,12 @@ public class RunOwnedFixtureOwnerReadAuthorization {
   public SourceReceipt authorizeVersion(GetAuthoredWorldVersionStateRequest wire) {
     var trusted = authenticatedConfiguration();
     SourceReceipt receipt = receipt(trusted);
-    var request = AuthoredWorldVersionStateGrpcCodec.fromRequest(wire);
+    final AuthoredWorldVersionStateEvidence.Request request;
+    try {
+      request = AuthoredWorldVersionStateGrpcCodec.fromRequest(wire);
+    } catch (IllegalArgumentException invalidRequest) {
+      throw new RequestDecodingException(invalidRequest);
+    }
     var source = receipt.sourceEvidence();
     if (!namespace.equals(request.targetNamespace())
         || !request.canonicalTenantId().equals(source.canonicalTenantId())
@@ -154,6 +165,13 @@ public class RunOwnedFixtureOwnerReadAuthorization {
             trusted, receipt.creationEvidence(), committed.snapshot(), committed.descriptor());
     if (!actualSeal.equals(receipt.fixturePolicySeal())) {
       throw new IllegalStateException("Fixed receipt policy seal differs from committed owner");
+    }
+  }
+
+  /** Marks only malformed wire requests; owner-side argument failures have different semantics. */
+  public static final class RequestDecodingException extends IllegalArgumentException {
+    public RequestDecodingException(IllegalArgumentException cause) {
+      super("Fixture owner request could not be decoded", cause);
     }
   }
 }
