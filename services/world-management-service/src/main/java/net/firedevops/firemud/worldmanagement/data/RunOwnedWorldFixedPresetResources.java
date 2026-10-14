@@ -13,8 +13,10 @@ import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadGrpcCodec;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
+import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentityReceipt;
@@ -199,58 +201,15 @@ public final class RunOwnedWorldFixedPresetResources {
             CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toFixtureResponse(gameSession)
                 .toByteArray());
 
-    FixedPresetPlan unsealed =
-        new FixedPresetPlan(
-            PRESET_SCHEMA_VERSION,
-            PRESET_ID,
-            capability.operationId(),
-            capability.claimDigest(),
-            fixture.fixturePolicySeal().requestDigest(),
-            fixture.fixturePolicySeal().evidenceDigest(),
-            sha256Raw(gameSession.fixturePolicyRequestBytes()),
-            lifecycleBindingDigest,
-            gameSessionResponseBytesDigest,
-            sourceReceipt.targetNamespace(),
-            sourceReceipt.canonicalTenantId(),
-            sourceReceipt.worldSlug(),
-            sourceReceipt.operationId(),
-            sourceReceipt.sourceOperationId(),
-            sourceReceipt.sourceEvidenceDigest(),
-            sourceReceipt.receiptDigest(),
-            sourceReceipt.localTenantKey(),
-            versionReceipt.operationId(),
-            versionReceipt.canonicalVersionId(),
-            versionReceipt.gameDesignVersionId(),
-            versionState.evidenceDigest(),
-            versionReceipt.localVersionKey(),
-            descriptor.launchDescriptorId(),
-            descriptor.requestDigest(),
-            descriptor.resultDigest(),
-            descriptor.runtimeFlagsJson(),
-            descriptor.versionId(),
-            descriptor.releaseBundleId(),
-            descriptor.publishedReleaseBundleRef(),
-            bundle.getManifestHash(),
-            descriptor.generationConfigRevision(),
-            descriptor.versionStateEpoch(),
-            gameSession.gameSessionTenantId(),
-            gameSession.gameInstanceId(),
-            gameSession.gameInstanceUuid(),
-            gameSession.canonicalTenantId(),
-            gameSession.canonicalVersionId(),
-            gameSession.playableStateNamespaceId(),
-            gameSession.canonicalRealmId(),
-            capability.stateScope(),
-            capability.publicProductionRealm(),
-            gameSession.catalogRevision(),
-            capability.gameTemplateId(),
-            CONTENT_DIGEST,
-            REGION,
-            ZONE,
-            List.of(STARTER_ROOM, SECONDARY_ROOM),
-            EXITS,
-            "");
-    return unsealed.withPresetSealDigest(presetSealDigest(unsealed));
+    return sealPlan(
+        capability,
+        gameSession,
+        sourceReceipt,
+        versionReceipt,
+        descriptor,
+        bundle,
+        lifecycleBindingDigest,
+        gameSessionResponseBytesDigest);
   }
 
   /** Rebuilds the expected plan from immutable, typed World-owner receipts for restart reads. */
@@ -372,11 +331,32 @@ public final class RunOwnedWorldFixedPresetResources {
           "RUN_OWNED_WORLD_FIXED_PRESET_RETAINED_EVIDENCE_MISMATCH: retained typed World association, source, Version, descriptor, bundle, or fixture policy differs");
     }
 
+    return sealPlan(
+        capability,
+        gameSession,
+        sourceReceipt,
+        versionReceipt,
+        descriptor,
+        bundle,
+        lifecycleBindingDigest,
+        gameSessionResponseBytesDigest);
+  }
+
+  private static FixedPresetPlan sealPlan(
+      RunOwnedInitialAdmissionFixtureWireCodec.Capability capability,
+      CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult gameSession,
+      WorldAuthoredSourceIntakeReceipt sourceReceipt,
+      WorldAuthoredVersionIdentityReceipt versionReceipt,
+      AuthoredWorldLaunchDescriptorEvidence descriptor,
+      PublishedReleaseBundle bundle,
+      String lifecycleBindingDigest,
+      String gameSessionResponseBytesDigest) {
+    var versionState = versionReceipt.versionStateEvidence();
     FixedPresetPlan unsealed =
         new FixedPresetPlan(
             PRESET_SCHEMA_VERSION,
             PRESET_ID,
-            fixtureOperationId,
+            capability.operationId(),
             capability.claimDigest(),
             gameSession.fixturePolicySeal().requestDigest(),
             gameSession.fixturePolicySeal().evidenceDigest(),
