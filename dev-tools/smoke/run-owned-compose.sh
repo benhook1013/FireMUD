@@ -372,6 +372,7 @@ PY
 _firemud_smoke_validate_initial_admission_capability() {
   local path="$1" operation_id="$2" game_session_leaf_sha256="$3"
   local world_management_leaf_sha256="$4" ca_sha256="$5"
+  local claim_digest="$FIREMUD_SMOKE_INITIAL_ADMISSION_CLAIM_DIGEST"
   local file_metadata
   if [[ -L "$path" || ! -f "$path" ]]; then
     _firemud_smoke_fail "initial-admission capability must be an existing regular non-symlink file."
@@ -385,7 +386,8 @@ _firemud_smoke_validate_initial_admission_capability() {
 
   if ! python3 - "$path" "$FIREMUD_SMOKE_RUN_ID" \
     "$FIREMUD_SMOKE_COMPOSE_PROJECT_NAME" "$operation_id" \
-    "$game_session_leaf_sha256" "$world_management_leaf_sha256" "$ca_sha256" <<'PY'
+    "$game_session_leaf_sha256" "$world_management_leaf_sha256" "$ca_sha256" \
+    "$claim_digest" <<'PY'
 import json
 import os
 import re
@@ -393,14 +395,14 @@ import stat
 import sys
 import uuid
 
-path, run_id, project_name, operation_id, game_session_leaf_sha256, world_management_leaf_sha256, ca_sha256 = sys.argv[1:]
+path, run_id, project_name, operation_id, game_session_leaf_sha256, world_management_leaf_sha256, ca_sha256, claim_digest = sys.argv[1:]
 allowed = {
     "schema", "runId", "composeProjectName", "operationId", "tenantId",
     "gameTemplateId", "ownerAccountId", "worldSlug", "worldDisplayName",
     "realmSlug", "realmDisplayName", "visible", "publicProductionRealm",
     "requiresCharacterSelection", "stateScope", "characterCreationPolicy",
     "gameSessionLeafSha256", "gameSessionUriSan", "worldManagementLeafSha256",
-    "worldManagementUriSan", "caCertificateSha256",
+    "worldManagementUriSan", "caCertificateSha256", "claimDigest",
 }
 
 def unique_object(pairs):
@@ -474,6 +476,7 @@ expected = {
     "worldManagementLeafSha256": world_management_leaf_sha256,
     "worldManagementUriSan": "spiffe://firemud/ns/dev/sa/world-management-service",
     "caCertificateSha256": ca_sha256,
+    "claimDigest": claim_digest,
 }
 safe_id = re.compile(r"[a-z0-9][a-z0-9-]{0,127}\Z")
 if not safe_id.fullmatch(run_id) or not safe_id.fullmatch(project_name):
@@ -607,12 +610,13 @@ ensure_run_owned_initial_admission_capability() {
   }
   if ! python3 - "$temporary" "$FIREMUD_SMOKE_RUN_ID" \
     "$FIREMUD_SMOKE_COMPOSE_PROJECT_NAME" "$operation_id" \
-    "$leaf_sha256" "$world_management_leaf_sha256" "$ca_sha256" <<'PY'
+    "$leaf_sha256" "$world_management_leaf_sha256" "$ca_sha256" \
+    "$FIREMUD_SMOKE_INITIAL_ADMISSION_CLAIM_DIGEST" <<'PY'
 import json
 import pathlib
 import sys
 
-path, run_id, project_name, operation_id, game_session_leaf_sha256, world_management_leaf_sha256, ca_sha256 = sys.argv[1:]
+path, run_id, project_name, operation_id, game_session_leaf_sha256, world_management_leaf_sha256, ca_sha256, claim_digest = sys.argv[1:]
 value = {
     "schema": "firemud.run-owned-initial-admission-fixture.v1",
     "runId": run_id,
@@ -635,6 +639,7 @@ value = {
     "worldManagementLeafSha256": world_management_leaf_sha256,
     "worldManagementUriSan": "spiffe://firemud/ns/dev/sa/world-management-service",
     "caCertificateSha256": ca_sha256,
+    "claimDigest": claim_digest,
 }
 with pathlib.Path(path).open("w", encoding="utf-8") as target:
     json.dump(value, target, indent=2)

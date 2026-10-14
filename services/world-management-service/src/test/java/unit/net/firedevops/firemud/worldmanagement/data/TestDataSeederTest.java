@@ -110,15 +110,10 @@ class TestDataSeederTest {
   }
 
   @Test
-  void fixtureModeRefusesBeforeAnyRepositoryReadOrWrite() {
+  void fixtureModeSkipsSeedingWithoutPreventingStartupOrAccessingRepositories() {
     ReflectionTestUtils.setField(seeder, "runOwnedFixtureMode", true);
 
-    IllegalStateException error =
-        assertThrows(
-            IllegalStateException.class,
-            () -> seeder.run(new DefaultApplicationArguments(new String[] {})));
-
-    assertTrue(error.getMessage().startsWith("RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE:"));
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
     verifyNoInteractions(regionRepository, zoneRepository, roomRepository, roomExitRepository);
   }
 

@@ -552,7 +552,8 @@ public class TestDataSeeder implements ApplicationRunner {
     }
     if (!fixtureRunId.equals(capability.runId())
         || !fixtureComposeProjectName.equals(capability.composeProjectName())
-        || capability.tenantId() != 1L) {
+        || capability.tenantId() != 1L
+        || capability.ownerAccountId() != 1L) {
       throw new IllegalStateException(
           "Run-owned fixture capability does not match the configured Game Design scope");
     }

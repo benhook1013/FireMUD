@@ -11,14 +11,18 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.PublicKey;
 import java.security.cert.X509Certificate;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import javax.security.auth.x500.X500Principal;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameTemplate;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
@@ -35,6 +39,7 @@ import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactReposito
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -486,6 +491,82 @@ class TestDataSeederTest {
 
     verify(authoredWorldSourceRepository, never())
         .register(any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void rejectsWrongOwnerAccountBeforeAnySeederOwnerWrites(@TempDir Path directory)
+      throws Exception {
+    String runId = "compose-smoke-owner-3206";
+    String projectName = "firemud-smoke-compose-smoke-owner-3206";
+    String claimDigest = "d".repeat(64);
+    String gameSessionLeafDigest = "a".repeat(64);
+    String caDigest = "b".repeat(64);
+    String worldManagementLeafDigest = "c".repeat(64);
+    String operationId =
+        RunOwnedInitialAdmissionFixtureWireCodec.fixtureOperationId(
+                claimDigest, runId, projectName, gameSessionLeafDigest, caDigest)
+            .toString();
+    Path capabilityPath = directory.resolve("run-owned-initial-admission-capability.json");
+    String capabilityJson =
+        """
+        {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":1,"gameTemplateId":17,"ownerAccountId":27,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"ALLOW_NEW","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}%n\
+        """
+            .formatted(
+                RunOwnedInitialAdmissionFixtureWireCodec.CAPABILITY_SCHEMA,
+                runId,
+                projectName,
+                operationId,
+                gameSessionLeafDigest,
+                RunOwnedInitialAdmissionFixtureWireCodec.GAME_SESSION_URI_SAN,
+                caDigest,
+                RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
+                worldManagementLeafDigest,
+                claimDigest);
+    Files.writeString(capabilityPath, capabilityJson);
+    Files.setPosixFilePermissions(
+        capabilityPath, Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ));
+
+    ReflectionTestUtils.setField(seeder, "initialAdmissionFixtureEnabled", true);
+    ReflectionTestUtils.setField(seeder, "fixtureRunId", runId);
+    ReflectionTestUtils.setField(seeder, "fixtureComposeProjectName", projectName);
+    ReflectionTestUtils.setField(seeder, "fixtureCapabilityPath", capabilityPath.toString());
+    ReflectionTestUtils.setField(
+        seeder,
+        "fixtureReceiptPath",
+        directory
+            .resolve("run-owned-authored-world-source")
+            .resolve("source-receipt.json")
+            .toString());
+    ReflectionTestUtils.setField(
+        seeder, "gameSessionLeafCertPath", directory.resolve("game-session.crt").toString());
+    ReflectionTestUtils.setField(
+        seeder,
+        "worldManagementLeafCertPath",
+        directory.resolve("world-management.crt").toString());
+    ReflectionTestUtils.setField(seeder, "caCertPath", directory.resolve("ca.crt").toString());
+    ReflectionTestUtils.setField(seeder, "workloadNamespace", "dev");
+
+    var creationRepository =
+        mock(net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository.class);
+    var fixturePolicyProducer = mock(RunOwnedFixturePolicyProducer.class);
+    ReflectionTestUtils.setField(seeder, "creationRepository", creationRepository);
+    ReflectionTestUtils.setField(seeder, "fixturePolicyProducer", fixturePolicyProducer);
+
+    assertThatThrownBy(() -> seeder.run(new DefaultApplicationArguments(new String[] {})))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("does not match the configured Game Design scope");
+
+    verifyNoInteractions(
+        creationRepository,
+        fixturePolicyProducer,
+        gameRepository,
+        authoredWorldSourceRepository,
+        templateRepository,
+        revisionRepository,
+        versionRepository,
+        publishedReleaseBundleRepository,
+        versionAssetArtifactRepository,
+        launchReadback);
   }
 
   private PublishedReleaseBundle stubExistingSeedData() {

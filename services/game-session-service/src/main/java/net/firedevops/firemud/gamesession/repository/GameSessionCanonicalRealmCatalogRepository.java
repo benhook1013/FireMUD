@@ -1477,6 +1477,7 @@ public class GameSessionCanonicalRealmCatalogRepository {
     this.workloadNamespace = workloadNamespace;
     this.writeTransaction = new TransactionTemplate(transactionManager);
     this.writeTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    this.writeTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     this.readTransaction = new TransactionTemplate(transactionManager);
     this.readTransaction.setReadOnly(true);
     this.readTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
@@ -1491,7 +1492,7 @@ public class GameSessionCanonicalRealmCatalogRepository {
               .readCanonicalTenantAssociationSnapshot(source.targetNamespace(), canonicalTenantId)
               .orElseThrow(
                   () ->
-                      new InvalidCanonicalRealmCatalogException(
+                      new InvalidCatalogEvidenceException(
                           "Fresh canonical realm requires an existing complete Game Session tenant association"));
       FreshTenantCreationEvidence creation = association.sourceEvidence();
       if (!creation.targetNamespace().equals(source.targetNamespace())
@@ -1499,12 +1500,12 @@ public class GameSessionCanonicalRealmCatalogRepository {
           || creation.sourceGameRowId() != source.sourceGameRowId()
           || !creation.sourceGameTenantKey().equals(source.sourceGameTenantKey())
           || !creation.provenanceKind().equals(source.provenanceKind())) {
-        throw new InvalidCanonicalRealmCatalogException(
+        throw new InvalidCatalogEvidenceException(
             "Stored fresh tenant association differs from complete source receipt or canonical claim");
       }
       return association;
     } catch (InvalidFreshTenantAssociationException | IllegalArgumentException invalid) {
-      throw new InvalidCanonicalRealmCatalogException(
+      throw new InvalidCatalogEvidenceException(
           "Stored fresh tenant association contains invalid complete source evidence", invalid);
     }
   }
@@ -1523,7 +1524,7 @@ public class GameSessionCanonicalRealmCatalogRepository {
             .targetNamespace()
             .equals(source.targetNamespace())
         || !"NEW_GAME_ROW".equals(publishedSet.target().sourceProvenanceKind())) {
-      throw new InvalidCanonicalRealmCatalogException(
+      throw new InvalidCatalogEvidenceException(
           "Published policy target or operation namespace differs from exact fresh authored-world source identity");
     }
     List<RealmPolicyPublishedEvidence.Policy> publicPolicies =
@@ -1535,14 +1536,14 @@ public class GameSessionCanonicalRealmCatalogRepository {
             .toList();
     if (publishedSet.policyCount() != publishedSet.policies().size()
         || publicPolicies.size() != 1) {
-      throw new InvalidCanonicalRealmCatalogException(
+      throw new InvalidCatalogEvidenceException(
           "Exactly one complete visible public-production policy is required");
     }
     RealmPolicyPublishedEvidence.Policy selected = publicPolicies.getFirst();
     RealmEntryPolicy policy = selected.source().policy();
     if (!source.worldSlug().equals(policy.worldSlug())
         || !source.worldDisplayName().equals(policy.worldDisplayName())) {
-      throw new InvalidCanonicalRealmCatalogException(
+      throw new InvalidCatalogEvidenceException(
           "Public-production policy must exactly match the authored world");
     }
     return new SelectedPolicy(selected.policyId(), selected.policyDigest(), policy);
@@ -1551,7 +1552,7 @@ public class GameSessionCanonicalRealmCatalogRepository {
   private static <T> T required(Record row, String field, Class<T> type) {
     T value = row.get(field, type);
     if (value == null) {
-      throw new InvalidCanonicalRealmCatalogException(
+      throw new InvalidCatalogEvidenceException(
           "Stored canonical realm catalog is missing required evidence: " + field);
     }
     return value;
@@ -1572,14 +1573,4 @@ public class GameSessionCanonicalRealmCatalogRepository {
   }
 
   private record SelectedPolicy(UUID policyId, String policyDigest, RealmEntryPolicy policy) {}
-
-  public static final class InvalidCanonicalRealmCatalogException extends IllegalStateException {
-    public InvalidCanonicalRealmCatalogException(String message) {
-      super(message);
-    }
-
-    public InvalidCanonicalRealmCatalogException(String message, Throwable cause) {
-      super(message, cause);
-    }
-  }
 }
