@@ -60,6 +60,7 @@ import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.postgresql.util.PSQLException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -98,102 +99,46 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
-  void reservesExactHumanIntentButDeniesCommitAndAbortBeforePointerOrAuditEffects() {
-    Fixture fixture = fixture();
-    IntakeReceipt source = fixture.registerSource();
-    CanonicalRealmCatalogSnapshot catalog = fixture.createCatalog(source);
-    CreateCanonicalLaunchPreparationRequest preparationRequest =
-        preparationRequest(source, catalog);
-    AuthoredWorldLaunchDescriptorClient syntheticGameDesign =
-        syntheticGameDesignClient(preparationRequest, catalog, source);
-    GameSessionCanonicalLaunchPreparationService preparationService =
-        new GameSessionCanonicalLaunchPreparationService(
-            syntheticGameDesign,
-            fixture.catalogRepository,
-            fixture.sourceRepository,
-            fixture.preparationRepository,
-            fixture.transactionManager,
-            NAMESPACE);
-    CanonicalLaunchPreparationSnapshot preparation = preparationService.prepare(preparationRequest);
-    CompleteLaunchBindingEvidence completeBinding =
-        preparationService.readCompleteBinding(preparation);
-
-    FreshGameSessionTenantAssociation tenantAssociation =
-        fixture.createTestOnlyFreshMappingAndRunningLaunch(source, completeBinding);
+  void freshHumanReservationDeniesBeforeEffectsAndRetainedPendingCannotCommit() throws Exception {
+    Fixture fixture = fixture("1005");
+    PredecessorAdmission predecessor = preparePre1006Admission(fixture);
+    PreparedAdmission prepared = predecessor.prepared();
     CanonicalInitialAdmissionRequest request =
         initialAdmissionRequest(
-            catalog,
-            completeBinding,
-            fixture
-                .launchRepository
-                .read(CONTROL_PLANE_REQUEST_ID)
-                .orElseThrow()
-                .gameInstanceUuid());
-    assertThat(tenantAssociation.legacyGameSessionTenantId())
-        .isNotEqualTo(source.source().sourceGameRowId());
-    assertThat(request.playableStateNamespaceId()).isEqualTo(catalog.playableStateNamespaceId());
-    CanonicalInitialAdmissionWorldProof worldProof = testWorldProof(request);
+            prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
+    reservePre1006Attempt(fixture, predecessor.launch(), request);
+    migration(fixture, null).migrate();
+    migration(fixture, null).validate();
 
-    fixture.transactions.execute(
-        status -> {
-          fixture.initialAdmissionRepository.reserve(request);
-          return null;
-        });
-    fixture.transactions.execute(
-        status -> {
-          fixture.initialAdmissionRepository.reserve(request);
-          return null;
-        });
+    CanonicalInitialAdmissionOwnerProof pending =
+        fixture
+            .initialAdmissionRepository
+            .read(NAMESPACE, request.initialAdmissionRequestId())
+            .orElseThrow();
+    assertThat(pending.outcome()).isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
+    String before = attemptProjection(fixture, request);
+    CanonicalInitialAdmissionRequest freshRequest =
+        initialAdmissionRequest(
+            prepared.catalog(),
+            prepared.binding(),
+            prepared.gameInstanceUuid(),
+            "fresh-human-reserve-denied-" + prepared.catalog().realmId(),
+            CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER,
+            null,
+            uuid(115),
+            uuid(116));
+    assertHumanProtectionUnavailable(
+        () -> fixture.initialAdmissionRepository.reserve(freshRequest));
     assertThat(
-            fixture.initialAdmissionRepository.read(NAMESPACE, request.initialAdmissionRequestId()))
-        .map(CanonicalInitialAdmissionOwnerProof::outcome)
-        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
+            fixture.initialAdmissionRepository.read(
+                NAMESPACE, freshRequest.initialAdmissionRequestId()))
+        .isEmpty();
     assertThat(
             fixture.dsl.fetchCount(
                 DSL.table(DSL.name("game_session_canonical_initial_admission_attempt"))))
         .isEqualTo(1);
-
-    CanonicalInitialAdmissionWorldProof changedProof =
-        new CanonicalInitialAdmissionWorldProof(
-            worldProof.initialAdmissionRequestId(),
-            worldProof.requestDigest(),
-            worldProof.targetNamespace(),
-            worldProof.canonicalTenantId(),
-            worldProof.worldSlug(),
-            worldProof.realmId(),
-            worldProof.playableStateNamespaceId(),
-            worldProof.playableStateScope(),
-            worldProof.canonicalGameInstanceId(),
-            worldProof.canonicalVersionId(),
-            worldProof.lifecycleState(),
-            worldProof.activeLifecycleEpoch(),
-            worldProof.originKind(),
-            worldProof.expectedCatalogRevision(),
-            worldProof.expectedPriorPointerVersion(),
-            worldProof.holdId(),
-            uuid(111),
-            worldProof.holdBindingDigest());
-    assertThatThrownBy(
-            () ->
-                fixture.transactions.execute(
-                    status -> {
-                      fixture.initialAdmissionRepository.commit(request, changedProof, null);
-                      return null;
-                    }))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("does not match the exact initial admission request");
-    assertThat(
-            fixture.initialAdmissionRepository.read(NAMESPACE, request.initialAdmissionRequestId()))
-        .map(CanonicalInitialAdmissionOwnerProof::outcome)
-        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
-    assertThat(
-            Objects.requireNonNull(
-                fixture
-                    .dsl
-                    .fetchSingle(
-                        "SELECT count(*) FROM gameplay_admission_pointer "
-                            + "WHERE representation_version = 3")
-                    .get(0, Long.class)))
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
         .isZero();
 
     UUID mismatchedGameInstance = uuid(998);
@@ -257,23 +202,17 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 DSL.field(DSL.name("representation_version"), Integer.class).eq(3)))
         .isZero();
 
-    CanonicalInitialAdmissionOwnerProof pending =
-        fixture
-            .initialAdmissionRepository
-            .read(NAMESPACE, request.initialAdmissionRequestId())
-            .orElseThrow();
-    String before = attemptProjection(fixture, request);
     for (int retry = 0; retry < 2; retry++) {
       assertHumanProtectionUnavailable(
           () ->
               fixture.transactions.executeWithoutResult(
-                  status -> fixture.initialAdmissionRepository.commit(request, worldProof, null)));
+                  status ->
+                      fixture.initialAdmissionRepository.commit(request, testWorldProof(request))));
       assertHumanProtectionUnavailable(
           () ->
               fixture.transactions.executeWithoutResult(
                   status ->
-                      fixture.initialAdmissionRepository.abort(
-                          request, null, "Missing protection")));
+                      fixture.initialAdmissionRepository.abort(request, "Missing protection")));
       assertThat(attemptProjection(fixture, request)).isEqualTo(before);
       assertThat(
               fixture.initialAdmissionRepository.read(
@@ -287,7 +226,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   }
 
   @Test
-  void retainsAndReadsBack128CharacterRequestIdentityFromOwnerAttempt() {
+  void denies128CharacterFreshHumanIntentBeforeReservation() {
     Fixture fixture = fixture();
     PreparedAdmission prepared = prepareAdmission(fixture);
     String requestId = "r".repeat(128);
@@ -302,31 +241,21 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             uuid(115),
             uuid(116));
 
-    fixture.transactions.execute(
-        status -> {
-          fixture.initialAdmissionRepository.reserve(request);
-          return null;
-        });
-
-    CanonicalInitialAdmissionOwnerProof retained =
-        fixture.initialAdmissionRepository.read(NAMESPACE, requestId).orElseThrow();
-    assertThat(retained.outcome()).isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
-    assertThat(retained.initialAdmissionRequestId()).isEqualTo(requestId);
-    assertThat(retained.holdId()).isEqualTo(request.holdId());
-    assertThat(retained.holdFence()).isEqualTo(request.holdFence());
+    assertHumanProtectionUnavailable(() -> fixture.initialAdmissionRepository.reserve(request));
+    assertNoAttemptAndNoPending(fixture, request);
+    assertThat(fixture.initialAdmissionRepository.read(NAMESPACE, requestId)).isEmpty();
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
+        .isZero();
   }
 
   @Test
-  void competingNoPriorPointerReservationCannotReplacePendingUnprotectedHumanIntent() {
+  void competingFreshHumanReservationsDenyBeforeIntentOrPointerEffects() {
     Fixture fixture = fixture();
     PreparedAdmission prepared = prepareAdmission(fixture);
     CanonicalInitialAdmissionRequest first =
         initialAdmissionRequest(
             prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
-    fixture.transactions.executeWithoutResult(
-        status -> fixture.initialAdmissionRepository.reserve(first));
-    assertHumanProtectionUnavailable(
-        () -> fixture.initialAdmissionRepository.commit(first, testWorldProof(first), null));
     CanonicalInitialAdmissionRequest competing =
         initialAdmissionRequest(
             prepared.catalog(),
@@ -337,33 +266,25 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             null,
             uuid(117),
             uuid(118));
-    assertThatThrownBy(
-            () ->
-                fixture.transactions.executeWithoutResult(
-                    status -> fixture.initialAdmissionRepository.reserve(competing)))
-        .isInstanceOf(
-            CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class)
-        .hasMessageContaining("pending realm attempt");
+
+    assertHumanProtectionUnavailable(() -> fixture.initialAdmissionRepository.reserve(first));
+    assertHumanProtectionUnavailable(() -> fixture.initialAdmissionRepository.reserve(competing));
+    assertNoAttemptAndNoPending(fixture, first);
+    assertNoAttemptAndNoPending(fixture, competing);
+    assertThat(
+            fixture.initialAdmissionRepository.read(NAMESPACE, first.initialAdmissionRequestId()))
+        .isEmpty();
     assertThat(
             fixture.initialAdmissionRepository.read(
                 NAMESPACE, competing.initialAdmissionRequestId()))
         .isEmpty();
-    assertThat(
-            fixture.dsl.fetchCount(
-                DSL.table(DSL.name("game_session_canonical_initial_admission_attempt")),
-                DSL.field(DSL.name("status"), String.class).eq("PENDING")))
-        .isEqualTo(1);
-    assertThat(
-            fixture.initialAdmissionRepository.read(NAMESPACE, first.initialAdmissionRequestId()))
-        .map(CanonicalInitialAdmissionOwnerProof::outcome)
-        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
         .isZero();
   }
 
   @Test
-  void expectedClosedReservationRequiresExactCurrentOriginalClosedEvidence() {
+  void freshExpectedClosedHumanIntentDeniesBeforeEffects() {
     Fixture fixture = fixture();
     PreparedAdmission preparedAdmission = prepareAdmission(fixture);
     CanonicalRealmCatalogSnapshot catalog = preparedAdmission.catalog();
@@ -395,18 +316,11 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             129L,
             uuid(119),
             uuid(120));
-    assertThatThrownBy(
-            () ->
-                fixture.transactions.execute(
-                    status -> {
-                      fixture.initialAdmissionRepository.reserve(unsupportedPriorVersion);
-                      return null;
-                    }))
-        .isInstanceOf(
-            GameSessionCanonicalAdmissionPointerRepository
-                .InvalidCanonicalClosedPointerEvidenceException.class)
-        .hasMessageContaining("versions do not match");
+    String closedBefore = pointerAndAuditProjection(fixture);
+    assertHumanProtectionUnavailable(
+        () -> fixture.initialAdmissionRepository.reserve(unsupportedPriorVersion));
     assertNoAttemptAndNoPending(fixture, unsupportedPriorVersion);
+    assertThat(pointerAndAuditProjection(fixture)).isEqualTo(closedBefore);
 
     CanonicalInitialAdmissionRequest firstOpenRequest =
         initialAdmissionRequest(
@@ -418,42 +332,21 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             1L,
             uuid(121),
             uuid(122));
-    fixture.transactions.execute(
-        status -> {
-          fixture.initialAdmissionRepository.reserve(firstOpenRequest);
-          return null;
-        });
-    assertThat(
-            fixture.initialAdmissionRepository.read(
-                NAMESPACE, firstOpenRequest.initialAdmissionRequestId()))
-        .map(CanonicalInitialAdmissionOwnerProof::outcome)
-        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
-    var preparedExpectedClosed =
-        fixture.pointerRepository.prepareExpectedClosedForRealm(
-            NAMESPACE, TENANT, catalog.realmId(), 1L, catalog.catalogRevision());
-    String closedBefore = pointerAndAuditProjection(fixture);
-    String pendingBefore = attemptProjection(fixture, firstOpenRequest);
+    assertHumanProtectionUnavailable(
+        () -> fixture.initialAdmissionRepository.reserve(firstOpenRequest));
+    assertNoAttemptAndNoPending(fixture, firstOpenRequest);
     assertHumanProtectionUnavailable(
         () ->
-            fixture.transactions.executeWithoutResult(
-                status ->
-                    fixture.initialAdmissionRepository.commit(
-                        firstOpenRequest,
-                        testWorldProof(firstOpenRequest),
-                        preparedExpectedClosed)));
+            fixture.initialAdmissionRepository.commit(
+                firstOpenRequest, testWorldProof(firstOpenRequest)));
     assertHumanProtectionUnavailable(
-        () ->
-            fixture.transactions.executeWithoutResult(
-                status ->
-                    fixture.initialAdmissionRepository.abort(
-                        firstOpenRequest, preparedExpectedClosed, "Missing protection")));
+        () -> fixture.initialAdmissionRepository.abort(firstOpenRequest, "Missing protection"));
     assertThat(pointerAndAuditProjection(fixture)).isEqualTo(closedBefore);
-    assertThat(attemptProjection(fixture, firstOpenRequest)).isEqualTo(pendingBefore);
+    assertNoAttemptAndNoPending(fixture, firstOpenRequest);
     assertThat(
             fixture.initialAdmissionRepository.read(
                 NAMESPACE, firstOpenRequest.initialAdmissionRequestId()))
-        .map(CanonicalInitialAdmissionOwnerProof::outcome)
-        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
+        .isEmpty();
   }
 
   @Test
@@ -482,41 +375,40 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   }
 
   @Test
-  void unprotectedHumanAbortAndCommitRetryLeaveTheExactPendingOwnerUnchanged() {
+  void freshHumanReserveCommitAndAbortRetriesLeaveNoOwnerEffects() {
     Fixture fixture = fixture();
     PreparedAdmission prepared = prepareAdmission(fixture);
     var request =
         initialAdmissionRequest(
             prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
-    fixture.transactions.executeWithoutResult(
-        status -> fixture.initialAdmissionRepository.reserve(request));
-    var pending =
-        fixture
-            .initialAdmissionRepository
-            .read(NAMESPACE, request.initialAdmissionRequestId())
-            .orElseThrow();
-    String before = attemptProjection(fixture, request);
     for (int retry = 0; retry < 2; retry++) {
+      assertHumanProtectionUnavailable(() -> fixture.initialAdmissionRepository.reserve(request));
       assertHumanProtectionUnavailable(
-          () -> fixture.initialAdmissionRepository.abort(request, null, "World hold expired"));
+          () -> fixture.initialAdmissionRepository.abort(request, "World hold expired"));
       assertHumanProtectionUnavailable(
-          () -> fixture.initialAdmissionRepository.commit(request, testWorldProof(request), null));
-      fixture.transactions.executeWithoutResult(
-          status -> fixture.initialAdmissionRepository.reserve(request));
-      assertThat(attemptProjection(fixture, request)).isEqualTo(before);
+          () -> fixture.initialAdmissionRepository.commit(request, testWorldProof(request)));
+      assertNoAttemptAndNoPending(fixture, request);
       assertThat(
               fixture.initialAdmissionRepository.read(
                   NAMESPACE, request.initialAdmissionRequestId()))
-          .contains(pending);
+          .isEmpty();
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
+          .isZero();
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
+          .isZero();
     }
-    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
-    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
-        .isZero();
   }
 
   @Test
-  void terminalProtectionConstraintRejectsNewAndUpdatedUnprotectedTerminalRows() {
-    Fixture fixture = fixture();
+  void retainedPendingRowsPreserveUnprotectedTerminalWriteGuards() throws Exception {
+    Fixture fixture = fixture("1005");
+    PredecessorAdmission predecessor = preparePre1006Admission(fixture);
+    PreparedAdmission prepared = predecessor.prepared();
+    CanonicalInitialAdmissionRequest request =
+        initialAdmissionRequest(
+            prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
+    reservePre1006Attempt(fixture, predecessor.launch(), request);
+    migration(fixture, null).migrate();
     migration(fixture, null).validate();
     launchGuardProjection(fixture, true);
     assertThat(
@@ -526,12 +418,15 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     "SELECT count(*) FROM flyway_schema_history WHERE version = '1011' AND success")
                 .get(0, Long.class))
         .isEqualTo(1L);
-    PreparedAdmission prepared = prepareAdmission(fixture);
-    var request =
-        initialAdmissionRequest(
-            prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
-    fixture.transactions.executeWithoutResult(
-        status -> fixture.initialAdmissionRepository.reserve(request));
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT convalidated FROM pg_constraint WHERE conrelid = "
+                        + "'game_session_canonical_initial_admission_attempt'::regclass "
+                        + "AND conname = 'chk_gs_initial_admission_terminal_requires_protection'")
+                .get(0, Boolean.class))
+        .isFalse();
     String pendingBefore = attemptProjection(fixture, request);
     var terminalColumns =
         new HashMap<>(
@@ -550,12 +445,55 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     terminalColumns.put("abort_proof_digest", "sha256:" + "f".repeat(64));
     terminalColumns.put("terminal_at", terminalColumns.get("updated_at"));
 
-    // Isolate the declarative constraint in this disposable schema. All other triggers,
-    // source bindings and constraints stay enabled; each failed write rolls back separately.
-    fixture.dsl.execute(
-        "ALTER TABLE game_session_canonical_initial_admission_attempt DISABLE TRIGGER "
-            + "game_session_canonical_initial_admission_v44_terminal_evidence");
-    try {
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.executeWithoutResult(
+                    status ->
+                        fixture
+                            .dsl
+                            .insertInto(
+                                DSL.table(
+                                    DSL.name("game_session_canonical_initial_admission_attempt")))
+                            .set(terminalColumns)
+                            .execute()))
+        .isInstanceOfSatisfying(
+            DataAccessException.class,
+            exception -> {
+              assertThat(exception.sqlState()).isEqualTo("23514");
+              assertThat(exception)
+                  .hasStackTraceContaining(
+                      "New canonical initial-admission attempts must begin PENDING");
+            });
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.executeWithoutResult(
+                    status ->
+                        fixture.dsl.execute(
+                            "UPDATE game_session_canonical_initial_admission_attempt SET "
+                                + "status = 'ABORTED', abort_reason = ?, abort_proof_digest = ?, "
+                                + "updated_at = updated_at + INTERVAL '1 second', "
+                                + "terminal_at = updated_at + INTERVAL '1 second' "
+                                + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                            terminalColumns.get("abort_reason"),
+                            terminalColumns.get("abort_proof_digest"),
+                            NAMESPACE,
+                            request.initialAdmissionRequestId())))
+        .isInstanceOfSatisfying(
+            DataAccessException.class,
+            exception ->
+                assertPostgresConstraintFailure(
+                    exception,
+                    "chk_gs_initial_admission_terminal_requires_protection",
+                    "New canonical initial-admission terminal requires complete retained Account protection evidence"));
+    // The enabled v44 row trigger runs before declarative CHECK evaluation. INSERTs must begin
+    // PENDING; terminal UPDATEs reject each incomplete evidence shape with exact attribution.
+    for (String missing :
+        List.of(
+            "account_protection_evidence_version",
+            "account_protection_fence",
+            "original_owner_fence")) {
+      var partial = new HashMap<>(terminalColumns);
+      putControlledPartialProtection(fixture, partial, missing);
       assertThatThrownBy(
               () ->
                   fixture.transactions.executeWithoutResult(
@@ -565,7 +503,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                               .insertInto(
                                   DSL.table(
                                       DSL.name("game_session_canonical_initial_admission_attempt")))
-                              .set(terminalColumns)
+                              .set(partial)
                               .execute()))
           .isInstanceOfSatisfying(
               DataAccessException.class,
@@ -573,92 +511,37 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 assertThat(exception.sqlState()).isEqualTo("23514");
                 assertThat(exception)
                     .hasStackTraceContaining(
-                        "violates check constraint \"chk_gs_initial_admission_terminal_requires_protection\"");
+                        "New canonical initial-admission attempts must begin PENDING");
               });
       assertThatThrownBy(
               () ->
                   fixture.transactions.executeWithoutResult(
                       status ->
                           fixture.dsl.execute(
-                              "UPDATE game_session_canonical_initial_admission_attempt SET "
-                                  + "status = 'ABORTED', abort_reason = ?, abort_proof_digest = ?, "
-                                  + "updated_at = updated_at + INTERVAL '1 second', "
-                                  + "terminal_at = updated_at + INTERVAL '1 second' "
+                              "UPDATE game_session_canonical_initial_admission_attempt SET status = 'ABORTED', "
+                                  + "abort_reason = ?, abort_proof_digest = ?, updated_at = updated_at + INTERVAL '1 second', "
+                                  + "terminal_at = updated_at + INTERVAL '1 second', account_protection_evidence_version = ?, "
+                                  + "account_protection_id = ?, account_protection_fence = ?, original_owner_attempt_id = ?, "
+                                  + "original_owner_mutation_id = ?, original_owner_fence = ?, account_protection_evidence_bytes = ? "
                                   + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                              terminalColumns.get("abort_reason"),
-                              terminalColumns.get("abort_proof_digest"),
+                              partial.get("abort_reason"),
+                              partial.get("abort_proof_digest"),
+                              partial.get("account_protection_evidence_version"),
+                              partial.get("account_protection_id"),
+                              partial.get("account_protection_fence"),
+                              partial.get("original_owner_attempt_id"),
+                              partial.get("original_owner_mutation_id"),
+                              partial.get("original_owner_fence"),
+                              partial.get("account_protection_evidence_bytes"),
                               NAMESPACE,
                               request.initialAdmissionRequestId())))
           .isInstanceOfSatisfying(
               DataAccessException.class,
-              exception -> {
-                assertThat(exception.sqlState()).isEqualTo("23514");
-                assertThat(exception)
-                    .hasStackTraceContaining(
-                        "violates check constraint \"chk_gs_initial_admission_terminal_requires_protection\"");
-              });
-      for (String missing :
-          List.of(
-              "account_protection_evidence_version",
-              "account_protection_fence",
-              "original_owner_fence")) {
-        var partial = new HashMap<>(terminalColumns);
-        putControlledPartialProtection(fixture, partial, missing);
-        assertThatThrownBy(
-                () ->
-                    fixture.transactions.executeWithoutResult(
-                        status ->
-                            fixture
-                                .dsl
-                                .insertInto(
-                                    DSL.table(
-                                        DSL.name(
-                                            "game_session_canonical_initial_admission_attempt")))
-                                .set(partial)
-                                .execute()))
-            .isInstanceOfSatisfying(
-                DataAccessException.class,
-                exception -> {
-                  assertThat(exception.sqlState()).isEqualTo("23514");
-                  assertThat(exception)
-                      .hasStackTraceContaining(
-                          "violates check constraint \"chk_gs_initial_admission_account_protection_evidence_complete\"");
-                });
-        assertThatThrownBy(
-                () ->
-                    fixture.transactions.executeWithoutResult(
-                        status ->
-                            fixture.dsl.execute(
-                                "UPDATE game_session_canonical_initial_admission_attempt SET status = 'ABORTED', "
-                                    + "abort_reason = ?, abort_proof_digest = ?, updated_at = updated_at + INTERVAL '1 second', "
-                                    + "terminal_at = updated_at + INTERVAL '1 second', account_protection_evidence_version = ?, "
-                                    + "account_protection_id = ?, account_protection_fence = ?, original_owner_attempt_id = ?, "
-                                    + "original_owner_mutation_id = ?, original_owner_fence = ?, account_protection_evidence_bytes = ? "
-                                    + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                                partial.get("abort_reason"),
-                                partial.get("abort_proof_digest"),
-                                partial.get("account_protection_evidence_version"),
-                                partial.get("account_protection_id"),
-                                partial.get("account_protection_fence"),
-                                partial.get("original_owner_attempt_id"),
-                                partial.get("original_owner_mutation_id"),
-                                partial.get("original_owner_fence"),
-                                partial.get("account_protection_evidence_bytes"),
-                                NAMESPACE,
-                                request.initialAdmissionRequestId())))
-            .isInstanceOfSatisfying(
-                DataAccessException.class,
-                exception -> {
-                  assertThat(exception.sqlState()).isEqualTo("23514");
-                  assertThat(exception)
-                      .hasStackTraceContaining(
-                          "violates check constraint \"chk_gs_initial_admission_account_protection_evidence_complete\"");
-                });
-      }
-    } finally {
-      fixture.dsl.execute(
-          "ALTER TABLE game_session_canonical_initial_admission_attempt ENABLE TRIGGER "
-              + "game_session_canonical_initial_admission_v44_terminal_evidence");
+              exception ->
+                  assertPostgresConstraintFailure(
+                      exception,
+                      "chk_gs_initial_admission_terminal_requires_protection",
+                      "New canonical initial-admission terminal requires complete retained Account protection evidence"));
     }
     assertThat(attemptProjection(fixture, request)).isEqualTo(pendingBefore);
     assertThat(
@@ -837,13 +720,11 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     .intoArray())
             .containsOnlyNulls();
         assertHumanProtectionUnavailable(
-            () ->
-                predecessor.initialAdmissionRepository.commit(
-                    request, testWorldProof(request), null));
+            () -> predecessor.initialAdmissionRepository.commit(request, testWorldProof(request)));
         assertHumanProtectionUnavailable(
             () ->
                 predecessor.initialAdmissionRepository.abort(
-                    request, null, "Current Human retry remains unprotected"));
+                    request, "Current Human retry remains unprotected"));
         assertThatThrownBy(
                 () ->
                     predecessor.transactions.executeWithoutResult(
@@ -1497,6 +1378,26 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         .hasMessageContaining("Account terminal protection");
   }
 
+  private static void assertPostgresConstraintFailure(
+      Throwable failure, String expectedConstraint, String expectedMessage) {
+    PSQLException postgresFailure = postgresException(failure);
+    assertThat(postgresFailure.getSQLState()).isEqualTo("23514");
+    assertThat(postgresFailure.getServerErrorMessage()).isNotNull();
+    assertThat(postgresFailure.getServerErrorMessage().getConstraint())
+        .isEqualTo(expectedConstraint);
+    assertThat(postgresFailure.getServerErrorMessage().getMessage()).isEqualTo(expectedMessage);
+  }
+
+  private static PSQLException postgresException(Throwable failure) {
+    Throwable current = failure;
+    for (int depth = 0; current != null && depth < 8; depth++, current = current.getCause()) {
+      if (current instanceof PSQLException postgresFailure) {
+        return postgresFailure;
+      }
+    }
+    throw new AssertionError("PostgreSQL exception was not present in the cause chain", failure);
+  }
+
   private static String attemptProjection(
       Fixture fixture, CanonicalInitialAdmissionRequest request) {
     return fixture
@@ -1626,8 +1527,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     CanonicalGameInstanceLaunchAssociationRepository launchRepository =
         new CanonicalGameInstanceLaunchAssociationRepository(dsl, NAMESPACE);
     CanonicalInitialAdmissionRepository initialAdmissionRepository =
-        new CanonicalInitialAdmissionRepository(
-            dsl, catalogRepository, pointerRepository, launchRepository, eventRepository);
+        new CanonicalInitialAdmissionRepository(dsl, catalogRepository, pointerRepository);
     return new Fixture(
         dsl,
         transactionManager,

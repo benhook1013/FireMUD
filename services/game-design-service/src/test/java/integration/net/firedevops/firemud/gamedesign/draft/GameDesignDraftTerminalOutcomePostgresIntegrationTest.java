@@ -398,7 +398,9 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
 
   @Test
   void migrationDoesNotInventAccountOutcomesForRetainedStatusOnlyRows() {
-    Fixture legacy = createFixture(MigrationVersion.fromVersion("45"));
+    // V50.4 is the preserved coordinator frontier immediately before V50.5 adds
+    // Account-bound terminal receipts. Seed status-only history there, then upgrade normally.
+    Fixture legacy = createFixture(MigrationVersion.fromVersion("50.4"));
     TargetProof target = legacy.newHistoricalTarget();
     DraftCommitBinding binding = binding(target);
     List<DraftCommitCoordinatorRepository.OwnerOutcome> outcomes = allAppliedOutcomes(binding);
@@ -480,6 +482,11 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
                       binding.requestId());
             });
     legacy.migrateToLatest();
+
+    var retained = legacy.coordinator().read(target, binding.requestId()).orElseThrow();
+    assertThat(retained.binding()).isEqualTo(binding);
+    assertThat(retained.workflowState())
+        .isEqualTo(DraftCommitCoordinatorRepository.WorkflowState.SYNCHRONIZED);
 
     assertThat(
             new GameDesignDraftTerminalOutcomeRepository(legacy.dsl())
@@ -760,7 +767,7 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
       Game game = new Game();
       game.setTenantId(tenantKey);
       game.setName("Historical Game Design terminal evidence source");
-      game.setDescription("V45 canonical Version owner fixture");
+      game.setDescription("V50.4 canonical Version owner fixture");
       Game savedGame = Objects.requireNonNull(transaction.execute(status -> games.save(game)));
       UUID canonicalVersionId = UUID.randomUUID();
       org.jooq.Record savedVersion =
@@ -779,7 +786,7 @@ class GameDesignDraftTerminalOutcomePostgresIntegrationTest {
                                   + "identity_source_game_row_id, identity_source_game_tenant_key, "
                                   + "identity_source_provenance_kind",
                               canonicalVersionId,
-                              "V45 retained status-only migration fixture",
+                              "V50.4 retained status-only migration fixture",
                               savedGame.getId())
                           .fetchOne()));
       return new TargetProof(

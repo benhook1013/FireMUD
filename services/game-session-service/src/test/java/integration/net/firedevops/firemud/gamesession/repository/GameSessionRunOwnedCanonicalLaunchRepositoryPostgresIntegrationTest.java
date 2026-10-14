@@ -5,6 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -279,6 +282,117 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
     assertThat(ownerRows(fixture, evidence, first.gameInstanceId())).isEqualTo(originalRows);
   }
 
+  @Test
+  void retriesCanonicalLaunchAfterAdvisoryWaitWithRepeatableReadDatasourceDefault()
+      throws Exception {
+    Fixture fixture = fixtureWithRepeatableReadDefault();
+    AuthoredWorldSourceEvidence source = source(SOURCE_GAME_ROW_ID);
+    RunOwnedInitialAdmissionLaunchEvidence evidence = launchEvidence(source, OWNER_ACCOUNT_ID);
+    FixtureCanonicalRealmCatalog preparedCatalog =
+        fixture.catalogRepository.establishVerifiedFixtureRealm(evidence);
+    assertThat(
+            Objects.requireNonNull(
+                    fixture.dsl.fetchOne("SHOW default_transaction_isolation"),
+                    "PostgreSQL did not return the datasource transaction isolation setting")
+                .get(0, String.class))
+        .isEqualTo("repeatable read");
+    assertThat(fixture.catalogRepository.readVerifiedFixtureRealm(evidence))
+        .isEqualTo(preparedCatalog);
+
+    String lockKey =
+        "canonical-launch:" + NAMESPACE + ":" + evidence.fixtureCapability().operationId();
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try (Connection lockConnection = fixture.dataSource.getConnection()) {
+      boolean lockHeld = false;
+      try {
+        try (PreparedStatement acquire =
+            lockConnection.prepareStatement("SELECT pg_advisory_lock(hashtextextended(?, 0))")) {
+          acquire.setString(1, lockKey);
+          acquire.execute();
+          lockHeld = true;
+        }
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        Future<FixtureCanonicalInstanceLaunch> firstAttempt =
+            executor.submit(() -> contender(fixture, evidence, ready, start));
+        Future<FixtureCanonicalInstanceLaunch> secondAttempt =
+            executor.submit(() -> contender(fixture, evidence, ready, start));
+        assertThat(ready.await(15, TimeUnit.SECONDS)).isTrue();
+        start.countDown();
+        awaitAdvisoryWaiters(fixture, lockKey, 2);
+
+        try (PreparedStatement release =
+            lockConnection.prepareStatement("SELECT pg_advisory_unlock(hashtextextended(?, 0))")) {
+          release.setString(1, lockKey);
+          try (var result = release.executeQuery()) {
+            assertThat(result.next()).isTrue();
+            assertThat(result.getBoolean(1)).isTrue();
+          }
+          lockHeld = false;
+        }
+
+        FixtureCanonicalInstanceLaunch first = firstAttempt.get(30, TimeUnit.SECONDS);
+        FixtureCanonicalInstanceLaunch second = secondAttempt.get(30, TimeUnit.SECONDS);
+        assertThat(second).isEqualTo(first);
+        assertThat(first.status())
+            .isEqualTo(
+                net.firedevops.firemud.common.gamesession
+                    .CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus
+                    .STARTING);
+        assertThat(
+                fixture.dsl.fetchCount(
+                    DSL.table(DSL.name("game_session_canonical_instance_launch"))))
+            .isEqualTo(1);
+        assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances")))).isEqualTo(1);
+
+        OwnerRows committedRows = ownerRows(fixture, evidence, first.gameInstanceId());
+        assertThat(fixture.launchRepository.readVerifiedFixtureLaunch(evidence)).isEqualTo(first);
+        assertThat(fixture.launchRepository.createVerifiedFixtureStartingLaunch(evidence))
+            .isEqualTo(first);
+        assertThat(ownerRows(fixture, evidence, first.gameInstanceId())).isEqualTo(committedRows);
+      } finally {
+        if (lockHeld) {
+          try (PreparedStatement release =
+              lockConnection.prepareStatement(
+                  "SELECT pg_advisory_unlock(hashtextextended(?, 0))")) {
+            release.setString(1, lockKey);
+            release.execute();
+          }
+        }
+      }
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  private static void awaitAdvisoryWaiters(Fixture fixture, String lockKey, int expectedWaiters) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+    while (System.nanoTime() < deadline) {
+      Long waiting =
+          Objects.requireNonNull(
+                  fixture.dsl.fetchOne(
+                      "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+                          + "AND NOT granted AND objsubid = 1 "
+                          + "AND classid = (((hashtextextended(?, 0) >> 32) & 4294967295)::oid) "
+                          + "AND objid = ((hashtextextended(?, 0) & 4294967295)::oid)",
+                      lockKey,
+                      lockKey),
+                  "PostgreSQL did not return the advisory-lock waiter count")
+              .get(0, Long.class);
+      if (waiting == expectedWaiters) return;
+      try {
+        Thread.sleep(10);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(
+            "Interrupted while awaiting canonical launch advisory-lock waiters", interrupted);
+      }
+    }
+    throw new AssertionError(
+        "Both canonical launch calls did not wait on the original advisory lock");
+  }
+
   private static FixtureCanonicalInstanceLaunch contender(
       Fixture fixture,
       RunOwnedInitialAdmissionLaunchEvidence evidence,
@@ -437,53 +551,51 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
     var source = receipt.source();
     UUID creationId = uuid(1105);
     String requestDigest =
-        historicalDigest(
-            java.util.List.of(
-                "game-session-canonical-realm-catalog-request/v1",
-                "1",
-                creationId.toString(),
-                NAMESPACE,
-                source.canonicalTenantId().toString(),
-                receipt.operationId().toString(),
-                receipt.intakeRequestId().toString(),
-                receipt.requestDigest(),
-                receipt.receiptDigest(),
-                Integer.toString(source.schemaVersion()),
-                source.registrationRequestId().toString(),
-                source.operationId().toString(),
-                source.requestDigest(),
-                source.canonicalTenantId().toString(),
-                source.tenantSlug(),
-                source.worldSlug(),
-                source.worldDisplayName(),
-                Long.toString(source.sourceGameRowId()),
-                source.sourceGameTenantKey(),
-                source.provenanceKind(),
-                source.evidenceDigest(),
-                "historical-production",
-                "Historical Production",
-                "true",
-                "true",
-                "SHARED",
-                "ALLOW_NEW",
-                "ABSENT",
-                "ABSENT"));
+        CanonicalHumanPublicationOwnerTestFixtures.historicalDigest(
+            "game-session-canonical-realm-catalog-request/v1",
+            "1",
+            creationId.toString(),
+            NAMESPACE,
+            source.canonicalTenantId().toString(),
+            receipt.operationId().toString(),
+            receipt.intakeRequestId().toString(),
+            receipt.requestDigest(),
+            receipt.receiptDigest(),
+            Integer.toString(source.schemaVersion()),
+            source.registrationRequestId().toString(),
+            source.operationId().toString(),
+            source.requestDigest(),
+            source.canonicalTenantId().toString(),
+            source.tenantSlug(),
+            source.worldSlug(),
+            source.worldDisplayName(),
+            Long.toString(source.sourceGameRowId()),
+            source.sourceGameTenantKey(),
+            source.provenanceKind(),
+            source.evidenceDigest(),
+            "historical-production",
+            "Historical Production",
+            "true",
+            "true",
+            "SHARED",
+            "ALLOW_NEW",
+            "ABSENT",
+            "ABSENT");
     columns.put("request_digest", requestDigest);
     columns.put(
         "receipt_digest",
-        historicalDigest(
-            java.util.List.of(
-                "game-session-canonical-realm-catalog-receipt/v1",
-                "1",
-                NAMESPACE,
-                source.canonicalTenantId().toString(),
-                creationId.toString(),
-                requestDigest,
-                realmId.toString(),
-                uuid(1104).toString(),
-                "1",
-                receipt.operationId().toString(),
-                receipt.receiptDigest())));
+        CanonicalHumanPublicationOwnerTestFixtures.historicalDigest(
+            "game-session-canonical-realm-catalog-receipt/v1",
+            "1",
+            NAMESPACE,
+            source.canonicalTenantId().toString(),
+            creationId.toString(),
+            requestDigest,
+            realmId.toString(),
+            uuid(1104).toString(),
+            "1",
+            receipt.operationId().toString(),
+            receipt.receiptDigest()));
     columns.put("source_intake_operation_id", receipt.operationId());
     columns.put("source_intake_schema_version", 1);
     columns.put("source_intake_request_id", receipt.intakeRequestId());
@@ -505,21 +617,6 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
           insertOwnerRow(fixture, "gameplay_tenant_shared_playable_state_namespace", namespace);
           insertOwnerRow(fixture, "game_session_canonical_realm_catalog", columns);
         });
-  }
-
-  private static String historicalDigest(java.util.List<String> fields) {
-    try {
-      var hash = java.security.MessageDigest.getInstance("SHA-256");
-      for (String value : fields) {
-        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-        hash.update(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
-        hash.update((byte) ':');
-        hash.update(bytes);
-      }
-      return "sha256:" + java.util.HexFormat.of().formatHex(hash.digest());
-    } catch (java.security.NoSuchAlgorithmException exception) {
-      throw new IllegalStateException(exception);
-    }
   }
 
   private static void insertHumanLaunch(
@@ -805,8 +902,26 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
   }
 
   private static Fixture fixture(String targetVersion) {
+    return fixture(targetVersion, false);
+  }
+
+  private static Fixture fixtureWithRepeatableReadDefault() {
+    return fixture(null, true);
+  }
+
+  private static Fixture fixture(String targetVersion, boolean repeatableReadDefault) {
     String schema = "gs_run_owned_launch_" + UUID.randomUUID().toString().replace("-", "");
-    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    DriverManagerDataSource dataSource =
+        repeatableReadDefault
+            ? new DriverManagerDataSource() {
+              @Override
+              public Connection getConnection() throws SQLException {
+                Connection connection = super.getConnection();
+                connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+                return connection;
+              }
+            }
+            : new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
     dataSource.setUrl(postgres.getJdbcUrl());
     dataSource.setUsername(postgres.getUsername());
