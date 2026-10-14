@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -53,6 +54,7 @@ import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -510,6 +512,107 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   }
 
   @Test
+  void terminalProtectionConstraintRejectsNewAndUpdatedUnprotectedTerminalRows() {
+    Fixture fixture = fixture();
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM pg_trigger WHERE tgrelid = "
+                        + "'game_session_canonical_instance_launch'::regclass "
+                        + "AND tgname = 'gs_canonical_instance_launch_complete_catalog_identity'")
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    PreparedAdmission prepared = prepareAdmission(fixture);
+    var request =
+        initialAdmissionRequest(
+            prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
+    fixture.transactions.executeWithoutResult(
+        status -> fixture.initialAdmissionRepository.reserve(request));
+    String pendingBefore = attemptProjection(fixture, request);
+    var terminalColumns =
+        new HashMap<>(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT * FROM game_session_canonical_initial_admission_attempt "
+                        + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                    NAMESPACE,
+                    request.initialAdmissionRequestId())
+                .intoMap());
+    terminalColumns.put("initial_admission_request_id", "unprotected-terminal-insert");
+    terminalColumns.put("hold_id", UUID.randomUUID());
+    terminalColumns.put("status", "ABORTED");
+    terminalColumns.put("abort_reason", "Unprotected terminal constraint fixture");
+    terminalColumns.put("abort_proof_digest", "sha256:" + "f".repeat(64));
+    terminalColumns.put("terminal_at", terminalColumns.get("updated_at"));
+
+    // Isolate the declarative constraint in this disposable schema. All other triggers,
+    // source bindings and constraints stay enabled; each failed write rolls back separately.
+    fixture.dsl.execute(
+        "ALTER TABLE game_session_canonical_initial_admission_attempt DISABLE TRIGGER "
+            + "game_session_canonical_initial_admission_v44_terminal_evidence");
+    try {
+      assertThatThrownBy(
+              () ->
+                  fixture.transactions.executeWithoutResult(
+                      status ->
+                          fixture
+                              .dsl
+                              .insertInto(
+                                  DSL.table(
+                                      DSL.name("game_session_canonical_initial_admission_attempt")))
+                              .set(terminalColumns)
+                              .execute()))
+          .isInstanceOfSatisfying(
+              DataAccessException.class,
+              exception -> {
+                assertThat(exception.sqlState()).isEqualTo("23514");
+                assertThat(exception)
+                    .hasStackTraceContaining(
+                        "violates check constraint \"chk_gs_initial_admission_terminal_requires_protection\"");
+              });
+      assertThatThrownBy(
+              () ->
+                  fixture.transactions.executeWithoutResult(
+                      status ->
+                          fixture.dsl.execute(
+                              "UPDATE game_session_canonical_initial_admission_attempt SET "
+                                  + "status = 'ABORTED', abort_reason = ?, abort_proof_digest = ?, "
+                                  + "updated_at = updated_at + INTERVAL '1 second', "
+                                  + "terminal_at = updated_at + INTERVAL '1 second' "
+                                  + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                              terminalColumns.get("abort_reason"),
+                              terminalColumns.get("abort_proof_digest"),
+                              NAMESPACE,
+                              request.initialAdmissionRequestId())))
+          .isInstanceOfSatisfying(
+              DataAccessException.class,
+              exception -> {
+                assertThat(exception.sqlState()).isEqualTo("23514");
+                assertThat(exception)
+                    .hasStackTraceContaining(
+                        "violates check constraint \"chk_gs_initial_admission_terminal_requires_protection\"");
+              });
+    } finally {
+      fixture.dsl.execute(
+          "ALTER TABLE game_session_canonical_initial_admission_attempt ENABLE TRIGGER "
+              + "game_session_canonical_initial_admission_v44_terminal_evidence");
+    }
+    assertThat(attemptProjection(fixture, request)).isEqualTo(pendingBefore);
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM game_session_canonical_initial_admission_attempt "
+                        + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                    NAMESPACE,
+                    "unprotected-terminal-insert")
+                .get(0, Long.class))
+        .isZero();
+  }
+
+  @Test
   void pre1006CommittedAndAbortedRowsSurviveForwardProtectionMigration() throws Exception {
     for (boolean committed : List.of(true, false)) {
       Fixture predecessor = fixture("1005");
@@ -550,6 +653,15 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                       "SELECT count(*) FROM flyway_schema_history WHERE version = '1010' AND success")
                   .get(0, Long.class))
           .isEqualTo(1L);
+      assertThat(
+              predecessor
+                  .dsl
+                  .fetchSingle(
+                      "SELECT convalidated FROM pg_constraint WHERE conrelid = "
+                          + "'game_session_canonical_initial_admission_attempt'::regclass "
+                          + "AND conname = 'chk_gs_initial_admission_terminal_requires_protection'")
+                  .get(0, Boolean.class))
+          .isFalse();
       assertThat(predecessorAttemptProjection(predecessor, request)).isEqualTo(originalAttempt);
       assertThat(pointerAndAuditProjection(predecessor)).isEqualTo(originalPointerAndAudit);
       assertThat(predecessorSourceProjection(predecessor)).isEqualTo(originalSources);

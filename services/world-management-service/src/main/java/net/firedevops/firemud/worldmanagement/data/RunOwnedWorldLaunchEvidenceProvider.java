@@ -68,6 +68,7 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
   private final GameDesignClient gameDesignClient;
   private final ServiceEndpointsProperties serviceEndpoints;
   private final GrpcChannelFactory grpcChannelFactory;
+  private final GameSessionFixtureClientFactory gameSessionFixtureClientFactory;
   private final String workloadNamespace;
   private volatile CanonicalGameInstanceLaunchAssociationClient gameSessionFixtureClient;
 
@@ -83,6 +84,34 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
       ServiceEndpointsProperties serviceEndpoints,
       GrpcChannelFactory grpcChannelFactory,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this(
+        enabled,
+        capabilityPath,
+        sourceReceiptPath,
+        runId,
+        composeProjectName,
+        grpcProperties,
+        gameDesignClient,
+        serviceEndpoints,
+        grpcChannelFactory,
+        workloadNamespace,
+        (endpoints, properties, factory, namespace) ->
+            new CanonicalGameInstanceLaunchAssociationClient(
+                endpoints, properties, factory, namespace));
+  }
+
+  RunOwnedWorldLaunchEvidenceProvider(
+      boolean enabled,
+      String capabilityPath,
+      String sourceReceiptPath,
+      String runId,
+      String composeProjectName,
+      CommonGrpcClientProperties grpcProperties,
+      GameDesignClient gameDesignClient,
+      ServiceEndpointsProperties serviceEndpoints,
+      GrpcChannelFactory grpcChannelFactory,
+      String workloadNamespace,
+      GameSessionFixtureClientFactory gameSessionFixtureClientFactory) {
     this.enabled = enabled;
     this.capabilityPath = capabilityPath;
     this.sourceReceiptPath = sourceReceiptPath;
@@ -92,6 +121,8 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
     this.gameDesignClient = Objects.requireNonNull(gameDesignClient, "gameDesignClient");
     this.serviceEndpoints = serviceEndpoints == null ? null : serviceEndpoints.copy();
     this.grpcChannelFactory = grpcChannelFactory;
+    this.gameSessionFixtureClientFactory =
+        Objects.requireNonNull(gameSessionFixtureClientFactory, "gameSessionFixtureClientFactory");
     this.workloadNamespace = workloadNamespace;
   }
 
@@ -220,7 +251,7 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
       throw invalidEvidence();
     }
     CanonicalGameInstanceLaunchAssociationClient created =
-        new CanonicalGameInstanceLaunchAssociationClient(
+        gameSessionFixtureClientFactory.create(
             serviceEndpoints, grpcProperties, grpcChannelFactory, workloadNamespace);
     try {
       created.init();
@@ -410,6 +441,15 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
   }
 
   private record CertificatePins(String leafSha256, String uriSan, String caSha256) {}
+
+  @FunctionalInterface
+  interface GameSessionFixtureClientFactory {
+    CanonicalGameInstanceLaunchAssociationClient create(
+        ServiceEndpointsProperties endpoints,
+        CommonGrpcClientProperties tlsProperties,
+        GrpcChannelFactory channelFactory,
+        String workloadNamespace);
+  }
 
   private enum VerificationStage {
     ENABLED,

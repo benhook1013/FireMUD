@@ -143,8 +143,9 @@ public final class RunOwnedInitialAdmissionLaunchEvidence {
                 versionState,
                 launchDescriptor));
     var seal = fixture.receipt().fixturePolicySeal();
-    if (!"firemud.run-owned-fixture-policy-seal.v1".equals(seal.schema())
-        || !"game-design-service".equals(seal.ownerService())
+    if (!RunOwnedInitialAdmissionFixtureWireCodec.FIXTURE_POLICY_SEAL_SCHEMA.equals(seal.schema())
+        || !RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_OWNER_SERVICE.equals(
+            seal.ownerService())
         || !java.util.UUID.fromString(fixture.capability().operationId()).equals(seal.operationId())
         || !requestDigest.equals(seal.requestDigest())
         || !RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
