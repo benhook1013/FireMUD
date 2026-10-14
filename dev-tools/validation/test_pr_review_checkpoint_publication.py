@@ -106,6 +106,19 @@ class CheckpointPublicationTests(unittest.TestCase):
         self.assertEqual(self.github.posts, 1)
         self.assertEqual(self.store.history(PR)["runs"][0]["counts"], {"found": 3, "accepted": 1, "routed": 1})
 
+    def test_corrected_native_decision_cannot_replace_original_publication_or_intent(self):
+        from test_pr_review_sqlite_review_records import corrected_native_fixture
+
+        run_id, _, comment = corrected_native_fixture(self.store)
+        before = copy.deepcopy(self.store.attempt(run_id)["metadata"]["checkpoint_publication_intent"])
+        self.github.comments.append({**comment, "user": {"id": 456, "login": "owner"},
+            "issue_url": f"https://api.github.com/repos/{REPO}/issues/{PR}"})
+        with self.assertRaises((ReviewRecordsError, evidence.CaptureInvalid)):
+            self.publish(run_id)
+        self.assertEqual(self.github.posts, 0)
+        self.assertEqual(self.store.attempt(run_id)["metadata"]["checkpoint_publication_intent"], before)
+        self.assertEqual(self.github.comments[0]["body"], comment["body"])
+
     def test_unfinalized_refuses_before_github(self):
         self.cli_run(finalize=False)
         with self.assertRaisesRegex(ReviewRecordsError, "finalized"):
