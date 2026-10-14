@@ -111,9 +111,6 @@ public final class WorldAuthoredVersionIdentityService {
         || !sourceReceipt.worldSlug().equals(trustedSource.worldSlug())
         || !sourceReceipt.sourceOperationId().equals(trustedSource.operationId())
         || !sourceReceipt.sourceEvidenceDigest().equals(trustedSource.evidenceDigest())
-        || !fixtureEvidence
-            .fixtureProvenanceDigest()
-            .equals(fixtureEvidence.sourceReceipt().fixturePolicySeal().evidenceDigest())
         || !gs.fixturePolicySeal().equals(fixtureEvidence.sourceReceipt().fixturePolicySeal())
         || !gs.canonicalTenantId().equals(trustedSource.canonicalTenantId())
         || !gs.canonicalVersionId()

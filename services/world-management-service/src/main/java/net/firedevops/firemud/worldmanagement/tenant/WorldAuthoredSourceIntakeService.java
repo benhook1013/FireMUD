@@ -183,9 +183,6 @@ public class WorldAuthoredSourceIntakeService {
         expectedSource.operationId(),
         expectedSource.evidenceDigest());
     if (!fixtureOperationId.toString().equals(trustedReceipt.fixtureOperationId())
-        || !fixtureEvidence
-            .fixtureProvenanceDigest()
-            .equals(trustedReceipt.fixturePolicySeal().evidenceDigest())
         || !workloadNamespace.equals(expectedSource.targetNamespace())
         || !fixtureEvidence
             .launchDescriptor()

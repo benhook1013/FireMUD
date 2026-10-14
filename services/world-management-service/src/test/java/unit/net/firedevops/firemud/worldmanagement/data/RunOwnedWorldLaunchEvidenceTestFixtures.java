@@ -23,10 +23,6 @@ import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
  */
 public final class RunOwnedWorldLaunchEvidenceTestFixtures {
   private static final String CLAIM_DIGEST = controlledClaimDigest();
-  private static final String OPERATION_ID =
-      RunOwnedInitialAdmissionFixtureWireCodec.fixtureOperationId(
-              CLAIM_DIGEST, "fixture-run", "firemud-fixture-run", "a".repeat(64), "b".repeat(64))
-          .toString();
   private static final String RELEASE_REF = "8ce42642-53ae-4d07-aab8-37c43ce66e0c";
 
   private RunOwnedWorldLaunchEvidenceTestFixtures() {}
@@ -49,9 +45,36 @@ public final class RunOwnedWorldLaunchEvidenceTestFixtures {
 
   public static RunOwnedWorldLaunchEvidence createWithDescriptorOverrides(
       boolean scriptPatchVersionPresent, boolean remapSetIdPresent) {
-    UUID registrationId = UUID.fromString(OPERATION_ID);
+    return create(
+        false,
+        "a".repeat(64),
+        "c".repeat(64),
+        "b".repeat(64),
+        UUID.fromString("ed5d1541-a33e-4f8b-9b54-38c27d76ba6d"),
+        9L,
+        scriptPatchVersionPresent,
+        remapSetIdPresent);
+  }
+
+  static RunOwnedWorldLaunchEvidence create(
+      boolean mismatchedSeal,
+      String gameSessionLeafSha256,
+      String worldManagementLeafSha256,
+      String caCertificateSha256,
+      UUID canonicalTenantId,
+      long capabilityEpoch,
+      boolean scriptPatchVersionPresent,
+      boolean remapSetIdPresent) {
+    String operationId =
+        RunOwnedInitialAdmissionFixtureWireCodec.fixtureOperationId(
+                CLAIM_DIGEST,
+                "fixture-run",
+                "firemud-fixture-run",
+                gameSessionLeafSha256,
+                caCertificateSha256)
+            .toString();
+    UUID registrationId = UUID.fromString(operationId);
     UUID sourceOperationId = UUID.fromString("3f773701-e812-44f5-8ae0-7268d543beed");
-    UUID canonicalTenantId = UUID.fromString("ed5d1541-a33e-4f8b-9b54-38c27d76ba6d");
     String requestDigest =
         AuthoredWorldSourceDigest.requestDigest(
             "dev", registrationId, canonicalTenantId, "fixture-tenant", "demo", "Demo World");
@@ -86,7 +109,7 @@ public final class RunOwnedWorldLaunchEvidenceTestFixtures {
     var descriptorRequest =
         new AuthoredWorldLaunchDescriptorEvidence.Request(
             "dev",
-            OPERATION_ID,
+            operationId,
             canonicalTenantId,
             "demo",
             sourceOperationId,
@@ -149,10 +172,10 @@ public final class RunOwnedWorldLaunchEvidenceTestFixtures {
             RunOwnedInitialAdmissionFixtureWireCodec.CAPABILITY_SCHEMA,
             "fixture-run",
             "firemud-fixture-run",
-            OPERATION_ID,
+            operationId,
             42L,
             17L,
-            9L,
+            capabilityEpoch,
             "demo",
             "Demo World",
             "production",
@@ -162,11 +185,11 @@ public final class RunOwnedWorldLaunchEvidenceTestFixtures {
             false,
             "SHARED",
             "ALLOW_NEW",
-            "a".repeat(64),
+            gameSessionLeafSha256,
             RunOwnedInitialAdmissionFixtureWireCodec.GAME_SESSION_URI_SAN,
-            "b".repeat(64),
+            caCertificateSha256,
             RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
-            "c".repeat(64),
+            worldManagementLeafSha256,
             CLAIM_DIGEST);
     // Controlled constructor data remains untrusted; these commitments do not prove owner writes.
     UUID creationRequestId = UUID.fromString("1b3fdbda-a9f6-4cf5-b21e-b43f0e855f65");
@@ -210,33 +233,44 @@ public final class RunOwnedWorldLaunchEvidenceTestFixtures {
         new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal(
             RunOwnedInitialAdmissionFixtureWireCodec.FIXTURE_POLICY_SEAL_SCHEMA,
             RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_OWNER_SERVICE,
-            UUID.fromString(OPERATION_ID),
+            UUID.fromString(operationId),
             policyRequestDigest,
             RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
-                UUID.fromString(OPERATION_ID), policyRequestDigest));
+                UUID.fromString(operationId), policyRequestDigest));
+    UUID otherSealOperation = UUID.fromString("20000000-0000-4000-8000-000000000012");
+    var receiptSeal =
+        mismatchedSeal
+            ? new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal(
+                policySeal.schema(),
+                policySeal.ownerService(),
+                otherSealOperation,
+                policySeal.requestDigest(),
+                RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+                    otherSealOperation, policySeal.requestDigest()))
+            : policySeal;
     var receipt =
         new RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt(
             RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_SCHEMA,
             "fixture-run",
             "firemud-fixture-run",
-            OPERATION_ID,
+            operationId,
             RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_OWNER_SERVICE,
             RunOwnedInitialAdmissionFixtureWireCodec.GAME_SESSION_URI_SAN,
-            "a".repeat(64),
-            "b".repeat(64),
+            gameSessionLeafSha256,
+            caCertificateSha256,
             RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
-            "c".repeat(64),
+            worldManagementLeafSha256,
             source,
             launchRead,
             creation,
-            policySeal);
+            receiptSeal);
     var policyRequestBytes =
         RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestBytes(
             capability, creation, source, launchRead);
     UUID readRequestId = UUID.fromString("5d85bfbe-ae28-4a86-a72a-57471a5761bf");
     var associationRequest =
         new CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureRequest(
-            readRequestId, "dev", UUID.fromString(OPERATION_ID), policySeal.evidenceDigest());
+            readRequestId, "dev", UUID.fromString(operationId), policySeal.evidenceDigest());
     var association =
         new CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult(
             associationRequest,
@@ -258,10 +292,10 @@ public final class RunOwnedWorldLaunchEvidenceTestFixtures {
         descriptor,
         new byte[] {1},
         new byte[] {2},
-        "a".repeat(64),
+        gameSessionLeafSha256,
         RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
-        "c".repeat(64),
-        "b".repeat(64),
+        worldManagementLeafSha256,
+        caCertificateSha256,
         association);
   }
 }
