@@ -13,6 +13,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -805,6 +806,60 @@ class WorldLifecycleCommandServiceImplTest {
     verifyNoWorldRepositoryOrOwnerInteraction();
   }
 
+  @Test
+  void fixtureFailureAndTerminationRefuseBeforeWorldReadOrOtherEffects() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    when(provider.isEnabled()).thenReturn(true);
+    WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
+
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> fixtureService.failPreparedWorldInstance(42L, 101L, 1L, "failed"));
+    IllegalArgumentException termination =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> fixtureService.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
+
+    assertTrue(failure.getMessage().startsWith("RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE:"));
+    assertTrue(termination.getMessage().startsWith("RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE:"));
+    verify(provider, times(2)).isEnabled();
+    verifyNoWorldRepositoryOrOwnerInteraction();
+  }
+
+  @Test
+  void failureRejectsRetainedFixtureBindingBeforeSaving() {
+    WorldInstance fixture = fixtureWorldInstance();
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(fixture));
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.failPreparedWorldInstance(42L, 101L, 1L, "failed"));
+
+    assertTrue(error.getMessage().startsWith("RUN_OWNED_WORLD_LAUNCH_EVIDENCE_UNAVAILABLE:"));
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verifyNoInteractionsWithRuntimeCleanupOwners();
+  }
+
+  @Test
+  void terminationRejectsRetainedFixtureBindingBeforeWriteOrCleanup() {
+    WorldInstance fixture = fixtureWorldInstance();
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(fixture));
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
+
+    assertTrue(error.getMessage().startsWith("RUN_OWNED_WORLD_LAUNCH_EVIDENCE_UNAVAILABLE:"));
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verifyNoInteractions(entityManagementClient);
+    verifyNoInteractionsWithRuntimeCleanupOwners();
+  }
+
   private void verifyNoWorldRepositoryOrOwnerInteraction() {
     org.mockito.Mockito.verifyNoInteractions(
         worldInstanceRepository,
@@ -818,6 +873,15 @@ class WorldLifecycleCommandServiceImplTest {
         worldEventRepository,
         gameDesignClient,
         entityManagementClient);
+  }
+
+  private void verifyNoInteractionsWithRuntimeCleanupOwners() {
+    org.mockito.Mockito.verifyNoInteractions(
+        regionInstanceRepository,
+        zoneInstanceRepository,
+        roomInstanceRepository,
+        roomInstanceExitRepository,
+        worldEventRepository);
   }
 
   private WorldLifecycleCommandServiceImpl fixtureService(
@@ -878,6 +942,16 @@ class WorldLifecycleCommandServiceImplTest {
     instance.setLifecycleEpoch(2L);
     instance.setStatus("ACTIVE");
     instance.setRowVersion(0L);
+    return instance;
+  }
+
+  private static WorldInstance fixtureWorldInstance() {
+    WorldInstance instance = new WorldInstance();
+    instance.setTenantId(42L);
+    instance.setGameInstanceId(101L);
+    instance.setLifecycleEpoch(1L);
+    instance.setStatus("PREPARING");
+    instance.setRunOwnedFixtureBindingSha256("a".repeat(64));
     return instance;
   }
 
