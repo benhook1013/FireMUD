@@ -1934,7 +1934,7 @@ class SqliteReviewRecords:
             if ordinal == 0:
                 if prior != source_pr or decision not in {"accepted", "routed", "rejected"}:
                     raise ReviewRecordsError("CLI original decision conflicts with its source")
-                if (decision == "routed") != (target is not None):
+                if decision != "routed" and target is not None:
                     raise ReviewRecordsError("CLI original decision has conflicting route evidence")
             elif (prior != history[-1]["decision_id"] or decision not in {"accepted", "rejected"}
                   or history[-1]["decision"] not in {"accepted", "rejected"} or target is not None
@@ -3905,6 +3905,56 @@ class SqliteReviewRecords:
             "resolution_pr": resolution_pr,
             "outcome": outcome,
         }
+
+    def native_completion_time(
+        self, attempt_id: str, *, source_pr: int, _connection: sqlite3.Connection | None = None
+    ) -> str | None:
+        """Source completion proved by the retained native capture, never import clocks."""
+        from . import evidence, hosted
+        from .sqlite_hosted_capture import _terminal_event
+
+        with (contextlib.closing(self._connect(read_only=True)) if _connection is None
+              else contextlib.nullcontext(_connection)) as connection:
+            if _connection is None:
+                connection.execute("BEGIN")
+            self._require_compatible(connection)
+            row = connection.execute(
+                "SELECT channel, candidate_sha, state, finished_at, provider_review_id, metadata_json "
+                "FROM review_attempts WHERE attempt_id = ? AND source_pr = ?", (attempt_id, source_pr)
+            ).fetchone()
+            if row is None or row[2] != "completed":
+                return None
+            try:
+                if row[0] == "cli":
+                    snapshot = self._cli_capture_snapshot(connection, attempt_id, source_pr=source_pr)
+                    repository = snapshot["attempt"]["metadata"]["repository"]
+                    capture = evidence._cli_capture_from_sql(snapshot, repository, source_pr)
+                    at = capture.verified_completed_at
+                elif row[0] == "hosted":
+                    artifacts = self.attempt_artifacts(attempt_id, _connection=connection)
+                    metadata = json.loads(artifacts["metadata"])
+                    record = metadata["trigger_record"]
+                    comments = json.loads(artifacts["hosted_comments"])
+                    pull = {"number": source_pr, "headRefOid": row[1],
+                            "reviews": {"nodes": json.loads(artifacts["hosted_review"])},
+                            "comments": {"nodes": comments["comments"]},
+                            "reviewThreads": {"nodes": comments["review_threads"]}}
+                    payload = {"data": {"repository": {"pullRequest": pull}}}
+                    result = hosted.trigger_state(metadata["repository"], source_pr, payload, record)
+                    if result.state != "completed" or not result.attributed or str(result.response_id) != row[4]:
+                        return None
+                    # A missing provider event cannot fall back to observation time.
+                    if result.duration_seconds is None or not hosted.parse_timestamp(result.response_created_at):
+                        return None
+                    at, _, _ = _terminal_event(result, pull, observed_at=None)
+                    if hosted.parse_timestamp(at) != hosted.parse_timestamp(row[3]):
+                        return None
+                else:
+                    return None
+                parsed = hosted.parse_timestamp(at)
+                return parsed.isoformat().replace("+00:00", "Z") if parsed else None
+            except (KeyError, TypeError, ValueError, ReviewRecordsError, evidence.EvidenceError):
+                return None
 
     def history(
         self,

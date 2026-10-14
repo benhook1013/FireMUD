@@ -282,6 +282,7 @@ class CaptureData:
     decision_file_present: bool = False
     source_identity: str | None = None
     checkpoint_decisions: dict[int, tuple[str, str]] | None = None
+    verified_completed_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1039,8 +1040,26 @@ def _cli_capture_from_sql(
             checkpoint_decisions = None
     else:
         checkpoint_decisions = None
+    verified_metadata = _capture_metadata(metadata_value)
+    # Source clocks belong to this validated native attempt/run association.
+    # A supplied metadata clock, finalization, or publication cannot replace it.
+    verified_metadata.pop("completed_at", None)
+    from .hosted import parse_timestamp
+    attempt_finish = parse_timestamp(attempt.get("finished_at"))
+    run_finish = parse_timestamp(run.get("finished_at"))
+    terminal_value = metadata_value.get("capture_terminal_at")
+    terminal = (parse_timestamp(terminal_value) if isinstance(terminal_value, str)
+                and terminal_value.endswith(("Z", "+00:00")) else None)
+    started_at = parse_timestamp(attempt.get("started_at"))
+    # Equality of storage rows alone cannot prove when a provider finished.
+    # Old captures retain attribution but earn no local-period chronology credit.
+    if (metadata_value.get("capture_terminal_basis") == "provider_process_exit"
+            and terminal is not None and started_at is not None and terminal >= started_at
+            and terminal == attempt_finish == run_finish):
+        verified_metadata["completed_at"] = terminal.isoformat().replace("+00:00", "Z")
     capture = CaptureData(
-        metadata=_capture_metadata(metadata_value),
+        metadata=verified_metadata,
+        verified_completed_at=verified_metadata.get("completed_at"),
         findings=findings,
         decisions=snapshot.get("decisions", {}),
         decision_file_present=True,

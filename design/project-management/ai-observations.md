@@ -246,3 +246,14 @@ Entry format:
   - Context: the claimed Gameplay fresh-bootstrap run rebuilt all service jars and images successfully, then failed before startup while pulling public Redis images. WSL reported `UtilAcceptVsock` and `accept4` timeout errors followed by a Docker credential lookup failure.
   - Observation: using the native Linux Docker socket does not select a separate client credential configuration. A run-scoped private client configuration can omit unavailable Windows credential helpers while preserving static registry settings and Compose plugin discovery; the global client configuration need not change.
   - Current status: the required proof using packaged service artifacts passes both transports with the isolated configuration and pinned public images. This client failure establishes neither an application regression nor a cause for the earlier Testcontainers endpoint refusals.
+
+- `2026-10-14`: Review-period bookkeeping must not contend for provider execution locks
+  - Context: the Overseer reported that Gameplay's three concurrent metadata reset batches encountered active-provider errors during the native rollout, with no actual provider active.
+  - Observation: reset-versus-reset global lock contention was reported as provider activity, and network/full-stack refresh made local counter bookkeeping slow and coupled to unrelated source readiness.
+  - Expected pattern: snapshot retained completed native results and append the channel period in one local SQLite transaction; preserve provider reservations and enforce external evidence only at ordinary review/status admission.
+  - Current status: local transactional implementation is prepared; installed-selector promotion and live rollout verification remain pending with the owning orchestrator.
+  - Reconsideration trigger: verify concurrent metadata batches after coordinated version-matched selector promotion.
+
+- `2026-10-14`: Review-period reset recovery verified after coordinated promotion
+  - Outcome: [#3213](https://github.com/benhook1013/FireMUD/pull/3213) merged at `f4219551ad30c52933f184d6bf4aabb4373ef9c7`; all installed public selectors use writer build 11. Old reset writers drained at native command boundaries before promotion. Gameplay preserved the previous 58 applied keys and completed the remaining 24 serial resets in approximately 0.14–0.24 seconds per native call. Independent native-store readback verified all 82 unique periods across 41 open PRs, complete baselines, the requested defaults and no retained live stop in scope.
+  - Limit: this rollout used serialized metadata calls; it does not claim a new live concurrent-reset experiment. Existing provider findings, proof and historical review attribution remain preserved.
