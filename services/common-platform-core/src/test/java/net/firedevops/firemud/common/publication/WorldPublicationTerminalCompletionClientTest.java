@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -14,7 +15,9 @@ import io.grpc.stub.AbstractStub;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -47,7 +50,8 @@ class WorldPublicationTerminalCompletionClientTest {
     Thread monitorHolder = null;
     Thread closeThread = null;
     WorldPublicationTerminalCompletionClient client = null;
-    ManagedChannel channel = mock(ManagedChannel.class);
+    TlsCertificateWatcher originalWatcher = null;
+    List<ManagedChannel> channels = new CopyOnWriteArrayList<>();
     try {
       ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
       endpoints.setWorldManagementService("world.internal:6565");
@@ -55,7 +59,12 @@ class WorldPublicationTerminalCompletionClientTest {
       GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
       when(channelFactory.buildChannel(
               eq("world.internal:6565"), eq(6565), any(CommonGrpcClientProperties.class), eq(true)))
-          .thenReturn(channel);
+          .thenAnswer(
+              invocation -> {
+                ManagedChannel channel = mock(ManagedChannel.class);
+                channels.add(channel);
+                return channel;
+              });
       client = new WorldPublicationTerminalCompletionClient(endpoints, tls, channelFactory, "test");
       client.init();
       WorldPublicationTerminalCompletionClient clientUnderTest = client;
@@ -66,8 +75,21 @@ class WorldPublicationTerminalCompletionClientTest {
       assertThat(readField(initializedStub.getCallOptions().getCredentials(), "expectedPeerUri"))
           .isEqualTo("spiffe://firemud/ns/test/sa/world-management-service");
 
-      TlsCertificateWatcher watcher = watcher(client);
-      Set<Thread> activeCallbacks = activeCallbacks(watcher);
+      originalWatcher = watcher(client);
+      Set<Thread> activeCallbacks = activeCallbacks(originalWatcher);
+      TlsCertificateWatcher closeBoundary = mock(TlsCertificateWatcher.class);
+      TlsCertificateWatcher delegatedWatcher = originalWatcher;
+      doAnswer(
+              invocation -> {
+                assertThat(Thread.holdsLock(clientUnderTest))
+                    .as("the client monitor must be released before watcher shutdown")
+                    .isFalse();
+                delegatedWatcher.close();
+                return null;
+              })
+          .when(closeBoundary)
+          .close();
+      setWatcher(clientUnderTest, closeBoundary);
       CountDownLatch clientMonitorHeld = new CountDownLatch(1);
       monitorHolder =
           new Thread(
@@ -122,7 +144,10 @@ class WorldPublicationTerminalCompletionClientTest {
       assertThatThrownBy(() -> clientUnderTest.complete(request))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("not initialized and available");
-      verify(channel, times(1)).shutdown();
+      assertThat(channels).isNotEmpty();
+      for (ManagedChannel channel : channels) {
+        verify(channel, times(1)).shutdown();
+      }
     } finally {
       releaseClientMonitor.countDown();
       if (monitorHolder != null) {
@@ -131,10 +156,22 @@ class WorldPublicationTerminalCompletionClientTest {
       if (closeThread != null) {
         closeThread.join(TimeUnit.SECONDS.toMillis(7));
       }
-      if (client != null) {
-        client.close();
+      try {
+        if (originalWatcher != null) {
+          originalWatcher.close();
+        }
+      } finally {
+        try {
+          if (client != null) {
+            if (originalWatcher != null) {
+              setWatcher(client, originalWatcher);
+            }
+            client.close();
+          }
+        } finally {
+          restoreReloadPolicy(previousReloadPolicy);
+        }
       }
-      restoreReloadPolicy(previousReloadPolicy);
     }
   }
 
@@ -183,6 +220,14 @@ class WorldPublicationTerminalCompletionClientTest {
     Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("watcher");
     field.setAccessible(true);
     return (TlsCertificateWatcher) field.get(client);
+  }
+
+  private static void setWatcher(
+      WorldPublicationTerminalCompletionClient client, TlsCertificateWatcher watcher)
+      throws ReflectiveOperationException {
+    Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("watcher");
+    field.setAccessible(true);
+    field.set(client, watcher);
   }
 
   @SuppressWarnings("unchecked")

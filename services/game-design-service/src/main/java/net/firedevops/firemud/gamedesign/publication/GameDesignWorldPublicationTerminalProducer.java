@@ -17,6 +17,7 @@ public final class GameDesignWorldPublicationTerminalProducer implements AutoClo
   private final GameDesignPublicationOperationService owner;
   private final WorldPublicationTerminalCompletionClient completion;
   private final String namespace;
+  private final Object lifecycleLock = new Object();
   private boolean closed;
 
   public GameDesignWorldPublicationTerminalProducer(
@@ -56,52 +57,57 @@ public final class GameDesignWorldPublicationTerminalProducer implements AutoClo
   /**
    * Every retry independently reads the immutable GDS result and exactly replays World completion.
    */
-  public synchronized GameDesignPublicationTerminalEvidence reconcile(
+  public GameDesignPublicationTerminalEvidence reconcile(
       String tenant,
       String workflow,
       long version,
       String selectionDigest,
       GameDesignPublicationTerminalEvidence.Outcome expectedOutcome) {
-    if (TransactionSynchronizationManager.isActualTransactionActive()
-        || TransactionSynchronizationManager.isSynchronizationActive())
-      throw new IllegalStateException("Independent World publication handoff required");
-    if (closed) throw new IllegalStateException("World publication terminal producer closed");
-    Objects.requireNonNull(expectedOutcome);
-    var retained =
-        owner
-            .readExact(tenant, workflow, version, selectionDigest)
-            .orElseThrow(() -> new IllegalStateException("PUBLICATION_TERMINAL_PENDING"));
-    var operation = retained.operation();
-    // Repeat the complete scope check even for controlled owner doubles.
-    if (!tenant.equals(operation.tenantKey())
-        || !workflow.equals(operation.workflowId())
-        || version != operation.versionId()
-        || !selectionDigest.equals(operation.selectionDigest()))
-      throw new IllegalStateException("PUBLICATION_TERMINAL_SCOPE_CONFLICT");
-    if (!expectedOutcome.name().equals(retained.outcome())
-        || retained.terminalEvidenceBytes() == null)
-      throw new IllegalStateException("PUBLICATION_TERMINAL_UNRESOLVED");
-    var terminal =
-        GameDesignPublicationTerminalEvidence.fromStored(retained.terminalEvidenceBytes());
-    // Historical original bytes remain readable, but cannot acquire a fresh producer profile.
-    operation.inventory();
-    if (terminal.outcome() != expectedOutcome
-        || !Arrays.equals(operation.canonicalBytes(), terminal.operationBytes())
-        || !namespace.equals(terminal.worldEvidence().request().targetNamespace()))
-      throw new IllegalStateException("PUBLICATION_TERMINAL_EVIDENCE_CONFLICT");
-    var request =
-        WorldPublicationTerminalCompletionGrpcCodec.Request.create(
-            namespace, operation.canonicalBytes(), terminal.canonicalBytes());
-    var confirmed = completion.complete(request);
-    if (confirmed == null || !Arrays.equals(terminal.canonicalBytes(), confirmed.canonicalBytes()))
-      throw new IllegalStateException("WORLD_PUBLICATION_TERMINAL_PENDING");
-    return confirmed;
+    synchronized (lifecycleLock) {
+      if (TransactionSynchronizationManager.isActualTransactionActive()
+          || TransactionSynchronizationManager.isSynchronizationActive())
+        throw new IllegalStateException("Independent World publication handoff required");
+      if (closed) throw new IllegalStateException("World publication terminal producer closed");
+      Objects.requireNonNull(expectedOutcome);
+      var retained =
+          owner
+              .readExact(tenant, workflow, version, selectionDigest)
+              .orElseThrow(() -> new IllegalStateException("PUBLICATION_TERMINAL_PENDING"));
+      var operation = retained.operation();
+      // Repeat the complete scope check even for controlled owner doubles.
+      if (!tenant.equals(operation.tenantKey())
+          || !workflow.equals(operation.workflowId())
+          || version != operation.versionId()
+          || !selectionDigest.equals(operation.selectionDigest()))
+        throw new IllegalStateException("PUBLICATION_TERMINAL_SCOPE_CONFLICT");
+      if (!expectedOutcome.name().equals(retained.outcome())
+          || retained.terminalEvidenceBytes() == null)
+        throw new IllegalStateException("PUBLICATION_TERMINAL_UNRESOLVED");
+      var terminal =
+          GameDesignPublicationTerminalEvidence.fromStored(retained.terminalEvidenceBytes());
+      // Historical original bytes remain readable, but cannot acquire a fresh producer profile.
+      operation.inventory();
+      if (terminal.outcome() != expectedOutcome
+          || !Arrays.equals(operation.canonicalBytes(), terminal.operationBytes())
+          || !namespace.equals(terminal.worldEvidence().request().targetNamespace()))
+        throw new IllegalStateException("PUBLICATION_TERMINAL_EVIDENCE_CONFLICT");
+      var request =
+          WorldPublicationTerminalCompletionGrpcCodec.Request.create(
+              namespace, operation.canonicalBytes(), terminal.canonicalBytes());
+      var confirmed = completion.complete(request);
+      if (confirmed == null
+          || !Arrays.equals(terminal.canonicalBytes(), confirmed.canonicalBytes()))
+        throw new IllegalStateException("WORLD_PUBLICATION_TERMINAL_PENDING");
+      return confirmed;
+    }
   }
 
   @Override
-  public synchronized void close() throws IOException {
-    if (closed) return;
-    closed = true;
-    completion.close();
+  public void close() throws IOException {
+    synchronized (lifecycleLock) {
+      if (closed) return;
+      closed = true;
+      completion.close();
+    }
   }
 }

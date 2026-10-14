@@ -65,6 +65,10 @@ public class VersionPublishCommandServiceImpl {
   private final RecordedParticipantDigestService recordedParticipantDigestService;
   private final AuthoredDraftPublishSelectionRepository authoredSelections;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Trusted Spring injection rejects missing collaborators before publication; construction acquires no resources and this service defines or exposes no finalizer.")
   public VersionPublishCommandServiceImpl(
       VersionRepository versionRepository,
       GameRepository gameRepository,

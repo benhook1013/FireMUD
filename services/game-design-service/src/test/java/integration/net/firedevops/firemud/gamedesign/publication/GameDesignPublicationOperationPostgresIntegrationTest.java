@@ -77,6 +77,7 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperat
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationService;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationTerminalReadGrpcService;
+import net.firedevops.firemud.gamedesign.publication.GameDesignWorldPublicationTerminalProducer;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
 import net.firedevops.firemud.gamedesign.repository.GameAssetRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
