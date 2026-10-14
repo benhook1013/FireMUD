@@ -286,3 +286,20 @@ Entry format:
   - Observation: a multiline Bash execution continued to stage and commit after an auxiliary Python count assertion failed because the shell did not enable `errexit`. The actual gate passed 11 PostgreSQL cases; the failed assertion used a preliminary count of 10. The committed code remained qualified, but the command sequence did not enforce its intended dependency.
   - Guidance: use `set -euo pipefail` or separate sequential tool calls when a proof assertion must succeed before staging, committing or publishing. Read actual result counts before pinning them; an overall shell exit code can otherwise hide an earlier failure.
   - Current status: the [#3211](https://github.com/benhook1013/FireMUD/pull/3211) result was checked against the actual XML, corrected to 11 passing cases, and subsequent dependent commands use explicit failure propagation.
+
+- `2026-10-14`: Review-period bookkeeping must not contend for provider execution locks
+  - Context: the Overseer reported that Gameplay's three concurrent metadata reset batches encountered active-provider errors during the native rollout, with no actual provider active.
+  - Observation: reset-versus-reset global lock contention was reported as provider activity, and network/full-stack refresh made local counter bookkeeping slow and coupled to unrelated source readiness.
+  - Expected pattern: snapshot retained completed native results and append the channel period in one local SQLite transaction; preserve provider reservations and enforce external evidence only at ordinary review/status admission.
+  - Current status: local transactional implementation is prepared; installed-selector promotion and live rollout verification remain pending with the owning orchestrator.
+  - Reconsideration trigger: verify concurrent metadata batches after coordinated version-matched selector promotion.
+
+- `2026-10-14`: Transfer terminal-owned work at a native command boundary
+  - Context: a replacement subagent could not attach to the main agent’s existing execution session; the tools returned an unknown process ID even though the main agent could still observe its running batch.
+  - Expected pattern: keep one execution owner, finish the current native command without cancellation, then resume only the missing stable operation keys from the canonical store in the new owner’s terminal. An execution-session ID does not transfer process ownership across agent contexts. Use the same boundary to drain incompatible database writers before coordinated selector promotion.
+  - Evidence limits: completion counts and rollout timings remain in the owning controller job. This handoff does not replace the separate concurrent-reset reconsideration trigger above.
+
+- `2026-10-14`: Verify user-visible rendering against installed controller input
+  - Observation: Root deployed the numeric review-limit renderer before the matching controller fields were installed. Formatter tests passed, but interim live queue rows showed `Limits not reported`.
+  - Expected pattern: pair rendering changes with the version-matched controller input and verify the actual endpoint before claiming the related user-facing outcome is complete. This is a reusable verification lesson, not an additional approval gate or lifecycle policy.
+  - Recovery: coordinated controller promotion and actual-endpoint verification restored numeric limits; the owning controller job retains the rollout details.

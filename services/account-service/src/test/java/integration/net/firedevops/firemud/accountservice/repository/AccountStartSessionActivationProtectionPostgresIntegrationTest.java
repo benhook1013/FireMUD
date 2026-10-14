@@ -38,10 +38,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Runs V1003/V1004 against the actual Account PostgreSQL schema and assembled source-writer guard.
- * The integrity and currentness fixtures seed related owner rows with upstream producer triggers
- * disabled. Protection acquisition, child completeness, settlement and source-writer guards remain
- * enabled; they prove SQL currentness/exclusion/immutability only, not authenticated
+ * Runs V1003/V1004/V1004.1 against the actual Account PostgreSQL schema and assembled source-writer
+ * guard. The integrity and currentness fixtures seed related owner rows with upstream producer
+ * triggers disabled. Protection acquisition, child completeness, settlement and source-writer
+ * guards remain enabled; they prove SQL currentness/exclusion/immutability only, not authenticated
  * activation-protection production.
  */
 @Testcontainers(disabledWithoutDocker = true)
@@ -55,7 +55,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
   @Test
   void lifecycleUpgradePreservesPendingProtectionAndBlocksInvalidSettlement() throws Exception {
     Fixture fixture = fixture("1003");
-    CurrentnessCase current = currentnessCase(fixture, Instant.now().plusSeconds(10), 135500);
+    CurrentnessCase current = currentnessCase(fixture, Instant.now().plusSeconds(10), 135500, 1L);
     byte[] requestBinding = current.requestBytes();
     Map<String, Object> request = readJson(requestBinding);
     UUID activationRequestId = UUID.fromString((String) request.get("worldActivationRequestId"));
@@ -138,10 +138,10 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
             + "WHERE version IS NOT NULL AND version <> '1004' ORDER BY installed_rank";
     var installedHistory = fixture.dsl().fetch(retainedHistoryQuery).getValues(0, String.class);
     String protectionRowsQuery =
-        "SELECT row_to_json(p)::TEXT FROM "
+        "SELECT jsonb_build_object('row', to_jsonb(p), 'xmin', p.xmin::TEXT)::TEXT FROM "
             + "account_start_session_activation_protections p ORDER BY activation_protection_id";
     String sourceRowsQuery =
-        "SELECT row_to_json(s)::TEXT FROM "
+        "SELECT jsonb_build_object('row', to_jsonb(s), 'xmin', s.xmin::TEXT)::TEXT FROM "
             + "account_start_session_activation_protection_sources s ORDER BY activation_protection_id, source_key";
     var pendingRows = fixture.dsl().fetch(protectionRowsQuery).getValues(0, String.class);
     var retainedSources = fixture.dsl().fetch(sourceRowsQuery).getValues(0, String.class);
@@ -164,6 +164,29 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                     "SELECT max(version::int) FROM flyway_schema_history WHERE version ~ '^[0-9]+$'")
                 .get(0, Integer.class))
         .isEqualTo(1004);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT to_regprocedure('account_ss_activation_settlement_lifecycle_guard()')::TEXT")
+                .get(0, String.class))
+        .isNotNull();
+
+    String preCounterUpgradeHistoryQuery =
+        "SELECT installed_rank || ':' || version || ':' || script || ':' "
+            + "|| checksum || ':' || success FROM flyway_schema_history "
+            + "WHERE version IS NOT NULL AND version <> '1004.1' ORDER BY installed_rank";
+    var preCounterUpgradeHistory =
+        fixture.dsl().fetch(preCounterUpgradeHistoryQuery).getValues(0, String.class);
+    Flyway monotonicUpgrade = activationFlyway(fixture.dataSource(), "1004.1");
+    assertThat(monotonicUpgrade.migrate().migrationsExecuted).isEqualTo(1);
+    monotonicUpgrade.validate();
+    assertThat(fixture.dsl().fetch(preCounterUpgradeHistoryQuery).getValues(0, String.class))
+        .isEqualTo(preCounterUpgradeHistory);
+    assertThat(fixture.dsl().fetch(protectionRowsQuery).getValues(0, String.class))
+        .isEqualTo(pendingRows);
+    assertThat(fixture.dsl().fetch(sourceRowsQuery).getValues(0, String.class))
+        .isEqualTo(retainedSources);
     assertThat(
             fixture
                 .dsl()
@@ -299,6 +322,44 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
           activationRequestId,
           accountEvidenceBytes,
           jsonBytes(invalidResult));
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchCount(DSL.table("account_start_session_activation_protection_settlements")))
+          .isZero();
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .transaction()
+                      .executeWithoutResult(
+                          status ->
+                              fixture
+                                  .dsl()
+                                  .execute(
+                                      "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                                      sourceKey)))
+          .hasMessageContaining("Original StartSession activation protection remains pending");
+    }
+
+    for (Map.Entry<String, String> regressingCounter :
+        Map.of("lifecycleEpoch", "2", "rowVersion", "0").entrySet()) {
+      String assertionDescription =
+          "Committed ACTIVE lifecycle must reject a decrease in " + regressingCounter.getKey();
+      Map<String, Object> regressingLifecycle = readJson(activeBytes);
+      regressingLifecycle.put(regressingCounter.getKey(), regressingCounter.getValue());
+      Map<String, Object> regressingResult = readJson(activationResultBytes);
+      regressingResult.put(
+          "lifecycleEvidenceBytesBase64",
+          Base64.getEncoder().encodeToString(jsonBytes(regressingLifecycle)));
+      assertSettlementInsertRejected(
+          fixture,
+          id,
+          protectionFence,
+          activationRequestId,
+          accountEvidenceBytes,
+          jsonBytes(regressingResult),
+          "COMMITTED",
+          assertionDescription);
       assertThat(
               fixture
                   .dsl()
@@ -803,6 +864,26 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
       byte[] protectionEvidenceBytes,
       byte[] activationResultBytes,
       String outcome) {
+    assertSettlementInsertRejected(
+        fixture,
+        protectionId,
+        protectionFence,
+        activationRequestId,
+        protectionEvidenceBytes,
+        activationResultBytes,
+        outcome,
+        "Invalid activation settlement must be rejected");
+  }
+
+  private static void assertSettlementInsertRejected(
+      Fixture fixture,
+      UUID protectionId,
+      long protectionFence,
+      UUID activationRequestId,
+      byte[] protectionEvidenceBytes,
+      byte[] activationResultBytes,
+      String outcome,
+      String assertionDescription) {
     byte[] terminalBytes =
         terminalBytes(
             protectionId,
@@ -835,6 +916,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                                 terminalBytes,
                                 "terminal_digest",
                                 "sha256:" + hash(terminalBytes))))
+        .as(assertionDescription)
         .isInstanceOf(RuntimeException.class)
         .satisfies(
             failure -> {
@@ -990,6 +1072,11 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
 
   private static CurrentnessCase currentnessCase(
       Fixture fixture, Instant originalLease, int padding) throws Exception {
+    return currentnessCase(fixture, originalLease, padding, 0L);
+  }
+
+  private static CurrentnessCase currentnessCase(
+      Fixture fixture, Instant originalLease, int padding, long rowVersion) throws Exception {
     WorldCanonicalInstanceLifecycleEvidence lifecycle =
         AuthoringFixtures.lifecycleEvidence("PREPARING", 3L);
     UUID tenantId = lifecycle.request().canonicalTenantId();
@@ -1094,7 +1181,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                 lifecycle.runtimeRoomInstanceId(),
                 "PREPARING",
                 lifecycle.lifecycleEpoch(),
-                lifecycle.rowVersion(),
+                rowVersion,
                 lifecycle.captureId(),
                 lifecycle.graphSha256(),
                 preparationDigest,

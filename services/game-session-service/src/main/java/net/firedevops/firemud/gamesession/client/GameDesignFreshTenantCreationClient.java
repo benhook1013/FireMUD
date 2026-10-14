@@ -9,8 +9,10 @@ import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.FileBackedGrpcMtlsPolicy;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
@@ -28,6 +30,8 @@ public final class GameDesignFreshTenantCreationClient
 
   private final String workloadNamespace;
   private final GrpcServerPeerIdentityClientInterceptor serverPeerIdentityInterceptor;
+  private volatile boolean initialized;
+  private volatile boolean closed;
 
   public GameDesignFreshTenantCreationClient(
       ServiceEndpointsProperties endpoints,
@@ -48,8 +52,18 @@ public final class GameDesignFreshTenantCreationClient
   }
 
   /** Initializes this client only when the owning Game Session composition explicitly uses it. */
-  public void init() throws SSLException, IOException {
+  public synchronized void init() throws SSLException, IOException {
+    if (closed) {
+      throw new IllegalStateException("Game Design fresh-tenant client is closed");
+    }
+    if (initialized) {
+      return;
+    }
     initReloadingClient();
+    if (stub() == null) {
+      throw new IllegalStateException("Game Design fresh-tenant client has no gRPC stub");
+    }
+    initialized = true;
   }
 
   @Override
@@ -65,9 +79,29 @@ public final class GameDesignFreshTenantCreationClient
   @Override
   protected TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub buildStub(
       ManagedChannel channel) {
+    String expectedPeerUri = gameDesignServerPeerUri(workloadNamespace);
     return TenantIdentityServiceGrpc.newBlockingStub(
             ClientInterceptors.intercept(channel, serverPeerIdentityInterceptor))
+        .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withCompression("gzip");
+  }
+
+  @Override
+  public void close() throws IOException {
+    synchronized (this) {
+      closed = true;
+      initialized = false;
+    }
+    super.close();
+  }
+
+  private TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub requireStub() {
+    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub currentStub = stub();
+    if (closed || !initialized || currentStub == null) {
+      throw new IllegalStateException(
+          "Game Design fresh-tenant client is not initialized and available");
+    }
+    return currentStub;
   }
 
   /**
@@ -76,6 +110,7 @@ public final class GameDesignFreshTenantCreationClient
    */
   public FreshTenantCreationEvidence resolveCreation(
       UUID creationRequestId, String expectedRequestDigest) {
+    var currentStub = requireStub();
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(
           "Game Design fresh-tenant evidence must be resolved outside a Game Session transaction");
@@ -88,7 +123,7 @@ public final class GameDesignFreshTenantCreationClient
     }
 
     ResolveFreshTenantCreationResponse response =
-        stub()
+        currentStub
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .resolveFreshTenantCreation(
                 ResolveFreshTenantCreationRequest.newBuilder()
@@ -156,29 +191,10 @@ public final class GameDesignFreshTenantCreationClient
 
   private static CommonGrpcClientProperties requireGameSessionMtls(
       CommonGrpcClientProperties tlsProperties) {
-    if (tlsProperties == null) {
-      throw new IllegalArgumentException("Game Session gRPC TLS configuration is required");
-    }
-    if (tlsProperties.isPlaintext()) {
-      throw new IllegalArgumentException(
-          "Fresh tenant identity reads require Game Session workload mTLS");
-    }
-    if (!hasText(tlsProperties.getCertChain())
-        || !hasText(tlsProperties.getPrivateKey())
-        || !hasText(tlsProperties.getCaCert())) {
-      throw new IllegalArgumentException(
-          "Fresh tenant identity reads require Game Session certificate, key, and CA files");
-    }
-    if (tlsProperties.getCertChain().trim().startsWith("classpath:")
-        || tlsProperties.getPrivateKey().trim().startsWith("classpath:")
-        || tlsProperties.getCaCert().trim().startsWith("classpath:")) {
-      throw new IllegalArgumentException(
-          "Fresh tenant identity reads require file-backed Game Session workload mTLS");
-    }
-    return tlsProperties;
-  }
-
-  private static boolean hasText(String value) {
-    return value != null && !value.isBlank();
+    return FileBackedGrpcMtlsPolicy.require(
+        tlsProperties,
+        "Fresh tenant identity reads",
+        "Game Session gRPC TLS configuration is required",
+        "Fresh tenant identity reads require Game Session workload mTLS");
   }
 }

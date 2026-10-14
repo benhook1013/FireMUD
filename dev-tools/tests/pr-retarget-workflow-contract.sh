@@ -386,9 +386,12 @@ for filename in ("ci.yml", "security.yml", "license-scan.yml", "codeql.yml"):
         raise SystemExit(f"{filename} must retain an empty manual dispatch")
 PYTHON
 
-# Manual CI dispatch must pass and fetch its exact immutable Flyway parent.
+# Every CI event must fetch its exact immutable Flyway parent with shallow history.
 python3 - "$ci_path" <<'PYTHON'
+import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -396,19 +399,29 @@ import yaml
 workflow = yaml.load(Path(sys.argv[1]).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 job = workflow["jobs"]["flyway-migration-sanity-checks"]
 steps = job["steps"]
-fetch_steps = [step for step in steps if step.get("name") == "Fetch manual Flyway parent when needed"]
+fetch_steps = [step for step in steps if step.get("name") == "Fetch exact Flyway parent"]
 if len(fetch_steps) != 1:
-    raise SystemExit("CI must have exactly one manual Flyway parent fetch step")
+    raise SystemExit("CI must have exactly one exact Flyway parent fetch step")
 fetch = fetch_steps[0]
-if fetch.get("if") != "${{ github.event_name == 'workflow_dispatch' }}":
-    raise SystemExit("Flyway parent fetching must run only for manual dispatch")
-if fetch.get("env") != {"FLYWAY_BASE_SHA": "${{ inputs.flyway_base_sha }}"}:
-    raise SystemExit("Flyway parent fetch must use the configured manual input")
+if "if" in fetch:
+    raise SystemExit("Flyway parent fetching must cover every event")
+expected_base = (
+    "${{ github.event_name == 'workflow_dispatch' && inputs.flyway_base_sha "
+    "|| github.event_name == 'pull_request' && github.event.pull_request.base.sha "
+    "|| github.event.before }}"
+)
+if fetch.get("env") != {"FLYWAY_BASE_SHA": expected_base, "FLYWAY_EVENT_NAME": "${{ github.event_name }}"}:
+    raise SystemExit("Flyway fetch and checker must use the same immutable event parent")
+checkout_steps = [step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@")]
+if len(checkout_steps) != 1 or "fetch-depth" in checkout_steps[0].get("with", {}):
+    raise SystemExit("Flyway parent fetch must retain the default shallow checkout")
 fetch_script = fetch.get("run", "")
 for required in (
+    '"$FLYWAY_EVENT_NAME" != "workflow_dispatch"',
+    '"$FLYWAY_BASE_SHA" == "0000000000000000000000000000000000000000"',
     "^[[:xdigit:]]{40}$",
     'git cat-file -e "${FLYWAY_BASE_SHA}^{commit}"',
-    'git fetch --no-tags origin "$FLYWAY_BASE_SHA"',
+    'git fetch --no-tags --depth=1 origin "$FLYWAY_BASE_SHA"',
     'git rev-parse --verify "${FLYWAY_BASE_SHA}^{commit}"',
 ):
     if required not in fetch_script:
@@ -424,6 +437,62 @@ expected_base = (
 )
 if check_steps[0].get("env", {}).get("FIREMUD_FLYWAY_BASE_REF") != expected_base:
     raise SystemExit("Flyway version check must preserve dispatch, PR-base, and push-before parent selection")
+# Exercise the actual YAML fetch script against a shallow checkout, rather than
+# relying only on static command spelling or the checkout action's defaults.
+checker = Path(sys.argv[1]).resolve().parents[2] / "dev-tools/validation/check-flyway-versions.py"
+with tempfile.TemporaryDirectory(prefix="firemud-flyway-shallow-") as temporary:
+    fixture = Path(temporary) / "source"
+    fixture.mkdir()
+    def git_at(directory, *arguments):
+        return subprocess.run(["git", *arguments], cwd=directory, check=True,
+                              capture_output=True, text=True).stdout.strip()
+    git_at(fixture, "init", "-q")
+    migration = fixture / "services/example-service/src/main/resources/db/migration"
+    migration.mkdir(parents=True)
+    (fixture / "services/example-service/build.gradle.kts").write_text("dependencies {}\n")
+    (migration / "V1__base.sql").write_text("-- base fixture\n")
+    git_at(fixture, "add", ".")
+    git_at(fixture, "-c", "user.name=Flyway fixture", "-c", "user.email=fixture@example.invalid",
+           "commit", "-qm", "base")
+    parent = git_at(fixture, "rev-parse", "HEAD")
+    (migration / "V2__forward.sql").write_text("-- forward fixture\n")
+    git_at(fixture, "add", ".")
+    git_at(fixture, "-c", "user.name=Flyway fixture", "-c", "user.email=fixture@example.invalid",
+           "commit", "-qm", "forward")
+    child = git_at(fixture, "rev-parse", "HEAD")
+    checkout = Path(temporary) / "checkout"
+    subprocess.run(["git", "clone", "--depth=1", fixture.as_uri(), str(checkout)],
+                   check=True, capture_output=True, text=True)
+    if git_at(checkout, "rev-parse", "HEAD") != child:
+        raise SystemExit("shallow fixture selected the wrong immutable child")
+    environment = dict(os.environ)
+    for name in ("GITHUB_EVENT_PATH", "GITHUB_EVENT_NAME", "FIREMUD_FLYWAY_BASE_REF"):
+        environment.pop(name, None)
+    command = [sys.executable, str(checker), "--root", str(checkout), "--base-ref", parent]
+    missing = subprocess.run(command, env=environment, capture_output=True, text=True)
+    if missing.returncode == 0 or "immutable receiving parent commit is unavailable" not in missing.stderr:
+        raise SystemExit(f"shallow checkout did not demonstrate missing parent: {missing.stdout} {missing.stderr}")
+    for event_name in ("pull_request", "push", "workflow_dispatch"):
+        environment.update(FLYWAY_BASE_SHA=parent, FLYWAY_EVENT_NAME=event_name)
+        fetched = subprocess.run(["bash", "-euo", "pipefail", "-c", fetch_script], cwd=checkout,
+                                 env=environment, capture_output=True, text=True)
+        if fetched.returncode or git_at(checkout, "rev-parse", parent + "^{commit}") != parent:
+            raise SystemExit(f"exact parent fetch failed for {event_name}: {fetched.stderr}")
+    available = subprocess.run(command, env=environment, capture_output=True, text=True)
+    if available.returncode:
+        raise SystemExit(f"checker rejected exact fetched parent: {available.stdout} {available.stderr}")
+    environment.update(FLYWAY_BASE_SHA="0" * 40, FLYWAY_EVENT_NAME="push")
+    sentinel = subprocess.run(["bash", "-euo", "pipefail", "-c", fetch_script], cwd=checkout,
+                              env=environment, capture_output=True, text=True)
+    if sentinel.returncode:
+        raise SystemExit("new-branch sentinel must skip exact fetching")
+    environment["FLYWAY_EVENT_NAME"] = "workflow_dispatch"
+    sentinel = subprocess.run(["bash", "-euo", "pipefail", "-c", fetch_script], cwd=checkout,
+                              env=environment, capture_output=True, text=True)
+    if sentinel.returncode == 0:
+        raise SystemExit("manual dispatch must reject the zero parent sentinel")
+    print("Shallow Flyway parent refusal, exact immutable fetch and event sentinel proof passed")
+
 PYTHON
 
 # Optional native-PR comments cannot delay cancellation or require fork/bot write tokens.

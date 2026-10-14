@@ -414,7 +414,7 @@ def _parser() -> argparse.ArgumentParser:
     cli_decisions.add_argument("--finding", required=True, type=_positive_int)
     cli_decisions.add_argument("--decision", required=True, choices=("accepted", "routed", "rejected"))
     cli_decisions.add_argument("--actor", required=True)
-    cli_decisions.add_argument("--reason", required=True)
+    cli_decisions.add_argument("--reason", required=True, help="decision reason (maximum 300 characters)")
     cli_decisions.add_argument("--target-pr", type=_positive_int)
     records_database(cli_decisions)
     cli_correction = record_commands.add_parser(
@@ -541,7 +541,12 @@ def _parser() -> argparse.ArgumentParser:
         sub = run_commands.add_parser(name)
         sub.add_argument("--expect-pr", type=_positive_int)
         sub.add_argument("--force", action="store_true")
-        sub.add_argument("--reason")
+        if name == "hosted":
+            sub.add_argument(
+                "--reason", help="forced-request reason (maximum 240 characters; no characters below U+0020)"
+            )
+        else:
+            sub.add_argument("--reason")
 
     wait = commands.add_parser("wait", help="observe one existing review request without posting another")
     wait_commands = wait.add_subparsers(dest="wait_command", required=True)
@@ -632,8 +637,8 @@ def _parser() -> argparse.ArgumentParser:
         "period",
         help="record an explicit new default review-budget/taper period",
         description=(
-        "Reset one PR/channel from a stable attributable checkpoint or explicit current-history baseline "
-        "and exact current candidate head. "
+        "Reset one PR/channel using retained completed native SQLite results. "
+        "The supplied head is audit metadata; reset performs no Git or provider refresh. "
             "Prior review and finding history remains intact. An existing User stop requires --replace-stop."
         ),
     )
@@ -642,17 +647,18 @@ def _parser() -> argparse.ArgumentParser:
         "reset",
         help="start a new default Hosted (2 minimum, 3 maximum) or CLI (3 minimum, 6 maximum) review period",
     )
+    period_reset.add_argument("--database", help="explicit compatible local SQLite controller database")
     period_reset.add_argument("--pr", required=True, type=_positive_int)
     period_reset.add_argument("--channel", required=True, choices=("hosted", "cli"))
     period_reset_anchor = period_reset.add_mutually_exclusive_group(required=True)
     period_reset_anchor.add_argument(
         "--checkpoint",
-        help="exact stable completed attributable checkpoint to use as the new period baseline",
+        help="retained completed native checkpoint with a verified source completion boundary",
     )
     period_reset_anchor.add_argument(
         "--current-history-baseline",
         action="store_true",
-        help="baseline the exact complete retained native history observed now; no history receives credit",
+        help="snapshot completed native results in the local SQLite transaction; active requests may finish later",
     )
     period_reset.add_argument(
         "--baseline-id",
@@ -662,7 +668,7 @@ def _parser() -> argparse.ArgumentParser:
         "--head",
         required=True,
         type=_exact_sha,
-        help="exact current candidate head; it may differ from the reviewed checkpoint head",
+        help="caller-supplied exact SHA for audit; does not prove live candidate identity or readiness",
     )
     period_reset.add_argument("--reason", required=True)
     period_reset.add_argument("--actor", required=True, help="identity recording this reset decision")
@@ -792,6 +798,39 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _local_period_store(args: argparse.Namespace) -> SqliteStateStore:
+    """Resolve this administrative command's selected database without Git execution."""
+    if args.database:
+        selected = Path(args.database).expanduser().absolute()
+        if selected.is_symlink():
+            raise CliError("review-period database path must not be a symlink")
+        store = SqliteStateStore(selected)
+        if store.status().get("compatible") is not True:
+            raise CliError("selected controller SQLite database is incompatible")
+        return store
+    root = Path.cwd().resolve()
+    for parent in (root, *root.parents):
+        git_path = parent / ".git"
+        if git_path.is_dir():
+            common = git_path
+            break
+        if git_path.is_file():
+            pointer = git_path.read_text(encoding="utf-8").strip()
+            if not pointer.startswith("gitdir: "):
+                raise CliError("local Git directory pointer is malformed")
+            git_dir = (parent / pointer.removeprefix("gitdir: ")).resolve()
+            common_pointer = git_dir / "commondir"
+            common = ((git_dir / common_pointer.read_text(encoding="utf-8").strip()).resolve()
+                      if common_pointer.is_file() else git_dir)
+            break
+    else:
+        raise CliError("cannot resolve local review state; pass --database explicitly")
+    store = ControllerStateStore(state_path(common))._active_store()
+    if not isinstance(store, SqliteStateStore):
+        raise CliError("review-period reset requires the selected SQLite state store")
+    return store
+
+
 def _controller(args: argparse.Namespace) -> tuple[ReviewController, acceptance.AcceptanceFixture | None]:
     fixture_path = args.acceptance_fixture
     isolated_state = args.state_path
@@ -812,6 +851,8 @@ def _controller(args: argparse.Namespace) -> tuple[ReviewController, acceptance.
             ),
             None,
         )
+    if args.command == "decide" and args.decide_command == "period" and args.period_command == "reset":
+        return ReviewController(store=_local_period_store(args)), None
     return default_controller(), None
 
 
