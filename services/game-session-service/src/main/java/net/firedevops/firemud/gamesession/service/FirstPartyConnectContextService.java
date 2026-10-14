@@ -1,69 +1,97 @@
 package net.firedevops.firemud.gamesession.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtException;
+import java.time.Clock;
 import java.util.Optional;
-import net.firedevops.firemud.common.security.JwtClaims;
-import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.GatewayFirstPartyConnectContextEnvelope;
+import net.firedevops.firemud.common.security.GatewayFirstPartyConnectContextEnvelope.ContextClaims;
+import net.firedevops.firemud.common.security.GatewayFirstPartyConnectContextEnvelope.GatewayVerificationKeySource;
 import net.firedevops.firemud.gamesession.config.FirstPartyConnectContextProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 @Component
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
-    justification = "Injected configuration properties are framework-managed singletons")
-public class FirstPartyConnectContextService {
-  private static final Logger logger =
-      LoggerFactory.getLogger(FirstPartyConnectContextService.class);
-
+    justification = "Configuration and authority/key sources are framework-managed dependencies")
+public final class FirstPartyConnectContextService {
   private final FirstPartyConnectContextProperties properties;
-  private final JwtUtil jwtUtil;
+  private final GatewayVerificationKeySource keySource;
+  private final CanonicalPlayerRouteReadService routes;
+  private final Clock clock;
+
+  @Autowired
+  public FirstPartyConnectContextService(
+      FirstPartyConnectContextProperties properties,
+      GatewayVerificationKeySource keySource,
+      ObjectProvider<CanonicalPlayerRouteReadService> routes) {
+    this(
+        properties,
+        keySource,
+        routes.getIfAvailable(CanonicalPlayerRouteReadService::unavailable),
+        Clock.systemUTC());
+  }
 
   public FirstPartyConnectContextService(
       FirstPartyConnectContextProperties properties,
-      @Qualifier("firstPartyConnectContextJwtUtil") JwtUtil jwtUtil) {
+      GatewayVerificationKeySource keySource,
+      CanonicalPlayerRouteReadService routes,
+      Clock clock) {
     this.properties = properties;
-    this.jwtUtil = jwtUtil;
+    this.keySource = keySource;
+    this.routes = routes;
+    this.clock = clock;
   }
 
   public Optional<FirstPartyConnectContext> parse(String token) {
-    if (!StringUtils.hasText(token) || !StringUtils.hasText(properties.getJwtSecret())) {
+    if (token == null || token.isBlank()) {
       return Optional.empty();
     }
     try {
-      Claims claims = jwtUtil.parseToken(token).getPayload();
-      JwtClaims.SignedGameplayRoutingClaims routingClaims =
-          JwtClaims.requireSignedGameplayRoutingClaims(
-              claims, "first-party connect context account subject mismatch");
-      return Optional.of(
-          new FirstPartyConnectContext(
-              Long.toString(routingClaims.accountId()),
-              routingClaims.tenantId(),
-              routingClaims.worldSlug(),
-              routingClaims.realmSlug(),
-              routingClaims.gameInstanceId(),
-              routingClaims.pointerVersion(),
-              requiredTextClaim(claims, "connectScopeId"),
-              stringClaim(claims, "connectTokenJti"),
-              requiredTextClaim(claims, "connectRequestId"),
-              stringClaim(claims, "gatewayRequestId")));
-    } catch (IllegalArgumentException | JwtException ex) {
-      logger.warn("Rejecting invalid first-party connect context", ex);
+      var verified =
+          GatewayFirstPartyConnectContextEnvelope.verify(
+              token, keySource, clock.millis(), properties.getAllowedClockSkewMs());
+      CanonicalPlayableTarget target = routes.readCurrentTarget(verified.claims().tenantId());
+      if (!matches(verified.claims(), target)) {
+        return Optional.empty();
+      }
+      return Optional.of(new FirstPartyConnectContext(token, verified, target));
+    } catch (RuntimeException invalidOrUnavailable) {
+      // Neither signed payload nor key/owner details belong in ordinary logs.
       return Optional.empty();
     }
   }
 
-  private static String stringClaim(Claims claims, String key) {
-    Object value = claims.get(key);
-    return value == null ? null : value.toString();
+  public FirstPartyConnectContext requireRetained(FirstPartyConnectContext retained) {
+    if (retained == null) {
+      throw new IllegalStateException("First-party context is absent");
+    }
+    FirstPartyConnectContext current =
+        parse(retained.compactJws())
+            .orElseThrow(
+                () -> new IllegalStateException("First-party context is invalid or unavailable"));
+    if (!current.resolvedTarget().equals(retained.resolvedTarget())) {
+      throw new IllegalStateException("First-party target changed");
+    }
+    return current;
   }
 
-  private static String requiredTextClaim(Claims claims, String key) {
-    return JwtClaims.requireText(claims.get(key), key);
+  private static boolean matches(ContextClaims claims, CanonicalPlayableTarget target) {
+    // The current canonical resolver supports only public-production SHARED targets.
+    return target != null
+        && claims.tenantId().equals(target.canonicalTenantId())
+        && claims.realmId().equals(target.realmId())
+        && claims.worldSlug().equals(target.worldSlug())
+        && claims.realmSlug().equals(target.realmSlug())
+        && claims.playableStateNamespaceId().equals(target.playableStateNamespaceId())
+        && "SHARED".equals(claims.playableStateScope())
+        && claims.playableStateScope().equals(target.playableStateScope())
+        && claims.gameInstanceId().equals(target.canonicalGameInstanceId())
+        && claims.catalogRevision().equals(Long.toString(target.catalogRevision()))
+        && claims.pointerVersion().equals(Long.toString(target.pointerVersion()))
+        && claims.playtestLifecycleId() == null
+        && claims.playtestStateGeneration() == null;
   }
 }

@@ -156,12 +156,12 @@ class RedisSessionContextServiceTest {
   }
 
   @Test
-  void unreadableRetainedContextFailsClosedAndDoesNotBlockFreshReauthentication() {
+  void unreadableRetainedContextFailsClosedWithoutTreatingItAsAbsence() {
     String retainedKey = "sessionctx:10:1:context";
     when(valueOperations.get(retainedKey))
         .thenThrow(new SerializationException("old SessionContext record shape"));
 
-    assertEquals(Optional.empty(), service.findByTenantAndSessionId(10L, 1L));
+    assertThrows(IllegalStateException.class, () -> service.findByTenantAndSessionId(10L, 1L));
     assertThrows(
         SerializationException.class,
         () -> service.deleteBySessionId(10L, 1L),

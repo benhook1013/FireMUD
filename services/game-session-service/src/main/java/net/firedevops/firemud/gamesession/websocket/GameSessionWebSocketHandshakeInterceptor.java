@@ -53,6 +53,19 @@ public class GameSessionWebSocketHandshakeInterceptor implements HandshakeInterc
             bootstrapGameInstanceId,
             request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
     attributes.put(SESSION_ID_ATTR, sessionId);
+    boolean firstParty =
+        "first_party_web".equals(request.getHeaders().getFirst(CONNECTION_MODE_HEADER))
+            || StringUtils.hasText(request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
+    if (firstParty) {
+      attributes.put(CONNECTION_MODE_ATTR, "first_party_web");
+      attributes.put(CONNECT_CONTEXT_ATTR, request.getHeaders().getFirst(CONNECT_CONTEXT_HEADER));
+      attributes.put(
+          LOCALE_ATTR,
+          resolveLocaleTag(
+              request.getHeaders().getFirst(LOCALE_HEADER),
+              request.getHeaders().getFirst(ACCEPT_LANGUAGE_HEADER)));
+      return true;
+    }
     attributes.put(BOOTSTRAP_GAME_INSTANCE_ATTR, bootstrapGameInstanceId);
     attributes.put(TENANT_ID_ATTR, request.getHeaders().getFirst(TENANT_HEADER));
     attributes.put(WORLD_SLUG_ATTR, request.getHeaders().getFirst(WORLD_SLUG_HEADER));

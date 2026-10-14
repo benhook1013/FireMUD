@@ -8,6 +8,10 @@ import com.google.protobuf.util.JsonFormat;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,18 +35,19 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
-import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
 import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient;
+import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadEvidence;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.WorldManagementServiceApplication;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
@@ -60,20 +65,13 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplication;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphApplicationService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphAppliedResult;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitPlan;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitRepository;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDraftRegionCommitService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOperation;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcome;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomeService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalReadGrpcService;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPlan;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitRepository;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitService;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
-import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
@@ -82,10 +80,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceClosureDeclaration;
 import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
 import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamilyCount;
-import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
-import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
-import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
-import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -102,14 +97,14 @@ import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import net.firedevops.firemud.test.TestContainerImages;
 import tools.jackson.databind.ObjectMapper;
 
 /**
- * Controlled source/Version, Account binding, and PKI fixtures exercise current World APPLIED and
- * abort owners plus the same-namespace Account mTLS read handler. This proves SQL owner outcomes
- * and transport handling only, not genuine source provenance, production Account authorization,
- * or live runtime registration.
+ * Controlled source/Version, Account binding, and PKI fixtures exercise the actual World APPLIED
+ * and abort SQL owners plus same-namespace mTLS peer/read handlers. Account permission and held
+ * COMMIT_ORDER evidence are stipulated by controlled fixtures, not supplied by a production Account
+ * authority. This proves SQL owner outcomes and transport handling only, not genuine source
+ * provenance, production Account authorization, or live runtime registration.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -151,73 +146,101 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
   @MockitoBean private EntityManagementClient entityManagementClient;
 
   @Test
-  void abortBlocksDelayedTopologyAndRawRegionWritesAndExactRetrySurvivesFreeze() {
-    Fixture topology = fixture(false);
-    WorldDraftTopologyCommitPlan topologyPlan =
-        topologyPlan(topology, UUID.randomUUID(), UUID.randomUUID());
-    WorldDraftTerminalOperation topologyOperation = operation(topology, topologyPlan.binding());
-    WorldDraftTerminalOutcome original = terminalService().recordDefinitiveAbort(topologyOperation);
-    assertThatThrownBy(() -> topologyComponent().store(topologyPlan))
-        .isInstanceOf(RuntimeException.class)
-        .hasMessageContaining("no-commit");
-    assertThat(count("world_topology_draft_commit", topologyPlan.binding().requestId())).isZero();
+  void abortBlocksDelayedGraphApplicationAndGuardedStorageAndExactRetrySurvivesFreeze()
+      throws Exception {
+    Fixture f = fixture();
+    WorldDraftGraphApplication application = currentGraphApplication(f);
+    CountDownLatch verificationStarted = new CountDownLatch(1);
+    CountDownLatch releaseVerification = new CountDownLatch(1);
+    var applications = new WorldDraftGraphApplicationRepository(dsl, fence, mapper);
+    var delayedService =
+        new WorldDraftGraphApplicationService(
+            applications,
+            manager,
+            operation -> {
+              verificationStarted.countDown();
+              await(releaseVerification);
+              return new WorldDraftGraphApplicationService.CommitOrderProof(operation);
+            });
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try {
+      Future<Boolean> delayedApply =
+          executor.submit(() -> succeeded(() -> delayedService.apply(application)));
+      await(verificationStarted);
+      WorldDraftTerminalOutcome original =
+          terminalService().recordDefinitiveAbort(application.operation());
 
-    Fixture region = fixture(true);
-    WorldDraftRegionCommitPlan regionPlan =
-        regionPlan(region, UUID.randomUUID(), UUID.randomUUID());
-    WorldDraftTerminalOperation regionOperation = operation(region, regionPlan.binding());
-    terminalService().recordDefinitiveAbort(regionOperation);
-    assertThatThrownBy(() -> regionComponent().store(regionPlan))
-        .isInstanceOf(RuntimeException.class)
-        .hasMessageContaining("no-commit");
-    assertRawRegionFunctionDenied(region, regionPlan);
-    assertThat(regionName(region.seededRegion())).isEqualTo("seeded");
-    assertThat(count("world_region_draft_commit", regionPlan.binding().requestId())).isZero();
+      releaseVerification.countDown();
+      assertThat(delayedApply.get(30, TimeUnit.SECONDS)).isFalse();
+      assertThat(count("world_draft_graph_application", application.operation().requestId()))
+          .isZero();
+      assertThat(count("world_topology_draft_commit", application.operation().requestId()))
+          .isZero();
+      assertGuardedUuidTopologyFunctionDenied(application);
+      assertThat(count("world_topology_draft_commit", application.operation().requestId()))
+          .isZero();
+      assertThat(count("world_authored_topology_identity", application.operation().requestId()))
+          .isZero();
 
-    freeze(topology);
-    WorldDraftTerminalOutcome replay = terminalService().recordDefinitiveAbort(topologyOperation);
-    assertThat(replay.canonicalBytes()).containsExactly(original.canonicalBytes());
-    assertThat(replay.recordedAt()).isEqualTo(original.recordedAt());
+      freeze(f);
+      WorldDraftTerminalOutcome replay =
+          terminalService().recordDefinitiveAbort(application.operation());
+      assertThat(replay.canonicalBytes()).containsExactly(original.canonicalBytes());
+      assertThat(replay.recordedAt()).isEqualTo(original.recordedAt());
+    } finally {
+      releaseVerification.countDown();
+      executor.shutdownNow();
+    }
   }
 
   @Test
-  void retainedUnverifiedTopologyOrRegionOutputCannotBeRelabeledAsAborted() {
-    Fixture topology = fixture(false);
-    WorldDraftTopologyCommitPlan topologyPlan =
-        topologyPlan(topology, UUID.randomUUID(), UUID.randomUUID());
-    topologyComponent().store(topologyPlan);
-    assertThatThrownBy(
-            () ->
-                terminalService()
-                    .recordDefinitiveAbort(operation(topology, topologyPlan.binding())))
+  void retainedUnverifiedTopologyOrRegionHistoryCannotBeRelabeledAsAborted() throws Exception {
+    Fixture topologyFixture = fixture();
+    WorldDraftGraphApplication topology = currentGraphApplication(topologyFixture);
+    insertRetainedUnverifiedHistory(topologyFixture, topology, "world_topology_draft_commit");
+    assertThatThrownBy(() -> terminalService().recordDefinitiveAbort(topology.operation()))
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("history");
-    assertThat(count("world_topology_draft_commit", topologyPlan.binding().requestId()))
+    assertThat(count("world_topology_draft_commit", topology.operation().requestId()))
         .isEqualTo(1L);
-    assertThat(terminalService().readDefinitiveAbort(operation(topology, topologyPlan.binding())))
-        .isEmpty();
+    assertThat(terminalService().readDefinitiveAbort(topology.operation())).isEmpty();
 
-    Fixture region = fixture(true);
-    WorldDraftRegionCommitPlan regionPlan =
-        regionPlan(region, UUID.randomUUID(), UUID.randomUUID());
-    regionComponent().store(regionPlan);
-    assertThatThrownBy(
-            () -> terminalService().recordDefinitiveAbort(operation(region, regionPlan.binding())))
+    Fixture regionFixture = fixture();
+    WorldDraftGraphApplication region = currentGraphApplication(regionFixture);
+    insertRetainedUnverifiedHistory(regionFixture, region, "world_region_draft_commit");
+    assertThatThrownBy(() -> terminalService().recordDefinitiveAbort(region.operation()))
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("history");
-    assertThat(count("world_region_draft_commit", regionPlan.binding().requestId())).isEqualTo(1L);
+    assertThat(count("world_region_draft_commit", region.operation().requestId())).isEqualTo(1L);
+    assertThat(terminalService().readDefinitiveAbort(region.operation())).isEmpty();
+  }
+
+  @Test
+  void committedGraphApplicationCannotBeRelabeledAsAborted() throws Exception {
+    WorldDraftGraphApplication application = currentGraphApplication(fixture());
+    var applicationService = controlledGraphApplicationService();
+    WorldDraftGraphAppliedResult applied = applicationService.apply(application);
+
+    assertThatThrownBy(() -> terminalService().recordDefinitiveAbort(application.operation()))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("cannot be relabeled as no-commit");
+    assertThat(terminalService().readDefinitiveAbort(application.operation())).isEmpty();
+    assertThat(
+            applicationService
+                .readCommitted(NAMESPACE, application.operation().accountBindingBytes())
+                .orElseThrow()
+                .canonicalBytes())
+        .containsExactly(applied.canonicalBytes());
+    assertThat(count("world_draft_graph_application", application.operation().requestId()))
+        .isEqualTo(1L);
   }
 
   @Test
   void authenticatedMtlsReadReturnsExactCurrentAppliedOwnerAndExactRetry() throws Exception {
-    Fixture f = fixture(false);
+    Fixture f = fixture();
     WorldDraftGraphApplication application = currentGraphApplication(f);
     var applications = new WorldDraftGraphApplicationRepository(dsl, fence, mapper);
-    var applicationService =
-        new WorldDraftGraphApplicationService(
-            applications,
-            manager,
-            operation -> new WorldDraftGraphApplicationService.CommitOrderProof(operation));
+    var applicationService = controlledGraphApplicationService(applications);
 
     // The controlled fixture supplies a typed proof so the current World owner application runs;
     // it is not an Account producer or evidence of production original-order authority.
@@ -270,49 +293,47 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
   }
 
   @Test
-  void topologyCommitAndAbortSerializeToExactlyOneImmutableTerminalResult() throws Exception {
-    Fixture f = fixture(false);
-    WorldDraftTopologyCommitPlan plan = topologyPlan(f, UUID.randomUUID(), UUID.randomUUID());
-    WorldDraftTerminalOperation operation = operation(f, plan.binding());
+  void graphApplicationAndAbortSerializeToExactlyOneImmutableTerminalResult() throws Exception {
+    WorldDraftGraphApplication application = currentGraphApplication(fixture());
+    WorldDraftTerminalOperation operation = application.operation();
+    var applicationService = controlledGraphApplicationService();
     Race result =
         race(
-            () -> topologyComponent().store(plan),
+            () -> applicationService.apply(application),
             () -> terminalService().recordDefinitiveAbort(operation));
 
     assertThat(result.commitWon()).isNotEqualTo(result.abortWon());
     assertThat(terminalService().readDefinitiveAbort(operation).isPresent())
         .isEqualTo(result.abortWon());
-    assertThat(count("world_topology_draft_commit", plan.binding().requestId()) > 0L)
+    assertThat(count("world_draft_graph_application", operation.requestId()) > 0L)
         .isEqualTo(result.commitWon());
+    assertThat(count("world_topology_draft_commit", operation.requestId()) > 0L)
+        .isEqualTo(result.commitWon());
+    assertThat(count("world_authored_topology_identity", operation.requestId()) > 0L)
+        .isEqualTo(result.commitWon());
+    var appliedReadback =
+        applicationService.readCommitted(NAMESPACE, operation.accountBindingBytes());
+    assertThat(appliedReadback.isPresent()).isEqualTo(result.commitWon());
     if (result.abortWon()) {
-      assertThatThrownBy(() -> topologyComponent().store(plan))
+      assertThatThrownBy(() -> applicationService.apply(application))
           .isInstanceOf(RuntimeException.class);
+    } else {
+      assertThat(appliedReadback.orElseThrow().status()).isEqualTo("APPLIED");
+      assertThat(appliedReadback.orElseThrow().ownerReadback().fullBinding())
+          .containsExactly(operation.accountBindingBytes());
+      assertThatThrownBy(() -> terminalService().recordDefinitiveAbort(operation))
+          .isInstanceOf(RuntimeException.class)
+          .hasMessageContaining("cannot be relabeled as no-commit");
     }
   }
 
   @Test
-  void rawRegionCommitAndAbortSerializeOnTheSameV25Row() throws Exception {
-    Fixture f = fixture(true);
-    WorldDraftRegionCommitPlan plan = regionPlan(f, UUID.randomUUID(), UUID.randomUUID());
-    WorldDraftTerminalOperation operation = operation(f, plan.binding());
-    Race result =
-        race(
-            () -> regionComponent().store(plan),
-            () -> terminalService().recordDefinitiveAbort(operation));
-
-    assertThat(result.commitWon()).isNotEqualTo(result.abortWon());
-    assertThat(terminalService().readDefinitiveAbort(operation).isPresent())
-        .isEqualTo(result.abortWon());
-    assertThat(count("world_region_draft_commit", plan.binding().requestId()) > 0L)
-        .isEqualTo(result.commitWon());
-    assertThat(regionName(f.seededRegion())).isEqualTo(result.commitWon() ? "committed" : "seeded");
-  }
-
-  @Test
-  void absentReadbackIsUnknownChangedBindingsConflictAndRolledBackAbortLeavesNoRow() {
-    Fixture f = fixture(false);
-    WorldDraftTopologyCommitPlan plan = topologyPlan(f, UUID.randomUUID(), UUID.randomUUID());
-    WorldDraftTerminalOperation operation = operation(f, plan.binding());
+  void absentReadbackIsUnknownChangedBindingsConflictAndRolledBackAbortLeavesNoRow()
+      throws Exception {
+    Fixture f = fixture();
+    WorldDraftGraphApplication application = currentGraphApplication(f);
+    DraftCommitBinding binding = application.plan().binding();
+    WorldDraftTerminalOperation operation = application.operation();
     WorldDraftTerminalOutcomeService service = terminalService();
     assertThat(service.readDefinitiveAbort(operation)).isEmpty();
 
@@ -329,7 +350,7 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
 
     WorldDraftTerminalOutcome original = service.recordDefinitiveAbort(operation);
     byte[] changedAccount =
-        accountBinding(f, plan.binding(), operationIds(operation), new byte[] {9}).canonicalBytes();
+        accountBinding(f, binding, operationIds(operation), new byte[] {9}).canonicalBytes();
     WorldDraftTerminalOperation changedSource =
         new WorldDraftTerminalOperation(
             operation.operationId(),
@@ -373,8 +394,7 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("changed binding");
 
-    DraftCommitBinding changedBinding =
-        changedPayload(plan.binding(), "substituted game design bytes");
+    DraftCommitBinding changedBinding = changedPayload(binding, "substituted game design bytes");
     WorldDraftTerminalOperation changedInput =
         operation(f, changedBinding, operation.operationId(), operation.authorizationFenceId());
     assertThatThrownBy(() -> service.readDefinitiveAbort(changedInput))
@@ -387,9 +407,9 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
   @Test
   void authenticatedMtlsReadReturnsUnknownThenExactAbortAcrossFreezeAndRejectsSubstitution()
       throws Exception {
-    Fixture f = fixture(false);
-    WorldDraftTopologyCommitPlan plan = topologyPlan(f, UUID.randomUUID(), UUID.randomUUID());
-    WorldDraftTerminalOperation operation = operation(f, plan.binding());
+    Fixture f = fixture();
+    WorldDraftGraphApplication application = currentGraphApplication(f);
+    WorldDraftTerminalOperation operation = application.operation();
     WorldDraftTerminalOutcomeRepository repository = terminalRepository();
     WorldDraftTerminalReadGrpcService receiver =
         new WorldDraftTerminalReadGrpcService(
@@ -436,7 +456,8 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
           .containsExactly(abort.canonicalBytes());
 
       byte[] changedAccount =
-          accountBinding(f, plan.binding(), operationIds(operation), new byte[] {9}).canonicalBytes();
+          accountBinding(f, application.plan().binding(), operationIds(operation), new byte[] {9})
+              .canonicalBytes();
       var changedBindingRequest =
           WorldDraftTerminalReadEvidence.Request.create(NAMESPACE, changedAccount);
       assertThatThrownBy(() -> client.read(changedBindingRequest))
@@ -496,37 +517,83 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
     }
   }
 
-  private void assertRawRegionFunctionDenied(Fixture f, WorldDraftRegionCommitPlan plan) {
-    Map<String, Object> change = new LinkedHashMap<>();
-    var mutation = plan.regionRevisions().getFirst().mutation();
-    change.put("id", f.seededRegion());
-    change.put("expectedAggregateEpoch", mutation.getExpectedDraftRevisionEpoch());
-    change.put("expectedScopeEpoch", mutation.getExpectedDraftScopeRevisionEpoch());
-    change.put("name", "delayed");
-    change.put("shardId", 1);
-    change.put("weather", "rain");
-    change.put("generationSeed", 17L);
-    change.put("generatorType", "test");
-    change.put("generatorParams", "{}");
-    change.put("spacingMultiplier", 1.0d);
-    String ownerJson = mapper.writeValueAsString(plan.ownerBinding());
-    String changesJson = mapper.writeValueAsString(List.of(change));
+  private void assertGuardedUuidTopologyFunctionDenied(WorldDraftGraphApplication application)
+      throws Exception {
+    List<Map<String, Object>> executionRevisions = new ArrayList<>();
+    for (RevisionPayload revision : application.operation().binding().revisions()) {
+      if (revision.owner() != Owner.WORLD_MANAGEMENT) {
+        continue;
+      }
+      Map<String, Object> encoded = new LinkedHashMap<>();
+      encoded.put("revisionOrder", revision.revisionOrder());
+      encoded.put("revisionId", revision.revisionId().toString());
+      encoded.put("owner", revision.owner().name());
+      encoded.put("payload", revision.payload());
+      executionRevisions.add(encoded);
+    }
+    String ownerJson = mapper.writeValueAsString(application.plan().ownerBinding());
+    String executionJson = mapper.writeValueAsString(executionRevisions);
     assertThatThrownBy(
             () ->
                 ownerTransaction()
                     .execute(
                         status ->
                             dsl.resultQuery(
-                                    "SELECT world_store_guarded_region_rows(?::jsonb, ?::jsonb, ?::jsonb)",
+                                    "SELECT world_store_guarded_uuid_topology("
+                                        + "?::jsonb, ?::jsonb, ?::jsonb)",
                                     ownerJson,
-                                    plan.binding().canonicalJson(),
-                                    changesJson)
+                                    application.operation().binding().canonicalJson(),
+                                    executionJson)
                                 .fetch()))
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("definitive no-commit");
   }
 
-  private Fixture fixture(boolean seedRegion) {
+  /**
+   * Inserts a controlled retained STORED_PERMISSION_UNVERIFIED row using the current immutable
+   * schema, enabled triggers/constraints, and owner identity foreign key. Synthetic graph/result
+   * bytes make this a history fixture, not a claim that either legacy writer produced it or that
+   * Account authorized it.
+   */
+  private void insertRetainedUnverifiedHistory(
+      Fixture fixture, WorldDraftGraphApplication application, String table) {
+    if (!List.of("world_topology_draft_commit", "world_region_draft_commit").contains(table)) {
+      throw new IllegalArgumentException("Unsupported controlled history fixture table");
+    }
+    byte[] retainedGraphBytes =
+        "controlled retained World graph history fixture"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    byte[] retainedResultBytes =
+        "controlled retained World result history fixture"
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    ownerTransaction()
+        .execute(
+            status ->
+                dsl.execute(
+                    "INSERT INTO "
+                        + table
+                        + " (request_id,commit_id,version_identity_operation_id,target_namespace,"
+                        + "canonical_tenant_id,canonical_version_id,local_tenant_key,local_version_key,"
+                        + "owner_binding_json,binding_json,binding_digest,graph_bytes,graph_sha256,"
+                        + "result_bytes,storage_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    application.operation().requestId(),
+                    application.operation().commitId(),
+                    application.operation().ownerBinding().versionIdentityOperationId(),
+                    application.operation().ownerBinding().targetNamespace(),
+                    application.operation().canonicalTenantId(),
+                    application.operation().canonicalVersionId(),
+                    fixture.intake().localTenantKey(),
+                    fixture.version().localVersionKey(),
+                    mapper.writeValueAsString(application.operation().ownerBinding()),
+                    application.operation().binding().canonicalJson(),
+                    application.operation().binding().digest(),
+                    retainedGraphBytes,
+                    digest(retainedGraphBytes).substring("sha256:".length()),
+                    retainedResultBytes,
+                    "STORED_PERMISSION_UNVERIFIED"));
+  }
+
+  private Fixture fixture() {
     UUID tenant = UUID.randomUUID();
     UUID registration = UUID.randomUUID();
     UUID sourceOperation = UUID.randomUUID();
@@ -608,27 +675,9 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
                           sourceOperation,
                           sourceDigest,
                           intake.receiptDigest());
-                  return new Fixture(intake, version, owner, null);
+                  return new Fixture(intake, version, owner);
                 });
-    if (!seedRegion) {
-      return created;
-    }
-    Long regionId =
-        ownerTransaction()
-            .execute(
-                status -> {
-                  dsl.execute("SET LOCAL session_replication_role = 'replica'");
-                  var inserted =
-                      Objects.requireNonNull(
-                          dsl.fetchOne(
-                              "INSERT INTO region(name,tenant_id,version_id) VALUES ('seeded',?,?) RETURNING id",
-                              intake.localTenantKey(),
-                              created.version().localVersionKey()),
-                          "seeded region insert must return a row");
-                  return Objects.requireNonNull(
-                      inserted.get(0, Long.class), "seeded region insert must return an id");
-                });
-    return new Fixture(intake, created.version(), created.owner(), regionId);
+    return created;
   }
 
   private WorldDraftGraphApplication currentGraphApplication(Fixture f) throws Exception {
@@ -710,12 +759,7 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
       String aggregateId = mutation.getAggregateId();
       affected.add(
           new AffectedUnit(
-              Owner.WORLD_MANAGEMENT,
-              family,
-              aggregateId,
-              "AGGREGATE",
-              aggregateId,
-              "0"));
+              Owner.WORLD_MANAGEMENT, family, aggregateId, "AGGREGATE", aggregateId, "0"));
       affected.add(
           new AffectedUnit(
               Owner.WORLD_MANAGEMENT,
@@ -785,10 +829,7 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
   }
 
   private WorldDesignMutationRevision.Builder currentMutation(
-      UUID commitId,
-      UUID aggregateId,
-      UUID regionId,
-      WorldDesignAggregateType aggregateType) {
+      UUID commitId, UUID aggregateId, UUID regionId, WorldDesignAggregateType aggregateType) {
     return WorldDesignMutationRevision.newBuilder()
         .setCommitId(commitId.toString())
         .setLogicalRevisionId(UUID.randomUUID().toString())
@@ -824,18 +865,15 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
                 .setRoomTemplateId(roomId.toString()))
         .addFamilyCounts(
             familyCount(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION, 1))
-        .addFamilyCounts(
-            familyCount(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE, 1))
-        .addFamilyCounts(
-            familyCount(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM, 1))
+        .addFamilyCounts(familyCount(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE, 1))
+        .addFamilyCounts(familyCount(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM, 1))
         .addFamilyCounts(
             familyCount(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT, 0))
         .addFamilyCounts(
             familyCount(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE, 0))
         .addFamilyCounts(
             familyCount(
-                WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING,
-                0))
+                WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING, 0))
         .setInboundSourceClosure(inbound.build())
         .build();
   }
@@ -846,134 +884,6 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
 
   private WorldInboundSourceFamilyCount inboundCount(WorldInboundSourceFamily family) {
     return WorldInboundSourceFamilyCount.newBuilder().setFamily(family).setCount(0).build();
-  }
-
-  private WorldDraftTopologyCommitPlan topologyPlan(Fixture f, UUID request, UUID commit) {
-    UUID aggregate = UUID.randomUUID();
-    UUID revisionId = UUID.randomUUID();
-    WorldDesignMutationRevision mutation =
-        WorldDesignMutationRevision.newBuilder()
-            .setCommitId(commit.toString())
-            .setLogicalRevisionId(revisionId.toString())
-            .setAggregateId(aggregate.toString())
-            .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
-            .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
-            .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
-            .setScopeId(aggregate.toString())
-            .setRegion(
-                RegionDesignMutation.newBuilder()
-                    .setName("topology")
-                    .setWeather("clear")
-                    .setShardId(0)
-                    .setGenerationSeed(17)
-                    .setGeneratorType("test")
-                    .setGeneratorParams("{}"))
-            .build();
-    List<AffectedUnit> worldUnits =
-        List.of(
-            new AffectedUnit(
-                Owner.WORLD_MANAGEMENT,
-                "REGION",
-                aggregate.toString(),
-                "AGGREGATE",
-                aggregate.toString(),
-                "0"),
-            new AffectedUnit(
-                Owner.WORLD_MANAGEMENT,
-                "REGION",
-                aggregate.toString(),
-                "REGION_SUBTREE",
-                aggregate.toString(),
-                "0"));
-    DraftCommitBinding binding = draftBinding(f, request, commit, mutation, revisionId, worldUnits);
-    return WorldDraftTopologyCommitPlan.create(binding, f.owner());
-  }
-
-  private WorldDraftRegionCommitPlan regionPlan(Fixture f, UUID request, UUID commit) {
-    return regionPlan(f, request, commit, 0L);
-  }
-
-  private WorldDraftRegionCommitPlan regionPlan(
-      Fixture f, UUID request, UUID commit, long expectedEpoch) {
-    long region = f.seededRegion();
-    UUID revisionId = UUID.randomUUID();
-    WorldDesignMutationRevision mutation =
-        WorldDesignMutationRevision.newBuilder()
-            .setCommitId(commit.toString())
-            .setLogicalRevisionId(revisionId.toString())
-            .setAggregateId(Long.toString(region))
-            .setAggregateType(WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
-            .setOperation(WorldDesignMutationOperation.WORLD_DESIGN_MUTATION_OPERATION_UPSERT)
-            .setScopeType(WorldDesignScopeType.WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE)
-            .setScopeId(Long.toString(region))
-            .setExpectedDraftRevisionEpoch(expectedEpoch)
-            .setExpectedDraftScopeRevisionEpoch(expectedEpoch)
-            .setRegion(
-                RegionDesignMutation.newBuilder()
-                    .setName("committed")
-                    .setWeather("clear")
-                    .setShardId(1)
-                    .setGenerationSeed(17)
-                    .setGeneratorType("test")
-                    .setGeneratorParams("{}"))
-            .build();
-    List<AffectedUnit> worldUnits =
-        List.of(
-            new AffectedUnit(
-                Owner.WORLD_MANAGEMENT,
-                "REGION",
-                Long.toString(region),
-                "AGGREGATE",
-                Long.toString(region),
-                Long.toString(expectedEpoch)),
-            new AffectedUnit(
-                Owner.WORLD_MANAGEMENT,
-                "REGION",
-                Long.toString(region),
-                "REGION_SUBTREE",
-                Long.toString(region),
-                Long.toString(expectedEpoch)));
-    DraftCommitBinding binding = draftBinding(f, request, commit, mutation, revisionId, worldUnits);
-    return WorldDraftRegionCommitPlan.create(binding, f.owner());
-  }
-
-  private DraftCommitBinding draftBinding(
-      Fixture f,
-      UUID request,
-      UUID commit,
-      WorldDesignMutationRevision worldMutation,
-      UUID worldRevision,
-      List<AffectedUnit> worldUnits) {
-    var source = f.intake().source();
-    TargetProof target =
-        new TargetProof(
-            f.owner().canonicalTenantId(),
-            f.owner().canonicalVersionId(),
-            GAME_DESIGN_VERSION,
-            source.sourceGameTenantKey(),
-            source.sourceGameRowId(),
-            source.sourceGameTenantKey(),
-            source.provenanceKind());
-    UUID gdRevision = UUID.randomUUID();
-    List<AffectedUnit> allUnits = new ArrayList<>(worldUnits);
-    allUnits.add(
-        new AffectedUnit(
-            Owner.GAME_DESIGN_CONTROL_PLANE,
-            "VERSION",
-            f.owner().canonicalVersionId().toString(),
-            "AGGREGATE",
-            f.owner().canonicalVersionId().toString(),
-            "0"));
-    return DraftCommitBinding.create(
-        target,
-        request,
-        commit,
-        "retained-base",
-        List.of(
-            new RevisionPayload("0", worldRevision, Owner.WORLD_MANAGEMENT, json(worldMutation)),
-            new RevisionPayload(
-                "1", gdRevision, Owner.GAME_DESIGN_CONTROL_PLANE, "opaque Game Design input")),
-        allUnits);
   }
 
   private DraftCommitBinding changedPayload(DraftCommitBinding binding, String payload) {
@@ -1055,14 +965,19 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
         UUID.randomUUID());
   }
 
-  private WorldDraftTopologyCommitService topologyComponent() {
-    return new WorldDraftTopologyCommitService(
-        new WorldDraftTopologyCommitRepository(dsl, fence, mapper), manager, plan -> {});
+  private WorldDraftGraphApplicationService controlledGraphApplicationService() {
+    return controlledGraphApplicationService(
+        new WorldDraftGraphApplicationRepository(dsl, fence, mapper));
   }
 
-  private WorldDraftRegionCommitService regionComponent() {
-    return new WorldDraftRegionCommitService(
-        new WorldDraftRegionCommitRepository(dsl, fence, mapper), manager, plan -> {});
+  private WorldDraftGraphApplicationService controlledGraphApplicationService(
+      WorldDraftGraphApplicationRepository applications) {
+    // This typed proof is stipulated by the test; it does not implement production Account
+    // authorization or held original COMMIT_ORDER authority.
+    return new WorldDraftGraphApplicationService(
+        applications,
+        manager,
+        operation -> new WorldDraftGraphApplicationService.CommitOrderProof(operation));
   }
 
   private WorldDraftTerminalOutcomeService terminalService() {
@@ -1108,53 +1023,6 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
     return Objects.requireNonNull(result.get(0, Long.class), "count query must return a value");
   }
 
-  private List<Long> regionEpochs(Fixture f) {
-    var aggregateRow =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT draft_revision_epoch FROM world_design_aggregate_epoch "
-                    + "WHERE tenant_id = ? AND version_id = ? "
-                    + "AND aggregate_type = 'REGION' AND aggregate_id = ?",
-                f.intake().localTenantKey(),
-                f.version().localVersionKey(),
-                f.seededRegion()),
-            "aggregate epoch row must exist");
-    long aggregateEpoch =
-        Objects.requireNonNull(aggregateRow.get(0, Long.class), "aggregate epoch value must exist");
-    var scopeRow =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT draft_scope_revision_epoch FROM world_design_scope_epoch "
-                    + "WHERE tenant_id = ? AND version_id = ? "
-                    + "AND scope_type = 'REGION_SUBTREE' AND scope_id = ?",
-                f.intake().localTenantKey(),
-                f.version().localVersionKey(),
-                Long.toString(f.seededRegion())),
-            "scope epoch row must exist");
-    long scopeEpoch =
-        Objects.requireNonNull(scopeRow.get(0, Long.class), "scope epoch value must exist");
-    return List.of(aggregateEpoch, scopeEpoch);
-  }
-
-  private long draftRegionCount(Fixture f) {
-    var row =
-        Objects.requireNonNull(
-            dsl.fetchOne(
-                "SELECT count(*) FROM region WHERE tenant_id = ? AND version_id = ?",
-                f.intake().localTenantKey(),
-                f.version().localVersionKey()),
-            "region count query must return a row");
-    return Objects.requireNonNull(row.get(0, Long.class), "region count must have a value");
-  }
-
-  private String regionName(long regionId) {
-    var result =
-        Objects.requireNonNull(
-            dsl.fetchOne("SELECT name FROM region WHERE id = ?", regionId),
-            "region lookup must return a row");
-    return Objects.requireNonNull(result.get(0, String.class), "region lookup must return a name");
-  }
-
   private TransactionTemplate ownerTransaction() {
     TransactionTemplate transaction = new TransactionTemplate(manager);
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -1195,8 +1063,8 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
         .start();
   }
 
-  private WorldDraftTerminalReadClient terminalReadClient(
-      Server server, TerminalReadTestPki pki) throws Exception {
+  private WorldDraftTerminalReadClient terminalReadClient(Server server, TerminalReadTestPki pki)
+      throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setWorldManagementService("127.0.0.1:" + server.getPort());
     return new WorldDraftTerminalReadClient(
@@ -1350,13 +1218,5 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
   private record Fixture(
       WorldAuthoredSourceIntakeReceipt intake,
       WorldAuthoredVersionIdentityReceipt version,
-      OwnerBinding owner,
-      Long seededRegionId) {
-    long seededRegion() {
-      if (seededRegionId == null) {
-        throw new IllegalStateException("Fixture has no retained region");
-      }
-      return seededRegionId;
-    }
-  }
+      OwnerBinding owner) {}
 }

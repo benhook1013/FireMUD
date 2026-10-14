@@ -21,7 +21,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Stream;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.springcloudgateway.SpringCloudGatewayApplication;
 import net.firedevops.firemud.springcloudgateway.config.GatewayHeaderTrustProperties;
 import net.firedevops.firemud.springcloudgateway.config.GatewayTcpProxyListenerProperties;
@@ -40,7 +39,6 @@ import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.HttpHandler;
-import org.springframework.mock.env.MockEnvironment;
 import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.web.reactive.DispatcherHandler;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
@@ -309,11 +307,7 @@ class TcpProxyTlsListenerAdmissionIntegrationTest {
     HeaderTrustFilter headerTrustFilter = new HeaderTrustFilter(headerProperties, trustPolicy);
     GameplayHandshakeFilter handshakeFilter =
         new GameplayHandshakeFilter(
-            mock(JwtUtil.class),
-            mock(RuntimeIdentity.class),
-            null,
-            new MockEnvironment().withProperty("spring.profiles.active", "test"),
-            GameplayWebSocketObservability.disabled());
+            mock(RuntimeIdentity.class), GameplayWebSocketObservability.disabled());
 
     WebSocketHandler gameplayHandler = responseBehavior::apply;
     GenericApplicationContext context = new GenericApplicationContext();

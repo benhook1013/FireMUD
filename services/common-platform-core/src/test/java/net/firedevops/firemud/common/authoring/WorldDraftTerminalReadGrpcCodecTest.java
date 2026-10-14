@@ -335,10 +335,7 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     var v2Binding = v1.accountBinding().withRequiredOwners();
     var request =
         new WorldDraftTerminalReadEvidence.Request(
-            1,
-            "test",
-            uuid("33333333-3333-4333-8333-333333333334"),
-            v2Binding.canonicalBytes());
+            1, "test", uuid("33333333-3333-4333-8333-333333333334"), v2Binding.canonicalBytes());
     var committed = AuthoringFixtures.committedReadback(request);
 
     var response = WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(committed));
@@ -347,7 +344,8 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     assertThat(request.accountBinding().schemaVersion())
         .isEqualTo(DraftAuthorizationFenceBinding.SCHEMA_V2);
     assertThat(decoded.request()).isEqualTo(request);
-    assertThat(decoded.request().originalAccountBinding()).containsExactly(v2Binding.canonicalBytes());
+    assertThat(decoded.request().originalAccountBinding())
+        .containsExactly(v2Binding.canonicalBytes());
     assertThat(decoded.ownerReadback().orElseThrow().canonicalBytes())
         .containsExactly(committed.canonicalBytes());
     assertThat(decoded.ownerReadback().orElseThrow().fullBinding())

@@ -1,6 +1,7 @@
-package integration.net.firedevops.firemud.gamesession.service;
+package net.firedevops.firemud.gamesession.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -63,11 +64,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GameplayLoginSourceContext;
 import net.firedevops.firemud.account.v1.GameplayLoginTransportClass;
+import net.firedevops.firemud.account.v1.InitialGameplayLoginTokenWitness;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
@@ -79,14 +82,8 @@ import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordin
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult.Disposition;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult.ProofKind;
+import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginJournalSnapshot;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository;
-import net.firedevops.firemud.gamesession.service.InitialGameplayLoginCleanupOwner;
-import net.firedevops.firemud.gamesession.service.InitialGameplayLoginContextRedisClient;
-import net.firedevops.firemud.gamesession.service.InitialGameplayLoginContextRedisKeys;
-import net.firedevops.firemud.gamesession.service.InitialGameplayLoginContextState;
-import net.firedevops.firemud.gamesession.service.InitialGameplayLoginCoordinationQualification;
-import net.firedevops.firemud.gamesession.service.InitialGameplayLoginRedisAttemptClosure;
-import net.firedevops.firemud.gamesession.service.InitialGameplayLoginRedisBinding;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginRedisBinding.AcknowledgementPolicy;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginRedisBinding.Profile;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -177,6 +174,7 @@ class InitialGameplayLoginContextRedisIntegrationTest {
   private StatefulRedisConnection<byte[], byte[]> adminConnection;
   private RedisCommands<byte[], byte[]> admin;
   private String schema;
+  private InitialGameplayLoginCoordinationJournalRepository journal;
 
   @BeforeAll
   static void startOwnedPhysicalFixtures() throws Exception {
@@ -326,6 +324,46 @@ class InitialGameplayLoginContextRedisIntegrationTest {
         .containsSubsequence("aclWhoami", "get", "close")
         .doesNotContain("evalsha", "WAITAOF");
     assertThat(qualification.active).isFalse();
+  }
+
+  @Test
+  void createPendingIsCreateOnlyAndUsesPhysicalAcknowledgementAndIndependentReadback()
+      throws Exception {
+    var original = coordinates();
+    own(original);
+    var provider = new TracedProvider(writer);
+    var client = client(provider, new ControlledAuthority(), 1);
+    var expected = InitialGameplayLoginContextState.pending(original);
+
+    assertThat(client.createPending(original).orElseThrow().encode())
+        .containsExactly(expected.encode());
+    byte[] created = admin.get(key(original));
+    assertThat(created).containsExactly(expected.encode());
+    assertThat(admin.pexpiretime(key(original))).isEqualTo(-1L);
+
+    assertThat(client.createPending(original)).isEmpty();
+    assertThat(admin.get(key(original))).containsExactly(created);
+    assertThat(provider.traces.get(0))
+        .containsSubsequence("aclWhoami", "evalsha", "WAITAOF", "close");
+    assertThat(provider.traces.get(1)).containsSubsequence("aclWhoami", "get", "close");
+  }
+
+  @Test
+  void createPendingNeverAdoptsOrOverwritesAnExistingExpiringPhysicalValue() throws Exception {
+    var original = coordinates();
+    own(original);
+    byte[] malformed = ascii("{existing-unqualified-value}");
+    admin.set(key(original), malformed);
+    admin.pexpire(key(original), 60_000);
+    long originalExpiry = admin.pexpiretime(key(original));
+
+    assertThat(
+            client(new TracedProvider(writer), new ControlledAuthority(), 1)
+                .createPending(original))
+        .isEmpty();
+
+    assertThat(admin.get(key(original))).containsExactly(malformed);
+    assertThat(admin.pexpiretime(key(original))).isPositive().isEqualTo(originalExpiry);
   }
 
   @ParameterizedTest
@@ -554,6 +592,195 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     assertThat(admin.get(key(unrelated))).containsExactly(untouched);
   }
 
+  @Test
+  void ownerComposesDurableOriginalWithPhysicalPendingAndExactNonAdmittingInstall()
+      throws Exception {
+    var authority = new ControlledAuthority();
+    var provider = new TracedProvider(writer);
+    var contexts = client(provider, authority, 1);
+    var account = mock(CanonicalGameplayLoginAccountClient.class);
+    var cleanup = cleanup(contexts, account);
+    var owner = new InitialGameplayLoginOwner(contexts, cleanup, account);
+    var secret = "fixture-transient-secret".toCharArray();
+    var credentials =
+        new InitialGameplayLoginCredentialPresentation(
+            "player@example.test", "203.0.113.10", secret);
+    var resultRef = new AtomicReference<CanonicalGameplayLoginResult>();
+    var requestRef = new AtomicReference<AuthenticateRequest>();
+    var reservationRef = new AtomicReference<InitialGameplayLoginAttemptCoordinates>();
+    var beforeFirstMutation = new AtomicBoolean(true);
+    provider.beforeEval =
+        () -> {
+          if (beforeFirstMutation.compareAndSet(true, false)) {
+            var reserved = journal.readRetainedPage(Optional.empty(), 5);
+            assertThat(reserved).hasSize(1);
+            var original = reserved.get(0).coordinates();
+            reservationRef.set(original);
+            assertThat(original.expectedAttemptFence()).isEqualTo(1L);
+            assertThat(admin.get(key(original))).isNull();
+            assertThat(reserved.get(0).abandoned()).isFalse();
+            assertThat(reserved.get(0).verifiedWitness()).isEmpty();
+          }
+        };
+    when(account.authenticate(any(AuthenticateRequest.class), any()))
+        .thenAnswer(
+            invocation -> {
+              var request = invocation.getArgument(0, AuthenticateRequest.class);
+              var original = coordinates(request);
+              requestRef.set(request);
+              assertThat(original).isEqualTo(reservationRef.get());
+              assertThat(original.expectedAttemptFence()).isEqualTo(1L);
+              assertThat(original.requestId().version()).isEqualTo(4);
+              assertThat(original.callerContextId().version()).isEqualTo(4);
+              assertThat(original.requestId()).isNotEqualTo(original.callerContextId());
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(provider.traces).hasSize(2);
+              assertThat(provider.traces.get(0)).containsSubsequence("evalsha", "WAITAOF", "close");
+              assertThat(provider.traces.get(1)).containsSubsequence("get", "close");
+              assertThat(admin.get(key(original)))
+                  .containsExactly(InitialGameplayLoginContextState.pending(original).encode());
+              var committed = journal.readCommitted(original).orElseThrow();
+              assertThat(committed.abandoned()).isFalse();
+              assertThat(committed.verifiedWitness()).isEmpty();
+              assertThat(committed.frozenRetirementRequest()).isEmpty();
+              var result = validatedResult(request, UUID.randomUUID());
+              resultRef.set(result);
+              return result;
+            });
+
+    var outcome = owner.receive(credentials);
+    var original = outcome.coordinates();
+    ownedKeys.add(InitialGameplayLoginContextRedisKeys.contextKey(original.callerContextId()));
+
+    assertThat(outcome.status())
+        .isEqualTo(InitialGameplayLoginOwner.Status.INSTALLED_NON_ADMITTING);
+    assertThat(original.expectedAttemptFence()).isEqualTo(1L);
+    assertThat(original.requestId().version()).isEqualTo(4);
+    assertThat(original.callerContextId().version()).isEqualTo(4);
+    assertThat(original.requestId()).isNotEqualTo(original.callerContextId());
+    assertThat(original).isEqualTo(reservationRef.get());
+    assertThat(requestRef.get().getRequestId()).isEqualTo(original.requestId().toString());
+    assertThat(requestRef.get().getSourceContext().getCallerContextId())
+        .isEqualTo(original.callerContextId().toString());
+    assertThat(secret).containsOnly('\0');
+
+    var privateResult = outcome.takePrivateResult().orElseThrow();
+    try {
+      assertThat(privateResult).isSameAs(resultRef.get());
+      byte[] installed =
+          InitialGameplayLoginContextState.installed(original, privateResult).encode();
+      byte[] persisted = admin.get(key(original));
+      assertThat(persisted).containsExactly(installed);
+      assertThat(containsSequence(persisted, privateResult.compactJwtBytes())).isFalse();
+      assertThat(containsSequence(persisted, ascii("fixture-transient-secret"))).isFalse();
+      assertThat(admin.pexpiretime(key(original))).isEqualTo(-1L);
+      assertThat(provider.traces).hasSize(4);
+      assertThat(provider.traces.get(2)).containsSubsequence("evalsha", "WAITAOF", "close");
+      assertThat(provider.traces.get(3)).containsSubsequence("get", "close");
+      var committed = journal.readCommitted(original).orElseThrow();
+      assertThat(committed.abandoned()).isFalse();
+      assertThat(committed.verifiedWitness()).contains(witness(privateResult));
+      assertThat(committed.frozenRetirementRequest()).isEmpty();
+      verify(account, never()).retireInitialGameplayLogin(any());
+      assertThat(authority.active).isFalse();
+    } finally {
+      outcome.close();
+      privateResult.close();
+    }
+  }
+
+  @Test
+  void ownerClosesExactOriginalAndWipesResultWhenCredentialCustodyEndsAfterAccountResponse()
+      throws Exception {
+    var authority = new ControlledAuthority();
+    var provider = new TracedProvider(writer);
+    var contexts = client(provider, authority, 1);
+    var account = mock(CanonicalGameplayLoginAccountClient.class);
+    var cleanup = cleanup(contexts, account);
+    var owner = new InitialGameplayLoginOwner(contexts, cleanup, account);
+    var secret = "fixture-transient-secret".toCharArray();
+    var credentials =
+        new InitialGameplayLoginCredentialPresentation(
+            "player@example.test", "203.0.113.10", secret);
+    var resultRef = new AtomicReference<CanonicalGameplayLoginResult>();
+    var retirementRef =
+        new AtomicReference<net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest>();
+    when(account.authenticate(any(AuthenticateRequest.class), any()))
+        .thenAnswer(
+            invocation -> {
+              var request = invocation.getArgument(0, AuthenticateRequest.class);
+              var original = coordinates(request);
+              assertThat(provider.traces).hasSize(2);
+              assertThat(admin.get(key(original)))
+                  .containsExactly(InitialGameplayLoginContextState.pending(original).encode());
+              assertThat(journal.readCommitted(original).orElseThrow().verifiedWitness()).isEmpty();
+              var result = validatedResult(request, UUID.randomUUID());
+              resultRef.set(result);
+              credentials.close();
+              return result;
+            });
+    when(account.retireInitialGameplayLogin(any()))
+        .thenAnswer(
+            invocation -> {
+              var request =
+                  invocation.getArgument(
+                      0, net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest.class);
+              var original = coordinates(request);
+              retirementRef.set(request);
+              assertThat(authority.active).isTrue();
+              assertThat(authority.current).isTrue();
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(request.hasTokenWitness()).isTrue();
+              assertThat(provider.traces).hasSize(4);
+              assertThat(provider.traces.get(2)).containsSubsequence("evalsha", "WAITAOF", "close");
+              assertThat(provider.traces.get(3)).containsSubsequence("get", "close");
+              assertThat(admin.get(key(original)))
+                  .containsExactly(InitialGameplayLoginContextState.closed(original).encode());
+              var beforeAccount = journal.readCommitted(original).orElseThrow();
+              assertThat(beforeAccount.abandoned()).isTrue();
+              assertThat(beforeAccount.frozenRetirementRequest()).contains(request);
+              return new InitialGameplayLoginDisposalResult(
+                  UUID.fromString(request.getRequestId()),
+                  UUID.fromString(request.getCallerContextId()),
+                  UUID.randomUUID(),
+                  Disposition.PENDING,
+                  ProofKind.NONE);
+            });
+
+    var outcome = owner.receive(credentials);
+    var original = outcome.coordinates();
+    ownedKeys.add(InitialGameplayLoginContextRedisKeys.contextKey(original.callerContextId()));
+
+    assertThat(outcome.status())
+        .isEqualTo(InitialGameplayLoginOwner.Status.CLEANUP_ACCOUNT_PENDING);
+    assertThat(outcome.failureCode()).contains("CUSTODY_LOST");
+    assertThat(outcome.cleanupStatus())
+        .isEqualTo(InitialGameplayLoginCleanupOwner.Status.ACCOUNT_PENDING);
+    assertThat(secret).containsOnly('\0');
+    assertThatThrownBy(() -> resultRef.get().compactJwtBytes())
+        .isInstanceOf(IllegalStateException.class);
+    assertThat(admin.get(key(original)))
+        .containsExactly(InitialGameplayLoginContextState.closed(original).encode());
+    var committed = journal.readCommitted(original).orElseThrow();
+    assertThat(committed.abandoned()).isTrue();
+    var verifiedWitness = witness(resultRef.get());
+    assertThat(committed.verifiedWitness()).contains(verifiedWitness);
+    var exactRetirement = InitialGameplayLoginJournalSnapshot.request(original, verifiedWitness);
+    assertThat(committed.frozenRetirementRequest()).contains(exactRetirement);
+    assertThat(retirementRef.get()).isEqualTo(exactRetirement);
+    assertThat(committed.retainedReceipt())
+        .hasValueSatisfying(
+            receipt -> {
+              assertThat(receipt.disposition()).isEqualTo(Disposition.PENDING);
+              assertThat(receipt.proofKind()).isEqualTo(ProofKind.NONE);
+            });
+    assertThat(provider.traces).hasSize(4);
+    assertThat(outcome.takePrivateResult()).isEmpty();
+    verify(account).authenticate(any(AuthenticateRequest.class), any());
+    verify(account).retireInitialGameplayLogin(any());
+    assertThat(authority.active).isFalse();
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"absent", "replaced", "newer-attempt"})
   void originalClosureCannotCreateAbsentOrTouchReplacementAndNewContext(String condition) {
@@ -605,7 +832,7 @@ class InitialGameplayLoginContextRedisIntegrationTest {
             "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
         .load()
         .migrate();
-    var journal =
+    journal =
         new InitialGameplayLoginCoordinationJournalRepository(
             DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES));
     return new InitialGameplayLoginCleanupOwner(
@@ -641,6 +868,29 @@ class InitialGameplayLoginContextRedisIntegrationTest {
 
   private static InitialGameplayLoginAttemptCoordinates coordinates() {
     return new InitialGameplayLoginAttemptCoordinates(UUID.randomUUID(), UUID.randomUUID(), 7);
+  }
+
+  private static InitialGameplayLoginAttemptCoordinates coordinates(AuthenticateRequest request) {
+    return new InitialGameplayLoginAttemptCoordinates(
+        UUID.fromString(request.getRequestId()),
+        UUID.fromString(request.getSourceContext().getCallerContextId()),
+        1L);
+  }
+
+  private static InitialGameplayLoginAttemptCoordinates coordinates(
+      net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest request) {
+    return new InitialGameplayLoginAttemptCoordinates(
+        UUID.fromString(request.getRequestId()), UUID.fromString(request.getCallerContextId()), 1L);
+  }
+
+  private static InitialGameplayLoginTokenWitness witness(CanonicalGameplayLoginResult result) {
+    var evidence = result.evidence();
+    return InitialGameplayLoginTokenWitness.newBuilder()
+        .setTokenJti(evidence.tokenJti().toString())
+        .setTokenSha256(evidence.tokenSha256())
+        .setTokenGeneration(Long.parseLong(evidence.tokenGeneration()))
+        .setIssuanceFence(Long.parseLong(evidence.issuanceFence()))
+        .build();
   }
 
   private void own(InitialGameplayLoginAttemptCoordinates original) {
@@ -920,6 +1170,25 @@ class InitialGameplayLoginContextRedisIntegrationTest {
 
   private static CanonicalGameplayLoginResult validatedResult(
       InitialGameplayLoginAttemptCoordinates original, UUID jti) throws Exception {
+    var request =
+        AuthenticateRequest.newBuilder()
+            .setRequestId(original.requestId().toString())
+            .setEmail("player@example.test")
+            .setPassword("fixture-transient-secret")
+            .setSourceContext(
+                GameplayLoginSourceContext.newBuilder()
+                    .setCallerContextId(original.callerContextId().toString())
+                    .setCanonicalClientAddress("203.0.113.10")
+                    .setTransportClass(
+                        GameplayLoginTransportClass
+                            .GAMEPLAY_LOGIN_TRANSPORT_CLASS_TRUSTED_TCP_PROXY))
+            .build();
+    return validatedResult(request, jti);
+  }
+
+  private static CanonicalGameplayLoginResult validatedResult(AuthenticateRequest request, UUID jti)
+      throws Exception {
+    var original = coordinates(request);
     var claims =
         new LinkedHashMap<String, Object>(
             Map.ofEntries(
@@ -947,19 +1216,6 @@ class InitialGameplayLoginContextRedisIntegrationTest {
     signature.initSign(keys.getPrivate());
     signature.update(input.getBytes(StandardCharsets.US_ASCII));
     String token = input + "." + encoder.encodeToString(signature.sign());
-    var request =
-        AuthenticateRequest.newBuilder()
-            .setRequestId(original.requestId().toString())
-            .setEmail("player@example.test")
-            .setPassword("fixture-transient-secret")
-            .setSourceContext(
-                GameplayLoginSourceContext.newBuilder()
-                    .setCallerContextId(original.callerContextId().toString())
-                    .setCanonicalClientAddress("203.0.113.10")
-                    .setTransportClass(
-                        GameplayLoginTransportClass
-                            .GAMEPLAY_LOGIN_TRANSPORT_CLASS_TRUSTED_TCP_PROXY))
-            .build();
     var response =
         AuthenticateResponse.newBuilder()
             .setAuthToken(token)

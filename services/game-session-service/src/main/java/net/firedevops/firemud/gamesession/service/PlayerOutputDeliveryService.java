@@ -17,6 +17,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -128,7 +129,15 @@ public final class PlayerOutputDeliveryService {
             .counter(
                 "gamesession.output.delivery.failed", "kind", output.kind().name().toLowerCase())
             .increment();
-        activeTransportSessionRegistry.unregister(context.sessionId(), session);
+        try {
+          // Only the owned close callback removes registration and commits disconnect cleanup.
+          session.close(CloseStatus.SERVER_ERROR.withReason("internal_error"));
+        } catch (IOException closeFailure) {
+          LOG.warn(
+              "Failed to close transport after delivery failure for session {}",
+              context.sessionId(),
+              closeFailure);
+        }
         break;
       }
     }

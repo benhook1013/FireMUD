@@ -24,9 +24,49 @@ public record SessionContext(
     long pointerVersion,
     String playableStateScope,
     String connectScopeId,
-    String connectRequestId)
+    String connectRequestId,
+    FirstPartyConnectContext firstPartyConnectContext)
     implements Serializable {
   private static final long serialVersionUID = 1L;
+
+  public SessionContext(
+      long sessionId,
+      long tenantId,
+      String accountId,
+      String loginName,
+      long characterId,
+      String characterName,
+      long gameInstanceId,
+      String roomInstanceId,
+      String jwt,
+      String localeTag,
+      long bootstrapGameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion,
+      String playableStateScope,
+      String connectScopeId,
+      String connectRequestId) {
+    this(
+        sessionId,
+        tenantId,
+        accountId,
+        loginName,
+        characterId,
+        characterName,
+        gameInstanceId,
+        roomInstanceId,
+        jwt,
+        localeTag,
+        bootstrapGameInstanceId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        playableStateScope,
+        connectScopeId,
+        connectRequestId,
+        null);
+  }
 
   public SessionContext {
     loginName = loginName == null ? null : loginName.trim();
@@ -316,31 +356,32 @@ public record SessionContext(
   }
 
   public Optional<FirstPartyConnectContext> persistedFirstPartyConnectContext() {
-    if (!hasAccountIdentity() || tenantId <= 0) {
-      return Optional.empty();
-    }
-    FirstPartyConnectContext connectContext =
-        new FirstPartyConnectContext(
-            accountId,
-            tenantId,
-            worldSlug,
-            realmSlug,
-            bootstrapGameInstanceId,
-            pointerVersion,
-            connectScopeId,
-            null,
-            connectRequestId,
-            null);
-    return connectContext.hasCompleteRoutingScope()
-        ? Optional.of(connectContext)
-        : Optional.empty();
+    return Optional.ofNullable(firstPartyConnectContext);
   }
 
   public boolean hasPartialPersistedFirstPartyConnectContext() {
-    if (!hasAccountIdentity() || tenantId <= 0) {
-      return false;
-    }
-    boolean hasAnyPersistedSelectorField = connectScopeId != null || connectRequestId != null;
-    return hasAnyPersistedSelectorField && persistedFirstPartyConnectContext().isEmpty();
+    return firstPartyConnectContext == null && (connectScopeId != null || connectRequestId != null);
+  }
+
+  public SessionContext withFirstPartyConnectContext(FirstPartyConnectContext context) {
+    return new SessionContext(
+        sessionId,
+        tenantId,
+        accountId,
+        loginName,
+        characterId,
+        characterName,
+        gameInstanceId,
+        roomInstanceId,
+        jwt,
+        localeTag,
+        bootstrapGameInstanceId,
+        worldSlug,
+        realmSlug,
+        pointerVersion,
+        playableStateScope,
+        connectScopeId,
+        connectRequestId,
+        context);
   }
 }

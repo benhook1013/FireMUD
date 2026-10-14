@@ -275,8 +275,7 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
     assertThat(f.tx(() -> f.fences.readSettlement(original))).isEqualTo(expected);
   }
 
-  public byte[] originalDraftOwnerReadback(
-      DraftAuthorizationFenceBinding original, Owner owner) {
+  public byte[] originalDraftOwnerReadback(DraftAuthorizationFenceBinding original, Owner owner) {
     return f.tx(
             () ->
                 f.fences
