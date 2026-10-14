@@ -114,9 +114,11 @@ import tools.jackson.databind.json.JsonMapper;
  * source vector, COMMIT_ORDER verifier, and Game Design terminal read are controlled fixtures: this
  * proves owner-local World storage and required-mTLS owner readback, not a genuine Account actor,
  * source hold, producer provenance, public publication, selector activation, or runtime admission.
- * The graph declares explicit counts for all six families (including zero generation rules) and all
- * seven empty inbound families. A separate opaque nonempty generation-rule fixture proves that
- * selected freeze/inventory failure leaves the APPLIED graph and World owner unchanged.
+ * The paired Game Design Version/DRAFT revision and affected unit are controlled original-order
+ * binding inputs only; this test does not claim a physical Game Design mutation. The graph declares
+ * explicit counts for all six families (including zero generation rules) and all seven empty
+ * inbound families. A separate opaque nonempty generation-rule fixture proves that selected
+ * freeze/inventory failure leaves the APPLIED graph and World owner unchanged.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -735,7 +737,7 @@ class WorldSelectedPublicationPostgresIntegrationTest {
                             participant,
                             AuthoredWorldReleaseAttestationEvidence
                                 .CLOSURE_SELECTOR_SCHEMA_VERSION),
-                        "GAME_LOGIC".equals(participant) ? "b".repeat(64) : null,
+                        "GAME_LOGIC".equals(participant) ? "sha256:" + "b".repeat(64) : null,
                         null,
                         null))
             .toList();
@@ -969,10 +971,22 @@ class WorldSelectedPublicationPostgresIntegrationTest {
     }
 
     List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>();
+    List<AffectedUnit> affected = new ArrayList<>();
+    UUID canonicalVersionId = owner.version().canonicalVersionId();
     revisions.add(
         new DraftCommitBinding.RevisionPayload(
-            "0", UUID.randomUUID(), Owner.GAME_DESIGN_CONTROL_PLANE, "controlled-original-order"));
-    List<AffectedUnit> affected = new ArrayList<>();
+            "0",
+            UUID.randomUUID(),
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            "controlled selected Game Design Version original-order evidence"));
+    affected.add(
+        new AffectedUnit(
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            "DRAFT",
+            canonicalVersionId.toString(),
+            "AGGREGATE",
+            canonicalVersionId.toString(),
+            "0"));
     for (int index = 0; index < mutations.size(); index++) {
       WorldDesignMutationRevision mutation = mutations.get(index);
       revisions.add(
