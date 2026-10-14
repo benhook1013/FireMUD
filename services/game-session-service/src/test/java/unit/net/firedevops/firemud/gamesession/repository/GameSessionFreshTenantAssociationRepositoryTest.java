@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import java.util.UUID;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,19 @@ class GameSessionFreshTenantAssociationRepositoryTest {
     assertThatThrownBy(() -> repository.associateFresh(null, null, null))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("writable owner transaction");
+
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void canonicalTenantReadRejectsLegacyDslOnlyCompositionBeforeStorageAccess() {
+    DSLContext dsl = mock(DSLContext.class);
+    GameSessionFreshTenantAssociationRepository repository =
+        new GameSessionFreshTenantAssociationRepository(dsl);
+
+    assertThatThrownBy(() -> repository.readByCanonicalTenantId(UUID.randomUUID()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Explicit owner transaction composition");
 
     verifyNoInteractions(dsl);
   }
