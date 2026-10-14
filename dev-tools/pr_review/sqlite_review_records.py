@@ -1934,7 +1934,7 @@ class SqliteReviewRecords:
             if ordinal == 0:
                 if prior != source_pr or decision not in {"accepted", "routed", "rejected"}:
                     raise ReviewRecordsError("CLI original decision conflicts with its source")
-                if (decision == "routed") != (target is not None):
+                if decision != "routed" and target is not None:
                     raise ReviewRecordsError("CLI original decision has conflicting route evidence")
             elif (prior != history[-1]["decision_id"] or decision not in {"accepted", "rejected"}
                   or history[-1]["decision"] not in {"accepted", "rejected"} or target is not None
