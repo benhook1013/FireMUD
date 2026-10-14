@@ -295,3 +295,8 @@ Entry format:
   - Observation: the next CLI review exposed the unchanged row. Documentation hygiene checks had passed because they do not verify that a requested semantic target changed. The original native fix record therefore overstated its proof.
   - Expected pattern: inspect the exact requested row or declaration before recording an accepted-fix resolution; verify its named anchors instead of relying on a nearby paragraph or a broad substring replacement.
   - Current status: the exact row is corrected and verified. An immutable audited resolution correction points to the published repair while retaining the original wrong attribution; the User and Overseer were informed.
+
+- **2026-10-14 — Follow typed construction before accepting a missing validation finding.**
+  - Observation: A CLI finding claimed World accepted non-STARTING fixture allocations. Main initially accepted it after reading the codec and client but missed the shared result constructor's existing STARTING requirement; the attempted negative fixture failed before reaching World.
+  - Consequence and recovery: The redundant production guard was removed, the decision was corrected in the immutable controller audit, and the public checkpoint correction preserves the original review credit. Focused wire-response rejection proof verifies the actual transitive boundary.
+  - Reusable lesson: Follow the complete typed construction path before adjudicating an absent check. A local consumer need not repeat an invariant already enforced by every constructible input; retained findings and changed code alone are not fix proof.

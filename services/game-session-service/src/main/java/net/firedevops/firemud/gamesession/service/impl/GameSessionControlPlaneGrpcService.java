@@ -390,11 +390,13 @@ public final class GameSessionControlPlaneGrpcService
               .withDescription("Fixture launch owner read is not authorized")
               .asRuntimeException());
     } catch (IllegalArgumentException invalidOwnerState) {
+      logger.warn("GetRunOwnedFixtureLaunchAssociation rejected; category=INVALID_OWNER_STATE");
       responseObserver.onError(
           Status.FAILED_PRECONDITION
               .withDescription("Exact fixed fixture launch owner read is unavailable")
               .asRuntimeException());
     } catch (IllegalStateException unavailable) {
+      logger.warn("GetRunOwnedFixtureLaunchAssociation rejected; category=OWNER_READ_UNAVAILABLE");
       responseObserver.onError(
           Status.FAILED_PRECONDITION
               .withDescription("Exact fixed fixture launch owner read is unavailable")
