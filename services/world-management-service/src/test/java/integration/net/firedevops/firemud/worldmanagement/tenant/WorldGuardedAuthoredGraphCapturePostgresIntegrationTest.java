@@ -1323,13 +1323,7 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       Flyway currentFrontier = flyway(source, schema, worldLocation, sagaLocation);
       currentFrontier.migrate();
       currentFrontier.validate();
-      assertThat(
-              dsl.fetchSingle(
-                      "SELECT version FROM "
-                          + HISTORY
-                          + " WHERE success AND version IS NOT NULL ORDER BY installed_rank DESC LIMIT 1")
-                  .get(0, String.class))
-          .isEqualTo("1042.1");
+      assertThat(currentFrontier.info().pending()).isEmpty();
       // V1012 added nullable application_transaction_id to retained draft-commit rows. Capture a
       // complete row-image baseline after that historical-to-current schema change so the
       // following denials prove current-frontier atomicity without conflating migration metadata.
