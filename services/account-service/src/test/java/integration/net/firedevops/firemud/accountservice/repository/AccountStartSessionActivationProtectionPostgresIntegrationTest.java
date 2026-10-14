@@ -13,6 +13,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
@@ -38,11 +40,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Runs V1003/V1004/V1004.1 against the actual Account PostgreSQL schema and assembled source-writer
- * guard. The integrity and currentness fixtures seed related owner rows with upstream producer
- * triggers disabled. Protection acquisition, child completeness, settlement and source-writer
- * guards remain enabled; they prove SQL currentness/exclusion/immutability only, not authenticated
- * activation-protection production.
+ * Runs V1003/V1004/V1004.1/V1004.2 against the actual Account PostgreSQL schema and assembled
+ * source-writer guard. The integrity and currentness fixtures seed related owner rows with upstream
+ * producer triggers disabled. Protection acquisition, child completeness, settlement and
+ * source-writer guards remain enabled; they prove SQL currentness/exclusion/immutability only, not
+ * authenticated activation-protection production.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountStartSessionActivationProtectionPostgresIntegrationTest {
@@ -183,6 +185,30 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
     monotonicUpgrade.validate();
     assertThat(fixture.dsl().fetch(preCounterUpgradeHistoryQuery).getValues(0, String.class))
         .isEqualTo(preCounterUpgradeHistory);
+    assertThat(fixture.dsl().fetch(protectionRowsQuery).getValues(0, String.class))
+        .isEqualTo(pendingRows);
+    assertThat(fixture.dsl().fetch(sourceRowsQuery).getValues(0, String.class))
+        .isEqualTo(retainedSources);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT to_regprocedure('account_ss_activation_settlement_lifecycle_guard()')::TEXT")
+                .get(0, String.class))
+        .isNotNull();
+
+    String preRetainedLifecycleUpgradeHistoryQuery =
+        "SELECT installed_rank || ':' || version || ':' || script || ':' "
+            + "|| checksum || ':' || success FROM flyway_schema_history "
+            + "WHERE version IS NOT NULL AND version <> '1004.2' ORDER BY installed_rank";
+    var preRetainedLifecycleUpgradeHistory =
+        fixture.dsl().fetch(preRetainedLifecycleUpgradeHistoryQuery).getValues(0, String.class);
+    Flyway retainedLifecycleUpgrade = activationFlyway(fixture.dataSource(), "1004.2");
+    assertThat(retainedLifecycleUpgrade.migrate().migrationsExecuted).isEqualTo(1);
+    retainedLifecycleUpgrade.validate();
+    assertThat(
+            fixture.dsl().fetch(preRetainedLifecycleUpgradeHistoryQuery).getValues(0, String.class))
+        .isEqualTo(preRetainedLifecycleUpgradeHistory);
     assertThat(fixture.dsl().fetch(protectionRowsQuery).getValues(0, String.class))
         .isEqualTo(pendingRows);
     assertThat(fixture.dsl().fetch(sourceRowsQuery).getValues(0, String.class))
@@ -536,6 +562,233 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
         .contains("account_start_session_admission_protection_sources")
         .contains("account_ss_admission_is_settled")
         .contains("account_start_session_activation_protection_settlements");
+  }
+
+  @Test
+  void retainedMalformedPreparingLifecycleCannotSettleAfterV1004_2Upgrade() throws Exception {
+    for (String malformedCounter :
+        List.of("missing lifecycleEpoch", "missing rowVersion", "numeric lifecycleEpoch")) {
+      Fixture fixture = fixture("1003");
+      CurrentnessCase valid = currentnessCase(fixture, Instant.now().plusSeconds(120));
+      Map<String, Object> request = readJson(valid.requestBytes());
+      byte[] validPreparingBytes =
+          Base64.getDecoder().decode((String) request.get("preparingEvidenceBytesBase64"));
+      Map<String, Object> malformedPreparing = readJson(validPreparingBytes);
+      if (malformedCounter.startsWith("missing ")) {
+        malformedPreparing.remove(malformedCounter.substring("missing ".length()));
+      } else {
+        malformedPreparing.put("lifecycleEpoch", 3);
+      }
+      byte[] malformedPreparingBytes = jsonBytes(malformedPreparing);
+      assertThatThrownBy(
+              () -> WorldCanonicalInstanceLifecycleEvidence.fromStored(malformedPreparingBytes))
+          .as("retained PREPARING evidence with %s is not a closed lifecycle", malformedCounter)
+          .isInstanceOf(IllegalArgumentException.class);
+      request.put(
+          "preparingEvidenceBytesBase64",
+          Base64.getEncoder().encodeToString(malformedPreparingBytes));
+      CurrentnessCase malformed =
+          new CurrentnessCase(
+              jsonBytes(request),
+              valid.operationIdentityBytes(),
+              valid.operationIdentityDigest(),
+              valid.ownerAttemptId(),
+              valid.expiryText());
+
+      // V1003 admitted this exact structurally bound PREPARING carrier. The later migrations
+      // preserve it and harden settlement; this does not represent authenticated World creation.
+      acquireProtection(fixture, malformed);
+      var stored =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT activation_protection_id, activation_protection_fence, acquired_at, "
+                      + "world_preparing_evidence FROM account_start_session_activation_protections");
+      UUID protectionId = stored.get("activation_protection_id", UUID.class);
+      long protectionFence = stored.get("activation_protection_fence", Long.class);
+      assertThat(stored.get("world_preparing_evidence", byte[].class))
+          .isEqualTo(malformedPreparingBytes);
+      OffsetDateTime acquiredAt = stored.get("acquired_at", OffsetDateTime.class);
+      String sourceKey =
+          fixture
+              .dsl()
+              .fetchSingle(
+                  "SELECT source_key FROM account_start_session_activation_protection_sources "
+                      + "ORDER BY source_key LIMIT 1")
+              .get("source_key", String.class);
+      String protectionRowsQuery =
+          "SELECT jsonb_build_object('row', to_jsonb(p), 'xmin', p.xmin::TEXT)::TEXT FROM "
+              + "account_start_session_activation_protections p ORDER BY activation_protection_id";
+      String sourceRowsQuery =
+          "SELECT jsonb_build_object('row', to_jsonb(s), 'xmin', s.xmin::TEXT)::TEXT FROM "
+              + "account_start_session_activation_protection_sources s "
+              + "ORDER BY activation_protection_id, source_key";
+      var pendingRows = fixture.dsl().fetch(protectionRowsQuery).getValues(0, String.class);
+      var retainedSources = fixture.dsl().fetch(sourceRowsQuery).getValues(0, String.class);
+      assertThat(pendingRows).hasSize(1);
+      assertThat(retainedSources).hasSize(2);
+
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .transaction()
+                      .executeWithoutResult(
+                          status ->
+                              fixture
+                                  .dsl()
+                                  .execute(
+                                      "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                                      sourceKey)))
+          .hasMessageContaining("Original StartSession activation protection remains pending");
+
+      Flyway v1004 = activationFlyway(fixture.dataSource(), "1004");
+      assertThat(v1004.migrate().migrationsExecuted).isEqualTo(1);
+      v1004.validate();
+      Flyway v1004_1 = activationFlyway(fixture.dataSource(), "1004.1");
+      assertThat(v1004_1.migrate().migrationsExecuted).isEqualTo(1);
+      v1004_1.validate();
+      String previousHistoryQuery =
+          "SELECT installed_rank || ':' || version || ':' || script || ':' "
+              + "|| checksum || ':' || success FROM flyway_schema_history "
+              + "WHERE version IS NOT NULL AND version <> '1004.2' ORDER BY installed_rank";
+      var previousHistory = fixture.dsl().fetch(previousHistoryQuery).getValues(0, String.class);
+      Flyway v1004_2 = activationFlyway(fixture.dataSource(), "1004.2");
+      assertThat(v1004_2.migrate().migrationsExecuted).isEqualTo(1);
+      v1004_2.validate();
+      assertThat(fixture.dsl().fetch(previousHistoryQuery).getValues(0, String.class))
+          .isEqualTo(previousHistory);
+      assertThat(fixture.dsl().fetch(protectionRowsQuery).getValues(0, String.class))
+          .isEqualTo(pendingRows);
+      assertThat(fixture.dsl().fetch(sourceRowsQuery).getValues(0, String.class))
+          .isEqualTo(retainedSources);
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle(
+                      "SELECT world_preparing_evidence FROM account_start_session_activation_protections")
+                  .get(0, byte[].class))
+          .isEqualTo(malformedPreparingBytes);
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .transaction()
+                      .executeWithoutResult(
+                          status ->
+                              fixture
+                                  .dsl()
+                                  .execute(
+                                      "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                                      sourceKey)))
+          .hasMessageContaining("Original StartSession activation protection remains pending");
+
+      UUID activationRequestId = UUID.fromString((String) request.get("worldActivationRequestId"));
+      byte[][] sourceEvidenceBytes =
+          fixture
+              .dsl()
+              .fetch(
+                  "SELECT source_evidence FROM account_start_session_activation_protection_sources "
+                      + "ORDER BY account_publication_authorization_source_sort_key(source_key)")
+              .stream()
+              .map(row -> row.get("source_evidence", byte[].class))
+              .toArray(byte[][]::new);
+      byte[] evidence =
+          accountEvidence(
+              protectionId,
+              protectionFence,
+              acquiredAt,
+              malformed.requestBytes(),
+              bytes("{}"),
+              sourceEvidenceBytes);
+      byte[] result = activationResult(activationRequestId, malformedPreparingBytes, "COMMITTED");
+      assertSettlementInsertRejected(
+          fixture,
+          protectionId,
+          protectionFence,
+          activationRequestId,
+          evidence,
+          result,
+          "COMMITTED",
+          "V1004.2 must reject retained PREPARING evidence with " + malformedCounter);
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchCount(DSL.table("account_start_session_activation_protection_settlements")))
+          .isZero();
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .transaction()
+                      .executeWithoutResult(
+                          status ->
+                              fixture
+                                  .dsl()
+                                  .execute(
+                                      "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                                      sourceKey)))
+          .hasMessageContaining("Original StartSession activation protection remains pending");
+    }
+  }
+
+  @Test
+  void noncanonicalActivationRequestUuidCannotAcquireProtectionOrBlockSourceWriters()
+      throws Exception {
+    Fixture fixture = fixture("1004.1");
+    Flyway upgrade = activationFlyway(fixture.dataSource(), "1004.2");
+    assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
+    upgrade.validate();
+
+    CurrentnessCase valid = currentnessCase(fixture, Instant.now().plusSeconds(120));
+    Map<String, Object> request = readJson(valid.requestBytes());
+    String uppercaseActivationId =
+        UUID.fromString("abcdefab-cdef-4abc-8def-abcdefabcdef").toString().toUpperCase(Locale.ROOT);
+    request.put("worldActivationRequestId", uppercaseActivationId);
+    CurrentnessCase noncanonical =
+        new CurrentnessCase(
+            jsonBytes(request),
+            valid.operationIdentityBytes(),
+            valid.operationIdentityDigest(),
+            valid.ownerAttemptId(),
+            valid.expiryText());
+
+    assertThatThrownBy(() -> acquireProtection(fixture, noncanonical))
+        .as("activation request UUID spelling must match canonical PostgreSQL UUID text")
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining(
+            "Activation protection does not retain its exact canonical request fields")
+        .satisfies(
+            failure -> {
+              Throwable postgresFailure = failure;
+              while (postgresFailure.getCause() != null) {
+                postgresFailure = postgresFailure.getCause();
+              }
+              assertThat(postgresFailure)
+                  .isInstanceOfSatisfying(
+                      org.postgresql.util.PSQLException.class,
+                      sqlFailure -> assertThat(sqlFailure.getSQLState()).isEqualTo("23514"));
+            });
+    assertThat(fixture.dsl().fetchCount(DSL.table("account_start_session_activation_protections")))
+        .isZero();
+    assertThat(
+            fixture
+                .dsl()
+                .fetchCount(DSL.table("account_start_session_activation_protection_sources")))
+        .isZero();
+    String sourceKey =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT source_key FROM account_start_session_world_participation_sources "
+                    + "ORDER BY source_key LIMIT 1")
+            .get("source_key", String.class);
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                        sourceKey));
   }
 
   @Test

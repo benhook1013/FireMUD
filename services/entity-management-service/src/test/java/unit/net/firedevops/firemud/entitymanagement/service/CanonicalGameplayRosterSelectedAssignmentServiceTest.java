@@ -267,7 +267,7 @@ class CanonicalGameplayRosterSelectedAssignmentServiceTest {
   }
 
   @Test
-  void changedSnapshotOrActorAbsentFromItFailsBeforeReceiptRead() {
+  void actorAbsentFromExpectedSnapshotFailsBeforeReceiptRead() {
     CanonicalGameplayRosterOwnerEvidencePort ownerPort =
         mock(CanonicalGameplayRosterOwnerEvidencePort.class);
     CharacterRepository repository = mock(CharacterRepository.class);
