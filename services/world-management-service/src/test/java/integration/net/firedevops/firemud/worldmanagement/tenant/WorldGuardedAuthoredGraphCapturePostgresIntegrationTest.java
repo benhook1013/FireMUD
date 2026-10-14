@@ -66,10 +66,11 @@ import tools.jackson.databind.json.JsonMapper;
  * Bounded native upgrade from the literal d7c8f84 World/Saga parent. External source and Version
  * values are controlled; real World repositories retain them with all storage guards enabled. The
  * parent World row is legacy storage, not a Human frozen graph or canonical activation claim.
- * Positive component storage and the 40-migration endpoint are explicitly historical at 1007.1; the
- * retained schema-2 snapshot separately upgrades through the current default frontier. These
- * historical component cases do not qualify current Account permission or genuine Human authority.
- * Physical Docker execution with zero skips is required to qualify this definition.
+ * Positive component storage remains explicitly historical at 1007.1; the retained schema-2
+ * snapshot upgrades through the current default frontier. The guarded-store case also repeats its
+ * relevant denials at the current frontier. These component cases do not qualify current Account
+ * permission or genuine Human authority. Physical Docker execution with zero skips is required to
+ * qualify this definition.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -650,18 +651,15 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
     write.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     Path root = repositoryRoot();
+    String worldLocation =
+        "filesystem:"
+            + root.resolve("services/world-management-service/src/main/resources/db/migration");
+    String sagaLocation =
+        "filesystem:" + root.resolve("services/common-saga/src/main/resources/db/migration/saga");
     try {
       // Controlled permission-unverified component storage at the historical guarded frontier.
       // Later Account/APPLIED owners retain their default-current denial requirements.
-      historicalGuardedStage(
-              source,
-              schema,
-              "filesystem:"
-                  + root.resolve(
-                      "services/world-management-service/src/main/resources/db/migration"),
-              "filesystem:"
-                  + root.resolve("services/common-saga/src/main/resources/db/migration/saga"))
-          .migrate();
+      historicalGuardedStage(source, schema, worldLocation, sagaLocation).migrate();
       assertCanonicalFrozenMutationTriggerBindings(dsl, schema);
       var upstream = controlledSource();
       var intake =
@@ -1048,6 +1046,96 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
               dsl.fetch("SELECT to_jsonb(t)::text FROM world_topology_draft_commit t")
                   .getValues(0, String.class))
           .isEqualTo(rowsBefore);
+
+      // Historical storage proof above is retained as such. Repeat the actual naked-write,
+      // schema-2 capture, wrong-checkpoint capture, and missing-owner-history denials after the
+      // complete current World/Saga migration frontier.
+      Flyway currentFrontier = flyway(source, schema, worldLocation, sagaLocation);
+      currentFrontier.migrate();
+      currentFrontier.validate();
+      assertThat(currentFrontier.info().pending()).isEmpty();
+      // V1012 added nullable application_transaction_id to retained draft-commit rows. Capture a
+      // complete row-image baseline after that historical-to-current schema change so the
+      // following denials prove current-frontier atomicity without conflating migration metadata.
+      List<String> currentTopologyCommitRowsBefore =
+          dsl.fetch("SELECT to_jsonb(t)::text FROM world_topology_draft_commit t")
+              .getValues(0, String.class);
+      List<String> currentRegionRowsBefore =
+          dsl.fetch(
+                  "SELECT xmin::text || ':' || to_jsonb(r)::text FROM region r "
+                      + "WHERE tenant_id=? ORDER BY id",
+                  intake.localTenantKey())
+              .getValues(0, String.class);
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE region SET name='naked at current frontier' WHERE tenant_id=?",
+                      intake.localTenantKey()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("23514"));
+      assertThat(
+              dsl.fetch(
+                      "SELECT xmin::text || ':' || to_jsonb(r)::text FROM region r "
+                          + "WHERE tenant_id=? ORDER BY id",
+                      intake.localTenantKey())
+                  .getValues(0, String.class))
+          .isEqualTo(currentRegionRowsBefore);
+
+      assertThatThrownBy(() -> write.execute(status -> graphCapture.capture(capture)))
+          .isInstanceOf(WorldAuthoredGraphSnapshotRepository.MissingOwnerHistoryException.class)
+          .hasMessageContaining("retained V19 revision history");
+      assertThatThrownBy(
+              () ->
+                  insertCanonicalFrozenCandidate(
+                      dsl,
+                      plan,
+                      schemaTwoCapture,
+                      stored,
+                      mapper.writeValueAsString(schemaTwoCapture),
+                      identityJson,
+                      intakeJson))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("New canonical graph capture requires selected closure schema 4")
+          .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("23514"));
+
+      // The retained current DTO accepts only schema 3; its altered checkpoint is therefore
+      // rejected at the current schema-4 boundary before a schema-4 checkpoint comparison.
+      var currentWrongCheckpointCapture =
+          new WorldAuthoredGraphSnapshot.CaptureRequest(
+              capture.targetNamespace(),
+              capture.canonicalTenantId(),
+              capture.canonicalVersionId(),
+              capture.intakeRequestId(),
+              capture.publicationFence(),
+              capture.publicationRequestId(),
+              capture.requestDigest(),
+              capture.versionStateEpoch(),
+              capture.publishWorkflowId(),
+              capture.appliedCommitId() + "-current-mismatch",
+              capture.contentDigest(),
+              3,
+              capture.suppliedOwnedAffectedTuples());
+      assertThatThrownBy(
+              () ->
+                  insertCanonicalFrozenCandidate(
+                      dsl,
+                      plan,
+                      currentWrongCheckpointCapture,
+                      stored,
+                      mapper.writeValueAsString(currentWrongCheckpointCapture),
+                      identityJson,
+                      intakeJson))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("New canonical graph capture requires selected closure schema 4")
+          .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("23514"));
+      assertThat(
+              dsl.fetchSingle("SELECT count(*) FROM world_canonical_frozen_topology")
+                  .get(0, Long.class))
+          .isZero();
+      assertThat(
+              dsl.fetch("SELECT to_jsonb(t)::text FROM world_topology_draft_commit t")
+                  .getValues(0, String.class))
+          .isEqualTo(currentTopologyCommitRowsBefore);
     } finally {
       dsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
     }

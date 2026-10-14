@@ -578,11 +578,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
     String preparationInputDigest = "sha256:" + fixtureBindingSha256;
     byte[] associationResponseBytes =
         CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toFixtureResponse(gs).toByteArray();
-    String runtimeFlagsJson =
-        gameSessionRequest.runtimeFlagsJson() == null
-                || gameSessionRequest.runtimeFlagsJson().isBlank()
-            ? "{}"
-            : gameSessionRequest.runtimeFlagsJson();
+    String runtimeFlagsJson = descriptor.runtimeFlagsJson();
 
     WorldCanonicalInstanceAssociation.CanonicalIdentity identity =
         new WorldCanonicalInstanceAssociation.CanonicalIdentity(

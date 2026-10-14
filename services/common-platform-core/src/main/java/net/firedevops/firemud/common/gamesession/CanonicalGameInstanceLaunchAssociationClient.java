@@ -104,8 +104,15 @@ public final class CanonicalGameInstanceLaunchAssociationClient
             .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(peer, expectedLeafSha256))
             .getRunOwnedFixtureLaunchAssociation(
                 CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toFixtureRequest(request));
-    var result =
-        CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureResponse(request, response);
+    CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult result;
+    try {
+      result =
+          CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureResponse(
+              request, response);
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalStateException(
+          "Game Session returned invalid run-owned fixture owner evidence", invalid);
+    }
     if (!expectedLeafSha256.equals(
         result.fixturePolicyRequest().capability().gameSessionLeafSha256())) {
       throw new IllegalStateException(

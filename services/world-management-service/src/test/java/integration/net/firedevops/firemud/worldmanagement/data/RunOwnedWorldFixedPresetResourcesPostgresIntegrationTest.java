@@ -399,14 +399,16 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             .as("literal migration %s", artifact.getKey())
             .isEqualTo(artifact.getValue());
       }
-    assertThat(versions(dsl)).hasSize(76);
-    assertThat(versions(dsl).subList(34, 40))
-        .containsExactly("1003", "1004", "1005", "1006", "1007", "1007.1");
-    assertThat(versions(dsl).subList(40, 76)).containsExactlyElementsOf(remainingVersions());
     var configured =
         migration(dataSource("world_management_service"), "world_management_service", null);
     assertThat(configured.getConfiguration().isOutOfOrder()).isFalse();
     configured.validate();
+    int resolvedVersionedCount = resolvedVersionedMigrationCount(configured);
+    assertThat(versions(dsl)).hasSize(resolvedVersionedCount);
+    assertThat(versions(dsl).subList(34, 40))
+        .containsExactly("1003", "1004", "1005", "1006", "1007", "1007.1");
+    assertThat(versions(dsl).subList(40, resolvedVersionedCount))
+        .containsExactlyElementsOf(remainingVersions());
   }
 
   @Test
@@ -734,7 +736,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   @Test
-  void installed34ThroughParent40ToLatest76RetainsRowsXminAndStableLegacyUpdates()
+  void installed34ThroughParent40ToDefaultFrontierRetainsRowsXminAndStableLegacyUpdates()
       throws Exception {
     String schema = "world_fixture_upgrade_" + UUID.randomUUID().toString().replace("-", "");
     var source = dataSource(schema);
@@ -913,25 +915,28 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .get(0, Long.class))
           .isEqualTo(1L);
 
-      var rowsAt75 = new LinkedHashMap<>(allRows(connection));
-      rowsAt75.remove(HISTORY);
-      var historyAt75 = history(connection);
+      var retainedRowsAtV1042 = new LinkedHashMap<>(allRows(connection));
+      retainedRowsAtV1042.remove(HISTORY);
+      var historyAtV1042 = history(connection);
       var full = migration(source, schema, null);
       full.migrate();
       full.validate();
       assertThat(full.getConfiguration().isOutOfOrder()).isFalse();
-      assertThat(versions(connection)).hasSize(76);
-      assertThat(versions(connection).subList(40, 76))
+      int resolvedVersionedCount = resolvedVersionedMigrationCount(full);
+      assertThat(versions(connection)).hasSize(resolvedVersionedCount);
+      assertThat(versions(connection).subList(40, resolvedVersionedCount))
           .containsExactlyElementsOf(remainingVersions());
       assertThat(history(connection).subList(0, 40)).isEqualTo(parentHistory);
-      assertThat(history(connection).subList(0, 75)).isEqualTo(historyAt75);
+      assertThat(history(connection).subList(0, 75)).isEqualTo(historyAtV1042);
       for (var entry : originalColumns.entrySet())
         assertThat(retainedRows(connection, schema, entry.getKey(), entry.getValue()))
             .as("all original values and xmin for %s", entry.getKey())
             .containsAll(originalRows.get(entry.getKey()));
-      var rowsAt76 = new LinkedHashMap<>(allRows(connection));
-      rowsAt76.remove(HISTORY);
-      assertThat(rowsAt76).as("all retained row values and xmin across V1042").isEqualTo(rowsAt75);
+      var retainedRowsAtDefaultFrontier = new LinkedHashMap<>(allRows(connection));
+      retainedRowsAtDefaultFrontier.remove(HISTORY);
+      assertThat(retainedRowsAtDefaultFrontier)
+          .as("all retained row values and xmin from V1042 through the default frontier")
+          .isEqualTo(retainedRowsAtV1042);
       assertThat(sourceOwner.read("dev", intakeRequest)).contains(intake);
       assertThat(
               versionOwner.readByCanonicalVersion(
@@ -996,7 +1001,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       rowsAfterLegacyRollback.remove(HISTORY);
       assertThat(rowsAfterLegacyRollback)
           .as("all retained row values and xmin after legacy rollback")
-          .isEqualTo(rowsAt76);
+          .isEqualTo(retainedRowsAtDefaultFrontier);
       // No current Human protection is fabricated. Literal pre-extension legacy and owner
       // receipts are retained; a historical canonical Human association requires a separate donor.
     } finally {
@@ -1371,14 +1376,91 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertThat(result.zoneCount()).isEqualTo(1);
     assertThat(result.roomCount()).isEqualTo(2);
     assertThat(result.exitCount()).isEqualTo(2);
-    TransactionTemplate committedRead = new TransactionTemplate(transactionManager);
-    committedRead.setReadOnly(true);
-    committedRead.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
-    RunOwnedWorldFixedPresetResources.MaterializedFixedPreset committedResult =
-        committedRead.execute(
-            status ->
-                RunOwnedWorldFixedPresetResources.readCommitted(dsl, association, source, version));
-    assertThat(committedResult).isEqualTo(result);
+    var readbackRowsBefore = allRows(dsl);
+    assertFixedPresetReadbackMode(
+        "writable READ COMMITTED",
+        plan,
+        worldId,
+        privateKey,
+        result,
+        false,
+        TransactionDefinition.ISOLATION_READ_COMMITTED,
+        "read committed",
+        true,
+        readbackRowsBefore);
+    assertFixedPresetReadbackMode(
+        "read-only REPEATABLE READ",
+        plan,
+        worldId,
+        privateKey,
+        result,
+        true,
+        TransactionDefinition.ISOLATION_REPEATABLE_READ,
+        "repeatable read",
+        true,
+        readbackRowsBefore);
+    assertFixedPresetReadbackMode(
+        "read-only SERIALIZABLE",
+        plan,
+        worldId,
+        privateKey,
+        result,
+        true,
+        TransactionDefinition.ISOLATION_SERIALIZABLE,
+        "serializable",
+        true,
+        readbackRowsBefore);
+    assertFixedPresetReadbackMode(
+        "read-only READ COMMITTED",
+        plan,
+        worldId,
+        privateKey,
+        result,
+        true,
+        TransactionDefinition.ISOLATION_READ_COMMITTED,
+        "read committed",
+        false,
+        readbackRowsBefore);
+    assertFixedPresetReadbackMode(
+        "writable REPEATABLE READ",
+        plan,
+        worldId,
+        privateKey,
+        result,
+        false,
+        TransactionDefinition.ISOLATION_REPEATABLE_READ,
+        "repeatable read",
+        false,
+        readbackRowsBefore);
+    assertFixedPresetReadbackMode(
+        "writable SERIALIZABLE",
+        plan,
+        worldId,
+        privateKey,
+        result,
+        false,
+        TransactionDefinition.ISOLATION_SERIALIZABLE,
+        "serializable",
+        false,
+        readbackRowsBefore);
+    assertFixedPresetReadbackMode(
+        "writable READ UNCOMMITTED",
+        plan,
+        worldId,
+        privateKey,
+        result,
+        false,
+        TransactionDefinition.ISOLATION_READ_UNCOMMITTED,
+        "read uncommitted",
+        false,
+        readbackRowsBefore);
+    assertThat(RunOwnedWorldFixedPresetResources.readCommitted(dsl, plan, worldId, privateKey))
+        .as("standalone readback in PostgreSQL's implicit writable READ COMMITTED transaction")
+        .isEqualTo(result);
+    assertThat(allRows(dsl))
+        .as("no row or byte changes after standalone readback")
+        .isEqualTo(readbackRowsBefore);
+    assertNoPendingManifests(worldId);
     assertThat(
             scalarLong(
                 "SELECT count(*) FROM world_authored_topology_identity WHERE fixture_world_instance_id = ? "
@@ -1732,7 +1814,16 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   private static List<String> remainingVersions() {
-    return remainingVersionsThrough(1042);
+    List<String> versions = new ArrayList<>(remainingVersionsThrough(1042));
+    versions.add("1042.1");
+    versions.add("1042.2");
+    return List.copyOf(versions);
+  }
+
+  private static int resolvedVersionedMigrationCount(Flyway flyway) {
+    int count = 0;
+    for (var migration : flyway.info().all()) if (migration.getVersion() != null) count++;
+    return count;
   }
 
   private static List<String> remainingVersionsThrough(int latestWorldVersion) {
@@ -1828,6 +1919,58 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     TransactionTemplate transaction = new TransactionTemplate(transactionManager);
     transaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     return transaction;
+  }
+
+  private void assertFixedPresetReadbackMode(
+      String mode,
+      RunOwnedWorldFixedPresetResources.FixedPresetPlan plan,
+      long worldId,
+      long privateGameInstanceKey,
+      RunOwnedWorldFixedPresetResources.MaterializedFixedPreset expected,
+      boolean readOnly,
+      int isolationLevel,
+      String expectedIsolation,
+      boolean supported,
+      Map<String, List<String>> rowsBefore) {
+    var transaction = new TransactionTemplate(transactionManager);
+    transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    transaction.setIsolationLevel(isolationLevel);
+    transaction.setReadOnly(readOnly);
+    if (supported) {
+      RunOwnedWorldFixedPresetResources.MaterializedFixedPreset actual =
+          transaction.execute(
+              status ->
+                  readPresetInCurrentTransaction(
+                      plan, worldId, privateGameInstanceKey, readOnly, expectedIsolation));
+      assertThat(actual).as(mode).isEqualTo(expected);
+    } else {
+      assertSqlState(
+          () ->
+              transaction.execute(
+                  status ->
+                      readPresetInCurrentTransaction(
+                          plan, worldId, privateGameInstanceKey, readOnly, expectedIsolation)),
+          "23514",
+          "Run-owned fixed-preset readback requires an owner read transaction");
+    }
+    assertThat(allRows(dsl)).as("no row or byte changes after " + mode).isEqualTo(rowsBefore);
+    assertNoPendingManifests(worldId);
+  }
+
+  private RunOwnedWorldFixedPresetResources.MaterializedFixedPreset readPresetInCurrentTransaction(
+      RunOwnedWorldFixedPresetResources.FixedPresetPlan plan,
+      long worldId,
+      long privateGameInstanceKey,
+      boolean readOnly,
+      String expectedIsolation) {
+    var settings =
+        dsl.fetchSingle(
+            "SELECT current_setting('transaction_isolation'), "
+                + "current_setting('transaction_read_only')");
+    assertThat(settings.get(0, String.class)).isEqualTo(expectedIsolation);
+    assertThat(settings.get(1, String.class)).isEqualTo(readOnly ? "on" : "off");
+    return RunOwnedWorldFixedPresetResources.readCommitted(
+        dsl, plan, worldId, privateGameInstanceKey);
   }
 
   private void assertNoPendingManifests(long worldInstanceId) {
