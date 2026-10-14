@@ -553,6 +553,7 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       flyway(
               source,
               schema,
+              null,
               "filesystem:"
                   + root.resolve(
                       "services/world-management-service/src/main/resources/db/migration"),
