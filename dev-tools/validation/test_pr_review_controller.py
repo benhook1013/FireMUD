@@ -18,6 +18,7 @@ import time
 import unittest
 from collections.abc import Mapping
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from subprocess import CompletedProcess
 from types import SimpleNamespace
@@ -70,6 +71,7 @@ from pr_review.state import (
     ReviewAllocation,
     ReviewState,
     StackReconciliationDecision,
+    StateError,
     StateStore,
     SummaryFindingDisposition,
     observation_fingerprint,
@@ -460,1468 +462,196 @@ class ControllerTests(unittest.TestCase):
         independent_cli = select_review_target(state, Channel.CLI, [1], {1: []})
         self.assertEqual(independent_cli.target, 1)
 
-    def test_period_reset_uses_stable_checkpoint_and_separate_current_head_then_is_idempotent(self):
-        checkpoint = self.allocation_evidence(
-            head=HEAD_1,
-            checkpoint="cli-checkpoint-1",
-            source_run_id="cli-run-1",
-        )
-        checkpoint["channel"] = "cli"
-        controller = self.make(
-            {1: pr(1, HEAD_2)},
-            {(1, "cli"): [checkpoint]},
-            heads={"feature-1": HEAD_2, "develop": BASE},
-        )
+    def local_period_controller(self, channel="cli"):
+        controller = self.make({1: pr(1, HEAD_2)}, {}, heads={}, sqlite=True)
         controller.set_stack([1])
+        records = SqliteReviewRecords(controller.store.path)
+        records.bootstrap()
+        records.start_attempt(attempt_id="old", source_pr=1, channel=channel, candidate_sha=HEAD_1,
+                              started_at="2026-10-01T00:00:00Z")
+        records.complete_attempt_run("old", finish={"state": "completed", "finished_at": "2026-10-01T00:00:01Z",
+            "checkpoint_id": "old-checkpoint", "provider_review_id": "99" if channel == "hosted" else None},
+            run={"run_id": "old", "source_pr": 1, "channel": channel, "source_head": HEAD_1,
+                 "findings": [FindingObservation("finding:old", "Old finding")],
+                 "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z"})
+        records.start_attempt(attempt_id="active", source_pr=1, channel=channel, candidate_sha=HEAD_1,
+                              started_at="2026-10-01T00:01:00Z")
+        return controller, records
 
-        result = controller.decide_period_reset(
-            pr=1,
-            channel="cli",
-            head=HEAD_2,
-            checkpoint="cli-checkpoint-1",
-            actor="operator@example.invalid",
-            reason="begin a new CLI discovery period",
-        )
+    def local_period_reset(self, controller, channel="cli", **changes):
+        inputs = {"pr": 1, "channel": channel, "head": HEAD_3, "current_history_baseline": True,
+                  "baseline_id": "local-period", "actor": "operator", "reason": "authorized renewal"}
+        inputs.update(changes)
+        return controller.decide_period_reset(**inputs)
 
-        self.assertEqual(result["status"], "recorded")
-        period = result["period"]
-        self.assertEqual(period["reviewed_head"], HEAD_1)
-        self.assertEqual(period["current_head"], HEAD_2)
-        self.assertEqual(period["actor"], "operator@example.invalid")
-        self.assertEqual(period["baseline_checkpoints"], ["cli-checkpoint-1"])
-        self.assertEqual(period["baseline_source_run_ids"], ["cli-run-1"])
-        self.assertEqual(controller._state().allocations, {})
-        self.assertEqual(
-            ReviewController._default_period_progress(
-                controller._state(), 1, Channel.CLI, [checkpoint]
-            )["used"],
-            0,
-        )
+    def test_local_period_reset_is_transactional_without_external_calls_and_preserves_records(self):
+        for channel in ("cli", "hosted"):
+            with self.subTest(channel=channel):
+                controller, records = self.local_period_controller(channel)
+                before = records.history(1, include_display=False)
+                original_history = records.history
+                transactions = []
+                def history_in_transaction(*args, transactions=transactions, original_history=original_history, **kwargs):
+                    connection = kwargs["_connection"]
+                    self.assertTrue(connection.in_transaction)
+                    self.assertEqual(connection.execute("SELECT count(*) FROM review_runs").fetchone()[0], 1)
+                    transactions.append(True)
+                    return original_history(*args, **kwargs)
+                with (patch.object(SqliteReviewRecords, "history", side_effect=history_in_transaction),
+                      patch.object(controller, "_require_github", side_effect=AssertionError("external call")),
+                      patch.object(controller, "_cached_history", side_effect=AssertionError("external call"))):
+                    result = self.local_period_reset(controller, channel)
+                self.assertEqual(transactions, [True])
+                self.assertEqual(result["period"]["current_head"], HEAD_3)
+                self.assertIsNone(result["period"]["current_base_tip"])
+                self.assertIsNone(result["period"]["current_parent_identity"])
+                self.assertEqual(result["period"]["baseline_mode"], "native_history")
+                self.assertIn("old", result["period"]["baseline_source_run_ids"])
+                self.assertNotIn("active", result["period"]["baseline_source_run_ids"])
+                self.assertEqual(records.history(1, include_display=False), before)
 
-        retry = controller.decide_period_reset(
-            pr=1,
-            channel="cli",
-            head=HEAD_2,
-            checkpoint="cli-checkpoint-1",
-            actor="operator@example.invalid",
-            reason="begin a new CLI discovery period",
-        )
-        self.assertEqual(retry["status"], "already_recorded")
-        self.assertEqual(retry["period"]["period_id"], period["period_id"])
+    def test_local_period_replay_has_no_clock_or_history_and_changed_inputs_refuse(self):
+        controller, _ = self.local_period_controller()
+        first = self.local_period_reset(controller)
+        with (patch("pr_review.controller.datetime", side_effect=AssertionError("new clock")),
+              patch.object(SqliteReviewRecords, "history", side_effect=AssertionError("new snapshot"))):
+            replay = self.local_period_reset(controller)
+            self.assertEqual(replay["period"], first["period"])
+            self.assertEqual(replay["status"], "already_recorded")
+            for changes in ({"head": HEAD_2}, {"reason": "changed"}, {"actor": "other"}, {"replace_stop": True}):
+                with self.subTest(changes=changes), self.assertRaisesRegex(ControllerError, "different reset inputs"):
+                    self.local_period_reset(controller, **changes)
 
-    def test_historical_period_reset_replays_keep_saved_bounds_and_reject_changed_inputs(self):
-        for channel, saved_bounds in (("hosted", (2, 2, 1)), ("cli", (0, 6, 3))):
-            for baseline_mode in ("checkpoint", "current_history"):
-                with self.subTest(channel=channel, baseline_mode=baseline_mode):
-                    if baseline_mode == "checkpoint":
-                        controller, _provider, retained = self.parent_moved_period_reset_controller(channel)
-                        baseline = {"checkpoint": retained["checkpoint"]}
-                    else:
-                        controller, _provider, _history = self.current_history_period_reset_controller(channel)
-                        baseline = {
-                            "current_history_baseline": True,
-                            "baseline_id": f"historical-{channel}-replay",
-                        }
-                    inputs = {
-                        "pr": 2,
-                        "channel": channel,
-                        "head": HEAD_3,
-                        **baseline,
-                        "actor": "operator@example.invalid",
-                        "reason": f"replay historical {channel} period",
-                    }
-                    initial = controller.decide_period_reset(**inputs)
-                    historical = dataclasses.replace(
-                        controller._state().review_period_decisions[-1],
-                        minimum_completed=saved_bounds[0],
-                        maximum_completed=saved_bounds[1],
-                        zero_useful_required=saved_bounds[2],
-                    )
-                    controller.store.update(
-                        lambda state, saved=historical: dataclasses.replace(
-                            state,
-                            review_period_decisions=tuple(
-                                saved if item.period_id == saved.period_id else item
-                                for item in state.review_period_decisions
-                            ),
-                        )
-                    )
+    def test_legacy_current_history_key_replay_returns_original_without_restarting_period(self):
+        controller, _ = self.local_period_controller()
+        self.local_period_reset(controller)
+        period = controller._state().review_period_decisions[-1]
+        legacy = dataclasses.replace(period, baseline_mode="current_history", completion_cutoff=None,
+            current_base_ref="develop", current_base_tip=BASE, current_parent_identity="develop",
+            current_parent_head=BASE, current_merge_base=BASE, current_patch_id="legacy-patch")
+        controller.store.update(lambda state: dataclasses.replace(state, review_period_decisions=(legacy,)))
+        with (patch("pr_review.controller.datetime", side_effect=AssertionError("new clock")),
+              patch.object(SqliteReviewRecords, "history", side_effect=AssertionError("new snapshot"))):
+            replay = self.local_period_reset(controller)
+        self.assertEqual(replay["status"], "already_recorded")
+        self.assertEqual(replay["period"], legacy.to_dict())
+        self.assertEqual(controller._state().review_period_decisions, (legacy,))
+        result = self.allocation_evidence(checkpoint="legacy-new", source_run_id="legacy-new")
+        self.assertEqual(ReviewController._default_period_progress(controller._state(), 1, Channel.CLI, [result])["used"], 1)
 
-                    replay = controller.decide_period_reset(**inputs)
+    def test_local_period_writer_fence_and_logical_roundtrip(self):
+        controller, _ = self.local_period_controller()
+        self.local_period_reset(controller)
+        before = controller.store.path.read_bytes()
+        old_writer = SqliteStateStore(controller.store.path, writer_build=10)
+        with self.assertRaisesRegex(StateError, "writer build 11"):
+            old_writer.update(lambda state: state)
+        self.assertEqual(controller.store.path.read_bytes(), before)
+        state = controller._state()
+        self.assertEqual(ReviewState.from_dict(state.to_dict()), state)
 
-                    self.assertEqual(replay["status"], "already_recorded")
-                    self.assertEqual(replay["period"], historical.to_dict())
-                    self.assertEqual(replay["period"]["period_id"], initial["period"]["period_id"])
-                    with self.assertRaisesRegex(ControllerError, "different reset inputs"):
-                        controller.decide_period_reset(**{**inputs, "actor": "another@example.invalid"})
-                    with self.assertRaisesRegex(ControllerError, "different reset inputs"):
-                        controller.decide_period_reset(**{**inputs, "reason": "changed decision reason"})
-
-    def current_history_period_reset_controller(self, channel="cli", *, sqlite=False):
-        controller, provider, _retained = self.parent_moved_period_reset_controller(channel, sqlite=sqlite)
-        legacy = {
-            "pr": 2,
-            "channel": channel,
-            "head": HEAD_3,
-            "child_head": HEAD_3,
-            "checkpoint": None,
-            "source_run_id": f"{channel}-native-run-without-checkpoint",
-            "completed": True,
-            "attributable": True,
-            "anchored": False,
-            "accepted": 2,
-            "raw": 3,
-            "correction": False,
-            "non_counting": False,
-        }
-        unassigned = {
-            "pr": 2,
-            "channel": channel,
-            "head": HEAD_3,
-            "checkpoint": None,
-            "source_run_id": None,
-            "completed": False,
-            "attributable": False,
-            "anchored": False,
-            "reason": "retained historical result has no stable public checkpoint",
-        }
-        marker = {
-            "pr": 2,
-            "channel": channel,
-            "head": HEAD_3,
-            "checkpoint": "scope-timeline:complete",
-            "kind": "scope_timeline",
-            "scope_timeline": True,
-            "scope_timeline_complete": True,
-            "completed": False,
-            "attributable": False,
-            "anchored": False,
-            "non_counting": True,
-        }
-        provider.backing[(2, channel)] = [legacy, unassigned, marker]
-        return controller, provider, [legacy, unassigned, marker]
-
-    def test_current_history_period_baseline_preserves_unanchored_history_and_counts_new_results(self):
-        controller, provider, raw_history = self.current_history_period_reset_controller()
-        original_state = controller._state()
-
-        result = controller.decide_period_reset(
-            pr=2,
-            channel="cli",
-            head=HEAD_3,
-            current_history_baseline=True,
-            baseline_id="successor-cli-reset-1",
-            actor="operator@example.invalid",
-            reason="start a future-only CLI budget period",
-        )
-
-        self.assertEqual(result["status"], "recorded")
-        period_data = result["period"]
-        self.assertEqual(period_data["baseline_mode"], "current_history")
-        self.assertEqual(period_data["baseline_id"], "successor-cli-reset-1")
-        self.assertEqual(period_data["baseline_observation_count"], len(raw_history))
-        self.assertEqual(period_data["baseline_observation_fingerprints"], [observation_fingerprint(item) for item in raw_history])
-        self.assertEqual(period_data["baseline_source_run_ids"], ["cli-native-run-without-checkpoint"])
-        self.assertNotIn("checkpoint", period_data)
-        self.assertNotIn("reviewed_head", period_data)
-        self.assertEqual(provider.backing[(2, "cli")], raw_history)
-        self.assertEqual(controller._state().ordered_prs, original_state.ordered_prs)
-        self.assertEqual(controller._state().routes, original_state.routes)
-
-        report = controller.status()
-        self.assertEqual(report["prs"][1]["reconciliation"], "PARENT_MOVED")
-        self.assertEqual(report["prs"][1]["review_progress"]["cli"]["period"]["completed"], 0)
-        self.assertEqual(provider.backing[(2, "cli")], raw_history)
-
-        retry = controller.decide_period_reset(
-            pr=2,
-            channel="cli",
-            head=HEAD_3,
-            current_history_baseline=True,
-            baseline_id="successor-cli-reset-1",
-            actor="operator@example.invalid",
-            reason="start a future-only CLI budget period",
-        )
-        self.assertEqual(retry["status"], "already_recorded")
-        self.assertEqual(retry["period"]["period_id"], result["period"]["period_id"])
-
-        new_result = self.review_evidence(controller, 2, "cli", "future-valid-checkpoint")
-        new_result.update(source_run_id="future-valid-run", accepted=0, raw=0, corrected_state=True)
-        provider.backing[(2, "cli")].append(new_result)
-        report = controller.status()
-        self.assertEqual(report["prs"][1]["review_progress"]["cli"]["period"]["completed"], 1)
-        with self.assertRaisesRegex(ControllerError, "different reset inputs"):
-            controller.decide_period_reset(
-                pr=2,
-                channel="cli",
-                head=HEAD_3,
-                current_history_baseline=True,
-                baseline_id="successor-cli-reset-1",
-                actor="operator@example.invalid",
-                reason="start a future-only CLI budget period",
-            )
-
-        second = controller.decide_period_reset(
-            pr=2,
-            channel="cli",
-            head=HEAD_3,
-            current_history_baseline=True,
-            baseline_id="successor-cli-reset-2",
-            actor="operator@example.invalid",
-            reason="explicitly start another future-only CLI period",
-        )
-        self.assertEqual(second["status"], "recorded")
-        self.assertNotEqual(second["period"]["period_id"], result["period"]["period_id"])
-        self.assertEqual(controller._state().review_period_decisions[-1].baseline_id, "successor-cli-reset-2")
-
-    def test_current_history_period_excludes_raw_no_source_id_rows_at_actual_admission(self):
-        controller, provider, _retained = self.current_history_period_reset_controller()
-        old_results = [
-            self.allocation_evidence(
-                number=2,
-                head=HEAD_3,
-                checkpoint=f"legacy-without-source-id-{index}",
-                accepted=1,
-                channel="cli",
-            )
-            for index in range(6)
-        ]
-        complete_timeline = {
-            "pr": 2,
-            "channel": "cli",
-            "head": HEAD_3,
-            "checkpoint": "scope-timeline:complete",
-            "kind": "scope_timeline",
-            "scope_timeline": True,
-            "scope_timeline_complete": True,
-            "completed": False,
-            "attributable": False,
-            "anchored": False,
-            "non_counting": True,
-        }
-        provider.backing[(2, "cli")] = [*old_results, complete_timeline]
-
-        controller.decide_period_reset(
-            pr=2,
-            channel="cli",
-            head=HEAD_3,
-            current_history_baseline=True,
-            baseline_id="raw-history-no-source-ids",
-            actor="operator@example.invalid",
-            reason="keep old no-source-ID observations outside the new counters",
-        )
-
-        self.assertEqual(
-            ReviewController._default_period_progress(controller._state(), 2, Channel.CLI, old_results)["used"], 0
-        )
-        admissions = []
-        controller._admit_review(2, "cli", lambda: admissions.append("before-new-result"))
-        self.assertEqual(admissions, ["before-new-result"])
-
-        new_result = self.review_evidence(controller, 2, "cli", "first-new-attributable-result")
-        new_result.update(source_run_id="first-new-run", accepted=0, raw=0)
-        provider.backing[(2, "cli")].insert(0, new_result)
-        progress = ReviewController._default_period_progress(
-            controller._state(), 2, Channel.CLI, provider.backing[(2, "cli")]
-        )
+    def test_local_period_completion_cutoff_filters_budget_and_taper_but_preserves_active(self):
+        controller, _ = self.local_period_controller()
+        self.local_period_reset(controller)
+        period = controller._state().review_period_decisions[-1]
+        cutoff = hosted.parse_timestamp(period.completion_cutoff)
+        after = (cutoff + timedelta(seconds=1)).isoformat()
+        before = (cutoff - timedelta(seconds=1)).isoformat()
+        rows = [self.allocation_evidence(checkpoint="published-old", source_run_id="old", verified_completed_at=after),
+                self.allocation_evidence(checkpoint="late-historical", source_run_id="late", verified_completed_at=before),
+                self.allocation_evidence(checkpoint="unknown", source_run_id="unknown", observed_at=after),
+                self.allocation_evidence(checkpoint="new", source_run_id="active", verified_completed_at=after)]
+        progress = ReviewController._default_period_progress(controller._state(), 1, Channel.CLI, rows)
         self.assertEqual(progress["used"], 1)
-        controller._admit_review(2, "cli", lambda: admissions.append("after-new-result"))
-        self.assertEqual(admissions, ["before-new-result", "after-new-result"])
+        self.assertEqual([item.source_run_id for item in progress["taper_history"]], ["active"])
+        active = {"pr": 1, "channel": "cli", "head": HEAD_1, "attempt_id": "active", "checkpoint": "trigger:active", "active_review": True}
+        self.assertEqual(ReviewController._default_period_progress(controller._state(), 1, Channel.CLI, [active])["in_flight"], 1)
+        completed = ReviewController._default_period_progress(controller._state(), 1, Channel.CLI, [active, rows[-1]])
+        self.assertEqual(completed["used"], 1)
+        self.assertEqual(completed["in_flight"], 0)
+        duplicate = ReviewController._default_period_progress(controller._state(), 1, Channel.CLI, [rows[-1], rows[-1]])
+        self.assertEqual(duplicate["used"], 1)
 
-    def test_live_completed_hosted_response_late_checkpoint_remains_baselined(self):
-        with tempfile.TemporaryDirectory() as directory:
-            common = Path(directory) / "git-common"
-            provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
-
-            @contextmanager
-            def reset_lock(_pr, _channel):
-                yield
-
-            provider.review_period_reset_lock = reset_lock
-            controller = ReviewController(
-                store=StateStore(Path(directory) / "state.json"),
-                github=FakeGitHub({1: pr(1, HEAD_1)}),
-                git=FakeGit({"develop": BASE, "feature-1": HEAD_1}),
-                evidence=provider, repository="owner/repo",
-            )
-            provider.state_store = controller.store
-            controller.set_stack([1])
-            anchor = {"pr": 1, "child_head": HEAD_1, "parent_identity": "develop",
-                      "parent_head": BASE, "merge_base": BASE, "patch_id": "patch-cccc"}
-            record = {
-                "schema_version": 2, "status": "posted", "repository": "owner/repo",
-                "pr_number": 1, "head_sha": HEAD_1, "anchor": anchor,
-                "trigger": {"id": 10, "created_at": "2026-10-12T00:00:00Z",
-                            "url": "https://example.test/comments/10", "type": "full", "command": hosted.FULL_COMMAND},
-            }
-            trigger = {"databaseId": 10, "author": {"login": "maintainer"},
-                       "body": hosted.FULL_COMMAND, "createdAt": record["trigger"]["created_at"],
-                       "url": record["trigger"]["url"]}
-            review = {"databaseId": 55, "author": {"login": "coderabbitai[bot]"},
-                      "body": f"<!-- walkthrough_start -->\nReviewed {HEAD_1}",
-                      "state": "COMMENTED", "submittedAt": "2026-10-12T00:02:00Z", "commit": {"oid": HEAD_1}}
-            pull = {"number": 1, "baseRefName": "develop", "baseRefOid": BASE,
-                    "headRefName": "feature-1", "headRefOid": HEAD_1, "changedFiles": 1,
-                    "mergeable": "MERGEABLE", "headRepository": {"nameWithOwner": "owner/repo"},
-                    "comments": {"nodes": [trigger]}, "reviews": {"nodes": [review]}, "reviewThreads": {"nodes": []}}
-            payload = {"data": {"repository": {"pullRequest": pull}}}
-            path = hosted.default_trigger_record_path("owner/repo", 1, common)
-            path.parent.mkdir(parents=True)
-            path.write_text(json.dumps(record), encoding="utf-8")
-
-            def checkpoint(comment_id, review_id, created):
-                return {"databaseId": comment_id, "author": {"login": "maintainer"},
-                        "body": f"Hosted: 0 found / 0 accepted · `{HEAD_1}` · 1 files\n<!-- firemud-hosted-review: {review_id} -->",
-                        "createdAt": created, "updatedAt": created}
-
-            with (
-                patch.object(github, "fetch_pull_request", return_value=payload),
-                patch.object(hosted, "_git_common_dir", return_value=common),
-                patch.object(evidence, "git_common_dir", return_value=common),
-            ):
-                before = provider.admission_history(1, "hosted")
-                self.assertTrue(any(row.get("checkpoint") == "trigger-uncheckpointed:55" for row in before))
-                result = controller.decide_period_reset(
-                    pr=1, channel="hosted", head=HEAD_1, current_history_baseline=True,
-                    baseline_id="late-hosted-checkpoint", actor="operator", reason="new future-only period",
-                )
-                self.assertIn("hosted-review:55", result["period"]["baseline_source_run_ids"])
-                pull["comments"]["nodes"].append(checkpoint(12, 55, "2026-10-12T00:03:00Z"))
-                late = provider.admission_history(1, "hosted")
-                published = next(row for row in late if row.get("checkpoint") == "12")
-                self.assertTrue(published["completed"] and published["attributable"] and published["anchored"])
-                self.assertEqual(published["source_run_id"], "hosted-review:55")
-                progress = controller._default_period_progress(controller._state(), 1, Channel.HOSTED, late)
-                self.assertEqual(progress["used"], 0)
-                self.assertEqual(progress["taper_history"], [])
-                admissions = []
-                controller._admit_review(1, "hosted", lambda: admissions.append("after-late-checkpoint"))
-
-                # A second actual request/response at the same head receives its own public checkpoint.
-                archived = path.parent / "trigger-10.json"
-                archived.write_text(json.dumps(record), encoding="utf-8")
-                record["trigger"] = {**record["trigger"], "id": 20,
-                                     "created_at": "2026-10-12T00:04:00Z", "url": "https://example.test/comments/20"}
-                path.write_text(json.dumps(record), encoding="utf-8")
-                pull["comments"]["nodes"].extend([
-                    {**trigger, "databaseId": 20, "createdAt": record["trigger"]["created_at"], "url": record["trigger"]["url"]},
-                    checkpoint(22, 65, "2026-10-12T00:07:00Z"),
-                ])
-                pull["reviews"]["nodes"].append({**review, "databaseId": 65, "submittedAt": "2026-10-12T00:06:00Z"})
-                fresh = provider.admission_history(1, "hosted")
-                self.assertTrue(next(row for row in fresh if row.get("checkpoint") == "22")["completed"])
-                progress = controller._default_period_progress(controller._state(), 1, Channel.HOSTED, fresh)
-                self.assertEqual(progress["used"], 1)
-                self.assertEqual([row.checkpoint for row in progress["taper_history"]], ["22"])
-                controller._admit_review(1, "hosted", lambda: admissions.append("after-new-response"))
-                self.assertEqual(admissions, ["after-late-checkpoint", "after-new-response"])
-
-    def test_live_unbound_hosted_records_are_fingerprinted_and_same_baseline_id_conflicts(self):
-        with tempfile.TemporaryDirectory() as directory:
-            records = SimpleNamespace(history=Mock(return_value={
-                "attempts": [{"attempt_id": "native-unbound", "channel": "hosted", "status": "completed",
-                              "provider_review_id": "201", "checkpoint_id": None},
-                             {"attempt_id": "native-archived-only", "channel": "hosted", "status": "completed",
-                              "provider_review_id": "401", "checkpoint_id": None}],
-                "provider_origins": [],
-            }))
-            provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
-
-            @contextmanager
-            def reset_lock(_pr, _channel):
-                yield
-
-            provider.review_period_reset_lock = reset_lock
-            provider.repository_cli_lock_status = lambda: "clear"
-            controller = ReviewController(
-                store=StateStore(Path(directory) / "state.json"),
-                github=FakeGitHub({1: pr(1, HEAD_1)}),
-                git=FakeGit({"develop": BASE, "feature-1": HEAD_1}),
-                evidence=provider,
-                repository="owner/repo",
-            )
-            provider.state_store = controller.store
-            controller.set_stack([1])
-
-            def payload(comment_body="Legacy CodeRabbit comment without a modern checkpoint binding", inline_body="Old inline finding"):
-                return {
-                    "data": {
-                        "repository": {
-                            "pullRequest": {
-                                "number": 1,
-                                "baseRefName": "develop",
-                                "baseRefOid": BASE,
-                                "headRefName": "feature-1",
-                                "headRefOid": HEAD_1,
-                                "changedFiles": 1,
-                                "mergeable": "MERGEABLE",
-                                "headRepository": {"nameWithOwner": "owner/repo"},
-                                "comments": {
-                                    "nodes": [
-                                        {
-                                            "databaseId": 101,
-                                            "author": {"login": "maintainer"},
-                                            "body": f"Hosted: 1 found / 1 accepted · `{HEAD_1[:12]}` · 1 files",
-                                            "createdAt": "2026-10-12T00:00:00Z",
-                                            "updatedAt": "2026-10-12T00:00:00Z",
-                                        },
-                                        {
-                                            "databaseId": 102,
-                                            "author": {"login": "coderabbitai[bot]"},
-                                            "body": comment_body,
-                                            "createdAt": "2026-10-12T00:01:00Z",
-                                            "updatedAt": "2026-10-12T00:01:00Z",
-                                        },
-                                    ]
-                                },
-                                "reviews": {
-                                    "nodes": [
-                                        {
-                                            "databaseId": 201,
-                                            "author": {"login": "coderabbitai[bot]"},
-                                            "body": "Legacy CodeRabbit review without a modern trigger binding",
-                                            "state": "COMMENTED",
-                                            "submittedAt": "2026-10-12T00:02:00Z",
-                                            "commit": {"oid": HEAD_1},
-                                        }
-                                    ]
-                                },
-                                "reviewThreads": {"nodes": [{
-                                    "id": "PRRT_old", "isResolved": True, "isOutdated": True,
-                                    "path": "old.py", "line": 1,
-                                    "comments": {"nodes": [{"id": "PRRC_old", "databaseId": 301,
-                                        "author": {"login": "coderabbitai[bot]"}, "body": inline_body,
-                                        "createdAt": "2026-10-12T00:02:00Z",
-                                        "pullRequestReview": {"databaseId": 201}}]},
-                                }]},
-                            }
-                        }
-                    }
-                }
-
-            payloads = [payload(), payload("Changed retained CodeRabbit comment"), payload(), payload(),
-                        payload(), payload(), payload(inline_body="Changed retained inline finding")]
-
-            def fetch_payload(*_args, **_kwargs):
-                return payloads.pop(0)
-
-            def snapshot_digest(history):
-                fingerprints = [observation_fingerprint(item) for item in history]
-                encoded = json.dumps(fingerprints, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
-                return hashlib.sha256(encoded).hexdigest()
-
-            with (
-                patch.object(github, "fetch_pull_request", side_effect=fetch_payload),
-                patch.object(hosted, "_git_common_dir", return_value=Path(directory) / "git-common"),
-                patch.object(hosted, "current_trigger_record_paths", return_value=[]),
-                patch.object(provider, "_complete_trigger_paths", return_value=[]),
-            ):
-                initial_history = provider.period_reset_history(1, "hosted")
-                changed_history = provider.period_reset_history(1, "hosted")
-
-                initial_records = {
-                    item["provider_id"]: item["period_baseline_source_fingerprint"]
-                    for item in initial_history
-                    if item.get("kind") == "retained_public_provider_record"
-                }
-                changed_records = {
-                    item["provider_id"]: item["period_baseline_source_fingerprint"]
-                    for item in changed_history
-                    if item.get("kind") == "retained_public_provider_record"
-                }
-                self.assertEqual(set(initial_records), {101, 102, 201, 301, "PRRT_old"})
-                self.assertTrue(any(item.get("kind") == "retained_native_attempt" for item in initial_history))
-                self.assertEqual(initial_records[101], changed_records[101])
-                self.assertNotEqual(initial_records[102], changed_records[102])
-                self.assertEqual(initial_records[201], changed_records[201])
-                self.assertNotEqual(snapshot_digest(initial_history), snapshot_digest(changed_history))
-                self.assertFalse(any(item.get("checkpoint") == "101" for item in initial_history))
-
-                admissions = []
-                controller._admit_review(1, "hosted", lambda: admissions.append("ordinary-before-reset"))
-
-                result = controller.decide_period_reset(
-                    pr=1,
-                    channel="hosted",
-                    head=HEAD_1,
-                    current_history_baseline=True,
-                    baseline_id="live-unbound-hosted-baseline",
-                    actor="operator@example.invalid",
-                    reason="start a future-only Hosted period",
-                )
-                controller._admit_review(1, "hosted", lambda: admissions.append("ordinary-after-reset"))
-                self.assertEqual(admissions, ["ordinary-before-reset", "ordinary-after-reset"])
-                self.assertIn("native-unbound", result["period"]["baseline_source_run_ids"])
-                self.assertIn("hosted-review:201", result["period"]["baseline_source_run_ids"])
-                self.assertIn("hosted-review:401", result["period"]["baseline_source_run_ids"])
-                self.assertIn("hosted-review:102", result["period"]["baseline_source_run_ids"])
-                self.assertNotIn("hosted-review:101", result["period"]["baseline_source_run_ids"])
-                repeated = controller.decide_period_reset(
-                    pr=1,
-                    channel="hosted",
-                    head=HEAD_1,
-                    current_history_baseline=True,
-                    baseline_id="live-unbound-hosted-baseline",
-                    actor="operator@example.invalid",
-                    reason="start a future-only Hosted period",
-                )
-                self.assertEqual(repeated["status"], "already_recorded")
-                self.assertEqual(repeated["period"]["period_id"], result["period"]["period_id"])
-                with self.assertRaisesRegex(ControllerError, "different reset inputs"):
-                    controller.decide_period_reset(
-                        pr=1,
-                        channel="hosted",
-                        head=HEAD_1,
-                        current_history_baseline=True,
-                        baseline_id="live-unbound-hosted-baseline",
-                        actor="operator@example.invalid",
-                        reason="start a future-only Hosted period",
-                    )
-
-    def test_current_history_period_baseline_refuses_incomplete_conflicting_and_mismatched_inputs(self):
-        controller, provider, _raw_history = self.current_history_period_reset_controller()
-        provider.backing[(2, "cli")][-1]["scope_timeline_complete"] = False
-        original = controller._state()
-        with self.assertRaisesRegex(ControllerError, "complete retained provider history"):
-            controller.decide_period_reset(
-                pr=2,
-                channel="cli",
-                head=HEAD_3,
-                current_history_baseline=True,
-                baseline_id="incomplete-history",
-                actor="operator@example.invalid",
-                reason="incomplete snapshots cannot be baselined",
-            )
-        self.assertEqual(controller._state(), original)
-
-        controller, provider, _raw_history = self.current_history_period_reset_controller()
-        provider.backing[(2, "cli")].insert(
-            1,
-            {
-                "pr": 2,
-                "channel": "cli",
-                "head": HEAD_3,
-                "checkpoint": "pending-capture:cli-run-pending",
-                "completed": False,
-                "attributable": False,
-                "anchored": False,
-            },
-        )
-        original = controller._state()
-        with self.assertRaisesRegex(ControllerError, "capture lacks its checkpoint"):
-            controller.decide_period_reset(
-                pr=2,
-                channel="cli",
-                head=HEAD_3,
-                current_history_baseline=True,
-                baseline_id="pending-capture-history",
-                actor="operator@example.invalid",
-                reason="pending captures remain held",
-            )
-        self.assertEqual(controller._state(), original)
-
-        controller, provider, _raw_history = self.current_history_period_reset_controller()
-        original = controller._state()
-        with (
-            provider.review_activity_gate,
-            self.assertRaisesRegex(ControllerError, "provider admission or execution is active"),
-        ):
-            controller.decide_period_reset(
-                pr=2,
-                channel="cli",
-                head=HEAD_3,
-                current_history_baseline=True,
-                baseline_id="active-provider",
-                actor="operator@example.invalid",
-                reason="active provider work must remain held",
-            )
-        self.assertEqual(controller._state(), original)
-
-    def test_current_history_reset_is_available_for_hosted_and_cli_on_parent_moved_heads(self):
-        for channel in ("hosted", "cli"):
-            with self.subTest(channel=channel):
-                controller, _provider, _raw_history = self.current_history_period_reset_controller(channel)
-                result = controller.decide_period_reset(
-                    pr=2,
-                    channel=channel,
-                    head=HEAD_3,
-                    current_history_baseline=True,
-                    baseline_id=f"successor-{channel}-reset-1",
-                    actor="operator@example.invalid",
-                    reason=f"start a future-only {channel} period",
-                )
-                self.assertEqual(result["status"], "recorded")
-                self.assertEqual(
-                    (
-                        result["period"]["minimum_completed"],
-                        result["period"]["maximum_completed"],
-                        result["period"]["zero_useful_required"],
-                    ),
-                    (2, 3, 1) if channel == "hosted" else (3, 6, 3),
-                )
-                self.assertEqual(result["period"]["baseline_mode"], "current_history")
-                self.assertNotIn("reviewed_head", result["period"])
-                self.assertEqual(controller.status()["prs"][1]["reconciliation"], "PARENT_MOVED")
-
-        controller, provider, raw_history = self.current_history_period_reset_controller()
-        provider.backing[(2, "cli")].append(
-            dict(raw_history[0], accepted=99)
-        )
-        original = controller._state()
-        with self.assertRaisesRegex(ControllerError, "conflicting source-run identity"):
-            controller.decide_period_reset(
-                pr=2,
-                channel="cli",
-                head=HEAD_3,
-                current_history_baseline=True,
-                baseline_id="conflicting-history",
-                actor="operator@example.invalid",
-                reason="conflicting source identity must remain held",
-            )
-        self.assertEqual(controller._state(), original)
-
-        controller, _provider, _raw_history = self.current_history_period_reset_controller()
-        initial = controller.decide_period_reset(
-            pr=2,
-            channel="cli",
-            head=HEAD_3,
-            current_history_baseline=True,
-            baseline_id="same-id-changed-candidate",
-            actor="operator@example.invalid",
-            reason="baseline one exact current candidate",
-        )
-        changed_head = "8" * 40
-        controller.github.values[2] = pr(2, changed_head, "feature-1", HEAD_2)
-        controller.git.heads["feature-2"] = changed_head
-        with self.assertRaisesRegex(ControllerError, "already recorded with different reset inputs"):
-            controller.decide_period_reset(
-                pr=2,
-                channel="cli",
-                head=changed_head,
-                current_history_baseline=True,
-                baseline_id="same-id-changed-candidate",
-                actor="operator@example.invalid",
-                reason="baseline one exact current candidate",
-            )
-        self.assertEqual(controller._state().review_period_decisions[0].period_id, initial["period"]["period_id"])
-
-        controller, provider, _raw_history = self.current_history_period_reset_controller()
-        original = controller._state()
-        with self.assertRaisesRegex(ControllerError, "--head does not match"):
-            controller.decide_period_reset(
-                pr=2,
-                channel="cli",
-                head=HEAD_2,
-                current_history_baseline=True,
-                baseline_id="mismatched-current-head",
-                actor="operator@example.invalid",
-                reason="exact current head is mandatory",
-            )
-        self.assertEqual(controller._state(), original)
-
-    def parent_moved_period_reset_controller(self, channel, *, sqlite=False):
-        parent_history = self.allocation_evidence(
-            number=1,
-            head=HEAD_1,
-            checkpoint="parent-before-move",
-            source_run_id="parent-run-before-move",
-            channel="hosted",
-            parent_identity="develop",
-            parent_head=BASE,
-            merge_base=BASE,
-            patch_id=f"patch-{HEAD_1[:4]}",
-        )
-        retained = self.allocation_evidence(
-            number=2,
-            head=HEAD_3,
-            checkpoint=f"{channel}-retained-checkpoint",
-            source_run_id=f"{channel}-retained-run",
-            accepted=1,
-            channel=channel,
-            parent_identity="1",
-            parent_head=HEAD_2,
-            merge_base=BASE,
-            patch_id=f"patch-{HEAD_3[:4]}",
-        )
-        provider = AuditedEvidence({(1, "hosted"): [parent_history], (2, channel): [retained]})
-        controller = self.make(
-            {
-                1: pr(1, HEAD_2, base_tip=PARENT),
-                2: pr(2, HEAD_3, "feature-1", HEAD_2),
-            },
-            provider,
-            heads={"develop": PARENT, "feature-1": HEAD_2, "feature-2": HEAD_3},
-            sqlite=sqlite,
-        )
-        controller.set_stack([1, 2])
-        return controller, provider, retained
-
-    def test_period_reset_allows_parent_moved_history_without_releasing_any_holds(self):
-        for channel in ("hosted", "cli"):
-            with self.subTest(channel=channel):
-                controller, provider, retained = self.parent_moved_period_reset_controller(channel)
-                before_state = controller._state()
-                before_history = copy.deepcopy(provider[(2, channel)])
-                before = controller.status()
-                self.assertEqual(before["prs"][1]["reconciliation"], "PARENT_MOVED")
-
-                result = controller.decide_period_reset(
-                    pr=2,
-                    channel=channel,
-                    head=HEAD_3,
-                    checkpoint=retained["checkpoint"],
-                    actor="operator@example.invalid",
-                    reason=f"start a new {channel} default period",
-                )
-
-                self.assertEqual(result["status"], "recorded")
-                after_state = controller._state()
-                self.assertEqual(after_state.ordered_prs, before_state.ordered_prs)
-                self.assertEqual(after_state.allocations, before_state.allocations)
-                self.assertEqual(after_state.routes, before_state.routes)
-                self.assertEqual(
-                    tuple(item for item in after_state.review_period_decisions if item.channel != channel),
-                    tuple(item for item in before_state.review_period_decisions if item.channel != channel),
-                )
-                selected_periods = [
-                    item for item in after_state.review_period_decisions if item.pr == 2 and item.channel == channel
-                ]
-                self.assertEqual(len(selected_periods), 1)
-                self.assertEqual(provider[(2, channel)], before_history)
-
-                after = controller.status()
-                self.assertEqual(after["prs"][1]["reconciliation"], "PARENT_MOVED")
-                self.assertEqual(after["prs"][1]["channels"][channel], "PARENT_MOVED")
-                self.assertIn(retained["checkpoint"], after["prs"][1]["review_obligations"][channel])
-                self.assertEqual(after["review_targets"][channel]["status"], "PARENT_MOVED")
-
-    def test_hosted_period_reset_fences_only_target_refs_while_ancestor_holds_remain(self):
-        for baseline_mode in ("checkpoint", "current_history"):
-            with self.subTest(baseline_mode=baseline_mode):
-                controller, provider, retained = self.parent_moved_period_reset_controller("hosted")
-                provider.backing[(1, "hosted")] = []
-                provider.backing[(2, "hosted")].append(self.scope_timeline_evidence(2, head=HEAD_3))
-                controller.github.values[1] = dataclasses.replace(
-                    controller.github.values[1], mergeable="CONFLICTING"
-                )
-                baseline = (
-                    {"checkpoint": retained["checkpoint"]}
-                    if baseline_mode == "checkpoint"
-                    else {"current_history_baseline": True, "baseline_id": "held-ancestor-reset"}
-                )
-                before_state = controller._state()
-                before_history = copy.deepcopy(provider.backing)
-                before = controller.status()
-                live, reconciliation = controller._reconciliation(before_state)
-                self.assertEqual(reconciliation.status_for(1), stack.ReconciliationStatus.UNRECONCILED)
-                self.assertFalse(controller._current_branches_match(
-                    before_state, live, reconciliation, 2, controller.git.heads
-                ))
-
-                result = controller.decide_period_reset(
-                    pr=2, channel="hosted", head=HEAD_3, **baseline,
-                    actor="operator@example.invalid", reason="reset bookkeeping while ancestor holds remain",
-                )
-
-                self.assertEqual(result["status"], "recorded")
-                after_state = controller._state()
-                self.assertEqual(
-                    dataclasses.replace(after_state, review_period_decisions=before_state.review_period_decisions),
-                    before_state,
-                )
-                self.assertEqual(provider.backing, before_history)
-                after = controller.status()
-                self.assertEqual(after["prs"][0]["reconciliation"], "UNRECONCILED")
-                self.assertEqual(after["review_targets"]["hosted"], before["review_targets"]["hosted"])
-                self.assertIn(retained["checkpoint"], after["prs"][1]["review_obligations"]["hosted"])
-                live, reconciliation = controller._reconciliation(after_state)
-                self.assertFalse(controller._current_branches_match(
-                    after_state, live, reconciliation, 2, controller.git.heads
-                ))
-
-    def test_hosted_period_reset_preserves_target_patch_and_history_holds(self):
-        for classification in (stack.ReconciliationStatus.PATCH_CHANGED, stack.ReconciliationStatus.EQUIVALENT_HISTORY):
-            for baseline_mode in ("checkpoint", "current_history"):
-                with self.subTest(classification=classification, baseline_mode=baseline_mode):
-                    retained = self.allocation_evidence(
-                        head=HEAD_1, checkpoint="older-hosted-checkpoint", source_run_id="older-hosted-result",
-                        channel="hosted", accepted=1,
-                        patch_id=(f"patch-{HEAD_1[:4]}" if classification == stack.ReconciliationStatus.PATCH_CHANGED
-                                  else f"patch-{HEAD_2[:4]}"),
-                    )
-                    unresolved = {
-                        "pr": 1, "head": HEAD_2, "checkpoint": "review-threads:1:0",
-                        "held": True, "finding_only_hold": True,
-                    }
-                    provider = AuditedEvidence({
-                        (1, "hosted"): [retained, unresolved, self.scope_timeline_evidence(head=HEAD_2)]
-                    })
-                    controller = self.make(
-                        {1: pr(1, HEAD_2)}, provider, heads={"feature-1": HEAD_2, "develop": BASE}
-                    )
-                    controller.set_stack([1])
-                    baseline = (
-                        {"checkpoint": retained["checkpoint"]}
-                        if baseline_mode == "checkpoint"
-                        else {"current_history_baseline": True, "baseline_id": "changed-target-reset"}
-                    )
-                    before_state = controller._state()
-                    before_history = copy.deepcopy(provider.backing)
-                    _, reconciliation = controller._reconciliation(before_state)
-                    self.assertEqual(reconciliation.status_for(1, "hosted"), classification)
-                    before_obligations = controller.status()["prs"][0]["review_obligations"]["hosted"]
-                    self.assertIn(unresolved["checkpoint"], before_obligations)
-
-                    result = controller.decide_period_reset(
-                        pr=1, channel="hosted", head=HEAD_2, **baseline,
-                        actor="operator@example.invalid", reason="reset counters without reconciling changed evidence",
-                    )
-
-                    self.assertEqual(result["status"], "recorded")
-                    after_state = controller._state()
-                    self.assertEqual(
-                        dataclasses.replace(after_state, review_period_decisions=before_state.review_period_decisions),
-                        before_state,
-                    )
-                    self.assertEqual(provider.backing, before_history)
-                    _, reconciliation = controller._reconciliation(after_state)
-                    self.assertEqual(reconciliation.status_for(1, "hosted"), classification)
-                    self.assertEqual(
-                        controller.status()["prs"][0]["review_obligations"]["hosted"], before_obligations
-                    )
-
-    def actual_base_period_reset_controller(self, mergeable="MERGEABLE"):
-        retained = self.allocation_evidence(
-            checkpoint="retained-pr-base-checkpoint", source_run_id="retained-pr-base-result",
-            channel="hosted", accepted=1,
-        )
-        provider = AuditedEvidence({(1, "hosted"): [retained, self.scope_timeline_evidence()]})
-        controller = self.make(
-            {1: pr(1, HEAD_1, base_tip=BASE, mergeable=mergeable)}, provider,
-            heads={"feature-1": HEAD_1, "develop": PARENT},
-        )
-        controller.set_stack([1])
-        original_read = controller.github.period_reset_ref_identity
-
-        def read_actual_refs(number):
-            value = original_read(number)
-            value["baseRef"]["target"]["oid"] = PARENT
-            return value
-
-        controller.github.period_reset_ref_identity = read_actual_refs
-        return controller, provider, retained
-
-    def test_hosted_period_reset_verifies_actual_base_without_replacing_retained_pr_base_oid(self):
-        for baseline_mode in ("checkpoint", "current_history"):
-            for mergeable in ("MERGEABLE", "CONFLICTING", "UNKNOWN"):
-                with self.subTest(baseline_mode=baseline_mode, mergeable=mergeable):
-                    controller, provider, retained = self.actual_base_period_reset_controller(mergeable)
-                    baseline = (
-                        {"checkpoint": retained["checkpoint"]}
-                        if baseline_mode == "checkpoint"
-                        else {"current_history_baseline": True, "baseline_id": "actual-base-reset"}
-                    )
-                    before_state = controller._state()
-                    before_history = copy.deepcopy(provider.backing)
-                    before = controller.status()
-                    live, reconciliation = controller._reconciliation(before_state)
-                    self.assertEqual(live[1].base_tip, BASE)
-                    self.assertNotEqual(live[1].base_tip, controller.git.heads[live[1].base_ref])
-                    self.assertFalse(controller._current_branches_match(
-                        before_state, live, reconciliation, 1, controller.git.heads
-                    ))
-                    with patch.object(
-                        controller.github, "period_reset_ref_identity",
-                        wraps=controller.github.period_reset_ref_identity,
-                    ) as refs_read:
-                        result = controller.decide_period_reset(
-                            pr=1, channel="hosted", head=HEAD_1, **baseline,
-                            actor="operator@example.invalid", reason="reset against separately verified current base refs",
-                        )
-                    self.assertEqual(refs_read.call_count, 2)
-                    self.assertEqual(result["status"], "recorded")
-                    self.assertEqual(result["period"]["current_base_tip"], BASE)
-                    self.assertEqual(result["period"]["current_base_ref"], "develop")
-                    self.assertEqual(controller.github.values[1].base_tip, BASE)
-                    self.assertEqual(controller.git.heads["develop"], PARENT)
-                    self.assertEqual(provider.backing, before_history)
-                    after_state = controller._state()
-                    self.assertEqual(
-                        dataclasses.replace(after_state, review_period_decisions=before_state.review_period_decisions),
-                        before_state,
-                    )
-                    after = controller.status()
-                    self.assertEqual(after["prs"][0]["reconciliation"], before["prs"][0]["reconciliation"])
-                    self.assertEqual(after["review_targets"]["hosted"], before["review_targets"]["hosted"])
-                    self.assertEqual(
-                        after["prs"][0]["review_obligations"], before["prs"][0]["review_obligations"]
-                    )
-
-    def test_hosted_period_reset_refuses_uncertain_actual_base_identity(self):
-        for baseline_mode in ("checkpoint", "current_history"):
-            for problem in ("missing-base-ref", "missing-target", "malformed-tip", "wrong-ref-name",
-                            "disagreeing-tip", "missing-capability", "unavailable-read", "missing-state",
-                            "missing-merged-evidence", "wrong-pr", "wrong-head"):
-                with self.subTest(baseline_mode=baseline_mode, problem=problem):
-                    controller, provider, retained = self.actual_base_period_reset_controller()
-                    value = controller.github.period_reset_ref_identity(1)
-                    if problem == "missing-base-ref":
-                        value["baseRef"] = None
-                    elif problem == "missing-target":
-                        value["baseRef"]["target"] = None
-                    elif problem == "malformed-tip":
-                        value["baseRef"]["target"]["oid"] = "ambiguous-tip"
-                    elif problem == "wrong-ref-name":
-                        value["baseRef"]["name"] = "other-base"
-                    elif problem == "disagreeing-tip":
-                        value["baseRef"]["target"]["oid"] = BASE
-                    elif problem == "missing-state":
-                        value.pop("state")
-                    elif problem == "missing-merged-evidence":
-                        value.pop("mergedAt")
-                    elif problem == "wrong-pr":
-                        value["number"] = 2
-                    elif problem == "wrong-head":
-                        value["headRefOid"] = HEAD_2
-                    if problem == "missing-capability":
-                        controller.github.period_reset_ref_identity = None
-                    elif problem == "unavailable-read":
-                        controller.github.period_reset_ref_identity = Mock(side_effect=OSError("identity unavailable"))
-                    else:
-                        controller.github.period_reset_ref_identity = lambda _number, selected=value: selected
-                    baseline = (
-                        {"checkpoint": retained["checkpoint"]}
-                        if baseline_mode == "checkpoint"
-                        else {"current_history_baseline": True, "baseline_id": "uncertain-actual-base"}
-                    )
-                    original = controller._state()
-                    original_history = copy.deepcopy(provider.backing)
-                    with self.assertRaises(ControllerError):
-                        controller.decide_period_reset(
-                            pr=1, channel="hosted", head=HEAD_1, **baseline,
-                            actor="operator@example.invalid", reason="uncertain actual refs must refuse",
-                        )
-                    self.assertEqual(controller._state(), original)
-                    self.assertEqual(provider.backing, original_history)
-
-    def test_hosted_period_reset_rechecks_actual_refs_before_recording(self):
-        for baseline_mode in ("checkpoint", "current_history"):
-            for movement in ("actual-base-tip", "remote-base-tip", "remote-head-tip", "base-ref", "head-ref",
-                             "pr-head", "head-repository", "pr-base-oid", "closed", "missing-base", "unavailable"):
-                with self.subTest(baseline_mode=baseline_mode, movement=movement):
-                    controller, provider, retained = self.actual_base_period_reset_controller()
-                    original_read = controller.github.period_reset_ref_identity
-                    reads = 0
-
-                    def moving_refs(number, read=original_read, change=movement, selected_controller=controller):
-                        nonlocal reads
-                        value = read(number)
-                        reads += 1
-                        if reads != 2:
-                            return value
-                        if change == "actual-base-tip":
-                            value["baseRef"]["target"]["oid"] = HEAD_2
-                            selected_controller.git.heads["develop"] = HEAD_2
-                        elif change == "remote-base-tip":
-                            selected_controller.git.heads["develop"] = HEAD_2
-                        elif change == "remote-head-tip":
-                            selected_controller.git.heads["feature-1"] = HEAD_2
-                        elif change == "base-ref":
-                            value["baseRefName"] = "other-base"
-                            value["baseRef"]["name"] = "other-base"
-                        elif change == "head-ref":
-                            value["headRefName"] = "other-head"
-                        elif change == "pr-head":
-                            value["headRefOid"] = HEAD_2
-                        elif change == "head-repository":
-                            value["headRepository"]["nameWithOwner"] = "other/repo"
-                        elif change == "pr-base-oid":
-                            value["baseRefOid"] = HEAD_2
-                        elif change == "closed":
-                            value["state"] = "CLOSED"
-                        elif change == "missing-base":
-                            value["baseRef"] = None
-                            selected_controller.git.heads.pop("develop")
-                        else:
-                            raise OSError("actual refs cannot be rechecked")
-                        return value
-
-                    controller.github.period_reset_ref_identity = moving_refs
-                    baseline = (
-                        {"checkpoint": retained["checkpoint"]}
-                        if baseline_mode == "checkpoint"
-                        else {"current_history_baseline": True, "baseline_id": "moving-actual-base"}
-                    )
-                    original = controller._state()
-                    original_history = copy.deepcopy(provider.backing)
-                    with self.assertRaises(ControllerError):
-                        controller.decide_period_reset(
-                            pr=1, channel="hosted", head=HEAD_1, **baseline,
-                            actor="operator@example.invalid", reason="actual refs moved before append",
-                        )
-                    self.assertEqual(reads, 2)
-                    self.assertEqual(controller._state(), original)
-                    self.assertEqual(provider.backing, original_history)
-
-    def test_cli_period_reset_does_not_read_hosted_actual_ref_identity(self):
-        controller, _provider, retained = self.parent_moved_period_reset_controller("cli")
-        controller.github.period_reset_ref_identity = Mock(side_effect=AssertionError("Hosted-only read"))
-        result = controller.decide_period_reset(
-            pr=2, channel="cli", head=HEAD_3, checkpoint=retained["checkpoint"],
-            actor="operator@example.invalid", reason="retain original CLI reset behavior",
-        )
-        self.assertEqual(result["status"], "recorded")
-        controller.github.period_reset_ref_identity.assert_not_called()
-
-    def test_live_hosted_reset_provider_keeps_actual_ref_and_retained_pr_base_separate(self):
-        controller, _provider, _retained = self.actual_base_period_reset_controller()
-        value = controller.github.period_reset_ref_identity(1)
-        payload = {"data": {"repository": {"pullRequest": value}}}
-        with patch.object(github, "run_gh_query", return_value=payload) as query:
-            actual = LiveGitHub("owner/repo").period_reset_ref_identity(1)
-        self.assertEqual(actual["baseRefOid"], BASE)
-        self.assertEqual(actual["baseRef"]["target"]["oid"], PARENT)
-        self.assertEqual(query.call_args.args[1], {"owner": "owner", "repo": "repo", "number": 1})
-        self.assertIn("baseRef { name target { oid } }", query.call_args.args[0])
-        with (
-            patch.object(github, "run_gh_query", return_value={"data": {"repository": {"pullRequest": None}}}),
-            self.assertRaises((RuntimeError, TypeError)),
-        ):
-            LiveGitHub("owner/repo").period_reset_ref_identity(1)
-
-    def test_hosted_period_reset_allows_mergeability_or_ancestry_holds_with_exact_refs(self):
-        for baseline_mode in ("checkpoint", "current_history"):
-            for hold in ("CONFLICTING", "UNKNOWN", "ancestry"):
-                with self.subTest(baseline_mode=baseline_mode, hold=hold):
-                    target, head = (2, HEAD_2) if hold == "ancestry" else (1, HEAD_1)
-                    retained = self.allocation_evidence(
-                        number=target, head=head, accepted=1,
-                        checkpoint="held-target-checkpoint", source_run_id="held-target-result", channel="hosted",
-                        parent_identity="1" if hold == "ancestry" else "develop",
-                        parent_head=HEAD_1 if hold == "ancestry" else BASE,
-                    )
-                    provider = AuditedEvidence({
-                        (target, "hosted"): [retained, self.scope_timeline_evidence(target, head=head)]
-                    })
-                    values = (
-                        {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
-                        if hold == "ancestry" else {1: pr(1, HEAD_1, mergeable=hold)}
-                    )
-                    controller = self.make(
-                        values, provider, heads={"feature-1": HEAD_1, "feature-2": HEAD_2, "develop": BASE},
-                    )
-                    controller.set_stack(list(values))
-                    if hold == "ancestry":
-                        controller.git.is_ancestor = lambda ancestor, descendant: (ancestor, descendant) != (HEAD_1, HEAD_2)
-                    baseline = (
-                        {"checkpoint": retained["checkpoint"]}
-                        if baseline_mode == "checkpoint"
-                        else {"current_history_baseline": True, "baseline_id": "held-target-reset"}
-                    )
-                    before_state = controller._state()
-                    before_history = copy.deepcopy(provider.backing)
-                    before = controller.status()
-                    live, reconciliation = controller._reconciliation(before_state, evidence_prs={target})
-                    self.assertEqual(reconciliation.status_for(target, "hosted"), stack.ReconciliationStatus.UNRECONCILED)
-                    self.assertEqual(live[target].head, controller.git.heads[live[target].head_ref])
-                    self.assertEqual(live[target].base_tip, controller.git.heads[live[target].base_ref])
-
-                    result = controller.decide_period_reset(
-                        pr=target, channel="hosted", head=head, **baseline,
-                        actor="operator@example.invalid", reason="reset counters while target readiness remains held",
-                    )
-
-                    self.assertEqual(result["status"], "recorded")
-                    after_state = controller._state()
-                    self.assertEqual(
-                        dataclasses.replace(after_state, review_period_decisions=before_state.review_period_decisions),
-                        before_state,
-                    )
-                    self.assertEqual(provider.backing, before_history)
-                    after = controller.status()
-                    self.assertEqual(after["review_targets"]["hosted"], before["review_targets"]["hosted"])
-                    self.assertEqual(after["prs"][target - 1]["reconciliation"], "UNRECONCILED")
-                    self.assertEqual(
-                        after["prs"][target - 1]["review_obligations"]["hosted"],
-                        before["prs"][target - 1]["review_obligations"]["hosted"],
-                    )
-
-    def test_hosted_period_reset_with_mergeability_hold_still_refuses_uncertain_baselines(self):
-        for mergeable in ("CONFLICTING", "UNKNOWN"):
-            for problem in ("missing-checkpoint", "ambiguous-checkpoint", "malformed-anchor", "unattributable",
-                            "incomplete-history", "conflicting-source"):
-                with self.subTest(mergeable=mergeable, problem=problem):
-                    retained = self.allocation_evidence(
-                        checkpoint="held-target-checkpoint", source_run_id="held-target-result", channel="hosted",
-                    )
-                    history = [retained, self.scope_timeline_evidence()]
-                    if problem == "missing-checkpoint":
-                        history.pop(0)
-                    elif problem == "ambiguous-checkpoint":
-                        history.append(dict(retained, source_run_id="another-result"))
-                    elif problem == "malformed-anchor":
-                        retained["parent_head"] = "malformed-sha"
-                    elif problem == "unattributable":
-                        retained["attributable"] = False
-                    elif problem == "incomplete-history":
-                        history[-1]["scope_timeline_complete"] = False
-                    else:
-                        history.append(dict(retained, checkpoint="other-checkpoint", accepted=1))
-                    controller = self.make(
-                        {1: pr(1, HEAD_1, mergeable=mergeable)}, AuditedEvidence({(1, "hosted"): history}),
-                        heads={"feature-1": HEAD_1, "develop": BASE},
-                    )
-                    controller.set_stack([1])
-                    baseline = (
-                        {"current_history_baseline": True, "baseline_id": "uncertain-held-target"}
-                        if problem in {"incomplete-history", "conflicting-source"}
-                        else {"checkpoint": "held-target-checkpoint"}
-                    )
-                    original = controller._state()
-                    with self.assertRaises(ControllerError):
-                        controller.decide_period_reset(
-                            pr=1, channel="hosted", head=HEAD_1, **baseline,
-                            actor="operator@example.invalid", reason="uncertain baseline must remain fenced",
-                        )
-                    self.assertEqual(controller._state(), original)
-
-    def test_hosted_period_reset_still_refuses_uncertain_target_refs(self):
-        for baseline_mode in ("checkpoint", "current_history"):
-            for mergeable in ("MERGEABLE", "CONFLICTING", "UNKNOWN"):
-                for problem in (
-                    "missing-head-ref", "missing-head-branch", "moved-head", "missing-base", "moved-base",
-                    "wrong-repository", "unknown-repository", "unavailable-refs", "malformed-head-tip",
-                    "malformed-base-tip",
-                ):
-                    with self.subTest(baseline_mode=baseline_mode, mergeable=mergeable, problem=problem):
-                        controller, provider, retained = self.parent_moved_period_reset_controller("hosted")
-                        provider.backing[(2, "hosted")].append(self.scope_timeline_evidence(2, head=HEAD_3))
-                        item = dataclasses.replace(controller.github.values[2], mergeable=mergeable)
-                        controller.github.values[2] = item
-                        if problem == "missing-head-ref":
-                            controller.github.values[2] = dataclasses.replace(item, head_ref="")
-                        elif problem == "missing-head-branch":
-                            controller.git.heads.pop("feature-2")
-                        elif problem == "moved-head":
-                            controller.git.heads["feature-2"] = HEAD_1
-                        elif problem == "missing-base":
-                            controller.git.heads.pop("feature-1")
-                        elif problem == "moved-base":
-                            controller.git.heads["feature-1"] = HEAD_1
-                        elif problem in {"wrong-repository", "unknown-repository"}:
-                            controller.github.values[2] = dataclasses.replace(
-                                item, head_repository="other/repo" if problem == "wrong-repository" else None
-                            )
-                        elif problem == "unavailable-refs":
-                            controller.git.remote_heads = lambda: (_ for _ in ()).throw(
-                                ControllerError("remote refs unavailable")
-                            )
-                        else:
-                            ref = "feature-2" if problem == "malformed-head-tip" else "feature-1"
-                            controller.git.heads[ref] = "ambiguous-tip"
-                        baseline = (
-                            {"checkpoint": retained["checkpoint"]}
-                            if baseline_mode == "checkpoint"
-                            else {"current_history_baseline": True, "baseline_id": "uncertain-target-reset"}
-                        )
-                        original = controller._state()
-                        with self.assertRaises(ControllerError):
-                            controller.decide_period_reset(
-                                pr=2, channel="hosted", head=HEAD_3, **baseline,
-                                actor="operator@example.invalid", reason="uncertain target must remain fenced",
-                            )
-                        self.assertEqual(controller._state(), original)
-
-    def test_cli_period_reset_still_refuses_source_tip_drift_or_absent_actual_base(self):
-        for baseline_mode in ("checkpoint", "current_history"):
-            for problem in ("source-tip-drift", "absent-actual-base"):
-                with self.subTest(baseline_mode=baseline_mode, problem=problem):
-                    retained = self.allocation_evidence(
-                        checkpoint="cli-certain-baseline", source_run_id="cli-baseline-result", channel="cli",
-                    )
-                    provider = AuditedEvidence({
-                        (1, "cli"): [retained, self.scope_timeline_evidence(channel="cli")]
-                    })
-                    item = pr(1, HEAD_1)
-                    heads = {"feature-1": HEAD_1, "develop": BASE}
-                    if problem == "source-tip-drift":
-                        heads["feature-1"] = HEAD_2
-                    else:
-                        item = dataclasses.replace(item, base_ref="absent-base")
-                    controller = self.make({1: item}, provider, heads=heads)
-                    controller.set_stack([1])
-                    baseline = (
-                        {"checkpoint": retained["checkpoint"]}
-                        if baseline_mode == "checkpoint"
-                        else {"current_history_baseline": True, "baseline_id": "cli-uncertain-target"}
-                    )
-                    original = controller._state()
-                    original_history = copy.deepcopy(provider.backing)
-                    _, reconciliation = controller._reconciliation(original, evidence_prs={1})
-                    self.assertEqual(reconciliation.status_for(1, "cli"), stack.ReconciliationStatus.UNRECONCILED)
-                    with self.assertRaisesRegex(ControllerError, "current cli review anchor is UNRECONCILED"):
-                        controller.decide_period_reset(
-                            pr=1, channel="cli", head=HEAD_1, **baseline,
-                            actor="operator@example.invalid", reason="CLI ref uncertainty must remain fenced",
-                        )
-                    self.assertEqual(controller._state(), original)
-                    self.assertEqual(provider.backing, original_history)
-
-    def test_hosted_period_reset_rechecks_target_identity_after_snapshot_even_with_held_ancestor(self):
-        for baseline_mode in ("checkpoint", "current_history"):
-            for changed_field in ("head", "base_ref", "base_tip"):
-                with self.subTest(baseline_mode=baseline_mode, changed_field=changed_field):
-                    controller, provider, retained = self.parent_moved_period_reset_controller("hosted")
-                    provider.backing[(1, "hosted")] = []
-                    provider.backing[(2, "hosted")].append(self.scope_timeline_evidence(2, head=HEAD_3))
-                    controller.github.values[1] = dataclasses.replace(
-                        controller.github.values[1], mergeable="CONFLICTING"
-                    )
-                    baseline = (
-                        {"checkpoint": retained["checkpoint"]}
-                        if baseline_mode == "checkpoint"
-                        else {"current_history_baseline": True, "baseline_id": "racing-target-reset"}
-                    )
-                    original = controller._state()
-                    original_read = controller.github.pull_request
-                    target_reads = 0
-
-                    def read_identity(number, read=original_read, field=changed_field):
-                        nonlocal target_reads
-                        value = read(number)
-                        if number == 2:
-                            target_reads += 1
-                            if target_reads == 2:
-                                changed_value = "develop" if field == "base_ref" else HEAD_1
-                                return dataclasses.replace(value, **{field: changed_value})
-                        return value
-
-                    with (
-                        patch.object(controller.github, "pull_request", side_effect=read_identity),
-                        self.assertRaisesRegex(ControllerError, "candidate head or base changed"),
-                    ):
-                        controller.decide_period_reset(
-                            pr=2, channel="hosted", head=HEAD_3, **baseline,
-                            actor="operator@example.invalid", reason="target identity must survive the final recheck",
-                        )
-                    self.assertEqual(target_reads, 2)
-                    self.assertEqual(controller._state(), original)
-
-    def test_period_reset_still_refuses_unstable_ambiguous_or_active_evidence(self):
-        for evidence_change, expected_error in (
-            (lambda value: value.update(completed=False), "not a stable completed attributable"),
-            (lambda value: value.update(attributable=False), "not a stable completed attributable"),
-        ):
-            with self.subTest(expected_error=expected_error):
-                controller, provider, retained = self.parent_moved_period_reset_controller("cli")
-                evidence_change(provider[(2, "cli")][0])
-                original = controller._state()
-                with self.assertRaisesRegex(ControllerError, expected_error):
-                    controller.decide_period_reset(
-                        pr=2,
-                        channel="cli",
-                        head=HEAD_3,
-                        checkpoint=retained["checkpoint"],
-                        actor="operator@example.invalid",
-                        reason="invalid evidence must remain held",
-                    )
-                self.assertEqual(controller._state(), original)
-
-        controller, provider, retained = self.parent_moved_period_reset_controller("cli")
-        provider[(2, "cli")].append(dict(retained, source_run_id="duplicate-run"))
-        original = controller._state()
-        with self.assertRaisesRegex(ControllerError, "missing or ambiguous"):
-            controller.decide_period_reset(
-                pr=2,
-                channel="cli",
-                head=HEAD_3,
-                checkpoint=retained["checkpoint"],
-                actor="operator@example.invalid",
-                reason="ambiguous evidence must remain held",
-            )
-        self.assertEqual(controller._state(), original)
-
-        controller, provider, retained = self.parent_moved_period_reset_controller("cli")
-        original = controller._state()
-        with self.assertRaisesRegex(ControllerError, "--head does not match"):
-            controller.decide_period_reset(
-                pr=2,
-                channel="cli",
-                head=HEAD_2,
-                checkpoint=retained["checkpoint"],
-                actor="operator@example.invalid",
-                reason="mismatched identity must remain held",
-            )
-        self.assertEqual(controller._state(), original)
-
-        controller, provider, retained = self.parent_moved_period_reset_controller("cli", sqlite=True)
-        stopped = ReviewAllocation(
-            pr=2,
-            channel="cli",
-            head=HEAD_3,
-            parent_identity="1",
-            parent_head=HEAD_2,
-            merge_base=BASE,
-            patch_id=f"patch-{HEAD_3[:4]}",
-            baseline_checkpoints=(),
-            reason="retain explicit stop",
-            stop_basis="direct_human",
-            stop_head=HEAD_3,
-            stop_parent_identity="1",
-            stop_parent_head=HEAD_2,
-            stop_reason="User stopped this channel",
-        )
-        controller.store.update(
-            lambda state: dataclasses.replace(state, allocations={"2:cli": stopped})
-        )
-        original = controller._state()
+    def test_local_period_explicit_stop_replacement_and_other_channel_preservation(self):
+        controller, _ = self.local_period_controller()
+        stopped = ReviewAllocation(pr=1, channel="cli", head=HEAD_2, parent_identity="develop", parent_head=BASE,
+            merge_base=BASE, patch_id="patch",
+            baseline_checkpoints=(), reason="retain stop", stop_basis="direct_human", stop_head=HEAD_2,
+            stop_parent_identity="develop", stop_parent_head=BASE, stop_reason="User stopped")
+        other = dataclasses.replace(stopped, channel="hosted")
+        controller.store.update(lambda state: dataclasses.replace(state, allocations={"1:cli": stopped, "1:hosted": other}))
         with self.assertRaisesRegex(ControllerError, "explicit User stop"):
-            controller.decide_period_reset(
-                pr=2,
-                channel="cli",
-                head=HEAD_3,
-                checkpoint=retained["checkpoint"],
-                actor="operator@example.invalid",
-                reason="stop remains held without replacement authority",
-            )
-        self.assertEqual(controller._state(), original)
-        controller, provider, _raw_history = self.current_history_period_reset_controller("cli", sqlite=True)
-        controller.store.update(
-            lambda state: dataclasses.replace(state, allocations={"2:cli": stopped})
-        )
-        original = controller._state()
-        with self.assertRaisesRegex(ControllerError, "explicit User stop"):
-            controller.decide_period_reset(
-                pr=2,
-                channel="cli",
-                head=HEAD_3,
-                current_history_baseline=True,
-                baseline_id="stopped-history-reset",
-                actor="operator@example.invalid",
-                reason="current-history baseline cannot replace an explicit stop",
-            )
-        self.assertEqual(controller._state(), original)
+            self.local_period_reset(controller)
+        result = self.local_period_reset(controller, replace_stop=True)
+        self.assertEqual(result["period"]["superseded_allocation"], stopped.to_dict())
+        self.assertEqual(controller._state().allocations, {"1:hosted": other})
+        with self.assertRaisesRegex(ControllerError, "requires an existing explicit User stop"):
+            self.local_period_reset(controller, baseline_id="second", replace_stop=True)
 
-        controller, provider, retained = self.parent_moved_period_reset_controller("cli")
-        original = controller._state()
-        with (
-            provider.review_activity_gate,
-            self.assertRaisesRegex(ControllerError, "provider admission or execution is active"),
+    def test_local_period_checkpoint_requires_verified_retained_native_boundary(self):
+        controller, _ = self.local_period_controller()
+        inputs = {"current_history_baseline": False, "baseline_id": None, "checkpoint": "old-checkpoint"}
+        with self.assertRaisesRegex(ControllerError, "verified source completion boundary"):
+            self.local_period_reset(controller, **inputs)
+        with patch.object(SqliteReviewRecords, "native_completion_time", return_value="2026-10-01T00:00:01Z"):
+            result = self.local_period_reset(controller, **inputs)
+        self.assertEqual(result["period"]["completion_cutoff"], "2026-10-01T00:00:01Z")
+        self.assertNotEqual(result["period"]["completion_cutoff"], result["period"]["recorded_at"])
+        with self.assertRaisesRegex(ControllerError, "exact retained completed native attempt"):
+            self.local_period_reset(controller, **{**inputs, "checkpoint": "missing"})
+
+    def test_status_default_period_reports_checked_limits_before_and_after_closure(self):
+        for channel, count, accepted, minimum, maximum, channel_status in (
+            ("hosted", 1, 0, 2, 3, "READY"),
+            ("cli", 2, 0, 3, 6, "READY"),
+            ("hosted", 3, 1, 2, 3, "BUDGET_EXHAUSTED"),
+            ("cli", 3, 0, 3, 6, "COMPLETE"),
         ):
-            controller.decide_period_reset(
-                pr=2,
-                channel="cli",
-                head=HEAD_3,
-                checkpoint=retained["checkpoint"],
-                actor="operator@example.invalid",
-                reason="active provider work must remain held",
-            )
-        self.assertEqual(controller._state(), original)
-
-    def test_period_reset_excludes_provider_admission_through_fresh_evidence_and_state_write(self):
-        for channel in ("hosted", "cli"):
-            with self.subTest(channel=channel):
-                checkpoint = self.allocation_evidence(
-                    checkpoint=f"{channel}-reset-checkpoint",
-                    source_run_id=f"{channel}-reset-run",
-                    channel=channel,
-                )
-                provider = AuditedEvidence({(1, channel): [checkpoint]})
-                controller = self.make(
-                    {1: pr(1, HEAD_1)},
-                    provider,
-                    heads={"feature-1": HEAD_1, "develop": BASE},
-                )
+            with self.subTest(channel=channel, count=count, accepted=accepted):
+                rows = [self.allocation_evidence(checkpoint=f"result-{index}", channel=channel,
+                                                source_run_id=f"run-{index}", accepted=accepted)
+                        for index in range(count)]
+                controller = self.make({1: pr(1, HEAD_1)}, {(1, channel): rows}, heads={"feature-1": HEAD_1})
                 controller.set_stack([1])
-                original_update = controller.store.update
-                admission_started = threading.Event()
-                order = []
-                admissions = []
+                row = controller.status()["prs"][0]
+                rule = row["review_progress"][channel]["rule"]
+                self.assertEqual(row["channels"][channel], channel_status)
+                self.assertEqual((rule["minimum"], rule["maximum"], rule["completed"]), (minimum, maximum, count))
+                self.assertEqual(rule["required_remaining"], max(0, minimum - count))
+                self.assertEqual(rule["maximum_remaining"], maximum - count)
+                self.assertEqual(rule["in_flight"], 0)
+                self.assertEqual(rule["request_slots_remaining"], maximum - count)
 
-                def concurrent_admission(
-                    selected_provider=provider,
-                    observed_order=order,
-                    started_event=admission_started,
-                ):
-                    with selected_provider.review_activity_gate:
-                        observed_order.append("provider_admitted")
-                        started_event.set()
+    def test_windowed_unchecked_default_limits_use_saved_period_without_credit(self):
+        values, heads = _stacked_prs(6)
+        provider = CountingEvidence()
+        controller = self.make(values, provider, heads=heads, sqlite=True)
+        controller.set_stack(list(values))
+        SqliteReviewRecords(controller.store.path).bootstrap()
+        controller.decide_period_reset(pr=5, channel="cli", head=values[5].head,
+            current_history_baseline=True, baseline_id="tail-limits", actor="operator", reason="renew")
+        period = dataclasses.replace(controller.store.load().review_period_decisions[-1], minimum_completed=1,
+                                     maximum_completed=9)
+        controller.store.update(lambda state: dataclasses.replace(state, review_period_decisions=(period,)))
+        self._enable_batch_status(controller, values)
+        report = controller.status_overview()
+        for number, channel, minimum, maximum in ((5, "cli", 1, 9), (6, "cli", 3, 6), (5, "hosted", 2, 3)):
+            row = next(row for row in report["prs"] if row["pr"] == number)
+            rule = row["review_progress"][channel]["rule"]
+            self.assertEqual((rule["minimum"], rule["maximum"]), (minimum, maximum))
+            for field in ("completed", "required_remaining", "maximum_remaining", "in_flight", "request_slots_remaining"):
+                self.assertIsNone(rule[field], field)
+        self.assertFalse(any(number in {5, 6} for number, _ in provider.history_reads))
 
-                def update_while_locked(
-                    mutate,
-                    *args,
-                    selected_provider=provider,
-                    selected_channel=channel,
-                    observed_order=order,
-                    started_event=admission_started,
-                    active_admissions=admissions,
-                    update=original_update,
-                    **kwargs,
-                ):
-                    self.assertTrue(selected_provider.review_period_lock_held)
-                    self.assertEqual(selected_provider.admission_history_reads, [(1, selected_channel, True)])
-                    observed_order.append("state_update")
-                    admission = threading.Thread(target=concurrent_admission)
-                    active_admissions.append(admission)
-                    admission.start()
-                    self.assertFalse(started_event.wait(0.05))
-                    updated = update(mutate, *args, **kwargs)
-                    self.assertTrue(selected_provider.review_period_lock_held)
-                    self.assertFalse(started_event.is_set())
-                    observed_order.append("state_updated")
-                    return updated
-
-                with patch.object(controller.store, "update", side_effect=update_while_locked):
-                    result = controller.decide_period_reset(
-                        pr=1,
-                        channel=channel,
-                        head=HEAD_1,
-                        checkpoint=f"{channel}-reset-checkpoint",
-                        actor="operator@example.invalid",
-                        reason=f"begin a new {channel} period",
-                    )
-
-                admissions[0].join(timeout=1)
-                self.assertFalse(admissions[0].is_alive())
-                self.assertEqual(result["status"], "recorded")
-                self.assertEqual(order, ["state_update", "state_updated", "provider_admitted"])
-
-    def test_live_evidence_reset_locks_follow_channel_order_and_are_thread_visible(self):
-        temporary_directory = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary_directory.cleanup)
-        common = Path(temporary_directory.name) / "common"
-        state_store = ControllerStateStore(common / "firemud" / "pr-review-stack.json")
-        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), state_store)
-
-        with patch("pr_review.runtime.evidence.git_common_dir", return_value=common):
-            for channel in ("hosted", "cli"):
-                with self.subTest(channel=channel), provider.review_period_reset_lock(1, channel):
-                    request_lock = hosted.default_trigger_record_path("owner/repo", 1, common).parent / "request.lock"
-                    repository_lock = (
-                        common / "firemud" / "hosted" / "owner_repo" / "repository.request.lock"
-                        if channel == "hosted"
-                        else common / "firemud" / "pr-review" / "cli.lock"
-                    )
-                    self.assertTrue(request_lock.exists())
-                    self.assertTrue(repository_lock.exists())
-                    self.assertFalse(provider._request_lock_is_held(request_lock))
-                    if channel == "cli":
-                        self.assertEqual(provider.repository_cli_lock_status(), "clear")
-
-                    other_thread_result = []
-
-                    def observe_request_lock(
-                        selected_provider=provider,
-                        selected_lock=request_lock,
-                        result=other_thread_result,
-                    ):
-                        result.append(selected_provider._request_lock_is_held(selected_lock))
-
-                    observer = threading.Thread(target=observe_request_lock)
-                    observer.start()
-                    observer.join(timeout=1)
-                    self.assertFalse(observer.is_alive())
-                    self.assertEqual(other_thread_result, [True])
+    def test_default_period_progress_error_keeps_limits_and_unknown_counters(self):
+        state = ReviewState(ordered_prs=(1,))
+        view = ReviewController._default_period_view(state, 1, Channel.CLI, {"error": "ambiguous completion"})
+        progress = ReviewController._review_progress_view(None, view, [], "READY")
+        self.assertEqual(progress["status"], "UNSTABLE")
+        self.assertEqual((progress["rule"]["minimum"], progress["rule"]["maximum"]), (3, 6))
+        self.assertIsNone(progress["rule"]["completed"])
+        self.assertIsNone(progress["rule"]["required_remaining"])
+        self.assertIsNone(progress["rule"]["maximum_remaining"])
 
     def test_default_budget_is_rechecked_under_admission_mutation(self):
         provider = AuditedEvidence()
@@ -2007,76 +737,6 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertIsNone(legacy_snapshot["error"])
         self.assertEqual(legacy_snapshot["results"], [])
-
-    def test_period_reset_refuses_a_mismatched_head_and_preserves_explicit_stop(self):
-        checkpoint = self.allocation_evidence(
-            head=HEAD_1,
-            checkpoint="cli-checkpoint-1",
-            source_run_id="cli-run-1",
-        )
-        checkpoint["channel"] = "cli"
-        controller = self.make(
-            {1: pr(1, HEAD_2)},
-            {(1, "cli"): [checkpoint]},
-            heads={"feature-1": HEAD_2, "develop": BASE},
-            sqlite=True,
-        )
-        controller.set_stack([1])
-        stopped = ReviewAllocation(
-            pr=1,
-            channel="cli",
-            head=HEAD_2,
-            parent_identity="develop",
-            parent_head=BASE,
-            merge_base=BASE,
-            patch_id=f"patch-{HEAD_2[:4]}",
-            baseline_checkpoints=(),
-            reason="retain explicit stop",
-            stop_basis="direct_human",
-            stop_head=HEAD_2,
-            stop_parent_identity="develop",
-            stop_parent_head=BASE,
-            stop_reason="User stopped this channel",
-        )
-        controller.store.update(
-            lambda state: dataclasses.replace(state, allocations={"1:cli": stopped})
-        )
-        original = controller._state()
-
-        with self.assertRaisesRegex(ControllerError, "--head does not match"):
-            controller.decide_period_reset(
-                pr=1,
-                channel="cli",
-                head=HEAD_1,
-                checkpoint="cli-checkpoint-1",
-                actor="operator@example.invalid",
-                reason="wrong candidate",
-                replace_stop=True,
-            )
-        self.assertEqual(controller._state(), original)
-        with self.assertRaisesRegex(ControllerError, "explicit User stop"):
-            controller.decide_period_reset(
-                pr=1,
-                channel="cli",
-                head=HEAD_2,
-                checkpoint="cli-checkpoint-1",
-                actor="operator@example.invalid",
-                reason="new period",
-            )
-        self.assertEqual(controller._state(), original)
-
-        replaced = controller.decide_period_reset(
-            pr=1,
-            channel="cli",
-            head=HEAD_2,
-            checkpoint="cli-checkpoint-1",
-            actor="operator@example.invalid",
-            reason="new period after explicit resume",
-            replace_stop=True,
-        )
-        self.assertEqual(replaced["status"], "recorded")
-        self.assertEqual(replaced["superseded_allocation_identity"], "1:cli")
-        self.assertEqual(replaced["period"]["superseded_allocation"]["stop_reason"], "User stopped this channel")
 
     def test_hosted_preflight_deadline_covers_target_selection_before_adapter(self):
         controller = self.make({})
@@ -3653,6 +2313,66 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(completed["taper_complete"])
         self.assertEqual(evidence[(1, "hosted")][0]["checkpoint"], "hosted-old-head")
         self.assertGreaterEqual(len(evidence.stop_audit_calls), 3)
+
+    def stopped_count_fixture(self, rows):
+        history = {(1, "cli"): [self.allocation_evidence(checkpoint="baseline", channel="cli")]}
+        controller = self.grant_bounded_allocation(channel="cli", evidence=history, checkpoint="baseline",
+                                                    minimum=4, cap=4, sqlite=True)
+        history[(1, "cli")].extend(rows)
+        state = controller.store.load()
+        allocation = dataclasses.replace(state.allocations["1:cli"], stop_basis="direct_human",
+            stop_checkpoint="administrative-stop", stop_reviewed_head=HEAD_1,
+            stop_reviewed_patch_id=f"patch-{HEAD_1[:4]}", stop_head=HEAD_1,
+            stop_parent_identity="develop", stop_parent_head=BASE, stop_merge_base=BASE,
+            stop_patch_id=f"patch-{HEAD_1[:4]}", stop_reason="Human stopped discovery")
+        controller.store.update(lambda value: dataclasses.replace(value, allocations={**value.allocations, "1:cli": allocation}))
+        return controller, history, allocation
+
+    def test_stopped_bounded_allocation_counts_four_reviews_not_stop_checkpoint(self):
+        rows = [self.allocation_evidence(checkpoint=f"completed-{index}", channel="cli",
+                                        source_run_id=f"run.completed{index}") for index in range(4)]
+        controller, _, allocation = self.stopped_count_fixture(rows)
+        report = controller.status()["prs"][0]
+        view = report["allocations"]["cli"]
+        self.assertEqual(view["completed_count"], 4)
+        self.assertEqual(view["status"], "STOPPED")
+        self.assertEqual(view["stop_checkpoint"], "administrative-stop")
+        self.assertEqual(view["stop_reason"], "Human stopped discovery")
+        self.assertEqual(report["channels"]["cli"], "HUMAN_STOPPED")
+        progress = report["review_progress"]["cli"]
+        self.assertEqual(progress["rule"]["completed"], 4)
+        self.assertEqual((progress["rule"]["minimum"], progress["rule"]["maximum"]), (4, 4))
+        self.assertEqual(progress["rule"]["required_remaining"], 0)
+        self.assertEqual(progress["status"], "HUMAN_STOPPED")
+        self.assertEqual(progress["label"], "Stopped")
+        self.assertEqual(progress["rule"]["kind"], "human_stop")
+        self.assertEqual(progress["rule"]["label"], "Human stop")
+        self.assertEqual(controller.store.load().allocations["1:cli"], allocation)
+
+    def test_stopped_bounded_allocation_preserves_partial_zero_and_unknown_counts(self):
+        cases = (
+            ([], 0, False),
+            ([self.allocation_evidence(checkpoint="partial", channel="cli", completed=False)], 0, False),
+            ([self.allocation_evidence(checkpoint="unanchored", channel="cli", anchored=False)], 0, False),
+            ([self.allocation_evidence(checkpoint="valid", channel="cli"),
+              self.allocation_evidence(checkpoint="correction", channel="cli", correction=True)], 1, False),
+            ([self.allocation_evidence(checkpoint="valid", channel="cli")], None, True),
+            ([self.allocation_evidence(checkpoint="bad-anchor", channel="cli", parent_head="unknown")], None, False),
+        )
+        for rows, expected, missing_timeline in cases:
+            with self.subTest(expected=expected, missing_timeline=missing_timeline):
+                controller, history, allocation = self.stopped_count_fixture(rows)
+                if missing_timeline:
+                    history[(1, "cli")] = [row for row in history[(1, "cli")] if not row.get("scope_timeline")]
+                report = controller.status()["prs"][0]
+                self.assertEqual(report["allocations"]["cli"]["completed_count"], expected)
+                self.assertEqual(report["allocations"]["cli"]["status"], "STOPPED")
+                self.assertEqual(report["channels"]["cli"], "HUMAN_STOPPED")
+                self.assertEqual(report["review_progress"]["cli"]["rule"]["completed"], expected)
+                self.assertEqual(report["review_progress"]["cli"]["rule"]["label"], "Human stop")
+                self.assertEqual(controller.store.load().allocations["1:cli"], allocation)
+                durable = controller._durable_stop_allocations(controller.store.load(), 1)["cli"]
+                self.assertIsNone(durable["completed_count"])
 
     def test_bounded_hosted_extra_review_preserves_existing_taper_history(self):
         controller, _ = self.hosted_judgment_allocation_fixture(sqlite=True)
@@ -11413,6 +10133,12 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("READY", tail["channels"].values())
         self.assertNotIn("COMPLETE", tail["channels"].values())
         self.assertTrue(all(pr_number <= 4 for pr_number, _ in evidence.history_reads))
+        for channel, limits in (("hosted", (2, 3)), ("cli", (3, 6))):
+            rule = tail["review_progress"][channel]["rule"]
+            self.assertEqual((rule["minimum"], rule["maximum"]), limits)
+            self.assertIsNone(rule["completed"])
+            self.assertIsNone(rule["required_remaining"])
+            self.assertIsNone(rule["maximum_remaining"])
 
     def test_status_overview_preserves_tail_stop_when_saved_parent_moves(self):
         values, heads = _stacked_prs(5)
@@ -17060,7 +15786,8 @@ class ReviewProgressPresentationTests(unittest.TestCase):
         result = controller.status()["prs"][0]
         self.assertEqual(result["channels"]["hosted"], "PARENT_MOVED")
         self.assertEqual(result["review_progress"]["hosted"]["label"], "Needs review")
-        self.assertEqual(result["review_progress"]["hosted"]["rule"]["label"], "Normal taper")
+        self.assertEqual(result["review_progress"]["hosted"]["rule"]["minimum"], 2)
+        self.assertEqual(result["review_progress"]["hosted"]["rule"]["maximum"], 3)
         self.assertTrue(row["parent_moved"])
 
 

@@ -316,6 +316,8 @@ def run_self_test() -> None:
         event_path = Path(tmp) / "event.json"
         sha = "1" * 40
         for event, expected in [({"pull_request": {"base": {"sha": sha}}}, sha),
+                                ({"pull_request": {"base": None}}, None),
+                                ({"pull_request": {"base": "invalid"}}, None),
                                 ({"before": sha}, sha), ({"before": "0" * 40}, None), ({}, None)]:
             event_path.write_text(json.dumps(event), encoding="utf-8")
             if event_base_ref(str(event_path)) != expected:
@@ -375,7 +377,8 @@ def event_base_ref(event_path: str | None) -> str | None:
     event = json.loads(Path(event_path).read_text(encoding="utf-8"))
     pull_request = event.get("pull_request")
     if isinstance(pull_request, dict):
-        return pull_request.get("base", {}).get("sha")
+        base = pull_request.get("base")
+        return base.get("sha") if isinstance(base, dict) else None
     inputs = event.get("inputs")
     if isinstance(inputs, dict):
         return inputs.get("flyway_base_sha")

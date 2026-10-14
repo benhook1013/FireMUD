@@ -1,7 +1,6 @@
 package net.firedevops.firemud.entitymanagement.repository;
 
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.*;
-import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTERS;
 import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTER_FRIEND;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -10,7 +9,6 @@ import net.firedevops.firemud.entitymanagement.entity.CharacterFriend;
 import net.firedevops.firemud.entitymanagement.entity.CharacterFriendKey;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
-import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
 import org.springframework.data.domain.Page;
@@ -75,8 +73,11 @@ public class CharacterFriendRepository {
                           DSL.val(entity.getTenantId()),
                           DSL.val(toLocalDateTime(entity.getCreatedAt())))
                       .where(
-                          legacyCharacter(DSL.val(entity.getId().getCharacterId()))
-                              .and(legacyCharacter(DSL.val(entity.getId().getFriendId())))))
+                          CharacterRepository.legacyCharacterExists(
+                                  DSL.val(entity.getId().getCharacterId()))
+                              .and(
+                                  CharacterRepository.legacyCharacterExists(
+                                      DSL.val(entity.getId().getFriendId())))))
               .execute();
       if (inserted != 1) {
         throw new IllegalStateException("Legacy friend endpoints are unavailable");
@@ -97,15 +98,8 @@ public class CharacterFriendRepository {
   }
 
   private static Condition legacyFriendEndpoints() {
-    return legacyCharacter(CHARACTER_FRIEND.CHARACTER_ID)
-        .and(legacyCharacter(CHARACTER_FRIEND.FRIEND_ID));
-  }
-
-  private static Condition legacyCharacter(Field<Long> characterId) {
-    return DSL.exists(
-        DSL.selectOne()
-            .from(CHARACTERS)
-            .where(CHARACTERS.ID.eq(characterId).and(CharacterRepository.legacyCharacterRow())));
+    return CharacterRepository.legacyCharacterExists(CHARACTER_FRIEND.CHARACTER_ID)
+        .and(CharacterRepository.legacyCharacterExists(CHARACTER_FRIEND.FRIEND_ID));
   }
 
   private CharacterFriend toEntity(Record record) {
