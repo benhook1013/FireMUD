@@ -1646,5 +1646,4 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       throw new IllegalStateException("World draft mutation test was interrupted", exception);
     }
   }
-
 }
