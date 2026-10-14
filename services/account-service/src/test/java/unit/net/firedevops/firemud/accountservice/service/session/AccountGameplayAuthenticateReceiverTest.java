@@ -178,9 +178,9 @@ class AccountGameplayAuthenticateReceiverTest {
     assertThat(response.getTokenJti()).isEqualTo(result.tokenJti().toString());
     assertThat(response.getTokenSha256()).isEqualTo(result.tokenSha256());
     assertThat(response.getTokenProfile()).isEqualTo(result.profile());
-    assertThat(response.getIssuedAtEpochSecond()).isEqualTo(result.issuedAtEpochSecond());
-    assertThat(response.getNotBeforeEpochSecond()).isEqualTo(result.notBeforeEpochSecond());
-    assertThat(response.getExpiresAtEpochSecond()).isEqualTo(result.expiresAtEpochSecond());
+    assertThat(response.getIssuedAtEpochSeconds()).isEqualTo(result.issuedAtEpochSecond());
+    assertThat(response.getNotBeforeEpochSeconds()).isEqualTo(result.notBeforeEpochSecond());
+    assertThat(response.getExpiresAtEpochSeconds()).isEqualTo(result.expiresAtEpochSecond());
     assertThat(response.getTokenGeneration()).isEqualTo(result.tokenGeneration());
     assertThat(response.getIssuanceFence()).isEqualTo(result.issuanceFence());
     assertThat(response.getAuthorityTupleCanonicalJson().toByteArray())
