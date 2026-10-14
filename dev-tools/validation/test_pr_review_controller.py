@@ -6756,15 +6756,17 @@ class ControllerTests(unittest.TestCase):
         )
         controller.set_stack([1])
 
-        with patch.object(controller, "_stop_audit", return_value={}):
-            with self.assertRaisesRegex(ControllerError, "did not retain every exact terminal response"):
-                controller.decide_stop(
-                    pr=1,
-                    channel="hosted",
-                    reason="stop with unresolved ambiguity",
-                    retain_ambiguous_fingerprints=(fingerprint,),
-                    ambiguity_reason="the response cannot be attributed",
-                )
+        with (
+            patch.object(controller, "_stop_audit", return_value={}),
+            self.assertRaisesRegex(ControllerError, "did not retain every exact terminal response"),
+        ):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="stop with unresolved ambiguity",
+                retain_ambiguous_fingerprints=(fingerprint,),
+                ambiguity_reason="the response cannot be attributed",
+            )
 
         self.assertEqual(evidence.history_reads, [(1, "hosted"), (1, "cli")])
 
