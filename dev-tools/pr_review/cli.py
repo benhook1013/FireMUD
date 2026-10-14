@@ -414,7 +414,7 @@ def _parser() -> argparse.ArgumentParser:
     cli_decisions.add_argument("--finding", required=True, type=_positive_int)
     cli_decisions.add_argument("--decision", required=True, choices=("accepted", "routed", "rejected"))
     cli_decisions.add_argument("--actor", required=True)
-    cli_decisions.add_argument("--reason", required=True)
+    cli_decisions.add_argument("--reason", required=True, help="decision reason (maximum 300 characters)")
     cli_decisions.add_argument("--target-pr", type=_positive_int)
     records_database(cli_decisions)
     cli_correction = record_commands.add_parser(
@@ -541,7 +541,12 @@ def _parser() -> argparse.ArgumentParser:
         sub = run_commands.add_parser(name)
         sub.add_argument("--expect-pr", type=_positive_int)
         sub.add_argument("--force", action="store_true")
-        sub.add_argument("--reason")
+        if name == "hosted":
+            sub.add_argument(
+                "--reason", help="forced-request reason (maximum 240 characters; no characters below U+0020)"
+            )
+        else:
+            sub.add_argument("--reason")
 
     wait = commands.add_parser("wait", help="observe one existing review request without posting another")
     wait_commands = wait.add_subparsers(dest="wait_command", required=True)
