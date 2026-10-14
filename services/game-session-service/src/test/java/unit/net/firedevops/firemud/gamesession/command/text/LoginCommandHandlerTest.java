@@ -361,14 +361,14 @@ class LoginCommandHandlerTest {
 
   @Test
   void bareLoginWithUnavailableFirstPartyContextDoesNotAuthenticateOrChangeOwnership() {
-    when(firstPartyConnectContextRegistry.find(1L)).thenReturn(Optional.empty());
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenThrow(new IllegalStateException("retained context store unavailable"));
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals(
-        LoginCommandConstants.PROMPT_MODE_UNSUPPORTED_CODE, result.commandResult().errorCode());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
     verify(accountClient, never()).authenticate(anyString(), anyString());
     verify(firstPartyConnectContextRegistry, never()).unregister(1L);
     verify(gameInstanceRepository, never()).findById(anyLong());
