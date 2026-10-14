@@ -236,12 +236,6 @@ Entry format:
   - Expected pattern: read the class’s declared package before specifying a test filter, and verify task execution rather than equating build success with every requested check passing. Enable the repository’s canonical full-check property when selecting static tasks.
   - Current status: corrected package selection passed 50 focused unit cases; the subsequent runtime fix passed 58 selected unit cases. A separate canonical `-PfullCheck` run executed the required static checks successfully. No validation requirement was waived.
 
-- `2026-10-13`: Fresh-bootstrap discovery needs every required Compose placeholder
-  - Context: the existing fresh-bootstrap wrapper failed before claiming a run or building images because its configuration-only service discovery supplied the mTLS certificate placeholder but omitted the required authored-world source receipt mount.
-  - Observation: Compose interpolation rejected the missing directory. The discovery command now supplies a configuration-only receipt path as well; this path is never used by the actual deployment, whose unchanged run-owned claim and capability create and bind the real receipt directory before Compose starts.
-  - Expected pattern: keep configuration-only placeholders aligned with required Compose mount and environment inputs, then run the existing validate-only preflight when those inputs change. A successful parse establishes configuration completeness, not deployment or owner authority.
-  - Current status: the existing smoke contract, shellcheck and actual configuration-only parsing pass. The subsequent fresh rebuilt packaged WebSocket and Telnet player-flow baselines pass with the unchanged real run-owned claim; this does not establish canonical owner provenance.
-
 - `2026-10-13`: Native Linux Docker proof can still invoke a Windows credential helper
   - Context: the claimed Gameplay fresh-bootstrap run rebuilt all service jars and images successfully, then failed before startup while pulling public Redis images. WSL reported `UtilAcceptVsock` and `accept4` timeout errors followed by a Docker credential lookup failure.
   - Observation: using the native Linux Docker socket does not select a separate client credential configuration. A run-scoped private client configuration can omit unavailable Windows credential helpers while preserving static registry settings and Compose plugin discovery; the global client configuration need not change.
