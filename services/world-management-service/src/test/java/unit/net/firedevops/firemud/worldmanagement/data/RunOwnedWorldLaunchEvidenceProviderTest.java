@@ -201,6 +201,24 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
   }
 
   @Test
+  void fixtureOwnerWireResultRejectsNonStartingAllocationsBeforeWorldConsumption() {
+    var original = fixtureEvidence().gameSessionAssociation();
+    var response =
+        net.firedevops.firemud.common.gamesession
+            .CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toFixtureResponse(original);
+    for (var status : java.util.List.of("RUNNING", "STOPPED")) {
+      var changed = response.toBuilder().setCurrentGameInstanceStatus(status).build();
+      assertThatThrownBy(
+              () ->
+                  net.firedevops.firemud.common.gamesession
+                      .CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureResponse(
+                      original.request(), changed))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Fixture launch association read requires the current STARTING snapshot");
+    }
+  }
+
+  @Test
   void disabledFixtureFailsBeforeReadingFilesOrCallingGameDesign(CapturedOutput output) {
     GameDesignClient gameDesignClient = mock(GameDesignClient.class);
     RunOwnedWorldLaunchEvidenceProvider provider =
