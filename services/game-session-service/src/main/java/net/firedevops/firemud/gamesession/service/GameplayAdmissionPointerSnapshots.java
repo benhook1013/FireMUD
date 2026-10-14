@@ -61,6 +61,10 @@ public final class GameplayAdmissionPointerSnapshots {
     if (shell == null) {
       return null;
     }
+    if (shell.firstPartyConnectContext() != null
+        || shell.hasPartialPersistedFirstPartyConnectContext()) {
+      return shell;
+    }
     List<GameplayAdmissionPointerSnapshot> filteredRuntimePointers =
         runtimePointers == null
             ? List.of()
@@ -101,7 +105,8 @@ public final class GameplayAdmissionPointerSnapshots {
                     pointer.pointerVersion(),
                     pointer.stateScope(),
                     normalizedShell.connectScopeId(),
-                    normalizedShell.connectRequestId()))
+                    normalizedShell.connectRequestId(),
+                    normalizedShell.firstPartyConnectContext()))
         .orElse(clearGenericBootstrapRouting(normalizedShell));
   }
 
@@ -155,40 +160,6 @@ public final class GameplayAdmissionPointerSnapshots {
         && Objects.equals(
             normalizeScope(existing.playableStateScope()),
             normalizeScope(incoming.playableStateScope()));
-  }
-
-  public static boolean sameBootstrapRoute(
-      FirstPartyConnectContext existing,
-      long tenantId,
-      long bootstrapGameInstanceId,
-      String worldSlug,
-      String realmSlug,
-      long pointerVersion) {
-    if (existing == null) {
-      return false;
-    }
-    if (existing.tenantId() != tenantId || existing.gameInstanceId() != bootstrapGameInstanceId) {
-      return false;
-    }
-    RoutingBundle existingRoutingBundle =
-        normalizeRoutingBundle(
-            existing.worldSlug(), existing.realmSlug(), Long.valueOf(existing.pointerVersion()));
-    RoutingBundle incomingRoutingBundle =
-        normalizeRoutingBundle(worldSlug, realmSlug, Long.valueOf(pointerVersion));
-    if ((existingRoutingBundle == null) != (incomingRoutingBundle == null)) {
-      return false;
-    }
-    if (incomingRoutingBundle == null) {
-      return true;
-    }
-    if (!sameRoutingIdentity(
-        existingRoutingBundle.worldSlug(),
-        existingRoutingBundle.realmSlug(),
-        incomingRoutingBundle.worldSlug(),
-        incomingRoutingBundle.realmSlug())) {
-      return false;
-    }
-    return existingRoutingBundle.pointerVersion().equals(incomingRoutingBundle.pointerVersion());
   }
 
   public static Optional<GameplayAdmissionPointerSnapshot> singularCompletePointer(
@@ -335,7 +306,8 @@ public final class GameplayAdmissionPointerSnapshots {
         0L,
         null,
         shell.connectScopeId(),
-        shell.connectRequestId());
+        shell.connectRequestId(),
+        shell.firstPartyConnectContext());
   }
 
   private static SessionContext normalizePartialGenericRouting(SessionContext shell) {

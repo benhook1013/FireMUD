@@ -16,20 +16,32 @@ public record FirstPartyConnectContextResolution(
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry) {
     Objects.requireNonNull(
         firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
-    Optional<FirstPartyConnectContext> registryContext =
-        firstPartyConnectContextRegistry.find(sessionId);
-    if (registryContext.isPresent()) {
-      FirstPartyConnectContext connectContext = registryContext.orElseThrow();
-      return new FirstPartyConnectContextResolution(
-          connectContext.hasCompleteRoutingScope() ? Optional.of(connectContext) : Optional.empty(),
-          !connectContext.hasCompleteRoutingScope());
-    }
-    if (sessionContext == null) {
+    try {
+      Optional<FirstPartyConnectContext> registryContext =
+          firstPartyConnectContextRegistry.find(sessionId);
+      Optional<FirstPartyConnectContext> persisted =
+          sessionContext == null
+              ? Optional.empty()
+              : sessionContext.persistedFirstPartyConnectContext();
+      if (sessionContext != null && sessionContext.hasPartialPersistedFirstPartyConnectContext()) {
+        return new FirstPartyConnectContextResolution(Optional.empty(), true);
+      }
+      if (registryContext.isPresent()) {
+        FirstPartyConnectContext current =
+            firstPartyConnectContextRegistry.requireRetained(registryContext.orElseThrow());
+        if (persisted.isPresent() && !current.equals(persisted.orElseThrow())) {
+          return new FirstPartyConnectContextResolution(Optional.empty(), true);
+        }
+        return new FirstPartyConnectContextResolution(Optional.of(current), false);
+      }
+      if (persisted.isPresent()) {
+        return new FirstPartyConnectContextResolution(
+            Optional.of(firstPartyConnectContextRegistry.requireRetained(persisted.orElseThrow())),
+            false);
+      }
       return new FirstPartyConnectContextResolution(Optional.empty(), false);
+    } catch (RuntimeException invalidOrUnavailable) {
+      return new FirstPartyConnectContextResolution(Optional.empty(), true);
     }
-    Optional<FirstPartyConnectContext> persistedContext =
-        sessionContext.persistedFirstPartyConnectContext();
-    return new FirstPartyConnectContextResolution(
-        persistedContext, sessionContext.hasPartialPersistedFirstPartyConnectContext());
   }
 }

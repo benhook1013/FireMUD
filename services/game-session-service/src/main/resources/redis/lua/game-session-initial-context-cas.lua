@@ -1,5 +1,5 @@
--- Owner-only compare mutation. No context creation, expiry, or authenticated gameplay admission.
--- KEYS[1] exact tenantless original context. ARGV operation, exact prior bytes, exact desired bytes.
+-- Owner-only original-context creation and exact compare mutation. No expiry or admission.
+-- KEYS[1] exact tenantless original context. ARGV operation, prior bytes (empty for create), desired bytes.
 local prefix = 'session:game:initial-context:v1:'
 local maxBytes = 32768
 local function uuid(value)
@@ -46,10 +46,19 @@ local function envelope(bytes)
 end
 if #KEYS ~= 1 or #ARGV ~= 3 then return -2 end
 local operation = ARGV[1]
-if operation ~= 'INSTALL' and operation ~= 'CLOSE' then return -2 end
-local before = envelope(ARGV[2])
+if operation ~= 'CREATE_PENDING' and operation ~= 'INSTALL' and operation ~= 'CLOSE' then return -2 end
 local after = envelope(ARGV[3])
-if not before or not after or KEYS[1] ~= prefix .. before.callerContextId
+if not after or KEYS[1] ~= prefix .. after.callerContextId then return -2 end
+if operation == 'CREATE_PENDING' then
+  if ARGV[2] ~= '' or after.state ~= 'PENDING' then return -2 end
+  -- TYPE is atomic with the write in this script and rejects every existing physical value,
+  -- including malformed, expiring, replaced, or otherwise unqualified state.
+  if redis.call('TYPE', KEYS[1]).ok ~= 'none' then return -1 end
+  redis.call('SET', KEYS[1], ARGV[3])
+  return 1
+end
+local before = envelope(ARGV[2])
+if not before or KEYS[1] ~= prefix .. before.callerContextId
     or before.requestId ~= after.requestId or before.callerContextId ~= after.callerContextId
     or before.expectedAttemptFence ~= after.expectedAttemptFence then return -2 end
 if operation == 'INSTALL' then

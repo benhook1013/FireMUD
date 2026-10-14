@@ -12,6 +12,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -73,14 +74,17 @@ public final class CanonicalGameplayLoginAccountClient
     initReloadingClient();
   }
 
-  public CanonicalGameplayLoginResult authenticate(AuthenticateRequest originalRequest) {
+  public CanonicalGameplayLoginResult authenticate(
+      AuthenticateRequest originalRequest, BooleanSupplier originalCustodyCurrent) {
     CanonicalGameplayLoginResult.requireOriginalRequest(originalRequest);
+    Objects.requireNonNull(originalCustodyCurrent, "Original custody guard required");
     Deadline overall = Deadline.after(invocationBudgetNanos, TimeUnit.NANOSECONDS);
     if (Context.current().getDeadline() != null)
       overall = overall.minimum(Context.current().getDeadline());
     for (int attempt = 0; attempt < 2; attempt++) {
       if (overall.isExpired()) throw failure(Status.Code.DEADLINE_EXCEEDED);
-      if (Context.current().isCancelled()) throw failure(Status.Code.CANCELLED);
+      if (Context.current().isCancelled() || !custodyCurrent(originalCustodyCurrent))
+        throw failure(Status.Code.CANCELLED);
       var currentStub = stub();
       if (currentStub == null) throw failure(Status.Code.UNAVAILABLE);
       try {
@@ -93,7 +97,8 @@ public final class CanonicalGameplayLoginAccountClient
             || (code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED))
           throw boundedTransportFailure(transport);
         if (overall.isExpired()) throw failure(Status.Code.DEADLINE_EXCEEDED);
-        if (Context.current().isCancelled()) throw failure(Status.Code.CANCELLED);
+        if (Context.current().isCancelled() || !custodyCurrent(originalCustodyCurrent))
+          throw failure(Status.Code.CANCELLED);
         try {
           reloadChannel();
         } catch (SSLException reloadFailure) {
@@ -102,6 +107,14 @@ public final class CanonicalGameplayLoginAccountClient
       }
     }
     throw failure(Status.Code.UNAVAILABLE);
+  }
+
+  private static boolean custodyCurrent(BooleanSupplier originalCustodyCurrent) {
+    try {
+      return originalCustodyCurrent.getAsBoolean();
+    } catch (RuntimeException unavailable) {
+      return false;
+    }
   }
 
   /** Lifecycle-only call: the workflow retains the exact original nonsecret request identity. */

@@ -97,6 +97,26 @@ class CanonicalGameplayLoginResultTest {
         .doesNotContain("authToken", "compactJwt", "credential", "password");
   }
 
+  @Test
+  void closeOverwritesOwnedCompactTokenAndRefusesFurtherSecretAccess() throws Exception {
+    var wire = response(claims());
+    var result = decode(wire);
+    var ownedBytes = CanonicalGameplayLoginResult.class.getDeclaredField("compactJwt");
+    ownedBytes.setAccessible(true);
+    byte[] privateBytes = (byte[]) ownedBytes.get(result);
+    assertThat(privateBytes)
+        .containsExactly(wire.getAuthToken().getBytes(StandardCharsets.US_ASCII));
+
+    result.close();
+    result.close();
+
+    assertThat(privateBytes).containsOnly((byte) 0);
+    assertThatThrownBy(result::compactJwtBytes)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Canonical LOGIN private result is closed");
+    assertThat(result.evidence().accountId()).isEqualTo(ACCOUNT);
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {

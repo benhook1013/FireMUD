@@ -22,7 +22,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Inactive owner-only compare mutation; no context producer, credential storage or admission. */
+/** Unregistered owner-only initial-context mutations; no production qualifier or admission. */
 public final class InitialGameplayLoginContextRedisClient {
   private final InitialGameplayLoginRedisBinding binding;
   private final RedisScriptCatalog catalog;
@@ -54,6 +54,25 @@ public final class InitialGameplayLoginContextRedisClient {
     if (acquired.isEmpty()) return Optional.empty();
     try (HeldQualification held = acquired.orElseThrow()) {
       return mutate(coordinates, desired, "INSTALL", held);
+    } catch (RuntimeException unavailable) {
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Creates the exact original PENDING aggregate only when its complete Redis key is physically
+   * absent. The script performs the absence check and SET atomically; a pre-read is never used as
+   * create authority. A positive result additionally requires the configured acknowledgement and
+   * independent physical readback under the held external qualification.
+   */
+  public Optional<InitialGameplayLoginContextState> createPending(
+      InitialGameplayLoginAttemptCoordinates coordinates) {
+    Objects.requireNonNull(coordinates, "Original coordinates required");
+    var desired = InitialGameplayLoginContextState.pending(coordinates);
+    Optional<HeldQualification> acquired = acquireQualification();
+    if (acquired.isEmpty()) return Optional.empty();
+    try (HeldQualification held = acquired.orElseThrow()) {
+      return mutate(coordinates, desired, "CREATE_PENDING", held);
     } catch (RuntimeException unavailable) {
       return Optional.empty();
     }
@@ -108,13 +127,19 @@ public final class InitialGameplayLoginContextRedisClient {
       try (StatefulRedisConnection<byte[], byte[]> connection = binding.openPinnedConnection()) {
         RedisCommands<byte[], byte[]> commands = requirePinned(connection);
         requirePrincipal(commands);
-        byte[] priorBytes = commands.get(key);
-        var prior = InitialGameplayLoginContextState.decode(priorBytes);
-        if (!prior.coordinates().equals(coordinates)
-            || "INSTALL".equals(operation)
-                && prior.state() != InitialGameplayLoginContextState.State.PENDING
-                && !(prior.state() == InitialGameplayLoginContextState.State.INSTALLED
-                    && Arrays.equals(priorBytes, desiredBytes))) return Optional.empty();
+        byte[] priorBytes = "CREATE_PENDING".equals(operation) ? new byte[0] : commands.get(key);
+        if ("CREATE_PENDING".equals(operation)) {
+          if (desired.state() != InitialGameplayLoginContextState.State.PENDING) {
+            return Optional.empty();
+          }
+        } else {
+          var prior = InitialGameplayLoginContextState.decode(priorBytes);
+          if (!prior.coordinates().equals(coordinates)
+              || "INSTALL".equals(operation)
+                  && prior.state() != InitialGameplayLoginContextState.State.PENDING
+                  && !(prior.state() == InitialGameplayLoginContextState.State.INSTALLED
+                      && Arrays.equals(priorBytes, desiredBytes))) return Optional.empty();
+        }
         held.requireCurrent();
         String loaded = commands.scriptLoad(source);
         if (!digest("SHA-1", source).equals(loaded)) throw unavailable();
@@ -171,7 +196,7 @@ public final class InitialGameplayLoginContextRedisClient {
             .equals(
                 List.of(
                     new RedisScriptDescriptor.ArgumentSpec("operation"),
-                    new RedisScriptDescriptor.ArgumentSpec("exactPriorContextUtf8"),
+                    new RedisScriptDescriptor.ArgumentSpec("exactPriorContextUtf8OrEmptyForCreate"),
                     new RedisScriptDescriptor.ArgumentSpec("exactDesiredContextUtf8")))
         || descriptor.resetSensitivity() != RedisScriptDescriptor.ResetSensitivity.CLUSTER
         || descriptor.lossClass() != RedisScriptDescriptor.LossClass.SESSION_LEASE_CACHE_OR_WAKE_UP
