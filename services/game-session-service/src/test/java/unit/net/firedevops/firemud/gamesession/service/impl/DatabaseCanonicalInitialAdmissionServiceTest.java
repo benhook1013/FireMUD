@@ -16,7 +16,6 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProo
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof.Outcome;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
-import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProof;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionWorldVerifier;
@@ -36,7 +35,7 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
       mock(GameSessionCanonicalAdmissionPointerRepository.class);
   private final CanonicalInitialAdmissionWorldVerifier worldVerifier =
       mock(CanonicalInitialAdmissionWorldVerifier.class);
-  private final RecordingTransactionManager transactionManager = new RecordingTransactionManager(0);
+  private final RecordingTransactionManager transactionManager = new RecordingTransactionManager();
   private final DatabaseCanonicalInitialAdmissionService service =
       new DatabaseCanonicalInitialAdmissionService(
           repository, pointerRepository, worldVerifier, transactionManager);
@@ -106,25 +105,6 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
     assertThat(transactionManager.settings).isEmpty();
   }
 
-  private static void assertWritableReadCommittedTransaction() {
-    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-    assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
-    assertThat(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
-        .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-  }
-
-  private static void assertOutsideTransaction() {
-    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-    assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-  }
-
-  private static TransactionSettings writableReadCommittedRequiresNew() {
-    return new TransactionSettings(
-        TransactionDefinition.PROPAGATION_REQUIRES_NEW,
-        TransactionDefinition.ISOLATION_READ_COMMITTED,
-        false);
-  }
-
   private static CanonicalInitialAdmissionRequest request() {
     String targetNamespace = "initial-admission-test";
     UUID tenantId = uuid("11111111-1111-4111-8111-111111111111");
@@ -174,34 +154,6 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
         "sha256:" + "a".repeat(64));
   }
 
-  private static CanonicalInitialAdmissionOwnerProof pendingProof(
-      CanonicalInitialAdmissionRequest request) {
-    return new CanonicalInitialAdmissionOwnerProof(
-        Outcome.PENDING,
-        request.initialAdmissionRequestId(),
-        request.requestDigest(),
-        request.targetNamespace(),
-        request.canonicalTenantId(),
-        request.worldSlug(),
-        request.realmId(),
-        request.playableStateNamespaceId(),
-        request.playableStateScope(),
-        request.canonicalGameInstanceId(),
-        request.canonicalVersionId(),
-        request.activeLifecycleEpoch(),
-        request.expectedCatalogRevision(),
-        request.originKind(),
-        request.expectedPriorPointerVersion(),
-        request.holdId(),
-        request.holdFence(),
-        request.holdBindingDigest(),
-        null,
-        null,
-        null,
-        false,
-        null);
-  }
-
   private static CanonicalInitialAdmissionOwnerProof committedProof(
       CanonicalInitialAdmissionRequest request) {
     return new CanonicalInitialAdmissionOwnerProof(
@@ -230,57 +182,6 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
         Instant.parse("2026-10-10T00:00:00Z"));
   }
 
-  private static CanonicalInitialAdmissionOwnerProof abortedProof(
-      CanonicalInitialAdmissionRequest request) {
-    return new CanonicalInitialAdmissionOwnerProof(
-        Outcome.ABORTED,
-        request.initialAdmissionRequestId(),
-        request.requestDigest(),
-        request.targetNamespace(),
-        request.canonicalTenantId(),
-        request.worldSlug(),
-        request.realmId(),
-        request.playableStateNamespaceId(),
-        request.playableStateScope(),
-        request.canonicalGameInstanceId(),
-        request.canonicalVersionId(),
-        request.activeLifecycleEpoch(),
-        request.expectedCatalogRevision(),
-        request.originKind(),
-        request.expectedPriorPointerVersion(),
-        request.holdId(),
-        request.holdFence(),
-        request.holdBindingDigest(),
-        null,
-        null,
-        "sha256:" + "c".repeat(64),
-        true,
-        Instant.parse("2026-10-10T00:00:00Z"));
-  }
-
-  private static CanonicalInitialAdmissionWorldProof worldProof(
-      CanonicalInitialAdmissionRequest request) {
-    return new CanonicalInitialAdmissionWorldProof(
-        request.initialAdmissionRequestId(),
-        request.requestDigest(),
-        request.targetNamespace(),
-        request.canonicalTenantId(),
-        request.worldSlug(),
-        request.realmId(),
-        request.playableStateNamespaceId(),
-        request.playableStateScope(),
-        request.canonicalGameInstanceId(),
-        request.canonicalVersionId(),
-        "ACTIVE",
-        request.activeLifecycleEpoch(),
-        request.originKind(),
-        request.expectedCatalogRevision(),
-        request.expectedPriorPointerVersion(),
-        request.holdId(),
-        request.holdFence(),
-        request.holdBindingDigest());
-  }
-
   private static UUID uuid(String value) {
     return UUID.fromString(value);
   }
@@ -289,13 +190,6 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
 
   private static final class RecordingTransactionManager implements PlatformTransactionManager {
     private final List<TransactionSettings> settings = new ArrayList<>();
-    private int commitCount;
-    private int rollbackCount;
-    private int failOnCommitNumber;
-
-    private RecordingTransactionManager(int failOnCommitNumber) {
-      this.failOnCommitNumber = failOnCommitNumber;
-    }
 
     @Override
     public TransactionStatus getTransaction(TransactionDefinition definition) {
@@ -314,16 +208,11 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
 
     @Override
     public void commit(TransactionStatus status) {
-      commitCount++;
       TransactionSynchronizationManager.clear();
-      if (commitCount == failOnCommitNumber) {
-        throw new IllegalStateException("simulated transaction commit failure");
-      }
     }
 
     @Override
     public void rollback(TransactionStatus status) {
-      rollbackCount++;
       TransactionSynchronizationManager.clear();
     }
   }
