@@ -1647,12 +1647,4 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
     }
   }
 
-  private static Path repositoryRoot() {
-    Path candidate = Path.of("").toAbsolutePath();
-    while (candidate != null) {
-      if (Files.exists(candidate.resolve("settings.gradle.kts"))) return candidate;
-      candidate = candidate.getParent();
-    }
-    throw new IllegalStateException("Unable to locate repository filesystem migrations");
-  }
 }
