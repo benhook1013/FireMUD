@@ -40,6 +40,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 public class GameSessionFreshTenantAssociationRepository {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
+  private static final int MAX_TENANT_ID_ALLOCATION_ATTEMPTS = 64;
 
   private final DSLContext dsl;
 
@@ -615,21 +616,29 @@ public class GameSessionFreshTenantAssociationRepository {
   }
 
   private long allocateFreshTenantId() {
-    Record reservation =
-        dsl.fetchOne(
-            "INSERT INTO game_session_tenant_scope_reservation (reservation_kind)"
-                + " VALUES ('FRESH_SOURCE_BOUND') RETURNING game_session_tenant_id, reservation_kind");
-    if (reservation == null
-        || !"FRESH_SOURCE_BOUND".equals(required(reservation, "reservation_kind", String.class))) {
-      throw new InvalidFreshTenantAssociationException(
-          "Game Session numeric tenant reservation did not allocate a fresh source-bound key");
+    for (int attempt = 0; attempt < MAX_TENANT_ID_ALLOCATION_ATTEMPTS; attempt++) {
+      Record reservation =
+          dsl.fetchOne(
+              "INSERT INTO game_session_tenant_scope_reservation (reservation_kind)"
+                  + " VALUES ('FRESH_SOURCE_BOUND')"
+                  + " ON CONFLICT (game_session_tenant_id) DO NOTHING"
+                  + " RETURNING game_session_tenant_id, reservation_kind");
+      if (reservation == null) {
+        continue;
+      }
+      if (!"FRESH_SOURCE_BOUND".equals(required(reservation, "reservation_kind", String.class))) {
+        throw new InvalidFreshTenantAssociationException(
+            "Game Session numeric tenant reservation did not allocate a fresh source-bound key");
+      }
+      Long tenantId = required(reservation, "game_session_tenant_id", Long.class);
+      if (tenantId <= 0) {
+        throw new InvalidFreshTenantAssociationException(
+            "Game Session numeric tenant reservation is not positive");
+      }
+      return tenantId;
     }
-    Long tenantId = required(reservation, "game_session_tenant_id", Long.class);
-    if (tenantId <= 0) {
-      throw new InvalidFreshTenantAssociationException(
-          "Game Session numeric tenant reservation is not positive");
-    }
-    return tenantId;
+    throw new InvalidFreshTenantAssociationException(
+        "Game Session numeric tenant reservation exhausted its bounded allocation attempts");
   }
 
   private void lockSourceIdentity(FreshTenantCreationEvidence evidence) {
