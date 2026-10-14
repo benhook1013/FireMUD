@@ -51,9 +51,7 @@ public class RunOwnedFixtureLaunchReadback {
   private final VersionService versionService;
   private final VersionAssetArtifactService artifactService;
   private final LaunchDescriptorService launchDescriptorService;
-
-  @org.springframework.beans.factory.annotation.Autowired
-  private net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
+  private final net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
       creationRepository;
 
   @SuppressFBWarnings(
@@ -68,7 +66,9 @@ public class RunOwnedFixtureLaunchReadback {
       GameAuthoredWorldSourceRepository sourceRepository,
       VersionService versionService,
       VersionAssetArtifactService artifactService,
-      LaunchDescriptorService launchDescriptorService) {
+      LaunchDescriptorService launchDescriptorService,
+      net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
+          creationRepository) {
     this.gameRepository = gameRepository;
     this.templateRepository = templateRepository;
     this.versionRepository = versionRepository;
@@ -77,6 +77,7 @@ public class RunOwnedFixtureLaunchReadback {
     this.versionService = versionService;
     this.artifactService = artifactService;
     this.launchDescriptorService = launchDescriptorService;
+    this.creationRepository = creationRepository;
   }
 
   @Transactional(propagation = Propagation.MANDATORY, readOnly = true)

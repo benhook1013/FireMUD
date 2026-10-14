@@ -18,7 +18,7 @@ import tools.jackson.databind.ObjectMapper;
 
 /** Fixed-capability fixture authority only; never emits human selected-publication evidence. */
 @Service
-final class RunOwnedFixturePolicyProducer {
+public final class RunOwnedFixturePolicyProducer {
   private static final String SCHEMA = "firemud.run-owned-fixture-policy-seal.v1";
   private static final String OWNER = "game-design-service";
   private final DSLContext dsl;
