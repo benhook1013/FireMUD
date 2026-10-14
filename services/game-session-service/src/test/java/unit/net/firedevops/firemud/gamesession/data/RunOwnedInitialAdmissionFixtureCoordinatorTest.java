@@ -329,7 +329,11 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
               });
       assertThat(enteredOwner.await(5, TimeUnit.SECONDS)).isTrue();
 
-      fixture.coordinator.retryRunOwnedFixtureBootstrap();
+      try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> mainLoader =
+          mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
+        stubFixtureLoaders(mainLoader, fixture, fixture.sourceReceipt);
+        fixture.coordinator.retryRunOwnedFixtureBootstrap();
+      }
 
       verify(fixture.launchOwner, times(1)).createVerifiedFixtureStartingLaunch(any());
       releaseOwner.countDown();

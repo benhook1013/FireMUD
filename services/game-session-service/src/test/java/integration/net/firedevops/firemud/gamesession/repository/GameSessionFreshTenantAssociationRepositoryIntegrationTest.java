@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldInt
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.FreshTenantAssociationConflictException;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.InvalidFreshTenantAssociationException;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.InvalidFreshTenantSourceException;
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
@@ -127,7 +128,7 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
     FreshGameSessionTenantAssociation committed =
         fixture.associate(associationOperationId, NAMESPACE, firstSource);
     assertThatThrownBy(() -> fixture.associate(associationOperationId, NAMESPACE, secondSource))
-        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+        .isExactlyInstanceOf(FreshTenantAssociationConflictException.class);
     assertThatThrownBy(
             () -> fixture.associate(associationOperationId, NAMESPACE + "-other", firstSource))
         .isInstanceOf(InvalidFreshTenantSourceException.class);

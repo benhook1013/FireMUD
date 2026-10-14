@@ -1,9 +1,6 @@
 package net.firedevops.firemud.gamesession.repository;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -13,12 +10,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
 import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec;
@@ -33,6 +28,7 @@ import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.FreshTenantAssociation;
+import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.InvalidFreshTenantAssociationException;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -1463,20 +1459,6 @@ public class GameSessionCanonicalRealmCatalogRepository {
         HexFormat.of().formatHex(policyBytes));
   }
 
-  private static final ObjectMapper JSON = new ObjectMapper();
-  private static final Set<String> CREATION_EVIDENCE_FIELDS =
-      Set.of(
-          "schemaVersion",
-          "targetNamespace",
-          "creationRequestId",
-          "operationId",
-          "requestDigest",
-          "canonicalTenantId",
-          "sourceGameRowId",
-          "sourceGameTenantKey",
-          "provenanceKind",
-          "evidenceDigest");
-
   private final String workloadNamespace;
   private final TransactionTemplate writeTransaction;
   private final TransactionTemplate readTransaction;
@@ -1503,81 +1485,25 @@ public class GameSessionCanonicalRealmCatalogRepository {
 
   private FreshTenantAssociation verifyStoredFreshAssociation(
       AuthoredWorldSourceEvidence source, UUID canonicalTenantId) {
-    Record row =
-        dsl.fetchOne(
-            "SELECT fresh.target_namespace, fresh.association_request_id,"
-                + " fresh.source_schema_version, fresh.source_target_namespace,"
-                + " fresh.source_request_id, fresh.source_canonical_tenant_id,"
-                + " fresh.canonical_tenant_id, fresh.legacy_game_session_tenant_id,"
-                + " fresh.source_game_row_id, fresh.source_game_tenant_key, fresh.provenance_kind,"
-                + " fresh.association_kind, fresh.association_operation_id,"
-                + " fresh.complete_source_evidence::text AS complete_source_evidence,"
-                + " claim.target_namespace AS claim_namespace,"
-                + " claim.canonical_tenant_id AS claim_canonical_tenant_id,"
-                + " claim.legacy_game_session_tenant_id AS claim_tenant_id,"
-                + " claim.association_kind AS claim_kind,"
-                + " claim.reservation_kind AS claim_reservation_kind,"
-                + " claim.association_operation_id AS claim_operation_id,"
-                + " claim.association_request_id AS claim_request_id,"
-                + " reservation.reservation_kind AS reservation_kind"
-                + " FROM game_session_fresh_tenant_association fresh"
-                + " LEFT JOIN game_session_tenant_canonical_claim claim"
-                + " ON claim.target_namespace = fresh.target_namespace"
-                + " AND claim.canonical_tenant_id = fresh.canonical_tenant_id"
-                + " LEFT JOIN game_session_tenant_scope_reservation reservation"
-                + " ON reservation.game_session_tenant_id = fresh.legacy_game_session_tenant_id"
-                + " WHERE fresh.target_namespace = ? AND fresh.canonical_tenant_id = ?",
-            source.targetNamespace(),
-            canonicalTenantId);
-    if (row == null) {
-      throw new InvalidCanonicalRealmCatalogException(
-          "Fresh canonical realm requires an existing complete Game Session tenant association");
-    }
     try {
-      String requestIdText = required(row, "association_request_id", UUID.class).toString();
-      UUID associationOperationId = required(row, "association_operation_id", UUID.class);
-      UUID tenantId = required(row, "canonical_tenant_id", UUID.class);
-      long numericTenantId = required(row, "legacy_game_session_tenant_id", Long.class);
-      FreshTenantCreationEvidence creation =
-          parseCreationEvidence(required(row, "complete_source_evidence", String.class));
-      if (!source.targetNamespace().equals(required(row, "target_namespace", String.class))
-          || !source
-              .targetNamespace()
-              .equals(required(row, "source_target_namespace", String.class))
-          || !requestIdText.equals(required(row, "source_request_id", UUID.class).toString())
-          || !tenantId.equals(required(row, "source_canonical_tenant_id", UUID.class))
-          || required(row, "source_schema_version", Integer.class) != creation.schemaVersion()
-          || required(row, "source_game_row_id", Long.class) != creation.sourceGameRowId()
-          || !required(row, "source_game_tenant_key", String.class)
-              .equals(creation.sourceGameTenantKey())
-          || !required(row, "provenance_kind", String.class).equals(creation.provenanceKind())
-          || !"FRESH_SOURCE_BOUND".equals(required(row, "association_kind", String.class))
-          || !creation.targetNamespace().equals(source.targetNamespace())
-          || !creation
-              .creationRequestId()
-              .equals(required(row, "association_request_id", UUID.class))
-          || !creation.canonicalTenantId().equals(tenantId)
-          || !creation.targetNamespace().equals(source.targetNamespace())
+      FreshTenantAssociation association =
+          new GameSessionFreshTenantAssociationRepository(dsl)
+              .readCanonicalTenantAssociationSnapshot(source.targetNamespace(), canonicalTenantId)
+              .orElseThrow(
+                  () ->
+                      new InvalidCanonicalRealmCatalogException(
+                          "Fresh canonical realm requires an existing complete Game Session tenant association"));
+      FreshTenantCreationEvidence creation = association.sourceEvidence();
+      if (!creation.targetNamespace().equals(source.targetNamespace())
           || !creation.canonicalTenantId().equals(source.canonicalTenantId())
           || creation.sourceGameRowId() != source.sourceGameRowId()
           || !creation.sourceGameTenantKey().equals(source.sourceGameTenantKey())
-          || !creation.provenanceKind().equals(source.provenanceKind())
-          || !"FRESH_SOURCE_BOUND".equals(required(row, "claim_kind", String.class))
-          || !"FRESH_SOURCE_BOUND".equals(required(row, "claim_reservation_kind", String.class))
-          || !"FRESH_SOURCE_BOUND".equals(required(row, "reservation_kind", String.class))
-          || !source.targetNamespace().equals(required(row, "claim_namespace", String.class))
-          || !tenantId.equals(required(row, "claim_canonical_tenant_id", UUID.class))
-          || numericTenantId != required(row, "claim_tenant_id", Long.class)
-          || !associationOperationId.equals(required(row, "claim_operation_id", UUID.class))
-          || !required(row, "association_request_id", UUID.class)
-              .equals(required(row, "claim_request_id", UUID.class))
-          || associationOperationId.equals(creation.operationId())) {
+          || !creation.provenanceKind().equals(source.provenanceKind())) {
         throw new InvalidCanonicalRealmCatalogException(
             "Stored fresh tenant association differs from complete source receipt or canonical claim");
       }
-      return new FreshTenantAssociation(
-          source.targetNamespace(), tenantId, numericTenantId, associationOperationId, creation);
-    } catch (IllegalArgumentException invalid) {
+      return association;
+    } catch (InvalidFreshTenantAssociationException | IllegalArgumentException invalid) {
       throw new InvalidCanonicalRealmCatalogException(
           "Stored fresh tenant association contains invalid complete source evidence", invalid);
     }
@@ -1622,72 +1548,6 @@ public class GameSessionCanonicalRealmCatalogRepository {
     return new SelectedPolicy(selected.policyId(), selected.policyDigest(), policy);
   }
 
-  /** ADR0047 UTF-8 byte-length framing; every input segment has an unambiguous byte boundary. */
-  private static FreshTenantCreationEvidence parseCreationEvidence(String serializedEvidence) {
-    try {
-      JsonNode json = JSON.readTree(serializedEvidence);
-      if (json == null || !json.isObject() || json.size() != CREATION_EVIDENCE_FIELDS.size()) {
-        throw new IllegalArgumentException(
-            "Complete creation evidence must be one closed JSON object");
-      }
-      HashSet<String> fields = new HashSet<>();
-      json.fieldNames().forEachRemaining(fields::add);
-      if (!fields.equals(CREATION_EVIDENCE_FIELDS)) {
-        throw new IllegalArgumentException(
-            "Complete creation evidence has unknown or missing fields");
-      }
-      return new FreshTenantCreationEvidence(
-          requiredInt(json, "schemaVersion"),
-          requiredText(json, "targetNamespace"),
-          parseUuid(requiredText(json, "creationRequestId")),
-          parseUuid(requiredText(json, "operationId")),
-          requiredText(json, "requestDigest"),
-          parseUuid(requiredText(json, "canonicalTenantId")),
-          requiredLong(json, "sourceGameRowId"),
-          requiredText(json, "sourceGameTenantKey"),
-          requiredText(json, "provenanceKind"),
-          requiredText(json, "evidenceDigest"));
-    } catch (IOException | IllegalArgumentException invalid) {
-      throw new InvalidCanonicalRealmCatalogException(
-          "Stored complete Game Design creation evidence is invalid", invalid);
-    }
-  }
-
-  private static String requiredText(JsonNode json, String field) {
-    JsonNode value = json.get(field);
-    if (value == null || !value.isTextual()) {
-      throw new IllegalArgumentException("Complete creation evidence field must be text: " + field);
-    }
-    return value.textValue();
-  }
-
-  private static int requiredInt(JsonNode json, String field) {
-    JsonNode value = json.get(field);
-    if (value == null || !value.isIntegralNumber() || !value.canConvertToInt()) {
-      throw new IllegalArgumentException(
-          "Complete creation evidence field must be an integer: " + field);
-    }
-    return value.intValue();
-  }
-
-  private static long requiredLong(JsonNode json, String field) {
-    JsonNode value = json.get(field);
-    if (value == null || !value.isIntegralNumber() || !value.canConvertToLong()) {
-      throw new IllegalArgumentException(
-          "Complete creation evidence field must be an integer: " + field);
-    }
-    return value.longValue();
-  }
-
-  private static UUID parseUuid(String value) {
-    UUID parsed = UUID.fromString(value);
-    if (!parsed.toString().equals(value) || NIL_UUID.equals(parsed)) {
-      throw new IllegalArgumentException(
-          "Complete creation evidence UUID must be canonical and nonnil");
-    }
-    return parsed;
-  }
-
   private static <T> T required(Record row, String field, Class<T> type) {
     T value = row.get(field, type);
     if (value == null) {
@@ -1695,12 +1555,6 @@ public class GameSessionCanonicalRealmCatalogRepository {
           "Stored canonical realm catalog is missing required evidence: " + field);
     }
     return value;
-  }
-
-  private static void sourceRequireNonNil(UUID id, String label) {
-    if (id == null || NIL_UUID.equals(id)) {
-      throw new IllegalArgumentException("Canonical nonnil " + label + " is required");
-    }
   }
 
   private static void requireNoActiveOwnerTransaction() {

@@ -86,6 +86,13 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
   }
 
   @Test
+  void launchEvidenceConstructorRejectsMismatchedGameSessionFixtureAssociation() {
+    assertThatThrownBy(() -> fixtureEvidence(true))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageStartingWith("RUN_OWNED_WORLD_GAME_SESSION_FIXTURE_ASSOCIATION_MISMATCH:");
+  }
+
+  @Test
   void disabledFixtureFailsBeforeReadingFilesOrCallingGameDesign(CapturedOutput output) {
     GameDesignClient gameDesignClient = mock(GameDesignClient.class);
     RunOwnedWorldLaunchEvidenceProvider provider =
@@ -262,6 +269,10 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
   }
 
   private static RunOwnedWorldLaunchEvidence fixtureEvidence() {
+    return fixtureEvidence(false);
+  }
+
+  private static RunOwnedWorldLaunchEvidence fixtureEvidence(boolean mismatchedSeal) {
     UUID registrationId = UUID.fromString(OPERATION_ID);
     UUID sourceOperationId = UUID.fromString("3f773701-e812-44f5-8ae0-7268d543beed");
     UUID canonicalTenantId = UUID.fromString("ed5d1541-a33e-4f8b-9b54-38c27d76ba6d");
@@ -427,6 +438,17 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
             policyRequestDigest,
             RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
                 UUID.fromString(OPERATION_ID), policyRequestDigest));
+    UUID otherSealOperation = UUID.fromString("20000000-0000-4000-8000-000000000012");
+    var receiptSeal =
+        mismatchedSeal
+            ? new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal(
+                policySeal.schema(),
+                policySeal.ownerService(),
+                otherSealOperation,
+                policySeal.requestDigest(),
+                RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+                    otherSealOperation, policySeal.requestDigest()))
+            : policySeal;
     var receipt =
         new RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt(
             RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_SCHEMA,
@@ -442,7 +464,7 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
             source,
             launchRead,
             creation,
-            policySeal);
+            receiptSeal);
     var policyRequestBytes =
         RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestBytes(
             capability, creation, source, launchRead);

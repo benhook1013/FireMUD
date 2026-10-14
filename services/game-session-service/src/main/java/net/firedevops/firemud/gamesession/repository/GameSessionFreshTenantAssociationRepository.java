@@ -498,6 +498,9 @@ public class GameSessionFreshTenantAssociationRepository {
   private FreshTenantAssociation commitAssociation(
       FreshTenantCreationEvidence sourceEvidence, UUID requestedOperationId) {
     requireOwnerTransaction();
+    if (requestedOperationId != null) {
+      lockAssociationOperation(requestedOperationId);
+    }
     lockSourceIdentity(sourceEvidence);
 
     Optional<FreshTenantAssociation> prior =
@@ -514,6 +517,12 @@ public class GameSessionFreshTenantAssociationRepository {
     }
 
     rejectOrphanOrRetainedClaim(sourceEvidence);
+    if (requestedOperationId != null
+        && (findAssociationByOperation(requestedOperationId) != null
+            || findClaimByOperation(requestedOperationId) != null)) {
+      throw new FreshTenantAssociationConflictException(
+          "Association operation ID is already bound to different source or namespace evidence");
+    }
     long tenantId = allocateFreshTenantId();
     UUID associationOperationId =
         requestedOperationId == null
@@ -583,6 +592,12 @@ public class GameSessionFreshTenantAssociationRepository {
   private Optional<FreshTenantAssociation> readByCanonicalTenantIdInTransaction(
       String namespace, UUID canonicalTenantId) {
     requireOwnerTransaction();
+    return readCanonicalTenantAssociationSnapshot(namespace, canonicalTenantId);
+  }
+
+  /** One complete owner association/claim snapshot under the caller's established read boundary. */
+  Optional<FreshTenantAssociation> readCanonicalTenantAssociationSnapshot(
+      String namespace, UUID canonicalTenantId) {
     if (canonicalTenantId == null || isNil(canonicalTenantId)) {
       throw new IllegalArgumentException("Canonical tenant UUID must be nonnil");
     }

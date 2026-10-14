@@ -12,7 +12,6 @@ import java.security.NoSuchAlgorithmException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.HexFormat;
 import java.util.List;
@@ -181,7 +180,6 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
             gameSessionFixtureClient()
                 .readFixture(fixtureReadRequest, capability.gameSessionLeafSha256());
         stage = VerificationStage.GAME_SESSION_FIXTURE_COMPARE;
-        requireFixtureReadback(capability, receipt, gameSessionAssociation);
 
         return new RunOwnedWorldLaunchEvidence(
             capability,
@@ -203,41 +201,6 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
     } catch (RuntimeException exception) {
       logger.warn("Run-owned World launch evidence verification rejected; stage={}", stage);
       throw exception;
-    }
-  }
-
-  private static void requireFixtureReadback(
-      RunOwnedInitialAdmissionFixtureWireCodec.Capability capability,
-      RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt receipt,
-      CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult actual) {
-    var expectedPolicy =
-        new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicyRequest(
-            capability,
-            receipt.creationEvidence(),
-            receipt.sourceEvidence(),
-            receipt.launchReadEvidence());
-    byte[] expectedBytes =
-        RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestBytes(
-            capability,
-            receipt.creationEvidence(),
-            receipt.sourceEvidence(),
-            receipt.launchReadEvidence());
-    if (!actual.request().fixtureOperationId().toString().equals(capability.operationId())
-        || !actual.request().targetNamespace().equals(receipt.sourceEvidence().targetNamespace())
-        || !actual
-            .request()
-            .expectedFixturePolicyEvidenceDigest()
-            .equals(receipt.fixturePolicySeal().evidenceDigest())
-        || !actual.fixturePolicySeal().equals(receipt.fixturePolicySeal())
-        || !Objects.equals(actual.fixturePolicyRequest(), expectedPolicy)
-        || !Arrays.equals(actual.fixturePolicyRequestBytes(), expectedBytes)
-        || !actual.canonicalTenantId().equals(receipt.sourceEvidence().canonicalTenantId())
-        || !actual
-            .canonicalVersionId()
-            .toString()
-            .equals(
-                receipt.launchReadEvidence().publishedReleaseBundle().getCanonicalVersionId())) {
-      throw invalidEvidence();
     }
   }
 

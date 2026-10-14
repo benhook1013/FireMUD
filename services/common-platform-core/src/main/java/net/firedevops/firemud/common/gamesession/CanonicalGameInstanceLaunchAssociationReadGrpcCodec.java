@@ -66,7 +66,9 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
         .setCanonicalVersionId(result.canonicalVersionId().toString())
         .setCanonicalRealmId(result.canonicalRealmId().toString())
         .setPlayableStateNamespaceId(result.playableStateNamespaceId().toString())
-        .setPlayableStateScope("SHARED")
+        .setPlayableStateScope(
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_SHARED)
         .setCatalogRevision(result.catalogRevision())
         .setCurrentGameInstanceStatus(result.currentGameInstanceStatus().name())
         .setCurrentRowVersion(result.currentRowVersion())
@@ -90,7 +92,10 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
             response.getTargetNamespace(),
             parseCanonicalNonNilUuid(response.getFixtureOperationId(), "fixtureOperationId"),
             response.getExpectedFixturePolicyEvidenceDigest());
-    if (!expected.equals(actual) || !"SHARED".equals(response.getPlayableStateScope())) {
+    if (!expected.equals(actual)
+        || response.getPlayableStateScope()
+            != net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_SHARED) {
       throw new IllegalArgumentException(
           "Fixture launch owner changed the exact read identity or scope");
     }
