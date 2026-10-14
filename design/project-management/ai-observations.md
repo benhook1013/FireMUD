@@ -301,3 +301,8 @@ Entry format:
   - Observation: Main initially accepted it after reading the codec and client but missed the shared result constructor's existing STARTING requirement; the attempted negative fixture failed before reaching World.
   - Recovery: The redundant production guard was removed, the decision was corrected in the immutable controller audit, and the public checkpoint correction preserves the original review credit. Focused wire-response rejection proof verifies the actual transitive boundary.
   - Expected pattern: Follow the complete typed construction path before adjudicating an absent check. A local consumer need not repeat an invariant already enforced by every constructible input; retained findings and changed code alone are not fix proof.
+
+- `2026-10-14`: Selected-PR status can exhaust its deadline while reading historical targets
+  - Observation: Gameplay's full `reviews status --pr 3206` failed at its 120-second deadline in `target_history_pr_3162_cli`, after 99 prior phases, so it produced no completed readiness result. The existing `--summary --json` projection subsequently succeeded; no safety guard was bypassed.
+  - Consequence and unknowns: the timeout delayed current-front adjudication. The diagnostic identifies historical evidence work, but does not establish which lookup caused the overall latency or that the summary avoids that work.
+  - Current status: the exact diagnostic was reported to Overseer for the controller owner's existing performance work. Prefer the documented summary projection for routine status and retain an explicit unavailable result when a required inspection times out; reconsider at the owner's next measured performance checkpoint.
