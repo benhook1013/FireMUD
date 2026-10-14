@@ -93,7 +93,9 @@ class WorldCanonicalInstanceExecutionTerminalSchemaPostgresIntegrationTest {
           .satisfies(failure -> assertThat(sqlState(failure)).isEqualTo("23514"));
       assertThat(executionRows(dsl, qualifiedExecutionTable)).isEmpty();
 
-      Flyway current = flyway(source, schema, null, worldLocation, sagaLocation);
+      Flyway current =
+          flyway(
+              source, schema, MigrationVersion.fromVersion("1042.1"), worldLocation, sagaLocation);
       current.migrate();
       current.validate();
       assertThat(latestVersion(dsl)).isEqualTo("1042.1");

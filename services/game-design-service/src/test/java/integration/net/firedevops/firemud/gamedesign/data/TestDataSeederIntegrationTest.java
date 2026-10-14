@@ -108,6 +108,7 @@ import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.Ordered;
+import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -131,6 +132,7 @@ import tools.jackson.databind.ObjectMapper;
     classes = GameDesignServiceApplication.class,
     properties = {
       "spring.profiles.active=test",
+      "spring.config.import=file:src/main/resources/application.yml",
       "firemud.smoke.seed-demo-runtime.enabled=true",
       "FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false",
       "spring.flyway.clean-disabled=false",
@@ -192,6 +194,7 @@ class TestDataSeederIntegrationTest {
   private net.firedevops.firemud.gamedesign.data.RunOwnedFixturePolicyProducer fixturePolicy;
 
   @Autowired private Flyway flyway;
+  @Autowired private ConfigurableEnvironment environment;
   @MockitoSpyBean private GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
   @Autowired private GameRepository gameRepository;
 
@@ -696,6 +699,53 @@ class TestDataSeederIntegrationTest {
   @Test
   void actualProducerStartingAndPreparingOwnersComposeOverThreeMutualTlsSockets(
       @TempDir Path testDirectory) throws Exception {
+    assertThat(environment.getRequiredProperty("spring.application.name"))
+        .isEqualTo("game-design-service");
+    var applicationNameOrigin =
+        environment.getPropertySources().stream()
+            .filter(source -> source.containsProperty("spring.application.name"))
+            .map(
+                source ->
+                    org.springframework.boot.origin.OriginLookup.getOrigin(
+                        source, "spring.application.name"))
+            .filter(java.util.Objects::nonNull)
+            .findFirst()
+            .orElseThrow(
+                () -> new AssertionError("spring.application.name has no config data origin"));
+    while (applicationNameOrigin
+        instanceof org.springframework.boot.origin.PropertySourceOrigin wrapper) {
+      applicationNameOrigin =
+          java.util.Objects.requireNonNull(
+              wrapper.getOrigin(), "spring.application.name origin wrapper has no concrete parent");
+    }
+    assertThat(applicationNameOrigin)
+        .as("origin for spring.application.name: %s", applicationNameOrigin)
+        .isInstanceOf(org.springframework.boot.origin.TextResourceOrigin.class);
+    Path actualApplicationConfig =
+        java.util.Objects.requireNonNull(
+                ((org.springframework.boot.origin.TextResourceOrigin) applicationNameOrigin)
+                    .getResource())
+            .getFile()
+            .toPath()
+            .toRealPath();
+    Path expectedApplicationConfig = Path.of("src/main/resources/application.yml").toRealPath();
+    assertThat(actualApplicationConfig)
+        .withFailMessage(
+            "spring.application.name came from %s, expected GDS config %s",
+            actualApplicationConfig, expectedApplicationConfig)
+        .isEqualTo(expectedApplicationConfig);
+
+    Map<String, java.util.function.Supplier<Object>> postgresProperties = new LinkedHashMap<>();
+    PostgresBackedServiceTestSupport.registerPostgresService(
+        postgresProperties::put, postgres, "game_design_service");
+    String expectedFlywayLocations =
+        postgresProperties.get("spring.flyway.locations").get().toString();
+    assertThat(
+            java.util.Arrays.stream(flyway.getConfiguration().getLocations())
+                .map(org.flywaydb.core.api.Location::getDescriptor)
+                .toList())
+        .containsExactlyInAnyOrder(expectedFlywayLocations.split(","));
+
     Fixture fixture = prepareFixture(testDirectory);
     configureSeeder(fixture);
     seeder.run(new DefaultApplicationArguments(new String[] {}));
