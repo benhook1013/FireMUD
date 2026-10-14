@@ -6,7 +6,7 @@ The target design places the generation engine and typed design-time/runtime ing
 
 The legacy `POST /generation/rules` endpoint remains a direct persistence path with tenant access checks. Its DTO now requires an explicit positive Version, and writes require an existing OPEN publication owner; that local fence does not supply authenticated Game Design workflow or lifecycle authority. Procedural-generation readiness remains unavailable pending the canonical typed owner path.
 
-The selected direct-authored owner source is prepared but unqualified. It may retain explicit owner-proved empty generation inputs under the [World digest/input manifest](./runtime-and-data.md#digest-input-manifest); unsupported nonempty rules and inbound generation sources remain refused. This does not invoke a World generation engine, add a registry or qualify derived-artifact publication/readiness. Subsequent owner-chain and transport proof status belongs to [the World tracker](../../../project-management/implementation-tracking/world-runtime-and-movement.md#selected-publication-world-owner-source).
+The selected direct-authored owner chain has bounded physical storage and authenticated World readback qualification under controlled fixtures. Its complete inventory and explicit artifact decisions retain the selected source and frozen checkpoint; schema/input/storage authority belongs to the [World digest/input manifest](./runtime-and-data.md#digest-input-manifest). Unsupported nonempty rules and inbound generation sources remain refused. This does not invoke a World generation engine, add a registry or qualify finalized artifact production, release delivery or runtime discovery. The components remain standalone, unregistered and default denied; proof attribution and genuine handoff gaps belong to [the World tracker](../../../project-management/implementation-tracking/world-runtime-and-movement.md#selected-publication-world-owner-source).
 
 ## Derived World Artifact Publication
 
@@ -17,6 +17,8 @@ Derived world artifacts such as navmesh/path graph bundles follow one canonical 
 - If derived artifacts are exported outside World Management storage, they must be handed to the Game Design publish workflow as explicit publish inputs so Game Design can write them, attest them in `published_release_bundle` through typed `artifactDigests[]`, declare launch-required manifest usage keys through `requiredManifestAssetKeys[]`, and expose them through the same release bundle used by activation and repair tooling.
 - If a deployment keeps these artifacts only in World Management storage, the read path must remain World-owned via gRPC or database-backed APIs and must not rely on unpublished object-store conventions.
 - Implementations must choose one of those paths per artifact family and document the consumer read path. Mixing direct World writes to object storage with Game Design-managed asset publication for the same artifact family is not allowed.
+
+The supported direct-authored room/exit subset retains explicit `NAVMESH` and `PATH_GRAPH` decisions in its complete owner inventory. Its authored edges require neither derived bundle; that bounded classification does not supply producer records for other source models. When a source requires a derived artifact, the finalized producer record and digest must follow the publication and consumer read path below. Input and inventory binding rules remain owned by [World Runtime and Data](./runtime-and-data.md#digest-input-manifest).
 
 Initial-slice decision:
 
