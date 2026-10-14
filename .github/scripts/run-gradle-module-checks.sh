@@ -23,6 +23,8 @@ readonly TEMP_DIR
 readonly NORMAL_LOG="$TEMP_DIR/normal.log"
 readonly REFRESH_LOG="$TEMP_DIR/refresh.log"
 
+# Invoked indirectly by the EXIT trap below.
+# shellcheck disable=SC2329
 cleanup() {
   rm -f -- "$NORMAL_LOG" "$REFRESH_LOG"
   rmdir -- "$TEMP_DIR"
