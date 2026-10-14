@@ -11,7 +11,6 @@ import java.sql.Connection;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -87,102 +86,11 @@ public class CanonicalInitialAdmissionRepository {
     Objects.requireNonNull(eventRepository, "eventRepository");
   }
 
-  /** Persists the immutable request identity before remote World verification is attempted. */
+  /** Denies fresh Human intent before owner effects while Account protection is unavailable. */
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public void reserve(CanonicalInitialAdmissionRequest request) {
     Objects.requireNonNull(request, "request");
-    requireWritableReadCommittedOwnerTransaction();
-    lockTarget(request);
-    Attempt existing =
-        findAttempt(request.targetNamespace(), request.initialAdmissionRequestId(), true);
-    if (existing != null && !PENDING.equals(existing.status())) {
-      requireSameRequestIdentity(existing, request);
-      return;
-    }
-    if (existing == null
-        && request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
-      lockAllAdmissionRepresentationsForNoPrior();
-    }
-    CanonicalRealmCatalogSnapshot catalog = lockCatalog(request);
-    CanonicalInitialAdmissionLaunchTarget launchTarget =
-        lockLaunchTarget(request, existing == null);
-    requireRequestMatchesCatalogAndLaunch(request, catalog, launchTarget);
-
-    if (existing != null) {
-      requireSameRequest(existing, request, launchTarget);
-      return;
-    }
-    Attempt otherPending = findPendingForRealm(request, true);
-    if (otherPending != null) {
-      throw new CanonicalInitialAdmissionConflictException(
-          "Another initial-admission request already owns the pending realm attempt");
-    }
-
-    if (request.originKind() == CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER) {
-      pointerRepository.requireNoAdmissionPointerRepresentations(
-          request.targetNamespace(),
-          request.canonicalTenantId(),
-          request.realmId(),
-          request.worldSlug(),
-          catalog.realmSlug(),
-          launchTarget.association().gameSessionTenantId(),
-          launchTarget.gameInstanceId());
-    } else {
-      pointerRepository.lockExpectedClosedForRealm(
-          request.targetNamespace(),
-          request.canonicalTenantId(),
-          request.realmId(),
-          request.expectedPriorPointerVersion(),
-          request.expectedCatalogRevision());
-    }
-
-    Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
-    int inserted =
-        dsl.execute(
-            "INSERT INTO "
-                + OPERATION_TABLE
-                + " (target_namespace, initial_admission_request_id, request_digest, "
-                + "canonical_tenant_id, world_slug, realm_id, playable_state_namespace_id, "
-                + "playable_state_scope, canonical_game_instance_id, game_session_tenant_id, "
-                + "game_instance_id, canonical_version_id, runtime_version_id, "
-                + "expected_catalog_revision, origin_kind, "
-                + "expected_prior_pointer_version, active_lifecycle_epoch, hold_id, hold_fence, "
-                + "hold_binding_digest, status, created_at, updated_at) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', "
-                + "CAST(? AS TIMESTAMPTZ), CAST(? AS TIMESTAMPTZ)) ON CONFLICT DO NOTHING",
-            request.targetNamespace(),
-            request.initialAdmissionRequestId(),
-            request.requestDigest(),
-            request.canonicalTenantId(),
-            request.worldSlug(),
-            request.realmId(),
-            request.playableStateNamespaceId(),
-            request.playableStateScope(),
-            request.canonicalGameInstanceId(),
-            launchTarget.association().gameSessionTenantId(),
-            launchTarget.gameInstanceId(),
-            request.canonicalVersionId(),
-            launchTarget.runtimeVersionId(),
-            request.expectedCatalogRevision(),
-            request.originKind().name(),
-            request.expectedPriorPointerVersion(),
-            request.activeLifecycleEpoch(),
-            request.holdId(),
-            request.holdFence(),
-            request.holdBindingDigest(),
-            utc(now),
-            utc(now));
-    Attempt reserved =
-        findAttempt(request.targetNamespace(), request.initialAdmissionRequestId(), true);
-    if (reserved == null) {
-      throw new CanonicalInitialAdmissionConflictException(
-          "Initial-admission request reservation conflicted with durable owner state");
-    }
-    requireSameRequest(reserved, request, launchTarget);
-    if (inserted == 0 && !PENDING.equals(reserved.status())) {
-      throw new CanonicalInitialAdmissionConflictException(
-          "Initial-admission request identity was concurrently terminalized");
-    }
+    throw unavailableHumanAdmissionProtection();
   }
 
   /**
