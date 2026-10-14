@@ -102,8 +102,8 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * Controlled source/Version, Account binding, and PKI fixtures exercise the actual World APPLIED
  * and abort SQL owners plus same-namespace mTLS peer/read handlers. Account permission and held
- * COMMIT_ORDER evidence are stipulated by controlled fixtures, not supplied by a production
- * Account authority. This proves SQL owner outcomes and transport handling only, not genuine source
+ * COMMIT_ORDER evidence are stipulated by controlled fixtures, not supplied by a production Account
+ * authority. This proves SQL owner outcomes and transport handling only, not genuine source
  * provenance, production Account authorization, or live runtime registration.
  */
 @Testcontainers(disabledWithoutDocker = true)
@@ -197,20 +197,18 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
   void retainedUnverifiedTopologyOrRegionHistoryCannotBeRelabeledAsAborted() throws Exception {
     Fixture topologyFixture = fixture();
     WorldDraftGraphApplication topology = currentGraphApplication(topologyFixture);
-    insertRetainedUnverifiedHistory(
-        topologyFixture, topology, "world_topology_draft_commit");
-    assertThatThrownBy(
-            () -> terminalService().recordDefinitiveAbort(topology.operation()))
+    insertRetainedUnverifiedHistory(topologyFixture, topology, "world_topology_draft_commit");
+    assertThatThrownBy(() -> terminalService().recordDefinitiveAbort(topology.operation()))
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("history");
-    assertThat(count("world_topology_draft_commit", topology.operation().requestId())).isEqualTo(1L);
+    assertThat(count("world_topology_draft_commit", topology.operation().requestId()))
+        .isEqualTo(1L);
     assertThat(terminalService().readDefinitiveAbort(topology.operation())).isEmpty();
 
     Fixture regionFixture = fixture();
     WorldDraftGraphApplication region = currentGraphApplication(regionFixture);
     insertRetainedUnverifiedHistory(regionFixture, region, "world_region_draft_commit");
-    assertThatThrownBy(
-            () -> terminalService().recordDefinitiveAbort(region.operation()))
+    assertThatThrownBy(() -> terminalService().recordDefinitiveAbort(region.operation()))
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("history");
     assertThat(count("world_region_draft_commit", region.operation().requestId())).isEqualTo(1L);
@@ -223,8 +221,7 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
     var applicationService = controlledGraphApplicationService();
     WorldDraftGraphAppliedResult applied = applicationService.apply(application);
 
-    assertThatThrownBy(
-            () -> terminalService().recordDefinitiveAbort(application.operation()))
+    assertThatThrownBy(() -> terminalService().recordDefinitiveAbort(application.operation()))
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("cannot be relabeled as no-commit");
     assertThat(terminalService().readDefinitiveAbort(application.operation())).isEmpty();
@@ -397,8 +394,7 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
         .isInstanceOf(RuntimeException.class)
         .hasMessageContaining("changed binding");
 
-    DraftCommitBinding changedBinding =
-        changedPayload(binding, "substituted game design bytes");
+    DraftCommitBinding changedBinding = changedPayload(binding, "substituted game design bytes");
     WorldDraftTerminalOperation changedInput =
         operation(f, changedBinding, operation.operationId(), operation.authorizationFenceId());
     assertThatThrownBy(() -> service.readDefinitiveAbort(changedInput))
