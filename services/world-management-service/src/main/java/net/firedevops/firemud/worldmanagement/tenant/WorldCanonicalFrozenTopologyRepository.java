@@ -106,8 +106,9 @@ public class WorldCanonicalFrozenTopologyRepository {
     var provenance = owner.lockAndResolve(request.freeze());
     WorldCanonicalFrozenTopology prior = find(request);
     if (prior != null) return prior;
-    if (request.freeze().digestSchemaVersion() != 3) {
-      throw new ConflictException("New canonical graph capture requires digest schema 3");
+    if (request.freeze().digestSchemaVersion() != 3
+        && request.freeze().digestSchemaVersion() != 4) {
+      throw new ConflictException("Canonical graph capture requires schema 3 or selected schema 4");
     }
     if (!"FROZEN".equals(provenance.ownerFreezePhase())) {
       throw new ConflictException(
@@ -129,16 +130,30 @@ public class WorldCanonicalFrozenTopologyRepository {
     var graph =
         topology.verifyImmutableBytes(request.plan(), stored.graphBytes(), stored.resultBytes());
     requirePrivateKeys(graph, identity);
+    if (graph.inboundSourceClosure().isPresent() != (request.freeze().digestSchemaVersion() == 4)) {
+      throw new ConflictException(
+          "Selected inbound closure and schema-4 frozen checkpoint must be bound together");
+    }
     var digest =
-        digestService.getDraftDesignDigest(
-            Long.toString(provenance.localTenantKey()),
-            Long.toString(provenance.localVersionKey()));
+        request.freeze().digestSchemaVersion() == 4
+            ? digestService.getSelectedDraftDesignDigest(
+                Long.toString(provenance.localTenantKey()),
+                Long.toString(provenance.localVersionKey()),
+                graph
+                    .inboundSourceClosure()
+                    .orElseThrow(
+                        () ->
+                            new ConflictException(
+                                "Selected graph capture requires its exact original inbound closure")))
+            : digestService.getDraftDesignDigest(
+                Long.toString(provenance.localTenantKey()),
+                Long.toString(provenance.localVersionKey()));
     if (!Long.toString(provenance.localTenantKey()).equals(digest.tenantId())
         || !Long.toString(provenance.localVersionKey()).equals(digest.scopeValue())
-        || digest.digestSchemaVersion() != 3
+        || digest.digestSchemaVersion() != request.freeze().digestSchemaVersion()
         || !request.freeze().contentDigest().equals(digest.contentDigest())) {
       throw new ConflictException(
-          "Canonical graph capture differs from exact schema-3 frozen content checkpoint");
+          "Canonical graph capture differs from exact frozen content checkpoint");
     }
     UUID captureId = UUID.randomUUID();
     String freezeJson = JSON.writeValueAsString(request.freeze());

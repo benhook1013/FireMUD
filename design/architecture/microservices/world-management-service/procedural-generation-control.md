@@ -4,7 +4,9 @@
 
 The target design places the generation engine and typed design-time/runtime ingress in World Management. Current `SimpleDungeonGenerator` and registry implementations remain in Automation & Scripting, and World Management lacks typed APIs that invoke a World-owned engine; its current typed Draft mutation path for generated subtrees is not such an invocation API.
 
-The legacy `POST /generation/rules` endpoint remains live as a direct persistence path. It only checks tenant access, does not require the authenticated Game Design Draft workflow or validate version lifecycle state, and its DTO mapping defaults `versionId` rather than accepting the target version. This is migration drift: generation inputs must converge on the typed Game Design-authorized Draft/version-state path, and the legacy endpoint must be removed or fail closed before procedural-generation readiness is claimed.
+The legacy `POST /generation/rules` endpoint remains a direct persistence path with tenant access checks. Its DTO now requires an explicit positive Version, and writes require an existing OPEN publication owner; that local fence does not supply authenticated Game Design workflow or lifecycle authority. Procedural-generation readiness remains unavailable pending the canonical typed owner path.
+
+The selected direct-authored owner source is prepared but unqualified. It may retain explicit owner-proved empty generation inputs under the [World digest/input manifest](./runtime-and-data.md#digest-input-manifest); unsupported nonempty rules and inbound generation sources remain refused. This does not invoke a World generation engine, add a registry or qualify derived-artifact publication/readiness. Subsequent owner-chain and transport proof status belongs to [the World tracker](../../../project-management/implementation-tracking/world-runtime-and-movement.md#selected-publication-world-owner-source).
 
 ## Derived World Artifact Publication
 
