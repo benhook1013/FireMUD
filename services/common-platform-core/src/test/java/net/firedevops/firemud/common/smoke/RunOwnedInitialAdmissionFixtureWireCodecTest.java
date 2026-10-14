@@ -146,32 +146,44 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
                 launchDescriptor().getAuthoredWorldBinding().toBuilder()
                     .setUnknownFields(UNKNOWN_FIELD_SET))
             .build();
+    assertInvalidReceipt(receiptWithSubstitutedDescriptor(descriptorWithNestedUnknownFields));
     assertInvalidReceipt(
-        () ->
-            sourceReceiptJson(
-                sourceEvidence(),
-                bundle(),
-                artifactState(),
-                versionState(),
-                descriptorWithNestedUnknownFields));
+        receiptWithSubstitutedDescriptor(
+            descriptorFor(12L, bundle().getId(), bundle().getPublishedReleaseBundleRef())));
+    assertInvalidReceipt(
+        receiptWithSubstitutedDescriptor(
+            descriptorFor(
+                bundle().getVersionId(), bundle().getId(), "different-owner-release-ref")));
+  }
 
-    assertInvalidReceipt(
-        () ->
-            sourceReceiptJson(
-                sourceEvidence(),
-                bundle(),
-                artifactState(),
-                versionState(),
-                descriptorFor(12L, bundle().getId(), bundle().getPublishedReleaseBundleRef())));
-    assertInvalidReceipt(
-        () ->
-            sourceReceiptJson(
-                sourceEvidence(),
-                bundle(),
-                artifactState(),
-                versionState(),
-                descriptorFor(
-                    bundle().getVersionId(), bundle().getId(), "different-owner-release-ref")));
+  @Test
+  void rejectsFreshCreationAndSourceEvidenceWithDifferentValidProvenance() {
+    AuthoredWorldSourceEvidence retainedSourceEvidence = sourceEvidence("RETAINED_GAME_V29");
+    LaunchDescriptor retainedSourceDescriptor =
+        descriptorFor(
+            retainedSourceEvidence,
+            bundle().getVersionId(),
+            bundle().getId(),
+            bundle().getPublishedReleaseBundleRef());
+    LaunchReadEvidence retainedSourceLaunchRead =
+        new LaunchReadEvidence(
+            RunOwnedInitialAdmissionFixtureWireCodec.LAUNCH_READ_EVIDENCE_SCHEMA,
+            17L,
+            bundle(),
+            artifactState(),
+            versionState(),
+            retainedSourceDescriptor);
+
+    assertThat(creationEvidence().provenanceKind()).isEqualTo("NEW_GAME_ROW");
+    assertThat(retainedSourceEvidence.provenanceKind()).isEqualTo("RETAINED_GAME_V29");
+    assertThatThrownBy(
+            () ->
+                RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestBytes(
+                    capability(),
+                    creationEvidence(),
+                    retainedSourceEvidence,
+                    retainedSourceLaunchRead))
+        .isInstanceOf(RunOwnedInitialAdmissionFixtureWireCodec.InvalidWireDataException.class);
   }
 
   @Test
@@ -333,11 +345,6 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
         .isInstanceOf(RunOwnedInitialAdmissionFixtureWireCodec.InvalidWireDataException.class);
   }
 
-  private static void assertInvalidReceipt(java.util.function.Supplier<String> json) {
-    assertThatThrownBy(() -> parseSourceReceipt(json.get(), capability()))
-        .isInstanceOf(IllegalArgumentException.class);
-  }
-
   private static void assertInvalidReceipt(String json) {
     assertInvalidReceiptBytes(json.getBytes(StandardCharsets.UTF_8));
   }
@@ -368,6 +375,14 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
   private static String validSourceReceiptJson() {
     return sourceReceiptJson(
         sourceEvidence(), bundle(), artifactState(), versionState(), launchDescriptor());
+  }
+
+  private static String receiptWithSubstitutedDescriptor(LaunchDescriptor descriptor) {
+    String valid = validSourceReceiptJson();
+    String encodedValidDescriptor = encode(launchDescriptor().toByteArray());
+    String encodedReplacementDescriptor = encode(descriptor.toByteArray());
+    assertThat(valid).contains("\"launchDescriptorBase64\":\"" + encodedValidDescriptor + "\"");
+    return valid.replace(encodedValidDescriptor, encodedReplacementDescriptor);
   }
 
   private static String sourceReceiptJson(
@@ -456,6 +471,10 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
   }
 
   private static AuthoredWorldSourceEvidence sourceEvidence() {
+    return sourceEvidence("NEW_GAME_ROW");
+  }
+
+  private static AuthoredWorldSourceEvidence sourceEvidence(String provenanceKind) {
     UUID registrationRequestId = UUID.fromString(OPERATION_ID);
     UUID operationId = UUID.fromString(SOURCE_OPERATION_ID);
     String namespace = RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_TARGET_NAMESPACE;
@@ -482,7 +501,7 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
             worldDisplayName,
             13L,
             "7",
-            "NEW_GAME_ROW");
+            provenanceKind);
     return new AuthoredWorldSourceEvidence(
         1,
         namespace,
@@ -495,7 +514,7 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
         worldDisplayName,
         13L,
         "7",
-        "NEW_GAME_ROW",
+        provenanceKind,
         evidenceDigest);
   }
 
@@ -556,7 +575,11 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
   }
 
   private static LaunchDescriptor descriptorFor(long versionId, long bundleId, String bundleRef) {
-    AuthoredWorldSourceEvidence source = sourceEvidence();
+    return descriptorFor(sourceEvidence(), versionId, bundleId, bundleRef);
+  }
+
+  private static LaunchDescriptor descriptorFor(
+      AuthoredWorldSourceEvidence source, long versionId, long bundleId, String bundleRef) {
     var request =
         new AuthoredWorldLaunchDescriptorEvidence.Request(
             RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_TARGET_NAMESPACE,
