@@ -35,7 +35,8 @@ public class CharacterEquipmentRepository {
                     CHARACTER_EQUIPMENT
                         .CHARACTER_ID
                         .eq(characterId)
-                        .and(CHARACTERS.TENANT_ID.eq(tenantId))));
+                        .and(CHARACTERS.TENANT_ID.eq(tenantId))
+                        .and(CharacterRepository.legacyCharacterRow())));
     var content =
         dsl.select(
                 CHARACTER_EQUIPMENT.CHARACTER_ID,
@@ -68,7 +69,8 @@ public class CharacterEquipmentRepository {
                 CHARACTER_EQUIPMENT
                     .CHARACTER_ID
                     .eq(characterId)
-                    .and(CHARACTERS.TENANT_ID.eq(tenantId)))
+                    .and(CHARACTERS.TENANT_ID.eq(tenantId))
+                    .and(CharacterRepository.legacyCharacterRow()))
             .orderBy(CHARACTER_EQUIPMENT.SLOT.asc())
             .limit(
                 JooqEntityManagementRepositorySupport.limitOrDefault(pageable, Integer.MAX_VALUE))
@@ -83,7 +85,8 @@ public class CharacterEquipmentRepository {
             .from(CHARACTER_EQUIPMENT)
             .join(CHARACTERS)
             .on(CHARACTER_EQUIPMENT.CHARACTER_ID.eq(CHARACTERS.ID))
-            .where(CHARACTERS.TENANT_ID.eq(tenantId)));
+            .where(
+                CHARACTERS.TENANT_ID.eq(tenantId).and(CharacterRepository.legacyCharacterRow())));
   }
 
   private CharacterEquipmentEntry toEntity(Record record) {

@@ -22,7 +22,6 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.data.domain.Pageable;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -38,7 +37,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
     classes = EntityManagementServiceApplication.class,
     properties = "spring.grpc.server.port=0")
 class ContainerInstanceLocationIntegrationTest {
-  private static final Long TENANT_ID = 1L;
+  private Long tenantId;
   private static final String GAME_INSTANCE_ID = "GI-1";
   private static final String ROOM_INSTANCE_ID = "R-1";
   private static final PlayableStateScope PLAYABLE_STATE_SCOPE =
@@ -66,14 +65,12 @@ class ContainerInstanceLocationIntegrationTest {
   @Autowired private ItemInstanceRepository itemInstanceRepository;
   @Autowired private ItemStackRepository itemStackRepository;
   @Autowired private ContainerInstanceRepository containerInstanceRepository;
-  @Autowired private JdbcTemplate jdbcTemplate;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
 
   @BeforeEach
-  void cleanDatabase() {
-    jdbcTemplate.execute(
-        "TRUNCATE TABLE item_stacks, item_instances, container_instances, items, characters RESTART IDENTITY CASCADE");
+  void allocateIsolatedFixtureTenant() {
+    tenantId = java.util.concurrent.ThreadLocalRandom.current().nextLong(1L, Long.MAX_VALUE);
   }
 
   @Test
@@ -84,13 +81,13 @@ class ContainerInstanceLocationIntegrationTest {
     Item torch = itemRepository.save(ordinaryItem("Torch"));
 
     inventoryService.addItem(
-        TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, backpack.getId(), 1);
+        tenantId, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, backpack.getId(), 1);
     inventoryService.addItem(
-        TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, torch.getId(), 1);
+        tenantId, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, torch.getId(), 1);
 
     var inventory =
         inventoryService.listInventory(
-            TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, Pageable.unpaged());
+            tenantId, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, Pageable.unpaged());
     var backpackEntry =
         inventory.getContent().stream()
             .filter(entry -> entry.itemId().equals(backpack.getId()))
@@ -103,7 +100,7 @@ class ContainerInstanceLocationIntegrationTest {
             .orElseThrow();
 
     containerService.putItemIntoContainer(
-        TENANT_ID,
+        tenantId,
         alice.getId(),
         backpackEntry.containerInstanceId(),
         GAME_INSTANCE_ID,
@@ -117,7 +114,7 @@ class ContainerInstanceLocationIntegrationTest {
         null);
 
     inventoryService.dropItemToRoom(
-        TENANT_ID,
+        tenantId,
         alice.getId(),
         GAME_INSTANCE_ID,
         PLAYABLE_STATE_SCOPE,
@@ -132,7 +129,7 @@ class ContainerInstanceLocationIntegrationTest {
 
     var roomGround =
         inventoryService.listRoomGroundItems(
-            TENANT_ID, GAME_INSTANCE_ID, ROOM_INSTANCE_ID, Pageable.unpaged());
+            tenantId, GAME_INSTANCE_ID, ROOM_INSTANCE_ID, Pageable.unpaged());
     var droppedBackpack =
         roomGround.getContent().stream()
             .filter(entry -> entry.itemId().equals(backpack.getId()))
@@ -144,7 +141,7 @@ class ContainerInstanceLocationIntegrationTest {
 
     var roomContents =
         containerService.listContainerContents(
-            TENANT_ID,
+            tenantId,
             alice.getId(),
             backpackEntry.containerInstanceId(),
             GAME_INSTANCE_ID,
@@ -156,7 +153,7 @@ class ContainerInstanceLocationIntegrationTest {
         .satisfies(item -> assertThat(item.itemName()).isEqualTo("Torch"));
 
     inventoryService.pickupItemFromRoom(
-        TENANT_ID,
+        tenantId,
         bob.getId(),
         GAME_INSTANCE_ID,
         PLAYABLE_STATE_SCOPE,
@@ -171,7 +168,7 @@ class ContainerInstanceLocationIntegrationTest {
 
     var bobContents =
         containerService.listContainerContents(
-            TENANT_ID,
+            tenantId,
             bob.getId(),
             backpackEntry.containerInstanceId(),
             GAME_INSTANCE_ID,
@@ -191,15 +188,15 @@ class ContainerInstanceLocationIntegrationTest {
     Item ration = itemRepository.save(ordinaryItem("Ration"));
 
     inventoryService.addItem(
-        TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, backpack.getId(), 2);
+        tenantId, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, backpack.getId(), 2);
     inventoryService.addItem(
-        TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, torch.getId(), 1);
+        tenantId, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, torch.getId(), 1);
     inventoryService.addItem(
-        TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, ration.getId(), 1);
+        tenantId, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, ration.getId(), 1);
 
     var inventory =
         inventoryService.listInventory(
-            TENANT_ID, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, Pageable.unpaged());
+            tenantId, alice.getId(), GAME_INSTANCE_ID, PLAYABLE_STATE_SCOPE, Pageable.unpaged());
     var backpacks =
         inventory.getContent().stream()
             .filter(entry -> entry.itemId().equals(backpack.getId()))
@@ -220,7 +217,7 @@ class ContainerInstanceLocationIntegrationTest {
         .isNotEqualTo(backpacks.get(1).containerInstanceId());
 
     containerService.putItemIntoContainer(
-        TENANT_ID,
+        tenantId,
         alice.getId(),
         backpacks.get(0).containerInstanceId(),
         GAME_INSTANCE_ID,
@@ -233,7 +230,7 @@ class ContainerInstanceLocationIntegrationTest {
         null,
         null);
     containerService.putItemIntoContainer(
-        TENANT_ID,
+        tenantId,
         alice.getId(),
         backpacks.get(1).containerInstanceId(),
         GAME_INSTANCE_ID,
@@ -248,7 +245,7 @@ class ContainerInstanceLocationIntegrationTest {
 
     var firstContents =
         containerService.listContainerContents(
-            TENANT_ID,
+            tenantId,
             alice.getId(),
             backpacks.get(0).containerInstanceId(),
             GAME_INSTANCE_ID,
@@ -257,7 +254,7 @@ class ContainerInstanceLocationIntegrationTest {
             Pageable.unpaged());
     var secondContents =
         containerService.listContainerContents(
-            TENANT_ID,
+            tenantId,
             alice.getId(),
             backpacks.get(1).containerInstanceId(),
             GAME_INSTANCE_ID,
@@ -275,7 +272,7 @@ class ContainerInstanceLocationIntegrationTest {
 
   private Character character(String name) {
     Character character = new Character();
-    character.setTenantId(TENANT_ID);
+    character.setTenantId(tenantId);
     character.setAccountId((long) name.length() + 1L);
     character.setPlayableStateKey("shared-live");
     character.setName(name);
@@ -299,7 +296,7 @@ class ContainerInstanceLocationIntegrationTest {
 
   private Item ordinaryItem(String name) {
     Item item = new Item();
-    item.setTenantId(TENANT_ID);
+    item.setTenantId(tenantId);
     item.setVersionId(1L);
     item.setName(name);
     item.setDescription(name + " desc");

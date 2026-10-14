@@ -236,6 +236,11 @@ Entry format:
   - Expected pattern: read the class’s declared package before specifying a test filter, and verify task execution rather than equating build success with every requested check passing. Enable the repository’s canonical full-check property when selecting static tasks.
   - Current status: corrected package selection passed 50 focused unit cases; the subsequent runtime fix passed 58 selected unit cases. A separate canonical `-PfullCheck` run executed the required static checks successfully. No validation requirement was waived.
 
+- `2026-10-13`: Native Linux Docker proof can still invoke a Windows credential helper
+  - Context: the claimed Gameplay fresh-bootstrap run rebuilt all service jars and images successfully, then failed before startup while pulling public Redis images. WSL reported `UtilAcceptVsock` and `accept4` timeout errors followed by a Docker credential lookup failure.
+  - Observation: using the native Linux Docker socket does not select a separate client credential configuration. A run-scoped private client configuration can omit unavailable Windows credential helpers while preserving static registry settings and Compose plugin discovery; the global client configuration need not change.
+  - Current status: the required proof using packaged service artifacts passes both transports with the isolated configuration and pinned public images. This client failure establishes neither an application regression nor a cause for the earlier Testcontainers endpoint refusals.
+
 - `2026-10-14`: Review-period bookkeeping must not contend for provider execution locks
   - Context: the Overseer reported that Gameplay's three concurrent metadata reset batches encountered active-provider errors during the native rollout, with no actual provider active.
   - Observation: reset-versus-reset global lock contention was reported as provider activity, and network/full-stack refresh made local counter bookkeeping slow and coupled to unrelated source readiness.
@@ -243,4 +248,20 @@ Entry format:
   - Current status: local transactional implementation is prepared; installed-selector promotion and live rollout verification remain pending with the owning orchestrator.
   - Reconsideration trigger: verify concurrent metadata batches after coordinated version-matched selector promotion.
 
+- `2026-10-14`: Transfer terminal-owned work at a native command boundary
+  - Context: a replacement subagent could not attach to the main agent’s existing execution session; the tools returned an unknown process ID even though the main agent could still observe its running batch.
+  - Expected pattern: keep one execution owner, finish the current native command without cancellation, then resume only the missing stable operation keys from the canonical store in the new owner’s terminal. An execution-session ID does not transfer process ownership across agent contexts. Use the same boundary to drain incompatible database writers before coordinated selector promotion.
+  - Evidence limits: completion counts and rollout timings remain in the owning controller job. This handoff does not replace the separate concurrent-reset reconsideration trigger above.
+
+- `2026-10-14`: Verify user-visible rendering against installed controller input
+  - Observation: Root deployed the numeric review-limit renderer before the matching controller fields were installed. Formatter tests passed, but interim live queue rows showed `Limits not reported`.
+  - Expected pattern: pair rendering changes with the version-matched controller input and verify the actual endpoint before claiming the related user-facing outcome is complete. This is a reusable verification lesson, not an additional approval gate or lifecycle policy.
+  - Recovery: coordinated controller promotion and actual-endpoint verification restored numeric limits; the owning controller job retains the rollout details.
+
 - 2026-10-15: Administrative review settings share a dispatch boundary with provider-backed commands. When removing latency from one setting command, inspect the neighbouring stop/allocation/reset dispatch family and prove each actual entrypoint with Git, GitHub and subprocess access forbidden; method-only fixtures can preserve legacy behavior while missing expensive controller construction. Retain evidence-bound consumption as a separate operation rather than weakening request admission.
+
+- `2026-10-14`: Native fix attribution needs the exact requested postimage
+  - Context: Gameplay recorded a requested AA-1.3 tracker-row repair as fixed after its nearby narrative and migration proof passed, while the named row still lacked the migration anchors.
+  - Observation: the next CLI review exposed the unchanged row. Documentation hygiene checks had passed because they do not verify that a requested semantic target changed. The original native fix record therefore overstated its proof.
+  - Expected pattern: inspect the exact requested row or declaration before recording an accepted-fix resolution; verify its named anchors instead of relying on a nearby paragraph or a broad substring replacement.
+  - Current status: the exact row is corrected and verified. An immutable audited resolution correction points to the published repair while retaining the original wrong attribution; the User and Overseer were informed.

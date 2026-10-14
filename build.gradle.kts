@@ -411,8 +411,12 @@ tasks.register<Exec>("linkCheck") {
 
 tasks.register<Exec>("checkFlywayVersions") {
     group = "verification"
-    description = "Checks service Flyway migrations for duplicate or out-of-order versions."
-    commandLine("bash", "dev-tools/validation/check-flyway-versions.sh")
+    description = "Checks combined Flyway migration versions and additions against an immutable parent when available."
+    val baseRef = providers.gradleProperty("flywayBaseRef").orNull
+    commandLine(
+        listOf("bash", "dev-tools/validation/check-flyway-versions.sh") +
+            if (baseRef != null) listOf("--base-ref", baseRef) else emptyList<String>()
+    )
 }
 
 tasks.register<Exec>("checkGrpcTransportConfig") {

@@ -3,26 +3,34 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:\.[0-9]+)*)__.+\.(?:java|sql)$")
+VERSION_RE = re.compile(r"^V(?P<version>[0-9]+(?:[._][0-9]+)*)__.+\.(?:java|sql)$")
+MIGRATION_PATH_RE = re.compile(r"^services/([^/]+)/src/main/(?:resources|java)/db/migration/")
+RUNTIME_DEPENDENCY_RE = re.compile(
+    r'(?:implementation|api|runtimeOnly)\s*\(\s*project\(\s*":([^\"]+)"'
+    r'|dependencies\.add\(\s*"(?:implementation|api|runtimeOnly)"\s*,\s*project\.project\(\s*":([^\"]+)"'
+)
+PLUGIN_RE = re.compile(r'(?:\bid|pluginManager\.apply)\(\s*"([^\"]+)"\s*\)')
+Snapshot = dict[str, bytes]
 
 
 @dataclasses.dataclass(frozen=True)
 class MigrationFile:
-    path: Path
-    root: Path
-    project: Path
+    path: str
+    project: str
     version_text: str
     version_key: tuple[int, ...]
 
 
 def normalize_version(version_text: str) -> tuple[int, ...]:
-    parts = [int(part) for part in version_text.split(".")]
+    parts = [int(part) for part in re.split(r"[._]", version_text)]
     while len(parts) > 1 and parts[-1] == 0:
         parts.pop()
     return tuple(parts)
@@ -32,93 +40,150 @@ def version_label(version_key: tuple[int, ...]) -> str:
     return ".".join(str(part) for part in version_key)
 
 
-def project_label(project_root: Path, repo_root: Path) -> str:
-    return project_root.relative_to(repo_root).as_posix()
+def relevant_path(path: str) -> bool:
+    return bool(MIGRATION_PATH_RE.match(path)) or (
+        path.startswith("services/")
+        and (path.endswith("/build.gradle.kts") or re.search(r"/src/main/resources/application[^/]*\.ya?ml$", path))
+    ) or (path.startswith("buildSrc/") and path.endswith((".kt", ".kts")))
 
 
-def discover_migration_files(repo_root: Path) -> list[MigrationFile]:
-    services_dir = repo_root / "services"
-    if not services_dir.is_dir():
-        return []
+def current_snapshot(repo_root: Path) -> Snapshot:
+    paths = [*repo_root.glob("services/*/build.gradle.kts"),
+             *repo_root.glob("services/*/src/main/resources/application*.y*ml"),
+             *repo_root.glob("services/*/src/main/resources/db/migration/**/*"),
+             *repo_root.glob("services/*/src/main/java/db/migration/**/*"),
+             *repo_root.glob("buildSrc/**/*.kt"), *repo_root.glob("buildSrc/**/*.kts")]
+    return {path.relative_to(repo_root).as_posix(): path.read_bytes() for path in paths if path.is_file()}
 
-    discovered: list[MigrationFile] = []
-    sql_paths = services_dir.glob("*/src/main/resources/db/migration/**/V*__*.sql")
-    java_paths = services_dir.glob("*/src/main/java/db/migration/**/V*__*.java")
-    for path in [*sql_paths, *java_paths]:
-        if not path.is_file():
-            continue
-        rel_path = path.relative_to(repo_root).as_posix()
-        is_sql = "src/main/resources/db/migration" in rel_path
-        is_java = "src/main/java/db/migration" in rel_path
-        if not is_sql and not is_java:
-            continue
 
-        match = VERSION_RE.match(path.name)
-        if match is None:
-            continue
+def git(repo_root: Path, *args: str) -> bytes:
+    result = subprocess.run(["git", "-C", str(repo_root), *args], capture_output=True, check=False)
+    if result.returncode:
+        raise ValueError(result.stderr.decode().strip() or f"git {' '.join(args)} failed")
+    return result.stdout
 
-        service_name = path.relative_to(repo_root).parts[1]
-        project_root = repo_root / "services" / service_name
-        if is_java:
-            java_root = project_root / "src/main/java/db/migration"
-            relative_parent = path.parent.relative_to(java_root)
-            logical_root = project_root / "src/main/resources/db/migration" / relative_parent
-        else:
-            logical_root = path.parent
-        version_text = match.group("version")
-        discovered.append(
-            MigrationFile(
-                path=path,
-                root=logical_root,
-                project=project_root,
-                version_text=version_text,
-                version_key=normalize_version(version_text),
-            )
-        )
 
+def parent_snapshot(repo_root: Path, base_ref: str) -> Snapshot:
+    # A branch name can move while validation runs. Require the caller's pinned commit.
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", base_ref):
+        raise ValueError("--base-ref must be a full immutable 40-character commit SHA")
+    try:
+        commit = git(repo_root, "rev-parse", "--verify", f"{base_ref}^{{commit}}").decode().strip()
+    except ValueError as error:
+        raise ValueError(f"immutable receiving parent commit is unavailable: {base_ref}; fetch that exact SHA") from error
+    if commit.lower() != base_ref.lower():
+        raise ValueError("--base-ref must identify a commit directly")
+    paths = git(repo_root, "ls-tree", "-r", "--name-only", commit, "services", "buildSrc").decode().splitlines()
+    return {path: git(repo_root, "show", f"{commit}:{path}") for path in paths if relevant_path(path)}
+
+
+def discover_migration_files(snapshot: Snapshot) -> list[MigrationFile]:
+    discovered = []
+    for path in sorted(snapshot):
+        project_match = MIGRATION_PATH_RE.match(path)
+        version_match = VERSION_RE.match(Path(path).name)
+        if project_match and version_match:
+            text = version_match.group("version")
+            discovered.append(MigrationFile(path, project_match.group(1), text, normalize_version(text)))
     return discovered
 
 
-def collect_issues(repo_root: Path) -> tuple[list[str], int, int]:
-    discovered = discover_migration_files(repo_root)
-    grouped: dict[Path, dict[Path, list[MigrationFile]]] = {}
-    for item in discovered:
-        grouped.setdefault(item.project, {}).setdefault(item.root, []).append(item)
+def saga_adopters(snapshot: Snapshot) -> set[str]:
+    """Read existing runtime dependencies and composed convention plugins, not classifications.
 
-    issues: list[str] = []
-    for project_root in sorted(grouped, key=lambda path: path.relative_to(repo_root).as_posix()):
-        roots = grouped[project_root]
-        service_label = project_label(project_root, repo_root)
-        seen_versions: dict[tuple[int, ...], MigrationFile] = {}
-        highest_seen: tuple[int, ...] | None = None
-        for root in sorted(
-            roots,
-            key=lambda path: (len(path.relative_to(project_root).parts), path.relative_to(project_root).as_posix()),
-        ):
-            for item in sorted(roots[root], key=lambda migration: (migration.version_key, migration.path.name)):
-                existing = seen_versions.get(item.version_key)
-                if existing is not None:
-                    issues.append(
-                        f"{service_label} ({root.relative_to(project_root).as_posix()}): "
-                        f"duplicate version V{item.version_text} in {item.path.relative_to(repo_root).as_posix()} "
-                        f"also appears in {existing.path.relative_to(repo_root).as_posix()}"
-                    )
-                    continue
+    This follows the repository's literal Kotlin DSL wiring. Test dependencies are
+    deliberately excluded: they do not put Saga resources on startup classpaths.
+    """
+    registration = snapshot.get("buildSrc/build.gradle.kts", b"").decode()
+    plugin_sources: dict[str, str] = {}
+    for plugin_id, class_name in re.findall(
+        r'id\s*=\s*"([^\"]+)"\s+implementationClass\s*=\s*"([^\"]+)"', registration
+    ):
+        path = "buildSrc/src/main/kotlin/" + class_name.replace(".", "/") + ".kt"
+        if path not in snapshot:
+            raise ValueError(f"missing convention source for {plugin_id}: {path}")
+        plugin_sources[plugin_id] = snapshot[path].decode()
 
-                seen_versions[item.version_key] = item
+    module_sources = {path.split("/")[1]: data.decode() for path, data in snapshot.items()
+                      if re.fullmatch(r"services/[^/]+/build.gradle.kts", path)}
 
-                if highest_seen is not None and item.version_key <= highest_seen:
-                    issues.append(
-                        f"{service_label} ({root.relative_to(project_root).as_posix()}): "
-                        f"version V{item.version_text} in {item.path.relative_to(repo_root).as_posix()} "
-                        f"is out of order after V{version_label(highest_seen)}"
-                    )
-                    continue
+    def reaches_saga(source: str, visited: set[str]) -> bool:
+        for dependency in RUNTIME_DEPENDENCY_RE.findall(source):
+            module = next(part for part in dependency if part)
+            if module == "common-saga":
+                return True
+            key = "module:" + module
+            if (key not in visited and module in module_sources
+                    and reaches_saga(module_sources[module], visited | {key})):
+                return True
+        for plugin in PLUGIN_RE.findall(source):
+            key = "plugin:" + plugin
+            if (key not in visited and plugin in plugin_sources
+                    and reaches_saga(plugin_sources[plugin], visited | {key})):
+                return True
+        return False
 
-                if highest_seen is None or item.version_key > highest_seen:
-                    highest_seen = item.version_key
+    adopters = set()
+    for project, source in module_sources.items():
+        # Flyway scans nested packages below db/migration, so the parent location
+        # exposes Saga resources too, even without a redundant explicit saga location.
+        locations = [data.decode() for path, data in snapshot.items()
+                     if re.fullmatch(rf"services/{re.escape(project)}/src/main/resources/application[^/]*\.ya?ml", path)]
+        if (any(re.search(r"classpath:db/migration(?:/saga)?(?:[\s,\"']|$)", text) for text in locations)
+                and reaches_saga(source, {"module:" + project})):
+            adopters.add(project)
+    return adopters
 
-    return issues, len(grouped), len(discovered)
+
+def effective_sets(snapshot: Snapshot) -> tuple[dict[str, list[MigrationFile]], list[MigrationFile]]:
+    migrations = discover_migration_files(snapshot)
+    grouped: dict[str, list[MigrationFile]] = {}
+    for item in migrations:
+        grouped.setdefault(item.project, []).append(item)
+    shared = grouped.get("common-saga", [])
+    for adopter in saga_adopters(snapshot):
+        grouped.setdefault(adopter, []).extend(shared)
+    return grouped, migrations
+
+
+def collect_issues(current: Snapshot, parent: Snapshot | None) -> tuple[list[str], int, int]:
+    grouped, migrations = effective_sets(current)
+    parent_grouped, parent_migrations = effective_sets(parent) if parent is not None else ({}, [])
+    issues = []
+    for project, items in sorted(grouped.items()):
+        seen: dict[tuple[int, ...], MigrationFile] = {}
+        for item in items:
+            existing = seen.get(item.version_key)
+            if existing:
+                issues.append(f"services/{project}: duplicate version V{item.version_text} in {item.path} "
+                              f"also appears in {existing.path}")
+            else:
+                seen[item.version_key] = item
+
+        previous = parent_grouped.get(project, [])
+        previous_paths = {item.path for item in previous}
+        frontier = max((item.version_key for item in previous), default=None)
+        for item in items:
+            if parent is not None and item.path not in previous_paths and frontier is not None and item.version_key <= frontier:
+                issues.append(f"services/{project}: new migration {item.path} (V{item.version_text}) "
+                              f"must exceed effective parent frontier V{version_label(frontier)}")
+
+    # A shared migration remains in the raw repository even if a project stops
+    # loading it. Compare each project's effective history so removing either
+    # the runtime dependency or a Flyway location cannot silently drop it.
+    for project, previous in sorted(parent_grouped.items()):
+        current_paths = {item.path for item in grouped.get(project, [])}
+        for item in previous:
+            if item.path not in current_paths:
+                issues.append(f"services/{project}: historical effective migration no longer applied: {item.path}")
+
+    # Treat parent histories conservatively as applied; never rewrite their names/checksums.
+    for item in parent_migrations:
+        if item.path not in current:
+            issues.append(f"historical migration removed or renamed: {item.path}")
+        elif parent is not None and current[item.path] != parent[item.path]:
+            issues.append(f"historical migration content changed: {item.path}")
+    return issues, len(grouped), len(migrations)
 
 
 def make_fixture(root: Path, relative_paths: list[str]) -> None:
@@ -129,62 +194,209 @@ def make_fixture(root: Path, relative_paths: list[str]) -> None:
 
 
 def run_self_test() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        repo_root = Path(tmp)
-        make_fixture(
-            repo_root,
-            [
-                "services/clean-service/src/main/resources/db/migration/V1__init.sql",
-                "services/clean-service/src/main/java/db/migration/V2__next.java",
-            ],
-        )
-        issues, _, _ = collect_issues(repo_root)
-        if issues:
-            raise AssertionError(f"clean fixture unexpectedly failed: {issues}")
+    local = "services/example-service/src/main/resources/db/migration/"
+    shared = "services/common-saga/src/main/resources/db/migration/saga/"
+    wiring = {
+        "services/example-service/build.gradle.kts": b'dependencies { implementation(project(":common-saga")) }',
+        "services/example-service/src/main/resources/application.yml": b'spring:\n  flyway:\n    locations: classpath:db/migration,classpath:db/migration/saga\n',
+    }
+    history = {**wiring, local + "V1__init.sql": b"-- local\n", shared + "V1002__saga.sql": b"-- shared\n"}
+
+    def check(label: str, current: Snapshot, parent: Snapshot | None, expected: str | None) -> None:
+        issues, _, _ = collect_issues(current, parent)
+        if (expected is None and issues) or (expected is not None and not any(expected in issue for issue in issues)):
+            raise AssertionError(f"{label}: expected {expected!r}, got {issues}")
+
+    check("unchanged legacy history", history, history, None)
+    check("duplicate-only without a base", history, None, None)
+    check("new low local", {**history, local + "V2__new.sql": b"-- new"}, history, "frontier V1002")
+    check("forward local", {**history, local + "V1003__new.sql": b"-- new"}, history, None)
+
+    unadopted_parent = {
+        "services/example-service/build.gradle.kts": b"dependencies {}",
+        "services/example-service/src/main/resources/application.yml":
+            b"spring:\n  flyway:\n    locations: classpath:db/migration\n",
+        local + "V2000__init.sql": b"-- local\n",
+        shared + "V1000__saga_a.sql": b"-- shared a\n",
+        shared + "V1001__saga_b.sql": b"-- shared b\n",
+        shared + "V1002__saga_c.sql": b"-- shared c\n",
+    }
+    newly_adopted = {
+        **unadopted_parent,
+        "services/example-service/build.gradle.kts": wiring["services/example-service/build.gradle.kts"],
+        "services/example-service/src/main/resources/application.yml":
+            wiring["services/example-service/src/main/resources/application.yml"],
+    }
+    check("newly effective shared history below local frontier", newly_adopted, unadopted_parent, "frontier V2000")
+    check("unchanged non-adopter with raw shared history", unadopted_parent, unadopted_parent, None)
+
+    forward_parent = {path: data for path, data in unadopted_parent.items()
+                      if path != local + "V2000__init.sql"}
+    forward_parent[local + "V999__init.sql"] = b"-- local\n"
+    forward_adopted = {
+        **forward_parent,
+        "services/example-service/build.gradle.kts": wiring["services/example-service/build.gradle.kts"],
+        "services/example-service/src/main/resources/application.yml":
+            wiring["services/example-service/src/main/resources/application.yml"],
+        shared + "V1003__saga_forward.sql": b"-- forward shared\n",
+    }
+    check("newly effective shared history above local frontier", forward_adopted, forward_parent, None)
+
+    test_only_parent = {
+        **unadopted_parent,
+        "services/example-service/src/main/resources/application.yml": wiring["services/example-service/src/main/resources/application.yml"],
+    }
+    test_only_forward = {
+        **test_only_parent,
+        "services/example-service/build.gradle.kts": b'testImplementation(project(":common-saga"))',
+        local + "V2001__forward.sql": b"-- new local\n",
+    }
+    check("test-only saga dependency does not adopt shared migrations", test_only_forward, test_only_parent, None)
+
+    advanced = {**history, local + "V1005__later.sql": b"-- later"}
+    check("shared below adopter frontier", {**advanced, shared + "V1004__new.sql": b"-- new"}, advanced, "frontier V1005")
+    check("forward shared", {**advanced, shared + "V1006__new.sql": b"-- new"}, advanced, None)
+    check("combined duplicate", {**history, local + "V1002__duplicate.sql": b"-- dup"}, history, "duplicate version V1002")
+    check("normalized duplicate", {**history, local + "V1002_0__duplicate.sql": b"-- dup"}, history, "duplicate version V1002")
+    check("changed history", {**history, local + "V1__init.sql": b"-- rewritten"}, history, "content changed")
+    check("removed history", {path: data for path, data in history.items() if path != local + "V1__init.sql"}, history, "removed or renamed")
+    check("java/sql duplicate", {**history, "services/example-service/src/main/java/db/migration/V1__dup.java": b"// dup"}, history, "duplicate version V1")
+
+    # Exercise the actual composed convention wiring and exclude test-only dependencies.
+    conventions = {
+        "buildSrc/build.gradle.kts": b'id = "base"\nimplementationClass = "example.Base"\nid = "composed"\nimplementationClass = "example.Composed"',
+        "buildSrc/src/main/kotlin/example/Base.kt": b'dependencies.add("implementation", project.project(":common-saga"))',
+        "buildSrc/src/main/kotlin/example/Composed.kt": b'pluginManager.apply("base")',
+    }
+    composed = {**history, **conventions, "services/example-service/build.gradle.kts": b'plugins { id("composed") }'}
+    check("composed runtime convention", {**composed, local + "V2__new.sql": b"-- new"}, composed, "frontier V1002")
+    test_only = {**history, "services/example-service/build.gradle.kts": b'testImplementation(project(":common-saga"))'}
+    check("test-only dependency", {**test_only, local + "V2__new.sql": b"-- new"}, test_only, None)
+    dependency_removed = {**history, "services/example-service/build.gradle.kts": b"dependencies {}"}
+    check("removed runtime dependency", dependency_removed, history, "historical effective migration no longer applied")
+    explicit_saga_location = {**history, "services/example-service/src/main/resources/application.yml":
+                              b"spring:\n  flyway:\n    locations: classpath:db/migration/saga\n"}
+    location_removed = {**explicit_saga_location, "services/example-service/src/main/resources/application.yml":
+                        b"spring:\n  flyway:\n    locations: classpath:db/migration/other\n"}
+    check("removed Flyway location", location_removed, explicit_saga_location,
+          "historical effective migration no longer applied")
+    second_local = "services/second-service/src/main/resources/db/migration/"
+    multiple = {**history, "services/second-service/build.gradle.kts": wiring["services/example-service/build.gradle.kts"],
+                "services/second-service/src/main/resources/application.yml": wiring["services/example-service/src/main/resources/application.yml"],
+                second_local + "V2000__later.sql": b"-- later"}
+    check("every adopter frontier", {**multiple, shared + "V1003__new.sql": b"-- new"}, multiple, "frontier V2000")
+    one_adopter_removed = {**multiple, "services/example-service/build.gradle.kts": b"dependencies {}"}
+    membership_issues, _, _ = collect_issues(one_adopter_removed, multiple)
+    if (not any("services/example-service: historical effective migration no longer applied" in issue
+                for issue in membership_issues)
+            or any("services/second-service:" in issue for issue in membership_issues)):
+        raise AssertionError(f"one adopter removal affected the wrong project histories: {membership_issues}")
 
     with tempfile.TemporaryDirectory() as tmp:
-        repo_root = Path(tmp)
-        make_fixture(
-            repo_root,
-            [
-                "services/duplicate-service/src/main/resources/db/migration/V1__init.sql",
-                "services/duplicate-service/src/main/java/db/migration/V1__dup.java",
-            ],
-        )
-        issues, _, _ = collect_issues(repo_root)
-        if not any("duplicate version V1" in issue for issue in issues):
-            raise AssertionError(f"duplicate fixture did not fail as expected: {issues}")
+        root = Path(tmp)
+        for path, data in history.items():
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        git(root, "init", "-q")
+        git(root, "add", ".")
+        git(root, "-c", "user.name=Flyway fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "history")
+        base = git(root, "rev-parse", "HEAD").decode().strip()
+        make_fixture(root, [local + "V2__new.sql"])
+        check("immutable git parent and worktree addition", current_snapshot(root), parent_snapshot(root, base), "frontier V1002")
+        try:
+            parent_snapshot(root, "HEAD")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("mutable base ref was accepted")
 
     with tempfile.TemporaryDirectory() as tmp:
-        repo_root = Path(tmp)
-        make_fixture(
-            repo_root,
-            [
-                "services/order-service/src/main/resources/db/migration/V2__init.sql",
-                "services/order-service/src/main/resources/db/migration/saga/V1__saga.sql",
-            ],
-        )
-        issues, _, _ = collect_issues(repo_root)
-        if not any("out of order" in issue for issue in issues):
-            raise AssertionError(f"out-of-order fixture did not fail as expected: {issues}")
+        git(Path(tmp), "init", "-q")
+        event_path = Path(tmp) / "event.json"
+        sha = "1" * 40
+        for event, expected in [({"pull_request": {"base": {"sha": sha}}}, sha),
+                                ({"pull_request": {"base": None}}, None),
+                                ({"pull_request": {"base": "invalid"}}, None),
+                                ({"before": sha}, sha), ({"before": "0" * 40}, None), ({}, None)]:
+            event_path.write_text(json.dumps(event), encoding="utf-8")
+            if event_base_ref(str(event_path)) != expected:
+                raise AssertionError(f"unexpected event base for {event}")
+        manual_event = {"inputs": {"flyway_base_sha": sha}}
+        event_path.write_text(json.dumps(manual_event), encoding="utf-8")
+        if event_base_ref(str(event_path)) != sha:
+            raise AssertionError("manual dispatch base SHA was not selected")
+
+        # CI passes push metadata through the environment; the explicit option
+        # must handle the same unborn-branch sentinel without reading Git history.
+        for explicit in (False, True):
+            environment = dict(os.environ)
+            environment.pop("GITHUB_EVENT_PATH", None)
+            environment.pop("GITHUB_EVENT_NAME", None)
+            environment["FIREMUD_FLYWAY_BASE_REF"] = "0" * 40
+            command = [sys.executable, str(Path(__file__).resolve()), "--root", tmp]
+            if explicit:
+                command.extend(["--base-ref", "0" * 40])
+            result = subprocess.run(command, check=False, env=environment, capture_output=True, text=True)
+            if result.returncode or "Parent frontier comparison" not in result.stdout:
+                raise AssertionError(f"unborn explicit={explicit}: {result.stdout} {result.stderr}")
+
+        manual_environment = dict(os.environ)
+        manual_environment["FIREMUD_FLYWAY_BASE_REF"] = "1" * 40
+        manual_environment["GITHUB_EVENT_NAME"] = "workflow_dispatch"
+        manual_environment["GITHUB_EVENT_PATH"] = str(event_path)
+        event_path.write_text(json.dumps({"inputs": {}}), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--root", tmp],
+                                check=False, env=manual_environment, capture_output=True, text=True)
+        if result.returncode == 0 or "requires a full immutable" not in result.stderr:
+            raise AssertionError(f"manual dispatch without a base was accepted: {result.stdout} {result.stderr}")
+
+        event_path.write_text(json.dumps({"inputs": {"flyway_base_sha": "not-a-sha"}}), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--root", tmp],
+                                check=False, env=manual_environment, capture_output=True, text=True)
+        if result.returncode == 0 or "full immutable 40-character" not in result.stderr:
+            raise AssertionError(f"malformed manual dispatch base was accepted: {result.stdout} {result.stderr}")
+
+        event_path.write_text(json.dumps({"inputs": {"flyway_base_sha": "0" * 40}}), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--root", tmp],
+                                check=False, env=manual_environment, capture_output=True, text=True)
+        if result.returncode == 0 or "requires a full immutable" not in result.stderr:
+            raise AssertionError(f"zero-sentinel manual dispatch base was accepted: {result.stdout} {result.stderr}")
+
+        event_path.write_text(json.dumps({"inputs": {"flyway_base_sha": "2" * 40}}), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--root", tmp],
+                                check=False, env=manual_environment, capture_output=True, text=True)
+        if result.returncode == 0 or "immutable receiving parent commit is unavailable" not in result.stderr:
+            raise AssertionError(f"unavailable manual dispatch parent was accepted: {result.stdout} {result.stderr}")
 
     print("Flyway migration sanity checker self-test passed.")
 
 
+def event_base_ref(event_path: str | None) -> str | None:
+    if not event_path:
+        return None
+    event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+    pull_request = event.get("pull_request")
+    if isinstance(pull_request, dict):
+        base = pull_request.get("base")
+        return base.get("sha") if isinstance(base, dict) else None
+    inputs = event.get("inputs")
+    if isinstance(inputs, dict):
+        return inputs.get("flyway_base_sha")
+    before = event.get("before")
+    # A newly created branch has no parent history in the push event.
+    return before if before and before != "0" * 40 else None
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Check Flyway migration versions across FireMUD services.")
-    parser.add_argument(
-        "--root",
-        default=Path(os.environ.get("FIREMUD_REPO_ROOT", Path(__file__).resolve().parents[2])),
-        type=Path,
-        help="Repository root to scan. Defaults to the FireMUD checkout root.",
-    )
-    parser.add_argument(
-        "--self-test",
-        action="store_true",
-        help="Run a small built-in validation suite against temporary fixtures.",
-    )
-    return parser.parse_args()
+    parser = argparse.ArgumentParser(description="Check combined Flyway histories and forward-only additions against a pinned parent.")
+    parser.add_argument("--root", default=Path(os.environ.get("FIREMUD_REPO_ROOT", Path(__file__).resolve().parents[2])), type=Path,
+                        help="Repository root to scan. Defaults to the FireMUD checkout root.")
+    parser.add_argument("--base-ref", default=os.environ.get("FIREMUD_FLYWAY_BASE_REF"),
+                        help="Full immutable parent commit SHA; defaults to FIREMUD_FLYWAY_BASE_REF or GitHub event base metadata.")
+    parser.add_argument("--self-test", action="store_true", help="Run focused validation against temporary fixtures.")
+    args = parser.parse_args()
+    return args
 
 
 def main() -> int:
@@ -192,18 +404,34 @@ def main() -> int:
     if args.self_test:
         run_self_test()
         return 0
-
-    repo_root = args.root.resolve()
-    issues, project_count, file_count = collect_issues(repo_root)
+    root = args.root.resolve()
+    try:
+        event_path = os.environ.get("GITHUB_EVENT_PATH")
+        if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+            base_ref = event_base_ref(event_path)
+            if not base_ref or base_ref == "0" * 40:
+                raise ValueError("workflow_dispatch requires a full immutable Flyway base SHA input")
+        else:
+            base_ref = args.base_ref or event_base_ref(event_path)
+        # All input paths use GitHub's all-zero sentinel for a new branch.
+        if base_ref == "0" * 40:
+            base_ref = None
+        parent = parent_snapshot(root, base_ref) if base_ref else None
+        issues, project_count, file_count = collect_issues(current_snapshot(root), parent)
+    except (ValueError, OSError, TypeError) as error:
+        print(f"Flyway migration sanity check failed: {error}", file=sys.stderr)
+        return 1
     if issues:
         print("Flyway migration sanity check failed:", file=sys.stderr)
         for issue in issues:
             print(f"- {issue}", file=sys.stderr)
         return 1
-
-    print(
-        f"Flyway migration sanity check passed: {project_count} migration sets, {file_count} versioned files."
-    )
+    if base_ref:
+        print(f"Flyway migration sanity check passed: {project_count} migration sets, {file_count} versioned files; parent {base_ref}.")
+    else:
+        print(f"Flyway duplicate-version check passed: {project_count} migration sets, {file_count} versioned files. "
+              "Parent frontier comparison and history preservation checks unavailable without --base-ref "
+              "or FIREMUD_FLYWAY_BASE_REF (or GitHub event base metadata).")
     return 0
 
 
