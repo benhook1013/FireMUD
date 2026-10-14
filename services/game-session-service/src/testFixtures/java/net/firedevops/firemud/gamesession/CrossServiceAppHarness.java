@@ -101,7 +101,12 @@ public final class CrossServiceAppHarness {
     int boundGrpcPort = context.getBean(GrpcServerLifecycle.class).getPort();
     int boundHttpPort =
         Objects.requireNonNull(((WebServerApplicationContext) context).getWebServer()).getPort();
-    int restartGrpcPort = grpcPort == 0 ? boundGrpcPort : grpcPort;
+    Consumer<Map<String, Object>> restartCustomizer =
+        restartProps -> {
+          customizer.accept(restartProps);
+          restartProps.put("server.port", String.valueOf(boundHttpPort));
+          restartProps.put("spring.grpc.server.port", String.valueOf(boundGrpcPort));
+        };
     return new GameLogicHolder(
         context,
         boundGrpcPort,
@@ -111,11 +116,11 @@ public final class CrossServiceAppHarness {
         socialEndpoint,
         () ->
             startGameLogic(
-                restartGrpcPort,
+                boundGrpcPort,
                 worldEndpoint,
                 entityEndpoint,
                 socialEndpoint,
-                customizer,
+                restartCustomizer,
                 extraConfigClasses));
   }
 
