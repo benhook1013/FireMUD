@@ -473,12 +473,26 @@ with tempfile.TemporaryDirectory(prefix="firemud-flyway-shallow-") as temporary:
     if missing.returncode == 0 or "immutable receiving parent commit is unavailable" not in missing.stderr:
         raise SystemExit(f"shallow checkout did not demonstrate missing parent: {missing.stdout} {missing.stderr}")
     for event_name in ("pull_request", "push", "workflow_dispatch"):
+        checkout = Path(temporary) / f"checkout-{event_name}"
+        subprocess.run(["git", "clone", "--depth=1", fixture.as_uri(), str(checkout)],
+                       check=True, capture_output=True, text=True)
+        if git_at(checkout, "rev-parse", "HEAD") != child:
+            raise SystemExit(f"shallow fixture selected the wrong immutable child for {event_name}")
+        unavailable = subprocess.run(["git", "cat-file", "-e", f"{parent}^{{commit}}"],
+                                     cwd=checkout, capture_output=True, text=True)
+        if unavailable.returncode == 0:
+            raise SystemExit(f"immutable parent was already available before the {event_name} fetch")
+        event_command = [sys.executable, str(checker), "--root", str(checkout), "--base-ref", parent]
         environment.update(FLYWAY_BASE_SHA=parent, FLYWAY_EVENT_NAME=event_name)
         fetched = subprocess.run(["bash", "-euo", "pipefail", "-c", fetch_script], cwd=checkout,
                                  env=environment, capture_output=True, text=True)
         if fetched.returncode or git_at(checkout, "rev-parse", parent + "^{commit}") != parent:
             raise SystemExit(f"exact parent fetch failed for {event_name}: {fetched.stderr}")
-    available = subprocess.run(command, env=environment, capture_output=True, text=True)
+        available = subprocess.run(event_command, env=environment, capture_output=True, text=True)
+        if available.returncode:
+            raise SystemExit(f"checker rejected exact fetched parent for {event_name}: {available.stdout} {available.stderr}")
+        fetched_command = event_command
+    available = subprocess.run(fetched_command, env=environment, capture_output=True, text=True)
     if available.returncode:
         raise SystemExit(f"checker rejected exact fetched parent: {available.stdout} {available.stderr}")
     environment.update(FLYWAY_BASE_SHA="0" * 40, FLYWAY_EVENT_NAME="push")

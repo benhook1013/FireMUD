@@ -271,6 +271,19 @@ def fresh_taper_history(
         else:
             relevant = relevant[matches[0] + 1 :]
 
+    allocation = state.allocations.get(f"{pr}:{selected.value}")
+    if allocation is not None and allocation.administrative_local and allocation.reopens_taper:
+        cutoff = datetime.fromisoformat(allocation.administrative_recorded_at.replace("Z", "+00:00"))
+        fresh = []
+        for item in relevant:
+            try:
+                completed = datetime.fromisoformat(item.verified_completed_at.replace("Z", "+00:00"))
+                if completed.tzinfo is not None and completed > cutoff:
+                    fresh.append(item)
+            except (AttributeError, TypeError, ValueError):
+                pass
+        relevant = fresh
+
     period = next((period for period in reversed(state.review_period_decisions)
                    if period.pr == pr and period.channel == selected.value), None)
     if period is not None and period.baseline_mode == "native_history":

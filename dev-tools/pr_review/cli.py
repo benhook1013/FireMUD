@@ -631,6 +631,7 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="start a new taper streak at the allocation decision; prior results remain historical",
     )
+    allocation.add_argument("--database", help="explicit compatible local SQLite controller database")
     allocation.add_argument("--reason", required=True)
     allocation.add_argument("--json", action="store_true", dest="as_json")
     period = decide_commands.add_parser(
@@ -681,6 +682,7 @@ def _parser() -> argparse.ArgumentParser:
     stop = decide_commands.add_parser(
         "stop", help="record a human decision to stop new review discovery on one channel"
     )
+    stop.add_argument("--database", help="explicit compatible local SQLite controller database")
     stop.add_argument("--pr", required=True, type=_positive_int)
     stop.add_argument("--channel", required=True, choices=("hosted", "cli"))
     stop.add_argument("--reason", required=True)
@@ -798,12 +800,12 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _local_period_store(args: argparse.Namespace) -> SqliteStateStore:
+def _local_administrative_store(args: argparse.Namespace) -> SqliteStateStore:
     """Resolve this administrative command's selected database without Git execution."""
-    if args.database:
+    if getattr(args, "database", None):
         selected = Path(args.database).expanduser().absolute()
         if selected.is_symlink():
-            raise CliError("review-period database path must not be a symlink")
+            raise CliError("administrative database path must not be a symlink")
         store = SqliteStateStore(selected)
         if store.status().get("compatible") is not True:
             raise CliError("selected controller SQLite database is incompatible")
@@ -827,7 +829,7 @@ def _local_period_store(args: argparse.Namespace) -> SqliteStateStore:
         raise CliError("cannot resolve local review state; pass --database explicitly")
     store = ControllerStateStore(state_path(common))._active_store()
     if not isinstance(store, SqliteStateStore):
-        raise CliError("review-period reset requires the selected SQLite state store")
+        raise CliError("administrative settings require the selected SQLite state store")
     return store
 
 
@@ -852,7 +854,32 @@ def _controller(args: argparse.Namespace) -> tuple[ReviewController, acceptance.
             None,
         )
     if args.command == "decide" and args.decide_command == "period" and args.period_command == "reset":
-        return ReviewController(store=_local_period_store(args)), None
+        return ReviewController(store=_local_administrative_store(args)), None
+    if args.command == "decide" and args.decide_command == "allocation":
+        return ReviewController(store=_local_administrative_store(args)), None
+    if (
+        args.command == "decide"
+        and args.decide_command == "stop"
+        and args.checkpoint is None
+        and not args.retain_ambiguous_fingerprint
+        and args.ambiguity_reason is None
+        and not args.acknowledge_over_ceiling
+    ):
+        store = _local_administrative_store(args)
+        allocation = store.load().allocations.get(f"{args.pr}:{args.channel}")
+        if (
+            allocation is None
+            or allocation.stop_basis is not None
+            or allocation.handoff_checkpoint is not None
+            or allocation.min_additional_completed is not None
+            or allocation.max_additional_completed is not None
+        ):
+            return ReviewController(store=store), None
+    if args.command == "decide" and args.decide_command == "stop" and getattr(args, "database", None):
+        selected_store = _local_administrative_store(args)
+        canonical_store = _local_administrative_store(argparse.Namespace(database=None))
+        if selected_store.path.resolve() != canonical_store.path.resolve():
+            raise CliError("evidence-bound review stop requires the canonical controller database")
     return default_controller(), None
 
 
