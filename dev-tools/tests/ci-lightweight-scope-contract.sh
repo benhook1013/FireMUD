@@ -312,7 +312,7 @@ require_equal(
     module_checks_step,
     ("run",),
     "echo \"::group::Run Module Validation\"\n"
-    "./gradlew --refresh-dependencies --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8' :${{ matrix.module }}:check -PfullCheck\n"
+    "bash ./.github/scripts/run-gradle-module-checks.sh '${{ matrix.module }}'\n"
     "echo \"::endgroup::\"\n",
     "ci workflow",
 )
