@@ -5,92 +5,83 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProof;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
+import org.springframework.aop.framework.ProxyFactory;
+import org.springframework.jdbc.datasource.AbstractDataSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class CanonicalInitialAdmissionRepositoryTest {
   @Test
-  void incompleteHumanCommitAndAbortDenyBeforeAnyOwnerStorageInteraction() {
+  void incompleteHumanReserveCommitAndAbortDenyBeforeAnyOwnerStorageInteraction() {
     var dsl = mock(DSLContext.class);
     var catalog = mock(GameSessionCanonicalRealmCatalogRepository.class);
     var pointers = mock(GameSessionCanonicalAdmissionPointerRepository.class);
-    var launches = mock(CanonicalGameInstanceLaunchAssociationRepository.class);
-    var events = mock(GameplayAdmissionPointerEventRepository.class);
-    var repository =
-        new CanonicalInitialAdmissionRepository(dsl, catalog, pointers, launches, events);
-    var prior = committedProof();
-    String digest =
-        CanonicalInitialAdmissionRequest.computeRequestDigest(
-            prior.targetNamespace(),
-            prior.canonicalTenantId(),
-            prior.worldSlug(),
-            prior.realmId(),
-            prior.playableStateNamespaceId(),
-            prior.playableStateScope(),
-            prior.canonicalGameInstanceId(),
-            prior.canonicalVersionId(),
-            prior.activeLifecycleEpoch(),
-            prior.expectedCatalogRevision(),
-            prior.originKind(),
-            prior.expectedPriorPointerVersion(),
-            prior.initialAdmissionRequestId());
-    var request =
-        new CanonicalInitialAdmissionRequest(
-            prior.targetNamespace(),
-            prior.canonicalTenantId(),
-            prior.worldSlug(),
-            prior.realmId(),
-            prior.playableStateNamespaceId(),
-            prior.playableStateScope(),
-            prior.canonicalGameInstanceId(),
-            prior.canonicalVersionId(),
-            prior.activeLifecycleEpoch(),
-            prior.expectedCatalogRevision(),
-            prior.originKind(),
-            prior.expectedPriorPointerVersion(),
-            prior.initialAdmissionRequestId(),
-            digest,
-            prior.holdId(),
-            prior.holdFence(),
-            prior.holdBindingDigest());
-    var world =
-        new CanonicalInitialAdmissionWorldProof(
-            request.initialAdmissionRequestId(),
-            digest,
-            request.targetNamespace(),
-            request.canonicalTenantId(),
-            request.worldSlug(),
-            request.realmId(),
-            request.playableStateNamespaceId(),
-            request.playableStateScope(),
-            request.canonicalGameInstanceId(),
-            request.canonicalVersionId(),
-            "ACTIVE",
-            request.activeLifecycleEpoch(),
-            request.originKind(),
-            request.expectedCatalogRevision(),
-            request.expectedPriorPointerVersion(),
-            request.holdId(),
-            request.holdFence(),
-            request.holdBindingDigest());
-    assertThatThrownBy(() -> repository.commit(request, world, null))
+    var repository = new CanonicalInitialAdmissionRepository(dsl, catalog, pointers);
+    var request = canonicalRequest();
+    var world = worldProof(request);
+    assertThatThrownBy(() -> repository.reserve(request))
         .isInstanceOf(
             CanonicalInitialAdmissionRepository
                 .CanonicalHumanAdmissionProtectionUnavailableException.class)
         .hasMessageContaining("Account terminal protection");
-    assertThatThrownBy(() -> repository.abort(request, null, "Missing protection"))
+    assertThatThrownBy(() -> repository.commit(request, world))
+        .isInstanceOf(
+            CanonicalInitialAdmissionRepository
+                .CanonicalHumanAdmissionProtectionUnavailableException.class)
+        .hasMessageContaining("Account terminal protection");
+    assertThatThrownBy(() -> repository.abort(request, "Missing protection"))
         .isInstanceOf(
             CanonicalInitialAdmissionRepository
                 .CanonicalHumanAdmissionProtectionUnavailableException.class);
-    verifyNoInteractions(dsl, catalog, pointers, launches, events);
+    verifyNoInteractions(dsl, catalog, pointers);
+  }
+
+  @Test
+  void proxiedHumanDenialsDoNotAcquireTransactionOrDatabaseConnection() {
+    var dsl = mock(DSLContext.class);
+    var catalog = mock(GameSessionCanonicalRealmCatalogRepository.class);
+    var pointers = mock(GameSessionCanonicalAdmissionPointerRepository.class);
+    var repository = new CanonicalInitialAdmissionRepository(dsl, catalog, pointers);
+    var dataSource = new RefusingDataSource();
+    var transactionManager = new DataSourceTransactionManager(dataSource);
+    var proxyFactory = new ProxyFactory(repository);
+    proxyFactory.addAdvice(
+        new TransactionInterceptor(transactionManager, new AnnotationTransactionAttributeSource()));
+    var proxied = (CanonicalInitialAdmissionRepository) proxyFactory.getProxy();
+    var request = canonicalRequest();
+    var world = worldProof(request);
+
+    assertThatThrownBy(() -> proxied.reserve(request))
+        .isInstanceOf(
+            CanonicalInitialAdmissionRepository
+                .CanonicalHumanAdmissionProtectionUnavailableException.class);
+    assertThatThrownBy(() -> proxied.commit(request, world))
+        .isInstanceOf(
+            CanonicalInitialAdmissionRepository
+                .CanonicalHumanAdmissionProtectionUnavailableException.class);
+    assertThatThrownBy(() -> proxied.abort(request, "Missing protection"))
+        .isInstanceOf(
+            CanonicalInitialAdmissionRepository
+                .CanonicalHumanAdmissionProtectionUnavailableException.class);
+
+    assertThat(dataSource.connectionAttempts()).isZero();
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    verifyNoInteractions(dsl, catalog, pointers);
   }
 
   @Test
@@ -194,6 +185,70 @@ class CanonicalInitialAdmissionRepositoryTest {
     fields.put("last_update_reason", "World-held initial admission");
     fields.put("prepared_version_upgrade_id", null);
     return fields;
+  }
+
+  private static CanonicalInitialAdmissionRequest canonicalRequest() {
+    CanonicalInitialAdmissionOwnerProof proof = committedProof();
+    return new CanonicalInitialAdmissionRequest(
+        proof.targetNamespace(),
+        proof.canonicalTenantId(),
+        proof.worldSlug(),
+        proof.realmId(),
+        proof.playableStateNamespaceId(),
+        proof.playableStateScope(),
+        proof.canonicalGameInstanceId(),
+        proof.canonicalVersionId(),
+        proof.activeLifecycleEpoch(),
+        proof.expectedCatalogRevision(),
+        proof.originKind(),
+        proof.expectedPriorPointerVersion(),
+        proof.initialAdmissionRequestId(),
+        proof.requestDigest(),
+        proof.holdId(),
+        proof.holdFence(),
+        proof.holdBindingDigest());
+  }
+
+  private static CanonicalInitialAdmissionWorldProof worldProof(
+      CanonicalInitialAdmissionRequest request) {
+    return new CanonicalInitialAdmissionWorldProof(
+        request.initialAdmissionRequestId(),
+        request.requestDigest(),
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.worldSlug(),
+        request.realmId(),
+        request.playableStateNamespaceId(),
+        request.playableStateScope(),
+        request.canonicalGameInstanceId(),
+        request.canonicalVersionId(),
+        "ACTIVE",
+        request.activeLifecycleEpoch(),
+        request.originKind(),
+        request.expectedCatalogRevision(),
+        request.expectedPriorPointerVersion(),
+        request.holdId(),
+        request.holdFence(),
+        request.holdBindingDigest());
+  }
+
+  private static final class RefusingDataSource extends AbstractDataSource {
+    private final AtomicInteger connectionAttempts = new AtomicInteger();
+
+    @Override
+    public Connection getConnection() throws SQLException {
+      connectionAttempts.incrementAndGet();
+      throw new SQLException("Human admission denial must not acquire a database connection");
+    }
+
+    @Override
+    public Connection getConnection(String username, String password) throws SQLException {
+      return getConnection();
+    }
+
+    int connectionAttempts() {
+      return connectionAttempts.get();
+    }
   }
 
   private static String requestDigest() {
