@@ -83,13 +83,9 @@ public class TestDataSeeder implements ApplicationRunner {
   private final VersionAssetArtifactRepository versionAssetArtifactRepository;
   private final RunOwnedFixtureLaunchReadback launchReadback;
   private final ObjectMapper objectMapper;
-
-  @org.springframework.beans.factory.annotation.Autowired
-  private net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
+  private final net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
       creationRepository;
-
-  @org.springframework.beans.factory.annotation.Autowired
-  private RunOwnedFixturePolicyProducer fixturePolicyProducer;
+  private final RunOwnedFixturePolicyProducer fixturePolicyProducer;
 
   @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:false}")
   private boolean initialAdmissionFixtureEnabled;

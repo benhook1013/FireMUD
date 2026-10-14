@@ -327,14 +327,26 @@ public final class GameSessionControlPlaneGrpcService
             "Fixture launch owner read cannot run inside an ambient transaction");
       }
       if (request == null) {
-        throw new IllegalArgumentException("Fixture launch owner request is required");
+        responseObserver.onError(
+            Status.INVALID_ARGUMENT
+                .withDescription("Fixture launch owner selector is invalid")
+                .asRuntimeException());
+        return;
       }
 
       // Authentication and the fixed default-off boundary precede strict wire decoding.
       RunOwnedInitialAdmissionLaunchEvidence evidence =
           runOwnedFixtureCoordinator.loadFixedVerifiedEvidenceForWorldPeer();
-      CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureRequest selector =
-          CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureRequest(request);
+      CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureRequest selector;
+      try {
+        selector = CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureRequest(request);
+      } catch (IllegalArgumentException malformedSelector) {
+        responseObserver.onError(
+            Status.INVALID_ARGUMENT
+                .withDescription("Fixture launch owner selector is invalid")
+                .asRuntimeException());
+        return;
+      }
       if (!fixtureReadWorkloadNamespace.equals(selector.targetNamespace())
           || !evidence.sourceEvidence().targetNamespace().equals(selector.targetNamespace())
           || !evidence
@@ -345,8 +357,11 @@ public final class GameSessionControlPlaneGrpcService
               .fixturePolicySeal()
               .evidenceDigest()
               .equals(selector.expectedFixturePolicyEvidenceDigest())) {
-        throw new IllegalArgumentException(
-            "Fixture launch owner selector differs from the fixed verified source");
+        responseObserver.onError(
+            Status.INVALID_ARGUMENT
+                .withDescription("Fixture launch owner selector is invalid")
+                .asRuntimeException());
+        return;
       }
 
       var launch = runOwnedFixtureCoordinator.readFixedFixtureLaunch(evidence);
@@ -374,10 +389,10 @@ public final class GameSessionControlPlaneGrpcService
           Status.PERMISSION_DENIED
               .withDescription("Fixture launch owner read is not authorized")
               .asRuntimeException());
-    } catch (IllegalArgumentException malformed) {
+    } catch (IllegalArgumentException invalidOwnerState) {
       responseObserver.onError(
-          Status.INVALID_ARGUMENT
-              .withDescription("Fixture launch owner selector is invalid")
+          Status.FAILED_PRECONDITION
+              .withDescription("Exact fixed fixture launch owner read is unavailable")
               .asRuntimeException());
     } catch (IllegalStateException unavailable) {
       responseObserver.onError(
