@@ -26,9 +26,12 @@ import org.jooq.Record;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Actual guarded six-family component storage; explicitly unwired, with private keys. */
 public class WorldDraftTopologyCommitRepository {
+  private static final ObjectMapper OWNER_BINDING_JSON = JsonMapper.builder().build();
+
   private final DSLContext dsl;
   private final WorldDesignPublicationFenceRepository fence;
   private final ObjectMapper mapper;
@@ -49,14 +52,18 @@ public class WorldDraftTopologyCommitRepository {
       throw new ConflictException(
           "World complete storage readback requires no active caller transaction");
     }
-    return Optional.ofNullable(find(plan, mapper.writeValueAsString(plan.ownerBinding())));
+    return Optional.ofNullable(find(plan, ownerBindingJson(plan.ownerBinding())));
+  }
+
+  static String ownerBindingJson(WorldDesignPublicationFenceEvidence.OwnerBinding ownerBinding) {
+    return OWNER_BINDING_JSON.writeValueAsString(
+        Objects.requireNonNull(ownerBinding, "ownerBinding"));
   }
 
   /** Caller already holds the exact shared V25 FROZEN owner lock; no writer is entered. */
   WorldDraftTopologyCommitEvidence readUnderFrozenLock(WorldDraftTopologyCommitPlan plan) {
     requireTransaction();
-    WorldDraftTopologyCommitEvidence stored =
-        find(plan, mapper.writeValueAsString(plan.ownerBinding()));
+    WorldDraftTopologyCommitEvidence stored = find(plan, ownerBindingJson(plan.ownerBinding()));
     if (stored == null) {
       throw new ConflictException("World frozen capture has no committed complete topology result");
     }
@@ -75,7 +82,7 @@ public class WorldDraftTopologyCommitRepository {
 
   WorldDraftTopologyCommitEvidence store(WorldDraftTopologyCommitPlan plan) {
     requireTransaction();
-    String ownerJson = mapper.writeValueAsString(plan.ownerBinding());
+    String ownerJson = ownerBindingJson(plan.ownerBinding());
     WorldDraftTopologyCommitEvidence prior = find(plan, ownerJson);
     if (prior != null) {
       return prior;

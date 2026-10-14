@@ -59,6 +59,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import tools.jackson.databind.SerializationFeature;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Bounded native upgrade from the literal d7c8f84 World/Saga parent. External source and Version
@@ -535,15 +537,24 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
               contentDigest,
               2,
               List.of());
-      byte[] graphBytes =
+      var graphMapper = new tools.jackson.databind.ObjectMapper();
+      byte[] freshGraphBytes =
           new WorldAuthoredGraphReader(dsl)
               .readAndValidateGraph(intake.localTenantKey(), version.localVersionKey())
-              .encode(new tools.jackson.databind.ObjectMapper());
-      assertThat(new String(graphBytes, StandardCharsets.UTF_8))
+              .encode(graphMapper);
+      assertThat(new String(freshGraphBytes, StandardCharsets.UTF_8))
           .isEqualTo(
-              "{\"snapshotSchemaVersion\":1,\"regions\":[],\"zones\":[],\"rooms\":[],"
+              "{\"snapshotSchemaVersion\":2,\"regions\":[],\"zones\":[],\"rooms\":[],"
                   + "\"roomExits\":[],\"generationRules\":[],"
                   + "\"worldEntitySpawnBindings\":[]}");
+      // Retain actual predecessor bytes independently of the current schema-2 writer.
+      byte[] graphBytes =
+          ("{\"snapshotSchemaVersion\":1,\"regions\":[],\"zones\":[],\"rooms\":[],"
+                  + "\"roomExits\":[],\"generationRules\":[],"
+                  + "\"worldEntitySpawnBindings\":[]}")
+              .getBytes(StandardCharsets.UTF_8);
+      assertThat(WorldAuthoredGraph.decode(graphBytes, graphMapper).encode(graphMapper))
+          .isEqualTo(graphBytes);
       var snapshotRepository = new WorldAuthoredGraphSnapshotRepository(dsl);
       WorldAuthoredGraphSnapshot stored =
           Objects.requireNonNull(
@@ -672,11 +683,106 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
           new WorldDesignPublicationFenceRepository(
               dsl, new WorldAuthoredSourceIntakeRepository(dsl));
       var mapper = new tools.jackson.databind.ObjectMapper();
-      var topology = new WorldDraftTopologyCommitRepository(dsl, fence, mapper);
+      var applicationMapper =
+          JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build();
+      var topology = new WorldDraftTopologyCommitRepository(dsl, fence, applicationMapper);
       var plan = topologyPlan(intake, version);
       var stored = Objects.requireNonNull(write.execute(status -> topology.store(plan)));
       assertThat(stored.status()).isEqualTo("STORED_PERMISSION_UNVERIFIED");
+      String storedOwnerBindingJson =
+          dsl.fetchSingle(
+                  "SELECT owner_binding_json FROM world_topology_draft_commit WHERE request_id = ?",
+                  plan.binding().requestId())
+              .get("owner_binding_json", String.class);
+      assertThat(storedOwnerBindingJson)
+          .isEqualTo(WorldDraftTopologyCommitRepository.ownerBindingJson(plan.ownerBinding()))
+          .isNotEqualTo(applicationMapper.writeValueAsString(plan.ownerBinding()));
       assertThat(topology.readCommitted(plan)).isPresent();
+      // Exercise the snapshot reader against actual V1005 canonical spawn storage. This is
+      // graph/codec proof only: it does not supply the missing V19 complete-commit history.
+      var authored =
+          Objects.requireNonNull(
+              write.execute(
+                  status ->
+                      new WorldAuthoredGraphReader(dsl)
+                          .readAndValidateGraph(
+                              intake.localTenantKey(), version.localVersionKey())));
+      var spawnRow =
+          dsl.fetchSingle(
+              "SELECT entity_template_id, entity_canonical_tenant_id, entity_canonical_version_id, "
+                  + "entity_canonical_template_id FROM world_entity_spawn_binding "
+                  + "WHERE tenant_id = ? AND version_id = ?",
+              intake.localTenantKey(),
+              version.localVersionKey());
+      assertThat(spawnRow.get("entity_template_id")).isNull();
+      assertThat(authored.spawnBindings()).hasSize(1);
+      assertThat(authored.spawnBindings().getFirst().get("entityReference"))
+          .isEqualTo(
+              Map.of(
+                  "kind", "CANONICAL_UUID",
+                  "tenantId", spawnRow.get("entity_canonical_tenant_id", UUID.class).toString(),
+                  "versionId", spawnRow.get("entity_canonical_version_id", UUID.class).toString(),
+                  "templateId",
+                      spawnRow.get("entity_canonical_template_id", UUID.class).toString()));
+      byte[] authoredBytes = authored.encode(mapper);
+      assertThat(mapper.readTree(authoredBytes).get("snapshotSchemaVersion").intValue())
+          .isEqualTo(2);
+      assertThat(WorldAuthoredGraph.decode(authoredBytes, mapper).encode(mapper))
+          .isEqualTo(authoredBytes);
+      // An independent legacy tenant exercises both storage representations and proves that
+      // canonical duplicate identity includes the tenant and Version, not only the template UUID.
+      // These ordinary unclaimed rows do not represent a canonical authored-source capture.
+      long legacyRegion =
+          dsl.fetchSingle(
+                  "INSERT INTO region (tenant_id, version_id, name, generation_seed) "
+                      + "VALUES (7002, 12, 'Reader region', 42) RETURNING id")
+              .get(0, Long.class);
+      long legacyZone =
+          dsl.fetchSingle(
+                  "INSERT INTO zone (tenant_id, version_id, region_id, name) "
+                      + "VALUES (7002, 12, ?, 'Reader zone') RETURNING id",
+                  legacyRegion)
+              .get(0, Long.class);
+      long legacyRoom =
+          dsl.fetchSingle(
+                  "INSERT INTO room (tenant_id, version_id, zone_id, name) "
+                      + "VALUES (7002, 12, ?, 'Reader room') RETURNING id",
+                  legacyZone)
+              .get(0, Long.class);
+      UUID entityTenant = UUID.randomUUID();
+      UUID entityVersion = UUID.randomUUID();
+      UUID entityTemplate = UUID.randomUUID();
+      for (var reference :
+          List.of(
+              List.of(entityTenant, entityVersion, entityTemplate),
+              List.of(UUID.randomUUID(), entityVersion, entityTemplate),
+              List.of(entityTenant, UUID.randomUUID(), entityTemplate))) {
+        dsl.execute(
+            "INSERT INTO world_entity_spawn_binding (tenant_id, version_id, room_id, "
+                + "entity_template_type, entity_template_id, entity_canonical_tenant_id, "
+                + "entity_canonical_version_id, entity_canonical_template_id) "
+                + "VALUES (7002, 12, ?, 'NPC', NULL, ?, ?, ?)",
+            legacyRoom,
+            reference.get(0),
+            reference.get(1),
+            reference.get(2));
+      }
+      dsl.execute(
+          "INSERT INTO world_entity_spawn_binding (tenant_id, version_id, room_id, "
+              + "entity_template_type, entity_template_id) VALUES (7002, 12, ?, 'NPC', ?)",
+          legacyRoom,
+          Long.MAX_VALUE);
+      var legacyGraph =
+          Objects.requireNonNull(
+              write.execute(
+                  status -> new WorldAuthoredGraphReader(dsl).readAndValidateGraph(7002L, 12L)));
+      assertThat(legacyGraph.spawnBindings()).hasSize(4);
+      assertThat(legacyGraph.spawnBindings().getLast().get("entityReference"))
+          .isEqualTo(
+              Map.of("kind", "RETAINED_PRIVATE_KEY", "templateId", Long.toString(Long.MAX_VALUE)));
+      byte[] legacyGraphBytes = legacyGraph.encode(mapper);
+      assertThat(WorldAuthoredGraph.decode(legacyGraphBytes, mapper).encode(mapper))
+          .isEqualTo(legacyGraphBytes);
       var replay = Objects.requireNonNull(write.execute(status -> topology.store(plan)));
       assertThat(replay.graphBytes()).isEqualTo(stored.graphBytes());
       assertThat(replay.resultBytes()).isEqualTo(stored.resultBytes());

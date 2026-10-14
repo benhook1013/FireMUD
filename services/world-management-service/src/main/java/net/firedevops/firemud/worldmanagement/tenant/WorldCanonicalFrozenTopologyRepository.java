@@ -142,7 +142,8 @@ public class WorldCanonicalFrozenTopologyRepository {
     }
     UUID captureId = UUID.randomUUID();
     String freezeJson = JSON.writeValueAsString(request.freeze());
-    String ownerJson = JSON.writeValueAsString(request.plan().ownerBinding());
+    String ownerJson =
+        WorldDraftTopologyCommitRepository.ownerBindingJson(request.plan().ownerBinding());
     byte[] result =
         result(
             captureId,
@@ -202,7 +203,7 @@ public class WorldCanonicalFrozenTopologyRepository {
         || !ownerBinding.equals(supplied.plan().ownerBinding())
         || !freeze.equals(supplied.freeze())
         || !bindingJson.equals(binding.canonicalJson())
-        || !ownerJson.equals(JSON.writeValueAsString(ownerBinding))
+        || !ownerJson.equals(WorldDraftTopologyCommitRepository.ownerBindingJson(ownerBinding))
         || !freezeJson.equals(JSON.writeValueAsString(freeze))) {
       throw new ConflictException(
           "Frozen topology request was reused with changed complete input or checkpoint");

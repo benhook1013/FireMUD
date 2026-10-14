@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Function;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshotRepository.SnapshotConflictException;
 import tools.jackson.core.JacksonException;
@@ -25,13 +26,15 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Immutable World-owned value and codec for the six version-scoped authored content families. */
 public final class WorldAuthoredGraph {
-  private static final int SNAPSHOT_SCHEMA_VERSION = 1;
+  private static final int SNAPSHOT_SCHEMA_VERSION = 2;
   private static final ObjectMapper STRICT_JSON_MAPPER =
       JsonMapper.builder()
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
           .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
           .build();
 
+  // Retained schema-1 snapshots keep their immutable byte representation on replay.
+  private final int snapshotSchemaVersion;
   private final List<Map<String, Object>> regions;
   private final List<Map<String, Object>> zones;
   private final List<Map<String, Object>> rooms;
@@ -46,6 +49,18 @@ public final class WorldAuthoredGraph {
       List<? extends Map<String, ?>> roomExits,
       List<? extends Map<String, ?>> generationRules,
       List<? extends Map<String, ?>> spawnBindings) {
+    this(SNAPSHOT_SCHEMA_VERSION, regions, zones, rooms, roomExits, generationRules, spawnBindings);
+  }
+
+  private WorldAuthoredGraph(
+      int snapshotSchemaVersion,
+      List<? extends Map<String, ?>> regions,
+      List<? extends Map<String, ?>> zones,
+      List<? extends Map<String, ?>> rooms,
+      List<? extends Map<String, ?>> roomExits,
+      List<? extends Map<String, ?>> generationRules,
+      List<? extends Map<String, ?>> spawnBindings) {
+    this.snapshotSchemaVersion = snapshotSchemaVersion;
     this.regions = copyRows(regions, false);
     this.zones = copyRows(zones, false);
     this.rooms = copyRows(rooms, false);
@@ -84,7 +99,7 @@ public final class WorldAuthoredGraph {
   public byte[] encode(ObjectMapper objectMapper) {
     Objects.requireNonNull(objectMapper, "objectMapper");
     LinkedHashMap<String, Object> root = new LinkedHashMap<>();
-    root.put("snapshotSchemaVersion", SNAPSHOT_SCHEMA_VERSION);
+    root.put("snapshotSchemaVersion", snapshotSchemaVersion);
     root.put("regions", regions);
     root.put("zones", zones);
     root.put("rooms", rooms);
@@ -138,12 +153,14 @@ public final class WorldAuthoredGraph {
         "generationRules",
         "worldEntitySpawnBindings");
     JsonNode schemaVersion = root.get("snapshotSchemaVersion");
-    if (!schemaVersion.isInt() || schemaVersion.intValue() != SNAPSHOT_SCHEMA_VERSION) {
+    if (!schemaVersion.isInt()
+        || (schemaVersion.intValue() != 1 && schemaVersion.intValue() != SNAPSHOT_SCHEMA_VERSION)) {
       throw malformed("World authored graph snapshot schema version is unsupported");
     }
 
     WorldAuthoredGraph graph =
         new WorldAuthoredGraph(
+            schemaVersion.intValue(),
             decodeRows(root.get("regions"), "regions", WorldAuthoredGraph::decodeRegion),
             decodeRows(root.get("zones"), "zones", WorldAuthoredGraph::decodeZone),
             decodeRows(root.get("rooms"), "rooms", WorldAuthoredGraph::decodeRoom),
@@ -155,7 +172,7 @@ public final class WorldAuthoredGraph {
             decodeRows(
                 root.get("worldEntitySpawnBindings"),
                 "worldEntitySpawnBindings",
-                WorldAuthoredGraph::decodeSpawnBinding));
+                row -> decodeSpawnBinding(row, schemaVersion.intValue())));
     if (!Arrays.equals(graph.encode(objectMapper), original)) {
       throw malformed("World authored graph bytes are not in canonical encoding");
     }
@@ -280,14 +297,14 @@ public final class WorldAuthoredGraph {
     return decoded;
   }
 
-  private static LinkedHashMap<String, Object> decodeSpawnBinding(JsonNode row) {
+  private static LinkedHashMap<String, Object> decodeSpawnBinding(JsonNode row, int schemaVersion) {
     requireFields(
         row,
         "worldEntitySpawnBindings row",
         "id",
         "roomId",
         "entityTemplateType",
-        "entityTemplateId",
+        schemaVersion == 1 ? "entityTemplateId" : "entityReference",
         "spawnCount",
         "respawnDelaySeconds");
     LinkedHashMap<String, Object> decoded = new LinkedHashMap<>();
@@ -298,12 +315,57 @@ public final class WorldAuthoredGraph {
       throw malformed("World authored graph worldEntitySpawnBindings row type is unsupported");
     }
     decoded.put("entityTemplateType", entityType);
-    decoded.put(
-        "entityTemplateId", positiveLong(row, "entityTemplateId", "worldEntitySpawnBindings row"));
+    if (schemaVersion == 1) {
+      decoded.put(
+          "entityTemplateId",
+          positiveLong(row, "entityTemplateId", "worldEntitySpawnBindings row"));
+    } else {
+      decoded.put("entityReference", decodeEntityReference(row.get("entityReference")));
+    }
     decoded.put("spawnCount", positiveInt(row, "spawnCount", "worldEntitySpawnBindings row"));
     decoded.put(
         "respawnDelaySeconds",
         nonNegativeInt(row, "respawnDelaySeconds", "worldEntitySpawnBindings row"));
+    return decoded;
+  }
+
+  private static LinkedHashMap<String, Object> decodeEntityReference(JsonNode reference) {
+    String label = "worldEntitySpawnBindings entityReference";
+    requireObject(reference, label);
+    String kind = nonBlankString(reference, "kind", label);
+    LinkedHashMap<String, Object> decoded = new LinkedHashMap<>();
+    decoded.put("kind", kind);
+    if (kind.equals("RETAINED_PRIVATE_KEY")) {
+      requireFields(reference, label, "kind", "templateId");
+      String templateId = nonBlankString(reference, "templateId", label);
+      try {
+        long numeric = Long.parseLong(templateId);
+        if (numeric <= 0L || !Long.toString(numeric).equals(templateId)) {
+          throw malformed("World authored graph retained Entity templateId is noncanonical");
+        }
+      } catch (NumberFormatException exception) {
+        throw malformed(
+            "World authored graph retained Entity templateId is unsupported", exception);
+      }
+      decoded.put("templateId", templateId);
+    } else if (kind.equals("CANONICAL_UUID")) {
+      requireFields(reference, label, "kind", "tenantId", "versionId", "templateId");
+      for (String field : List.of("tenantId", "versionId", "templateId")) {
+        String value = nonBlankString(reference, field, label);
+        try {
+          UUID uuid = UUID.fromString(value);
+          if (uuid.equals(new UUID(0L, 0L)) || !uuid.toString().equals(value)) {
+            throw malformed("World authored graph canonical Entity " + field + " is noncanonical");
+          }
+        } catch (IllegalArgumentException exception) {
+          throw malformed(
+              "World authored graph canonical Entity " + field + " is unsupported", exception);
+        }
+        decoded.put(field, value);
+      }
+    } else {
+      throw malformed("World authored graph Entity reference kind is unsupported");
+    }
     return decoded;
   }
 
@@ -409,7 +471,13 @@ public final class WorldAuthoredGraph {
 
   WorldAuthoredGraph withRegions(List<? extends Map<String, ?>> updatedRegions) {
     return new WorldAuthoredGraph(
-        updatedRegions, zones, rooms, roomExits, generationRules, spawnBindings);
+        snapshotSchemaVersion,
+        updatedRegions,
+        zones,
+        rooms,
+        roomExits,
+        generationRules,
+        spawnBindings);
   }
 
   private static List<Map<String, Object>> copyRows(
