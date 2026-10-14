@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -13,10 +14,15 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionFixtureCoordinator;
+import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidence;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindHoldBinding;
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindOwnerProof;
@@ -45,6 +51,8 @@ import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupRequest;
 import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResponse;
 import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResultRequest;
 import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResultResponse;
+import net.firedevops.firemud.gamesession.v1.GetRunOwnedFixtureLaunchAssociationRequest;
+import net.firedevops.firemud.gamesession.v1.GetRunOwnedFixtureLaunchAssociationResponse;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
 import net.firedevops.firemud.gamesession.v1.InitialAdmissionBindOwnerProofOutcome;
@@ -90,6 +98,7 @@ import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.QueryTimeoutException;
 import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.grpc.server.service.GrpcService;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @GrpcService
 @SuppressFBWarnings(
@@ -112,6 +121,9 @@ public final class GameSessionControlPlaneGrpcService
   private final MeterRegistry meterRegistry;
   private InitialAdmissionBindOwnerProofReader initialAdmissionBindOwnerProofReader;
   private InitialAdmissionBindOwnerReadWorkloadGuard initialAdmissionBindOwnerReadWorkloadGuard;
+  private RunOwnedInitialAdmissionFixtureCoordinator runOwnedFixtureCoordinator;
+  private String fixtureReadWorkloadNamespace;
+  private boolean fixtureLaunchReadEnabled;
 
   private static final Pattern SHA_256 = Pattern.compile("[0-9a-f]{64}");
 
@@ -143,6 +155,16 @@ public final class GameSessionControlPlaneGrpcService
     this.initialAdmissionBindOwnerProofReader = proofReader;
     this.initialAdmissionBindOwnerReadWorkloadGuard =
         new InitialAdmissionBindOwnerReadWorkloadGuard(workloadNamespace);
+  }
+
+  @Autowired(required = false)
+  public void configureRunOwnedFixtureLaunchAssociationReadBoundary(
+      RunOwnedInitialAdmissionFixtureCoordinator fixtureCoordinator,
+      @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:false}") boolean fixtureEnabled,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this.runOwnedFixtureCoordinator = fixtureCoordinator;
+    this.fixtureLaunchReadEnabled = fixtureEnabled;
+    this.fixtureReadWorkloadNamespace = workloadNamespace;
   }
 
   private long parseTenantId(String tenantId) {
@@ -283,6 +305,109 @@ public final class GameSessionControlPlaneGrpcService
     }
     responseObserver.onNext(response.build());
     responseObserver.onCompleted();
+  }
+
+  /**
+   * Fixed, default-off read of the exact verified fixture source and its immutable GS owner row.
+   */
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getRunOwnedFixtureLaunchAssociation")
+  public void getRunOwnedFixtureLaunchAssociation(
+      GetRunOwnedFixtureLaunchAssociationRequest request,
+      StreamObserver<GetRunOwnedFixtureLaunchAssociationResponse> responseObserver) {
+    Objects.requireNonNull(responseObserver, "responseObserver");
+    try {
+      requireWorldFixtureLaunchAssociationReadCaller();
+      if (!fixtureLaunchReadEnabled || runOwnedFixtureCoordinator == null) {
+        throw new IllegalStateException("Fixed fixture owner read is disabled");
+      }
+      if (TransactionSynchronizationManager.isActualTransactionActive()
+          || TransactionSynchronizationManager.isSynchronizationActive()) {
+        throw new IllegalStateException(
+            "Fixture launch owner read cannot run inside an ambient transaction");
+      }
+      if (request == null) {
+        throw new IllegalArgumentException("Fixture launch owner request is required");
+      }
+
+      // Authentication and the fixed default-off boundary precede strict wire decoding.
+      RunOwnedInitialAdmissionLaunchEvidence evidence =
+          runOwnedFixtureCoordinator.loadFixedVerifiedEvidenceForWorldPeer();
+      CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureRequest selector =
+          CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureRequest(request);
+      if (!fixtureReadWorkloadNamespace.equals(selector.targetNamespace())
+          || !evidence.sourceEvidence().targetNamespace().equals(selector.targetNamespace())
+          || !evidence
+              .fixtureCapability()
+              .operationId()
+              .equals(selector.fixtureOperationId().toString())
+          || !evidence
+              .fixturePolicySeal()
+              .evidenceDigest()
+              .equals(selector.expectedFixturePolicyEvidenceDigest())) {
+        throw new IllegalArgumentException(
+            "Fixture launch owner selector differs from the fixed verified source");
+      }
+
+      var launch = runOwnedFixtureCoordinator.readFixedFixtureLaunch(evidence);
+      var catalog = launch.catalog().snapshot();
+      var result =
+          new CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult(
+              selector,
+              launch.catalog().association().gameSessionTenantId(),
+              launch.gameInstanceId(),
+              catalog.tenantId(),
+              launch.gameInstanceUuid(),
+              UUID.fromString(evidence.publishedReleaseBundle().getCanonicalVersionId()),
+              catalog.realmId(),
+              catalog.playableStateNamespaceId(),
+              catalog.catalogRevision(),
+              launch.status(),
+              launch.rowVersion(),
+              evidence.fixturePolicyRequestBytes(),
+              evidence.fixturePolicySeal());
+      responseObserver.onNext(
+          CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toFixtureResponse(result));
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException unauthorized) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Fixture launch owner read is not authorized")
+              .asRuntimeException());
+    } catch (IllegalArgumentException malformed) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Fixture launch owner selector is invalid")
+              .asRuntimeException());
+    } catch (IllegalStateException unavailable) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Exact fixed fixture launch owner read is unavailable")
+              .asRuntimeException());
+    } catch (RuntimeException failure) {
+      logger.error("GetRunOwnedFixtureLaunchAssociation failed");
+      responseObserver.onError(
+          Status.INTERNAL.withDescription("Fixture launch owner read failed").asRuntimeException());
+    }
+  }
+
+  private void requireWorldFixtureLaunchAssociationReadCaller() {
+    GrpcPeerIdentity peerIdentity = GrpcPeerIdentity.current();
+    if (!GameSessionControlPlaneServiceGrpc.getGetRunOwnedFixtureLaunchAssociationMethod()
+            .getFullMethodName()
+            .equals(
+                "game_session.v1.GameSessionControlPlaneService/GetRunOwnedFixtureLaunchAssociation")
+        || fixtureReadWorkloadNamespace == null
+        || !GrpcPeerIdentity.isValidNamespace(fixtureReadWorkloadNamespace)
+        || peerIdentity == null
+        || !"world-management-service".equals(peerIdentity.service())
+        || !fixtureReadWorkloadNamespace.equals(peerIdentity.namespace())
+        || !("spiffe://firemud/ns/" + fixtureReadWorkloadNamespace + "/sa/world-management-service")
+            .equals(peerIdentity.uri())
+        || SessionContext.hasAuthenticatedCallerContext()) {
+      throw new AdminAuthorizationException(
+          "Fixture launch read requires the exact authenticated World Management workload peer");
+    }
   }
 
   private GetInitialAdmissionBindProofResponse.Builder echoInitialAdmissionBindTuple(

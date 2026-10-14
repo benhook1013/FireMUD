@@ -25,7 +25,7 @@ class GameSessionCanonicalStartingInstanceRepositoryTest {
     DSLContext dsl = mock(DSLContext.class);
     var repository = new GameSessionCanonicalStartingInstanceRepository(dsl, NAMESPACE);
 
-    assertThatThrownBy(() -> repository.createStarting(null, null, null, null, null))
+    assertThatThrownBy(() -> repository.createStarting(null, null, null, null, null, null))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("writable owner transaction");
 
@@ -39,7 +39,7 @@ class GameSessionCanonicalStartingInstanceRepositoryTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
 
-    assertThatThrownBy(() -> repository.createStarting(null, null, null, null, null))
+    assertThatThrownBy(() -> repository.createStarting(null, null, null, null, null, null))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("writable owner transaction");
 

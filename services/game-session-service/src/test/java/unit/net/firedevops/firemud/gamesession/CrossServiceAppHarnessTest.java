@@ -26,7 +26,8 @@ import org.springframework.core.env.MapPropertySource;
 
 class CrossServiceAppHarnessTest {
   private static final StartSessionRequest REQUEST =
-      new StartSessionRequest(41L, 810L, "7f1e5306-e9a7-46d9-b5cf-75348e20ffbd", 1001L);
+      new StartSessionRequest(
+          41L, 810L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 1001L);
   private static final AuthoredWorldSourceEvidence SOURCE_EVIDENCE = sourceEvidence();
   private static final RunOwnedInitialAdmissionLaunchEvidence LAUNCH_EVIDENCE =
       RunOwnedInitialAdmissionLaunchEvidenceTestFixture.create(REQUEST, SOURCE_EVIDENCE);

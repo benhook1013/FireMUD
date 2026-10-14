@@ -1,275 +1,289 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import integration.net.firedevops.firemud.gamesession.repository.CanonicalHumanPublicationOwnerTestFixtures;
 import java.time.Instant;
 import java.util.UUID;
-import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof.Outcome;
-import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
+import javax.sql.DataSource;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
+import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
+import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalStartingInstanceRepository.StartingInstance;
+import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
 import org.jooq.DSLContext;
+import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.support.TransactionTemplate;
 
-/** Shared PostgreSQL fixtures for lease-bound binding tests that require a real launch target. */
+/**
+ * Shared PostgreSQL fixtures for lease-bound binding tests that require a current launch target.
+ * The source, policy, catalog, pin, and Starting records are written by their actual GS owners;
+ * upstream producer inputs remain controlled test evidence and do not establish Account admission.
+ */
 public final class CanonicalGameplayBindingRuntimeTestFixtures {
   private static final String SHA256 = "sha256:" + "a".repeat(64);
   private static final String RAW_SHA256 = "a".repeat(64);
+  private static final long GAME_TEMPLATE_ID = 1L;
+  private static final long VERSION_ID = 1L;
+  private static final long RELEASE_BUNDLE_ID = 1L;
+  private static final long VERSION_STATE_EPOCH = 2L;
+  private static final String RUNTIME_FLAGS_JSON = "{}";
 
   private CanonicalGameplayBindingRuntimeTestFixtures() {}
 
-  public static RuntimeTarget seedRunningLaunch(DSLContext dsl) {
-    return seedRunningLaunch(dsl, UUID.randomUUID(), 1L, 23L, UUID.randomUUID());
+  public static RuntimeTarget seedRunningLaunch(DataSource dataSource) {
+    return seedRunningLaunch(dataSource, UUID.randomUUID());
   }
 
   /**
-   * Seeds a fully linked fresh tenant, catalog, launch, and RUNNING runtime for the supplied
-   * candidate identity. All deferred constraints and normal owner triggers remain enabled.
+   * Creates the source-bound catalog and runtime using current Game Session owners. The source,
+   * publication, original tuple, and Account projection are explicitly controlled upstream test
+   * inputs; this path proves neither a live producer nor initial-admission terminal authority.
    */
-  public static RuntimeTarget seedRunningLaunch(
-      DSLContext dsl,
-      UUID canonicalTenantId,
-      long gameSessionTenantId,
-      long gameInstanceId,
-      UUID gameInstanceUuid) {
-    return seedRunningLaunch(
-        dsl,
-        canonicalTenantId,
-        gameSessionTenantId,
-        gameInstanceId,
-        gameInstanceUuid,
-        UUID.randomUUID());
-  }
-
-  public static RuntimeTarget seedRunningLaunch(
-      DSLContext dsl,
-      UUID canonicalTenantId,
-      long gameSessionTenantId,
-      long gameInstanceId,
-      UUID gameInstanceUuid,
-      UUID playableStateNamespaceId) {
-    if (gameSessionTenantId <= 0 || gameInstanceId <= 0) {
-      throw new IllegalArgumentException("Runtime identifiers must be positive");
-    }
-    if (canonicalTenantId == null
-        || gameInstanceUuid == null
-        || playableStateNamespaceId == null
-        || new UUID(0L, 0L).equals(canonicalTenantId)
-        || new UUID(0L, 0L).equals(gameInstanceUuid)
-        || new UUID(0L, 0L).equals(playableStateNamespaceId)) {
-      throw new IllegalArgumentException("Canonical runtime identities must be non-nil");
+  public static RuntimeTarget seedRunningLaunch(DataSource dataSource, UUID canonicalTenantId) {
+    if (canonicalTenantId == null || new UUID(0L, 0L).equals(canonicalTenantId)) {
+      throw new IllegalArgumentException("Canonical tenant UUID must be non-nil");
     }
 
-    RuntimeTarget target =
-        RuntimeTarget.create(
+    String token = UUID.randomUUID().toString().replace("-", "");
+    String shortToken = token.substring(0, 10);
+    String targetNamespace = "fixture-" + shortToken;
+    String tenantSlug = "tenant-" + shortToken;
+    String worldSlug = "world-" + shortToken;
+    String worldDisplayName = "Fixture World " + shortToken;
+    String sourceGameTenantKey = "gds-source-" + shortToken;
+    long sourceGameRowId =
+        Math.floorMod(UUID.randomUUID().getLeastSignificantBits(), Long.MAX_VALUE - 1L) + 1L;
+    UUID registrationRequestId = UUID.randomUUID();
+    UUID sourceOperationId = UUID.randomUUID();
+    String sourceRequestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            targetNamespace,
+            registrationRequestId,
             canonicalTenantId,
-            gameSessionTenantId,
-            gameInstanceId,
-            gameInstanceUuid,
-            playableStateNamespaceId);
-    dsl.transaction(
-        configuration -> {
-          DSLContext tx = DSL.using(configuration);
-          seedSourceAndCatalog(tx, target);
-          seedFreshTenantAssociation(tx, target);
-          seedStartingRuntimeAndLaunch(tx, target);
-          tx.execute(
-              "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
-              target.gameSessionTenantId(),
-              target.gameInstanceId());
-        });
-    return target;
-  }
+            tenantSlug,
+            worldSlug,
+            worldDisplayName);
+    String sourceEvidenceDigest =
+        AuthoredWorldSourceDigest.evidenceDigest(
+            targetNamespace,
+            registrationRequestId,
+            sourceOperationId,
+            sourceRequestDigest,
+            canonicalTenantId,
+            tenantSlug,
+            worldSlug,
+            worldDisplayName,
+            sourceGameRowId,
+            sourceGameTenantKey,
+            "NEW_GAME_ROW");
+    AuthoredWorldSourceEvidence sourceEvidence =
+        new AuthoredWorldSourceEvidence(
+            1,
+            targetNamespace,
+            registrationRequestId,
+            sourceOperationId,
+            sourceRequestDigest,
+            canonicalTenantId,
+            tenantSlug,
+            worldSlug,
+            worldDisplayName,
+            sourceGameRowId,
+            sourceGameTenantKey,
+            "NEW_GAME_ROW",
+            sourceEvidenceDigest);
 
-  private static void seedSourceAndCatalog(DSLContext tx, RuntimeTarget target) {
-    tx.execute(
-        "INSERT INTO game_session_authored_world_tenant_source_binding"
-            + " (target_namespace, canonical_tenant_id, tenant_slug, source_game_row_id,"
-            + " source_game_tenant_key, provenance_kind) VALUES (?, ?, ?, ?, ?, 'NEW_GAME_ROW')",
-        target.targetNamespace(),
-        target.canonicalTenantId(),
-        target.tenantSlug(),
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey());
+    DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
+    TransactionTemplate transactions = new TransactionTemplate(transactionManager);
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    String controlPlaneRequestId = "launch-" + token;
+    UUID ownerAccountUuid = UUID.randomUUID();
 
-    tx.execute(
-        "INSERT INTO game_session_authored_world_source_intake"
-            + " (operation_id, schema_version, target_namespace, intake_request_id, request_digest,"
-            + " source_schema_version, source_registration_request_id, source_operation_id,"
-            + " source_request_digest, canonical_tenant_id, tenant_slug, world_slug,"
-            + " world_display_name, source_game_row_id, source_game_tenant_key,"
-            + " source_provenance_kind, source_evidence_digest, receipt_digest)"
-            + " VALUES (?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', ?, ?)",
-        target.sourceIntakeOperationId(),
-        target.targetNamespace(),
-        target.sourceIntakeRequestId(),
-        SHA256,
-        target.sourceRegistrationRequestId(),
-        target.sourceOperationId(),
-        SHA256,
-        target.canonicalTenantId(),
-        target.tenantSlug(),
-        target.worldSlug(),
-        target.worldDisplayName(),
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey(),
-        SHA256,
-        SHA256);
+    GameSessionAuthoredWorldSourceRepository sourceRepository =
+        new GameSessionAuthoredWorldSourceRepository(dsl);
+    IntakeReceipt sourceReceipt =
+        java.util.Objects.requireNonNull(
+            transactions.execute(
+                status -> sourceRepository.register(UUID.randomUUID(), sourceEvidence)),
+            "registered authored-world source receipt");
 
-    tx.execute(
-        "INSERT INTO gameplay_tenant_shared_playable_state_namespace"
-            + " (tenant_id, playable_state_namespace_id, canonical_tenant_id, target_namespace,"
-            + " source_intake_operation_id, source_intake_schema_version, source_intake_request_id,"
-            + " source_intake_request_digest, source_intake_receipt_digest, source_schema_version,"
-            + " source_registration_request_id, source_operation_id, source_request_digest,"
-            + " source_game_row_id, source_game_tenant_key, source_provenance_kind,"
-            + " source_evidence_digest)"
-            + " VALUES (NULL, ?, ?, ?, ?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', ?)",
-        target.playableStateNamespaceId(),
-        target.canonicalTenantId(),
-        target.targetNamespace(),
-        target.sourceIntakeOperationId(),
-        target.sourceIntakeRequestId(),
-        SHA256,
-        SHA256,
-        target.sourceRegistrationRequestId(),
-        target.sourceOperationId(),
-        SHA256,
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey(),
-        SHA256);
+    FreshTenantCreationEvidence creationEvidence =
+        CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(sourceEvidence);
+    FreshGameSessionTenantAssociation tenantAssociation =
+        java.util.Objects.requireNonNull(
+            transactions.execute(
+                status ->
+                    new GameSessionFreshTenantAssociationRepository(dsl)
+                        .associateFresh(
+                            UUID.randomUUID(), targetNamespace, sourceReceipt, creationEvidence)),
+            "fresh source-bound Game Session tenant association");
 
-    tx.execute(
-        "INSERT INTO game_session_canonical_realm_catalog"
-            + " (target_namespace, canonical_tenant_id, tenant_slug, world_slug, realm_id,"
-            + " realm_slug, realm_display_name, visible, public_production, state_scope,"
-            + " playable_state_namespace_id, character_creation_policy, catalog_revision,"
-            + " creation_request_id, request_digest, receipt_digest, source_intake_operation_id,"
-            + " source_intake_schema_version, source_intake_request_id, source_intake_request_digest,"
-            + " source_intake_receipt_digest, source_schema_version, source_registration_request_id,"
-            + " source_operation_id, source_request_digest, source_world_display_name,"
-            + " source_game_row_id, source_game_tenant_key, source_provenance_kind, source_evidence_digest)"
-            + " VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, TRUE, 'SHARED', ?, 'PLAYER_CHOICE', 1, ?, ?, ?, ?, 1, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', ?)",
-        target.targetNamespace(),
-        target.canonicalTenantId(),
-        target.tenantSlug(),
-        target.worldSlug(),
-        target.realmId(),
-        target.realmSlug(),
-        target.realmDisplayName(),
-        target.playableStateNamespaceId(),
-        target.catalogCreationRequestId(),
-        SHA256,
-        SHA256,
-        target.sourceIntakeOperationId(),
-        target.sourceIntakeRequestId(),
-        SHA256,
-        SHA256,
-        target.sourceRegistrationRequestId(),
-        target.sourceOperationId(),
-        SHA256,
-        target.worldDisplayName(),
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey(),
-        SHA256);
-  }
+    UUID catalogRequestId = UUID.randomUUID();
+    UUID canonicalVersionId = UUID.randomUUID();
+    String publishRequestId = "publication-" + token;
+    String bundleRef = "published-release-" + shortToken;
+    String generationConfigRevision = "generation-" + shortToken;
+    CreateCanonicalRealmCatalogRequest catalogRequest =
+        new CreateCanonicalRealmCatalogRequest(
+            catalogRequestId,
+            targetNamespace,
+            canonicalTenantId,
+            sourceReceipt.operationId(),
+            "main-realm",
+            "Main Realm",
+            true,
+            true,
+            "SHARED",
+            "PRESEEDED_ONLY",
+            null,
+            null);
+    var publishedSet =
+        CanonicalHumanPublicationOwnerTestFixtures.publishedSet(
+            catalogRequest,
+            sourceEvidence,
+            canonicalVersionId,
+            VERSION_ID,
+            publishRequestId,
+            bundleRef,
+            generationConfigRevision,
+            VERSION_STATE_EPOCH);
+    GameSessionCanonicalRealmCatalogRepository catalogRepository =
+        new GameSessionCanonicalRealmCatalogRepository(dsl);
+    var preparedCatalog =
+        catalogRepository.prepareInitialPublicProduction(catalogRequest, publishedSet);
+    CanonicalRealmCatalogSnapshot catalog =
+        java.util.Objects.requireNonNull(
+            transactions.execute(
+                status -> catalogRepository.createInitialPublicProduction(preparedCatalog)),
+            "created public-production canonical catalog");
 
-  private static void seedFreshTenantAssociation(DSLContext tx, RuntimeTarget target) {
-    tx.execute(
-        "INSERT INTO game_session_tenant_scope_reservation"
-            + " (game_session_tenant_id, reservation_kind) VALUES (?, 'FRESH_SOURCE_BOUND')",
-        target.gameSessionTenantId());
-    tx.execute(
-        "INSERT INTO game_session_tenant_canonical_claim"
-            + " (target_namespace, canonical_tenant_id, legacy_game_session_tenant_id,"
-            + " association_kind, reservation_kind, association_operation_id, association_request_id)"
-            + " VALUES (?, ?, ?, 'FRESH_SOURCE_BOUND', 'FRESH_SOURCE_BOUND', ?, ?)",
-        target.targetNamespace(),
-        target.canonicalTenantId(),
-        target.gameSessionTenantId(),
-        target.tenantAssociationOperationId(),
-        target.tenantAssociationRequestId());
-    tx.execute(
-        "INSERT INTO game_session_fresh_tenant_association"
-            + " (association_operation_id, target_namespace, association_request_id,"
-            + " source_schema_version, source_target_namespace, source_request_id,"
-            + " source_canonical_tenant_id, canonical_tenant_id, legacy_game_session_tenant_id,"
-            + " source_game_row_id, source_game_tenant_key, provenance_kind, association_kind)"
-            + " VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', 'FRESH_SOURCE_BOUND')",
-        target.tenantAssociationOperationId(),
-        target.targetNamespace(),
-        target.tenantAssociationRequestId(),
-        target.targetNamespace(),
-        target.tenantAssociationRequestId(),
-        target.canonicalTenantId(),
-        target.canonicalTenantId(),
-        target.gameSessionTenantId(),
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey());
-  }
+    AuthoredWorldLaunchDescriptorEvidence.Request descriptorRequest =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            targetNamespace,
+            controlPlaneRequestId,
+            canonicalTenantId,
+            worldSlug,
+            sourceEvidence.operationId(),
+            sourceEvidence.evidenceDigest(),
+            GAME_TEMPLATE_ID,
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            true,
+            RUNTIME_FLAGS_JSON);
+    String launchDescriptorId = "descriptor-" + shortToken;
+    AuthoredWorldLaunchDescriptorEvidence descriptor =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            descriptorRequest,
+            launchDescriptorId,
+            VERSION_ID,
+            false,
+            null,
+            RUNTIME_FLAGS_JSON,
+            generationConfigRevision,
+            VERSION_STATE_EPOCH,
+            RELEASE_BUNDLE_ID,
+            bundleRef,
+            false,
+            null);
+    CompleteLaunchBindingEvidence binding =
+        CanonicalHumanPublicationOwnerTestFixtures.completeBinding(descriptor, publishedSet);
+    var originalTuple =
+        CanonicalHumanPublicationOwnerTestFixtures.tuple(
+            targetNamespace,
+            canonicalTenantId,
+            ownerAccountUuid,
+            GAME_TEMPLATE_ID,
+            controlPlaneRequestId);
+    CanonicalHumanPublicationOwnerTestFixtures.pinLaunch(
+        dsl, transactions, originalTuple, sourceEvidence, publishedSet, binding);
 
-  private static void seedStartingRuntimeAndLaunch(DSLContext tx, RuntimeTarget target) {
-    tx.execute(
-        "INSERT INTO game_instances"
-            + " (id, tenant_id, runtime_version, owner_account_id, status, row_version,"
-            + " game_instance_uuid, game_template_id, launch_descriptor_id, version_id,"
-            + " release_bundle_id, generation_config_revision, version_state_epoch,"
-            + " run_owned_start_request_id, run_owned_start_request_digest,"
-            + " run_owned_start_published_release_bundle_ref, run_owned_start_preparing_epoch,"
-            + " run_owned_start_active_epoch)"
-            + " VALUES (?, ?, 'fixture-runtime', 99, 'STARTING', 1, ?, 1, ?, 1, 1, ?, 1, ?, ?, ?, 1, 2)",
-        target.gameInstanceId(),
-        target.gameSessionTenantId(),
-        target.gameInstanceUuid(),
-        target.launchDescriptorId(),
-        target.generationConfigRevision(),
-        target.controlPlaneRequestId(),
+    GameSessionCanonicalStartingInstanceRepository startingRepository =
+        new GameSessionCanonicalStartingInstanceRepository(dsl, targetNamespace);
+    StartingInstance startingInstance =
+        java.util.Objects.requireNonNull(
+            transactions.execute(
+                status ->
+                    startingRepository.createStarting(
+                        tenantAssociation,
+                        binding,
+                        ownerAccountUuid,
+                        controlPlaneRequestId,
+                        originalTuple.mutationDigest(),
+                        originalTuple)),
+            "created canonical STARTING instance");
+    int consumerInputRows =
+        java.util.Objects.requireNonNull(
+            transactions.execute(
+                status ->
+                    dsl.execute(
+                        // Controlled upstream World epoch inputs support only this downstream
+                        // guard-consumer proof; they are not World ACTIVE, Human terminal, Account
+                        // protection, or admission evidence.
+                        "UPDATE game_instances SET status = 'RUNNING',"
+                            + " row_version = row_version + 1, run_owned_start_preparing_epoch = 1,"
+                            + " run_owned_start_active_epoch = 2 WHERE tenant_id = ? AND id = ?",
+                        tenantAssociation.legacyGameSessionTenantId(),
+                        startingInstance.gameInstanceId())),
+            "controlled runtime consumer input row count");
+    if (consumerInputRows != 1) {
+      throw new IllegalStateException(
+          "Created canonical STARTING test row did not receive controlled consumer inputs");
+    }
+
+    return new RuntimeTarget(
+        targetNamespace,
+        tenantSlug,
+        canonicalTenantId,
+        worldSlug,
+        worldDisplayName,
+        catalog.realmId(),
+        catalog.realmSlug(),
+        catalog.realmDisplayName(),
+        tenantAssociation.legacyGameSessionTenantId(),
+        startingInstance.gameInstanceId(),
+        catalog.playableStateNamespaceId(),
+        catalog.stateScope(),
+        startingInstance.gameInstanceUuid(),
+        canonicalVersionId,
+        VERSION_ID,
+        catalog.catalogRevision(),
+        1L,
         RAW_SHA256,
-        target.publishedReleaseBundleRef());
-
-    tx.execute(
-        "INSERT INTO game_session_canonical_instance_launch"
-            + " (target_namespace, control_plane_request_id, game_session_tenant_id,"
-            + " canonical_tenant_id, tenant_association_operation_id, tenant_association_request_id,"
-            + " tenant_source_schema_version, tenant_source_target_namespace, tenant_source_request_id,"
-            + " tenant_source_canonical_tenant_id, tenant_source_game_row_id,"
-            + " tenant_source_game_tenant_key, tenant_source_provenance_kind, tenant_association_kind,"
-            + " game_instance_id, game_instance_uuid, canonical_realm_id, world_slug,"
-            + " playable_state_namespace_id, playable_state_scope, public_production,"
-            + " captured_starting_row_version, game_template_id, launch_descriptor_id, version_id,"
-            + " release_bundle_id, generation_config_revision, version_state_epoch,"
-            + " complete_launch_binding_evidence)"
-            + " VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', 'FRESH_SOURCE_BOUND',"
-            + " ?, ?, ?, ?, ?, 'SHARED', TRUE, 1, 1, ?, 1, 1, ?, 1,"
-            + " jsonb_build_object('descriptor', jsonb_build_object('targetNamespace', ?,"
-            + " 'controlPlaneRequestId', ?, 'canonicalTenantId', ?, 'worldSlug', ?,"
-            + " 'gameTemplateId', '1', 'launchDescriptorId', ?, 'versionId', '1',"
-            + " 'releaseBundleId', '1', 'generationConfigRevision', ?, 'versionStateEpoch', '1',"
-            + " 'publishedReleaseBundleRef', ?), 'releaseAttestation',"
-            + " jsonb_build_object('canonicalVersionId', ?)))",
-        target.targetNamespace(),
-        target.controlPlaneRequestId(),
-        target.gameSessionTenantId(),
-        target.canonicalTenantId(),
-        target.tenantAssociationOperationId(),
-        target.tenantAssociationRequestId(),
-        target.targetNamespace(),
-        target.tenantAssociationRequestId(),
-        target.canonicalTenantId(),
-        target.sourceGameRowId(),
-        target.sourceGameTenantKey(),
-        target.gameInstanceId(),
-        target.gameInstanceUuid(),
-        target.realmId(),
-        target.worldSlug(),
-        target.playableStateNamespaceId(),
-        target.launchDescriptorId(),
-        target.generationConfigRevision(),
-        target.targetNamespace(),
-        target.controlPlaneRequestId(),
-        target.canonicalTenantId().toString(),
-        target.worldSlug(),
-        target.launchDescriptorId(),
-        target.generationConfigRevision(),
-        target.publishedReleaseBundleRef(),
-        target.canonicalVersionId().toString());
+        2L,
+        "initial-" + shortToken,
+        RAW_SHA256,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        SHA256,
+        1L,
+        SHA256,
+        Instant.now(),
+        catalog.characterCreationPolicy(),
+        sourceEvidence.sourceGameRowId(),
+        sourceEvidence.sourceGameTenantKey(),
+        sourceReceipt.operationId(),
+        sourceReceipt.intakeRequestId(),
+        sourceEvidence.registrationRequestId(),
+        sourceEvidence.operationId(),
+        tenantAssociation.associationOperationId(),
+        creationEvidence.creationRequestId(),
+        catalog.creationRequestId(),
+        launchDescriptorId,
+        generationConfigRevision,
+        controlPlaneRequestId,
+        bundleRef);
   }
 
   public record RuntimeTarget(
@@ -314,6 +328,11 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
       String generationConfigRevision,
       String controlPlaneRequestId,
       String publishedReleaseBundleRef) {
+    /**
+     * The downstream binding tests use this carrier for selector equality only. Its admission
+     * fields are placeholders required by the current value type and do not come from an admission
+     * owner or establish a terminal Human proof.
+     */
     public CanonicalPlayableTarget playableTarget() {
       return new CanonicalPlayableTarget(
           targetNamespace,
@@ -337,14 +356,16 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
           activeWorldEpoch,
           initialAdmissionRequestId,
           initialAdmissionRequestDigest,
-          OriginKind.NO_PRIOR_POINTER,
+          net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind
+              .NO_PRIOR_POINTER,
           null,
           holdId,
           holdFence,
           holdBindingDigest,
           auditEventId,
           ownerProofDigest,
-          Outcome.COMMITTED,
+          net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof.Outcome
+              .COMMITTED,
           false,
           ownerProofTerminalAt,
           characterCreationPolicy);
@@ -352,59 +373,6 @@ public final class CanonicalGameplayBindingRuntimeTestFixtures {
 
     public CanonicalPlayableTarget admissionTarget() {
       return playableTarget();
-    }
-
-    private static RuntimeTarget create(
-        UUID canonicalTenantId,
-        long gameSessionTenantId,
-        long gameInstanceId,
-        UUID gameInstanceUuid,
-        UUID playableStateNamespaceId) {
-      String token = UUID.randomUUID().toString().replace("-", "");
-      String shortToken = token.substring(0, 10);
-      Instant terminalAt = Instant.now();
-      return new RuntimeTarget(
-          "fixture-" + shortToken,
-          "tenant-" + shortToken,
-          canonicalTenantId,
-          "world-" + shortToken,
-          "Fixture World " + shortToken,
-          UUID.randomUUID(),
-          "main",
-          "Main Realm",
-          gameSessionTenantId,
-          gameInstanceId,
-          playableStateNamespaceId,
-          "SHARED",
-          gameInstanceUuid,
-          UUID.randomUUID(),
-          1L,
-          1L,
-          1L,
-          RAW_SHA256,
-          2L,
-          "initial-" + shortToken,
-          RAW_SHA256,
-          UUID.randomUUID(),
-          UUID.randomUUID(),
-          SHA256,
-          1L,
-          SHA256,
-          terminalAt,
-          "PLAYER_CHOICE",
-          gameInstanceId + 50_000L,
-          "source-" + shortToken,
-          UUID.randomUUID(),
-          UUID.randomUUID(),
-          UUID.randomUUID(),
-          UUID.randomUUID(),
-          UUID.randomUUID(),
-          UUID.randomUUID(),
-          UUID.randomUUID(),
-          "descriptor-" + shortToken,
-          "generation-" + shortToken,
-          "launch-" + token,
-          "published-release-" + shortToken);
     }
   }
 }

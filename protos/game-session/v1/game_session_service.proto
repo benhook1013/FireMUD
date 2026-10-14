@@ -48,6 +48,9 @@ service GameSessionControlPlaneService {
   rpc GetCanonicalGameInstanceLaunchAssociation(
       GetCanonicalGameInstanceLaunchAssociationRequest)
       returns (GetCanonicalGameInstanceLaunchAssociationResponse);
+  // Fixed default-off run-owned fixture allocation read; exact World workload only.
+  rpc GetRunOwnedFixtureLaunchAssociation(GetRunOwnedFixtureLaunchAssociationRequest)
+      returns (GetRunOwnedFixtureLaunchAssociationResponse);
   rpc ValidateBuiltInCommandAlias(ValidateBuiltInCommandAliasRequest)
       returns (ValidateBuiltInCommandAliasResponse);
   rpc ListAdmissionPointers(ListAdmissionPointersRequest)
@@ -644,6 +647,36 @@ message GetCanonicalGameInstanceLaunchAssociationResponse {
   bool public_production = 18;
   string owner_attempt_id = 19;
   int64 owner_fence = 20;
+}
+
+message GetRunOwnedFixtureLaunchAssociationRequest {
+  string read_request_id = 1;
+  string target_namespace = 2;
+  string fixture_operation_id = 3;
+  string expected_fixture_policy_evidence_digest = 4;
+}
+
+// Complete immutable fixture provenance plus independently read GS allocations; no Human tuple.
+message GetRunOwnedFixtureLaunchAssociationResponse {
+  string read_request_id = 1;
+  string target_namespace = 2;
+  string fixture_operation_id = 3;
+  string expected_fixture_policy_evidence_digest = 4;
+  int64 game_session_tenant_id = 5;
+  int64 game_instance_id = 6;
+  string canonical_tenant_id = 7;
+  string game_instance_uuid = 8;
+  string canonical_version_id = 9;
+  string canonical_realm_id = 10;
+  string playable_state_namespace_id = 11;
+  string playable_state_scope = 12;
+  int64 catalog_revision = 13;
+  string current_game_instance_status = 14;
+  int64 current_row_version = 15;
+  bytes fixture_policy_request_bytes = 16;
+  string fixture_policy_seal_operation_id = 17;
+  string fixture_policy_seal_request_digest = 18;
+  string fixture_policy_seal_evidence_digest = 19;
 }
 
 message GetGameplayCommandStatusRequest {

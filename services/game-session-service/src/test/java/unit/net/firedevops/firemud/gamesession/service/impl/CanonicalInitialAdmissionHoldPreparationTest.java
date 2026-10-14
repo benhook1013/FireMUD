@@ -3,8 +3,6 @@ package unit.net.firedevops.firemud.gamesession.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -48,157 +46,62 @@ class CanonicalInitialAdmissionHoldPreparationTest {
   }
 
   @Test
-  void commitsIntentBeforeWorldAndAttachesInASeparateWritableReadCommittedTransaction()
-      throws Exception {
-    List<String> events = new ArrayList<>();
-    Fixtures fixtures = new Fixtures(events);
-    HoldIdentity identity = identity(HOLD_REQUEST, 7);
-    when(fixtures.repository.reserve(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .thenAnswer(
-            invocation -> {
-              assertWritableTransaction();
-              events.add("reserve");
-              return snapshot(IntentState.PENDING_HOLD, null, HOLD_REQUEST, LIFECYCLE_REQUEST);
-            });
-    when(fixtures.worldClient.acquire(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              events.add("world");
-              return identity;
-            });
-    when(fixtures.repository.attach(HOLD_REQUEST, identity))
-        .thenAnswer(
-            invocation -> {
-              assertWritableTransaction();
-              events.add("attach");
-              return snapshot(IntentState.HOLD_ATTACHED, identity, HOLD_REQUEST, LIFECYCLE_REQUEST);
-            });
-
-    CanonicalInitialAdmissionIntentSnapshot result =
-        fixtures.preparation.prepare(HOLD_REQUEST, LIFECYCLE_REQUEST);
-
-    assertThat(result.state()).isEqualTo(IntentState.HOLD_ATTACHED);
-    assertThat(events)
-        .containsExactly("begin", "reserve", "commit", "world", "begin", "attach", "commit");
-    assertThat(fixtures.transactionManager.transactionDefinitions)
-        .allSatisfy(
-            definition -> {
-              assertThat(definition.getPropagationBehavior())
-                  .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-              assertThat(definition.getIsolationLevel())
-                  .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-              assertThat(definition.isReadOnly()).isFalse();
-            });
+  void freshHumanRequestDeniesBeforeIntentTransactionOrWorldAccess() {
+    Fixtures fixtures = new Fixtures(new ArrayList<>());
+    assertHumanUnavailable(fixtures, HOLD_REQUEST, LIFECYCLE_REQUEST);
   }
 
   @Test
-  void reserveFailurePreventsWorldAcquisition() throws Exception {
+  void unavailableIntentOwnerCannotMoveDenialAfterReservation() {
     Fixtures fixtures = new Fixtures(new ArrayList<>());
     when(fixtures.repository.reserve(HOLD_REQUEST, LIFECYCLE_REQUEST))
         .thenThrow(new IllegalStateException("reserve failed"));
-
-    assertThatThrownBy(() -> fixtures.preparation.prepare(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .hasMessage("reserve failed");
-
-    verifyNoInteractions(fixtures.worldClient);
-    verify(fixtures.repository, never())
-        .attach(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    assertHumanUnavailable(fixtures, HOLD_REQUEST, LIFECYCLE_REQUEST);
   }
 
   @Test
-  void reserveCommitFailurePreventsWorldAcquisitionAndAttachment() throws Exception {
+  void failingTransactionManagerCannotBeginUnprotectedHumanReservation() {
     Fixtures fixtures = new Fixtures(new ArrayList<>(), true);
-    when(fixtures.repository.reserve(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .thenReturn(snapshot(IntentState.PENDING_HOLD, null, HOLD_REQUEST, LIFECYCLE_REQUEST));
-
-    assertThatThrownBy(() -> fixtures.preparation.prepare(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessage("reserve commit failed");
-
-    verifyNoInteractions(fixtures.worldClient);
-    verify(fixtures.repository, never())
-        .attach(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
-    assertThat(fixtures.transactionManager.transactionDefinitions).hasSize(1);
+    assertHumanUnavailable(fixtures, HOLD_REQUEST, LIFECYCLE_REQUEST);
   }
 
   @Test
-  void remoteFailureLeavesPendingIntentAndRetryUsesTheSameExactRequest() throws Exception {
+  void repeatedHumanRequestDoesNotReserveOrAcquireAfterRemoteFailure() {
     Fixtures fixtures = new Fixtures(new ArrayList<>());
-    HoldIdentity identity = identity(HOLD_REQUEST, 8);
-    when(fixtures.repository.reserve(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .thenReturn(snapshot(IntentState.PENDING_HOLD, null, HOLD_REQUEST, LIFECYCLE_REQUEST));
     when(fixtures.worldClient.acquire(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .thenThrow(new IllegalStateException("World unavailable"))
-        .thenReturn(identity);
-    when(fixtures.repository.attach(HOLD_REQUEST, identity))
-        .thenReturn(snapshot(IntentState.HOLD_ATTACHED, identity, HOLD_REQUEST, LIFECYCLE_REQUEST));
-
-    assertThatThrownBy(() -> fixtures.preparation.prepare(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .hasMessage("World unavailable");
-    assertThat(fixtures.preparation.prepare(HOLD_REQUEST, LIFECYCLE_REQUEST).state())
-        .isEqualTo(IntentState.HOLD_ATTACHED);
-
-    verify(fixtures.repository, org.mockito.Mockito.times(2))
-        .reserve(HOLD_REQUEST, LIFECYCLE_REQUEST);
-    verify(fixtures.worldClient, org.mockito.Mockito.times(2))
-        .acquire(HOLD_REQUEST, LIFECYCLE_REQUEST);
-    verify(fixtures.repository).attach(HOLD_REQUEST, identity);
-  }
-
-  @Test
-  void attachFailurePropagatesWithoutReplacingRequestOrCallingAnyCompensation() throws Exception {
-    Fixtures fixtures = new Fixtures(new ArrayList<>());
-    HoldIdentity identity = identity(HOLD_REQUEST, 9);
-    when(fixtures.repository.reserve(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .thenReturn(snapshot(IntentState.PENDING_HOLD, null, HOLD_REQUEST, LIFECYCLE_REQUEST));
-    when(fixtures.worldClient.acquire(HOLD_REQUEST, LIFECYCLE_REQUEST)).thenReturn(identity);
-    when(fixtures.repository.attach(HOLD_REQUEST, identity))
-        .thenThrow(new IllegalStateException("attach changed"));
-
-    assertThatThrownBy(() -> fixtures.preparation.prepare(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .hasMessage("attach changed");
-
-    verify(fixtures.worldClient).acquire(HOLD_REQUEST, LIFECYCLE_REQUEST);
-    verify(fixtures.repository).attach(HOLD_REQUEST, identity);
-    verify(fixtures.repository, never())
-        .reserve(
-            org.mockito.ArgumentMatchers.argThat(r -> r != HOLD_REQUEST),
-            org.mockito.ArgumentMatchers.any());
-  }
-
-  @Test
-  void exactAttachedOrTerminalReplayReturnsHistoricalSnapshotWithoutWorldCall() throws Exception {
-    for (IntentState state : List.of(IntentState.HOLD_ATTACHED, IntentState.TERMINAL)) {
-      Fixtures fixtures = new Fixtures(new ArrayList<>());
-      HoldIdentity retained = identity(HOLD_REQUEST, 10);
-      CanonicalInitialAdmissionIntentSnapshot historical =
-          snapshot(state, retained, HOLD_REQUEST, LIFECYCLE_REQUEST);
-      when(fixtures.repository.reserve(HOLD_REQUEST, LIFECYCLE_REQUEST)).thenReturn(historical);
-
-      assertThat(fixtures.preparation.prepare(HOLD_REQUEST, LIFECYCLE_REQUEST))
-          .isSameAs(historical);
-
-      verifyNoInteractions(fixtures.worldClient);
-      verify(fixtures.repository, never())
-          .attach(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+        .thenThrow(new IllegalStateException("World unavailable"));
+    for (int retry = 0; retry < 2; retry++) {
+      assertHumanUnavailable(fixtures, HOLD_REQUEST, LIFECYCLE_REQUEST);
     }
   }
 
   @Test
-  void wrongWorldIdentityAndChangedSnapshotTupleAreDenied() throws Exception {
+  void configuredWorldIdentityAndAttachFailureCannotBypassHumanProtection() {
+    Fixtures fixtures = new Fixtures(new ArrayList<>());
+    HoldIdentity acquired = identity(HOLD_REQUEST, 9);
+    when(fixtures.worldClient.acquire(HOLD_REQUEST, LIFECYCLE_REQUEST)).thenReturn(acquired);
+    when(fixtures.repository.attach(HOLD_REQUEST, acquired))
+        .thenThrow(new IllegalStateException("attach changed"));
+    assertHumanUnavailable(fixtures, HOLD_REQUEST, LIFECYCLE_REQUEST);
+  }
+
+  @Test
+  void attachedOrTerminalReadbackCannotAuthorizeNewHumanPreparation() {
+    for (IntentState state : List.of(IntentState.HOLD_ATTACHED, IntentState.TERMINAL)) {
+      Fixtures fixtures = new Fixtures(new ArrayList<>());
+      // Controlled readback input is never queried and establishes no live admission authority.
+      var retained = snapshot(state, identity(HOLD_REQUEST, 10), HOLD_REQUEST, LIFECYCLE_REQUEST);
+      when(fixtures.repository.reserve(HOLD_REQUEST, LIFECYCLE_REQUEST)).thenReturn(retained);
+      assertHumanUnavailable(fixtures, HOLD_REQUEST, LIFECYCLE_REQUEST);
+    }
+  }
+
+  @Test
+  void changedRequestLifecycleSnapshotAndWorldIdentityCannotBypassEarlyHumanDenial() {
     Fixtures wrongIdentity = new Fixtures(new ArrayList<>());
-    when(wrongIdentity.repository.reserve(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .thenReturn(snapshot(IntentState.PENDING_HOLD, null, HOLD_REQUEST, LIFECYCLE_REQUEST));
     when(wrongIdentity.worldClient.acquire(HOLD_REQUEST, LIFECYCLE_REQUEST))
         .thenReturn(identity(holdRequest("different-request"), 11));
-
-    assertThatThrownBy(() -> wrongIdentity.preparation.prepare(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("did not echo");
-    verify(wrongIdentity.repository, never())
-        .attach(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    assertHumanUnavailable(wrongIdentity, HOLD_REQUEST, LIFECYCLE_REQUEST);
 
     Fixtures changedSnapshot = new Fixtures(new ArrayList<>());
     when(changedSnapshot.repository.reserve(HOLD_REQUEST, LIFECYCLE_REQUEST))
@@ -208,16 +111,10 @@ class CanonicalInitialAdmissionHoldPreparationTest {
                 null,
                 HOLD_REQUEST,
                 lifecycleRequestWithChangedIdentity()));
-    assertThatThrownBy(() -> changedSnapshot.preparation.prepare(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("changed the exact request tuple");
-    verifyNoInteractions(changedSnapshot.worldClient);
+    assertHumanUnavailable(changedSnapshot, HOLD_REQUEST, LIFECYCLE_REQUEST);
 
     Fixtures changedAttach = new Fixtures(new ArrayList<>());
     HoldIdentity acquired = identity(HOLD_REQUEST, 12);
-    when(changedAttach.repository.reserve(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .thenReturn(snapshot(IntentState.PENDING_HOLD, null, HOLD_REQUEST, LIFECYCLE_REQUEST));
-    when(changedAttach.worldClient.acquire(HOLD_REQUEST, LIFECYCLE_REQUEST)).thenReturn(acquired);
     when(changedAttach.repository.attach(HOLD_REQUEST, acquired))
         .thenReturn(
             snapshot(
@@ -225,9 +122,15 @@ class CanonicalInitialAdmissionHoldPreparationTest {
                 identity(HOLD_REQUEST, 14),
                 HOLD_REQUEST,
                 LIFECYCLE_REQUEST));
-    assertThatThrownBy(() -> changedAttach.preparation.prepare(HOLD_REQUEST, LIFECYCLE_REQUEST))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("exact World hold identity");
+    assertHumanUnavailable(changedAttach, HOLD_REQUEST, LIFECYCLE_REQUEST);
+    assertHumanUnavailable(
+        new Fixtures(new ArrayList<>()),
+        holdRequest("different-request"),
+        lifecycleRequestWithChangedIdentity());
+    assertHumanUnavailable(
+        new Fixtures(new ArrayList<>()),
+        holdRequest("closed-origin-request", InitialAdmissionOrigin.EXPECT_CLOSED, 1L),
+        LIFECYCLE_REQUEST);
   }
 
   @Test
@@ -248,12 +151,18 @@ class CanonicalInitialAdmissionHoldPreparationTest {
     verifyNoInteractions(synchronization.repository, synchronization.worldClient);
   }
 
-  private static void assertWritableTransaction() {
-    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-    assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isTrue();
-    assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
-    assertThat(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
-        .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+  private static void assertHumanUnavailable(
+      Fixtures fixtures,
+      Request request,
+      WorldCanonicalInstanceLifecycleEvidence.Request lifecycle) {
+    assertThatThrownBy(() -> fixtures.preparation.prepare(request, lifecycle))
+        .isInstanceOf(
+            net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository
+                .CanonicalHumanAdmissionProtectionUnavailableException.class)
+        .hasMessageContaining("Account terminal protection");
+    verifyNoInteractions(fixtures.repository, fixtures.worldClient);
+    assertThat(fixtures.transactionManager.transactionDefinitions).isEmpty();
+    assertThat(fixtures.transactionManager.events).isEmpty();
   }
 
   private static CanonicalInitialAdmissionIntentSnapshot snapshot(
@@ -298,6 +207,11 @@ class CanonicalInitialAdmissionHoldPreparationTest {
   }
 
   private static Request holdRequest(String requestId) {
+    return holdRequest(requestId, InitialAdmissionOrigin.NO_PRIOR_POINTER, null);
+  }
+
+  private static Request holdRequest(
+      String requestId, InitialAdmissionOrigin origin, Long priorPointerVersion) {
     String requestDigest =
         CanonicalInitialAdmissionRequest.computeRequestDigest(
             NAMESPACE,
@@ -310,8 +224,8 @@ class CanonicalInitialAdmissionHoldPreparationTest {
             VERSION,
             2L,
             1L,
-            CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER,
-            null,
+            CanonicalInitialAdmissionRequest.OriginKind.valueOf(origin.name()),
+            priorPointerVersion,
             requestId);
     return new Request(
         NAMESPACE,
@@ -325,9 +239,9 @@ class CanonicalInitialAdmissionHoldPreparationTest {
         2L,
         requestId,
         requestDigest,
-        InitialAdmissionOrigin.NO_PRIOR_POINTER,
+        origin,
         1L,
-        null);
+        priorPointerVersion);
   }
 
   private static WorldCanonicalInstanceLifecycleEvidence.Request lifecycleRequest() {

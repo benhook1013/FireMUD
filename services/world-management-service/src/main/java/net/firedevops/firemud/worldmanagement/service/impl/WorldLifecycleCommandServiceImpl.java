@@ -14,7 +14,6 @@ import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
-import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidenceProvider;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
@@ -227,41 +226,17 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   @Timed(value = "world.prepareInstance")
   public WorldInstanceLifecycleSnapshotDto prepareWorldInstance(
       PreparedWorldInstanceRequest request) {
-    validatePrepareRequest(request);
-    RunOwnedWorldLaunchEvidence fixtureEvidence = configuredFixtureEvidence();
-    if (fixtureEvidence != null) {
-      fixtureEvidence.requireMatches(request);
-      worldInstanceRepository.lockRunOwnedFixtureOperation(
-          request.tenantId(), request.controlPlaneRequestId());
-      WorldInstance operationInstance =
-          worldInstanceRepository
-              .findRunOwnedFixtureByTenantIdAndControlPlaneRequestIdForUpdate(
-                  request.tenantId(), request.controlPlaneRequestId())
-              .orElse(null);
-      if (operationInstance != null
-          && !operationInstance.getGameInstanceId().equals(request.gameInstanceId())) {
-        throw fixtureIdentityConflict();
-      }
+    if (fixtureModeEnabled()) {
+      throw fixtureWritesUnavailable();
     }
+    validatePrepareRequest(request);
     WorldInstance existing =
-        fixtureEvidence == null
-            ? worldInstanceRepository
-                .findByTenantIdAndGameInstanceId(request.tenantId(), request.gameInstanceId())
-                .orElse(null)
-            : worldInstanceRepository
-                .findByTenantIdAndGameInstanceIdForUpdate(
-                    request.tenantId(), request.gameInstanceId())
-                .orElse(null);
+        worldInstanceRepository
+            .findByTenantIdAndGameInstanceId(request.tenantId(), request.gameInstanceId())
+            .orElse(null);
     if (existing != null) {
       if (existing.getRunOwnedFixtureBindingSha256() != null) {
-        if (fixtureEvidence == null) {
-          throw fixtureEvidenceUnavailable();
-        }
-        requireRunOwnedFixtureBinding(existing, fixtureEvidence, request);
-        return snapshot(existing);
-      }
-      if (fixtureEvidence != null) {
-        throw fixtureIdentityConflict();
+        throw fixtureEvidenceUnavailable();
       }
       if (!samePreparedRequest(existing, request)) {
         throw new IllegalArgumentException(
@@ -269,9 +244,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       }
       return snapshot(existing);
     }
-    if (fixtureEvidence == null) {
-      validateAttestedLaunchInputs(request);
-    }
+    validateAttestedLaunchInputs(request);
     WorldInstance worldInstance = new WorldInstance();
     worldInstance.setTenantId(request.tenantId());
     worldInstance.setGameInstanceId(request.gameInstanceId());
@@ -289,10 +262,6 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     worldInstance.setRemapSetId(normalizeBlank(request.remapSetId()));
     worldInstance.setLifecycleEpoch(1L);
     worldInstance.setStatus(STATUS_PREPARING);
-    if (fixtureEvidence != null) {
-      worldInstance.setRunOwnedFixtureBindingSha256(fixtureEvidence.bindingDigest(request, 1L));
-      worldInstance.setRunOwnedFixturePreparingLifecycleEpoch(1L);
-    }
     worldInstance.setCreatedAt(Instant.now());
     worldInstance.setUpdatedAt(Instant.now());
     WorldInstance saved = worldInstanceRepository.save(worldInstance);
@@ -326,42 +295,22 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   @Timed(value = "world.activateInstance")
   public WorldInstanceLifecycleSnapshotDto activatePreparedWorldInstance(
       long tenantId, long gameInstanceId, long expectedLifecycleEpoch) {
+    if (fixtureModeEnabled()) {
+      throw fixtureWritesUnavailable();
+    }
     WorldInstance worldInstance = requireWorldInstance(tenantId, gameInstanceId);
     if (worldInstance.getRunOwnedFixtureBindingSha256() != null) {
-      if (!fixtureModeEnabled()) {
-        throw fixtureEvidenceUnavailable();
-      }
-      RunOwnedWorldLaunchEvidence fixtureEvidence =
-          runOwnedWorldLaunchEvidenceProvider.requireAuthenticatedEvidence();
-      worldInstance = requireLockedWorldInstance(tenantId, gameInstanceId);
-      PreparedWorldInstanceRequest preparedRequest = preparedRequest(worldInstance);
-      requireRunOwnedFixtureBinding(worldInstance, fixtureEvidence, preparedRequest);
-      if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {
-        long preparingEpoch = worldInstance.getRunOwnedFixturePreparingLifecycleEpoch();
-        if (worldInstance.getLifecycleEpoch() != preparingEpoch + 1L
-            || (expectedLifecycleEpoch != preparingEpoch
-                && expectedLifecycleEpoch != worldInstance.getLifecycleEpoch())) {
-          throw lifecycleEpochMismatch();
-        }
-        return snapshot(worldInstance);
-      }
-      requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
-    } else {
-      if (fixtureModeEnabled()) {
-        throw fixtureIdentityConflict();
-      }
-      requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
-      if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {
-        return snapshot(worldInstance);
-      }
+      throw fixtureEvidenceUnavailable();
+    }
+    requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
+    if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {
+      return snapshot(worldInstance);
     }
     if (!STATUS_PREPARING.equals(worldInstance.getStatus())) {
       throw new IllegalArgumentException(
           "INVALID_WORLD_INSTANCE_STATE: world instance is not in PREPARING state");
     }
-    if (worldInstance.getRunOwnedFixtureBindingSha256() == null) {
-      validateAttestedLaunchInputs(preparedRequest(worldInstance));
-    }
+    validateAttestedLaunchInputs(preparedRequest(worldInstance));
     worldInstance.setStatus(STATUS_ACTIVE);
     worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
     worldInstance.setFailureReason(null);
@@ -392,30 +341,6 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
         worldInstance.getRemapSetId());
   }
 
-  private void requireRunOwnedFixtureBinding(
-      WorldInstance instance,
-      RunOwnedWorldLaunchEvidence fixtureEvidence,
-      PreparedWorldInstanceRequest request) {
-    Long preparingEpoch = instance.getRunOwnedFixturePreparingLifecycleEpoch();
-    if (instance.getRunOwnedFixtureBindingSha256() == null
-        || preparingEpoch == null
-        || preparingEpoch <= 0L
-        || preparingEpoch != 1L
-        || !samePreparedRequest(instance, request)
-        || !instance
-            .getRunOwnedFixtureBindingSha256()
-            .equals(fixtureEvidence.bindingDigest(request, preparingEpoch))) {
-      throw fixtureEvidenceMismatch();
-    }
-  }
-
-  private RunOwnedWorldLaunchEvidence configuredFixtureEvidence() {
-    if (!fixtureModeEnabled()) {
-      return null;
-    }
-    return runOwnedWorldLaunchEvidenceProvider.requireAuthenticatedEvidence();
-  }
-
   private boolean fixtureModeEnabled() {
     return runOwnedWorldLaunchEvidenceProvider != null
         && runOwnedWorldLaunchEvidenceProvider.isEnabled();
@@ -426,19 +351,9 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
         "RUN_OWNED_WORLD_LAUNCH_EVIDENCE_UNAVAILABLE: fixture-bound lifecycle requires verified run evidence");
   }
 
-  private static IllegalArgumentException fixtureEvidenceMismatch() {
+  private static IllegalArgumentException fixtureWritesUnavailable() {
     return new IllegalArgumentException(
-        "RUN_OWNED_WORLD_LAUNCH_EVIDENCE_MISMATCH: stored fixture binding or prepared identity changed");
-  }
-
-  private static IllegalArgumentException fixtureIdentityConflict() {
-    return new IllegalArgumentException(
-        "RUN_OWNED_WORLD_LAUNCH_IDENTITY_CONFLICT: fixture operation is bound to another instance");
-  }
-
-  private static IllegalArgumentException lifecycleEpochMismatch() {
-    return new IllegalArgumentException(
-        "WORLD_INSTANCE_LIFECYCLE_STALE: world instance lifecycle epoch mismatch");
+        "RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE: fixture prepare and activation are disabled until World-owned materialization is available");
   }
 
   @Override

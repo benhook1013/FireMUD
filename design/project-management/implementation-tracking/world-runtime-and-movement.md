@@ -6,6 +6,10 @@ This is a non-normative implementation tracker for world runtime and movement. C
 
 ## Current Status
 
+### Canonical fixture launch receiving boundary
+
+The canonical launch-owner successor adds authenticated fixed Game Session `STARTING` allocation readback. World bootstrap and fixture prepare/activate refuse before owner effects until actual World materialization and holds are composed. That source read grants no World lifecycle, first admission, Entity or operational-region authority. The successor World whole-service check, formatting, static analysis and documentation checks passed on parent `b41a1f8c9853e87592e09f0b4194dca8965b2cc0`. Its 65 freshly executed service integration cases comprise 63 PostgreSQL-backed cases and two controlled mTLS socket tests; 271 unit cases retained their preceding execution attribution. The socket tests qualify authentication and exact echo against controlled remote handlers, while the database cases qualify before-effects refusal and independent passive storage, retained rows and constraints. They do not establish a live remote Game Session producer, complete-commit producer, World activation or packaged runtime. The preceding guarded graph owner's proof retains its own published-source attribution. All four genuine handoffs remain open.
+
 ### Guarded graph capture and frozen owner stage
 
 The World owner stage carries immutable donor migrations V1003–V1007 for guarded six-family topology, authored/canonical graph storage and schema-3 capture. The ordinary digest writer now emits schema 3 with tagged numeric-versus-canonical Entity references through its installed interface. The installed 31 World plus three Saga artifacts remain unchanged. New V1007.1 restores the installed V27.2 stable same-tenant legacy UPDATE fastpath after V1004; later donor guard replacements must preserve that same invariant through their own forward repairs. No shared/protobuf or Game Design/Game Session fixture contracts are introduced, and the existing private fixture bootstrap is unchanged.

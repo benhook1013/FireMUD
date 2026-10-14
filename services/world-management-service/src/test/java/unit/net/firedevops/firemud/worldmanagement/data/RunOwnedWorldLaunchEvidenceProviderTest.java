@@ -9,13 +9,19 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.ArtifactState;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
@@ -31,10 +37,26 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 
 @ExtendWith(OutputCaptureExtension.class)
 class RunOwnedWorldLaunchEvidenceProviderTest {
-  private static final String OPERATION_ID = "7f1e5306-e9a7-46d9-b5cf-75348e20ffbd";
+  private static final String CLAIM_DIGEST = controlledClaimDigest();
+  private static final String OPERATION_ID =
+      RunOwnedInitialAdmissionFixtureWireCodec.fixtureOperationId(
+              CLAIM_DIGEST, "fixture-run", "firemud-fixture-run", "a".repeat(64), "b".repeat(64))
+          .toString();
   private static final String RELEASE_REF = "8ce42642-53ae-4d07-aab8-37c43ce66e0c";
 
   @TempDir Path temporaryDirectory;
+
+  private static String controlledClaimDigest() {
+    try {
+      // Exact controlled fixture bytes; this is not a physical run claim.
+      return HexFormat.of()
+          .formatHex(
+              MessageDigest.getInstance("SHA-256")
+                  .digest("fixture-run\nfiremud-fixture-run\n".getBytes(StandardCharsets.UTF_8)));
+    } catch (NoSuchAlgorithmException exception) {
+      throw new IllegalStateException(exception);
+    }
+  }
 
   @Test
   void bindingDigestNormalizesAcceptedBlankOptionalOverridesToAbsent() {
@@ -46,10 +68,28 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
   }
 
   @Test
+  void launchEvidenceBindsStartingAllocationPrivateKeysFromOwnerProjection() {
+    RunOwnedWorldLaunchEvidence evidence = fixtureEvidence();
+
+    evidence.requireMatches(request(null, null));
+    assertThat(evidence.gameSessionAssociation().gameSessionTenantId()).isEqualTo(142L);
+    assertThat(evidence.gameSessionAssociation().gameInstanceId()).isEqualTo(1001L);
+    assertThat(evidence.gameSessionAssociation().currentGameInstanceStatus())
+        .isEqualTo(
+            CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus.STARTING);
+    assertThat(evidence.capability().tenantId()).isEqualTo(42L);
+    assertThat(evidence.gameSessionAssociation().gameSessionTenantId())
+        .isNotEqualTo(evidence.capability().tenantId());
+    assertThatThrownBy(() -> evidence.requireGameSessionAllocation(42L, 1001L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageStartingWith("RUN_OWNED_WORLD_GAME_SESSION_ALLOCATION_MISMATCH:");
+  }
+
+  @Test
   void disabledFixtureFailsBeforeReadingFilesOrCallingGameDesign(CapturedOutput output) {
     GameDesignClient gameDesignClient = mock(GameDesignClient.class);
     RunOwnedWorldLaunchEvidenceProvider provider =
-        new RunOwnedWorldLaunchEvidenceProvider(
+        provider(
             false,
             temporaryDirectory.resolve("missing-capability.json").toString(),
             temporaryDirectory.resolve("missing-receipt.json").toString(),
@@ -81,7 +121,7 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
     Files.setPosixFilePermissions(
         receipt, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.GROUP_READ));
     RunOwnedWorldLaunchEvidenceProvider provider =
-        new RunOwnedWorldLaunchEvidenceProvider(
+        provider(
             true,
             capability.toString(),
             receipt.toString(),
@@ -124,7 +164,7 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
     String relativeCapabilityPath =
         workingDirectory.relativize(capability.toAbsolutePath().normalize()).toString();
     RunOwnedWorldLaunchEvidenceProvider provider =
-        new RunOwnedWorldLaunchEvidenceProvider(
+        provider(
             true,
             relativeCapabilityPath,
             receipt.toString(),
@@ -151,7 +191,7 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
     Files.setPosixFilePermissions(
         receipt, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.GROUP_READ));
     RunOwnedWorldLaunchEvidenceProvider provider =
-        new RunOwnedWorldLaunchEvidenceProvider(
+        provider(
             true,
             capability.toString(),
             receipt.toString(),
@@ -182,7 +222,7 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
         receipt, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.GROUP_READ));
     Files.createSymbolicLink(capability, target.getFileName());
     RunOwnedWorldLaunchEvidenceProvider provider =
-        new RunOwnedWorldLaunchEvidenceProvider(
+        provider(
             true,
             capability.toString(),
             receipt.toString(),
@@ -206,8 +246,8 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
 
   private static PreparedWorldInstanceRequest request(String patch, String remap) {
     return new PreparedWorldInstanceRequest(
-        42L,
-        101L,
+        142L,
+        1001L,
         17L,
         OPERATION_ID,
         "launch-descriptor-fixture-11",
@@ -292,21 +332,30 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
         PublishedReleaseBundle.newBuilder()
             .setId(77L)
             .setVersionId(11L)
+            .setVersionNumber(1)
+            .setAttestationSchemaVersion("v1")
+            .setCanonicalTenantId(canonicalTenantId.toString())
+            .setCanonicalVersionId("10000000-0000-4000-8000-000000000011")
             .setPublishedReleaseBundleRef(RELEASE_REF)
             .setGenerationConfigRevision("genrev-11")
             .setManifestHash(manifestHash)
             .build();
     var artifact =
         VersionAssetArtifactState.newBuilder()
+            .setTenantId("42")
             .setVersionId(11L)
+            .setStateEpoch(2L)
+            .setExportedVersionNumber(1)
             .setArtifactState(ArtifactState.ARTIFACT_STATE_PUBLISHED)
             .setManifestHash(manifestHash)
             .build();
     var version =
         VersionStateSnapshot.newBuilder()
+            .setTenantId("42")
             .setVersionId(11L)
             .setVersionState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
             .setVersionStateEpoch(77L)
+            .setUpdatedAt("2026-10-11T10:00:00Z")
             .build();
     RunOwnedInitialAdmissionFixtureWireCodec.Capability capability =
         new RunOwnedInitialAdmissionFixtureWireCodec.Capability(
@@ -330,7 +379,54 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
             RunOwnedInitialAdmissionFixtureWireCodec.GAME_SESSION_URI_SAN,
             "b".repeat(64),
             RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
-            "c".repeat(64));
+            "c".repeat(64),
+            CLAIM_DIGEST);
+    // Controlled constructor data remains untrusted; these commitments do not prove owner writes.
+    UUID creationRequestId = UUID.fromString("1b3fdbda-a9f6-4cf5-b21e-b43f0e855f65");
+    UUID creationOperationId = UUID.fromString("31e36104-3336-4cf5-899a-cb419f2f361e");
+    String creationRequestDigest =
+        GameTenantCreationDigest.requestDigest(
+            "dev", creationRequestId, "42", "Fixture Game", null);
+    var creation =
+        new FreshTenantCreationEvidence(
+            1,
+            "dev",
+            creationRequestId,
+            creationOperationId,
+            creationRequestDigest,
+            canonicalTenantId,
+            29L,
+            "42",
+            "NEW_GAME_ROW",
+            GameTenantCreationDigest.evidenceDigest(
+                "dev",
+                creationRequestId,
+                creationOperationId,
+                creationRequestDigest,
+                canonicalTenantId,
+                29L,
+                "42",
+                "NEW_GAME_ROW"));
+    var launchRead =
+        new RunOwnedInitialAdmissionFixtureWireCodec.LaunchReadEvidence(
+            RunOwnedInitialAdmissionFixtureWireCodec.LAUNCH_READ_EVIDENCE_SCHEMA,
+            17L,
+            bundle,
+            artifact,
+            version,
+            net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec
+                .toLaunchDescriptorMessage(descriptor));
+    String policyRequestDigest =
+        RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestDigest(
+            capability, creation, source, launchRead);
+    var policySeal =
+        new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal(
+            RunOwnedInitialAdmissionFixtureWireCodec.FIXTURE_POLICY_SEAL_SCHEMA,
+            RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_OWNER_SERVICE,
+            UUID.fromString(OPERATION_ID),
+            policyRequestDigest,
+            RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+                UUID.fromString(OPERATION_ID), policyRequestDigest));
     var receipt =
         new RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt(
             RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_SCHEMA,
@@ -344,14 +440,31 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
             RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
             "c".repeat(64),
             source,
-            new RunOwnedInitialAdmissionFixtureWireCodec.LaunchReadEvidence(
-                RunOwnedInitialAdmissionFixtureWireCodec.LAUNCH_READ_EVIDENCE_SCHEMA,
-                17L,
-                bundle,
-                artifact,
-                version,
-                net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec
-                    .toLaunchDescriptorMessage(descriptor)));
+            launchRead,
+            creation,
+            policySeal);
+    var policyRequestBytes =
+        RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestBytes(
+            capability, creation, source, launchRead);
+    UUID readRequestId = UUID.fromString("5d85bfbe-ae28-4a86-a72a-57471a5761bf");
+    var associationRequest =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureRequest(
+            readRequestId, "dev", UUID.fromString(OPERATION_ID), policySeal.evidenceDigest());
+    var association =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult(
+            associationRequest,
+            142L,
+            1001L,
+            canonicalTenantId,
+            UUID.fromString("20000000-0000-4000-8000-000000000011"),
+            UUID.fromString(bundle.getCanonicalVersionId()),
+            UUID.fromString("30000000-0000-4000-8000-000000000011"),
+            UUID.fromString("40000000-0000-4000-8000-000000000011"),
+            1L,
+            CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus.STARTING,
+            0L,
+            policyRequestBytes,
+            policySeal);
     return new RunOwnedWorldLaunchEvidence(
         capability,
         receipt,
@@ -361,6 +474,28 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
         "a".repeat(64),
         RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
         "c".repeat(64),
-        "b".repeat(64));
+        "b".repeat(64),
+        association);
+  }
+
+  private static RunOwnedWorldLaunchEvidenceProvider provider(
+      boolean enabled,
+      String capabilityPath,
+      String receiptPath,
+      String runId,
+      String composeProjectName,
+      CommonGrpcClientProperties grpcProperties,
+      GameDesignClient gameDesignClient) {
+    return new RunOwnedWorldLaunchEvidenceProvider(
+        enabled,
+        capabilityPath,
+        receiptPath,
+        runId,
+        composeProjectName,
+        grpcProperties,
+        gameDesignClient,
+        null,
+        null,
+        "dev");
   }
 }

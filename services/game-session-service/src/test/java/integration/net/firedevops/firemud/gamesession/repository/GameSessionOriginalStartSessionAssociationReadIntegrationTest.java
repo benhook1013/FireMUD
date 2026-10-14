@@ -5,13 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.InitialConfigured;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.gamesession.HistoricalOriginalStartSessionOwnerEvidence;
@@ -33,7 +32,6 @@ import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOper
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptClaim;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.ReservationResult;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionTemplateAssociationRepository;
-import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionTemplateAssociationRepository.PinnedAssociationSnapshot;
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -84,6 +82,17 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
         .containsExactly(tuple.canonicalBytes());
     assertThat(read.ownerAttemptId()).isEqualTo(starting.claim().ownerAttemptId());
     assertThat(read.ownerFence()).isEqualTo(starting.claim().ownerFence()).isPositive();
+    var catalog =
+        fixture
+            .dsl()
+            .fetchOne(
+                "SELECT realm_id, catalog_revision FROM game_session_canonical_realm_catalog "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                fixture.namespace(),
+                fixture.tenantId());
+    assertThat(catalog).isNotNull();
+    assertThat(read.canonicalRealmId()).isEqualTo(catalog.get("realm_id", UUID.class));
+    assertThat(read.catalogRevision()).isEqualTo(catalog.get("catalog_revision", Long.class));
     assertThat(
             fixture
                 .dsl()
@@ -104,9 +113,11 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
         GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.tuple(
             "original-association-handoff-no-owner");
     Fixture fixture = fixture(tuple, Duration.ofSeconds(30));
-    StartingInstance starting = fixture.startWithoutOwnerPins(tuple);
-
-    assertThat(fixture.read(selector(starting.launchAssociation()))).isEmpty();
+    assertThatThrownBy(() -> fixture.startWithoutOwnerPins(tuple))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Exact canonical pins are required before STARTING");
+    assertThat(count(fixture, "game_instances")).isZero();
+    assertThat(count(fixture, "game_session_canonical_instance_launch")).isZero();
   }
 
   @Test
@@ -354,9 +365,11 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
         GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.tuple(
             "historical-original-association-no-selection-pin");
     Fixture fixture = fixture(tuple, Duration.ofSeconds(30));
-    OwnerBackedStarting starting = fixture.startWithOwnerAttemptWithoutPins(tuple);
-
-    assertThat(fixture.historicalRead(historicalRequest(starting))).isEmpty();
+    assertThatThrownBy(() -> fixture.startWithOwnerAttemptWithoutPins(tuple))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Exact canonical pins are required before STARTING");
+    assertThat(count(fixture, "game_instances")).isZero();
+    assertThat(count(fixture, "game_session_canonical_instance_launch")).isZero();
 
     Fixture mismatched = fixture(tuple, Duration.ofSeconds(30));
     OwnerBackedStarting mismatchedStarting = mismatched.startWithOwnerPins(tuple);
@@ -463,45 +476,11 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
   }
 
   private static CompleteLaunchBindingEvidence completeBinding(
-      AuthoredWorldLaunchDescriptorEvidence descriptor, UUID canonicalVersionId) {
-    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
-        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        "original-association-commit",
-                        "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null))
-            .toList();
-    var release =
-        AuthoredWorldReleaseAttestationEvidence.create(
-            descriptor.targetNamespace(),
-            descriptor.resultDigest(),
-            descriptor.canonicalTenantId(),
-            canonicalVersionId,
-            descriptor.worldSlug(),
-            descriptor.authoredWorldSourceOperationId(),
-            descriptor.authoredWorldSourceEvidenceDigest(),
-            descriptor.launchDescriptorId(),
-            descriptor.publishedReleaseBundleRef(),
-            descriptor.versionStateEpoch(),
-            "original-association-publish",
-            "original-association-commit",
-            participants,
-            "sha256:" + "e".repeat(64),
-            1,
-            List.of(),
-            List.of(),
-            List.of(),
-            descriptor.generationConfigRevision());
-    return new CompleteLaunchBindingEvidence(descriptor, release);
+      AuthoredWorldLaunchDescriptorEvidence descriptor,
+      UUID canonicalVersionId,
+      RealmPolicyPublishedEvidence.PublishedSet publishedSet) {
+    assertThat(publishedSet.target().canonicalVersionId()).isEqualTo(canonicalVersionId);
+    return CanonicalHumanPublicationOwnerTestFixtures.completeBinding(descriptor, publishedSet);
   }
 
   private static AuthoredWorldLaunchDescriptorEvidence unpinnedDescriptor(
@@ -580,6 +559,16 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
         Objects.requireNonNull(
             transactions.execute(status -> sourceRepository.register(UUID.randomUUID(), source)),
             "registered fresh source receipt");
+    FreshGameSessionTenantAssociation tenantAssociation =
+        Objects.requireNonNull(
+            transactions.execute(
+                status ->
+                    tenantRepository.associateFresh(
+                        UUID.randomUUID(),
+                        namespace,
+                        sourceReceipt,
+                        CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source))),
+            "fresh tenant association");
     var createCatalog =
         new CreateCanonicalRealmCatalogRequest(
             UUID.randomUUID(),
@@ -591,18 +580,23 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
             true,
             true,
             "SHARED",
-            "explicit-policy-v1",
+            "PRESEEDED_ONLY",
             null,
             null);
-    var preparedCatalog = catalogRepository.prepareInitialPublicProduction(createCatalog);
+    var publishedSet =
+        CanonicalHumanPublicationOwnerTestFixtures.publishedSet(
+            createCatalog,
+            source,
+            CANONICAL_VERSION,
+            19L,
+            "original-association-publication",
+            "immutable-release-ref",
+            "generation-1",
+            5L);
+    var preparedCatalog =
+        catalogRepository.prepareInitialPublicProduction(createCatalog, publishedSet);
     transactions.executeWithoutResult(
         status -> catalogRepository.createInitialPublicProduction(preparedCatalog));
-    FreshGameSessionTenantAssociation tenantAssociation =
-        Objects.requireNonNull(
-            transactions.execute(
-                status ->
-                    tenantRepository.associateFresh(UUID.randomUUID(), namespace, sourceReceipt)),
-            "fresh tenant association");
     return new Fixture(
         namespace,
         tenantId,
@@ -614,7 +608,9 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
         startingRepository,
         new CanonicalGameInstanceLaunchAssociationRepository(dsl, namespace),
         source,
-        tenantAssociation);
+        tenantAssociation,
+        publishedSet,
+        ownerClaimLease);
   }
 
   private record Fixture(
@@ -628,34 +624,16 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
       GameSessionCanonicalStartingInstanceRepository starting,
       CanonicalGameInstanceLaunchAssociationRepository reads,
       AuthoredWorldSourceEvidence source,
-      FreshGameSessionTenantAssociation tenantAssociation) {
+      FreshGameSessionTenantAssociation tenantAssociation,
+      RealmPolicyPublishedEvidence.PublishedSet publishedSet,
+      Duration ownerClaimLease) {
     OwnerBackedStarting startWithOwnerPins(StartSessionPostAuthorizationExecutionTuple tuple) {
-      ReservationResult reservation =
-          Objects.requireNonNull(transactions.execute(status -> attempts.reserve(tuple)));
-      AttemptClaim claim = reservation.claim().orElseThrow();
-      var projection =
-          GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.projection(tuple);
-      transactions.executeWithoutResult(
-          status -> attempts.attachAccountRedemptionProjection(claim, projection));
-      var initial =
-          GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.result(
-              tuple, claim, new InitialConfigured(), UUID.randomUUID());
-      PinnedAssociationSnapshot pinnedAssociation =
-          Objects.requireNonNull(
-              transactions.execute(
-                  status -> templateAssociations.pinInitialOrValidateExactReplay(claim, initial)));
-      var resolved =
-          GameSessionStartSessionLaunchDescriptorRepositoryIntegrationTest.descriptorFor(
-              pinnedAssociation.result(), "original-start-session-descriptor");
-      transactions.executeWithoutResult(status -> descriptors.pin(claim, resolved));
-      var descriptor =
-          ((net.firedevops.firemud.common.gamedesign.StartSessionLaunchDescriptorGrpcCodec
-                      .DescriptorOutcome)
-                  resolved.outcome())
-              .descriptor();
+      var descriptor = unpinnedDescriptor(tuple, source);
       var binding =
-          completeBinding(
-              descriptor, pinnedAssociation.result().association().canonicalVersionId());
+          completeBinding(descriptor, publishedSet.target().canonicalVersionId(), publishedSet);
+      AttemptClaim claim =
+          CanonicalHumanPublicationOwnerTestFixtures.pinLaunch(
+              dsl, transactions, tuple, source, publishedSet, binding, ownerClaimLease);
       StartingInstance startingInstance =
           Objects.requireNonNull(
               transactions.execute(
@@ -665,7 +643,8 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
                           binding,
                           tuple.preAuthorizationTuple().action().target().ownerAccountId(),
                           tuple.controlPlaneRequestId(),
-                          "f".repeat(64))));
+                          tuple.mutationDigest(),
+                          tuple)));
       return new OwnerBackedStarting(startingInstance, claim);
     }
 
@@ -681,7 +660,7 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
                   GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.projection(
                       tuple)));
       var descriptor = unpinnedDescriptor(tuple, source);
-      var binding = completeBinding(descriptor, CANONICAL_VERSION);
+      var binding = completeBinding(descriptor, CANONICAL_VERSION, publishedSet);
       StartingInstance startingInstance =
           Objects.requireNonNull(
               transactions.execute(
@@ -691,13 +670,14 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
                           binding,
                           tuple.preAuthorizationTuple().action().target().ownerAccountId(),
                           tuple.controlPlaneRequestId(),
-                          "f".repeat(64))));
+                          tuple.mutationDigest(),
+                          tuple)));
       return new OwnerBackedStarting(startingInstance, claim);
     }
 
     StartingInstance startWithoutOwnerPins(StartSessionPostAuthorizationExecutionTuple tuple) {
       var descriptor = unpinnedDescriptor(tuple, source);
-      var binding = completeBinding(descriptor, CANONICAL_VERSION);
+      var binding = completeBinding(descriptor, CANONICAL_VERSION, publishedSet);
       return Objects.requireNonNull(
           transactions.execute(
               status ->
@@ -706,7 +686,8 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
                       binding,
                       tuple.preAuthorizationTuple().action().target().ownerAccountId(),
                       tuple.controlPlaneRequestId(),
-                      "f".repeat(64))));
+                      tuple.mutationDigest(),
+                      tuple)));
     }
 
     java.util.Optional<OriginalStartSessionAssociation> read(

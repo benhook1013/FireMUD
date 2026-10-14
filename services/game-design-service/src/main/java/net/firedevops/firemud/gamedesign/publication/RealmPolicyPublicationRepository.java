@@ -245,6 +245,12 @@ public final class RealmPolicyPublicationRepository {
 
   private Optional<RealmPolicyPublishedEvidence.PublishedSet> readPublishedSet(
       TargetProof target, Record header) {
+    // Retained pre-fixture schemas have no private discriminator column. Actual fixture
+    // headers must never be interpreted as Human frozen publication evidence.
+    if (header.field("fixture_operation_id") != null
+        && header.get("fixture_operation_id", UUID.class) != null) {
+      throw new IllegalStateException("FIXTURE_POLICY_IS_NOT_HUMAN_PUBLICATION_EVIDENCE");
+    }
     if (!Boolean.TRUE.equals(header.get("sealed", Boolean.class))) {
       throw new IllegalStateException("POLICY_PUBLICATION_SET_INCOMPLETE");
     }

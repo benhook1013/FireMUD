@@ -35,18 +35,27 @@ class CanonicalInitialAdmissionIntentRepositoryTest {
   }
 
   @Test
-  void reserveRejectsAnIdentityBeyondTheV28IntentWidthBeforeOwnerReads() {
+  void selectorsAcceptV34_3WidthAndRejectBeyond128BeforeOwnerReads() {
     DSLContext dsl = mock(DSLContext.class);
     var catalog = mock(GameSessionCanonicalRealmCatalogRepository.class);
     var launch = mock(CanonicalGameInstanceLaunchAssociationRepository.class);
     var repository = new CanonicalInitialAdmissionIntentRepository(dsl, catalog, launch);
-    String requestId = "r".repeat(121);
 
-    assertThatThrownBy(() -> repository.reserve(holdRequest(requestId), lifecycleRequest()))
+    assertThat(repository.read(NAMESPACE, "r".repeat(121))).isEmpty();
+    assertThat(repository.read(NAMESPACE, "r".repeat(128))).isEmpty();
+    verifyNoInteractions(catalog, launch);
+
+    DSLContext overflowDsl = mock(DSLContext.class);
+    var overflowCatalog = mock(GameSessionCanonicalRealmCatalogRepository.class);
+    var overflowLaunch = mock(CanonicalGameInstanceLaunchAssociationRepository.class);
+    var overflowRepository =
+        new CanonicalInitialAdmissionIntentRepository(overflowDsl, overflowCatalog, overflowLaunch);
+
+    assertThatThrownBy(() -> overflowRepository.read(NAMESPACE, "r".repeat(129)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("120-character intent column");
+        .hasMessageContaining("128-character intent column");
 
-    verifyNoInteractions(dsl, catalog, launch);
+    verifyNoInteractions(overflowDsl, overflowCatalog, overflowLaunch);
   }
 
   @Test

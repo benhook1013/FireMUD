@@ -193,10 +193,10 @@ public record CanonicalInitialAdmissionIntentSnapshot(
   private static void requireIntentRequestId(String value) {
     if (value == null
         || value.isBlank()
-        || value.codePointCount(0, value.length()) > 120
+        || value.codePointCount(0, value.length()) > 128
         || value.codePoints().anyMatch(Character::isISOControl)) {
       throw new IllegalArgumentException(
-          "Initial-admission request ID must fit the immutable V28 120-character intent column");
+          "Initial-admission request ID must fit the V34.3 128-character intent column");
     }
   }
 

@@ -35,6 +35,7 @@ import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto;
 import net.firedevops.firemud.gamedesign.dto.VersionStateDto;
 import net.firedevops.firemud.gamedesign.entity.VersionAssetArtifact;
+import net.firedevops.firemud.gamedesign.jooq.tables.GameDesignPublishedRealmPolicySet;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTemplateRepository;
@@ -136,6 +137,11 @@ class TestDataSeederIntegrationTest {
   @Autowired private Flyway flyway;
   @MockitoSpyBean private GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
   @Autowired private GameRepository gameRepository;
+
+  @Autowired
+  private net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
+      creationRepository;
+
   @Autowired private GameTemplateRepository templateRepository;
   @Autowired private VersionRepository versionRepository;
   @Autowired private VersionAssetArtifactRepository artifactRepository;
@@ -153,6 +159,24 @@ class TestDataSeederIntegrationTest {
     flyway.clean();
     flyway.migrate();
     seeder.run(new DefaultApplicationArguments(new String[] {}));
+  }
+
+  @Test
+  void fixtureRefusesExistingUnownedDemoInsteadOfBackfillingCreation(@TempDir Path testDirectory)
+      throws Exception {
+    Fixture fixture = prepareFixture(testDirectory);
+    flyway.clean();
+    flyway.migrate();
+    ReflectionTestUtils.setField(seeder, "initialAdmissionFixtureEnabled", false);
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
+    var existing = gameRepository.findByTenantId("1");
+    configureSeeder(fixture);
+    assertThatThrownBy(() -> seeder.run(new DefaultApplicationArguments(new String[] {})))
+        .hasMessageContaining("already belongs to a game row");
+    assertThat(gameRepository.findByTenantId("1").getId()).isEqualTo(existing.getId());
+    assertThat(creationRepository.read(fixture.operationId(), NAMESPACE)).isEmpty();
+    assertThat(fixture.receiptPath()).doesNotExist();
+    assertThat(dsl.fetchCount(SOURCE_OPERATIONS)).isZero();
   }
 
   @Test
@@ -191,7 +215,7 @@ class TestDataSeederIntegrationTest {
             PosixFilePermission.GROUP_READ,
             PosixFilePermission.OTHERS_READ);
     JsonNode envelope = objectMapper.readTree(Files.readAllBytes(receiptPath));
-    assertThat(envelope.size()).isEqualTo(12);
+    assertThat(envelope.size()).isEqualTo(14);
     assertThat(fieldNames(envelope))
         .isEqualTo(
             Set.of(
@@ -206,6 +230,8 @@ class TestDataSeederIntegrationTest {
                 "worldManagementLeafSha256",
                 "caCertificateSha256",
                 "sourceEvidence",
+                "creationEvidence",
+                "fixturePolicySeal",
                 "launchReadEvidence"));
     assertThat(envelope.get("schema").textValue())
         .isEqualTo("firemud.run-owned-authored-world-source-receipt.v1");
@@ -224,6 +250,89 @@ class TestDataSeederIntegrationTest {
         .isEqualTo(fixture.worldManagementLeafSha256());
     assertThat(envelope.get("caCertificateSha256").textValue())
         .isEqualTo(fixture.caCertificateSha256());
+    var creation =
+        objectMapper.treeToValue(
+            envelope.get("creationEvidence"),
+            net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence.class);
+    assertThat(creationRepository.read(fixture.operationId(), NAMESPACE)).contains(creation);
+    var policySeal =
+        objectMapper.treeToValue(
+            envelope.get("fixturePolicySeal"),
+            net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
+                .FixturePolicySeal.class);
+    var storedPolicy =
+        dsl.fetchSingle(
+            "SELECT * FROM game_design_published_realm_policy_set " + "WHERE canonical_tenant_id=?",
+            creation.canonicalTenantId());
+    assertThat(policySeal.operationId()).isEqualTo(fixture.operationId());
+    assertThat(storedPolicy.get("fixture_operation_id", UUID.class))
+        .isEqualTo(policySeal.operationId());
+    assertThat(storedPolicy.get("fixture_request_digest", String.class))
+        .isEqualTo(policySeal.requestDigest());
+    assertThat(storedPolicy.get("fixture_evidence_digest", String.class))
+        .isEqualTo(policySeal.evidenceDigest());
+    for (String humanField :
+        Set.of(
+            "source_commit_id",
+            "source_epoch",
+            "target_proof_json",
+            "operation_bytes",
+            "capture_bytes",
+            "terminal_evidence_bytes",
+            "release_content_bytes",
+            "published_release_bundle_ref",
+            "published_release_bundle_digest",
+            "publish_workflow_id",
+            "manifest_hash",
+            "publication_version_state_epoch",
+            "policy_count",
+            "policy_set_digest")) {
+      assertThat(storedPolicy.get(humanField)).as(humanField).isNull();
+    }
+    for (String humanTable :
+        Set.of(
+            "game_design_realm_policy_capture",
+            "game_design_publication_operation",
+            "game_design_published_realm_policy")) {
+      assertThat(dsl.fetchCount(DSL.table(DSL.name(humanTable)))).as(humanTable).isZero();
+    }
+    var versionForPolicy = versionRepository.findByTenantIdAndVersionNumber("1", 1).orElseThrow();
+    var fixtureTarget =
+        new net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof(
+            creation.canonicalTenantId(),
+            versionForPolicy.getCanonicalVersionId(),
+            versionForPolicy.getId(),
+            "1",
+            creation.sourceGameRowId(),
+            creation.sourceGameTenantKey(),
+            creation.provenanceKind());
+    assertThatThrownBy(
+            () ->
+                new net.firedevops.firemud.gamedesign.publication.RealmPolicyPublicationRepository(
+                        dsl)
+                    .readPublishedSet(fixtureTarget))
+        .hasMessageContaining("FIXTURE_POLICY_IS_NOT_HUMAN_PUBLICATION_EVIDENCE");
+    assertThat(
+            net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
+                .parseFixturePolicyRequestBytes(
+                    storedPolicy.get("fixture_request_bytes", byte[].class))
+                .creationEvidence())
+        .isEqualTo(creation);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM game_design_published_realm_policy "
+                        + "WHERE canonical_tenant_id=?",
+                    creation.canonicalTenantId())
+                .get(0, Long.class))
+        .isZero();
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE game_design_published_realm_policy_set "
+                        + "SET fixture_request_digest=? WHERE canonical_tenant_id=?",
+                    "sha256:" + "f".repeat(64),
+                    creation.canonicalTenantId()))
+        .hasMessageContaining("fixture policy seal is immutable");
     JsonNode sourceJson = envelope.get("sourceEvidence");
     assertThat(sourceJson.size()).isEqualTo(13);
     assertThat(fieldNames(sourceJson))
@@ -543,9 +652,27 @@ class TestDataSeederIntegrationTest {
     Files.setPosixFilePermissions(
         fixture.capabilityPath(),
         Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
-    Files.writeString(
-        fixture.capabilityPath(),
-        capability.replace(fixture.gameSessionLeafSha256(), wrongLeafDigest));
+    var changedCapability =
+        (tools.jackson.databind.node.ObjectNode) objectMapper.readTree(capability);
+    changedCapability.put("gameSessionLeafSha256", wrongLeafDigest);
+    UUID changedOperationId =
+        net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
+            .fixtureOperationId(
+                changedCapability.get("claimDigest").textValue(),
+                changedCapability.get("runId").textValue(),
+                changedCapability.get("composeProjectName").textValue(),
+                wrongLeafDigest,
+                changedCapability.get("caCertificateSha256").textValue());
+    changedCapability.put("operationId", changedOperationId.toString());
+    byte[] changedCapabilityBytes = objectMapper.writeValueAsBytes(changedCapability);
+    // The fixed operation is derived from the GS leaf pin. Keep this wire input valid so
+    // the negative reaches the actual configured certificate comparison, before any owner write.
+    assertThat(
+            net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
+                .parseCapability(changedCapabilityBytes)
+                .operationId())
+        .isEqualTo(changedOperationId.toString());
+    Files.write(fixture.capabilityPath(), changedCapabilityBytes);
     Files.setPosixFilePermissions(
         fixture.capabilityPath(),
         Set.of(
@@ -558,6 +685,10 @@ class TestDataSeederIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("TLS certificates do not match capability pins");
     assertThat(fixture.receiptPath()).doesNotExist();
+    assertThat(dsl.fetchCount(SOURCE_OPERATIONS, REGISTRATION_REQUEST_ID.eq(changedOperationId)))
+        .isZero();
+    assertThat(dsl.fetchCount(SOURCE_DELIVERIES, REGISTRATION_REQUEST_ID.eq(changedOperationId)))
+        .isZero();
     assertThat(dsl.fetchCount(SOURCE_OPERATIONS, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
         .isZero();
     assertThat(dsl.fetchCount(SOURCE_DELIVERIES, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
@@ -824,14 +955,18 @@ class TestDataSeederIntegrationTest {
     String leafDigest = certificateDigest(sessionCertificate);
     String worldManagementLeafDigest = certificateDigest(worldManagementCertificate);
     String caDigest = certificateDigest(caCertificate);
-    UUID operationId = UUID.randomUUID();
     String runId = "fixture-commit-proof";
     String composeProjectName = "firemud-smoke-fixture-commit-proof";
+    String claimDigest = "e".repeat(64);
+    UUID operationId =
+        net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
+            .fixtureOperationId(claimDigest, runId, composeProjectName, leafDigest, caDigest);
     Path capabilityPath = testDirectory.resolve("run-owned-initial-admission-capability.json");
     Map<String, Object> capability = new LinkedHashMap<>();
     capability.put("schema", "firemud.run-owned-initial-admission-fixture.v1");
     capability.put("runId", runId);
     capability.put("composeProjectName", composeProjectName);
+    capability.put("claimDigest", claimDigest);
     capability.put("operationId", operationId.toString());
     capability.put("tenantId", 1);
     capability.put(
@@ -876,18 +1011,32 @@ class TestDataSeederIntegrationTest {
             PosixFilePermission.OTHERS_READ,
             PosixFilePermission.OTHERS_WRITE,
             PosixFilePermission.OTHERS_EXECUTE));
-    return new Fixture(
-        operationId,
-        runId,
-        composeProjectName,
-        capabilityPath,
-        receiptDirectory.resolve("source-receipt.json"),
-        sessionCertificate,
-        worldManagementCertificate,
-        caCertificate,
-        leafDigest,
-        worldManagementLeafDigest,
-        caDigest);
+    Fixture fixture =
+        new Fixture(
+            operationId,
+            runId,
+            composeProjectName,
+            capabilityPath,
+            receiptDirectory.resolve("source-receipt.json"),
+            sessionCertificate,
+            worldManagementCertificate,
+            caCertificate,
+            leafDigest,
+            worldManagementLeafDigest,
+            caDigest);
+    configureSeeder(fixture);
+    ReflectionTestUtils.invokeMethod(seeder, "loadFixtureCapability");
+    // Disposable test schema only: create the real fixture owner from inception, never backfill.
+    flyway.clean();
+    flyway.migrate();
+    new TransactionTemplate(transactionManager)
+        .executeWithoutResult(
+            status ->
+                creationRepository.createCandidate(
+                    NAMESPACE, operationId, "1", "Demo Game", "Seed game"));
+    ReflectionTestUtils.setField(seeder, "initialAdmissionFixtureEnabled", false);
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
+    return fixture;
   }
 
   private void configureSeeder(Fixture fixture) {
@@ -1215,6 +1364,68 @@ class TestDataSeederIntegrationTest {
     assertThatThrownBy(() -> repository.save(saved))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Launch descriptors are immutable");
+  }
+
+  @Test
+  void policyOwnerRetainsValidatedExactHumanCaptureForeignKey() {
+    var generatedCaptureReferences =
+        GameDesignPublishedRealmPolicySet.GAME_DESIGN_PUBLISHED_REALM_POLICY_SET
+            .getReferences()
+            .stream()
+            .filter(
+                reference ->
+                    reference
+                        .getKey()
+                        .getTable()
+                        .getName()
+                        .equals("game_design_realm_policy_capture"))
+            .toList();
+    assertThat(generatedCaptureReferences).hasSize(1);
+    var generatedCaptureReference = generatedCaptureReferences.getFirst();
+    assertThat(generatedCaptureReference.getName())
+        .isEqualTo("fk_realm_policy_owner_exact_capture");
+    assertThat(
+            generatedCaptureReference.getFields().stream().map(field -> field.getName()).toList())
+        .containsExactly("canonical_tenant_id", "canonical_version_id", "source_commit_id");
+    assertThat(
+            generatedCaptureReference.getKey().getFields().stream()
+                .map(field -> field.getName())
+                .toList())
+        .containsExactly("canonical_tenant_id", "canonical_version_id", "commit_id");
+    var captureForeignKey =
+        dsl.fetchSingle(
+            "SELECT constraint_row.convalidated, constraint_row.confmatchtype::text AS match_type, "
+                + "constraint_row.confupdtype::text AS update_action, "
+                + "constraint_row.confdeltype::text AS delete_action, "
+                + "constraint_row.confrelid = 'game_design_realm_policy_capture'::regclass AS exact_target, "
+                + "ARRAY(SELECT attribute.attname::text "
+                + "FROM unnest(constraint_row.conkey) WITH ORDINALITY AS key(attnum, ordinal) "
+                + "JOIN pg_attribute attribute ON attribute.attrelid = constraint_row.conrelid "
+                + "AND attribute.attnum = key.attnum ORDER BY key.ordinal) AS owner_columns, "
+                + "ARRAY(SELECT attribute.attname::text "
+                + "FROM unnest(constraint_row.confkey) WITH ORDINALITY AS key(attnum, ordinal) "
+                + "JOIN pg_attribute attribute ON attribute.attrelid = constraint_row.confrelid "
+                + "AND attribute.attnum = key.attnum ORDER BY key.ordinal) AS capture_columns "
+                + "FROM pg_constraint constraint_row "
+                + "WHERE constraint_row.conrelid = 'game_design_published_realm_policy_set'::regclass "
+                + "AND constraint_row.contype = 'f' "
+                + "AND constraint_row.conname = 'fk_realm_policy_owner_exact_capture'");
+    assertThat(captureForeignKey.get("convalidated", Boolean.class)).isTrue();
+    assertThat(captureForeignKey.get("exact_target", Boolean.class)).isTrue();
+    assertThat(captureForeignKey.get("match_type", String.class)).isEqualTo("s");
+    assertThat(captureForeignKey.get("update_action", String.class)).isEqualTo("a");
+    assertThat(captureForeignKey.get("delete_action", String.class)).isEqualTo("a");
+    assertThat(captureForeignKey.get("owner_columns", String[].class))
+        .containsExactly("canonical_tenant_id", "canonical_version_id", "source_commit_id");
+    assertThat(captureForeignKey.get("capture_columns", String[].class))
+        .containsExactly("canonical_tenant_id", "canonical_version_id", "commit_id");
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT count(*) FROM pg_constraint "
+                        + "WHERE conrelid = 'game_design_published_realm_policy_set'::regclass "
+                        + "AND conname = 'game_design_published_realm__canonical_tenant_id_canonica_fkey1'")
+                .get(0, Long.class))
+        .isZero();
   }
 
   private FoundationFixture foundationFixture(String target) {

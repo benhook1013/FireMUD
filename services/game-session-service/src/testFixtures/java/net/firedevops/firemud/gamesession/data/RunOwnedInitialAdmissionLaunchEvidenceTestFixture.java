@@ -2,10 +2,15 @@ package net.firedevops.firemud.gamesession.data;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.ArtifactState;
 import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
@@ -13,8 +18,9 @@ import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
+import tools.jackson.databind.ObjectMapper;
 
-/** Test-only builder that obtains the run-owned carrier through the closed receipt parser. */
+/** Controlled test-only owner inputs parsed into the verified run-owned fixture carrier. */
 public final class RunOwnedInitialAdmissionLaunchEvidenceTestFixture {
   private static final String RUN_ID = "fixture-evidence-test";
   private static final String PROJECT_NAME = "firemud-smoke-fixture-evidence-test";
@@ -22,8 +28,19 @@ public final class RunOwnedInitialAdmissionLaunchEvidenceTestFixture {
   private static final String WORLD_LEAF_SHA = "c".repeat(64);
   private static final String CA_SHA = "b".repeat(64);
   private static final String CANONICAL_VERSION_ID = "10000000-0000-4000-8000-000000000011";
+  private static final String CLAIM_DIGEST = "d".repeat(64);
+  private static final String OPERATION_ID =
+      RunOwnedInitialAdmissionFixtureWireCodec.fixtureOperationId(
+              CLAIM_DIGEST, RUN_ID, PROJECT_NAME, LEAF_SHA, CA_SHA)
+          .toString();
+  private static final ObjectMapper JSON = new ObjectMapper();
 
   private RunOwnedInitialAdmissionLaunchEvidenceTestFixture() {}
+
+  /** Derived control-plane operation used by service tests that consume this fixed test fixture. */
+  public static String operationId() {
+    return OPERATION_ID;
+  }
 
   public static RunOwnedInitialAdmissionLaunchEvidence create(
       StartSessionRequest request, AuthoredWorldSourceEvidence sourceEvidence) {
@@ -53,6 +70,9 @@ public final class RunOwnedInitialAdmissionLaunchEvidenceTestFixture {
       PublishedReleaseBundle bundle,
       VersionAssetArtifactState artifactState,
       VersionStateSnapshot versionState) {
+    if (!OPERATION_ID.equals(request.controlPlaneRequestId())) {
+      throw new IllegalArgumentException("Test fixture request must use its derived operation ID");
+    }
     var capability =
         RunOwnedInitialAdmissionFixtureCapability.parseAndValidate(
             capabilityJson(request).getBytes(StandardCharsets.UTF_8), RUN_ID, PROJECT_NAME, pins());
@@ -144,22 +164,34 @@ public final class RunOwnedInitialAdmissionLaunchEvidenceTestFixture {
   }
 
   private static String capabilityJson(StartSessionRequest request) {
-    return """
-        {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":%d,"gameTemplateId":%d,"ownerAccountId":%d,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"ALLOW_NEW","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s"}%n\
-        """
-        .formatted(
-            RunOwnedInitialAdmissionFixtureCapability.CAPABILITY_SCHEMA,
-            RUN_ID,
-            PROJECT_NAME,
-            request.controlPlaneRequestId(),
-            request.tenantId(),
-            request.gameTemplateId(),
-            request.ownerAccountId(),
-            LEAF_SHA,
-            RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
-            CA_SHA,
-            RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN,
-            WORLD_LEAF_SHA);
+    return json(wireCapability(request));
+  }
+
+  private static RunOwnedInitialAdmissionFixtureWireCodec.Capability wireCapability(
+      StartSessionRequest request) {
+    return new RunOwnedInitialAdmissionFixtureWireCodec.Capability(
+        RunOwnedInitialAdmissionFixtureWireCodec.CAPABILITY_SCHEMA,
+        RUN_ID,
+        PROJECT_NAME,
+        request.controlPlaneRequestId(),
+        request.tenantId(),
+        request.gameTemplateId(),
+        request.ownerAccountId(),
+        RunOwnedInitialAdmissionFixtureWireCodec.WORLD_SLUG,
+        RunOwnedInitialAdmissionFixtureWireCodec.WORLD_DISPLAY_NAME,
+        RunOwnedInitialAdmissionFixtureWireCodec.REALM_SLUG,
+        RunOwnedInitialAdmissionFixtureWireCodec.REALM_DISPLAY_NAME,
+        true,
+        true,
+        false,
+        RunOwnedInitialAdmissionFixtureWireCodec.STATE_SCOPE,
+        RunOwnedInitialAdmissionFixtureWireCodec.CHARACTER_CREATION_POLICY,
+        LEAF_SHA,
+        RunOwnedInitialAdmissionFixtureWireCodec.GAME_SESSION_URI_SAN,
+        CA_SHA,
+        RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
+        WORLD_LEAF_SHA,
+        CLAIM_DIGEST);
   }
 
   private static String sourceReceiptJson(
@@ -168,39 +200,96 @@ public final class RunOwnedInitialAdmissionLaunchEvidenceTestFixture {
       PublishedReleaseBundle bundle,
       VersionAssetArtifactState artifactState,
       VersionStateSnapshot versionState) {
-    return """
-        {"schema":"%s","runId":"%s","composeProjectName":"%s","fixtureOperationId":"%s","ownerService":"%s","gameSessionUriSan":"%s","gameSessionLeafSha256":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","sourceEvidence":{"schemaVersion":%d,"targetNamespace":"%s","registrationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","tenantSlug":"%s","worldSlug":"%s","worldDisplayName":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"launchReadEvidence":{"schema":"%s","gameTemplateId":%d,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s","launchDescriptorBase64":"%s"}}%n\
-        """
-        .formatted(
-            RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_SCHEMA,
-            RUN_ID,
-            PROJECT_NAME,
-            request.controlPlaneRequestId(),
-            RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_OWNER_SERVICE,
-            RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
-            LEAF_SHA,
-            CA_SHA,
-            RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN,
-            WORLD_LEAF_SHA,
-            source.schemaVersion(),
+    var capability = wireCapability(request);
+    FreshTenantCreationEvidence creation = creationEvidence(source);
+    LaunchDescriptor descriptor = launchDescriptor(request, source, bundle, versionState);
+    var launchReadEvidence =
+        new RunOwnedInitialAdmissionFixtureWireCodec.LaunchReadEvidence(
+            RunOwnedInitialAdmissionFixtureWireCodec.LAUNCH_READ_EVIDENCE_SCHEMA,
+            request.gameTemplateId(),
+            bundle,
+            artifactState,
+            versionState,
+            descriptor);
+    String policyRequestDigest =
+        RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestDigest(
+            capability, creation, source, launchReadEvidence);
+    UUID operationId = UUID.fromString(capability.operationId());
+    var policySeal =
+        new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal(
+            RunOwnedInitialAdmissionFixtureWireCodec.FIXTURE_POLICY_SEAL_SCHEMA,
+            RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_OWNER_SERVICE,
+            operationId,
+            policyRequestDigest,
+            RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+                operationId, policyRequestDigest));
+
+    Map<String, Object> launchReadJson = new LinkedHashMap<>();
+    launchReadJson.put("schema", launchReadEvidence.schema());
+    launchReadJson.put("gameTemplateId", launchReadEvidence.gameTemplateId());
+    launchReadJson.put(
+        "publishedReleaseBundleBase64",
+        encode(launchReadEvidence.publishedReleaseBundle().toByteArray()));
+    launchReadJson.put(
+        "versionAssetArtifactStateBase64",
+        encode(launchReadEvidence.versionAssetArtifactState().toByteArray()));
+    launchReadJson.put(
+        "versionStateBase64", encode(launchReadEvidence.versionState().toByteArray()));
+    launchReadJson.put(
+        "launchDescriptorBase64", encode(launchReadEvidence.launchDescriptor().toByteArray()));
+
+    Map<String, Object> receipt = new LinkedHashMap<>();
+    receipt.put("schema", RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_SCHEMA);
+    receipt.put("runId", capability.runId());
+    receipt.put("composeProjectName", capability.composeProjectName());
+    receipt.put("fixtureOperationId", capability.operationId());
+    receipt.put(
+        "ownerService", RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_OWNER_SERVICE);
+    receipt.put("gameSessionUriSan", capability.gameSessionUriSan());
+    receipt.put("gameSessionLeafSha256", capability.gameSessionLeafSha256());
+    receipt.put("caCertificateSha256", capability.caCertificateSha256());
+    receipt.put("worldManagementUriSan", capability.worldManagementUriSan());
+    receipt.put("worldManagementLeafSha256", capability.worldManagementLeafSha256());
+    receipt.put("sourceEvidence", source);
+    receipt.put("launchReadEvidence", launchReadJson);
+    receipt.put("creationEvidence", creation);
+    receipt.put("fixturePolicySeal", policySeal);
+    return json(receipt);
+  }
+
+  private static FreshTenantCreationEvidence creationEvidence(AuthoredWorldSourceEvidence source) {
+    UUID creationRequestId = UUID.fromString("945cc1d0-1e69-4532-b1c3-7dcde16c9256");
+    UUID creationOperationId = UUID.fromString("e05352ce-7f61-4436-ac61-508edfe45e8a");
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
             source.targetNamespace(),
-            source.registrationRequestId(),
-            source.operationId(),
-            source.requestDigest(),
-            source.canonicalTenantId(),
-            source.tenantSlug(),
-            source.worldSlug(),
+            creationRequestId,
+            source.sourceGameTenantKey(),
             source.worldDisplayName(),
+            null);
+    return new FreshTenantCreationEvidence(
+        1,
+        source.targetNamespace(),
+        creationRequestId,
+        creationOperationId,
+        requestDigest,
+        source.canonicalTenantId(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey(),
+        source.provenanceKind(),
+        GameTenantCreationDigest.evidenceDigest(
+            source.targetNamespace(),
+            creationRequestId,
+            creationOperationId,
+            requestDigest,
+            source.canonicalTenantId(),
             source.sourceGameRowId(),
             source.sourceGameTenantKey(),
-            source.provenanceKind(),
-            source.evidenceDigest(),
-            RunOwnedInitialAdmissionLaunchEvidence.SCHEMA,
-            request.gameTemplateId(),
-            encode(bundle.toByteArray()),
-            encode(artifactState.toByteArray()),
-            encode(versionState.toByteArray()),
-            encode(launchDescriptor(request, source, bundle, versionState).toByteArray()));
+            source.provenanceKind()));
+  }
+
+  private static String json(Object value) {
+    return JSON.writeValueAsString(value);
   }
 
   private static LaunchDescriptor launchDescriptor(

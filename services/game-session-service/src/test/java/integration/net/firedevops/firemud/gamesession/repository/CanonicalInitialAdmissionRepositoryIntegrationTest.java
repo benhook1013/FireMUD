@@ -4,21 +4,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
-import net.firedevops.firemud.common.tenant.RuntimeTenantIdentityEvidence;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
+import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
+import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionLaunchTarget;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProof;
@@ -34,6 +41,8 @@ import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSou
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchPreparationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalStartingInstanceRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionWorldVerifier;
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
@@ -41,8 +50,8 @@ import net.firedevops.firemud.gamesession.service.GameSessionCanonicalLaunchPrep
 import net.firedevops.firemud.gamesession.service.impl.DatabaseCanonicalInitialAdmissionService;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
-import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
@@ -58,10 +67,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 /**
  * PostgreSQL proof for the canonical first-OPEN owner transaction.
  *
- * <p>The direct V25 reservation/claim/association inserts below are test-only owner fixtures for
- * exercising the migrated constraints. They are not a runtime fresh-tenant mapping producer. The
- * World proof is also test data; production remains disabled until the real verifier and Account
- * authorization redemption are composed.
+ * <p>Fresh association, catalog, and launch pins use their actual Game Session owners with
+ * controlled upstream creation, publication, Account tuple/projection, and World inputs. These
+ * inputs do not execute genuine upstream producers or establish Account terminal protection. Human
+ * terminal positives remain an implementation obligation until the protected owner boundary is
+ * composed.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -72,7 +82,6 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   private static final UUID INTAKE_REQUEST = uuid(103);
   private static final UUID CATALOG_REQUEST = uuid(104);
   private static final UUID ACTOR = uuid(105);
-  private static final UUID GAME_INSTANCE_UUID = uuid(108);
   private static final UUID CANONICAL_VERSION = uuid(109);
   private static final UUID ASSOCIATION_OPERATION = uuid(110);
   private static final String CONTROL_PLANE_REQUEST_ID = "canonical-start-instance-1";
@@ -84,7 +93,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
-  void reservesAndCommitsExactWorldHeldOpenWithPointerAuditAndOwnerReadback() {
+  void reservesExactHumanIntentButDeniesCommitAndAbortBeforePointerOrAuditEffects() {
     Fixture fixture = fixture();
     IntakeReceipt source = fixture.registerSource();
     CanonicalRealmCatalogSnapshot catalog = fixture.createCatalog(source);
@@ -106,7 +115,15 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
 
     FreshGameSessionTenantAssociation tenantAssociation =
         fixture.createTestOnlyFreshMappingAndRunningLaunch(source, completeBinding);
-    CanonicalInitialAdmissionRequest request = initialAdmissionRequest(catalog, completeBinding);
+    CanonicalInitialAdmissionRequest request =
+        initialAdmissionRequest(
+            catalog,
+            completeBinding,
+            fixture
+                .launchRepository
+                .read(CONTROL_PLANE_REQUEST_ID)
+                .orElseThrow()
+                .gameInstanceUuid());
     assertThat(tenantAssociation.legacyGameSessionTenantId())
         .isNotEqualTo(source.source().sourceGameRowId());
     assertThat(request.playableStateNamespaceId()).isEqualTo(catalog.playableStateNamespaceId());
@@ -235,218 +252,33 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 DSL.field(DSL.name("representation_version"), Integer.class).eq(3)))
         .isZero();
 
-    fixture.transactions.execute(
-        status -> {
-          fixture.initialAdmissionRepository.commit(request, worldProof, null);
-          return null;
-        });
-
-    CanonicalInitialAdmissionOwnerProof committed =
+    CanonicalInitialAdmissionOwnerProof pending =
         fixture
             .initialAdmissionRepository
             .read(NAMESPACE, request.initialAdmissionRequestId())
             .orElseThrow();
-    assertThat(committed.outcome())
-        .isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
-    assertThat(committed.canonicalTenantId()).isEqualTo(TENANT);
-    assertThat(committed.canonicalGameInstanceId()).isEqualTo(GAME_INSTANCE_UUID);
-    assertThat(committed.canonicalVersionId()).isEqualTo(CANONICAL_VERSION);
-    assertThat(committed.committedPointerVersion()).isEqualTo(1L);
-    assertThat(committed.auditEventId()).isPositive();
-    CanonicalInitialAdmissionRepository.CurrentOpenSnapshot currentSnapshot =
-        fixture.initialAdmissionRepository.readCurrentOpenSnapshotForRealm(
-            NAMESPACE, TENANT, request.realmId());
-    assertThat(currentSnapshot.ownerProof()).isEqualTo(committed);
-    assertThat(currentSnapshot.admissionPointerSnapshotDigest()).matches("[0-9a-f]{64}");
-    assertThat(
-            fixture.dsl.fetchCount(
-                DSL.table(DSL.name("game_session_canonical_initial_admission_attempt"))))
-        .isEqualTo(1);
-
-    Record pointer =
-        Objects.requireNonNull(
-            fixture.dsl.fetchOne(
-                "SELECT id, pointer_version, tenant_id, game_instance_id, "
-                    + "canonical_tenant_id, realm_id, "
-                    + "canonical_game_instance_id, canonical_version_id, initial_admission_request_id, "
-                    + "admission_state, representation_version FROM gameplay_admission_pointer "
-                    + "WHERE target_namespace = ? AND canonical_tenant_id = ? AND realm_id = ?",
-                NAMESPACE,
-                TENANT,
-                request.realmId()));
-    assertThat(pointer.get("tenant_id", Long.class))
-        .isEqualTo(tenantAssociation.legacyGameSessionTenantId());
-    assertThat(pointer.get("canonical_tenant_id", UUID.class)).isEqualTo(TENANT);
-    assertThat(pointer.get("realm_id", UUID.class)).isEqualTo(request.realmId());
-    assertThat(pointer.get("canonical_game_instance_id", UUID.class)).isEqualTo(GAME_INSTANCE_UUID);
-    assertThat(pointer.get("canonical_version_id", UUID.class)).isEqualTo(CANONICAL_VERSION);
-    assertThat(pointer.get("initial_admission_request_id", String.class))
-        .isEqualTo(request.initialAdmissionRequestId());
-    assertThat(pointer.get("admission_state", String.class)).isEqualTo("OPEN");
-    assertThat(pointer.get("representation_version", Integer.class)).isEqualTo(3);
-
-    Record audit =
-        Objects.requireNonNull(
-            fixture.dsl.fetchOne(
-                "SELECT canonical_tenant_id, realm_id, canonical_game_instance_id, "
-                    + "canonical_version_id, initial_admission_request_id, admission_state "
-                    + "FROM gameplay_admission_pointer_event WHERE id = ?",
-                committed.auditEventId()));
-    assertThat(audit.get("canonical_tenant_id", UUID.class)).isEqualTo(TENANT);
-    assertThat(audit.get("realm_id", UUID.class)).isEqualTo(request.realmId());
-    assertThat(audit.get("canonical_game_instance_id", UUID.class)).isEqualTo(GAME_INSTANCE_UUID);
-    assertThat(audit.get("canonical_version_id", UUID.class)).isEqualTo(CANONICAL_VERSION);
-    assertThat(audit.get("initial_admission_request_id", String.class))
-        .isEqualTo(request.initialAdmissionRequestId());
-    assertThat(audit.get("admission_state", String.class)).isEqualTo("OPEN");
-
-    CanonicalInitialAdmissionRequest replayRequest =
-        initialAdmissionRequest(catalog, completeBinding);
-    CanonicalInitialAdmissionWorldProof replayWorldProof = testWorldProof(replayRequest);
-    assertThat(replayRequest).isEqualTo(request);
-    assertThat(replayWorldProof).isEqualTo(worldProof);
-    int pointerRowsBeforeReplay =
-        fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")));
-    int auditRowsBeforeReplay =
-        fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event")));
-
-    fixture.transactions.execute(
-        status -> {
-          fixture.initialAdmissionRepository.reserve(replayRequest);
-          return null;
-        });
-    fixture.transactions.execute(
-        status -> {
-          fixture.initialAdmissionRepository.commit(replayRequest, replayWorldProof, null);
-          return null;
-        });
-
-    CanonicalInitialAdmissionOwnerProof replayed =
-        fixture
-            .initialAdmissionRepository
-            .read(NAMESPACE, replayRequest.initialAdmissionRequestId())
-            .orElseThrow();
-    assertThat(replayed).isEqualTo(committed);
-    Record pointerAfterReplay =
-        Objects.requireNonNull(
-            fixture.dsl.fetchOne(
-                "SELECT id, pointer_version, tenant_id, game_instance_id, canonical_tenant_id, "
-                    + "realm_id, canonical_game_instance_id, canonical_version_id, "
-                    + "initial_admission_request_id, admission_state, representation_version "
-                    + "FROM gameplay_admission_pointer WHERE target_namespace = ? "
-                    + "AND canonical_tenant_id = ? AND realm_id = ?",
-                NAMESPACE,
-                TENANT,
-                replayRequest.realmId()));
-    assertThat(pointerAfterReplay.get("id", Long.class)).isEqualTo(pointer.get("id", Long.class));
-    assertThat(pointerAfterReplay.get("pointer_version", Long.class))
-        .isEqualTo(pointer.get("pointer_version", Long.class));
-    assertThat(pointerAfterReplay.get("tenant_id", Long.class))
-        .isEqualTo(pointer.get("tenant_id", Long.class));
-    assertThat(pointerAfterReplay.get("game_instance_id", Long.class))
-        .isEqualTo(pointer.get("game_instance_id", Long.class));
-    assertThat(pointerAfterReplay.get("canonical_tenant_id", UUID.class))
-        .isEqualTo(pointer.get("canonical_tenant_id", UUID.class));
-    assertThat(pointerAfterReplay.get("realm_id", UUID.class))
-        .isEqualTo(pointer.get("realm_id", UUID.class));
-    assertThat(pointerAfterReplay.get("canonical_game_instance_id", UUID.class))
-        .isEqualTo(pointer.get("canonical_game_instance_id", UUID.class));
-    assertThat(pointerAfterReplay.get("canonical_version_id", UUID.class))
-        .isEqualTo(pointer.get("canonical_version_id", UUID.class));
-    assertThat(pointerAfterReplay.get("initial_admission_request_id", String.class))
-        .isEqualTo(pointer.get("initial_admission_request_id", String.class));
-    assertThat(pointerAfterReplay.get("admission_state", String.class))
-        .isEqualTo(pointer.get("admission_state", String.class));
-    assertThat(pointerAfterReplay.get("representation_version", Integer.class))
-        .isEqualTo(pointer.get("representation_version", Integer.class));
-    Record auditAfterReplay =
-        Objects.requireNonNull(
-            fixture.dsl.fetchOne(
-                "SELECT canonical_tenant_id, realm_id, canonical_game_instance_id, "
-                    + "canonical_version_id, initial_admission_request_id, admission_state "
-                    + "FROM gameplay_admission_pointer_event WHERE id = ?",
-                replayed.auditEventId()));
-    assertThat(auditAfterReplay.get("canonical_tenant_id", UUID.class))
-        .isEqualTo(audit.get("canonical_tenant_id", UUID.class));
-    assertThat(auditAfterReplay.get("realm_id", UUID.class))
-        .isEqualTo(audit.get("realm_id", UUID.class));
-    assertThat(auditAfterReplay.get("canonical_game_instance_id", UUID.class))
-        .isEqualTo(audit.get("canonical_game_instance_id", UUID.class));
-    assertThat(auditAfterReplay.get("canonical_version_id", UUID.class))
-        .isEqualTo(audit.get("canonical_version_id", UUID.class));
-    assertThat(auditAfterReplay.get("initial_admission_request_id", String.class))
-        .isEqualTo(audit.get("initial_admission_request_id", String.class));
-    assertThat(auditAfterReplay.get("admission_state", String.class))
-        .isEqualTo(audit.get("admission_state", String.class));
-    assertThat(
-            fixture.dsl.fetchCount(
-                DSL.table(DSL.name("game_session_canonical_initial_admission_attempt"))))
-        .isEqualTo(1);
-    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
-        .isEqualTo(pointerRowsBeforeReplay);
-    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
-        .isEqualTo(auditRowsBeforeReplay);
-
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "INSERT INTO gameplay_admission_pointer ("
-                        + "world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
-                        + "game_instance_id, pointer_version, visible, requires_character_selection, "
-                        + "state_scope, character_creation_policy, last_updated_by, last_update_reason, "
-                        + "public_production_realm, catalog_revision) "
-                        + "VALUES ('numeric-scope-guard-test', 'numeric-scope-guard-test', "
-                        + "'Numeric Scope Guard', 'Numeric Scope Guard', ?, 1, 1, TRUE, FALSE, "
-                        + "'SHARED', 'owner-mode', 'scope-guard-test', 'numeric-only guard', TRUE, 1)",
-                    tenantAssociation.legacyGameSessionTenantId()))
-        .hasMessageContaining("Numeric-only tenant scope cannot use a fresh source-bound key");
-    assertThat(
-            fixture.dsl.fetchCount(
-                DSL.table(DSL.name("gameplay_admission_pointer")),
-                DSL.field(DSL.name("world_slug"), String.class).eq("numeric-scope-guard-test")))
-        .isZero();
-
-    UUID mismatchedTenant = uuid(997);
-    assertThatThrownBy(
-            () ->
-                fixture.dsl.execute(
-                    "INSERT INTO gameplay_admission_pointer ("
-                        + "world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
-                        + "game_instance_id, pointer_version, visible, requires_character_selection, "
-                        + "state_scope, character_creation_policy, last_updated_by, last_update_reason, "
-                        + "created_at, updated_at, public_production_realm, catalog_revision, realm_id, "
-                        + "playable_state_namespace_id, representation_version, target_namespace, "
-                        + "canonical_tenant_id, admission_state, canonical_game_instance_id, "
-                        + "canonical_version_id, runtime_version_id, initial_admission_request_id, "
-                        + "initial_admission_request_digest, initial_admission_origin_kind, "
-                        + "initial_admission_prior_pointer_version, initial_admission_active_epoch, "
-                        + "initial_admission_hold_id, initial_admission_hold_fence, "
-                        + "initial_admission_hold_binding_digest) "
-                        + "SELECT world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
-                        + "game_instance_id, pointer_version + 1, visible, requires_character_selection, "
-                        + "state_scope, character_creation_policy, last_updated_by, last_update_reason, "
-                        + "created_at, updated_at, public_production_realm, catalog_revision, realm_id, "
-                        + "playable_state_namespace_id, representation_version, target_namespace, ?, "
-                        + "admission_state, canonical_game_instance_id, canonical_version_id, "
-                        + "runtime_version_id, initial_admission_request_id, initial_admission_request_digest, "
-                        + "initial_admission_origin_kind, initial_admission_prior_pointer_version, "
-                        + "initial_admission_active_epoch, initial_admission_hold_id, "
-                        + "initial_admission_hold_fence, initial_admission_hold_binding_digest "
-                        + "FROM gameplay_admission_pointer WHERE id = ?",
-                    mismatchedTenant,
-                    pointer.get("id", Long.class)))
-        .hasMessageContaining(
-            "Canonical OPEN pointer requires exact catalog and launch owner evidence");
-    assertThat(
-            fixture.dsl.fetchCount(
-                DSL.table(DSL.name("gameplay_admission_pointer")),
-                DSL.field(DSL.name("representation_version"), Integer.class).eq(3)))
-        .isEqualTo(1);
-    assertThat(
-            fixture.dsl.fetchCount(
-                DSL.table(DSL.name("gameplay_admission_pointer")),
-                DSL.field(DSL.name("canonical_tenant_id"), UUID.class).eq(mismatchedTenant)))
-        .isZero();
+    String before = attemptProjection(fixture, request);
+    for (int retry = 0; retry < 2; retry++) {
+      assertHumanProtectionUnavailable(
+          () ->
+              fixture.transactions.executeWithoutResult(
+                  status -> fixture.initialAdmissionRepository.commit(request, worldProof, null)));
+      assertHumanProtectionUnavailable(
+          () ->
+              fixture.transactions.executeWithoutResult(
+                  status ->
+                      fixture.initialAdmissionRepository.abort(
+                          request, null, "Missing protection")));
+      assertThat(attemptProjection(fixture, request)).isEqualTo(before);
+      assertThat(
+              fixture.initialAdmissionRepository.read(
+                  NAMESPACE, request.initialAdmissionRequestId()))
+          .contains(pending);
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
+          .isZero();
+      assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
+          .isZero();
+    }
   }
 
   @Test
@@ -458,6 +290,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         initialAdmissionRequest(
             prepared.catalog(),
             prepared.binding(),
+            prepared.gameInstanceUuid(),
             requestId,
             CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER,
             null,
@@ -479,52 +312,49 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   }
 
   @Test
-  void newNoPriorPointerReservationRejectsAnAlreadyOpenRealmWithoutLeavingPendingAttempt() {
+  void competingNoPriorPointerReservationCannotReplacePendingUnprotectedHumanIntent() {
     Fixture fixture = fixture();
-    PreparedAdmission preparedAdmission = prepareAdmission(fixture);
-    CanonicalRealmCatalogSnapshot catalog = preparedAdmission.catalog();
-    CompleteLaunchBindingEvidence binding = preparedAdmission.binding();
-    CanonicalInitialAdmissionRequest firstRequest = initialAdmissionRequest(catalog, binding);
-
-    fixture.transactions.execute(
-        status -> {
-          fixture.initialAdmissionRepository.reserve(firstRequest);
-          return null;
-        });
-    fixture.transactions.execute(
-        status -> {
-          fixture.initialAdmissionRepository.commit(
-              firstRequest, testWorldProof(firstRequest), null);
-          return null;
-        });
-    assertThat(
-            fixture.initialAdmissionRepository.read(
-                NAMESPACE, firstRequest.initialAdmissionRequestId()))
-        .map(CanonicalInitialAdmissionOwnerProof::outcome)
-        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
-
-    CanonicalInitialAdmissionRequest staleRequest =
+    PreparedAdmission prepared = prepareAdmission(fixture);
+    CanonicalInitialAdmissionRequest first =
         initialAdmissionRequest(
-            catalog,
-            binding,
-            "canonical-stale-no-prior-" + catalog.realmId(),
+            prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
+    fixture.transactions.executeWithoutResult(
+        status -> fixture.initialAdmissionRepository.reserve(first));
+    assertHumanProtectionUnavailable(
+        () -> fixture.initialAdmissionRepository.commit(first, testWorldProof(first), null));
+    CanonicalInitialAdmissionRequest competing =
+        initialAdmissionRequest(
+            prepared.catalog(),
+            prepared.binding(),
+            prepared.gameInstanceUuid(),
+            "competing-no-prior-" + prepared.catalog().realmId(),
             CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER,
             null,
             uuid(117),
             uuid(118));
     assertThatThrownBy(
             () ->
-                fixture.transactions.execute(
-                    status -> {
-                      fixture.initialAdmissionRepository.reserve(staleRequest);
-                      return null;
-                    }))
+                fixture.transactions.executeWithoutResult(
+                    status -> fixture.initialAdmissionRepository.reserve(competing)))
         .isInstanceOf(
-            GameSessionCanonicalAdmissionPointerRepository.CanonicalClosedPointerConflictException
-                .class)
-        .hasMessageContaining("already names this target");
-
-    assertNoAttemptAndNoPending(fixture, staleRequest);
+            CanonicalInitialAdmissionRepository.CanonicalInitialAdmissionConflictException.class)
+        .hasMessageContaining("pending realm attempt");
+    assertThat(
+            fixture.initialAdmissionRepository.read(
+                NAMESPACE, competing.initialAdmissionRequestId()))
+        .isEmpty();
+    assertThat(
+            fixture.dsl.fetchCount(
+                DSL.table(DSL.name("game_session_canonical_initial_admission_attempt")),
+                DSL.field(DSL.name("status"), String.class).eq("PENDING")))
+        .isEqualTo(1);
+    assertThat(
+            fixture.initialAdmissionRepository.read(NAMESPACE, first.initialAdmissionRequestId()))
+        .map(CanonicalInitialAdmissionOwnerProof::outcome)
+        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
+        .isZero();
   }
 
   @Test
@@ -554,6 +384,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         initialAdmissionRequest(
             catalog,
             binding,
+            preparedAdmission.gameInstanceUuid(),
             "canonical-expected-closed-v129-" + catalog.realmId(),
             CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED,
             129L,
@@ -576,6 +407,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         initialAdmissionRequest(
             catalog,
             binding,
+            preparedAdmission.gameInstanceUuid(),
             "canonical-expected-closed-v1-" + catalog.realmId(),
             CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED,
             1L,
@@ -594,190 +426,723 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     var preparedExpectedClosed =
         fixture.pointerRepository.prepareExpectedClosedForRealm(
             NAMESPACE, TENANT, catalog.realmId(), 1L, catalog.catalogRevision());
-    fixture.transactions.execute(
-        status -> {
-          fixture.initialAdmissionRepository.commit(
-              firstOpenRequest, testWorldProof(firstOpenRequest), preparedExpectedClosed);
-          return null;
-        });
-    CanonicalInitialAdmissionOwnerProof committed =
-        fixture
-            .initialAdmissionRepository
-            .read(NAMESPACE, firstOpenRequest.initialAdmissionRequestId())
-            .orElseThrow();
-    assertThat(committed.provesCommit()).isTrue();
-    assertThat(committed.committedPointerVersion()).isEqualTo(2L);
-
-    CanonicalInitialAdmissionRequest staleRequest =
-        initialAdmissionRequest(
-            catalog,
-            binding,
-            "canonical-stale-expected-closed-" + catalog.realmId(),
-            CanonicalInitialAdmissionRequest.OriginKind.EXPECT_CLOSED,
-            1L,
-            uuid(123),
-            uuid(124));
-    assertThatThrownBy(
-            () ->
-                fixture.transactions.execute(
-                    status -> {
-                      fixture.initialAdmissionRepository.reserve(staleRequest);
-                      return null;
-                    }))
-        .isInstanceOf(
-            GameSessionCanonicalAdmissionPointerRepository
-                .InvalidCanonicalClosedPointerEvidenceException.class);
-
-    assertNoAttemptAndNoPending(fixture, staleRequest);
+    String closedBefore = pointerAndAuditProjection(fixture);
+    String pendingBefore = attemptProjection(fixture, firstOpenRequest);
+    assertHumanProtectionUnavailable(
+        () ->
+            fixture.transactions.executeWithoutResult(
+                status ->
+                    fixture.initialAdmissionRepository.commit(
+                        firstOpenRequest,
+                        testWorldProof(firstOpenRequest),
+                        preparedExpectedClosed)));
+    assertHumanProtectionUnavailable(
+        () ->
+            fixture.transactions.executeWithoutResult(
+                status ->
+                    fixture.initialAdmissionRepository.abort(
+                        firstOpenRequest, preparedExpectedClosed, "Missing protection")));
+    assertThat(pointerAndAuditProjection(fixture)).isEqualTo(closedBefore);
+    assertThat(attemptProjection(fixture, firstOpenRequest)).isEqualTo(pendingBefore);
+    assertThat(
+            fixture.initialAdmissionRepository.read(
+                NAMESPACE, firstOpenRequest.initialAdmissionRequestId()))
+        .map(CanonicalInitialAdmissionOwnerProof::outcome)
+        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
   }
 
   @Test
-  void directlyConstructedOwnerServiceRunsMutationsInExplicitPostgresTransactions() {
+  void directlyConstructedHumanServiceDeniesBeforeReservationOrWorldVerification() {
     Fixture fixture = fixture();
-    IntakeReceipt source = fixture.registerSource();
-    CanonicalRealmCatalogSnapshot catalog = fixture.createCatalog(source);
-    CreateCanonicalLaunchPreparationRequest preparationRequest =
-        preparationRequest(source, catalog);
-    AuthoredWorldLaunchDescriptorClient syntheticGameDesign =
-        syntheticGameDesignClient(preparationRequest, catalog, source);
-    GameSessionCanonicalLaunchPreparationService preparationService =
-        new GameSessionCanonicalLaunchPreparationService(
-            syntheticGameDesign,
-            fixture.catalogRepository,
-            fixture.sourceRepository,
-            fixture.preparationRepository,
-            fixture.transactionManager,
-            NAMESPACE);
-    CanonicalLaunchPreparationSnapshot preparation = preparationService.prepare(preparationRequest);
-    CompleteLaunchBindingEvidence completeBinding =
-        preparationService.readCompleteBinding(preparation);
-    fixture.createTestOnlyFreshMappingAndRunningLaunch(source, completeBinding);
-    CanonicalInitialAdmissionRequest request = initialAdmissionRequest(catalog, completeBinding);
-    CanonicalInitialAdmissionWorldProof worldProof = testWorldProof(request);
-    CanonicalInitialAdmissionWorldVerifier worldVerifier =
+    PreparedAdmission prepared = prepareAdmission(fixture);
+    var request =
+        initialAdmissionRequest(
+            prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
+    CanonicalInitialAdmissionWorldVerifier verifier =
         mock(CanonicalInitialAdmissionWorldVerifier.class);
-    when(worldVerifier.verify(request))
-        .thenAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-              return worldProof;
-            });
-    DatabaseCanonicalInitialAdmissionService service =
+    var service =
         new DatabaseCanonicalInitialAdmissionService(
             fixture.initialAdmissionRepository,
             fixture.pointerRepository,
-            worldVerifier,
+            verifier,
             fixture.transactionManager);
-
-    CanonicalInitialAdmissionOwnerProof committed = service.bind(request);
-
-    assertThat(committed.outcome())
-        .isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED);
-    assertThat(committed.committedPointerVersion()).isEqualTo(1L);
-    assertThat(committed.auditEventId()).isPositive();
+    assertHumanProtectionUnavailable(() -> service.bind(request));
+    assertHumanProtectionUnavailable(() -> service.abort(request, "Missing protection"));
+    verifyNoInteractions(verifier);
+    assertNoAttemptAndNoPending(fixture, request);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
+        .isZero();
     assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-    assertThat(
-            fixture.dsl.fetchCount(
-                DSL.table(DSL.name("game_session_canonical_initial_admission_attempt"))))
-        .isEqualTo(1);
-    assertThat(
-            fixture.dsl.fetchCount(
-                DSL.table(DSL.name("gameplay_admission_pointer_event")),
-                DSL.field(DSL.name("initial_admission_request_id"), String.class)
-                    .eq(request.initialAdmissionRequestId())))
-        .isEqualTo(1);
   }
 
   @Test
-  void exactDefinitivelyAbortedAttemptCannotBeReopenedByRetry() {
+  void unprotectedHumanAbortAndCommitRetryLeaveTheExactPendingOwnerUnchanged() {
     Fixture fixture = fixture();
+    PreparedAdmission prepared = prepareAdmission(fixture);
+    var request =
+        initialAdmissionRequest(
+            prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
+    fixture.transactions.executeWithoutResult(
+        status -> fixture.initialAdmissionRepository.reserve(request));
+    var pending =
+        fixture
+            .initialAdmissionRepository
+            .read(NAMESPACE, request.initialAdmissionRequestId())
+            .orElseThrow();
+    String before = attemptProjection(fixture, request);
+    for (int retry = 0; retry < 2; retry++) {
+      assertHumanProtectionUnavailable(
+          () -> fixture.initialAdmissionRepository.abort(request, null, "World hold expired"));
+      assertHumanProtectionUnavailable(
+          () -> fixture.initialAdmissionRepository.commit(request, testWorldProof(request), null));
+      fixture.transactions.executeWithoutResult(
+          status -> fixture.initialAdmissionRepository.reserve(request));
+      assertThat(attemptProjection(fixture, request)).isEqualTo(before);
+      assertThat(
+              fixture.initialAdmissionRepository.read(
+                  NAMESPACE, request.initialAdmissionRequestId()))
+          .contains(pending);
+    }
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
+        .isZero();
+  }
+
+  @Test
+  void pre1006CommittedAndAbortedRowsSurviveForwardProtectionMigration() throws Exception {
+    for (boolean committed : List.of(true, false)) {
+      Fixture predecessor = fixture("1005");
+      PredecessorAdmission predecessorSources = preparePre1006Admission(predecessor);
+      PreparedAdmission prepared = predecessorSources.prepared();
+      CanonicalInitialAdmissionRequest request =
+          initialAdmissionRequest(
+              prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
+      reservePre1006Attempt(predecessor, predecessorSources.launch(), request);
+      // This is the real target1005 schema. Current terminal writers remain denied, and current
+      // typed catalog/terminal reads need columns introduced by1010. Only explicit predecessor SQL
+      // supplies the old row shape here; current owner readback is qualified after the upgrade.
+      seedPre1006Terminal(predecessor, prepared, predecessorSources.launch(), request, committed);
+      String originalSources = predecessorSourceProjection(predecessor);
+      String originalAttempt = predecessorAttemptProjection(predecessor, request);
+      String originalPointerAndAudit = pointerAndAuditProjection(predecessor);
+      String schema = predecessor.dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+      var migration =
+          Flyway.configure()
+              .dataSource(Objects.requireNonNull(predecessor.transactionManager.getDataSource()))
+              .schemas(schema)
+              .defaultSchema(schema)
+              .table("flyway_schema_history")
+              .locations(MIGRATION_LOCATION)
+              .load();
+      migration.migrate();
+      assertThat(
+              predecessor
+                  .dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM flyway_schema_history WHERE version = '1006' AND success")
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+      assertThat(
+              predecessor
+                  .dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM flyway_schema_history WHERE version = '1010' AND success")
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+      assertThat(predecessorAttemptProjection(predecessor, request)).isEqualTo(originalAttempt);
+      assertThat(pointerAndAuditProjection(predecessor)).isEqualTo(originalPointerAndAudit);
+      assertThat(predecessorSourceProjection(predecessor)).isEqualTo(originalSources);
+      CanonicalInitialAdmissionOwnerProof retained =
+          predecessor
+              .initialAdmissionRepository
+              .read(NAMESPACE, request.initialAdmissionRequestId())
+              .orElseThrow();
+      assertThat(retained.outcome())
+          .isEqualTo(
+              committed
+                  ? CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED
+                  : CanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
+      assertThat(retained.requestDigest()).isEqualTo(request.requestDigest());
+      assertThat(retained.holdId()).isEqualTo(request.holdId());
+      if (committed) {
+        assertThat(retained.committedPointerVersion()).isEqualTo(1L);
+        assertThat(retained.auditEventId()).isPositive();
+      } else {
+        assertThat(retained.provesAbort()).isTrue();
+        assertThat(retained.committedPointerVersion()).isNull();
+        assertThat(retained.auditEventId()).isNull();
+      }
+      assertThat(
+              predecessor
+                  .dsl
+                  .fetchSingle(
+                      "SELECT account_protection_evidence_version, account_protection_id, "
+                          + "account_protection_fence, original_owner_attempt_id, original_owner_mutation_id, "
+                          + "original_owner_fence, account_protection_evidence_bytes "
+                          + "FROM game_session_canonical_initial_admission_attempt "
+                          + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                      NAMESPACE,
+                      request.initialAdmissionRequestId())
+                  .intoArray())
+          .containsOnlyNulls();
+      assertHumanProtectionUnavailable(
+          () ->
+              predecessor.initialAdmissionRepository.commit(
+                  request, testWorldProof(request), null));
+      assertHumanProtectionUnavailable(
+          () ->
+              predecessor.initialAdmissionRepository.abort(
+                  request, null, "Current Human retry remains unprotected"));
+      assertThat(predecessorAttemptProjection(predecessor, request)).isEqualTo(originalAttempt);
+      assertThat(pointerAndAuditProjection(predecessor)).isEqualTo(originalPointerAndAudit);
+      assertThat(predecessorSourceProjection(predecessor)).isEqualTo(originalSources);
+    }
+  }
+
+  /** Old-schema SQL is confined to rows whose current owners require unavailable1010 columns. */
+  private static PredecessorAdmission preparePre1006Admission(Fixture fixture) throws Exception {
     IntakeReceipt source = fixture.registerSource();
-    CanonicalRealmCatalogSnapshot catalog = fixture.createCatalog(source);
-    CreateCanonicalLaunchPreparationRequest preparationRequest =
-        preparationRequest(source, catalog);
-    AuthoredWorldLaunchDescriptorClient syntheticGameDesign =
-        syntheticGameDesignClient(preparationRequest, catalog, source);
-    GameSessionCanonicalLaunchPreparationService preparationService =
-        new GameSessionCanonicalLaunchPreparationService(
-            syntheticGameDesign,
-            fixture.catalogRepository,
-            fixture.sourceRepository,
-            fixture.preparationRepository,
-            fixture.transactionManager,
-            NAMESPACE);
-    CanonicalLaunchPreparationSnapshot preparation = preparationService.prepare(preparationRequest);
-    CompleteLaunchBindingEvidence completeBinding =
-        preparationService.readCompleteBinding(preparation);
-    fixture.createTestOnlyFreshMappingAndRunningLaunch(source, completeBinding);
-    CanonicalInitialAdmissionRequest request = initialAdmissionRequest(catalog, completeBinding);
-    // Synthetic World proof input exercises the GS owner fence; it is not live World evidence.
-    CanonicalInitialAdmissionWorldProof worldProof = testWorldProof(request);
-
-    fixture.transactions.execute(
+    var association =
+        Objects.requireNonNull(
+            fixture.transactions.execute(
+                status ->
+                    new GameSessionFreshTenantAssociationRepository(fixture.dsl)
+                        .associateFresh(
+                            ASSOCIATION_OPERATION,
+                            NAMESPACE,
+                            source,
+                            CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
+                                source.source()))));
+    var request = catalogRequest(source);
+    var policy = publishedPolicy(source);
+    // This preparation is compatible with1005 and validates the complete closed policy/source
+    // evidence through the current owner; only its subsequent SQL writer needs1010 columns.
+    assertThat(fixture.catalogRepository.prepareInitialPublicProduction(request, policy))
+        .isNotNull();
+    byte[] policyBytes = RealmPolicyPublishedEvidenceCodec.encode(policy);
+    var authored = source.source();
+    UUID realm = UUID.randomUUID();
+    UUID namespace = UUID.randomUUID();
+    String baseDigest =
+        predecessorCatalogFrame(
+            fixture,
+            "game-session-canonical-realm-catalog-request/v1",
+            "1",
+            request.requestId().toString(),
+            NAMESPACE,
+            TENANT.toString(),
+            source.operationId().toString(),
+            source.intakeRequestId().toString(),
+            source.requestDigest(),
+            source.receiptDigest(),
+            Integer.toString(authored.schemaVersion()),
+            authored.registrationRequestId().toString(),
+            authored.operationId().toString(),
+            authored.requestDigest(),
+            TENANT.toString(),
+            authored.tenantSlug(),
+            authored.worldSlug(),
+            authored.worldDisplayName(),
+            Long.toString(authored.sourceGameRowId()),
+            authored.sourceGameTenantKey(),
+            authored.provenanceKind(),
+            authored.evidenceDigest(),
+            request.realmSlug(),
+            request.realmDisplayName(),
+            "true",
+            "true",
+            "SHARED",
+            request.characterCreationPolicy(),
+            "ABSENT",
+            "ABSENT");
+    String catalogDigest =
+        predecessorCatalogFrame(
+            fixture,
+            "game-session-complete-catalog-request/v1",
+            baseDigest,
+            HexFormat.of().formatHex(policyBytes));
+    String receiptDigest =
+        predecessorCatalogFrame(
+            fixture,
+            "game-session-canonical-realm-catalog-receipt/v1",
+            "1",
+            NAMESPACE,
+            TENANT.toString(),
+            request.requestId().toString(),
+            catalogDigest,
+            realm.toString(),
+            namespace.toString(),
+            "1",
+            source.operationId().toString(),
+            source.receiptDigest());
+    var catalog =
+        new CanonicalRealmCatalogSnapshot(
+            NAMESPACE,
+            TENANT,
+            authored.tenantSlug(),
+            authored.worldSlug(),
+            realm,
+            request.realmSlug(),
+            request.realmDisplayName(),
+            true,
+            true,
+            "SHARED",
+            namespace,
+            request.characterCreationPolicy(),
+            1L,
+            request.requestId(),
+            catalogDigest,
+            receiptDigest,
+            source);
+    fixture.transactions.executeWithoutResult(
         status -> {
-          fixture.initialAdmissionRepository.reserve(request);
-          return null;
+          fixture.dsl.execute(
+              "INSERT INTO gameplay_tenant_shared_playable_state_namespace (tenant_id, "
+                  + "playable_state_namespace_id, canonical_tenant_id, target_namespace, "
+                  + "source_intake_operation_id, source_intake_schema_version, source_intake_request_id, "
+                  + "source_intake_request_digest, source_intake_receipt_digest, source_schema_version, "
+                  + "source_registration_request_id, source_operation_id, source_request_digest, "
+                  + "source_game_row_id, source_game_tenant_key, source_provenance_kind, source_evidence_digest) "
+                  + "VALUES (NULL, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              namespace,
+              TENANT,
+              NAMESPACE,
+              source.operationId(),
+              source.intakeRequestId(),
+              source.requestDigest(),
+              source.receiptDigest(),
+              authored.schemaVersion(),
+              authored.registrationRequestId(),
+              authored.operationId(),
+              authored.requestDigest(),
+              authored.sourceGameRowId(),
+              authored.sourceGameTenantKey(),
+              authored.provenanceKind(),
+              authored.evidenceDigest());
+          fixture.dsl.execute(
+              "INSERT INTO game_session_canonical_realm_catalog (target_namespace, canonical_tenant_id, "
+                  + "tenant_slug, world_slug, realm_id, realm_slug, realm_display_name, visible, "
+                  + "public_production, state_scope, playable_state_namespace_id, character_creation_policy, "
+                  + "catalog_revision, creation_request_id, request_digest, receipt_digest, "
+                  + "source_intake_operation_id, source_intake_schema_version, source_intake_request_id, "
+                  + "source_intake_request_digest, source_intake_receipt_digest, source_schema_version, "
+                  + "source_registration_request_id, source_operation_id, source_request_digest, "
+                  + "source_world_display_name, source_game_row_id, source_game_tenant_key, "
+                  + "source_provenance_kind, source_evidence_digest, complete_policy_set_evidence) "
+                  + "VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, TRUE, 'SHARED', ?, ?, 1, ?, ?, ?, ?, 1, "
+                  + "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              NAMESPACE,
+              TENANT,
+              authored.tenantSlug(),
+              authored.worldSlug(),
+              realm,
+              request.realmSlug(),
+              request.realmDisplayName(),
+              namespace,
+              request.characterCreationPolicy(),
+              request.requestId(),
+              catalogDigest,
+              receiptDigest,
+              source.operationId(),
+              source.intakeRequestId(),
+              source.requestDigest(),
+              source.receiptDigest(),
+              authored.schemaVersion(),
+              authored.registrationRequestId(),
+              authored.operationId(),
+              authored.requestDigest(),
+              authored.worldDisplayName(),
+              authored.sourceGameRowId(),
+              authored.sourceGameTenantKey(),
+              authored.provenanceKind(),
+              authored.evidenceDigest(),
+              policyBytes);
         });
+    var preparationRequest = preparationRequest(source, catalog);
+    var descriptor =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            preparationRequest.descriptorRequest(catalog, authored),
+            "launch-descriptor-canonical-admission",
+            72,
+            false,
+            null,
+            "{}",
+            "generation-1",
+            3,
+            73,
+            "published-bundle-73",
+            false,
+            null);
+    var binding = CanonicalHumanPublicationOwnerTestFixtures.completeBinding(descriptor, policy);
+    var tuple =
+        CanonicalHumanPublicationOwnerTestFixtures.tuple(
+            NAMESPACE,
+            TENANT,
+            ACTOR,
+            descriptor.gameTemplateId(),
+            descriptor.controlPlaneRequestId());
+    CanonicalHumanPublicationOwnerTestFixtures.pinLaunch(
+        fixture.dsl, fixture.transactions, tuple, authored, policy, binding);
+    UUID instanceUuid = UUID.randomUUID();
+    String bindingJson =
+        tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(binding);
+    long tenantId = association.legacyGameSessionTenantId();
+    var sourceIdentity = association.sourceEvidence();
+    Long instanceId =
+        fixture.transactions.execute(
+            status -> {
+              long allocated =
+                  fixture
+                      .dsl
+                      .fetchSingle(
+                          "INSERT INTO game_instances (tenant_id, runtime_version, owner_account_uuid, status, "
+                              + "row_version, game_template_id, launch_descriptor_id, version_id, release_bundle_id, "
+                              + "version_state_epoch, generation_config_revision, run_owned_start_request_id, "
+                              + "run_owned_start_request_digest, run_owned_start_published_release_bundle_ref, "
+                              + "game_instance_uuid) VALUES (?, ?, ?, 'STARTING', 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                              + "RETURNING id",
+                          tenantId,
+                          Long.toString(descriptor.versionId()),
+                          ACTOR,
+                          descriptor.gameTemplateId(),
+                          descriptor.launchDescriptorId(),
+                          descriptor.versionId(),
+                          descriptor.releaseBundleId(),
+                          descriptor.versionStateEpoch(),
+                          descriptor.generationConfigRevision(),
+                          tuple.controlPlaneRequestId(),
+                          tuple.mutationDigest(),
+                          descriptor.publishedReleaseBundleRef(),
+                          instanceUuid)
+                      .get("id", Long.class);
+              fixture.dsl.execute(
+                  "INSERT INTO game_session_canonical_instance_launch (target_namespace, control_plane_request_id, "
+                      + "game_session_tenant_id, canonical_tenant_id, tenant_association_operation_id, "
+                      + "tenant_association_request_id, tenant_source_schema_version, tenant_source_target_namespace, "
+                      + "tenant_source_request_id, tenant_source_canonical_tenant_id, tenant_source_game_row_id, "
+                      + "tenant_source_game_tenant_key, tenant_source_provenance_kind, tenant_association_kind, "
+                      + "game_instance_id, game_instance_uuid, canonical_realm_id, world_slug, "
+                      + "playable_state_namespace_id, playable_state_scope, public_production, "
+                      + "captured_starting_row_version, game_template_id, launch_descriptor_id, version_id, "
+                      + "release_bundle_id, generation_config_revision, version_state_epoch, complete_launch_binding_evidence, "
+                      + "original_start_session_tuple, catalog_creation_request_id, catalog_revision, "
+                      + "catalog_source_intake_operation_id, catalog_source_intake_request_id) "
+                      + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'FRESH_SOURCE_BOUND', ?, ?, ?, ?, ?, "
+                      + "'SHARED', TRUE, 0, ?, ?, ?, ?, ?, ?, CAST(? AS JSONB), ?, ?, 1, ?, ?)",
+                  NAMESPACE,
+                  tuple.controlPlaneRequestId(),
+                  tenantId,
+                  TENANT,
+                  ASSOCIATION_OPERATION,
+                  sourceIdentity.requestId(),
+                  sourceIdentity.schemaVersion(),
+                  NAMESPACE,
+                  sourceIdentity.requestId(),
+                  TENANT,
+                  sourceIdentity.sourceGameRowId(),
+                  sourceIdentity.sourceGameTenantKey(),
+                  sourceIdentity.provenanceKind(),
+                  allocated,
+                  instanceUuid,
+                  realm,
+                  authored.worldSlug(),
+                  namespace,
+                  descriptor.gameTemplateId(),
+                  descriptor.launchDescriptorId(),
+                  descriptor.versionId(),
+                  descriptor.releaseBundleId(),
+                  descriptor.generationConfigRevision(),
+                  descriptor.versionStateEpoch(),
+                  bindingJson,
+                  tuple.canonicalBytes(),
+                  CATALOG_REQUEST,
+                  source.operationId(),
+                  source.intakeRequestId());
+              fixture.dsl.execute(
+                  "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
+                  tenantId,
+                  allocated);
+              return allocated;
+            });
+    var captured =
+        new CanonicalGameInstanceLaunchAssociation(
+            NAMESPACE,
+            tenantId,
+            ASSOCIATION_OPERATION,
+            TENANT,
+            instanceUuid,
+            authored.worldSlug(),
+            namespace,
+            RealmEntryPolicy.StateScope.SHARED,
+            true,
+            tuple.controlPlaneRequestId(),
+            descriptor.launchDescriptorId(),
+            0L,
+            binding,
+            CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.RUNNING,
+            0L);
+    var launch =
+        new CanonicalInitialAdmissionLaunchTarget(
+            captured, realm, Objects.requireNonNull(instanceId), descriptor.versionId());
+    return new PredecessorAdmission(new PreparedAdmission(catalog, binding, instanceUuid), launch);
+  }
+
+  private static void reservePre1006Attempt(
+      Fixture fixture,
+      CanonicalInitialAdmissionLaunchTarget launch,
+      CanonicalInitialAdmissionRequest request) {
+    fixture.transactions.executeWithoutResult(
+        status ->
+            fixture.dsl.execute(
+                "INSERT INTO game_session_canonical_initial_admission_attempt (target_namespace, "
+                    + "initial_admission_request_id, request_digest, canonical_tenant_id, world_slug, realm_id, "
+                    + "playable_state_namespace_id, playable_state_scope, canonical_game_instance_id, "
+                    + "game_session_tenant_id, game_instance_id, canonical_version_id, runtime_version_id, "
+                    + "expected_catalog_revision, origin_kind, expected_prior_pointer_version, active_lifecycle_epoch, "
+                    + "hold_id, hold_fence, hold_binding_digest, status, created_at, updated_at) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', "
+                    + "clock_timestamp(), clock_timestamp())",
+                NAMESPACE,
+                request.initialAdmissionRequestId(),
+                request.requestDigest(),
+                TENANT,
+                request.worldSlug(),
+                request.realmId(),
+                request.playableStateNamespaceId(),
+                request.playableStateScope(),
+                request.canonicalGameInstanceId(),
+                launch.association().gameSessionTenantId(),
+                launch.gameInstanceId(),
+                request.canonicalVersionId(),
+                launch.runtimeVersionId(),
+                request.expectedCatalogRevision(),
+                request.originKind().name(),
+                request.expectedPriorPointerVersion(),
+                request.activeLifecycleEpoch(),
+                request.holdId(),
+                request.holdFence(),
+                request.holdBindingDigest()));
+  }
+
+  /** Independent SQL encoding of the predecessor catalog's decimal-length UTF-8 framing. */
+  private static String predecessorCatalogFrame(Fixture fixture, String... fields) {
+    return fixture
+        .dsl
+        .fetchSingle(
+            "SELECT 'sha256:' || encode(sha256(string_agg(convert_to(octet_length(convert_to(field, 'UTF8'))::TEXT "
+                + "|| ':', 'UTF8') || convert_to(field, 'UTF8'), ''::BYTEA ORDER BY ordinal)), 'hex') AS digest "
+                + "FROM unnest(?::TEXT[]) WITH ORDINALITY framed(field, ordinal)",
+            (Object) fields)
+        .get("digest", String.class);
+  }
+
+  private record PredecessorAdmission(
+      PreparedAdmission prepared, CanonicalInitialAdmissionLaunchTarget launch) {}
+
+  /** Entire original source, namespace, catalog, runtime, launch and original-pin heap evidence. */
+  private static String predecessorSourceProjection(Fixture fixture) {
+    return fixture
+        .dsl
+        .fetchSingle(
+            "SELECT jsonb_build_array("
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY operation_id) FROM game_session_authored_world_source_intake source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY canonical_tenant_id) FROM game_session_authored_world_tenant_source_binding source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY association_operation_id) FROM game_session_fresh_tenant_association source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY canonical_tenant_id) FROM game_session_tenant_canonical_claim source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY to_jsonb(source)::TEXT) FROM game_session_tenant_scope_reservation source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY canonical_tenant_id) FROM gameplay_tenant_shared_playable_state_namespace source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source) - ARRAY['fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', 'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest']) ORDER BY realm_id) FROM game_session_canonical_realm_catalog source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY id) FROM game_instances source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source) - ARRAY['fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', 'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest']) ORDER BY game_instance_id) FROM game_session_canonical_instance_launch source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_operator_attempt source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_template_association_pin source),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(source)) ORDER BY owner_attempt_id) FROM game_session_start_session_launch_descriptor_pin source))::TEXT AS projection")
+        .get("projection", String.class);
+  }
+
+  private static void seedPre1006Terminal(
+      Fixture fixture,
+      PreparedAdmission prepared,
+      CanonicalInitialAdmissionLaunchTarget launch,
+      CanonicalInitialAdmissionRequest request,
+      boolean committed) {
     assertThat(
-            fixture.initialAdmissionRepository.read(NAMESPACE, request.initialAdmissionRequestId()))
-        .map(CanonicalInitialAdmissionOwnerProof::outcome)
-        .contains(CanonicalInitialAdmissionOwnerProof.Outcome.PENDING);
-    int pointerRowsBeforeAbort =
-        fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")));
-    int auditRowsBeforeAbort =
-        fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event")));
-    assertThat(pointerRowsBeforeAbort).isZero();
-    assertThat(auditRowsBeforeAbort).isZero();
-
-    fixture.transactions.execute(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM information_schema.columns WHERE table_schema = current_schema() "
+                        + "AND table_name = 'game_session_canonical_initial_admission_attempt' "
+                        + "AND column_name = 'account_protection_evidence_bytes'")
+                .get(0, Long.class))
+        .isZero();
+    Instant terminalAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
+    fixture.transactions.executeWithoutResult(
         status -> {
-          fixture.initialAdmissionRepository.abort(request, null, "World hold expired");
-          return null;
+          Long pointerId = null;
+          Long auditId = null;
+          String reason = "Explicit pre1006 owner abort fixture";
+          if (committed) {
+            auditId =
+                new GameplayAdmissionPointerEventRepository(fixture.dsl)
+                    .appendCanonicalInitialAdmissionOpen(
+                        request,
+                        prepared.catalog(),
+                        launch,
+                        1L,
+                        prepared.catalog().catalogRevision(),
+                        terminalAt);
+            pointerId =
+                fixture
+                    .dsl
+                    .fetchSingle(
+                        "INSERT INTO gameplay_admission_pointer (world_slug, realm_slug, world_display_name, "
+                            + "realm_display_name, tenant_id, game_instance_id, pointer_version, visible, "
+                            + "requires_character_selection, state_scope, character_creation_policy, "
+                            + "last_updated_by, last_update_reason, created_at, updated_at, "
+                            + "public_production_realm, catalog_revision, realm_id, playable_state_namespace_id, "
+                            + "representation_version, target_namespace, canonical_tenant_id, admission_state, "
+                            + "canonical_game_instance_id, canonical_version_id, runtime_version_id, "
+                            + "initial_admission_request_id, initial_admission_request_digest, "
+                            + "initial_admission_origin_kind, initial_admission_prior_pointer_version, "
+                            + "initial_admission_active_epoch, initial_admission_hold_id, "
+                            + "initial_admission_hold_fence, initial_admission_hold_binding_digest) "
+                            + "SELECT world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+                            + "game_instance_id, pointer_version, visible, requires_character_selection, "
+                            + "state_scope, character_creation_policy, actor_principal, reason, occurred_at, "
+                            + "occurred_at, public_production_realm, catalog_revision, realm_id, "
+                            + "playable_state_namespace_id, representation_version, target_namespace, "
+                            + "canonical_tenant_id, admission_state, canonical_game_instance_id, "
+                            + "canonical_version_id, runtime_version_id, initial_admission_request_id, "
+                            + "initial_admission_request_digest, initial_admission_origin_kind, "
+                            + "initial_admission_prior_pointer_version, initial_admission_active_epoch, "
+                            + "initial_admission_hold_id, initial_admission_hold_fence, "
+                            + "initial_admission_hold_binding_digest FROM gameplay_admission_pointer_event "
+                            + "WHERE id = ? RETURNING id",
+                        auditId)
+                    .get("id", Long.class);
+          }
+          String proof =
+              predecessorTerminalProofDigest(
+                  fixture, request, committed, auditId, reason, terminalAt);
+          if (committed) {
+            fixture.dsl.execute(
+                "UPDATE game_session_canonical_initial_admission_attempt SET "
+                    + "status = 'COMMITTED', pointer_id = ?, pointer_version = 1, audit_event_id = ?, "
+                    + "commit_proof_digest = ?, updated_at = CAST(? AS TIMESTAMPTZ), "
+                    + "terminal_at = CAST(? AS TIMESTAMPTZ) "
+                    + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                pointerId,
+                auditId,
+                proof,
+                terminalAt.atOffset(ZoneOffset.UTC),
+                terminalAt.atOffset(ZoneOffset.UTC),
+                NAMESPACE,
+                request.initialAdmissionRequestId());
+          } else {
+            fixture.dsl.execute(
+                "UPDATE game_session_canonical_initial_admission_attempt SET "
+                    + "status = 'ABORTED', abort_reason = ?, abort_proof_digest = ?, "
+                    + "updated_at = CAST(? AS TIMESTAMPTZ), terminal_at = CAST(? AS TIMESTAMPTZ) "
+                    + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                reason,
+                proof,
+                terminalAt.atOffset(ZoneOffset.UTC),
+                terminalAt.atOffset(ZoneOffset.UTC),
+                NAMESPACE,
+                request.initialAdmissionRequestId());
+          }
         });
+  }
 
-    CanonicalInitialAdmissionOwnerProof aborted =
-        fixture
-            .initialAdmissionRepository
-            .read(NAMESPACE, request.initialAdmissionRequestId())
-            .orElseThrow();
-    assertThat(aborted.provesAbort()).isTrue();
-    assertThat(aborted.outcome()).isEqualTo(CanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
-    assertThat(aborted.committedPointerVersion()).isNull();
-    assertThat(aborted.auditEventId()).isNull();
-    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
-        .isEqualTo(pointerRowsBeforeAbort);
-    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
-        .isEqualTo(auditRowsBeforeAbort);
+  /** Independent PostgreSQL encoding of the retained v1 length-prefixed terminal frame. */
+  private static String predecessorTerminalProofDigest(
+      Fixture fixture,
+      CanonicalInitialAdmissionRequest request,
+      boolean committed,
+      Long auditId,
+      String reason,
+      Instant terminalAt) {
+    return fixture
+        .dsl
+        .fetchSingle(
+            "SELECT 'sha256:' || encode(sha256(string_agg(int4send(octet_length(convert_to(field, 'UTF8'))) "
+                + "|| convert_to(field, 'UTF8'), ''::BYTEA ORDER BY ordinal)), 'hex') AS proof "
+                + "FROM game_session_canonical_initial_admission_attempt attempt "
+                + "CROSS JOIN LATERAL unnest(ARRAY[?::TEXT, request_digest, "
+                + "initial_admission_request_id, target_namespace, canonical_tenant_id::TEXT, world_slug, "
+                + "realm_id::TEXT, playable_state_namespace_id::TEXT, playable_state_scope, "
+                + "canonical_game_instance_id::TEXT, canonical_version_id::TEXT, runtime_version_id::TEXT, "
+                + "active_lifecycle_epoch::TEXT, expected_catalog_revision::TEXT, origin_kind, "
+                + "COALESCE(expected_prior_pointer_version::TEXT, ''), hold_id::TEXT, hold_fence::TEXT, "
+                + "hold_binding_digest] || CASE WHEN ? THEN ARRAY['1', ?::TEXT] ELSE ARRAY[?::TEXT] END "
+                + "|| ARRAY['', '', '', ?::TEXT]) WITH ORDINALITY fields(field, ordinal) "
+                + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+            committed
+                ? "gs-canonical-initial-admission-commit-proof/v1"
+                : "gs-canonical-initial-admission-abort-proof/v1",
+            committed,
+            auditId == null ? null : auditId.toString(),
+            reason,
+            terminalAt.toString(),
+            NAMESPACE,
+            request.initialAdmissionRequestId())
+        .get("proof", String.class);
+  }
 
-    fixture.transactions.execute(
-        status -> {
-          fixture.initialAdmissionRepository.reserve(request);
-          return null;
-        });
-    fixture.transactions.execute(
-        status -> {
-          fixture.initialAdmissionRepository.commit(request, worldProof, null);
-          return null;
-        });
+  /** Every pre1006 attempt column, including byte values, and the original heap xmin. */
+  private static String predecessorAttemptProjection(
+      Fixture fixture, CanonicalInitialAdmissionRequest request) {
+    return fixture
+        .dsl
+        .fetchSingle(
+            "SELECT jsonb_build_array(xmin::TEXT, to_jsonb(attempt) - ARRAY["
+                + "'account_protection_evidence_version', 'account_protection_id', "
+                + "'account_protection_fence', 'original_owner_attempt_id', 'original_owner_mutation_id', "
+                + "'original_owner_fence', 'account_protection_evidence_bytes'])::TEXT AS projection "
+                + "FROM game_session_canonical_initial_admission_attempt attempt "
+                + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+            NAMESPACE,
+            request.initialAdmissionRequestId())
+        .get("projection", String.class);
+  }
 
-    CanonicalInitialAdmissionOwnerProof afterRetry =
-        fixture
-            .initialAdmissionRepository
-            .read(NAMESPACE, request.initialAdmissionRequestId())
-            .orElseThrow();
-    assertThat(afterRetry).isEqualTo(aborted);
-    assertThat(
-            fixture.dsl.fetchCount(
-                DSL.table(DSL.name("game_session_canonical_initial_admission_attempt"))))
-        .isEqualTo(1);
-    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
-        .isEqualTo(pointerRowsBeforeAbort);
-    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer_event"))))
-        .isEqualTo(auditRowsBeforeAbort);
+  private static void assertHumanProtectionUnavailable(Runnable operation) {
+    assertThatThrownBy(operation::run)
+        .isInstanceOf(
+            CanonicalInitialAdmissionRepository
+                .CanonicalHumanAdmissionProtectionUnavailableException.class)
+        .hasMessageContaining("Account terminal protection");
+  }
+
+  private static String attemptProjection(
+      Fixture fixture, CanonicalInitialAdmissionRequest request) {
+    return fixture
+        .dsl
+        .fetchSingle(
+            "SELECT xmin::text || '/' || to_jsonb(attempt)::text AS projection "
+                + "FROM game_session_canonical_initial_admission_attempt attempt WHERE target_namespace = ? "
+                + "AND initial_admission_request_id = ?",
+            request.targetNamespace(),
+            request.initialAdmissionRequestId())
+        .get("projection", String.class);
+  }
+
+  private static String pointerAndAuditProjection(Fixture fixture) {
+    return fixture
+        .dsl
+        .fetchSingle(
+            "SELECT jsonb_build_array("
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::text, to_jsonb(pointer)) ORDER BY id) FROM gameplay_admission_pointer pointer),"
+                + "(SELECT jsonb_agg(jsonb_build_array(xmin::text, to_jsonb(event)) ORDER BY id) FROM gameplay_admission_pointer_event event))::text AS projection")
+        .get("projection", String.class);
   }
 
   private Fixture fixture() {
+    return fixture(null);
+  }
+
+  private Fixture fixture(String targetVersion) {
     String schema = "gs_canonical_admission_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
@@ -785,14 +1150,17 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    var migration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table("flyway_schema_history")
+            .locations(MIGRATION_LOCATION);
+    if (targetVersion != null) {
+      migration.target(MigrationVersion.fromVersion(targetVersion));
+    }
+    migration.load().migrate();
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);
@@ -882,8 +1250,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         null,
         false,
         null,
-        false,
-        null);
+        true,
+        "{}");
   }
 
   private static AuthoredWorldLaunchDescriptorClient syntheticGameDesignClient(
@@ -905,7 +1273,9 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             "published-bundle-73",
             false,
             null);
-    CompleteLaunchBindingEvidence binding = completeBinding(descriptor);
+    CompleteLaunchBindingEvidence binding =
+        CanonicalHumanPublicationOwnerTestFixtures.completeBinding(
+            descriptor, publishedPolicy(source));
     when(client.resolve(any(AuthoredWorldLaunchDescriptorEvidence.Request.class)))
         .thenReturn(descriptor);
     when(client.get(any(GetRequest.class))).thenReturn(descriptor);
@@ -913,54 +1283,27 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     return client;
   }
 
-  private static CompleteLaunchBindingEvidence completeBinding(
-      AuthoredWorldLaunchDescriptorEvidence descriptor) {
-    String commitId = "publish-commit-canonical-admission";
-    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
-        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        commitId,
-                        "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? digest("d") : null))
-            .toList();
-    AuthoredWorldReleaseAttestationEvidence attestation =
-        AuthoredWorldReleaseAttestationEvidence.create(
-            descriptor.targetNamespace(),
-            descriptor.resultDigest(),
-            descriptor.canonicalTenantId(),
-            CANONICAL_VERSION,
-            descriptor.worldSlug(),
-            descriptor.authoredWorldSourceOperationId(),
-            descriptor.authoredWorldSourceEvidenceDigest(),
-            descriptor.launchDescriptorId(),
-            descriptor.publishedReleaseBundleRef(),
-            descriptor.versionStateEpoch(),
-            "publish-canonical-admission",
-            commitId,
-            participants,
-            digest("b"),
-            1,
-            List.of(),
-            List.of(),
-            List.of(),
-            descriptor.generationConfigRevision());
-    return new CompleteLaunchBindingEvidence(descriptor, attestation);
+  private static net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence.PublishedSet
+      publishedPolicy(IntakeReceipt source) {
+    return CanonicalHumanPublicationOwnerTestFixtures.publishedSet(
+        catalogRequest(source),
+        source.source(),
+        CANONICAL_VERSION,
+        72L,
+        "publish-canonical-admission",
+        "published-bundle-73",
+        "generation-1",
+        3L);
   }
 
   private static CanonicalInitialAdmissionRequest initialAdmissionRequest(
-      CanonicalRealmCatalogSnapshot catalog, CompleteLaunchBindingEvidence binding) {
+      CanonicalRealmCatalogSnapshot catalog,
+      CompleteLaunchBindingEvidence binding,
+      UUID gameInstanceUuid) {
     return initialAdmissionRequest(
         catalog,
         binding,
+        gameInstanceUuid,
         "canonical-first-open-" + catalog.realmId(),
         CanonicalInitialAdmissionRequest.OriginKind.NO_PRIOR_POINTER,
         null,
@@ -971,6 +1314,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   private static CanonicalInitialAdmissionRequest initialAdmissionRequest(
       CanonicalRealmCatalogSnapshot catalog,
       CompleteLaunchBindingEvidence binding,
+      UUID gameInstanceUuid,
       String requestId,
       CanonicalInitialAdmissionRequest.OriginKind origin,
       Long expectedPriorPointerVersion,
@@ -986,7 +1330,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
             catalog.realmId(),
             catalog.playableStateNamespaceId(),
             "SHARED",
-            GAME_INSTANCE_UUID,
+            gameInstanceUuid,
             canonicalVersionId,
             activeEpoch,
             catalog.catalogRevision(),
@@ -1000,7 +1344,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         catalog.realmId(),
         catalog.playableStateNamespaceId(),
         "SHARED",
-        GAME_INSTANCE_UUID,
+        gameInstanceUuid,
         canonicalVersionId,
         activeEpoch,
         catalog.catalogRevision(),
@@ -1046,7 +1390,9 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     CanonicalLaunchPreparationSnapshot preparation = preparationService.prepare(preparationRequest);
     CompleteLaunchBindingEvidence binding = preparationService.readCompleteBinding(preparation);
     fixture.createTestOnlyFreshMappingAndRunningLaunch(source, binding);
-    return new PreparedAdmission(catalog, binding);
+    UUID allocatedInstanceUuid =
+        fixture.launchRepository.read(CONTROL_PLANE_REQUEST_ID).orElseThrow().gameInstanceUuid();
+    return new PreparedAdmission(catalog, binding, allocatedInstanceUuid);
   }
 
   private static CanonicalInitialAdmissionWorldProof testWorldProof(
@@ -1083,7 +1429,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         true,
         true,
         "SHARED",
-        "explicit-policy-v1",
+        "PRESEEDED_ONLY",
         null,
         null);
   }
@@ -1097,7 +1443,9 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   }
 
   private record PreparedAdmission(
-      CanonicalRealmCatalogSnapshot catalog, CompleteLaunchBindingEvidence binding) {}
+      CanonicalRealmCatalogSnapshot catalog,
+      CompleteLaunchBindingEvidence binding,
+      UUID gameInstanceUuid) {}
 
   private record Fixture(
       DSLContext dsl,
@@ -1115,7 +1463,18 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     }
 
     CanonicalRealmCatalogSnapshot createCatalog(IntakeReceipt source) {
-      var prepared = catalogRepository.prepareInitialPublicProduction(catalogRequest(source));
+      transactions.execute(
+          status ->
+              new GameSessionFreshTenantAssociationRepository(dsl)
+                  .associateFresh(
+                      ASSOCIATION_OPERATION,
+                      NAMESPACE,
+                      source,
+                      CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
+                          source.source())));
+      var prepared =
+          catalogRepository.prepareInitialPublicProduction(
+              catalogRequest(source), publishedPolicy(source));
       return Objects.requireNonNull(
           transactions.execute(
               status -> catalogRepository.createInitialPublicProduction(prepared)));
@@ -1123,87 +1482,42 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
 
     FreshGameSessionTenantAssociation createTestOnlyFreshMappingAndRunningLaunch(
         IntakeReceipt source, CompleteLaunchBindingEvidence binding) {
-      RuntimeTenantIdentityEvidence sourceIdentity =
-          new RuntimeTenantIdentityEvidence(
-              1,
+      var tuple =
+          CanonicalHumanPublicationOwnerTestFixtures.tuple(
               NAMESPACE,
-              source.source().registrationRequestId(),
               TENANT,
-              source.source().sourceGameRowId(),
-              source.source().sourceGameTenantKey(),
-              source.source().provenanceKind());
-      FreshGameSessionTenantAssociation association =
+              ACTOR,
+              binding.descriptor().gameTemplateId(),
+              binding.descriptor().controlPlaneRequestId());
+      CanonicalHumanPublicationOwnerTestFixtures.pinLaunch(
+          dsl, transactions, tuple, source.source(), publishedPolicy(source), binding);
+      return Objects.requireNonNull(
           transactions.execute(
               status -> {
-                Record reservation =
-                    Objects.requireNonNull(
-                        dsl.fetchOne(
-                            "INSERT INTO game_session_tenant_scope_reservation "
-                                + "(reservation_kind) VALUES ('FRESH_SOURCE_BOUND') "
-                                + "RETURNING game_session_tenant_id"));
-                long allocatedTenantId = reservation.get("game_session_tenant_id", Long.class);
-                FreshGameSessionTenantAssociation allocatedAssociation =
-                    new FreshGameSessionTenantAssociation(
-                        ASSOCIATION_OPERATION, allocatedTenantId, sourceIdentity);
+                var association =
+                    new GameSessionFreshTenantAssociationRepository(dsl)
+                        .associateFresh(
+                            ASSOCIATION_OPERATION,
+                            NAMESPACE,
+                            source,
+                            CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
+                                source.source()));
+                var starting =
+                    new GameSessionCanonicalStartingInstanceRepository(dsl, NAMESPACE)
+                        .createStarting(
+                            association,
+                            binding,
+                            ACTOR,
+                            tuple.controlPlaneRequestId(),
+                            tuple.mutationDigest(),
+                            tuple);
                 dsl.execute(
-                    "INSERT INTO game_session_tenant_canonical_claim "
-                        + "(target_namespace, canonical_tenant_id, legacy_game_session_tenant_id, "
-                        + "association_kind, reservation_kind, association_operation_id, "
-                        + "association_request_id) "
-                        + "VALUES (?, ?, ?, 'FRESH_SOURCE_BOUND', 'FRESH_SOURCE_BOUND', ?, ?)",
-                    NAMESPACE,
-                    TENANT,
-                    allocatedTenantId,
-                    ASSOCIATION_OPERATION,
-                    source.source().registrationRequestId());
-                dsl.execute(
-                    "INSERT INTO game_session_fresh_tenant_association "
-                        + "(association_operation_id, target_namespace, association_request_id, "
-                        + "source_schema_version, source_target_namespace, source_request_id, "
-                        + "source_canonical_tenant_id, canonical_tenant_id, "
-                        + "legacy_game_session_tenant_id, source_game_row_id, "
-                        + "source_game_tenant_key, provenance_kind, association_kind) "
-                        + "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', "
-                        + "'FRESH_SOURCE_BOUND')",
-                    ASSOCIATION_OPERATION,
-                    NAMESPACE,
-                    source.source().registrationRequestId(),
-                    NAMESPACE,
-                    source.source().registrationRequestId(),
-                    TENANT,
-                    TENANT,
-                    allocatedTenantId,
-                    source.source().sourceGameRowId(),
-                    source.source().sourceGameTenantKey());
-                Record instance =
-                    Objects.requireNonNull(
-                        dsl.fetchOne(
-                            "INSERT INTO game_instances "
-                                + "(tenant_id, runtime_version, game_template_id, "
-                                + "launch_descriptor_id, version_id, release_bundle_id, "
-                                + "generation_config_revision, version_state_epoch, "
-                                + "owner_account_id, status, row_version, game_instance_uuid, "
-                                + "run_owned_start_request_id, run_owned_start_request_digest, "
-                                + "run_owned_start_published_release_bundle_ref, "
-                                + "run_owned_start_preparing_epoch, run_owned_start_active_epoch) "
-                                + "VALUES (?, '72', 404, ?, 72, 73, 'generation-1', 3, 77, "
-                                + "'STARTING', 1, ?, ?, ?, ?, 1, 2) RETURNING id",
-                            allocatedTenantId,
-                            binding.descriptor().launchDescriptorId(),
-                            GAME_INSTANCE_UUID,
-                            CONTROL_PLANE_REQUEST_ID,
-                            "c".repeat(64),
-                            binding.descriptor().publishedReleaseBundleRef()));
-                long gameInstanceId = instance.get("id", Long.class);
-                launchRepository.capture(allocatedAssociation, gameInstanceId, binding);
-                dsl.execute(
-                    "UPDATE game_instances SET status = 'RUNNING' "
-                        + "WHERE tenant_id = ? AND id = ?",
-                    allocatedTenantId,
-                    gameInstanceId);
-                return allocatedAssociation;
-              });
-      return Objects.requireNonNull(association, "test fixture tenant association");
+                    "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
+                    association.legacyGameSessionTenantId(),
+                    starting.gameInstanceId());
+                return association;
+              }),
+          "Controlled actual GS tenant association");
     }
   }
 }

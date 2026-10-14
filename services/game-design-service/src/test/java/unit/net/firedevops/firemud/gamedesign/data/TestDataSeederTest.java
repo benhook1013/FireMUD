@@ -289,6 +289,75 @@ class TestDataSeederTest {
   }
 
   @Test
+  void independentlyReadsExactCommittedCreationAndRejectsChangedOrMissingOwnerEvidence() {
+    var creationRepository =
+        org.mockito.Mockito.mock(
+            net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository.class);
+    var readback =
+        new RunOwnedFixtureLaunchReadback(
+            gameRepository,
+            templateRepository,
+            versionRepository,
+            versionAssetArtifactRepository,
+            authoredWorldSourceRepository,
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.gamedesign.service.VersionService.class),
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService.class),
+            org.mockito.Mockito.mock(
+                net.firedevops.firemud.gamedesign.service.LaunchDescriptorService.class));
+    ReflectionTestUtils.setField(readback, "creationRepository", creationRepository);
+    var requestId = java.util.UUID.randomUUID();
+    var operationId = java.util.UUID.randomUUID();
+    var tenantId = java.util.UUID.randomUUID();
+    String requestDigest =
+        net.firedevops.firemud.common.tenant.GameTenantCreationDigest.requestDigest(
+            "dev", requestId, "1", "Demo Game", "Seed game");
+    var captured =
+        new net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence(
+            1,
+            "dev",
+            requestId,
+            operationId,
+            requestDigest,
+            tenantId,
+            17L,
+            "1",
+            "NEW_GAME_ROW",
+            net.firedevops.firemud.common.tenant.GameTenantCreationDigest.evidenceDigest(
+                "dev", requestId, operationId, requestDigest, tenantId, 17L, "1", "NEW_GAME_ROW"));
+    when(creationRepository.read(requestId, "dev")).thenReturn(java.util.Optional.of(captured));
+    assertThat(readback.readCommittedCreation(captured)).isEqualTo(captured);
+
+    var changed =
+        new net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence(
+            1,
+            "dev",
+            requestId,
+            operationId,
+            requestDigest,
+            tenantId,
+            18L,
+            "1",
+            "NEW_GAME_ROW",
+            net.firedevops.firemud.common.tenant.GameTenantCreationDigest.evidenceDigest(
+                "dev", requestId, operationId, requestDigest, tenantId, 18L, "1", "NEW_GAME_ROW"));
+    when(creationRepository.read(requestId, "dev")).thenReturn(java.util.Optional.of(changed));
+    assertThatThrownBy(() -> readback.readCommittedCreation(captured))
+        .hasMessageContaining("differs from its original operation");
+    when(creationRepository.read(requestId, "dev")).thenReturn(java.util.Optional.empty());
+    assertThatThrownBy(() -> readback.readCommittedCreation(captured))
+        .hasMessageContaining("creation receipt unavailable");
+    verify(creationRepository, org.mockito.Mockito.times(3)).read(requestId, "dev");
+    org.mockito.Mockito.verifyNoInteractions(
+        gameRepository,
+        templateRepository,
+        versionRepository,
+        versionAssetArtifactRepository,
+        authoredWorldSourceRepository);
+  }
+
+  @Test
   void acceptsExpectedWorkloadUriAlongsideGeneratedDnsSans() throws Exception {
     CertificateFixture gameSession =
         certificateFixture(

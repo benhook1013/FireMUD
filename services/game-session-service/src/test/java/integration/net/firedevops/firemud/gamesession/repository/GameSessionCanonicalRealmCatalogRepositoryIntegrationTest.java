@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCa
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.CatalogConflictException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository.PreparedInitialPublicProduction;
+import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -60,7 +61,7 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     Fixture fixture = fixture(true);
     IntakeReceipt source = fixture.register(tenant(1), "new-world", "Fresh World", "NEW_GAME_ROW");
     CreateCanonicalRealmCatalogRequest request =
-        request(source, uuid(20), "public-realm-east", "Public Realm", "owner-policy-v2", "SHARED");
+        request(source, uuid(20), "public-realm-east", "Public Realm", "PRESEEDED_ONLY", "SHARED");
     String retainedNamespaceXmin =
         requiredRecord(
                 fixture.dsl,
@@ -198,7 +199,7 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
                         uuid(21),
                         "another-realm",
                         "Another Realm",
-                        "owner-mode",
+                        "PRESEEDED_ONLY",
                         "SHARED")))
         .isInstanceOf(CatalogConflictException.class)
         .hasMessageContaining("already has a public-production");
@@ -259,10 +260,9 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     Fixture fixture = fixture(false);
     IntakeReceipt source = fixture.register(tenant(2), "world-two", "World Two", "NEW_GAME_ROW");
     CreateCanonicalRealmCatalogRequest request =
-        request(source, uuid(30), "realm", "Realm", "owner-mode", "SHARED");
+        request(source, uuid(30), "realm", "Realm", "PRESEEDED_ONLY", "SHARED");
 
-    PreparedInitialPublicProduction prepared =
-        fixture.catalogRepository.prepareInitialPublicProduction(request);
+    PreparedInitialPublicProduction prepared = fixture.prepare(request);
     assertThatThrownBy(() -> fixture.catalogRepository.createInitialPublicProduction(prepared))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("active owner transaction");
@@ -284,7 +284,7 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
                 request.requestId())
             .get("xmin", String.class);
     CreateCanonicalRealmCatalogRequest changed =
-        request(source, request.requestId(), "realm", "Changed Realm", "owner-mode", "SHARED");
+        request(source, request.requestId(), "realm", "Changed Realm", "PRESEEDED_ONLY", "SHARED");
     assertThatThrownBy(() -> fixture.create(changed)).isInstanceOf(CatalogConflictException.class);
     assertThat(fixture.catalogRepository.readByRequest(NAMESPACE, request.requestId()))
         .contains(created);
@@ -308,10 +308,10 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
             true,
             true,
             "SHARED",
-            "owner-mode",
+            "PRESEEDED_ONLY",
             null,
             null);
-    assertThatThrownBy(() -> fixture.catalogRepository.prepareInitialPublicProduction(wrongSource))
+    assertThatThrownBy(() -> fixture.prepare(wrongSource))
         .isInstanceOf(InvalidCatalogEvidenceException.class)
         .hasMessageContaining("source intake is missing");
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_canonical_realm_catalog"))))
@@ -330,11 +330,10 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
             true,
             true,
             "SHARED",
-            "owner-mode",
+            "PRESEEDED_ONLY",
             null,
             null);
-    assertThatThrownBy(
-            () -> fixture.catalogRepository.prepareInitialPublicProduction(mismatchedSource))
+    assertThatThrownBy(() -> fixture.prepare(mismatchedSource))
         .isInstanceOf(InvalidCatalogEvidenceException.class)
         .hasMessageContaining("conflicts with the immutable canonical tenant source binding");
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_canonical_realm_catalog"))))
@@ -359,7 +358,8 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     assertThatThrownBy(
             () ->
                 fixture.create(
-                    request(retained, uuid(31), "retained-realm", "Realm", "owner-mode", "SHARED")))
+                    request(
+                        retained, uuid(31), "retained-realm", "Realm", "PRESEEDED_ONLY", "SHARED")))
         .isInstanceOf(InvalidCatalogEvidenceException.class)
         .hasMessageContaining("fresh Game Design");
     assertThat(
@@ -584,10 +584,12 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
 
     CanonicalRealmCatalogSnapshot first =
         fixture.create(
-            request(firstSource, uuid(40), "realm-four", "Realm Four", "owner-mode", "ISOLATED"));
+            request(
+                firstSource, uuid(40), "realm-four", "Realm Four", "PRESEEDED_ONLY", "ISOLATED"));
     CanonicalRealmCatalogSnapshot second =
         fixture.create(
-            request(secondSource, uuid(50), "realm-five", "Realm Five", "owner-mode", "ISOLATED"));
+            request(
+                secondSource, uuid(50), "realm-five", "Realm Five", "PRESEEDED_ONLY", "ISOLATED"));
 
     assertThat(first.playableStateNamespaceId()).isNotEqualTo(second.playableStateNamespaceId());
     assertThat(first.tenantSlug()).isNotEqualTo(first.worldSlug());
@@ -625,7 +627,8 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
     IntakeReceipt source =
         fixture.register(tenant(6), "concurrent-world", "Concurrent World", "NEW_GAME_ROW");
     CreateCanonicalRealmCatalogRequest request =
-        request(source, uuid(60), "concurrent-realm", "Concurrent Realm", "owner-mode", "SHARED");
+        request(
+            source, uuid(60), "concurrent-realm", "Concurrent Realm", "PRESEEDED_ONLY", "SHARED");
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -668,11 +671,9 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
             uuid(71),
             "association-first-realm",
             "Association First Realm",
-            "owner-mode",
+            "PRESEEDED_ONLY",
             "SHARED");
-    assertThatThrownBy(
-            () ->
-                associationFirst.catalogRepository.prepareInitialPublicProduction(afterAssociation))
+    assertThatThrownBy(() -> associationFirst.prepare(afterAssociation))
         .isInstanceOf(CatalogConflictException.class)
         .hasMessageContaining("retained numeric Game Session identity");
     assertThat(
@@ -694,11 +695,12 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
                 uuid(80),
                 "catalog-first-realm",
                 "Catalog First Realm",
-                "owner-mode",
+                "PRESEEDED_ONLY",
                 "SHARED"));
     assertThatThrownBy(() -> catalogFirst.insertRetainedAssociation(catalogFirstSource, uuid(81)))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("cannot replace fresh canonical tenant namespace authority");
+        .hasStackTraceContaining(
+            "Retained tenant mapping conflicts with a Game Session owner claim");
     assertThat(
             catalogFirst.dsl.fetchCount(
                 DSL.table(DSL.name("game_session_canonical_realm_catalog"))))
@@ -868,7 +870,8 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
         transactionManager,
         transactions,
         dataSource,
-        schema);
+        schema,
+        new java.util.concurrent.ConcurrentHashMap<>());
   }
 
   private static UUID tenant(int value) {
@@ -891,7 +894,11 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
       DataSourceTransactionManager transactionManager,
       TransactionTemplate transactions,
       DriverManagerDataSource dataSource,
-      String schema) {
+      String schema,
+      java.util.Map<
+              CreateCanonicalRealmCatalogRequest,
+              net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence.PublishedSet>
+          publishedSets) {
     void migrateToLatest() {
       Flyway.configure()
           .dataSource(dataSource)
@@ -915,9 +922,67 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
       return java.util.Objects.requireNonNull(receipt);
     }
 
+    PreparedInitialPublicProduction prepare(CreateCanonicalRealmCatalogRequest request) {
+      Record sourceRow =
+          dsl.fetchOne(
+              "SELECT world_slug FROM game_session_authored_world_source_intake "
+                  + "WHERE target_namespace = ? AND operation_id = ?",
+              request.targetNamespace(),
+              request.sourceIntakeOperationId());
+      if (sourceRow == null) return catalogRepository.prepareInitialPublicProduction(request, null);
+      IntakeReceipt source =
+          sourceRepository
+              .read(
+                  request.sourceIntakeOperationId(),
+                  request.canonicalTenantId(),
+                  sourceRow.get("world_slug", String.class),
+                  request.targetNamespace())
+              .orElse(null);
+      if (source == null) return catalogRepository.prepareInitialPublicProduction(request, null);
+      boolean retained =
+          Boolean.TRUE.equals(
+              dsl.fetchSingle(
+                      "SELECT EXISTS (SELECT 1 FROM game_session_retained_tenant_association "
+                          + "WHERE target_namespace = ? AND canonical_tenant_id = ?) AS retained",
+                      request.targetNamespace(),
+                      request.canonicalTenantId())
+                  .get("retained", Boolean.class));
+      if (retained || !"NEW_GAME_ROW".equals(source.source().provenanceKind())) {
+        return catalogRepository.prepareInitialPublicProduction(request, null);
+      }
+      transactions.execute(
+          status ->
+              new GameSessionFreshTenantAssociationRepository(dsl)
+                  .associateFresh(
+                      UUID.nameUUIDFromBytes(
+                          ("gs-association/" + source.source().canonicalTenantId())
+                              .getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                      source.source().targetNamespace(),
+                      source,
+                      CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
+                          source.source())));
+      UUID versionId =
+          UUID.nameUUIDFromBytes(
+              ("controlled-version/" + source.source().canonicalTenantId())
+                  .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+      return catalogRepository.prepareInitialPublicProduction(
+          request,
+          publishedSets.computeIfAbsent(
+              request,
+              selected ->
+                  CanonicalHumanPublicationOwnerTestFixtures.publishedSet(
+                      selected,
+                      source.source(),
+                      versionId,
+                      72L,
+                      "publish-policy-" + selected.requestId(),
+                      "release-bundle:" + versionId,
+                      "generation-1",
+                      3L)));
+    }
+
     CanonicalRealmCatalogSnapshot create(CreateCanonicalRealmCatalogRequest request) {
-      PreparedInitialPublicProduction prepared =
-          catalogRepository.prepareInitialPublicProduction(request);
+      PreparedInitialPublicProduction prepared = prepare(request);
       CanonicalRealmCatalogSnapshot snapshot =
           transactions.execute(status -> catalogRepository.createInitialPublicProduction(prepared));
       return java.util.Objects.requireNonNull(snapshot);

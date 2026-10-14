@@ -13,11 +13,13 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldIntakeDigest;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
-import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.FreshTenantAssociationConflictException;
+import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.InvalidFreshTenantAssociationException;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.InvalidFreshTenantSourceException;
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -64,10 +66,13 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
     assertThat(retry).isEqualTo(first);
     assertThat(first.associationOperationId()).isEqualTo(associationOperationId);
     assertThat(first.legacyGameSessionTenantId()).isPositive();
-    assertThat(first.legacyGameSessionTenantId()).isNotEqualTo(source.source().sourceGameRowId());
     assertThat(first.sourceEvidence().requestId())
-        .isEqualTo(source.source().registrationRequestId());
+        .isEqualTo(creationEvidence(source.source()).creationRequestId());
     assertThat(first.sourceEvidence().canonicalTenantId()).isEqualTo(TENANT);
+    assertThat(first.sourceEvidence().sourceGameRowId())
+        .isEqualTo(source.source().sourceGameRowId());
+    assertThat(first.sourceEvidence().sourceGameTenantKey())
+        .isEqualTo(source.source().sourceGameTenantKey());
     assertThat(first.sourceEvidence().provenanceKind()).isEqualTo("NEW_GAME_ROW");
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_tenant_scope_reservation"))))
         .isEqualTo(1);
@@ -97,10 +102,10 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
     assertThatThrownBy(
             () -> fixture.associate(associationOperationId, NAMESPACE, changedReceipt(source)))
         .isInstanceOf(InvalidFreshTenantSourceException.class)
-        .hasMessageContaining("differs from the requested exact receipt");
+        .hasMessageContaining("Complete creation and authored-source receipts differ");
     assertThatThrownBy(
             () -> fixture.associate(associationOperationId, NAMESPACE + "-other", source))
-        .isInstanceOf(FreshTenantAssociationConflictException.class)
+        .isInstanceOf(InvalidFreshTenantSourceException.class)
         .hasMessageContaining("namespace");
 
     IntakeReceipt missing = receiptFor(uuid(607), freshSource(uuid(608), uuid(609), TENANT, 960L));
@@ -122,11 +127,10 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
     FreshGameSessionTenantAssociation committed =
         fixture.associate(associationOperationId, NAMESPACE, firstSource);
     assertThatThrownBy(() -> fixture.associate(associationOperationId, NAMESPACE, secondSource))
-        .isInstanceOf(FreshTenantAssociationConflictException.class)
-        .hasMessageContaining("different source or namespace");
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
     assertThatThrownBy(
             () -> fixture.associate(associationOperationId, NAMESPACE + "-other", firstSource))
-        .isInstanceOf(FreshTenantAssociationConflictException.class);
+        .isInstanceOf(InvalidFreshTenantSourceException.class);
 
     assertThat(
             Objects.requireNonNull(
@@ -200,7 +204,15 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
                 "expected retained source intake")
             .get("xmin", String.class);
 
-    assertThatThrownBy(() -> fixture.associate(uuid(622), NAMESPACE, retainedSource))
+    // A complete NEW_GAME_ROW candidate is deliberately paired with the committed retained
+    // receipt so the real GS intake reader exercises its provenance refusal before allocation.
+    assertThatThrownBy(
+            () ->
+                fixture.associate(
+                    uuid(622),
+                    NAMESPACE,
+                    retainedSource,
+                    creationEvidence(retainedSource.source(), "NEW_GAME_ROW")))
         .isInstanceOf(InvalidFreshTenantSourceException.class)
         .hasMessageContaining("NEW_GAME_ROW");
 
@@ -246,7 +258,9 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
     }
     try {
       return new Attempt(fixture.associate(associationOperationId, NAMESPACE, source), false);
-    } catch (FreshTenantAssociationConflictException conflict) {
+    } catch (InvalidFreshTenantAssociationException conflict) {
+      assertThat(conflict)
+          .hasMessageContaining("Association operation differs from its immutable original");
       return new Attempt(null, true);
     }
   }
@@ -260,6 +274,49 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
         .isZero();
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances")))).isZero();
     assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
+  }
+
+  /** Controlled upstream creation receipt; this GS owner test does not execute Game Design. */
+  private static FreshTenantCreationEvidence creationEvidence(AuthoredWorldSourceEvidence source) {
+    return creationEvidence(source, source.provenanceKind());
+  }
+
+  private static FreshTenantCreationEvidence creationEvidence(
+      AuthoredWorldSourceEvidence source, String provenanceKind) {
+    UUID request =
+        UUID.nameUUIDFromBytes(
+            ("creation-request/" + source.canonicalTenantId())
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    UUID operation =
+        UUID.nameUUIDFromBytes(
+            ("creation-operation/" + source.canonicalTenantId())
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            source.targetNamespace(),
+            request,
+            source.sourceGameTenantKey(),
+            source.worldDisplayName(),
+            null);
+    return new FreshTenantCreationEvidence(
+        1,
+        source.targetNamespace(),
+        request,
+        operation,
+        requestDigest,
+        source.canonicalTenantId(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey(),
+        provenanceKind,
+        GameTenantCreationDigest.evidenceDigest(
+            source.targetNamespace(),
+            request,
+            operation,
+            requestDigest,
+            source.canonicalTenantId(),
+            source.sourceGameRowId(),
+            source.sourceGameTenantKey(),
+            provenanceKind));
   }
 
   private static IntakeReceipt changedReceipt(IntakeReceipt receipt) {
@@ -459,13 +516,26 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
         UUID associationOperationId, String namespace, IntakeReceipt source) {
       return transactions.execute(
           status ->
-              associationRepository.associateFresh(associationOperationId, namespace, source));
+              associationRepository.associateFresh(
+                  associationOperationId, namespace, source, creationEvidence(source.source())));
     }
 
     FreshGameSessionTenantAssociation associate(
         UUID associationOperationId, String namespace, IntakeReceipt source) {
+      return associate(
+          associationOperationId, namespace, source, creationEvidence(source.source()));
+    }
+
+    FreshGameSessionTenantAssociation associate(
+        UUID associationOperationId,
+        String namespace,
+        IntakeReceipt source,
+        FreshTenantCreationEvidence creationEvidence) {
       return Objects.requireNonNull(
-          associateFresh(associationOperationId, namespace, source),
+          transactions.execute(
+              status ->
+                  associationRepository.associateFresh(
+                      associationOperationId, namespace, source, creationEvidence)),
           "fresh tenant association result");
     }
   }

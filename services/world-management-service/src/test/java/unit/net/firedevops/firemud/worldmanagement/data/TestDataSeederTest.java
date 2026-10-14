@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -25,6 +26,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.boot.DefaultApplicationArguments;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class TestDataSeederTest {
   @Mock RegionRepository regionRepository;
@@ -105,6 +107,19 @@ class TestDataSeederTest {
     assertEquals(2045L, exitCaptor.getAllValues().get(0).getToRoom().getId());
     assertEquals(2045L, exitCaptor.getAllValues().get(1).getFromRoom().getId());
     assertEquals(1021L, exitCaptor.getAllValues().get(1).getToRoom().getId());
+  }
+
+  @Test
+  void fixtureModeRefusesBeforeAnyRepositoryReadOrWrite() {
+    ReflectionTestUtils.setField(seeder, "runOwnedFixtureMode", true);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class,
+            () -> seeder.run(new DefaultApplicationArguments(new String[] {})));
+
+    assertTrue(error.getMessage().startsWith("RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE:"));
+    verifyNoInteractions(regionRepository, zoneRepository, roomRepository, roomExitRepository);
   }
 
   @Test

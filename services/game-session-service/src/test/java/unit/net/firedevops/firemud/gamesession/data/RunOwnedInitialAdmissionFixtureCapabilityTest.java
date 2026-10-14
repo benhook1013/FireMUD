@@ -23,6 +23,8 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrp
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionFixtureCapability.CertificatePins;
 import org.junit.jupiter.api.Test;
@@ -34,7 +36,11 @@ import org.mockito.stubbing.Answer;
 class RunOwnedInitialAdmissionFixtureCapabilityTest {
   private static final String RUN_ID = "compose-smoke-2939";
   private static final String PROJECT_NAME = "firemud-smoke-compose-smoke-2939";
-  private static final String OPERATION_ID = "d2db8478-9c56-42ab-99c2-9fbead6841ba";
+  private static final String CLAIM_DIGEST = "d".repeat(64);
+  private static final String OPERATION_ID =
+      RunOwnedInitialAdmissionFixtureWireCodec.fixtureOperationId(
+              CLAIM_DIGEST, RUN_ID, PROJECT_NAME, "a".repeat(64), "b".repeat(64))
+          .toString();
   private static final String SOURCE_OPERATION_ID = "3f773701-e812-44f5-8ae0-7268d543beed";
   private static final String LEAF_SHA = "a".repeat(64);
   private static final String WORLD_LEAF_SHA = "c".repeat(64);
@@ -52,6 +58,16 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertThat(capability.runId()).isEqualTo(RUN_ID);
     assertThat(capability.composeProjectName()).isEqualTo(PROJECT_NAME);
     assertThat(capability.operationId()).isEqualTo(OPERATION_ID);
+    assertThat(capability.claimDigest()).isEqualTo(CLAIM_DIGEST);
+    assertThat(capability.operationId())
+        .isEqualTo(
+            RunOwnedInitialAdmissionFixtureWireCodec.fixtureOperationId(
+                    capability.claimDigest(),
+                    capability.runId(),
+                    capability.composeProjectName(),
+                    capability.gameSessionLeafSha256(),
+                    capability.caCertificateSha256())
+                .toString());
     assertThat(capability.tenantId()).isEqualTo(7L);
     assertThat(capability.gameTemplateId()).isEqualTo(17L);
     assertThat(capability.ownerAccountId()).isEqualTo(27L);
@@ -127,10 +143,13 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertThat(receipt.ownerService())
         .isEqualTo(RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_OWNER_SERVICE);
     assertThat(receipt.sourceEvidence()).isEqualTo(sourceEvidence());
+    assertThat(receipt.creationEvidence()).isEqualTo(creationEvidence(sourceEvidence()));
+    assertThat(receipt.fixturePolicySeal().operationId()).isEqualTo(UUID.fromString(OPERATION_ID));
+    assertThat(receipt.fixturePolicySeal().requestDigest()).matches("sha256:[0-9a-f]{64}");
     assertThat(receipt.sourceEvidence().registrationRequestId())
         .isEqualTo(UUID.fromString(OPERATION_ID));
     assertThat(receipt.sourceEvidence().operationId())
-        .isNotEqualTo(receipt.sourceEvidence().registrationRequestId());
+        .isEqualTo(UUID.fromString(SOURCE_OPERATION_ID));
     assertThat(receipt.launchReadEvidence().schema())
         .isEqualTo(RunOwnedInitialAdmissionLaunchEvidence.SCHEMA);
     assertThat(receipt.launchReadEvidence().gameTemplateId()).isEqualTo(17L);
@@ -526,6 +545,8 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
       net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState artifactState,
       net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState,
       LaunchDescriptor descriptor) {
+    FreshTenantCreationEvidence creation = creationEvidence(source);
+    var seal = fixturePolicySeal(source, bundle, artifactState, versionState, descriptor, creation);
     String sourceJson =
         """
         {%n\
@@ -558,6 +579,31 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
                 source.sourceGameTenantKey(),
                 source.provenanceKind(),
                 source.evidenceDigest());
+    String creationJson =
+        """
+        {"schemaVersion":%d,"targetNamespace":"%s","creationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"}%n\
+        """
+            .formatted(
+                creation.schemaVersion(),
+                creation.targetNamespace(),
+                creation.creationRequestId(),
+                creation.operationId(),
+                creation.requestDigest(),
+                creation.canonicalTenantId(),
+                creation.sourceGameRowId(),
+                creation.sourceGameTenantKey(),
+                creation.provenanceKind(),
+                creation.evidenceDigest());
+    String sealJson =
+        """
+        {"schema":"%s","ownerService":"%s","operationId":"%s","requestDigest":"%s","evidenceDigest":"%s"}%n\
+        """
+            .formatted(
+                seal.schema(),
+                seal.ownerService(),
+                seal.operationId(),
+                seal.requestDigest(),
+                seal.evidenceDigest());
     return """
         {%n\
           "schema": "%s",%n\
@@ -571,7 +617,9 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
           "worldManagementUriSan": "%s",%n\
           "worldManagementLeafSha256": "%s",%n\
           "sourceEvidence": %s,%n\
-          "launchReadEvidence": %s%n\
+          "launchReadEvidence": %s,%n\
+          "creationEvidence": %s,%n\
+          "fixturePolicySeal": %s%n\
         }%n\
         """
         .formatted(
@@ -586,7 +634,92 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
             RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN,
             WORLD_LEAF_SHA,
             sourceJson,
-            launchReadEvidenceJson(source, bundle, artifactState, versionState, descriptor));
+            launchReadEvidenceJson(source, bundle, artifactState, versionState, descriptor),
+            creationJson,
+            sealJson);
+  }
+
+  private static FreshTenantCreationEvidence creationEvidence(AuthoredWorldSourceEvidence source) {
+    UUID creationRequestId = UUID.fromString("e1757a48-21ac-4c09-8a8a-f65c397b0c01");
+    UUID operationId = UUID.fromString("605221c7-5a99-4e8e-bef1-56cfac690c53");
+    String sourceGameTenantKey = source.sourceGameTenantKey();
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            source.targetNamespace(),
+            creationRequestId,
+            sourceGameTenantKey,
+            source.worldDisplayName(),
+            null);
+    return new FreshTenantCreationEvidence(
+        1,
+        source.targetNamespace(),
+        creationRequestId,
+        operationId,
+        requestDigest,
+        source.canonicalTenantId(),
+        source.sourceGameRowId(),
+        sourceGameTenantKey,
+        source.provenanceKind(),
+        GameTenantCreationDigest.evidenceDigest(
+            source.targetNamespace(),
+            creationRequestId,
+            operationId,
+            requestDigest,
+            source.canonicalTenantId(),
+            source.sourceGameRowId(),
+            sourceGameTenantKey,
+            source.provenanceKind()));
+  }
+
+  private static RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal fixturePolicySeal(
+      AuthoredWorldSourceEvidence source,
+      net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle bundle,
+      net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState artifactState,
+      net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot versionState,
+      LaunchDescriptor descriptor,
+      FreshTenantCreationEvidence creation) {
+    var capability =
+        RunOwnedInitialAdmissionFixtureWireCodec.parseCapability(
+            validJson().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    var launchReadEvidence =
+        new RunOwnedInitialAdmissionFixtureWireCodec.LaunchReadEvidence(
+            RunOwnedInitialAdmissionFixtureWireCodec.LAUNCH_READ_EVIDENCE_SCHEMA,
+            capability.gameTemplateId(),
+            bundle,
+            artifactState,
+            versionState,
+            descriptor);
+    String requestDigest;
+    try {
+      requestDigest =
+          RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestDigest(
+              capability, creation, source, launchReadEvidence);
+    } catch (IllegalArgumentException invalidNegativeTestEvidence) {
+      AuthoredWorldSourceEvidence validSource = sourceEvidence();
+      var validBundle = launchBundle();
+      var validArtifactState = launchArtifactState();
+      var validVersionState = launchVersionState();
+      var validCreation = creationEvidence(validSource);
+      var validLaunchReadEvidence =
+          new RunOwnedInitialAdmissionFixtureWireCodec.LaunchReadEvidence(
+              RunOwnedInitialAdmissionFixtureWireCodec.LAUNCH_READ_EVIDENCE_SCHEMA,
+              capability.gameTemplateId(),
+              validBundle,
+              validArtifactState,
+              validVersionState,
+              launchDescriptor(validSource, validBundle, validVersionState));
+      requestDigest =
+          RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestDigest(
+              capability, validCreation, validSource, validLaunchReadEvidence);
+    }
+    UUID fixtureOperationId = UUID.fromString(capability.operationId());
+    return new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal(
+        RunOwnedInitialAdmissionFixtureWireCodec.FIXTURE_POLICY_SEAL_SCHEMA,
+        RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_OWNER_SERVICE,
+        fixtureOperationId,
+        requestDigest,
+        RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+            fixtureOperationId, requestDigest));
   }
 
   private static String validLaunchReadEvidenceJson() {
@@ -759,7 +892,8 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
           "gameSessionUriSan": "%s",%n\
           "caCertificateSha256": "%s",%n\
           "worldManagementUriSan": "%s",%n\
-          "worldManagementLeafSha256": "%s"%n\
+          "worldManagementLeafSha256": "%s",%n\
+          "claimDigest": "%s"%n\
         }%n\
         """
         .formatted(
@@ -771,7 +905,8 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
             RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
             CA_SHA,
             RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN,
-            WORLD_LEAF_SHA);
+            WORLD_LEAF_SHA,
+            CLAIM_DIGEST);
   }
 
   private static X509Certificate certificate(String san, byte[] der, int basicConstraints)

@@ -3,9 +3,11 @@ package net.firedevops.firemud.worldmanagement.data;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.Objects;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
+import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 
@@ -21,6 +23,8 @@ public final class RunOwnedWorldLaunchEvidence {
   private final RunOwnedInitialAdmissionFixtureWireCodec.Capability capability;
   private final RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt sourceReceipt;
   private final AuthoredWorldLaunchDescriptorEvidence launchDescriptor;
+  private final CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult
+      gameSessionAssociation;
   private final byte[] capabilityBytes;
   private final byte[] sourceReceiptBytes;
   private final String gameSessionLeafSha256;
@@ -37,7 +41,8 @@ public final class RunOwnedWorldLaunchEvidence {
       String gameSessionLeafSha256,
       String worldManagementUriSan,
       String worldManagementLeafSha256,
-      String caCertificateSha256) {
+      String caCertificateSha256,
+      CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult gameSessionAssociation) {
     this.capability = Objects.requireNonNull(capability, "capability");
     this.sourceReceipt = Objects.requireNonNull(sourceReceipt, "sourceReceipt");
     this.launchDescriptor = Objects.requireNonNull(launchDescriptor, "launchDescriptor");
@@ -51,6 +56,8 @@ public final class RunOwnedWorldLaunchEvidence {
     this.worldManagementLeafSha256 =
         Objects.requireNonNull(worldManagementLeafSha256, "worldManagementLeafSha256");
     this.caCertificateSha256 = Objects.requireNonNull(caCertificateSha256, "caCertificateSha256");
+    this.gameSessionAssociation =
+        Objects.requireNonNull(gameSessionAssociation, "gameSessionAssociation");
   }
 
   public RunOwnedInitialAdmissionFixtureWireCodec.Capability capability() {
@@ -63,6 +70,20 @@ public final class RunOwnedWorldLaunchEvidence {
 
   public AuthoredWorldLaunchDescriptorEvidence launchDescriptor() {
     return launchDescriptor;
+  }
+
+  /** Exact authenticated allocation read from the existing Game Session launch owner. */
+  public CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult gameSessionAssociation() {
+    return gameSessionAssociation;
+  }
+
+  /** The readback identifies the private Game Session keys; it grants no World write authority. */
+  public void requireGameSessionAllocation(long tenantId, long gameInstanceId) {
+    if (tenantId != gameSessionAssociation.gameSessionTenantId()
+        || gameInstanceId != gameSessionAssociation.gameInstanceId()) {
+      throw new IllegalArgumentException(
+          "RUN_OWNED_WORLD_GAME_SESSION_ALLOCATION_MISMATCH: request differs from authenticated Game Session owner read");
+    }
   }
 
   public String gameSessionLeafSha256() {
@@ -95,7 +116,7 @@ public final class RunOwnedWorldLaunchEvidence {
             || version.getVersionState()
                 == net.firedevops.firemud.gamedesign.v1.VersionLifecycleState
                     .VERSION_LIFECYCLE_STATE_ACTIVE;
-    if (request.tenantId() != capability.tenantId()
+    if (request.tenantId() <= 0L
         || request.gameInstanceId() <= 0L
         || request.gameTemplateId() != capability.gameTemplateId()
         || !capability.operationId().equals(request.controlPlaneRequestId())
@@ -142,6 +163,53 @@ public final class RunOwnedWorldLaunchEvidence {
         || !request.controlPlaneRequestId().equals(launchDescriptor.controlPlaneRequestId())) {
       throw new IllegalArgumentException(
           "RUN_OWNED_WORLD_LAUNCH_EVIDENCE_MISMATCH: prepared request differs from committed fixture evidence");
+    }
+    requireGameSessionAllocation(request.tenantId(), request.gameInstanceId());
+    requireExactGameSessionFixtureAssociation();
+  }
+
+  private void requireExactGameSessionFixtureAssociation() {
+    var expectedPolicy =
+        new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicyRequest(
+            capability,
+            sourceReceipt.creationEvidence(),
+            sourceReceipt.sourceEvidence(),
+            sourceReceipt.launchReadEvidence());
+    byte[] expectedPolicyBytes =
+        RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestBytes(
+            capability,
+            sourceReceipt.creationEvidence(),
+            sourceReceipt.sourceEvidence(),
+            sourceReceipt.launchReadEvidence());
+    if (!gameSessionAssociation
+            .request()
+            .fixtureOperationId()
+            .toString()
+            .equals(capability.operationId())
+        || !gameSessionAssociation
+            .request()
+            .targetNamespace()
+            .equals(sourceReceipt.sourceEvidence().targetNamespace())
+        || !gameSessionAssociation
+            .request()
+            .expectedFixturePolicyEvidenceDigest()
+            .equals(sourceReceipt.fixturePolicySeal().evidenceDigest())
+        || !gameSessionAssociation.fixturePolicySeal().equals(sourceReceipt.fixturePolicySeal())
+        || !Objects.equals(gameSessionAssociation.fixturePolicyRequest(), expectedPolicy)
+        || !Arrays.equals(gameSessionAssociation.fixturePolicyRequestBytes(), expectedPolicyBytes)
+        || !gameSessionAssociation
+            .canonicalTenantId()
+            .equals(sourceReceipt.sourceEvidence().canonicalTenantId())
+        || !gameSessionAssociation
+            .canonicalVersionId()
+            .toString()
+            .equals(
+                sourceReceipt
+                    .launchReadEvidence()
+                    .publishedReleaseBundle()
+                    .getCanonicalVersionId())) {
+      throw new IllegalArgumentException(
+          "RUN_OWNED_WORLD_GAME_SESSION_FIXTURE_ASSOCIATION_MISMATCH: owner read differs from immutable fixture receipt");
     }
   }
 

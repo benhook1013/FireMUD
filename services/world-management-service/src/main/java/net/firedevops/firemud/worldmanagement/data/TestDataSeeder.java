@@ -9,6 +9,7 @@ import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -42,9 +43,16 @@ public class TestDataSeeder implements ApplicationRunner {
   private final RoomRepository roomRepository;
   private final RoomExitRepository roomExitRepository;
 
+  @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:false}")
+  private boolean runOwnedFixtureMode;
+
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
+    if (runOwnedFixtureMode) {
+      throw new IllegalStateException(
+          "RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE: fixture runtime seeding is disabled until World-owned materialization is available");
+    }
     ensureDemoTopology();
   }
 

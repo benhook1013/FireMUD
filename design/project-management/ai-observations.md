@@ -270,3 +270,8 @@ Entry format:
   - Observation: the upload consumed the matrix job's 20-minute budget, cancelling the job and making the required Validation Gate red despite passing source checks. Metadata callbacks used a separate concurrency group and did not cause this cancellation; the slow upload's underlying cause remains unknown.
   - Expected pattern: bound optional external uploads within the containing job's budget and preserve time for required proof artifacts. `continue-on-error` alone cannot protect against whole-job cancellation. Keep cancelled aggregate proof separate from successful individual checks.
   - Current status: the Codecov step is bounded to two minutes with its existing failure tolerance retained. New-head cloud validation remains required to verify the workflow outcome.
+
+- `2026-10-14`: Wait for the database-owned expiry condition in lock-race proof
+  - Context: a canonical Game Session pin test established its real PostgreSQL INSERT lock wait, then expected a finite owner lease to have expired after a fixed host sleep. The database still reported the lease live, so the intended post-expiry race was not established.
+  - Expected pattern: retain the original finite lease and exact blocker, poll the same PostgreSQL expiry predicate used by the owner within a bounded deadline, then release the lock and assert refusal without mutation. Do not change the lease, renew authority, weaken the refusal assertion or infer clock skew from the failed sleep assumption.
+  - Current status: the test now waits for the database-owned expiry condition; current physical qualification remains required.

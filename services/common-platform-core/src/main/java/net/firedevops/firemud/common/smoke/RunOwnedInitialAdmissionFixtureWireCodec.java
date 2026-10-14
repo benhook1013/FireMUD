@@ -7,15 +7,20 @@ import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
@@ -54,6 +59,11 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
   public static final String STATE_SCOPE = "SHARED";
   public static final String CHARACTER_CREATION_POLICY = "ALLOW_NEW";
 
+  public static final String FIXTURE_POLICY_SEAL_SCHEMA =
+      "firemud.run-owned-fixture-policy-seal.v1";
+  private static final UUID FIXTURE_OPERATION_NAMESPACE =
+      UUID.fromString("2b7ca687-3637-4dc4-9b12-08ec4c6a9f76");
+
   private static final int MAX_WIRE_BYTES = 16 * 1024;
   private static final Pattern SAFE_ID = Pattern.compile("[a-z0-9][a-z0-9-]{0,127}");
   private static final Pattern SHA_256 = Pattern.compile("[0-9a-f]{64}");
@@ -79,7 +89,8 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
           "gameSessionUriSan",
           "caCertificateSha256",
           "worldManagementUriSan",
-          "worldManagementLeafSha256");
+          "worldManagementLeafSha256",
+          "claimDigest");
   private static final Set<String> SOURCE_RECEIPT_FIELDS =
       Set.of(
           "schema",
@@ -93,7 +104,23 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
           "worldManagementUriSan",
           "worldManagementLeafSha256",
           "sourceEvidence",
-          "launchReadEvidence");
+          "launchReadEvidence",
+          "creationEvidence",
+          "fixturePolicySeal");
+  private static final Set<String> CREATION_EVIDENCE_FIELDS =
+      Set.of(
+          "schemaVersion",
+          "targetNamespace",
+          "creationRequestId",
+          "operationId",
+          "requestDigest",
+          "canonicalTenantId",
+          "sourceGameRowId",
+          "sourceGameTenantKey",
+          "provenanceKind",
+          "evidenceDigest");
+  private static final Set<String> FIXTURE_POLICY_SEAL_FIELDS =
+      Set.of("schema", "ownerService", "operationId", "requestDigest", "evidenceDigest");
   private static final Set<String> SOURCE_EVIDENCE_FIELDS =
       Set.of(
           "schemaVersion",
@@ -157,7 +184,8 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
             requiredText(root, "gameSessionUriSan"),
             requiredText(root, "caCertificateSha256"),
             requiredText(root, "worldManagementUriSan"),
-            requiredText(root, "worldManagementLeafSha256"));
+            requiredText(root, "worldManagementLeafSha256"),
+            requiredText(root, "claimDigest"));
     requireValidCapability(capability);
     return capability;
   }
@@ -186,6 +214,22 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
       AuthoredWorldSourceEvidence sourceEvidence = parseSourceEvidence(root.get("sourceEvidence"));
       LaunchReadEvidence launchReadEvidence =
           parseLaunchReadEvidence(root.get("launchReadEvidence"), capability, sourceEvidence);
+
+      FreshTenantCreationEvidence creationEvidence =
+          parseCreationEvidence(root.get("creationEvidence"));
+      FixturePolicySeal fixturePolicySeal = parseFixturePolicySeal(root.get("fixturePolicySeal"));
+      requireFixtureBinding(capability, creationEvidence, sourceEvidence, launchReadEvidence);
+      String policyRequestDigest =
+          fixturePolicyRequestDigest(
+              capability, creationEvidence, sourceEvidence, launchReadEvidence);
+      if (!FIXTURE_POLICY_SEAL_SCHEMA.equals(fixturePolicySeal.schema())
+          || !SOURCE_RECEIPT_OWNER_SERVICE.equals(fixturePolicySeal.ownerService())
+          || !UUID.fromString(capability.operationId()).equals(fixturePolicySeal.operationId())
+          || !policyRequestDigest.equals(fixturePolicySeal.requestDigest())
+          || !fixturePolicyEvidenceDigest(fixturePolicySeal.operationId(), policyRequestDigest)
+              .equals(fixturePolicySeal.evidenceDigest())) {
+        throw invalidWireData();
+      }
 
       if (!SOURCE_RECEIPT_SCHEMA.equals(schema)
           || !runId.equals(capability.runId())
@@ -217,7 +261,9 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
           worldManagementUriSan,
           worldManagementLeafSha256,
           sourceEvidence,
-          launchReadEvidence);
+          launchReadEvidence,
+          creationEvidence,
+          fixturePolicySeal);
     } catch (InvalidProtocolBufferException | RuntimeException exception) {
       if (exception instanceof InvalidWireDataException invalid) {
         throw invalid;
@@ -225,6 +271,221 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
       throw invalidWireData();
     }
   }
+
+  /** Pure existing run-owned UUIDv5 derivation; it grants no authorization. */
+  public static UUID fixtureOperationId(
+      String claimDigest,
+      String runId,
+      String projectName,
+      String gameSessionLeafSha256,
+      String caCertificateSha256) {
+    String identity =
+        String.join(
+            "\0",
+            CAPABILITY_SCHEMA,
+            claimDigest,
+            runId,
+            projectName,
+            gameSessionLeafSha256,
+            caCertificateSha256);
+    ByteBuffer namespace =
+        ByteBuffer.allocate(16)
+            .putLong(FIXTURE_OPERATION_NAMESPACE.getMostSignificantBits())
+            .putLong(FIXTURE_OPERATION_NAMESPACE.getLeastSignificantBits());
+    MessageDigest digest = newDigest("SHA-1");
+    digest.update(namespace.array());
+    byte[] value = digest.digest(identity.getBytes(StandardCharsets.UTF_8));
+    value[6] = (byte) ((value[6] & 0x0f) | 0x50);
+    value[8] = (byte) ((value[8] & 0x3f) | 0x80);
+    ByteBuffer bytes = ByteBuffer.wrap(value);
+    return new UUID(bytes.getLong(), bytes.getLong());
+  }
+
+  /** Closed ordered length-framed commitment. Parsed/encoded records are never trusted ingress. */
+  public static byte[] fixturePolicyRequestBytes(
+      Capability capability,
+      FreshTenantCreationEvidence creationEvidence,
+      AuthoredWorldSourceEvidence sourceEvidence,
+      LaunchReadEvidence launchReadEvidence) {
+    requireFixtureBinding(capability, creationEvidence, sourceEvidence, launchReadEvidence);
+    byte[][] parts = {
+      canonicalJson(capability),
+      canonicalJson(creationEvidence),
+      canonicalJson(sourceEvidence),
+      launchReadJson(launchReadEvidence)
+    };
+    int size = 0;
+    for (byte[] part : parts) size = Math.addExact(size, Math.addExact(4, part.length));
+    if (size > MAX_WIRE_BYTES) throw invalidWireData();
+    ByteBuffer output = ByteBuffer.allocate(size);
+    for (byte[] part : parts) output.putInt(part.length).put(part);
+    return output.array();
+  }
+
+  public static String fixturePolicyRequestDigest(
+      Capability capability,
+      FreshTenantCreationEvidence creationEvidence,
+      AuthoredWorldSourceEvidence sourceEvidence,
+      LaunchReadEvidence launchReadEvidence) {
+    return sha256(
+        fixturePolicyRequestBytes(
+            capability, creationEvidence, sourceEvidence, launchReadEvidence));
+  }
+
+  public static String fixturePolicyEvidenceDigest(UUID operationId, String requestDigest) {
+    if (operationId == null
+        || operationId.equals(new UUID(0L, 0L))
+        || requestDigest == null
+        || !requestDigest.matches("sha256:[0-9a-f]{64}")) throw invalidWireData();
+    byte[] schema = FIXTURE_POLICY_SEAL_SCHEMA.getBytes(StandardCharsets.UTF_8);
+    byte[] operation = operationId.toString().getBytes(StandardCharsets.UTF_8);
+    byte[] request = requestDigest.getBytes(StandardCharsets.UTF_8);
+    return sha256(
+        ByteBuffer.allocate(12 + schema.length + operation.length + request.length)
+            .putInt(schema.length)
+            .put(schema)
+            .putInt(operation.length)
+            .put(operation)
+            .putInt(request.length)
+            .put(request)
+            .array());
+  }
+
+  /** Pure retained request decoding; the owning service must independently verify its authority. */
+  public static FixturePolicyRequest parseFixturePolicyRequestBytes(byte[] bytes) {
+    if (bytes == null || bytes.length == 0 || bytes.length > MAX_WIRE_BYTES)
+      throw invalidWireData();
+    try {
+      ByteBuffer input = ByteBuffer.wrap(bytes);
+      byte[][] parts = new byte[4][];
+      for (int i = 0; i < parts.length; i++) {
+        if (input.remaining() < 4) throw invalidWireData();
+        int length = input.getInt();
+        if (length <= 0 || length > input.remaining()) throw invalidWireData();
+        parts[i] = new byte[length];
+        input.get(parts[i]);
+      }
+      if (input.hasRemaining()) throw invalidWireData();
+      Capability capability = parseCapability(parts[0]);
+      FreshTenantCreationEvidence creation = parseCreationEvidence(parseRoot(parts[1]));
+      AuthoredWorldSourceEvidence source = parseSourceEvidence(parseRoot(parts[2]));
+      LaunchReadEvidence launch = parseLaunchReadEvidence(parseRoot(parts[3]), capability, source);
+      if (!java.util.Arrays.equals(
+          bytes, fixturePolicyRequestBytes(capability, creation, source, launch)))
+        throw invalidWireData();
+      return new FixturePolicyRequest(capability, creation, source, launch);
+    } catch (InvalidProtocolBufferException | RuntimeException exception) {
+      throw invalidWireData();
+    }
+  }
+
+  private static void requireFixtureBinding(
+      Capability capability,
+      FreshTenantCreationEvidence creation,
+      AuthoredWorldSourceEvidence source,
+      LaunchReadEvidence launch) {
+    requireValidCapability(capability);
+    if (creation == null
+        || source == null
+        || launch == null
+        || !SOURCE_TARGET_NAMESPACE.equals(creation.targetNamespace())
+        || !creation.targetNamespace().equals(source.targetNamespace())
+        || !creation.canonicalTenantId().equals(source.canonicalTenantId())
+        || creation.sourceGameRowId() != source.sourceGameRowId()
+        || !creation.sourceGameTenantKey().equals(source.sourceGameTenantKey())
+        || !Long.toString(capability.tenantId()).equals(source.sourceGameTenantKey())
+        || !capability.operationId().equals(source.registrationRequestId().toString())
+        || !capability.worldSlug().equals(source.worldSlug())
+        || !capability.worldDisplayName().equals(source.worldDisplayName())
+        || !LAUNCH_READ_EVIDENCE_SCHEMA.equals(launch.schema())
+        || capability.gameTemplateId() != launch.gameTemplateId()) throw invalidWireData();
+    try {
+      // Existing full snapshot validation also applies to directly constructed wire records.
+      parseLaunchReadEvidence(parseRoot(launchReadJson(launch)), capability, source);
+    } catch (InvalidProtocolBufferException | RuntimeException exception) {
+      throw invalidWireData();
+    }
+  }
+
+  private static FreshTenantCreationEvidence parseCreationEvidence(JsonNode value) {
+    if (value == null || !value.isObject() || !hasExactFields(value, CREATION_EVIDENCE_FIELDS))
+      throw invalidWireData();
+    return new FreshTenantCreationEvidence(
+        requiredInt(value, "schemaVersion"),
+        requiredText(value, "targetNamespace"),
+        requiredUuid(value, "creationRequestId"),
+        requiredUuid(value, "operationId"),
+        requiredText(value, "requestDigest"),
+        requiredUuid(value, "canonicalTenantId"),
+        requiredPositiveLong(value, "sourceGameRowId"),
+        requiredText(value, "sourceGameTenantKey"),
+        requiredText(value, "provenanceKind"),
+        requiredText(value, "evidenceDigest"));
+  }
+
+  private static FixturePolicySeal parseFixturePolicySeal(JsonNode value) {
+    if (value == null || !value.isObject() || !hasExactFields(value, FIXTURE_POLICY_SEAL_FIELDS))
+      throw invalidWireData();
+    return new FixturePolicySeal(
+        requiredText(value, "schema"),
+        requiredText(value, "ownerService"),
+        requiredUuid(value, "operationId"),
+        requiredText(value, "requestDigest"),
+        requiredText(value, "evidenceDigest"));
+  }
+
+  private static byte[] launchReadJson(LaunchReadEvidence launch) {
+    Map<String, Object> values = new TreeMap<>();
+    values.put("schema", launch.schema());
+    values.put("gameTemplateId", launch.gameTemplateId());
+    values.put(
+        "publishedReleaseBundleBase64",
+        Base64.getEncoder().encodeToString(launch.publishedReleaseBundle().toByteArray()));
+    values.put(
+        "versionAssetArtifactStateBase64",
+        Base64.getEncoder().encodeToString(launch.versionAssetArtifactState().toByteArray()));
+    values.put(
+        "versionStateBase64",
+        Base64.getEncoder().encodeToString(launch.versionState().toByteArray()));
+    values.put(
+        "launchDescriptorBase64",
+        Base64.getEncoder().encodeToString(launch.launchDescriptor().toByteArray()));
+    return STRICT_JSON_MAPPER.writeValueAsBytes(values);
+  }
+
+  private static byte[] canonicalJson(Object record) {
+    JsonNode tree = STRICT_JSON_MAPPER.valueToTree(record);
+    Map<String, JsonNode> fields = new TreeMap<>();
+    tree.properties().forEach(field -> fields.put(field.getKey(), field.getValue()));
+    return STRICT_JSON_MAPPER.writeValueAsBytes(fields);
+  }
+
+  private static String sha256(byte[] value) {
+    return "sha256:" + HexFormat.of().formatHex(newDigest("SHA-256").digest(value));
+  }
+
+  private static MessageDigest newDigest(String algorithm) {
+    try {
+      return MessageDigest.getInstance(algorithm);
+    } catch (NoSuchAlgorithmException exception) {
+      throw new IllegalStateException(exception);
+    }
+  }
+
+  /** Pure untrusted retained fixture request projection. */
+  public record FixturePolicyRequest(
+      Capability capability,
+      FreshTenantCreationEvidence creationEvidence,
+      AuthoredWorldSourceEvidence sourceEvidence,
+      LaunchReadEvidence launchReadEvidence) {}
+
+  /** Owner seal wire data; only an independent committed owner readback establishes provenance. */
+  public record FixturePolicySeal(
+      String schema,
+      String ownerService,
+      UUID operationId,
+      String requestDigest,
+      String evidenceDigest) {}
 
   private static LaunchReadEvidence parseLaunchReadEvidence(
       JsonNode evidence, Capability capability, AuthoredWorldSourceEvidence sourceEvidence)
@@ -399,6 +660,16 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
         || !SAFE_ID.matcher(capability.runId()).matches()
         || !SAFE_ID.matcher(capability.composeProjectName()).matches()
         || !isCanonicalUuid(capability.operationId())
+        || capability.claimDigest() == null
+        || !SHA_256.matcher(capability.claimDigest()).matches()
+        || !fixtureOperationId(
+                capability.claimDigest(),
+                capability.runId(),
+                capability.composeProjectName(),
+                capability.gameSessionLeafSha256(),
+                capability.caCertificateSha256())
+            .toString()
+            .equals(capability.operationId())
         || capability.tenantId() <= 0L
         || capability.gameTemplateId() <= 0L
         || capability.ownerAccountId() <= 0L
@@ -615,7 +886,8 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
       String gameSessionUriSan,
       String caCertificateSha256,
       String worldManagementUriSan,
-      String worldManagementLeafSha256) {}
+      String worldManagementLeafSha256,
+      String claimDigest) {}
 
   /** Parsed source-receipt wire data. It is not a verified or trusted service carrier. */
   public record SourceReceipt(
@@ -630,7 +902,9 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
       String worldManagementUriSan,
       String worldManagementLeafSha256,
       AuthoredWorldSourceEvidence sourceEvidence,
-      LaunchReadEvidence launchReadEvidence) {}
+      LaunchReadEvidence launchReadEvidence,
+      FreshTenantCreationEvidence creationEvidence,
+      FixturePolicySeal fixturePolicySeal) {}
 
   /** Parsed launch projections and the actual immutable owner-issued descriptor message. */
   @SuppressFBWarnings(

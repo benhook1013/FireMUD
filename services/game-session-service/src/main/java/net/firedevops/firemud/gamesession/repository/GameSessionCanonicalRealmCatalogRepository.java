@@ -1,6 +1,9 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -9,24 +12,38 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
+import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidenceCodec;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
+import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
+import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.FreshTenantAssociation;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.Table;
 import org.jooq.impl.DSL;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Game Session-owned immutable initial realm catalog creation and exact readback.
@@ -115,6 +132,9 @@ public class GameSessionCanonicalRealmCatalogRepository {
           "Fail-fast validation is local; no overridable callback or partially initialized object escapes.")
   public GameSessionCanonicalRealmCatalogRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl, "dsl must not be null");
+    this.workloadNamespace = null;
+    this.writeTransaction = null;
+    this.readTransaction = null;
   }
 
   /**
@@ -125,6 +145,16 @@ public class GameSessionCanonicalRealmCatalogRepository {
   @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
   public PreparedInitialPublicProduction prepareInitialPublicProduction(
       CreateCanonicalRealmCatalogRequest request) {
+    Objects.requireNonNull(request, "request");
+    requireCommittedRead();
+    throw new InvalidCatalogEvidenceException(
+        "Complete immutable published policy evidence is required");
+  }
+
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public PreparedInitialPublicProduction prepareInitialPublicProduction(
+      CreateCanonicalRealmCatalogRequest request,
+      RealmPolicyPublishedEvidence.PublishedSet publishedSet) {
     Objects.requireNonNull(request, "request");
     requireCommittedRead();
     Record binding =
@@ -152,7 +182,12 @@ public class GameSessionCanonicalRealmCatalogRepository {
     requireRequestMatchesSource(request, committedSource);
     requireFreshSource(committedSource.source());
     requireNoRetainedTenantAssociation(request.targetNamespace(), request.canonicalTenantId());
-    return new PreparedInitialPublicProduction(request, committedSource);
+    byte[] policyBytes =
+        RealmPolicyPublishedEvidenceCodec.encode(
+            Objects.requireNonNull(publishedSet, "publishedSet"));
+    validateCompleteCatalogPolicy(request, committedSource, publishedSet);
+    verifyStoredFreshAssociation(committedSource.source(), request.canonicalTenantId());
+    return new PreparedInitialPublicProduction(request, committedSource, publishedSet, policyBytes);
   }
 
   /**
@@ -167,6 +202,8 @@ public class GameSessionCanonicalRealmCatalogRepository {
     requireWritableOwnerTransaction();
 
     IntakeReceipt sourceReceipt = lockAndReadFreshSource(request);
+    validatePreparedPolicy(request, sourceReceipt, prepared.policyEvidence);
+    verifyStoredFreshAssociation(sourceReceipt.source(), request.canonicalTenantId());
     if (!prepared.committedSource().equals(sourceReceipt)) {
       throw new InvalidCatalogEvidenceException(
           "Committed authored-world evidence changed before canonical catalog creation");
@@ -177,7 +214,8 @@ public class GameSessionCanonicalRealmCatalogRepository {
     dsl.execute("LOCK TABLE gameplay_tenant_shared_playable_state_namespace IN ROW EXCLUSIVE MODE");
     requireNoRetainedTenantAssociation(request.targetNamespace(), request.canonicalTenantId());
 
-    String requestDigest = requestDigest(request, sourceReceipt);
+    String requestDigest =
+        completeCatalogRequestDigest(requestDigest(request, sourceReceipt), prepared.policyBytes);
     Record existing = findByRequest(request.targetNamespace(), request.requestId());
     if (existing != null) {
       return requireExactRetry(existing, request, sourceReceipt, requestDigest);
@@ -234,6 +272,27 @@ public class GameSessionCanonicalRealmCatalogRepository {
             .set(SOURCE_GAME_TENANT_KEY, sourceReceipt.source().sourceGameTenantKey())
             .set(SOURCE_PROVENANCE_KIND, sourceReceipt.source().provenanceKind())
             .set(SOURCE_EVIDENCE_DIGEST, sourceReceipt.source().evidenceDigest())
+            .set(
+                DSL.field(DSL.name("complete_policy_set_evidence"), byte[].class),
+                prepared.policyEvidence instanceof HumanPolicy ? prepared.policyBytes : null)
+            .set(
+                DSL.field(DSL.name("fixture_policy_request_bytes"), byte[].class),
+                prepared.policyEvidence instanceof FixturePolicy ? prepared.policyBytes : null)
+            .set(
+                DSL.field(DSL.name("fixture_policy_seal_operation_id"), UUID.class),
+                prepared.policyEvidence instanceof FixturePolicy fixture
+                    ? fixture.evidence().fixturePolicySeal().operationId()
+                    : null)
+            .set(
+                DSL.field(DSL.name("fixture_policy_seal_request_digest"), String.class),
+                prepared.policyEvidence instanceof FixturePolicy fixture
+                    ? fixture.evidence().fixturePolicySeal().requestDigest()
+                    : null)
+            .set(
+                DSL.field(DSL.name("fixture_policy_seal_evidence_digest"), String.class),
+                prepared.policyEvidence instanceof FixturePolicy fixture
+                    ? fixture.evidence().fixturePolicySeal().evidenceDigest()
+                    : null)
             .onConflictDoNothing()
             .execute();
 
@@ -654,6 +713,34 @@ public class GameSessionCanonicalRealmCatalogRepository {
               stateScope,
               characterCreationPolicy,
               sourceReceipt);
+      CreateCanonicalRealmCatalogRequest storedRequest =
+          new CreateCanonicalRealmCatalogRequest(
+              requestId,
+              targetNamespace,
+              canonicalTenantId,
+              sourceIntakeOperationId,
+              realmSlug,
+              realmDisplayName,
+              visible,
+              publicProduction,
+              stateScope,
+              characterCreationPolicy,
+              null,
+              null);
+      byte[] policyBytes = record.get("complete_policy_set_evidence", byte[].class);
+      byte[] fixtureBytes = record.get("fixture_policy_request_bytes", byte[].class);
+      if (policyBytes != null && fixtureBytes == null) {
+        validateCompleteCatalogPolicy(
+            storedRequest, sourceReceipt, RealmPolicyPublishedEvidenceCodec.decode(policyBytes));
+      } else if (policyBytes == null && fixtureBytes != null) {
+        validateRetainedFixturePolicy(record, storedRequest, sourceReceipt, fixtureBytes);
+        policyBytes = fixtureBytes;
+      } else {
+        throw new InvalidCatalogEvidenceException(
+            "Exactly one complete catalog policy provenance required");
+      }
+      verifyStoredFreshAssociation(sourceReceipt.source(), canonicalTenantId);
+      expectedRequestDigest = completeCatalogRequestDigest(expectedRequestDigest, policyBytes);
       String persistedRequestDigest = required(record, REQUEST_DIGEST, "catalog request digest");
       UUID realmId = required(record, REALM_ID, "catalog realm id");
       UUID namespaceId =
@@ -1112,11 +1199,26 @@ public class GameSessionCanonicalRealmCatalogRepository {
   public static final class PreparedInitialPublicProduction {
     private final CreateCanonicalRealmCatalogRequest request;
     private final IntakeReceipt committedSource;
+    private final PolicyEvidence policyEvidence;
+    private final byte[] policyBytes;
 
     private PreparedInitialPublicProduction(
-        CreateCanonicalRealmCatalogRequest request, IntakeReceipt committedSource) {
+        CreateCanonicalRealmCatalogRequest request,
+        IntakeReceipt committedSource,
+        RealmPolicyPublishedEvidence.PublishedSet publishedSet,
+        byte[] policyBytes) {
+      this(request, committedSource, new HumanPolicy(publishedSet), policyBytes);
+    }
+
+    private PreparedInitialPublicProduction(
+        CreateCanonicalRealmCatalogRequest request,
+        IntakeReceipt committedSource,
+        PolicyEvidence policyEvidence,
+        byte[] policyBytes) {
       this.request = Objects.requireNonNull(request, "request");
       this.committedSource = Objects.requireNonNull(committedSource, "committedSource");
+      this.policyEvidence = Objects.requireNonNull(policyEvidence, "policyEvidence");
+      this.policyBytes = policyBytes.clone();
     }
 
     private CreateCanonicalRealmCatalogRequest request() {
@@ -1140,6 +1242,489 @@ public class GameSessionCanonicalRealmCatalogRepository {
     }
 
     public InvalidCatalogEvidenceException(String message, Throwable cause) {
+      super(message, cause);
+    }
+  }
+
+  private sealed interface PolicyEvidence permits HumanPolicy, FixturePolicy {}
+
+  private record HumanPolicy(RealmPolicyPublishedEvidence.PublishedSet publishedSet)
+      implements PolicyEvidence {
+    private HumanPolicy {
+      Objects.requireNonNull(publishedSet);
+    }
+  }
+
+  private record FixturePolicy(RunOwnedInitialAdmissionLaunchEvidence evidence)
+      implements PolicyEvidence {
+    private FixturePolicy {
+      evidence.requireVerifiedFixture();
+    }
+  }
+
+  private void validatePreparedPolicy(
+      CreateCanonicalRealmCatalogRequest request, IntakeReceipt source, PolicyEvidence evidence) {
+    switch (evidence) {
+      case HumanPolicy human ->
+          validateCompleteCatalogPolicy(request, source, human.publishedSet());
+      case FixturePolicy fixture -> {
+        fixture.evidence().requireVerifiedFixture();
+        if (!source.source().equals(fixture.evidence().sourceEvidence())) {
+          throw new InvalidCatalogEvidenceException("Fixture authored-source receipt changed");
+        }
+        validateFixtureCatalogFacts(
+            request, source.source(), fixture.evidence().fixtureCapability());
+      }
+    }
+  }
+
+  private static void validateFixtureCatalogFacts(
+      CreateCanonicalRealmCatalogRequest request,
+      AuthoredWorldSourceEvidence source,
+      RunOwnedInitialAdmissionFixtureWireCodec.Capability capability) {
+    if (!request.targetNamespace().equals(source.targetNamespace())
+        || !request.canonicalTenantId().equals(source.canonicalTenantId())
+        || !request.realmSlug().equals(capability.realmSlug())
+        || !request.realmDisplayName().equals(capability.realmDisplayName())
+        || request.visible() != capability.visible()
+        || request.publicProduction() != capability.publicProductionRealm()
+        || !request.stateScope().equals(capability.stateScope())
+        || !request.characterCreationPolicy().equals(capability.characterCreationPolicy())
+        || !source.worldSlug().equals(capability.worldSlug())
+        || !source.worldDisplayName().equals(capability.worldDisplayName())
+        || !source.sourceGameTenantKey().equals(Long.toString(capability.tenantId()))) {
+      throw new InvalidCatalogEvidenceException(
+          "Catalog differs from exact sealed fixture policy/source");
+    }
+  }
+
+  private void validateRetainedFixturePolicy(
+      Record row,
+      CreateCanonicalRealmCatalogRequest request,
+      IntakeReceipt source,
+      byte[] requestBytes) {
+    var retained =
+        RunOwnedInitialAdmissionFixtureWireCodec.parseFixturePolicyRequestBytes(requestBytes);
+    if (!Arrays.equals(
+            requestBytes,
+            RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestBytes(
+                retained.capability(),
+                retained.creationEvidence(),
+                retained.sourceEvidence(),
+                retained.launchReadEvidence()))
+        || !source.source().equals(retained.sourceEvidence())
+        || !verifyStoredFreshAssociation(source.source(), request.canonicalTenantId())
+            .sourceEvidence()
+            .equals(retained.creationEvidence())) {
+      throw new InvalidCatalogEvidenceException(
+          "Stored fixture policy differs from exact source/creation bytes");
+    }
+    validateFixtureCatalogFacts(request, source.source(), retained.capability());
+    String digest =
+        RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestDigest(
+            retained.capability(),
+            retained.creationEvidence(),
+            retained.sourceEvidence(),
+            retained.launchReadEvidence());
+    UUID sealOperation = required(row, "fixture_policy_seal_operation_id", UUID.class);
+    if (!UUID.fromString(retained.capability().operationId()).equals(sealOperation)
+        || !digest.equals(required(row, "fixture_policy_seal_request_digest", String.class))
+        || !RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+                sealOperation, digest)
+            .equals(required(row, "fixture_policy_seal_evidence_digest", String.class))) {
+      throw new InvalidCatalogEvidenceException(
+          "Stored fixture policy seal failed independent exact readback");
+    }
+  }
+
+  /** Retains the trusted fixture policy in this catalog owner; it grants no Human authority. */
+  public FixtureCanonicalRealmCatalog establishVerifiedFixtureRealm(
+      RunOwnedInitialAdmissionLaunchEvidence evidence) {
+    requireNoActiveOwnerTransaction();
+    evidence.requireVerifiedFixture();
+    if (!workloadNamespace.equals(evidence.sourceEvidence().targetNamespace())) {
+      throw new InvalidCatalogEvidenceException(
+          "Fixture source differs from configured owner namespace");
+    }
+    CanonicalRealmCatalogSnapshot committed =
+        writeTransaction.execute(
+            status -> {
+              FreshTenantAssociation association =
+                  new GameSessionFreshTenantAssociationRepository(dsl)
+                      .associateVerifiedFixtureInOwnerTransaction(evidence);
+              UUID requestId = UUID.fromString(evidence.fixtureCapability().operationId());
+              IntakeReceipt intake =
+                  new GameSessionAuthoredWorldSourceRepository(dsl)
+                      .register(requestId, evidence.sourceEvidence());
+              var cap = evidence.fixtureCapability();
+              var request =
+                  new CreateCanonicalRealmCatalogRequest(
+                      requestId,
+                      workloadNamespace,
+                      association.canonicalTenantId(),
+                      intake.operationId(),
+                      cap.realmSlug(),
+                      cap.realmDisplayName(),
+                      cap.visible(),
+                      cap.publicProductionRealm(),
+                      cap.stateScope(),
+                      cap.characterCreationPolicy(),
+                      null,
+                      null);
+              return createInitialPublicProduction(
+                  new PreparedInitialPublicProduction(
+                      request,
+                      intake,
+                      new FixturePolicy(evidence),
+                      evidence.fixturePolicyRequestBytes()));
+            });
+    Objects.requireNonNull(committed, "Fixture catalog owner returned no committed result");
+    return readVerifiedFixtureRealm(evidence);
+  }
+
+  public FixtureCanonicalRealmCatalog readVerifiedFixtureRealm(
+      RunOwnedInitialAdmissionLaunchEvidence evidence) {
+    requireNoActiveOwnerTransaction();
+    evidence.requireVerifiedFixture();
+    FixtureCanonicalRealmCatalog readback =
+        readTransaction.execute(status -> readVerifiedFixtureRealmInOwnerTransaction(evidence));
+    return Objects.requireNonNull(readback, "Fixture catalog owner read returned no result");
+  }
+
+  FixtureCanonicalRealmCatalog readVerifiedFixtureRealmInOwnerTransaction(
+      RunOwnedInitialAdmissionLaunchEvidence evidence) {
+    requireOwnerTransaction();
+    evidence.requireVerifiedFixture();
+    Record row =
+        findPublicForTenant(workloadNamespace, evidence.sourceEvidence().canonicalTenantId());
+    if (row == null
+        || row.get("complete_policy_set_evidence", byte[].class) != null
+        || !Arrays.equals(
+            evidence.fixturePolicyRequestBytes(),
+            row.get("fixture_policy_request_bytes", byte[].class))
+        || !evidence
+            .fixturePolicySeal()
+            .operationId()
+            .equals(row.get("fixture_policy_seal_operation_id", UUID.class))
+        || !evidence
+            .fixturePolicySeal()
+            .requestDigest()
+            .equals(row.get("fixture_policy_seal_request_digest", String.class))
+        || !evidence
+            .fixturePolicySeal()
+            .evidenceDigest()
+            .equals(row.get("fixture_policy_seal_evidence_digest", String.class))) {
+      throw new InvalidCatalogEvidenceException(
+          "Exact retained fixture policy is unavailable or changed");
+    }
+    CanonicalRealmCatalogSnapshot snapshot = toSnapshot(row);
+    FreshTenantAssociation association =
+        verifyStoredFreshAssociation(evidence.sourceEvidence(), snapshot.tenantId());
+    if (!snapshot.sourceIntakeReceipt().source().equals(evidence.sourceEvidence())
+        || !association.sourceEvidence().equals(evidence.creationEvidence())) {
+      throw new InvalidCatalogEvidenceException(
+          "Retained fixture catalog source or creation changed");
+    }
+    return new FixtureCanonicalRealmCatalog(snapshot, association);
+  }
+
+  public record FixtureCanonicalRealmCatalog(
+      CanonicalRealmCatalogSnapshot snapshot, FreshTenantAssociation association) {
+    public FixtureCanonicalRealmCatalog {
+      Objects.requireNonNull(snapshot);
+      Objects.requireNonNull(association);
+      if (!snapshot.tenantId().equals(association.canonicalTenantId())) {
+        throw new IllegalArgumentException("Fixture catalog differs from owner tenant association");
+      }
+    }
+  }
+
+  private void validateCompleteCatalogPolicy(
+      CreateCanonicalRealmCatalogRequest request,
+      IntakeReceipt sourceReceipt,
+      RealmPolicyPublishedEvidence.PublishedSet publishedSet) {
+    SelectedPolicy selected = selectPolicy(sourceReceipt.source(), publishedSet);
+    RealmEntryPolicy policy = selected.policy();
+    if (!request.realmSlug().equals(policy.realmSlug())
+        || !request.realmDisplayName().equals(policy.realmDisplayName())
+        || request.visible() != policy.visible()
+        || request.publicProduction() != policy.publicProduction()
+        || !request.stateScope().equals(policy.stateScope().name())
+        || !request.characterCreationPolicy().equals(policy.entryPolicy().name())) {
+      throw new InvalidCatalogEvidenceException(
+          "Catalog intent differs from its complete immutable owner policy");
+    }
+  }
+
+  private static String completeCatalogRequestDigest(String requestDigest, byte[] policyBytes) {
+    return digest(
+        "game-session-complete-catalog-request/v1",
+        requestDigest,
+        HexFormat.of().formatHex(policyBytes));
+  }
+
+  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final Set<String> CREATION_EVIDENCE_FIELDS =
+      Set.of(
+          "schemaVersion",
+          "targetNamespace",
+          "creationRequestId",
+          "operationId",
+          "requestDigest",
+          "canonicalTenantId",
+          "sourceGameRowId",
+          "sourceGameTenantKey",
+          "provenanceKind",
+          "evidenceDigest");
+
+  private final String workloadNamespace;
+  private final TransactionTemplate writeTransaction;
+  private final TransactionTemplate readTransaction;
+
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "The managed DSL, transaction owner, and required namespace are validated locally; no reference escapes, no overridable callback runs, and the type has no finalizer.")
+  public GameSessionCanonicalRealmCatalogRepository(
+      DSLContext dsl, PlatformTransactionManager transactionManager, String workloadNamespace) {
+    this.dsl = Objects.requireNonNull(dsl, "dsl");
+    Objects.requireNonNull(transactionManager, "transactionManager");
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
+      throw new IllegalArgumentException("Game Session workload namespace is missing or invalid");
+    }
+    this.workloadNamespace = workloadNamespace;
+    this.writeTransaction = new TransactionTemplate(transactionManager);
+    this.writeTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    this.readTransaction = new TransactionTemplate(transactionManager);
+    this.readTransaction.setReadOnly(true);
+    this.readTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_REPEATABLE_READ);
+    this.readTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+  }
+
+  private FreshTenantAssociation verifyStoredFreshAssociation(
+      AuthoredWorldSourceEvidence source, UUID canonicalTenantId) {
+    Record row =
+        dsl.fetchOne(
+            "SELECT fresh.target_namespace, fresh.association_request_id,"
+                + " fresh.source_schema_version, fresh.source_target_namespace,"
+                + " fresh.source_request_id, fresh.source_canonical_tenant_id,"
+                + " fresh.canonical_tenant_id, fresh.legacy_game_session_tenant_id,"
+                + " fresh.source_game_row_id, fresh.source_game_tenant_key, fresh.provenance_kind,"
+                + " fresh.association_kind, fresh.association_operation_id,"
+                + " fresh.complete_source_evidence::text AS complete_source_evidence,"
+                + " claim.target_namespace AS claim_namespace,"
+                + " claim.canonical_tenant_id AS claim_canonical_tenant_id,"
+                + " claim.legacy_game_session_tenant_id AS claim_tenant_id,"
+                + " claim.association_kind AS claim_kind,"
+                + " claim.reservation_kind AS claim_reservation_kind,"
+                + " claim.association_operation_id AS claim_operation_id,"
+                + " claim.association_request_id AS claim_request_id,"
+                + " reservation.reservation_kind AS reservation_kind"
+                + " FROM game_session_fresh_tenant_association fresh"
+                + " LEFT JOIN game_session_tenant_canonical_claim claim"
+                + " ON claim.target_namespace = fresh.target_namespace"
+                + " AND claim.canonical_tenant_id = fresh.canonical_tenant_id"
+                + " LEFT JOIN game_session_tenant_scope_reservation reservation"
+                + " ON reservation.game_session_tenant_id = fresh.legacy_game_session_tenant_id"
+                + " WHERE fresh.target_namespace = ? AND fresh.canonical_tenant_id = ?",
+            source.targetNamespace(),
+            canonicalTenantId);
+    if (row == null) {
+      throw new InvalidCanonicalRealmCatalogException(
+          "Fresh canonical realm requires an existing complete Game Session tenant association");
+    }
+    try {
+      String requestIdText = required(row, "association_request_id", UUID.class).toString();
+      UUID associationOperationId = required(row, "association_operation_id", UUID.class);
+      UUID tenantId = required(row, "canonical_tenant_id", UUID.class);
+      long numericTenantId = required(row, "legacy_game_session_tenant_id", Long.class);
+      FreshTenantCreationEvidence creation =
+          parseCreationEvidence(required(row, "complete_source_evidence", String.class));
+      if (!source.targetNamespace().equals(required(row, "target_namespace", String.class))
+          || !source
+              .targetNamespace()
+              .equals(required(row, "source_target_namespace", String.class))
+          || !requestIdText.equals(required(row, "source_request_id", UUID.class).toString())
+          || !tenantId.equals(required(row, "source_canonical_tenant_id", UUID.class))
+          || required(row, "source_schema_version", Integer.class) != creation.schemaVersion()
+          || required(row, "source_game_row_id", Long.class) != creation.sourceGameRowId()
+          || !required(row, "source_game_tenant_key", String.class)
+              .equals(creation.sourceGameTenantKey())
+          || !required(row, "provenance_kind", String.class).equals(creation.provenanceKind())
+          || !"FRESH_SOURCE_BOUND".equals(required(row, "association_kind", String.class))
+          || !creation.targetNamespace().equals(source.targetNamespace())
+          || !creation
+              .creationRequestId()
+              .equals(required(row, "association_request_id", UUID.class))
+          || !creation.canonicalTenantId().equals(tenantId)
+          || !creation.targetNamespace().equals(source.targetNamespace())
+          || !creation.canonicalTenantId().equals(source.canonicalTenantId())
+          || creation.sourceGameRowId() != source.sourceGameRowId()
+          || !creation.sourceGameTenantKey().equals(source.sourceGameTenantKey())
+          || !creation.provenanceKind().equals(source.provenanceKind())
+          || !"FRESH_SOURCE_BOUND".equals(required(row, "claim_kind", String.class))
+          || !"FRESH_SOURCE_BOUND".equals(required(row, "claim_reservation_kind", String.class))
+          || !"FRESH_SOURCE_BOUND".equals(required(row, "reservation_kind", String.class))
+          || !source.targetNamespace().equals(required(row, "claim_namespace", String.class))
+          || !tenantId.equals(required(row, "claim_canonical_tenant_id", UUID.class))
+          || numericTenantId != required(row, "claim_tenant_id", Long.class)
+          || !associationOperationId.equals(required(row, "claim_operation_id", UUID.class))
+          || !required(row, "association_request_id", UUID.class)
+              .equals(required(row, "claim_request_id", UUID.class))
+          || associationOperationId.equals(creation.operationId())) {
+        throw new InvalidCanonicalRealmCatalogException(
+            "Stored fresh tenant association differs from complete source receipt or canonical claim");
+      }
+      return new FreshTenantAssociation(
+          source.targetNamespace(), tenantId, numericTenantId, associationOperationId, creation);
+    } catch (IllegalArgumentException invalid) {
+      throw new InvalidCanonicalRealmCatalogException(
+          "Stored fresh tenant association contains invalid complete source evidence", invalid);
+    }
+  }
+
+  private static SelectedPolicy selectPolicy(
+      AuthoredWorldSourceEvidence source, RealmPolicyPublishedEvidence.PublishedSet publishedSet) {
+    GameDesignPublicationOperationBinding publicationOperation =
+        GameDesignPublicationOperationBinding.fromStored(publishedSet.operationBytes());
+    if (!publishedSet.target().canonicalTenantId().equals(source.canonicalTenantId())
+        || publishedSet.target().sourceGameRowId() != source.sourceGameRowId()
+        || !publishedSet.target().sourceGameTenantKey().equals(source.sourceGameTenantKey())
+        || !publishedSet.target().sourceProvenanceKind().equals(source.provenanceKind())
+        || !publicationOperation
+            .world()
+            .request()
+            .targetNamespace()
+            .equals(source.targetNamespace())
+        || !"NEW_GAME_ROW".equals(publishedSet.target().sourceProvenanceKind())) {
+      throw new InvalidCanonicalRealmCatalogException(
+          "Published policy target or operation namespace differs from exact fresh authored-world source identity");
+    }
+    List<RealmPolicyPublishedEvidence.Policy> publicPolicies =
+        publishedSet.policies().stream()
+            .filter(
+                policy ->
+                    policy.source().policy().visible()
+                        && policy.source().policy().publicProduction())
+            .toList();
+    if (publishedSet.policyCount() != publishedSet.policies().size()
+        || publicPolicies.size() != 1) {
+      throw new InvalidCanonicalRealmCatalogException(
+          "Exactly one complete visible public-production policy is required");
+    }
+    RealmPolicyPublishedEvidence.Policy selected = publicPolicies.getFirst();
+    RealmEntryPolicy policy = selected.source().policy();
+    if (!source.worldSlug().equals(policy.worldSlug())
+        || !source.worldDisplayName().equals(policy.worldDisplayName())) {
+      throw new InvalidCanonicalRealmCatalogException(
+          "Public-production policy must exactly match the authored world");
+    }
+    return new SelectedPolicy(selected.policyId(), selected.policyDigest(), policy);
+  }
+
+  /** ADR0047 UTF-8 byte-length framing; every input segment has an unambiguous byte boundary. */
+  private static FreshTenantCreationEvidence parseCreationEvidence(String serializedEvidence) {
+    try {
+      JsonNode json = JSON.readTree(serializedEvidence);
+      if (json == null || !json.isObject() || json.size() != CREATION_EVIDENCE_FIELDS.size()) {
+        throw new IllegalArgumentException(
+            "Complete creation evidence must be one closed JSON object");
+      }
+      HashSet<String> fields = new HashSet<>();
+      json.fieldNames().forEachRemaining(fields::add);
+      if (!fields.equals(CREATION_EVIDENCE_FIELDS)) {
+        throw new IllegalArgumentException(
+            "Complete creation evidence has unknown or missing fields");
+      }
+      return new FreshTenantCreationEvidence(
+          requiredInt(json, "schemaVersion"),
+          requiredText(json, "targetNamespace"),
+          parseUuid(requiredText(json, "creationRequestId")),
+          parseUuid(requiredText(json, "operationId")),
+          requiredText(json, "requestDigest"),
+          parseUuid(requiredText(json, "canonicalTenantId")),
+          requiredLong(json, "sourceGameRowId"),
+          requiredText(json, "sourceGameTenantKey"),
+          requiredText(json, "provenanceKind"),
+          requiredText(json, "evidenceDigest"));
+    } catch (IOException | IllegalArgumentException invalid) {
+      throw new InvalidCanonicalRealmCatalogException(
+          "Stored complete Game Design creation evidence is invalid", invalid);
+    }
+  }
+
+  private static String requiredText(JsonNode json, String field) {
+    JsonNode value = json.get(field);
+    if (value == null || !value.isTextual()) {
+      throw new IllegalArgumentException("Complete creation evidence field must be text: " + field);
+    }
+    return value.textValue();
+  }
+
+  private static int requiredInt(JsonNode json, String field) {
+    JsonNode value = json.get(field);
+    if (value == null || !value.isIntegralNumber() || !value.canConvertToInt()) {
+      throw new IllegalArgumentException(
+          "Complete creation evidence field must be an integer: " + field);
+    }
+    return value.intValue();
+  }
+
+  private static long requiredLong(JsonNode json, String field) {
+    JsonNode value = json.get(field);
+    if (value == null || !value.isIntegralNumber() || !value.canConvertToLong()) {
+      throw new IllegalArgumentException(
+          "Complete creation evidence field must be an integer: " + field);
+    }
+    return value.longValue();
+  }
+
+  private static UUID parseUuid(String value) {
+    UUID parsed = UUID.fromString(value);
+    if (!parsed.toString().equals(value) || NIL_UUID.equals(parsed)) {
+      throw new IllegalArgumentException(
+          "Complete creation evidence UUID must be canonical and nonnil");
+    }
+    return parsed;
+  }
+
+  private static <T> T required(Record row, String field, Class<T> type) {
+    T value = row.get(field, type);
+    if (value == null) {
+      throw new InvalidCanonicalRealmCatalogException(
+          "Stored canonical realm catalog is missing required evidence: " + field);
+    }
+    return value;
+  }
+
+  private static void sourceRequireNonNil(UUID id, String label) {
+    if (id == null || NIL_UUID.equals(id)) {
+      throw new IllegalArgumentException("Canonical nonnil " + label + " is required");
+    }
+  }
+
+  private static void requireNoActiveOwnerTransaction() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Authenticated Game Design reads must complete before opening a Game Session owner transaction");
+    }
+  }
+
+  private static void requireOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Game Session canonical realm storage access requires an active owner transaction");
+    }
+  }
+
+  private record SelectedPolicy(UUID policyId, String policyDigest, RealmEntryPolicy policy) {}
+
+  public static final class InvalidCanonicalRealmCatalogException extends IllegalStateException {
+    public InvalidCanonicalRealmCatalogException(String message) {
+      super(message);
+    }
+
+    public InvalidCanonicalRealmCatalogException(String message, Throwable cause) {
       super(message, cause);
     }
   }
