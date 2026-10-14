@@ -48,6 +48,21 @@ public final class CanonicalHumanPublicationOwnerTestFixtures {
 
   private CanonicalHumanPublicationOwnerTestFixtures() {}
 
+  public static String historicalDigest(String... fields) {
+    try {
+      var hash = java.security.MessageDigest.getInstance("SHA-256");
+      for (String value : fields) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        hash.update(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
+        hash.update((byte) ':');
+        hash.update(bytes);
+      }
+      return "sha256:" + java.util.HexFormat.of().formatHex(hash.digest());
+    } catch (java.security.NoSuchAlgorithmException exception) {
+      throw new IllegalStateException(exception);
+    }
+  }
+
   private static UUID id(String value) {
     return UUID.nameUUIDFromBytes(("TEST_ONLY:" + value).getBytes(StandardCharsets.UTF_8));
   }
