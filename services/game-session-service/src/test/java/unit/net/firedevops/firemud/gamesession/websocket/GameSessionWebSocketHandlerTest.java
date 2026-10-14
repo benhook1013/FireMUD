@@ -29,7 +29,6 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
-import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -124,56 +123,6 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
-  void afterConnectionEstablishedRegistersValidFirstPartyConnectContext() {
-    when(session.getAttributes())
-        .thenReturn(
-            Map.of(
-                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
-                "41",
-                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
-                "first_party_web",
-                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
-                "token"));
-    FirstPartyConnectContext connectContext =
-        new FirstPartyConnectContext(
-            "123", 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
-    when(firstPartyConnectContextService.parse("token")).thenReturn(Optional.of(connectContext));
-    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
-        .thenReturn(
-            List.of(
-                pointer(
-                    "demo",
-                    "Demo",
-                    "production",
-                    "Production",
-                    22L,
-                    7L,
-                    3L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW")));
-
-    handler.afterConnectionEstablished(session);
-
-    verify(firstPartyConnectContextRegistry).register(41L, connectContext);
-    verify(sessionContextService)
-        .save(
-            argThat(
-                context ->
-                    context.sessionId() == 41L
-                        && context.tenantId() == 22L
-                        && context.bootstrapGameInstanceId() == 7L
-                        && "demo".equals(context.worldSlug())
-                        && "production".equals(context.realmSlug())
-                        && context.pointerVersion() == 3L
-                        && "SHARED".equals(context.playableStateScope())
-                        && "scope-1".equals(context.connectScopeId())
-                        && "req-1".equals(context.connectRequestId())));
-  }
-
-  @Test
   void afterConnectionEstablishedRejectsInvalidFirstPartyConnectContextAsExpected()
       throws Exception {
     when(session.getAttributes())
@@ -195,86 +144,6 @@ class GameSessionWebSocketHandlerTest {
                 status ->
                     status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
                         && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
-    verify(firstPartyConnectContextRegistry, never()).register(Mockito.anyLong(), Mockito.any());
-    verify(sessionContextService, never()).save(Mockito.any());
-  }
-
-  @Test
-  void afterConnectionEstablishedRejectsFirstPartyContextWhenRetainedStateCannotBeRegistered()
-      throws Exception {
-    when(session.getAttributes())
-        .thenReturn(
-            Map.of(
-                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
-                "41",
-                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
-                "first_party_web",
-                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
-                "token"));
-    FirstPartyConnectContext connectContext =
-        new FirstPartyConnectContext(
-            "123", 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
-    when(firstPartyConnectContextService.parse("token")).thenReturn(Optional.of(connectContext));
-    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
-        .thenReturn(
-            List.of(
-                pointer(
-                    "demo",
-                    "Demo",
-                    "production",
-                    "Production",
-                    22L,
-                    7L,
-                    3L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW")));
-    Mockito.doThrow(new IllegalStateException("retained context is unreadable"))
-        .when(firstPartyConnectContextRegistry)
-        .register(41L, connectContext);
-
-    handler.afterConnectionEstablished(session);
-
-    verify(session)
-        .close(
-            argThat(
-                status ->
-                    status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
-                        && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
-    verify(sessionAuthenticationService, never()).resolveUnverifiedSessionContext(22L, 41L);
-    verify(sessionContextService, never()).save(Mockito.any());
-    verify(firstPartyConnectContextRegistry).register(41L, connectContext);
-  }
-
-  @Test
-  void afterConnectionEstablishedClosesWithServiceUnavailableWhenPointerAuthorityFails()
-      throws Exception {
-    when(session.getAttributes())
-        .thenReturn(
-            Map.of(
-                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
-                "41",
-                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
-                "first_party_web",
-                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
-                "token"));
-    FirstPartyConnectContext connectContext =
-        new FirstPartyConnectContext(
-            "123", 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
-    when(firstPartyConnectContextService.parse("token")).thenReturn(Optional.of(connectContext));
-    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
-        .thenThrow(new IllegalStateException("database unavailable"));
-
-    handler.afterConnectionEstablished(session);
-
-    verify(session)
-        .close(
-            argThat(
-                status ->
-                    status.getCode() == 1013
-                        && "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE".equals(status.getReason())));
     verify(firstPartyConnectContextRegistry, never()).register(Mockito.anyLong(), Mockito.any());
     verify(sessionContextService, never()).save(Mockito.any());
   }
@@ -1449,5 +1318,192 @@ class GameSessionWebSocketHandlerTest {
 
   private static UUID stableUuid(String value) {
     return UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void firstPartyBootstrapRetainsFullSignedContextAndOnlyCanonicalOwnerHandles() throws Exception {
+    var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
+    var context = fixture.context();
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR, context.compactJws(),
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR, "999",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR, "888"));
+    when(firstPartyConnectContextService.parse(context.compactJws()))
+        .thenAnswer(invocation -> fixture.service.parse(invocation.getArgument(0)));
+    when(firstPartyConnectContextService.requireRetained(any()))
+        .thenAnswer(invocation -> fixture.service.requireRetained(invocation.getArgument(0)));
+    handler.afterConnectionEstablished(session);
+    var captor = org.mockito.ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService).save(captor.capture());
+    org.assertj.core.api.Assertions.assertThat(captor.getValue().tenantId()).isEqualTo(22L);
+    org.assertj.core.api.Assertions.assertThat(captor.getValue().bootstrapGameInstanceId())
+        .isEqualTo(41L);
+    org.assertj.core.api.Assertions.assertThat(captor.getValue().firstPartyConnectContext())
+        .isEqualTo(context);
+    org.assertj.core.api.Assertions.assertThat(captor.getValue().hasAccountIdentity()).isFalse();
+    verify(gameplayAdmissionPointerAuthorityService, never())
+        .listByRuntimeTarget(Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  @Test
+  void missingCanonicalTargetRejectsBeforeRegistryBootstrapAndTransportWrites() throws Exception {
+    var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
+    String token = fixture.token();
+    when(fixture.routes.readCurrentTarget(
+            net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture.TENANT))
+        .thenReturn(null);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR, token));
+    when(firstPartyConnectContextService.parse(token))
+        .thenAnswer(invocation -> fixture.service.parse(invocation.getArgument(0)));
+    handler.afterConnectionEstablished(session);
+    verify(sessionContextService, never()).save(any());
+    verify(firstPartyConnectContextRegistry, never()).register(Mockito.anyLong(), any());
+    verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), any());
+    verify(session).close(any(CloseStatus.class));
+  }
+
+  @Test
+  void ownedRegisteredClosePerformsContextPromptAndPresenceCleanup() {
+    when(activeTransportSessionRegistry.unregister(41L, session)).thenReturn(true);
+    handler.afterConnectionClosed(session, CloseStatus.NORMAL);
+    verify(firstPartyConnectContextRegistry).unregister(41L);
+    verify(promptBurstCoordinator).evict("41");
+    verify(gameplayPresenceLifecycleService)
+        .recordDisconnected(
+            41L,
+            net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition
+                .TRANSPORT_LOSS);
+  }
+
+  @Test
+  void rejectedOrReplacedCloseDoesNotCleanUpIncumbentState() {
+    when(activeTransportSessionRegistry.unregister(41L, session)).thenReturn(false);
+    handler.afterConnectionClosed(session, CloseStatus.POLICY_VIOLATION);
+    verify(firstPartyConnectContextRegistry, never()).unregister(Mockito.anyLong());
+    verify(promptBurstCoordinator, never()).evict(any());
+    verify(gameplayPresenceLifecycleService, never()).recordDisconnected(Mockito.anyLong(), any());
+  }
+
+  @Test
+  void queuedFirstPartyFrameFromRejectedBootstrapCannotUseIncumbentOrdinarySession()
+      throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+    WebSocketSession incumbent = Mockito.mock(WebSocketSession.class);
+    when(activeTransportSessionRegistry.find(41L))
+        .thenReturn(
+            Optional.of(
+                new org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator(
+                    incumbent, 10_000, 64 * 1024)));
+    handler.handleMessage(session, new TextMessage("LOGIN demo@example.com swordfish"));
+    handler.afterConnectionClosed(session, CloseStatus.POLICY_VIOLATION);
+    verify(session).close(any(CloseStatus.class));
+    Mockito.verifyNoInteractions(
+        parser,
+        interpreter,
+        sessionAuthenticationService,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        screenBufferService,
+        promptBurstCoordinator,
+        firstPartyConnectContextRegistry);
+  }
+
+  @Test
+  void queuedFirstPartyFrameWithoutRegistrationCannotBootstrapOrInterpret() throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+    when(activeTransportSessionRegistry.find(41L)).thenReturn(Optional.empty());
+    handler.handleMessage(session, new TextMessage("PLAY demo hero"));
+    verify(session).close(any(CloseStatus.class));
+    Mockito.verifyNoInteractions(
+        parser,
+        interpreter,
+        sessionAuthenticationService,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        screenBufferService,
+        promptBurstCoordinator,
+        firstPartyConnectContextRegistry);
+  }
+
+  @Test
+  void sendFailureCloseCallbackOwnsCleanup() throws Exception {
+    SessionContext context = new SessionContext(41L, 22L, "123", 123L, 1L, "R-1", "jwt");
+    PlayerOutput output = PlayerOutput.notice("hello");
+    PresentationProperties presentation = new PresentationProperties();
+    when(settingsResolver.presentation(context)).thenReturn(presentation);
+    when(activeTransportSessionRegistry.find(41L)).thenReturn(Optional.of(session));
+    when(activeTransportSessionRegistry.unregister(41L, session)).thenReturn(true);
+    when(session.isOpen()).thenReturn(true);
+    when(promptBurstCoordinator.applyPromptWindow(any(), any(), any(), Mockito.eq(false)))
+        .thenAnswer(invocation -> invocation.getArgument(2));
+    when(outputProjector.projectPlayerOutput(session, output, null, presentation))
+        .thenReturn("hello");
+    Mockito.doThrow(new java.io.IOException("send failed")).when(session).sendMessage(any());
+    Mockito.doAnswer(
+            invocation -> {
+              handler.afterConnectionClosed(session, invocation.getArgument(0));
+              return null;
+            })
+        .when(session)
+        .close(any(CloseStatus.class));
+    var metrics = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+    try {
+      var delivery =
+          new net.firedevops.firemud.gamesession.service.PlayerOutputDeliveryService(
+              activeTransportSessionRegistry,
+              screenBufferService,
+              settingsResolver,
+              outputProjector,
+              promptComposer,
+              promptBurstCoordinator,
+              metrics);
+      delivery.deliver(context, List.of(output), false);
+    } finally {
+      metrics.close();
+    }
+    verify(activeTransportSessionRegistry).unregister(41L, session);
+    verify(firstPartyConnectContextRegistry).unregister(41L);
+    verify(promptBurstCoordinator).evict("41");
+    verify(gameplayPresenceLifecycleService)
+        .recordDisconnected(
+            41L,
+            net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition
+                .TRANSPORT_LOSS);
+  }
+
+  @Test
+  void exactRegisteredDecoratorDelegateAllowsFirstPartyFrameParsing() throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+    when(activeTransportSessionRegistry.find(41L))
+        .thenReturn(
+            Optional.of(
+                new org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator(
+                    session, 10_000, 64 * 1024)));
+    when(parser.parse(" ")).thenReturn(new TextCommand(TextCommandType.NOOP, List.of(), " "));
+    handler.handleMessage(session, new TextMessage(" "));
+    verify(parser).parse(" ");
+    verify(session, never()).close(any(CloseStatus.class));
+    Mockito.verifyNoInteractions(interpreter);
   }
 }

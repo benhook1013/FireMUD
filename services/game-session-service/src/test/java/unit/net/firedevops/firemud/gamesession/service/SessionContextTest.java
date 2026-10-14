@@ -106,7 +106,7 @@ class SessionContextTest {
   }
 
   @Test
-  void hasPartialPersistedFirstPartyConnectContextRequiresPositiveAccountIdentity() {
+  void oldSelectorFragmentsFailClosedEvenWithoutAccountIdentity() {
     SessionContext context =
         new SessionContext(
             1L,
@@ -127,7 +127,7 @@ class SessionContextTest {
             "scope-persisted",
             "request-123");
 
-    assertFalse(context.hasPartialPersistedFirstPartyConnectContext());
+    assertTrue(context.hasPartialPersistedFirstPartyConnectContext());
     assertTrue(context.persistedFirstPartyConnectContext().isEmpty());
   }
 

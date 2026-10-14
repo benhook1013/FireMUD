@@ -212,7 +212,8 @@ public class MoveCommandHandler {
         current.pointerVersion(),
         current.playableStateScope(),
         current.connectScopeId(),
-        current.connectRequestId());
+        current.connectRequestId(),
+        current.firstPartyConnectContext());
   }
 
   private boolean validDestination(SessionContext current, RoomInstanceRef destination) {

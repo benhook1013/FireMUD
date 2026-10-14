@@ -19,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -170,7 +171,15 @@ public final class CommunicationRecipientDeliveryService {
         meterRegistry
             .counter("gamesession.communication.delivery.failed", "role", roleTag(view))
             .increment();
-        activeTransportSessionRegistry.unregister(recipient.sessionId(), session);
+        try {
+          // Only the owned close callback removes registration and commits disconnect cleanup.
+          session.close(CloseStatus.SERVER_ERROR.withReason("internal_error"));
+        } catch (IOException closeFailure) {
+          LOG.warn(
+              "Failed to close transport after delivery failure for session {}",
+              recipient.sessionId(),
+              closeFailure);
+        }
       }
     }
   }

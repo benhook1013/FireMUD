@@ -258,6 +258,27 @@ class AuthControllerTest {
   }
 
   @Test
+  void connectTokenReportsUnavailableWithoutSettingCookie() throws Exception {
+    ConnectTokenRequest request = new ConnectTokenRequest("scope-1", "req-unavailable");
+    when(accountService.issueConnectToken(
+            "boot123", new ConnectTokenRequest("scope-1", "req-unavailable")))
+        .thenThrow(
+            new AuthenticationException(
+                "AUTH_UNAVAILABLE", "Canonical gameplay connect-token authority is unavailable"));
+
+    mockMvc
+        .perform(
+            post("/auth/connect-token")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer boot123")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("AUTH_UNAVAILABLE"))
+        .andExpect(header().doesNotExist(HttpHeaders.SET_COOKIE));
+  }
+
+  @Test
   void listBootstrapCharactersRejectsMissingConnectScopeIdBeforeDispatch() throws Exception {
     mockMvc
         .perform(
