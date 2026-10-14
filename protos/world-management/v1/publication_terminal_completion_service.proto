@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+option java_multiple_files = true;
+
+// Standalone authenticated completion of one exact World publication freeze.
+service WorldPublicationTerminalCompletionService {
+  rpc CompleteVersionPublication(CompleteVersionPublicationRequest)
+      returns (CompleteVersionPublicationResponse);
+}
+
+message CompleteVersionPublicationRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // Independent transport correlation; the original operation remains the mutation identity.
+  string request_id = 3;
+  // Complete canonical game-design-publication-operation/v2 bytes.
+  bytes original_operation = 4;
+  // Complete canonical immutable Game Design terminal bound to the original operation.
+  bytes game_design_terminal_evidence = 5;
+}
+
+message CompleteVersionPublicationResponse {
+  // The complete original request tuple is echoed byte-for-byte.
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  bytes original_operation = 4;
+  bytes game_design_terminal_evidence = 5;
+  // The exact terminal result retained by the World owner.
+  bytes stored_terminal_evidence = 6;
+}

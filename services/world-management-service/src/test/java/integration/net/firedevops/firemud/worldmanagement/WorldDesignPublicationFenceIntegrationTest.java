@@ -475,6 +475,66 @@ class WorldDesignPublicationFenceIntegrationTest {
   }
 
   @Test
+  void privateKeyWriterGuardRequiresExistingOpenOwnerAndRejectsFrozenOwnerWithoutEffects() {
+    WorldAuthoredSourceIntakeReceipt receipt = intake(UUID.randomUUID(), "private-key-guard");
+    WorldAuthoredVersionIdentityReceipt identity = identity(receipt, GAME_DESIGN_VERSION_A);
+
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status -> {
+                          repository.lockExistingOpenByPrivateKeys(
+                              receipt.localTenantKey(), identity.localVersionKey());
+                          return null;
+                        }))
+        .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+        .hasMessageContaining("existing publication owner row");
+    assertThat(ownerCount(receipt.canonicalTenantId(), GAME_DESIGN_VERSION_A)).isZero();
+    assertThat(attemptCount(receipt.canonicalTenantId(), GAME_DESIGN_VERSION_A)).isZero();
+
+    ownerTransaction()
+        .execute(
+            status -> {
+              repository.lockOpen(ownerBinding(receipt, GAME_DESIGN_VERSION_A));
+              return null;
+            });
+    String openOwnerSnapshot = ownerSnapshot(receipt, identity);
+    ownerTransaction()
+        .execute(
+            status -> {
+              repository.lockExistingOpenByPrivateKeys(
+                  receipt.localTenantKey(), identity.localVersionKey());
+              return null;
+            });
+    assertThat(ownerSnapshot(receipt, identity)).isEqualTo(openOwnerSnapshot);
+    WorldDesignPublicationFenceEvidence request =
+        evidence(receipt, "private-key-guard-freeze", GAME_DESIGN_VERSION_A, 1L);
+    FrozenAttempt frozen =
+        ownerTransaction()
+            .execute(status -> repository.claimFreeze(request, () -> SYNTHETIC_CHECKPOINT));
+    String ownerBeforeDeniedWrite = ownerSnapshot(receipt, identity);
+
+    assertThatThrownBy(
+            () ->
+                ownerTransaction()
+                    .execute(
+                        status -> {
+                          repository.lockExistingOpenByPrivateKeys(
+                              receipt.localTenantKey(), identity.localVersionKey());
+                          return null;
+                        }))
+        .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+        .hasMessageContaining("not open");
+
+    assertThat(ownerSnapshot(receipt, identity)).isEqualTo(ownerBeforeDeniedWrite);
+    assertThat(repository.readAttempt(request)).contains(frozen);
+    assertThat(ownerCount(receipt.canonicalTenantId(), GAME_DESIGN_VERSION_A)).isEqualTo(1L);
+    assertThat(attemptCount(receipt.canonicalTenantId(), GAME_DESIGN_VERSION_A)).isEqualTo(1L);
+    assertThat(ownerPhase(receipt.canonicalTenantId(), GAME_DESIGN_VERSION_A)).isEqualTo("FROZEN");
+  }
+
+  @Test
   void changedAssociationSourceRequestDigestEpochAndMissingCheckpointDoNotMutate() {
     UUID canonicalTenantId = UUID.randomUUID();
     String tenantSlug = "tenant-" + canonicalTenantId.toString().replace("-", "");
@@ -670,6 +730,24 @@ class WorldDesignPublicationFenceIntegrationTest {
     assertThat(ownerCount(canonicalTenantId, gameDesignVersionId)).isEqualTo(ownersBefore);
     assertThat(attemptCount(canonicalTenantId, gameDesignVersionId)).isEqualTo(attemptsBefore);
     assertThat(ownerPhase(canonicalTenantId, gameDesignVersionId)).isEqualTo(phaseBefore);
+  }
+
+  private String ownerSnapshot(
+      WorldAuthoredSourceIntakeReceipt receipt, WorldAuthoredVersionIdentityReceipt identity) {
+    var row =
+        dsl.fetchOne(
+            "SELECT xmin::text || ':' || to_jsonb(owner_row)::text "
+                + "FROM world_design_publication_fence_owner owner_row "
+                + "WHERE target_namespace=? AND canonical_tenant_id=? AND local_tenant_key=? "
+                + "AND version_id=?",
+            NAMESPACE,
+            receipt.canonicalTenantId(),
+            receipt.localTenantKey(),
+            identity.localVersionKey());
+    if (row == null) {
+      throw new IllegalStateException("World publication owner snapshot query returned no row");
+    }
+    return row.get(0, String.class);
   }
 
   private WorldAuthoredSourceIntakeReceipt intake(UUID tenantId, String worldSlug) {

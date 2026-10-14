@@ -49,6 +49,9 @@ public class VersionPublishCommandServiceImpl {
   private static final Logger logger =
       LoggingUtil.getLogger(VersionPublishCommandServiceImpl.class);
 
+  private final org.springframework.beans.factory.ObjectProvider<
+          net.firedevops.firemud.gamedesign.publication.GameDesignWorldPublicationTerminalProducer>
+      worldTerminalProducer;
   private final VersionRepository versionRepository;
   private final GameRepository gameRepository;
   private final PublishAttemptRepository publishAttemptRepository;
@@ -62,6 +65,10 @@ public class VersionPublishCommandServiceImpl {
   private final RecordedParticipantDigestService recordedParticipantDigestService;
   private final AuthoredDraftPublishSelectionRepository authoredSelections;
 
+  @SuppressFBWarnings(
+      value = "CT_CONSTRUCTOR_THROW",
+      justification =
+          "Trusted Spring injection rejects missing collaborators before publication; construction acquires no resources and this service defines or exposes no finalizer.")
   public VersionPublishCommandServiceImpl(
       VersionRepository versionRepository,
       GameRepository gameRepository,
@@ -74,7 +81,11 @@ public class VersionPublishCommandServiceImpl {
       VersionAssetArtifactService versionAssetArtifactService,
       PublishedReleaseBundleService publishedReleaseBundleService,
       RecordedParticipantDigestService recordedParticipantDigestService,
-      AuthoredDraftPublishSelectionRepository authoredSelections) {
+      AuthoredDraftPublishSelectionRepository authoredSelections,
+      org.springframework.beans.factory.ObjectProvider<
+              net.firedevops.firemud.gamedesign.publication
+                  .GameDesignWorldPublicationTerminalProducer>
+          worldTerminalProducer) {
     this.versionRepository = versionRepository;
     this.gameRepository = gameRepository;
     this.publishAttemptRepository = publishAttemptRepository;
@@ -87,6 +98,7 @@ public class VersionPublishCommandServiceImpl {
     this.publishedReleaseBundleService = publishedReleaseBundleService;
     this.recordedParticipantDigestService = recordedParticipantDigestService;
     this.authoredSelections = authoredSelections;
+    this.worldTerminalProducer = Objects.requireNonNull(worldTerminalProducer);
   }
 
   /** Internal plumbing only: a durable selection does not establish creator authorization. */
@@ -143,7 +155,7 @@ public class VersionPublishCommandServiceImpl {
     if (attempt == null || attempt.getStatus() == PublishAttemptStatus.PENDING) {
       throw fullVersionPublicationUnavailable();
     }
-    return replayTerminalAttempt(request, attempt);
+    return completeSelectedWorldTerminal(request, replayTerminalAttempt(request, attempt));
   }
 
   /**
@@ -151,6 +163,38 @@ public class VersionPublishCommandServiceImpl {
    * exists.
    */
   PublishWorkflowSnapshot reconcileFullVersionPublishMechanics(PublishWorkflowRequest request) {
+    // Complete only after all local commit/exception classification has left its owner boundary.
+    return completeSelectedWorldTerminal(
+        request, reconcileFullVersionPublishMechanicsLocal(request));
+  }
+
+  private PublishWorkflowSnapshot completeSelectedWorldTerminal(
+      PublishWorkflowRequest request, PublishWorkflowSnapshot snapshot) {
+    if (request.intent() == null || !snapshot.isTerminal()) return snapshot;
+    var producer = worldTerminalProducer.getIfAvailable();
+    if (producer == null)
+      throw pendingReconciliation("World publication terminal producer unavailable");
+    var selection = requireSelectedIntent(request);
+    try {
+      producer.reconcile(
+          request.tenantId(),
+          request.publishWorkflowId(),
+          snapshot.versionId(),
+          selection.digest(),
+          snapshot.isSucceeded()
+              ? net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence
+                  .Outcome.PUBLISHED
+              : net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence
+                  .Outcome.NO_PUBLICATION);
+    } catch (RuntimeException unresolved) {
+      throw pendingReconciliation(
+          "World publication terminal handoff requires exact retry", unresolved);
+    }
+    return snapshot;
+  }
+
+  private PublishWorkflowSnapshot reconcileFullVersionPublishMechanicsLocal(
+      PublishWorkflowRequest request) {
     request = request.recoverMissingPublishRequestId();
     validateRequestIdentity(request);
     logger.info(
@@ -186,10 +230,16 @@ public class VersionPublishCommandServiceImpl {
           "pending full-version attempt does not reference a draft version");
     }
     requireSelectedDraftEpoch(request, version);
-    return reconcileSelectedPublicationMechanics(request);
+    return reconcileSelectedPublicationMechanicsLocal(request);
   }
 
   private PublishWorkflowSnapshot reconcileSelectedPublicationMechanics(
+      PublishWorkflowRequest request) {
+    return completeSelectedWorldTerminal(
+        request, reconcileSelectedPublicationMechanicsLocal(request));
+  }
+
+  private PublishWorkflowSnapshot reconcileSelectedPublicationMechanicsLocal(
       PublishWorkflowRequest request) {
     validateRequestIdentity(request);
     requireSelectedIntent(request);

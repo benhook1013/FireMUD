@@ -8,6 +8,7 @@ import net.firedevops.firemud.worldmanagement.dto.RegionDto;
 import net.firedevops.firemud.worldmanagement.mapper.RegionMapper;
 import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.service.RegionService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class RegionServiceImpl implements RegionService {
   private final RegionRepository regionRepository;
   private final RegionMapper regionMapper;
+  private final WorldDesignPublicationFenceRepository publicationFenceRepository;
 
   @Override
   @Timed(value = "region.list")
@@ -30,11 +32,20 @@ public class RegionServiceImpl implements RegionService {
   @Transactional
   @Timed(value = "region.move")
   public RegionDto moveRegion(Long tenantId, Long regionId, Integer shardId) {
+    Long versionId =
+        regionRepository
+            .findVersionIdByTenantIdAndId(tenantId, regionId)
+            .orElseThrow(() -> new IllegalArgumentException("Region not found"));
+    publicationFenceRepository.lockExistingOpenByPrivateKeys(tenantId, versionId);
+    // The private Version locator is revalidated under V25 -> region row lock order.
     var region =
         regionRepository
-            .findById(regionId)
-            .filter(r -> r.getTenantId().equals(tenantId))
-            .orElseThrow(() -> new IllegalArgumentException("Region not found"));
+            .findByIdForUpdate(regionId)
+            .filter(r -> tenantId.equals(r.getTenantId()) && versionId.equals(r.getVersionId()))
+            .orElseThrow(
+                () ->
+                    new WorldDesignPublicationFenceRepository.ConflictException(
+                        "Region tenant or Version changed before the publication owner lock"));
     region.setShardId(shardId);
     return regionMapper.toDto(regionRepository.save(region));
   }

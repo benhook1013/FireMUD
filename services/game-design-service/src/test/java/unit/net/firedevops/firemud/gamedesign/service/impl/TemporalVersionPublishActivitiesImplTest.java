@@ -105,7 +105,8 @@ class TemporalVersionPublishActivitiesImplTest {
             artifacts,
             bundles,
             recordedDigests,
-            selections);
+            selections,
+            org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class));
 
     SelectionSnapshot reservation = selected ? selectedReservation() : null;
     PublishIntent intent = selected ? reservation.selection().intent() : null;

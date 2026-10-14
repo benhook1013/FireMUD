@@ -3,8 +3,11 @@ package net.firedevops.firemud.worldmanagement.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -33,6 +36,7 @@ import net.firedevops.firemud.worldmanagement.repository.WorldDesignRevisionLedg
 import net.firedevops.firemud.worldmanagement.repository.WorldDesignScopeEpochRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -50,6 +54,7 @@ class WorldDesignMutationServiceImplTest {
   @Mock private WorldDesignScopeEpochRepository scopeEpochRepository;
   @Mock private GameDesignClient gameDesignClient;
   @Mock private EntityManagementClient entityManagementClient;
+  @Mock private WorldDesignPublicationFenceRepository publicationFenceRepository;
 
   private WorldDesignMutationServiceImpl service;
 
@@ -68,7 +73,8 @@ class WorldDesignMutationServiceImplTest {
             aggregateEpochRepository,
             scopeEpochRepository,
             gameDesignClient,
-            entityManagementClient);
+            entityManagementClient,
+            publicationFenceRepository);
     when(gameDesignClient.getVersionState(1L, 7L))
         .thenReturn(versionState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT));
     when(ledgerRepository
@@ -95,6 +101,39 @@ class WorldDesignMutationServiceImplTest {
     when(scopeEpochRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(ledgerRepository.save(any(WorldDesignRevisionLedger.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+  }
+
+  @Test
+  void publicationOwnerLockPrecedesRemoteVersionReadAndMutation() {
+    service.applyMutation(regionCreateRequest());
+
+    var order = inOrder(publicationFenceRepository, gameDesignClient, regionRepository);
+    order.verify(publicationFenceRepository).lockExistingOpenByPrivateKeys(1L, 7L);
+    order.verify(gameDesignClient).getVersionState(1L, 7L);
+    order.verify(regionRepository).save(any(Region.class));
+  }
+
+  @Test
+  void missingOrFrozenPublicationOwnerDeniesBeforeOwnerReadsAndEffects() {
+    doThrow(new WorldDesignPublicationFenceRepository.ConflictException("Owner unavailable"))
+        .when(publicationFenceRepository)
+        .lockExistingOpenByPrivateKeys(1L, 7L);
+
+    assertThrows(
+        WorldDesignPublicationFenceRepository.ConflictException.class,
+        () -> service.applyMutation(regionCreateRequest()));
+    verifyNoInteractions(
+        gameDesignClient,
+        entityManagementClient,
+        ledgerRepository,
+        regionRepository,
+        zoneRepository,
+        roomRepository,
+        roomExitRepository,
+        generationRuleRepository,
+        worldEntitySpawnBindingRepository,
+        aggregateEpochRepository,
+        scopeEpochRepository);
   }
 
   @Test

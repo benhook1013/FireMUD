@@ -17,9 +17,11 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
+import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.ConflictException;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.OpenOwner;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.Node;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -53,6 +55,30 @@ public class WorldDraftTopologyCommitRepository {
           "World complete storage readback requires no active caller transaction");
     }
     return Optional.ofNullable(find(plan, ownerBindingJson(plan.ownerBinding())));
+  }
+
+  /**
+   * Selects the retained immutable graph for one exact synchronized binding. The separate Game
+   * Design evidence must prove this owner is APPLIED; this row's STORED_PERMISSION_UNVERIFIED label
+   * is never treated as APPLIED or as authorization. Unlike reconciliation readback, this path
+   * intentionally does not consult mutable current topology rows or epochs. Selection requires the
+   * canonical Account-bound result written with a genuine fresh graph in one owner transaction.
+   */
+  public Optional<WorldCanonicalAuthoredGraph> readSynchronized(
+      DraftSynchronizedVisibilityEvidence evidence) {
+    Objects.requireNonNull(evidence, "evidence");
+    evidence.requireValid();
+    var applied = evidence.appliedOwnerResult(DraftCommitBinding.Owner.WORLD_MANAGEMENT);
+    if (!applied.commitId().equals(evidence.binding().commitId())
+        || !applied.bindingDigest().equals(evidence.binding().digest())) {
+      throw new ConflictException(
+          "World owner APPLIED evidence differs from the exact Draft binding");
+    }
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new ConflictException(
+          "World synchronized graph selection requires no active caller transaction");
+    }
+    return new WorldDraftGraphApplicationRepository(dsl, fence, mapper).readSynchronized(evidence);
   }
 
   static String ownerBindingJson(WorldDesignPublicationFenceEvidence.OwnerBinding ownerBinding) {
@@ -466,11 +492,38 @@ public class WorldDraftTopologyCommitRepository {
       }
     }
     Map<String, Object> graph = new LinkedHashMap<>();
-    graph.put("schemaVersion", "2");
+    boolean hasInboundSourceClosure =
+        plan.graph()
+            .freshGraphDeclaration()
+            .flatMap(WorldDraftTopologyInputGraph.FreshGraphDeclaration::inboundSourceClosure)
+            .isPresent();
+    graph.put("schemaVersion", hasInboundSourceClosure ? "3" : "2");
     graph.put("canonicalTenantId", plan.graph().tenantId().toString());
     graph.put("canonicalVersionId", plan.graph().versionId().toString());
+    plan.graph()
+        .freshGraphDeclaration()
+        .flatMap(WorldDraftTopologyInputGraph.FreshGraphDeclaration::inboundSourceClosure)
+        .ifPresent(
+            closure -> graph.put("inboundSourceClosure", inboundSourceClosureContent(closure)));
     graph.put("rows", rows);
     return STABLE_JSON.writeValueAsBytes(graph);
+  }
+
+  static Map<String, Object> inboundSourceClosureContent(InboundSourceClosureDeclaration closure) {
+    Map<String, Object> content = new LinkedHashMap<>();
+    content.put("schemaVersion", closure.schemaVersion());
+    content.put(
+        "familyCounts",
+        closure.familyCounts().stream()
+            .map(
+                family -> {
+                  Map<String, Object> entry = new LinkedHashMap<>();
+                  entry.put("family", family.family().name());
+                  entry.put("count", family.count());
+                  return entry;
+                })
+            .toList());
+    return content;
   }
 
   static Map<String, Object> expectedContent(
