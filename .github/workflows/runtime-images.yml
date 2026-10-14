@@ -1393,7 +1393,7 @@ jobs:
           create-storage-record: false
 
   pr-local-smoke:
-    name: PR Full-Stack Smoke
+    name: PR Full-Stack Smoke (runtime-required=${{ needs.image-meta.outputs.runtime_smoke_required }})
     needs: [image-meta]
     if: ${{ (github.event_name == 'pull_request' && (github.event.action != 'edited' || github.event.changes.base.ref != null)) || github.event_name == 'repository_dispatch' }}
     runs-on: ubuntu-latest
@@ -1492,13 +1492,14 @@ jobs:
             "$SMOKE_MINIO_SERVER_IMAGE" "$SMOKE_MINIO_CLIENT_IMAGE"
 
       - name: Run credential-free full-stack smoke
+        id: runtime-smoke
         if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         env:
           SMOKE_MINIO_SERVER_IMAGE_ID: >-
             ${{ steps.minio-source.outputs.server_image_id }}
           SMOKE_MINIO_CLIENT_IMAGE_ID: >-
             ${{ steps.minio-source.outputs.client_image_id }}
-        run: bash ./dev-tools/verify-smoke-images.sh
+        run: bash ./dev-tools/verify-smoke-images.sh --keep-running
 
       - name: Export fixed-tag preview image artifact
         run: |
@@ -1617,6 +1618,7 @@ jobs:
             logs || true
 
       - name: Stop smoke stack
+        id: runtime-cleanup
         if: >-
           ${{ always() &&
           needs.image-meta.outputs.runtime_smoke_required == 'true' &&
@@ -1637,6 +1639,25 @@ jobs:
             echo "Unable to prove or release the smoke Compose project; refusing unowned teardown." >&2
             exit 1
           fi
+
+      - name: Require successful runtime smoke and authenticated cleanup
+        if: ${{ always() }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          RUNTIME_SMOKE_REQUIRED: ${{ needs.image-meta.outputs.runtime_smoke_required }}
+          RUNTIME_SMOKE_OUTCOME: ${{ steps.runtime-smoke.outcome }}
+          RUNTIME_CLEANUP_OUTCOME: ${{ steps.runtime-cleanup.outcome }}
+        with:
+          script: |
+            const required = process.env.RUNTIME_SMOKE_REQUIRED;
+            if (required !== "true" && required !== "false") {
+              core.setFailed("Runtime smoke scope is unavailable or invalid.");
+            } else if (required === "true" && (
+              process.env.RUNTIME_SMOKE_OUTCOME !== "success" ||
+              process.env.RUNTIME_CLEANUP_OUTCOME !== "success"
+            )) {
+              core.setFailed("Required runtime smoke and authenticated cleanup must both execute successfully.");
+            }
 
   pr-controller-smoke:
     name: PR Hosted Identity Controller Smoke

@@ -61,7 +61,7 @@ require_count "$job" 'steps.minio-source.outputs.client_image_id' 5
 require_count "$job" '-f docker/docker-compose.pr-local-minio.override.yml' 2
 require_contains "$job" "steps.minio-source.outputs.server_image_id != ''"
 require_contains "$job" "steps.minio-source.outputs.client_image_id != ''"
-require_contains "$job" 'run: bash ./dev-tools/verify-smoke-images.sh'
+require_contains "$job" 'run: bash ./dev-tools/verify-smoke-images.sh --keep-running'
 require_contains "$job" 'bash ./dev-tools/verify-smoke-images.sh'
 
 trusted_publisher="$(<"$TRUSTED_PUBLISH_WORKFLOW")"

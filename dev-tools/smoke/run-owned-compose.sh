@@ -828,6 +828,63 @@ stop_run_owned_compose_project() {
   fi
 }
 
+# Proof wrappers share one local resource admission with nested jar builds.
+# A caller may retain the stack explicitly, but owns final authenticated teardown.
+initialize_run_owned_compose_proof() {
+  FIREMUD_SMOKE_KEEP_RUNNING=false
+  FIREMUD_SMOKE_PROOF_CLAIMED=false
+  case "$#:${1:-}" in
+    0:) ;;
+    1:--keep-running) FIREMUD_SMOKE_KEEP_RUNNING=true ;;
+    *) echo "Usage: ${0##*/} [--keep-running]" >&2; return 2 ;;
+  esac
+  if [[ -n "${FIREMUD_LOCAL_RESOURCE_SESSION_FD+x}" ]]; then
+    python3 "$ROOT_DIR/dev-tools/validation/gradle-run-supervisor.py" --verify-resource-session || return 1
+    # Persist the exact target before any expensive/destructive project work.
+    _firemud_smoke_context || return 1
+    if [[ "${COMPOSE_PROJECT_NAME:-}" != "$FIREMUD_SMOKE_EXPECTED_PROJECT" ]]; then
+      _firemud_smoke_fail "COMPOSE_PROJECT_NAME must exactly match $FIREMUD_SMOKE_EXPECTED_PROJECT."
+      return 1
+    fi
+    python3 "$ROOT_DIR/dev-tools/validation/gradle-run-supervisor.py" \
+      --register-runtime-project "$FIREMUD_SMOKE_EXPECTED_PROJECT" || return 1
+  elif [[ "${CI:-}" != true && "${CI:-}" != 1 ]]; then
+    exec bash "$ROOT_DIR/dev-tools/validation/run-locked-gradle.sh" \
+      --resource-session bash "$0" "$@"
+  fi
+}
+
+finish_run_owned_compose_proof() {
+  local proof_status="$1"
+  if [[ "${FIREMUD_SMOKE_PROOF_CLAIMED:-false}" != true ]]; then
+    return "$proof_status"
+  fi
+  if [[ "${FIREMUD_SMOKE_KEEP_RUNNING:-false}" == true ]]; then
+    echo "Run-owned stack retained explicitly; caller owns authenticated teardown with the original capability." >&2
+    return "$proof_status"
+  fi
+  if ! stop_run_owned_compose_project "${COMPOSE_FILES[@]}"; then
+    echo "Run-owned proof cleanup failed or remains unknown; ownership was not proven released." >&2
+    ((proof_status != 0)) || proof_status=1
+  fi
+  return "$proof_status"
+}
+
+cleanup_run_owned_compose_proof() {
+  local proof_status=$?
+  trap - EXIT
+  trap '' INT TERM HUP
+  finish_run_owned_compose_proof "$proof_status" || proof_status=$?
+  exit "$proof_status"
+}
+
+install_run_owned_compose_proof_traps() {
+  trap cleanup_run_owned_compose_proof EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   require_run_owned_compose_project
 fi
