@@ -292,6 +292,360 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
     return fixture.launchRepository.createVerifiedFixtureStartingLaunch(evidence);
   }
 
+  @Test
+  void forwardHumanPolicyGuardPreservesActualV1011HistoryAndRejectsLegacyCatalogReuse() {
+    Fixture fixture = fixture("1003");
+    var source = source(SOURCE_GAME_ROW_ID);
+    var evidence = launchEvidence(source, OWNER_ACCOUNT_ID);
+    var receipt = registerAndAssociate(fixture, source, evidence);
+    UUID realmId = uuid(1101);
+    insertHistoricalCatalog(fixture, receipt, realmId);
+    migrate(fixture, "1011").load().migrate();
+    insertHumanLaunch(fixture, receipt, realmId, "retained-human-launch");
+    var before = retainedLaunchCatalogRows(fixture);
+    Record triggerBefore = launchTriggerIdentity(fixture);
+
+    migrate(fixture, null).load().migrate();
+
+    assertThat(retainedLaunchCatalogRows(fixture)).isEqualTo(before);
+    assertThat(launchTriggerIdentity(fixture)).isEqualTo(triggerBefore);
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT count(*) FROM flyway_schema_history WHERE version = '1011.1' AND success")
+                .get(0, Long.class))
+        .isEqualTo(1L);
+    assertThatThrownBy(
+            () -> insertHumanLaunch(fixture, receipt, realmId, "new-legacy-human-launch"))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasStackTraceContaining(
+            "Launch provenance differs from the exact retained canonical catalog owner");
+    assertThat(retainedLaunchCatalogRows(fixture)).isEqualTo(before);
+  }
+
+  @Test
+  void forwardHumanPolicyGuardAcceptsCompletePublishedCatalog() {
+    Fixture fixture = fixture();
+    var source = source(SOURCE_GAME_ROW_ID);
+    var evidence = launchEvidence(source, OWNER_ACCOUNT_ID);
+    var receipt = registerAndAssociate(fixture, source, evidence);
+    var request =
+        new net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest(
+            uuid(1102),
+            NAMESPACE,
+            source.canonicalTenantId(),
+            receipt.operationId(),
+            "human-production",
+            "Human Production",
+            true,
+            true,
+            "SHARED",
+            "PRESEEDED_ONLY",
+            null,
+            null);
+    var policy =
+        CanonicalHumanPublicationOwnerTestFixtures.publishedSet(
+            request,
+            source,
+            uuid(1103),
+            72L,
+            "human-policy-publication",
+            "human-release-bundle",
+            "generation-1",
+            3L);
+    var prepared = fixture.catalogRepository.prepareInitialPublicProduction(request, policy);
+    var catalog =
+        Objects.requireNonNull(
+            fixture.transactions.execute(
+                status -> fixture.catalogRepository.createInitialPublicProduction(prepared)));
+    insertHumanLaunch(fixture, receipt, catalog.realmId(), "complete-human-launch");
+    assertThat(
+            fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_canonical_instance_launch"))))
+        .isEqualTo(1);
+  }
+
+  private static IntakeReceipt registerAndAssociate(
+      Fixture fixture,
+      AuthoredWorldSourceEvidence source,
+      RunOwnedInitialAdmissionLaunchEvidence evidence) {
+    var receipt =
+        Objects.requireNonNull(
+            fixture.transactions.execute(
+                status ->
+                    fixture.sourceRepository.register(
+                        UUID.fromString(evidence.fixtureCapability().operationId()), source)));
+    fixture.transactions.executeWithoutResult(
+        status ->
+            fixture.tenantAssociationRepository.associateFresh(
+                associationOperationId(source), NAMESPACE, receipt, evidence.creationEvidence()));
+    return receipt;
+  }
+
+  private static java.util.List<String> retainedLaunchCatalogRows(Fixture fixture) {
+    return fixture
+        .dsl
+        .fetch(
+            "SELECT 'catalog' AS kind, xmin::text AS xmin, to_jsonb(owner_row)::text AS bytes "
+                + "FROM game_session_canonical_realm_catalog owner_row UNION ALL "
+                + "SELECT 'launch', xmin::text, to_jsonb(owner_row)::text "
+                + "FROM game_session_canonical_instance_launch owner_row ORDER BY kind, bytes")
+        .map(row -> row.get("kind") + "/" + row.get("xmin") + "/" + row.get("bytes"));
+  }
+
+  private static Record launchTriggerIdentity(Fixture fixture) {
+    return fixture.dsl.fetchSingle(
+        "SELECT oid, tgname, tgfoid, tgtype, tgenabled FROM pg_trigger "
+            + "WHERE tgrelid = 'game_session_canonical_instance_launch'::regclass "
+            + "AND tgname = 'gs_canonical_instance_launch_complete_catalog_identity'");
+  }
+
+  private static void insertHistoricalCatalog(
+      Fixture fixture, IntakeReceipt receipt, UUID realmId) {
+    var intake =
+        requiredRecord(
+            fixture.dsl,
+            "SELECT * FROM game_session_authored_world_source_intake WHERE operation_id = ?",
+            receipt.operationId());
+    var columns = new java.util.LinkedHashMap<String, Object>();
+    for (String field :
+        java.util.List.of(
+            "target_namespace",
+            "canonical_tenant_id",
+            "tenant_slug",
+            "world_slug",
+            "source_schema_version",
+            "source_registration_request_id",
+            "source_operation_id",
+            "source_request_digest",
+            "source_game_row_id",
+            "source_game_tenant_key",
+            "source_provenance_kind",
+            "source_evidence_digest")) {
+      columns.put(field, intake.get(field));
+    }
+    columns.put("realm_id", realmId);
+    columns.put("realm_slug", "historical-production");
+    columns.put("realm_display_name", "Historical Production");
+    columns.put("visible", true);
+    columns.put("public_production", true);
+    columns.put("state_scope", "SHARED");
+    columns.put("playable_state_namespace_id", uuid(1104));
+    columns.put("character_creation_policy", "ALLOW_NEW");
+    columns.put("catalog_revision", 1L);
+    columns.put("creation_request_id", uuid(1105));
+    var source = receipt.source();
+    UUID creationId = uuid(1105);
+    String requestDigest =
+        historicalDigest(
+            java.util.List.of(
+                "game-session-canonical-realm-catalog-request/v1",
+                "1",
+                creationId.toString(),
+                NAMESPACE,
+                source.canonicalTenantId().toString(),
+                receipt.operationId().toString(),
+                receipt.intakeRequestId().toString(),
+                receipt.requestDigest(),
+                receipt.receiptDigest(),
+                Integer.toString(source.schemaVersion()),
+                source.registrationRequestId().toString(),
+                source.operationId().toString(),
+                source.requestDigest(),
+                source.canonicalTenantId().toString(),
+                source.tenantSlug(),
+                source.worldSlug(),
+                source.worldDisplayName(),
+                Long.toString(source.sourceGameRowId()),
+                source.sourceGameTenantKey(),
+                source.provenanceKind(),
+                source.evidenceDigest(),
+                "historical-production",
+                "Historical Production",
+                "true",
+                "true",
+                "SHARED",
+                "ALLOW_NEW",
+                "ABSENT",
+                "ABSENT"));
+    columns.put("request_digest", requestDigest);
+    columns.put(
+        "receipt_digest",
+        historicalDigest(
+            java.util.List.of(
+                "game-session-canonical-realm-catalog-receipt/v1",
+                "1",
+                NAMESPACE,
+                source.canonicalTenantId().toString(),
+                creationId.toString(),
+                requestDigest,
+                realmId.toString(),
+                uuid(1104).toString(),
+                "1",
+                receipt.operationId().toString(),
+                receipt.receiptDigest())));
+    columns.put("source_intake_operation_id", receipt.operationId());
+    columns.put("source_intake_schema_version", 1);
+    columns.put("source_intake_request_id", receipt.intakeRequestId());
+    columns.put("source_intake_request_digest", receipt.requestDigest());
+    columns.put("source_intake_receipt_digest", receipt.receiptDigest());
+    columns.put("source_world_display_name", receipt.source().worldDisplayName());
+    var namespace = new java.util.LinkedHashMap<String, Object>();
+    for (var entry : columns.entrySet()) {
+      String field = entry.getKey();
+      if (field.equals("target_namespace")
+          || field.equals("canonical_tenant_id")
+          || field.equals("playable_state_namespace_id")
+          || field.startsWith("source_") && !field.equals("source_world_display_name")) {
+        namespace.put(field, entry.getValue());
+      }
+    }
+    fixture.transactions.executeWithoutResult(
+        status -> {
+          insertOwnerRow(fixture, "gameplay_tenant_shared_playable_state_namespace", namespace);
+          insertOwnerRow(fixture, "game_session_canonical_realm_catalog", columns);
+        });
+  }
+
+  private static String historicalDigest(java.util.List<String> fields) {
+    try {
+      var hash = java.security.MessageDigest.getInstance("SHA-256");
+      for (String value : fields) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        hash.update(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
+        hash.update((byte) ':');
+        hash.update(bytes);
+      }
+      return "sha256:" + java.util.HexFormat.of().formatHex(hash.digest());
+    } catch (java.security.NoSuchAlgorithmException exception) {
+      throw new IllegalStateException(exception);
+    }
+  }
+
+  private static void insertHumanLaunch(
+      Fixture fixture, IntakeReceipt receipt, UUID realmId, String requestId) {
+    var fresh =
+        requiredRecord(
+            fixture.dsl,
+            "SELECT * FROM game_session_fresh_tenant_association WHERE canonical_tenant_id = ?",
+            receipt.source().canonicalTenantId());
+    var catalog =
+        requiredRecord(
+            fixture.dsl,
+            "SELECT * FROM game_session_canonical_realm_catalog WHERE realm_id = ?",
+            realmId);
+    UUID instanceUuid = UUID.randomUUID();
+    var tuple =
+        CanonicalHumanPublicationOwnerTestFixtures.tuple(
+            NAMESPACE,
+            receipt.source().canonicalTenantId(),
+            uuid(Math.toIntExact(OWNER_ACCOUNT_ID)),
+            GAME_TEMPLATE_ID,
+            requestId);
+    fixture.transactions.executeWithoutResult(
+        status -> {
+          long instanceId =
+              fixture
+                  .dsl
+                  .fetchSingle(
+                      "INSERT INTO game_instances (tenant_id, runtime_version, owner_account_id, status, row_version, "
+                          + "game_instance_uuid, game_template_id, launch_descriptor_id, version_id, release_bundle_id, "
+                          + "generation_config_revision, version_state_epoch, run_owned_start_request_id, "
+                          + "run_owned_start_request_digest, run_owned_start_published_release_bundle_ref) "
+                          + "VALUES (?, '72', ?, 'STARTING', 0, ?, ?, 'human-launch-descriptor', 72, 73, 'generation-1', "
+                          + "3, ?, ?, 'human-release-bundle') RETURNING id",
+                      fresh.get("legacy_game_session_tenant_id"),
+                      OWNER_ACCOUNT_ID,
+                      instanceUuid,
+                      GAME_TEMPLATE_ID,
+                      requestId,
+                      tuple.mutationDigest())
+                  .get("id", Long.class);
+          var columns = new java.util.LinkedHashMap<String, Object>();
+          columns.put("target_namespace", NAMESPACE);
+          columns.put("control_plane_request_id", requestId);
+          columns.put("game_session_tenant_id", fresh.get("legacy_game_session_tenant_id"));
+          columns.put("canonical_tenant_id", receipt.source().canonicalTenantId());
+          for (String field :
+              java.util.List.of(
+                  "association_operation_id",
+                  "association_request_id",
+                  "source_schema_version",
+                  "source_target_namespace",
+                  "source_request_id",
+                  "source_canonical_tenant_id",
+                  "source_game_row_id",
+                  "source_game_tenant_key",
+                  "source_provenance_kind",
+                  "association_kind")) {
+            String target = "tenant_" + field;
+            if (field.equals("source_provenance_kind")) {
+              columns.put(target, fresh.get("provenance_kind"));
+            } else {
+              columns.put(target, fresh.get(field));
+            }
+          }
+          columns.put("game_instance_id", instanceId);
+          columns.put("game_instance_uuid", instanceUuid);
+          columns.put("canonical_realm_id", realmId);
+          columns.put("world_slug", catalog.get("world_slug"));
+          columns.put("playable_state_namespace_id", catalog.get("playable_state_namespace_id"));
+          columns.put("playable_state_scope", catalog.get("state_scope"));
+          columns.put("public_production", true);
+          columns.put("captured_starting_row_version", 0L);
+          columns.put("game_template_id", GAME_TEMPLATE_ID);
+          columns.put("launch_descriptor_id", "human-launch-descriptor");
+          columns.put("version_id", 72L);
+          columns.put("release_bundle_id", 73L);
+          columns.put("generation_config_revision", "generation-1");
+          columns.put("version_state_epoch", 3L);
+          // Guard-level SQL input; the full Human launch binding remains separately
+          // owner-validated.
+          String bindingJson =
+              String.format(
+                  "{\"descriptor\":{\"targetNamespace\":\"%s\",\"controlPlaneRequestId\":\"%s\","
+                      + "\"canonicalTenantId\":\"%s\",\"worldSlug\":\"%s\",\"gameTemplateId\":%d,"
+                      + "\"launchDescriptorId\":\"human-launch-descriptor\",\"versionId\":72,\"releaseBundleId\":73,"
+                      + "\"generationConfigRevision\":\"generation-1\",\"versionStateEpoch\":3,"
+                      + "\"publishedReleaseBundleRef\":\"human-release-bundle\"},\"releaseAttestation\":{}}",
+                  NAMESPACE,
+                  requestId,
+                  receipt.source().canonicalTenantId(),
+                  catalog.get("world_slug"),
+                  GAME_TEMPLATE_ID);
+          columns.put("complete_launch_binding_evidence", org.jooq.JSONB.valueOf(bindingJson));
+          columns.put("original_start_session_tuple", tuple.canonicalBytes());
+          columns.put("catalog_creation_request_id", catalog.get("creation_request_id"));
+          columns.put("catalog_revision", catalog.get("catalog_revision"));
+          columns.put("catalog_source_intake_operation_id", receipt.operationId());
+          columns.put("catalog_source_intake_request_id", receipt.intakeRequestId());
+          insertOwnerRow(fixture, "game_session_canonical_instance_launch", columns);
+        });
+  }
+
+  private static void insertOwnerRow(
+      Fixture fixture, String table, java.util.Map<String, Object> columns) {
+    fixture
+        .dsl
+        .insertInto(DSL.table(DSL.name(table)))
+        .columns(columns.keySet().stream().map(field -> DSL.field(DSL.name(field))).toList())
+        .values(columns.values())
+        .execute();
+  }
+
+  private static org.flywaydb.core.api.configuration.FluentConfiguration migrate(
+      Fixture fixture, String target) {
+    var configuration =
+        Flyway.configure()
+            .dataSource(fixture.dataSource)
+            .schemas(fixture.schema)
+            .defaultSchema(fixture.schema)
+            .table("flyway_schema_history")
+            .locations(MIGRATION_LOCATION);
+    if (target != null) configuration.target(target);
+    return configuration;
+  }
+
   private static void insertNakedCatalogRow(
       Fixture fixture, RunOwnedInitialAdmissionLaunchEvidence evidence) {
     FixtureCanonicalRealmCatalog catalog =
@@ -447,6 +801,10 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
   }
 
   private static Fixture fixture() {
+    return fixture(null);
+  }
+
+  private static Fixture fixture(String targetVersion) {
     String schema = "gs_run_owned_launch_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName("org.postgresql.Driver");
@@ -454,14 +812,15 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .table("flyway_schema_history")
-        .locations(MIGRATION_LOCATION)
-        .load()
-        .migrate();
+    var migration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table("flyway_schema_history")
+            .locations(MIGRATION_LOCATION);
+    if (targetVersion != null) migration.target(targetVersion);
+    migration.load().migrate();
 
     DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);
@@ -482,7 +841,9 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
         sourceRepository,
         tenantAssociationRepository,
         catalogRepository,
-        launchRepository);
+        launchRepository,
+        dataSource,
+        schema);
   }
 
   private record Fixture(
@@ -491,7 +852,9 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
       GameSessionAuthoredWorldSourceRepository sourceRepository,
       GameSessionFreshTenantAssociationRepository tenantAssociationRepository,
       GameSessionCanonicalRealmCatalogRepository catalogRepository,
-      GameSessionCanonicalInstanceLaunchRepository launchRepository) {}
+      GameSessionCanonicalInstanceLaunchRepository launchRepository,
+      DriverManagerDataSource dataSource,
+      String schema) {}
 
   private record OwnerRows(
       int sourceRows,
