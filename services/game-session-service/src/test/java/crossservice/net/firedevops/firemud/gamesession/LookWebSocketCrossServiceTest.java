@@ -15,6 +15,7 @@ import net.firedevops.firemud.gamesession.testsupport.GameplayTranscriptMatchers
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.test.AccountRuntimeStubServer;
+import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
@@ -240,7 +241,13 @@ class LookWebSocketCrossServiceTest {
                           LookTestFixtures.DESTINATION_ROOM_ID)
                       .test(response.trim()));
 
+      int gameLogicHttpPort = STACK.gameLogic().httpPort();
       STACK.restartGameLogic();
+      assertThat(STACK.gameLogic().httpPort()).isEqualTo(gameLogicHttpPort);
+      HttpTestSupport.awaitReadiness(
+          "http://localhost:" + gameLogicHttpPort + "/actuator/health/readiness", COMMAND_WAIT);
+      HttpTestSupport.awaitReadiness(
+          "http://localhost:" + gameSession().port() + "/actuator/health/readiness", COMMAND_WAIT);
 
       socket.send("LOOK");
       socket.awaitMatching(

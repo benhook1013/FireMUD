@@ -60,6 +60,11 @@ class TestDataSeederTest {
   @Mock VersionAssetArtifactRepository versionAssetArtifactRepository;
   @Mock RunOwnedFixtureLaunchReadback launchReadback;
 
+  @Mock
+  net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository creationRepository;
+
+  @Mock RunOwnedFixturePolicyProducer fixturePolicyProducer;
+
   private TestDataSeeder seeder;
 
   @BeforeEach
@@ -75,7 +80,9 @@ class TestDataSeederTest {
             publishedReleaseBundleRepository,
             versionAssetArtifactRepository,
             launchReadback,
-            new ObjectMapper());
+            new ObjectMapper(),
+            creationRepository,
+            fixturePolicyProducer);
   }
 
   @Test
@@ -310,8 +317,8 @@ class TestDataSeederTest {
             org.mockito.Mockito.mock(
                 net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService.class),
             org.mockito.Mockito.mock(
-                net.firedevops.firemud.gamedesign.service.LaunchDescriptorService.class));
-    ReflectionTestUtils.setField(readback, "creationRepository", creationRepository);
+                net.firedevops.firemud.gamedesign.service.LaunchDescriptorService.class),
+            creationRepository);
     var requestId = java.util.UUID.randomUUID();
     var operationId = java.util.UUID.randomUUID();
     var tenantId = java.util.UUID.randomUUID();
@@ -545,12 +552,6 @@ class TestDataSeederTest {
         directory.resolve("world-management.crt").toString());
     ReflectionTestUtils.setField(seeder, "caCertPath", directory.resolve("ca.crt").toString());
     ReflectionTestUtils.setField(seeder, "workloadNamespace", "dev");
-
-    var creationRepository =
-        mock(net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository.class);
-    var fixturePolicyProducer = mock(RunOwnedFixturePolicyProducer.class);
-    ReflectionTestUtils.setField(seeder, "creationRepository", creationRepository);
-    ReflectionTestUtils.setField(seeder, "fixturePolicyProducer", fixturePolicyProducer);
 
     assertThatThrownBy(() -> seeder.run(new DefaultApplicationArguments(new String[] {})))
         .isInstanceOf(IllegalStateException.class)

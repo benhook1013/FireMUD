@@ -137,6 +137,18 @@ class GameSessionFixtureLaunchAssociationReadGrpcServiceTest {
   }
 
   @Test
+  void rejectsNullRequestAfterAuthorizationAndDefaultOffChecksBeforeLoadingEvidence() {
+    Fixture fixture = fixture(true, true);
+
+    RecordingObserver<GetRunOwnedFixtureLaunchAssociationResponse> observer =
+        invoke(fixture, null, exactWorldContext(fixture.evidence));
+
+    assertEquals(Status.Code.INVALID_ARGUMENT, status(observer.failure));
+    assertNull(observer.response);
+    verifyNoInteractions(fixture.coordinator);
+  }
+
+  @Test
   void rejectsChangedSelectorAfterLoadingFixedEvidenceAndBeforeLaunchOwnerRead() {
     Fixture fixture = fixture(true, true);
     GetRunOwnedFixtureLaunchAssociationRequest changed =
@@ -149,6 +161,22 @@ class GameSessionFixtureLaunchAssociationReadGrpcServiceTest {
 
     assertEquals(Status.Code.INVALID_ARGUMENT, status(observer.failure));
     verify(fixture.coordinator).loadFixedVerifiedEvidenceForWorldPeer();
+    verify(fixture.coordinator, never()).readFixedFixtureLaunch(any());
+  }
+
+  @Test
+  void mapsRetainedFixtureOwnerStateFailureToFailedPrecondition() {
+    Fixture fixture = fixture(true, true);
+    org.mockito.Mockito.doThrow(
+            new IllegalArgumentException("retained fixture evidence is invalid"))
+        .when(fixture.coordinator)
+        .loadFixedVerifiedEvidenceForWorldPeer();
+
+    RecordingObserver<GetRunOwnedFixtureLaunchAssociationResponse> observer =
+        invoke(fixture, request(fixture.evidence), exactWorldContext(fixture.evidence));
+
+    assertEquals(Status.Code.FAILED_PRECONDITION, status(observer.failure));
+    assertNull(observer.response);
     verify(fixture.coordinator, never()).readFixedFixtureLaunch(any());
   }
 

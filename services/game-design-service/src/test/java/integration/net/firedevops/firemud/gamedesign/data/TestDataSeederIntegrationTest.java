@@ -2789,7 +2789,11 @@ class TestDataSeederIntegrationTest {
               new VersionAssetArtifactRepository(dsl),
               org.mockito.Mockito.mock(
                   net.firedevops.firemud.gamedesign.data.RunOwnedFixtureLaunchReadback.class),
-              new ObjectMapper());
+              new ObjectMapper(),
+              org.mockito.Mockito.mock(
+                  net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository.class),
+              org.mockito.Mockito.mock(
+                  net.firedevops.firemud.gamedesign.data.RunOwnedFixturePolicyProducer.class));
       transactions.executeWithoutResult(
           status -> seeder.run(new DefaultApplicationArguments(new String[] {})));
     }
