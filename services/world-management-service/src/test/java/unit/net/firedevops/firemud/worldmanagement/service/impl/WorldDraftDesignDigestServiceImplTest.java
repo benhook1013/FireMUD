@@ -12,7 +12,6 @@ import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBinding
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import tools.jackson.databind.ObjectMapper;
 
 class WorldDraftDesignDigestServiceImplTest {
   @Test
@@ -32,8 +31,7 @@ class WorldDraftDesignDigestServiceImplTest {
             roomRepository,
             roomExitRepository,
             generationRuleRepository,
-            worldEntitySpawnBindingRepository,
-            new ObjectMapper());
+            worldEntitySpawnBindingRepository);
 
     assertThrows(IllegalArgumentException.class, () -> service.getDraftDesignDigest("0", "7"));
 
@@ -63,8 +61,7 @@ class WorldDraftDesignDigestServiceImplTest {
             roomRepository,
             roomExitRepository,
             generationRuleRepository,
-            worldEntitySpawnBindingRepository,
-            new ObjectMapper());
+            worldEntitySpawnBindingRepository);
 
     assertThrows(IllegalArgumentException.class, () -> service.getDraftDesignDigest("1", "0"));
 
@@ -106,16 +103,47 @@ class WorldDraftDesignDigestServiceImplTest {
             roomRepository,
             roomExitRepository,
             generationRuleRepository,
-            worldEntitySpawnBindingRepository,
-            new ObjectMapper());
+            worldEntitySpawnBindingRepository);
 
     var digest = service.getDraftDesignDigest("1", "7");
 
     assertEquals("1", digest.tenantId());
     assertEquals("7", digest.scopeValue());
     assertEquals("version:7", digest.appliedCommitId());
-    assertEquals(2, digest.digestSchemaVersion());
+    assertEquals(3, digest.digestSchemaVersion());
     Mockito.verify(regionRepository).findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L);
     Mockito.verify(regionRepository, Mockito.never()).findByTenantIdOrderByIdAsc(Mockito.anyLong());
+  }
+
+  @Test
+  void canonicalSpawnReferenceAffectsSchemaThreeDigestAndMixedReferencesDeny() {
+    var regions = Mockito.mock(RegionRepository.class);
+    var zones = Mockito.mock(ZoneRepository.class);
+    var rooms = Mockito.mock(RoomRepository.class);
+    var exits = Mockito.mock(RoomExitRepository.class);
+    var rules = Mockito.mock(GenerationRuleRepository.class);
+    var spawns = Mockito.mock(WorldEntitySpawnBindingRepository.class);
+    var service =
+        new WorldDraftDesignDigestServiceImpl(regions, zones, rooms, exits, rules, spawns);
+    var room = new net.firedevops.firemud.worldmanagement.entity.Room();
+    room.setId(11L);
+    var spawn = new net.firedevops.firemud.worldmanagement.entity.WorldEntitySpawnBinding();
+    spawn.setId(12L);
+    spawn.setRoom(room);
+    spawn.setEntityTemplateType("NPC");
+    spawn.setEntityCanonicalTenantId(java.util.UUID.randomUUID());
+    spawn.setEntityCanonicalVersionId(java.util.UUID.randomUUID());
+    spawn.setEntityCanonicalTemplateId(java.util.UUID.randomUUID());
+    Mockito.when(spawns.findByTenantIdAndVersionIdOrderByIdAsc(1L, 7L)).thenReturn(List.of(spawn));
+    var before = service.getDraftDesignDigest("1", "7");
+    assertEquals(3, before.digestSchemaVersion());
+    spawn.setEntityCanonicalTemplateId(java.util.UUID.randomUUID());
+    org.junit.jupiter.api.Assertions.assertNotEquals(
+        before.contentDigest(), service.getDraftDesignDigest("1", "7").contentDigest());
+    spawn.setEntityTemplateId(9L);
+    assertThrows(IllegalStateException.class, () -> service.getDraftDesignDigest("1", "7"));
+    spawn.setEntityTemplateId(null);
+    spawn.setEntityCanonicalVersionId(null);
+    assertThrows(IllegalStateException.class, () -> service.getDraftDesignDigest("1", "7"));
   }
 }
