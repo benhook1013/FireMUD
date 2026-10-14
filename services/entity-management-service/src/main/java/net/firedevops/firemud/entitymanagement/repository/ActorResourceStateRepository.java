@@ -2,14 +2,11 @@ package net.firedevops.firemud.entitymanagement.repository;
 
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.*;
 import static net.firedevops.firemud.entitymanagement.jooq.Tables.ACTOR_RESOURCE_STATES;
-import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTERS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
-import org.jooq.Condition;
 import org.jooq.DSLContext;
-import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
@@ -34,7 +31,7 @@ public class ActorResourceStateRepository {
                 .eq(tenantId)
                 .and(ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY.eq(playableStateKey))
                 .and(ACTOR_RESOURCE_STATES.CHARACTER_ID.eq(characterId))
-                .and(legacyCharacter(ACTOR_RESOURCE_STATES.CHARACTER_ID)))
+                .and(CharacterRepository.legacyCharacterExists(ACTOR_RESOURCE_STATES.CHARACTER_ID)))
         .orderBy(ACTOR_RESOURCE_STATES.STAT_KEY.asc())
         .fetch(this::toEntity);
   }
@@ -68,7 +65,9 @@ public class ActorResourceStateRepository {
                           DSL.val(entity.getSourceId()),
                           DSL.val(toOffsetDateTime(entity.getCreatedAt())),
                           DSL.val(toOffsetDateTime(entity.getUpdatedAt())))
-                      .where(legacyCharacter(DSL.val(entity.getCharacterId()))))
+                      .where(
+                          CharacterRepository.legacyCharacterExists(
+                              DSL.val(entity.getCharacterId()))))
               .returningResult(ACTOR_RESOURCE_STATES.ID)
               .fetchOne(ACTOR_RESOURCE_STATES.ID);
       if (id == null) {
@@ -90,20 +89,15 @@ public class ActorResourceStateRepository {
                 ACTOR_RESOURCE_STATES
                     .ID
                     .eq(entity.getId())
-                    .and(legacyCharacter(ACTOR_RESOURCE_STATES.CHARACTER_ID)))
+                    .and(
+                        CharacterRepository.legacyCharacterExists(
+                            ACTOR_RESOURCE_STATES.CHARACTER_ID)))
             .execute();
     if (updated != 1) {
       throw new IllegalStateException("Legacy resource row is unavailable");
     }
     entity.setVersion(entity.getVersion() + 1);
     return entity;
-  }
-
-  private static Condition legacyCharacter(Field<Long> characterId) {
-    return DSL.exists(
-        DSL.selectOne()
-            .from(CHARACTERS)
-            .where(CHARACTERS.ID.eq(characterId).and(CharacterRepository.legacyCharacterRow())));
   }
 
   private ActorResourceState toEntity(Record record) {

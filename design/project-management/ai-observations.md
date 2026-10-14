@@ -254,6 +254,12 @@ Entry format:
   - Current status: local transactional implementation is prepared; installed-selector promotion and live rollout verification remain pending with the owning orchestrator.
   - Reconsideration trigger: verify concurrent metadata batches after coordinated version-matched selector promotion.
 
-- `2026-10-14`: Review-period reset recovery verified after coordinated promotion
-  - Outcome: [#3213](https://github.com/benhook1013/FireMUD/pull/3213) merged at `f4219551ad30c52933f184d6bf4aabb4373ef9c7`; all installed public selectors use writer build 11. Old reset writers drained at native command boundaries before promotion. Gameplay preserved the previous 58 applied keys and completed the remaining 24 serial resets in approximately 0.14–0.24 seconds per native call. Independent native-store readback verified all 82 unique periods across 41 open PRs, complete baselines, the requested defaults and no retained live stop in scope.
-  - Limit: this rollout used serialized metadata calls; it does not claim a new live concurrent-reset experiment. Existing provider findings, proof and historical review attribution remain preserved.
+- `2026-10-14`: Transfer terminal-owned work at a native command boundary
+  - Context: a replacement subagent could not attach to the main agent’s existing execution session; the tools returned an unknown process ID even though the main agent could still observe its running batch.
+  - Expected pattern: keep one execution owner, finish the current native command without cancellation, then resume only the missing stable operation keys from the canonical store in the new owner’s terminal. An execution-session ID does not transfer process ownership across agent contexts. Use the same boundary to drain incompatible database writers before coordinated selector promotion.
+  - Evidence limits: completion counts and rollout timings remain in the owning controller job. This handoff does not replace the separate concurrent-reset reconsideration trigger above.
+
+- `2026-10-14`: Verify user-visible rendering against installed controller input
+  - Observation: Root deployed the numeric review-limit renderer before the matching controller fields were installed. Formatter tests passed, but interim live queue rows showed `Limits not reported`.
+  - Expected pattern: pair rendering changes with the version-matched controller input and verify the actual endpoint before claiming the related user-facing outcome is complete. This is a reusable verification lesson, not an additional approval gate or lifecycle policy.
+  - Recovery: coordinated controller promotion and actual-endpoint verification restored numeric limits; the owning controller job retains the rollout details.
