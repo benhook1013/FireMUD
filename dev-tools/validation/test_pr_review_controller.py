@@ -10421,6 +10421,25 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("cli", tail["allocations"])
         self.assertTrue(all(pr_number <= 4 for pr_number, _ in evidence.history_reads))
 
+    def test_status_overview_keeps_unchanged_stacked_stopped_tail_informational(self):
+        values, heads = _stacked_prs(6)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads, sqlite=True)
+        controller.set_stack(list(values))
+        controller.decide_stop(pr=6, channel="hosted", reason="stop tail Hosted discovery")
+        self._enable_batch_status(controller, values)
+        evidence.history_reads.clear()
+
+        report = controller.status_overview()
+
+        tail = report["prs"][5]
+        self.assertEqual(tail["detail_level"], "identity_only")
+        self.assertEqual(tail["reconciliation"], "UNKNOWN")
+        self.assertEqual(tail["evidence_status"], "unknown")
+        self.assertEqual(tail["reason"], "tail review evidence was not deeply checked in this status invocation")
+        self.assertEqual(tail["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertTrue(all(pr_number <= 4 for pr_number, _ in evidence.history_reads))
+
     def test_status_overview_missing_batch_identity_fails_closed_without_deep_reads(self):
         values, heads = _stacked_prs(6)
         evidence = CountingEvidence()

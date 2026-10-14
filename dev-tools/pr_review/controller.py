@@ -6903,12 +6903,15 @@ class ReviewController:
         parent: stack.ParentLink,
     ) -> bool:
         for allocation in state.allocations.values():
+            parent_identity_matches = allocation.parent_identity == parent.identity or (
+                allocation.stop_basis is not None and allocation.parent_identity == item.base_ref
+            )
             if (
                 allocation.pr == pr
                 and not allocation.administrative_local
                 and (
                     allocation.head.casefold() != item.head.casefold()
-                    or allocation.parent_identity != parent.identity
+                    or not parent_identity_matches
                     or allocation.parent_head.casefold() != parent.parent_head.casefold()
                 )
             ):
