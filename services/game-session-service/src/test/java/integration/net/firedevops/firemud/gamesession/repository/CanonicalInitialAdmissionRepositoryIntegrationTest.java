@@ -725,8 +725,8 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
           assertThat(pointerAndAuditProjection(predecessor)).isEqualTo(originalPointerAndAudit);
           assertThat(predecessorSourceProjection(predecessor)).isEqualTo(originalSources);
         }
-        migration(predecessor, null).migrate();
-        migration(predecessor, null).validate();
+        migration(predecessor, "1011").migrate();
+        migration(predecessor, "1011").validate();
         assertThat(migrationHistoryProjection(predecessor, stagedOriginalHistory ? "1010" : "1005"))
             .isEqualTo(originalHistory);
         assertThat(
@@ -742,6 +742,40 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
           assertThat(attemptProjection(predecessor, request)).isEqualTo(originalFullAttempt);
         } else {
           launchGuardProjection(predecessor, true);
+        }
+        String v1011TriggerIdentity =
+            predecessor
+                .dsl
+                .fetchSingle(
+                    "SELECT oid, tgfoid, tgtype, tgenabled FROM pg_trigger "
+                        + "WHERE tgrelid = 'game_session_canonical_instance_launch'::regclass "
+                        + "AND tgname = 'gs_canonical_instance_launch_complete_catalog_identity'")
+                .formatJSON();
+        String v1011Guard = launchGuardProjection(predecessor, true);
+        migration(predecessor, null).migrate();
+        migration(predecessor, null).validate();
+        assertThat(
+                predecessor
+                    .dsl
+                    .fetchSingle(
+                        "SELECT oid, tgfoid, tgtype, tgenabled FROM pg_trigger "
+                            + "WHERE tgrelid = 'game_session_canonical_instance_launch'::regclass "
+                            + "AND tgname = 'gs_canonical_instance_launch_complete_catalog_identity'")
+                    .formatJSON())
+            .isEqualTo(v1011TriggerIdentity);
+        assertThat(launchGuardProjection(predecessor, true)).isNotEqualTo(v1011Guard);
+        assertThat(
+                predecessor
+                    .dsl
+                    .fetchSingle(
+                        "SELECT pg_get_functiondef('require_complete_canonical_launch_catalog_identity()'::regprocedure)")
+                    .get(0, String.class))
+            .contains(
+                "catalog_row.complete_policy_set_evidence IS NULL",
+                "octet_length(catalog_row.complete_policy_set_evidence) = 0");
+        if (stagedOriginalHistory) {
+          assertThat(otherGuardProjection(predecessor)).isEqualTo(otherGuards);
+          assertThat(attemptProjection(predecessor, request)).isEqualTo(originalFullAttempt);
         }
         assertThat(
                 predecessor
