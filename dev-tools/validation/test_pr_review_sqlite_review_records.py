@@ -2703,6 +2703,147 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             [run_id],
         )
 
+    def test_native_cli_capture_discovery_keeps_original_unassigned_route(self) -> None:
+        self.bootstrap()
+        run_id = "run.native-unassigned-route"
+        source_pr = 2828
+        repo = "owner/repo"
+        head = "d" * 40
+        source_finding_key = f"cli-run:{run_id}:finding:1"
+        instructions = "Review @src/a.py:1\nA routed source issue"
+        accepted_finding_key = f"cli-run:{run_id}:finding:2"
+        accepted_instructions = "Review @src/a.py:2\nAn accepted source issue"
+        metadata = {
+            "repository": repo,
+            "run_id": run_id,
+            "kind": "cli",
+            "pull_request": source_pr,
+            "candidate_sha": head,
+            "candidate_files": 1,
+            "parent_pr": None,
+            "parent_ref": "main",
+            "child_head_sha": head,
+            "parent_sha": "e" * 40,
+            "merge_base": "e" * 40,
+            "patch_identity": "f" * 64,
+            "capture_completion_marker": "capture-complete",
+        }
+        event_text = "\n".join(
+            (
+                json.dumps({"type": "finding", "codegenInstructions": instructions}),
+                json.dumps({"type": "finding", "codegenInstructions": accepted_instructions}),
+                json.dumps(
+                    {
+                        "type": "complete",
+                        "status": "review_completed",
+                        "findings": 2,
+                        "reviewedFiles": ["src/a.py"],
+                    }
+                ),
+            )
+        )
+        result_metadata = {**metadata, "duration_seconds": 9, "exit_status": 0}
+        self.records.start_attempt(
+            attempt_id=run_id,
+            source_pr=source_pr,
+            channel="cli",
+            candidate_sha=head,
+            started_at="2026-10-01T00:00:00Z",
+            metadata=metadata,
+        )
+        self.records.complete_attempt_run(
+            run_id,
+            finish={
+                "state": "completed",
+                "finished_at": "2026-10-01T00:00:09Z",
+                "duration_seconds": 9,
+                "exit_status": 0,
+                "artifacts": {"cli_events": event_text, "metadata": json.dumps(result_metadata)},
+            },
+            run={
+                "run_id": run_id,
+                "source_pr": source_pr,
+                "channel": "cli",
+                "source_head": head,
+                "reviewer": "CodeRabbit CLI",
+                "scope": "broad",
+                "started_at": "2026-10-01T00:00:00Z",
+                "finished_at": "2026-10-01T00:00:09Z",
+                "findings": (
+                    FindingObservation(
+                        source_finding_key=source_finding_key,
+                        title=sqlite_provider_imports._cli_finding_title(instructions, "CodeRabbit CLI finding 1"),
+                        detail=_safe_finding_detail(sqlite_provider_imports._cli_detail(instructions)),
+                    ),
+                    FindingObservation(
+                        source_finding_key=accepted_finding_key,
+                        title=sqlite_provider_imports._cli_finding_title(
+                            accepted_instructions, "CodeRabbit CLI finding 2"
+                        ),
+                        detail=_safe_finding_detail(sqlite_provider_imports._cli_detail(accepted_instructions)),
+                    ),
+                ),
+            },
+        )
+        route = self.records.record_source_decision(
+            run_id,
+            source_finding_key,
+            decision_id="native-unassigned-route-decision",
+            decision="routed",
+            actor="reviewer",
+            reason="Route for separate owner adjudication",
+            decided_at="2026-10-01T00:00:10Z",
+        )
+        self.records.record_source_decision(
+            run_id,
+            accepted_finding_key,
+            decision_id="native-unassigned-route-accepted-decision",
+            decision="accepted",
+            actor="reviewer",
+            reason="Valid accepted issue",
+            decided_at="2026-10-01T00:00:10Z",
+        )
+        self.records.finalize_run(run_id, finalized_at="2026-10-01T00:00:11Z")
+
+        snapshot = self.records.completed_cli_capture_snapshots(source_pr)[0]
+        self.assertEqual(snapshot["run"]["counts"], {"found": 2, "accepted": 1, "routed": 1})
+        self.assertEqual(snapshot["decision_history"][1][0]["decision"], "routed")
+        self.assertEqual(snapshot["observations"][0]["disposition"], "routed")
+        retained_route = self.records.list_routes(source_pr=source_pr)[0]
+        self.assertEqual(retained_route["route_id"], route["route_id"])
+        self.assertEqual(retained_route["source_finding_key"], source_finding_key)
+        self.assertIsNone(retained_route["target_pr"])
+        self.assertEqual(retained_route["status"], "open")
+
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE decisions SET target_pr = ? WHERE decision_id = ?",
+                (2879, "native-unassigned-route-accepted-decision"),
+            )
+        with self.assertRaisesRegex(ReviewRecordsError, "conflicting route evidence"):
+            self.records.completed_cli_capture_snapshots(source_pr)
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE decisions SET target_pr = NULL WHERE decision_id = ?",
+                ("native-unassigned-route-accepted-decision",),
+            )
+
+        captures = evidence.discover_cli_captures(
+            repo,
+            source_pr,
+            common=Path(self.temporary_directory.name),
+            records=self.records,
+        )
+        self.assertEqual(len(captures), 1)
+        self.assertEqual(captures[0].metadata["run_id"], run_id)
+        self.assertEqual(
+            captures[0].decisions,
+            {
+                1: ("routed", "Route for separate owner adjudication"),
+                2: ("accepted", "Valid accepted issue"),
+            },
+        )
+
     def failed_cli_observation_input(self, run_id: str = "run.failed-cli-observations"):
         pr = 2838
         head = "d" * 40
