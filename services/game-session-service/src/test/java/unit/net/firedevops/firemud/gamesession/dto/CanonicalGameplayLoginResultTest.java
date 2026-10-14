@@ -77,9 +77,9 @@ class CanonicalGameplayLoginResultTest {
     assertThat(evidence.tokenJti()).isEqualTo(JTI);
     assertThat(evidence.tokenSha256()).isEqualTo(wire.getTokenSha256());
     assertThat(evidence.tokenProfile()).isEqualTo(wire.getTokenProfile());
-    assertThat(evidence.issuedAtEpochSecond()).isEqualTo(wire.getIssuedAtEpochSecond());
-    assertThat(evidence.notBeforeEpochSecond()).isEqualTo(wire.getNotBeforeEpochSecond());
-    assertThat(evidence.expiresAtEpochSecond()).isEqualTo(wire.getExpiresAtEpochSecond());
+    assertThat(evidence.issuedAtEpochSecond()).isEqualTo(wire.getIssuedAtEpochSeconds());
+    assertThat(evidence.notBeforeEpochSecond()).isEqualTo(wire.getNotBeforeEpochSeconds());
+    assertThat(evidence.expiresAtEpochSecond()).isEqualTo(wire.getExpiresAtEpochSeconds());
     assertThat(evidence.tokenGeneration()).isEqualTo(wire.getTokenGeneration());
     assertThat(evidence.issuanceFence()).isEqualTo(wire.getIssuanceFence());
     assertThat(evidence.authorityTupleCanonicalJson())
@@ -126,9 +126,9 @@ class CanonicalGameplayLoginResultTest {
       case "jti" -> wire.setTokenJti(UUID.randomUUID().toString());
       case "hash" -> wire.setTokenSha256("0".repeat(64));
       case "profile" -> wire.setTokenProfile("control-ui");
-      case "iat" -> wire.setIssuedAtEpochSecond(NOW - 1);
-      case "nbf" -> wire.setNotBeforeEpochSecond(NOW - 1);
-      case "exp" -> wire.setExpiresAtEpochSecond(NOW + 121);
+      case "iat" -> wire.setIssuedAtEpochSeconds(NOW - 1);
+      case "nbf" -> wire.setNotBeforeEpochSeconds(NOW - 1);
+      case "exp" -> wire.setExpiresAtEpochSeconds(NOW + 121);
       case "generation" -> wire.setTokenGeneration("2");
       case "fence" -> wire.setIssuanceFence("2");
       case "unknown" ->
@@ -380,9 +380,9 @@ class CanonicalGameplayLoginResultTest {
         .setTokenJti(JTI.toString())
         .setTokenSha256(hash(token))
         .setTokenProfile(GameSessionAccountDelegationProfile.PROFILE)
-        .setIssuedAtEpochSecond(((Number) claims.get("iat")).longValue())
-        .setNotBeforeEpochSecond(((Number) claims.get("nbf")).longValue())
-        .setExpiresAtEpochSecond(((Number) claims.get("exp")).longValue())
+        .setIssuedAtEpochSeconds(((Number) claims.get("iat")).longValue())
+        .setNotBeforeEpochSeconds(((Number) claims.get("nbf")).longValue())
+        .setExpiresAtEpochSeconds(((Number) claims.get("exp")).longValue())
         .setTokenGeneration("1")
         .setIssuanceFence("1")
         .setAuthorityTupleCanonicalJson(canonical(claims.get("authorityTuple")))
