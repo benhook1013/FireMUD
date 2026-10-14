@@ -14,15 +14,23 @@ import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.authordraft.AccountDraftTerminalReconciliationService;
+import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFenceRepository.Settlement;
 import net.firedevops.firemud.accountservice.hostedterms.AccountHostedTermsService.CapturedEnvironmentBoundary;
 import net.firedevops.firemud.accountservice.service.session.AccountCoordinationPinnedConnectionProvider.AcknowledgementRequirements;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
+import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.authoring.GameDesignDraftTerminalReadClient;
+import net.firedevops.firemud.common.authoring.WorldDraftTerminalReadClient;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptContribution;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 
 /**
  * Genuine Account owner mutations. Fresh creator/legal sources and signer platform evidence are
- * explicitly test-only upstream inputs; this fixture is not production activation or settlement.
+ * explicitly test-only upstream inputs; this fixture provides no production activation or
+ * authorization and derives settlement only from exact retained owner readbacks.
  */
 public final class AccountControlUiOriginalOrderFixture implements AutoCloseable {
   private final AccountControlUiOwnerSourcesFixture f;
@@ -204,6 +212,79 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       AccountControlUiActorService actors,
       CapturedEnvironmentBoundary environment,
       AccountControlUiOwnerSourcesFixture sources) {}
+
+  // These fixture entry points use actual Account owners with test-only creator/legal,
+  // environment, signer-platform and Redis inputs. They confer no production authority.
+  public net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec.Request
+      prepareOriginalDraftOrder(DraftCommitBinding complete, String namespace) {
+    if (!f.tenant.equals(complete.target().canonicalTenantId()))
+      throw new IllegalArgumentException("Original Draft must target the retained Account tenant");
+    if (originalCreator == null) originalCreator = issueCreator();
+    var sources =
+        f.tx(() -> f.authority.captureInitial(f.tenant, originalCreator.environment())).sources();
+    var original =
+        new DraftAuthorizationFenceBinding(
+                UUID.randomUUID(),
+                complete.requestId(),
+                complete.commitId(),
+                UUID.randomUUID(),
+                f.account.getAccountUuid(),
+                f.tenant,
+                complete.target().canonicalVersionId(),
+                complete.baseCommitId(),
+                "0",
+                complete.canonicalBytes(),
+                complete.canonicalBytes(),
+                complete.digest(),
+                sources)
+            .withRequiredOwners();
+    return net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec.Request
+        .create(namespace, original, originalCreator.compact());
+  }
+
+  public io.grpc.BindableService originalDraftOrderProducer(String namespace) {
+    return new AccountOriginalDraftOrderGrpcService(
+        new AccountOriginalDraftOrderService(actors, namespace), f.terms, namespace);
+  }
+
+  public void assertOriginalDraftOrderPending(DraftAuthorizationFenceBinding original) {
+    var retained = f.tx(() -> f.fences.read(original));
+    assertThat(retained.ordering().name()).isEqualTo("COMMIT_ORDER");
+    assertThat(retained.binding()).isEqualTo(original.canonicalBytes());
+    assertThat(retained.orderedAt()).isNotNull();
+    assertThat(f.tx(() -> f.fences.readSettlement(original)).name()).isEqualTo("PENDING");
+  }
+
+  public net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadService
+      heldOrderOwner(String namespace) {
+    return new net.firedevops.firemud.accountservice.authordraft.AccountDraftCommitOrderReadService(
+        f.fences, f.manager, namespace);
+  }
+
+  /** Controlled composition only; settlement still derives from retained exact owner readbacks. */
+  public AccountDraftTerminalReconciliationService terminalReconciler(
+      GameDesignDraftTerminalReadClient gameDesignClient,
+      WorldDraftTerminalReadClient worldClient,
+      String namespace) {
+    return new AccountDraftTerminalReconciliationService(
+        f.fences, f.manager, gameDesignClient, worldClient, namespace);
+  }
+
+  public void assertOriginalDraftSettlement(
+      DraftAuthorizationFenceBinding original, Settlement expected) {
+    assertThat(f.tx(() -> f.fences.readSettlement(original))).isEqualTo(expected);
+  }
+
+  public byte[] originalDraftOwnerReadback(
+      DraftAuthorizationFenceBinding original, Owner owner) {
+    return f.tx(
+            () ->
+                f.fences
+                    .readOwnerResult(original, owner)
+                    .orElseThrow(() -> new AssertionError("Original Draft owner readback absent"))
+                    .readback())
+        .clone();
+  }
 
   @Override
   public void close() {

@@ -91,14 +91,22 @@ public final class GameDesignSourceRepository {
     return Optional.of(new Genesis(policy.orElseThrow(), command.orElseThrow(), asset));
   }
 
-  /** Stage actual source writes and record exactly one complete local owner outcome. */
-  public Application apply(DraftCommitBinding binding) {
-    requireWrite();
+  /** Pure typed owner/scope validation; this does not read storage or grant write authority. */
+  public void validateInput(DraftCommitBinding binding) {
     Objects.requireNonNull(binding, "binding");
-    List<CommandSource.Mutation> commandMutations = CommandSource.mutations(binding);
+    var commandMutations = CommandSource.mutations(binding);
     boolean policyMutation = CommandSource.hasRealmPolicyRevision(binding);
     boolean assetMutation = !AssetSource.mutations(binding).isEmpty();
     requireCompleteScopes(binding, !commandMutations.isEmpty(), policyMutation, assetMutation);
+  }
+
+  /** Stage actual source writes and record exactly one complete local owner outcome. */
+  public Application apply(DraftCommitBinding binding) {
+    requireWrite();
+    validateInput(binding);
+    List<CommandSource.Mutation> commandMutations = CommandSource.mutations(binding);
+    boolean policyMutation = CommandSource.hasRealmPolicyRevision(binding);
+    boolean assetMutation = !AssetSource.mutations(binding).isEmpty();
     requireGenesis(binding.target());
     requireReviewed(binding);
     Optional<CommandApplication> command = commands.apply(binding);

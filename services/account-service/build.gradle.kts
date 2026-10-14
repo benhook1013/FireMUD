@@ -80,6 +80,7 @@ dependencies {
     testFixturesImplementation("io.grpc:grpc-stub:${libs.versions.grpc.get()}")
 
     testImplementation(libs.grpc.inprocess)
+    testImplementation(libs.grpc.netty.shaded)
     testImplementation(project(":logging-admin-service"))
     testImplementation(testFixtures(project(":account-service")))
     testImplementation(testFixtures(project(":common-platform-core")))
@@ -130,4 +131,23 @@ tasks.named<Test>("test") {
 tasks.named<Test>("integrationTest") {
     val loggingArtifacts = loggingAdminIntegrationTestArtifacts.artifactFiles
     classpath = classpath.filter { it !in loggingArtifacts } + files(extractLoggingAdminIntegrationTestClasses)
+}
+
+// Owner proof exports classes and its required registry script without Account application or
+// Flyway resources, so a receiving service retains its own configuration and migration ownership.
+val accountOriginalOrderProofJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("original-order-proof")
+    dependsOn(tasks.named("classes"), tasks.named("testFixturesClasses"))
+    from(sourceSets.main.get().output.classesDirs)
+    from(sourceSets["testFixtures"].output.classesDirs)
+    from("src/main/resources") {
+        include("redis/lua/account-control-ui-registry-cas.lua")
+    }
+}
+
+val accountOriginalOrderProof by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+    extendsFrom(configurations.implementation.get())
+    outgoing.artifact(accountOriginalOrderProofJar)
 }
