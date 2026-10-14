@@ -393,6 +393,7 @@ public final class RunOwnedInitialAdmissionFixtureWireCodec {
         || !creation.canonicalTenantId().equals(source.canonicalTenantId())
         || creation.sourceGameRowId() != source.sourceGameRowId()
         || !creation.sourceGameTenantKey().equals(source.sourceGameTenantKey())
+        || !creation.provenanceKind().equals(source.provenanceKind())
         || !Long.toString(capability.tenantId()).equals(source.sourceGameTenantKey())
         || !capability.operationId().equals(source.registrationRequestId().toString())
         || !capability.worldSlug().equals(source.worldSlug())
