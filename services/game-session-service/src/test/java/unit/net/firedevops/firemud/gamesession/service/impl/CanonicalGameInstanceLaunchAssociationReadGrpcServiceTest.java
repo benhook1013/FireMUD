@@ -76,7 +76,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest {
     Context.ROOT.run(
         () ->
             service.getCanonicalGameInstanceLaunchAssociation(
-                GetCanonicalGameInstanceLaunchAssociationRequest.getDefaultInstance(), missingPeer));
+                GetCanonicalGameInstanceLaunchAssociationRequest.getDefaultInstance(),
+                missingPeer));
     assertDenied(missingPeer, Status.Code.UNAUTHENTICATED);
 
     assertDenied(
@@ -149,6 +150,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest {
             association.currentRowVersion(),
             OWNER_ATTEMPT,
             8L,
+            fixture.original().canonicalRealmId(),
+            fixture.original().catalogRevision(),
             association.launchBindingEvidence());
 
     assertThat(observer.error()).isNull();

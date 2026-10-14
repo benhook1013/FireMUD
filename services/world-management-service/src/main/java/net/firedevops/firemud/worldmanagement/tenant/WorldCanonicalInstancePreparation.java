@@ -16,8 +16,7 @@ import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
  * <p>The input preserves the caller's exact Game Session read tuple, the committed World launch
  * binding and source-qualified Version identity, and the original immutable frozen topology source.
  * It is component input only: construction does not authenticate a producer, authorize a release,
- * prove publication delivery, or enable lifecycle
- * activation or gameplay admission.
+ * prove publication delivery, or enable lifecycle activation or gameplay admission.
  */
 public final class WorldCanonicalInstancePreparation {
   private WorldCanonicalInstancePreparation() {}

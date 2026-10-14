@@ -83,11 +83,12 @@ public final class CanonicalWorldInstancePreparationGrpcCodec {
       throw new IllegalArgumentException("Exact original StartSession owner operation is required");
     }
     var operation = request.getOriginalStartSessionOperation();
-    var input = new OriginalOperationInput(
-        operation.getOriginalPostAuthorizationTuple().toByteArray(),
-        parseCanonicalNonNilUuid(operation.getGameSessionOwnerMutationId(), "ownerMutationId"),
-        parseCanonicalNonNilUuid(operation.getGameSessionOwnerAttemptId(), "ownerAttemptId"),
-        operation.getGameSessionOwnerFence());
+    var input =
+        new OriginalOperationInput(
+            operation.getOriginalPostAuthorizationTuple().toByteArray(),
+            parseCanonicalNonNilUuid(operation.getGameSessionOwnerMutationId(), "ownerMutationId"),
+            parseCanonicalNonNilUuid(operation.getGameSessionOwnerAttemptId(), "ownerAttemptId"),
+            operation.getGameSessionOwnerFence());
     requireOperationBinding(fromRequest(request), input);
     return input;
   }
@@ -202,13 +203,15 @@ public final class CanonicalWorldInstancePreparationGrpcCodec {
           || originalPostAuthorizationTuple.length > 262_144) {
         throw new IllegalArgumentException("Original StartSession tuple is empty or oversized");
       }
-      var decoded = StartSessionPostAuthorizationExecutionTuple.decode(originalPostAuthorizationTuple);
+      var decoded =
+          StartSessionPostAuthorizationExecutionTuple.decode(originalPostAuthorizationTuple);
       if (!Arrays.equals(decoded.canonicalBytes(), originalPostAuthorizationTuple))
         throw new IllegalArgumentException("Exact canonical original StartSession tuple required");
       this.originalPostAuthorizationTuple = originalPostAuthorizationTuple.clone();
       this.gameSessionOwnerMutationId = Objects.requireNonNull(gameSessionOwnerMutationId);
       this.gameSessionOwnerAttemptId = Objects.requireNonNull(gameSessionOwnerAttemptId);
-      if (NIL_UUID.equals(gameSessionOwnerMutationId) || NIL_UUID.equals(gameSessionOwnerAttemptId)) {
+      if (NIL_UUID.equals(gameSessionOwnerMutationId)
+          || NIL_UUID.equals(gameSessionOwnerAttemptId)) {
         throw new IllegalArgumentException("Game Session owner identities must be non-nil");
       }
       if (gameSessionOwnerFence <= 0L) {
@@ -235,12 +238,14 @@ public final class CanonicalWorldInstancePreparationGrpcCodec {
   }
 
   private static void requireOperationBinding(Request request, OriginalOperationInput input) {
-    var tuple = StartSessionPostAuthorizationExecutionTuple.decode(input.originalPostAuthorizationTuple());
+    var tuple =
+        StartSessionPostAuthorizationExecutionTuple.decode(input.originalPostAuthorizationTuple());
     var pre = tuple.preAuthorizationTuple();
     if (!request.targetNamespace().equals(pre.action().scope().targetNamespace())
         || !request.canonicalTenantId().equals(pre.action().scope().tenantId())
         || !request.controlPlaneRequestId().equals(pre.controlPlaneRequestId())) {
-      throw new IllegalArgumentException("Original StartSession tuple differs from preparation selector");
+      throw new IllegalArgumentException(
+          "Original StartSession tuple differs from preparation selector");
     }
   }
 

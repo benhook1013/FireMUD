@@ -34,6 +34,7 @@ import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
@@ -51,7 +52,7 @@ import tools.jackson.databind.json.JsonMapper;
 /** Mocked owner-client evidence exercises composition only; it is not genuine cross-owner proof. */
 class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
   private static final JsonMapper JSON = JsonMapper.builder().build();
-  private static final String NAMESPACE = "gameplay";
+  private static final String NAMESPACE = "test";
   private static final UUID TENANT = uuid("11111111-1111-4111-8111-111111111111");
   private static final UUID GAME_INSTANCE = uuid("23232323-2323-4323-8323-232323232323");
   private static final UUID PLAYABLE_NAMESPACE = uuid("33333333-3333-4333-8333-333333333333");
@@ -462,7 +463,7 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
 
   private static WorldPublishedStartLocationEvidence retainedWorldSelector() {
     try {
-      return WorldCanonicalPlayerLocationGrpcServiceTest.publishedSelector(NAMESPACE);
+      return AuthoringFixtures.startLocationEvidence();
     } catch (Exception malformedFixture) {
       throw new AssertionError(
           "Constructor-validated World selector fixture is invalid", malformedFixture);

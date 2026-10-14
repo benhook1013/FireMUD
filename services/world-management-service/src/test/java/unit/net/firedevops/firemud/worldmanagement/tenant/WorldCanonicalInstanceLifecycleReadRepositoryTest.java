@@ -11,6 +11,7 @@ import java.lang.reflect.Method;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
+import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
@@ -62,53 +63,58 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
   }
 
   @Test
-  void mapsRetainedAndSelectedFullAttestationsToTheirFrozenGraphProfiles() throws Exception {
-    assertThat(expectedFrozenGraphSchemaVersion(release(2))).isEqualTo(2);
-    assertThat(expectedFrozenGraphSchemaVersion(release(3))).isEqualTo(3);
-
-    var selectedFull =
-        release(AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
-    assertThat(selectedFull.participantDigests())
+  void mapsCurrentSelectorAttestationsToTheirFrozenGraphProfiles() throws Exception {
+    var selector = release(AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+    assertThat(selector.participantDigests())
         .extracting(AuthoredWorldReleaseAttestationEvidence.Participant::digestSchemaVersion)
-        .containsExactly(4, 3, 1, 6, 2);
-    assertThat(selectedFull.worldStartLocationEvidence()).isNotNull();
-    assertThat(selectedFull.worldStartLocationEvidence().request().digestSchemaVersion())
+        .containsExactly(3, 2, 1, 5, 1);
+    assertThat(selector.worldStartLocationEvidence()).isNotNull();
+    assertThat(selector.worldStartLocationEvidence().request().digestSchemaVersion()).isEqualTo(3);
+    assertThat(selector.worldStartLocationEvidence().request().canonicalTenantId())
+        .isEqualTo(selector.canonicalTenantId());
+    assertThat(selector.worldStartLocationEvidence().request().canonicalVersionId())
+        .isEqualTo(selector.canonicalVersionId());
+    assertThat(selector.worldStartLocationEvidence().request().contentDigest())
+        .isEqualTo(selector.participantDigests().getFirst().contentDigest());
+    assertThat(expectedFrozenGraphSchemaVersion(selector)).isEqualTo(2);
+
+    var closureSelector =
+        release(AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION);
+    assertThat(closureSelector.participantDigests())
+        .extracting(AuthoredWorldReleaseAttestationEvidence.Participant::digestSchemaVersion)
+        .containsExactly(4, 2, 1, 5, 2);
+    assertThat(closureSelector.worldStartLocationEvidence()).isNotNull();
+    assertThat(closureSelector.worldStartLocationEvidence().request().digestSchemaVersion())
         .isEqualTo(4);
-    assertThat(selectedFull.worldStartLocationEvidence().request().canonicalTenantId())
-        .isEqualTo(selectedFull.canonicalTenantId());
-    assertThat(selectedFull.worldStartLocationEvidence().request().canonicalVersionId())
-        .isEqualTo(selectedFull.canonicalVersionId());
-    assertThat(selectedFull.worldStartLocationEvidence().request().contentDigest())
-        .isEqualTo(selectedFull.participantDigests().getFirst().contentDigest());
-    assertThat(expectedFrozenGraphSchemaVersion(selectedFull)).isEqualTo(3);
+    assertThat(expectedFrozenGraphSchemaVersion(closureSelector)).isEqualTo(3);
   }
 
   @Test
-  void rejectsUnsupportedOrMixedSelectedFullAttestationProfiles() throws Exception {
+  void rejectsUnsupportedOrMixedCurrentSelectorAttestationProfiles() throws Exception {
     assertThatThrownBy(() -> expectedFrozenGraphSchemaVersion(release(1)))
         .hasMessageContaining("no supported selected World graph profile");
 
-    var selectedFull =
-        release(AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+    var closureSelector =
+        release(AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION);
     assertThatThrownBy(
             () ->
-                selectedFull(
-                    selectedFull,
-                    participantDigestsWithSchema(selectedFull, "ENTITY_MANAGEMENT", 2)))
+                closureSelector(
+                    closureSelector,
+                    participantDigestsWithSchema(closureSelector, "ENTITY_MANAGEMENT", 1)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Participant digest schema is unsupported");
     assertThatThrownBy(
             () ->
-                selectedFull(
-                    selectedFull,
-                    participantDigestsWithSchema(selectedFull, "AUTOMATION_SCRIPTING", 5)))
+                closureSelector(
+                    closureSelector,
+                    participantDigestsWithSchema(closureSelector, "AUTOMATION_SCRIPTING", 4)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Participant digest schema is unsupported");
     assertThatThrownBy(
             () ->
-                selectedFull(
-                    selectedFull,
-                    participantDigestsWithSchema(selectedFull, "WORLD_MANAGEMENT", 3)))
+                closureSelector(
+                    closureSelector,
+                    participantDigestsWithSchema(closureSelector, "WORLD_MANAGEMENT", 3)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Participant digest schema is unsupported");
   }
@@ -135,10 +141,7 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
         AuthoredWorldReleaseAttestationEvidence.requiresWorldStartLocationEvidence(schemaVersion)
             ? selectedWorldEvidence(
                 schemaVersion
-                            == AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION
-                        || schemaVersion
-                            == AuthoredWorldReleaseAttestationEvidence
-                                .CLOSURE_SELECTOR_SCHEMA_VERSION
+                        == AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION
                     ? 4
                     : 3)
             : null;
@@ -245,37 +248,15 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
               List.of(),
               "test-generation-config",
               selector);
-      case AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION ->
-          AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
-              namespace,
-              descriptorDigest,
-              tenantId,
-              versionId,
-              "synthetic-world",
-              UUID.fromString("33333333-3333-4333-8333-333333333333"),
-              "sha256:" + "e".repeat(64),
-              "test-descriptor",
-              "test-release",
-              1,
-              workflow,
-              commitId,
-              participants,
-              manifestHash,
-              1,
-              List.of(),
-              List.of(),
-              List.of(),
-              "test-generation-config",
-              selector);
       default -> throw new IllegalArgumentException("Unsupported test release schema");
     };
   }
 
   private static WorldPublishedStartLocationEvidence selectedWorldEvidence(int schemaVersion)
       throws Exception {
-    // ISOLATED carrier/profile selection only: this stipulates the newer World digest schema.
-    // It does not recompute a closure digest or prove a physical selected freeze/lifecycle read.
-    var retained = WorldCanonicalPlayerLocationGrpcServiceTest.publishedSelector("test");
+    // Controlled profile carrier only: changing the declared digest schema does not recompute a
+    // closure digest or prove a physical selected freeze/lifecycle read.
+    var retained = AuthoringFixtures.startLocationEvidence();
     var request = retained.request();
     if (schemaVersion == request.digestSchemaVersion()) return retained;
     var selectedRequest =
@@ -321,10 +302,10 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
         .toList();
   }
 
-  private static AuthoredWorldReleaseAttestationEvidence selectedFull(
+  private static AuthoredWorldReleaseAttestationEvidence closureSelector(
       AuthoredWorldReleaseAttestationEvidence basis,
       List<AuthoredWorldReleaseAttestationEvidence.Participant> participants) {
-    return AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
+    return AuthoredWorldReleaseAttestationEvidence.createClosureSelector(
         basis.targetNamespace(),
         basis.descriptorResultDigest(),
         basis.canonicalTenantId(),

@@ -18,6 +18,17 @@ dependencies {
   testImplementation(libs.bouncycastle.pkix)
   testCompileOnly(libs.spotbugs.annotations)
   add("integrationTestCompileOnly", libs.spotbugs.annotations)
+  add("crossServiceTestCompileOnly", libs.spotbugs.annotations)
+  add(
+      "crossServiceTestImplementation",
+      project(mapOf("path" to ":account-service", "configuration" to "accountOriginalOrderProof"))
+  )
+  add(
+      "crossServiceTestImplementation",
+      project(mapOf("path" to ":game-session-service", "configuration" to "gameSessionClassesProof"))
+  )
+  add("crossServiceTestImplementation", testFixtures(project(":common-test-support")))
+  add("crossServiceTestImplementation", "io.grpc:grpc-util:${libs.versions.grpc.get()}")
 }
 
 // Receiving owner proof uses World classes without its application or Flyway resources.

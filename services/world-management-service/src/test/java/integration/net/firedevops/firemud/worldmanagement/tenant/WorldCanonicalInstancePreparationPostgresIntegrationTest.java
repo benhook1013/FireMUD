@@ -25,10 +25,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Current-default World SQL refusal proof, not a successful preparation or Account-authority
- * proof. The World owner guard rejects a fresh execution row without the complete original-attempt
- * witness fields; controlled SQL values do not claim that Account issued or authenticated a
- * witness, or establish a genuine creator or production StartSession operation.
+ * Current-default World SQL refusal proof, not a successful preparation or Account-authority proof.
+ * The World owner guard rejects a fresh execution row without the complete original-attempt witness
+ * fields; controlled SQL values do not claim that Account issued or authenticated a witness, or
+ * establish a genuine creator or production StartSession operation.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -83,8 +83,7 @@ class WorldCanonicalInstancePreparationPostgresIntegrationTest {
       UUID attempt = UUID.randomUUID();
       String requestId = "missing-account-observation-" + UUID.randomUUID();
       byte[] tuple =
-          "{\"controlledFixture\":true}"
-              .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+          "{\"controlledFixture\":true}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
       String inputJson = "{\"schemaVersion\":4,\"controlledFixture\":true}";
       String inputDigest =
           "sha256:" + sha256(inputJson.getBytes(java.nio.charset.StandardCharsets.UTF_8));
@@ -126,8 +125,7 @@ class WorldCanonicalInstancePreparationPostgresIntegrationTest {
           .isEqualTo(preparationsBefore);
       assertThat(rowCount(dsl, "world_canonical_instance_association"))
           .isEqualTo(associationsBefore);
-      assertThat(rowCount(dsl, "world_canonical_instance_execution"))
-          .isEqualTo(executionsBefore);
+      assertThat(rowCount(dsl, "world_canonical_instance_execution")).isEqualTo(executionsBefore);
     } finally {
       dsl.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
     }
@@ -136,8 +134,7 @@ class WorldCanonicalInstancePreparationPostgresIntegrationTest {
   private static boolean migrationSucceeded(DSLContext dsl, String version) {
     return Boolean.TRUE.equals(
         dsl.fetchSingle(
-                "SELECT EXISTS(SELECT 1 FROM " + HISTORY + " WHERE version=? AND success)",
-                version)
+                "SELECT EXISTS(SELECT 1 FROM " + HISTORY + " WHERE version=? AND success)", version)
             .get(0, Boolean.class));
   }
 

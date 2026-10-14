@@ -44,8 +44,7 @@ class WorldStartSessionAccountParticipationVerifierTest {
 
   @Test
   void exactPeerAndWorkloadOnlyContextAreRequiredBeforeAccountAcquisition() {
-    var acquirer =
-        mock(AccountStartSessionWorldParticipationAcquisitionClient.class);
+    var acquirer = mock(AccountStartSessionWorldParticipationAcquisitionClient.class);
     var verifier = new WorldStartSessionAccountParticipationVerifier(NAMESPACE, acquirer);
     Input input = mock(Input.class);
     OriginalStartSessionOperationInput operationInput = operationInput();
@@ -82,8 +81,7 @@ class WorldStartSessionAccountParticipationVerifierTest {
 
   @Test
   void ambientWorldTransactionIsRejectedBeforeAccountAcquisition() {
-    var acquirer =
-        mock(AccountStartSessionWorldParticipationAcquisitionClient.class);
+    var acquirer = mock(AccountStartSessionWorldParticipationAcquisitionClient.class);
     var verifier = new WorldStartSessionAccountParticipationVerifier(NAMESPACE, acquirer);
     Input input = mock(Input.class);
     OriginalStartSessionOperationInput operationInput = operationInput();
@@ -108,8 +106,7 @@ class WorldStartSessionAccountParticipationVerifierTest {
     var accountClient = mock(AccountStartSessionWorldParticipationAcquisitionClient.class);
     var verifier = new WorldStartSessionAccountParticipationVerifier(NAMESPACE, accountClient);
     OriginalStartSessionOperationInput operationInput = operationInput();
-    Input input =
-        inputFor(uuid("99999999-9999-4999-8999-999999999999"), 37L, "STARTING");
+    Input input = inputFor(uuid("99999999-9999-4999-8999-999999999999"), 37L, "STARTING");
     var context =
         Context.ROOT.withValue(
             GrpcPeerIdentity.CONTEXT_KEY, peer("game-session-service", NAMESPACE));
@@ -123,8 +120,7 @@ class WorldStartSessionAccountParticipationVerifierTest {
     }
     verifyNoInteractions(accountClient);
 
-    Input wrongFence =
-        inputFor(operationInput.gameSessionOwnerAttemptId(), 38L, "STARTING");
+    Input wrongFence = inputFor(operationInput.gameSessionOwnerAttemptId(), 38L, "STARTING");
     previous = context.attach();
     try {
       assertThatThrownBy(() -> verifier.verifyAndHold(wrongFence, operationInput))
@@ -134,13 +130,10 @@ class WorldStartSessionAccountParticipationVerifierTest {
       context.detach(previous);
     }
     verifyNoInteractions(accountClient);
-
   }
 
   private static Input inputFor(
-      UUID associationAttempt,
-      long associationFence,
-      String currentStatus) {
+      UUID associationAttempt, long associationFence, String currentStatus) {
     Input input = mock(Input.class);
     var worldEvidence = mock(WorldCanonicalInstanceAssociation.GameSessionReadEvidence.class);
     when(worldEvidence.targetNamespace()).thenReturn(NAMESPACE);

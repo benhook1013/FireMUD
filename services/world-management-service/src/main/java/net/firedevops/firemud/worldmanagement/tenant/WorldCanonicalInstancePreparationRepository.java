@@ -251,7 +251,8 @@ public final class WorldCanonicalInstancePreparationRepository {
   /**
    * Retains the full immutable operation identity in a short transaction before materialization.
    * The record is not permission: every new writer still needs a fresh Account participation and
-   * must pass the DB-clock authorization and owner-lease checks after all World owner locks are acquired.
+   * must pass the DB-clock authorization and owner-lease checks after all World owner locks are
+   * acquired.
    */
   private long persistExecutionIntent(
       String inputJson,
@@ -323,7 +324,9 @@ public final class WorldCanonicalInstancePreparationRepository {
     return fence;
   }
 
-  /** Exact read-only recovery lookup; it never invokes a writer or reassembles external source data. */
+  /**
+   * Exact read-only recovery lookup; it never invokes a writer or reassembles external source data.
+   */
   public ExecutionLookup readExactExecution(WorldCanonicalInstanceExecutionIdentity identity) {
     Objects.requireNonNull(identity, "identity");
     requireNoActiveTransaction("World execution terminal read");
@@ -1185,7 +1188,9 @@ public final class WorldCanonicalInstancePreparationRepository {
     return result;
   }
 
-  /** Full typed evidence serialization, matching the closed World launch-binding persistence codec. */
+  /**
+   * Full typed evidence serialization, matching the closed World launch-binding persistence codec.
+   */
   private static String evidenceJson(Object evidence) {
     try {
       return JSON.writeValueAsString(Objects.requireNonNull(evidence, "evidence"));

@@ -20,6 +20,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
       UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
   private static final UUID OWNER_ATTEMPT_ID =
       UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  private static final UUID CANONICAL_REALM_ID =
+      UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
 
   @Test
   void roundTripsOwnerAttemptAndFenceAndRejectsMissingMalformedOrNonpositiveProof()
@@ -51,6 +53,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
         .isEqualTo(request);
     assertThat(result.ownerAttemptId()).isEqualTo(OWNER_ATTEMPT_ID);
     assertThat(result.ownerFence()).isEqualTo(4L);
+    assertThat(result.canonicalRealmId()).isEqualTo(CANONICAL_REALM_ID);
+    assertThat(result.catalogRevision()).isEqualTo(9L);
     assertThat(result.playableStateScope()).isEqualTo(RealmEntryPolicy.StateScope.SHARED);
     assertThat(result.launchBindingEvidence()).isEqualTo(launchBinding);
     for (var invalid :
@@ -59,7 +63,13 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
           response.toBuilder().setOwnerAttemptId("not-a-uuid").build(),
           response.toBuilder().setOwnerAttemptId("00000000-0000-0000-0000-000000000000").build(),
           response.toBuilder().setOwnerFence(0).build(),
-          response.toBuilder().setOwnerFence(-1).build()
+          response.toBuilder().setOwnerFence(-1).build(),
+          response.toBuilder().clearCanonicalRealmId().build(),
+          response.toBuilder().setCanonicalRealmId("not-a-uuid").build(),
+          response.toBuilder().setCanonicalRealmId("00000000-0000-0000-0000-000000000000").build(),
+          response.toBuilder().clearCatalogRevision().build(),
+          response.toBuilder().setCatalogRevision(0L).build(),
+          response.toBuilder().setCatalogRevision(-1L).build()
         }) {
       assertThatThrownBy(
               () ->
@@ -116,6 +126,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
                 launchBinding.releaseAttestation()))
         .setOwnerAttemptId(OWNER_ATTEMPT_ID.toString())
         .setOwnerFence(4L)
+        .setCanonicalRealmId(CANONICAL_REALM_ID.toString())
+        .setCatalogRevision(9L)
         .build();
   }
 }

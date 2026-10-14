@@ -153,3 +153,20 @@ val gameSessionMigrationDriverDist =
             into("lib")
         }
     }
+
+// Cross-service owner proof exports classes without application or Flyway resources.
+val gameSessionClassesProofJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("classes-proof")
+    dependsOn(tasks.named("classes"), tasks.named("compileIntegrationTestJava"))
+    from(sourceSets.main.get().output.classesDirs)
+    from(sourceSets["integrationTest"].output.classesDirs) {
+        include("integration/net/firedevops/firemud/gamesession/repository/CanonicalHumanPublicationOwnerTestFixtures*.class")
+    }
+}
+
+val gameSessionClassesProof by configurations.creating {
+    isCanBeConsumed = true
+    isCanBeResolved = false
+    extendsFrom(configurations.implementation.get())
+    outgoing.artifact(gameSessionClassesProofJar)
+}
