@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -11,6 +12,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec.ReadRequest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -149,6 +151,120 @@ public class WorldAuthoredSourceIntakeService {
     if (!accepted.equals(readback)) {
       throw new WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException(
           "World authored-source intake changed during commit readback");
+    }
+    return readback;
+  }
+
+  /**
+   * Retains the exact fresh source already sealed by the trusted fixed run-owned fixture. This
+   * overload is intentionally typed to the provider-created carrier; raw fixture files and caller
+   * supplied source DTOs cannot invoke the owner path.
+   */
+  public WorldAuthoredSourceIntakeReceipt intakeRunOwnedFixture(
+      RunOwnedWorldLaunchEvidence fixtureEvidence) {
+    Objects.requireNonNull(fixtureEvidence, "fixtureEvidence");
+    fixtureEvidence.requireFixedGameSessionPeer();
+    requireNoAmbientTransaction();
+    if (SessionContext.hasAuthenticatedCallerContext()) {
+      throw new SecurityException(
+          "Run-owned fixture source intake rejects authenticated end-user caller context");
+    }
+
+    var trustedReceipt = fixtureEvidence.sourceReceipt();
+    AuthoredWorldSourceEvidence expectedSource = trustedReceipt.sourceEvidence();
+    UUID fixtureOperationId = UUID.fromString(fixtureEvidence.capability().operationId());
+    UUID intakeRequestId = fixtureSourceIntakeRequestId(fixtureOperationId);
+    validateSchemaAndNamespace(SCHEMA_VERSION, workloadNamespace);
+    validateRequest(
+        workloadNamespace,
+        intakeRequestId,
+        expectedSource.canonicalTenantId(),
+        expectedSource.worldSlug(),
+        expectedSource.operationId(),
+        expectedSource.evidenceDigest());
+    if (!fixtureOperationId.toString().equals(trustedReceipt.fixtureOperationId())
+        || !fixtureEvidence
+            .fixtureProvenanceDigest()
+            .equals(trustedReceipt.fixturePolicySeal().evidenceDigest())
+        || !workloadNamespace.equals(expectedSource.targetNamespace())
+        || !fixtureEvidence
+            .launchDescriptor()
+            .canonicalTenantId()
+            .equals(expectedSource.canonicalTenantId())
+        || !fixtureEvidence.launchDescriptor().worldSlug().equals(expectedSource.worldSlug())
+        || !fixtureEvidence
+            .launchDescriptor()
+            .authoredWorldSourceOperationId()
+            .equals(expectedSource.operationId())
+        || !fixtureEvidence
+            .launchDescriptor()
+            .authoredWorldSourceEvidenceDigest()
+            .equals(expectedSource.evidenceDigest())) {
+      throw new WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException(
+          "Run-owned fixture evidence differs from its exact Game Design source owner binding");
+    }
+
+    Optional<WorldAuthoredSourceIntakeReceipt> prior =
+        repository.read(workloadNamespace, intakeRequestId);
+    if (prior.isPresent()) {
+      return requireReceiptForRequest(
+          prior.orElseThrow(),
+          intakeRequestId,
+          expectedSource.canonicalTenantId(),
+          expectedSource.worldSlug(),
+          expectedSource.operationId(),
+          expectedSource.evidenceDigest(),
+          expectedSource);
+    }
+
+    AuthoredWorldSourceEvidence current =
+        sourceClient.read(
+            new ReadRequest(
+                workloadNamespace,
+                newReadRequestId(intakeRequestId),
+                expectedSource.operationId(),
+                expectedSource.canonicalTenantId(),
+                expectedSource.worldSlug()));
+    requireFreshSourceForRequest(
+        current,
+        expectedSource.canonicalTenantId(),
+        expectedSource.worldSlug(),
+        expectedSource.operationId(),
+        expectedSource.evidenceDigest());
+    if (!expectedSource.equals(current)) {
+      throw new WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException(
+          "Authenticated Game Design source differs from the immutable run-owned fixture receipt");
+    }
+
+    WorldAuthoredSourceIntakeReceipt accepted =
+        ownerTransaction.execute(
+            status -> repository.acceptFresh(workloadNamespace, intakeRequestId, current));
+    requireReceiptForRequest(
+        accepted,
+        intakeRequestId,
+        expectedSource.canonicalTenantId(),
+        expectedSource.worldSlug(),
+        expectedSource.operationId(),
+        expectedSource.evidenceDigest(),
+        expectedSource);
+    WorldAuthoredSourceIntakeReceipt readback =
+        repository
+            .read(workloadNamespace, intakeRequestId)
+            .orElseThrow(
+                () ->
+                    new WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException(
+                        "Run-owned fixture source intake is missing after its owner commit"));
+    requireReceiptForRequest(
+        readback,
+        intakeRequestId,
+        expectedSource.canonicalTenantId(),
+        expectedSource.worldSlug(),
+        expectedSource.operationId(),
+        expectedSource.evidenceDigest(),
+        expectedSource);
+    if (!accepted.equals(readback)) {
+      throw new WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException(
+          "Run-owned fixture source intake changed during independent commit readback");
     }
     return readback;
   }
@@ -368,6 +484,17 @@ public class WorldAuthoredSourceIntakeService {
       readRequestId = UUID.randomUUID();
     } while (NIL_UUID.equals(readRequestId) || intakeRequestId.equals(readRequestId));
     return readRequestId;
+  }
+
+  private static UUID fixtureSourceIntakeRequestId(UUID fixtureOperationId) {
+    UUID requestId =
+        UUID.nameUUIDFromBytes(
+            ("firemud-world-run-owned-fixture-source-intake/v1:" + fixtureOperationId)
+                .getBytes(StandardCharsets.UTF_8));
+    if (NIL_UUID.equals(requestId) || fixtureOperationId.equals(requestId)) {
+      throw new IllegalArgumentException("Run-owned fixture source intake identity is invalid");
+    }
+    return requestId;
   }
 
   private static void requireNonNil(UUID value, String name) {

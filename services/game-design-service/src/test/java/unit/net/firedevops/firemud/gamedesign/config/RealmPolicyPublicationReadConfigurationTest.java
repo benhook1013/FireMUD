@@ -97,6 +97,8 @@ class RealmPolicyPublicationReadConfigurationTest {
                             .getFullMethodName(),
                         "gamedesign.v1.GameDesignService/ResolveLaunchDescriptor",
                         "gamedesign.v1.GameDesignService/GetLaunchDescriptor",
-                        "gamedesign.v1.GameDesignService/GetCompleteLaunchBinding"));
+                        "gamedesign.v1.GameDesignService/GetCompleteLaunchBinding",
+                        "gamedesign.v1.AuthoredWorldSourceReadService/ResolveAuthoredWorldSource",
+                        "gamedesign.v1.AuthoredWorldVersionStateService/GetAuthoredWorldVersionState"));
   }
 }

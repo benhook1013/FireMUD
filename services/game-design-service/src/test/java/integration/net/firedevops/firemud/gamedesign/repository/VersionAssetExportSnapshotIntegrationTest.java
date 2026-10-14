@@ -601,7 +601,11 @@ class VersionAssetExportSnapshotIntegrationTest {
             .defaultSchema(schema)
             .table("flyway_schema_history_game_design_service")
             .placeholders(Map.of("serviceSchema", schema))
-            .locations("classpath:db/migration");
+            .locations(
+                "filesystem:"
+                    + java.nio.file.Path.of("src/main/resources/db/migration")
+                        .toAbsolutePath()
+                        .normalize());
     if (target != null) {
       configuration.target(target);
     }
@@ -793,7 +797,11 @@ class VersionAssetExportSnapshotIntegrationTest {
         .defaultSchema(fixture.schema)
         .table("flyway_schema_history_game_design_service")
         .placeholders(Map.of("serviceSchema", fixture.schema))
-        .locations("classpath:db/migration")
+        .locations(
+            "filesystem:"
+                + java.nio.file.Path.of("src/main/resources/db/migration")
+                    .toAbsolutePath()
+                    .normalize())
         .load()
         .migrate();
   }

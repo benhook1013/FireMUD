@@ -749,9 +749,11 @@ class WorldLifecycleCommandServiceImplTest {
   }
 
   @Test
-  void fixturePrepareRefusesBeforeProviderEvidenceOrRepositoryInteraction() {
+  void fixturePrepareRejectsUnavailableAuthenticatedEvidenceBeforeRepositoryInteraction() {
     RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
     when(provider.isEnabled()).thenReturn(true);
+    IllegalArgumentException unavailable = new IllegalArgumentException("unverified fixture peer");
+    when(provider.requireAuthenticatedEvidence()).thenThrow(unavailable);
     WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
 
     IllegalArgumentException error =
@@ -759,10 +761,31 @@ class WorldLifecycleCommandServiceImplTest {
             IllegalArgumentException.class,
             () -> fixtureService.prepareWorldInstance(ordinaryPreparedRequest()));
 
-    assertTrue(error.getMessage().startsWith("RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE:"));
+    assertEquals(unavailable, error);
     verify(provider).isEnabled();
-    verify(provider, never()).requireAuthenticatedEvidence();
+    verify(provider).requireAuthenticatedEvidence();
     verifyNoWorldRepositoryOrOwnerInteraction();
+  }
+
+  @Test
+  void fixturePrepareRejectsAmbientTransactionBeforeRemoteEvidence() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    when(provider.isEnabled()).thenReturn(true);
+    WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
+    org.springframework.transaction.support.TransactionSynchronizationManager
+        .setActualTransactionActive(true);
+    try {
+      IllegalStateException error =
+          assertThrows(
+              IllegalStateException.class,
+              () -> fixtureService.prepareWorldInstance(ordinaryPreparedRequest()));
+      assertTrue(error.getMessage().contains("no ambient transaction"));
+      verify(provider, never()).requireAuthenticatedEvidence();
+      verifyNoWorldRepositoryOrOwnerInteraction();
+    } finally {
+      org.springframework.transaction.support.TransactionSynchronizationManager
+          .setActualTransactionActive(false);
+    }
   }
 
   @Test

@@ -108,6 +108,10 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
     // This pre-existing controlled storage row supplies no canonical association or authority.
     repository.save(passiveStorageRow(request, "a".repeat(64)));
     when(fixtureProvider.isEnabled()).thenReturn(true);
+    when(fixtureProvider.requireAuthenticatedEvidence())
+        .thenThrow(
+            new IllegalArgumentException(
+                "RUN_OWNED_WORLD_LAUNCH_EVIDENCE_UNAVAILABLE: controlled unavailable authenticated evidence"));
     clearInvocations(
         repository,
         fixtureEvidence,
@@ -117,13 +121,13 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
         bindProofClient);
     Map<String, List<String>> before = postgresState();
     try {
-      assertFixtureDenied(() -> lifecycleService.prepareWorldInstance(request));
-      assertFixtureDenied(() -> lifecycleService.prepareWorldInstance(request));
+      assertFixturePrepareDenied(() -> lifecycleService.prepareWorldInstance(request));
+      assertFixturePrepareDenied(() -> lifecycleService.prepareWorldInstance(request));
       assertFixtureDenied(
           () -> lifecycleService.activatePreparedWorldInstance(tenantId, gameInstanceId, 1L));
       assertFixtureDenied(
           () -> lifecycleService.activatePreparedWorldInstance(tenantId, gameInstanceId, 1L));
-      assertFixtureDenied(
+      assertFixturePrepareDenied(
           () ->
               lifecycleService.prepareWorldInstance(
                   request(tenantId, uniqueId(), request.controlPlaneRequestId())));
@@ -131,17 +135,21 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
       RunOwnedWorldLaunchEvidenceProvider restartedProvider =
           mock(RunOwnedWorldLaunchEvidenceProvider.class);
       when(restartedProvider.isEnabled()).thenReturn(true);
+      when(restartedProvider.requireAuthenticatedEvidence())
+          .thenThrow(
+              new IllegalArgumentException(
+                  "RUN_OWNED_WORLD_LAUNCH_EVIDENCE_UNAVAILABLE: controlled unavailable authenticated evidence"));
       WorldInstanceRepository restartedRepository = spy(new WorldInstanceRepository(dsl));
       WorldLifecycleCommandServiceImpl restartedService =
           restartedLifecycleService(restartedRepository, restartedProvider);
-      assertFixtureDenied(() -> restartedService.prepareWorldInstance(request));
+      assertFixturePrepareDenied(() -> restartedService.prepareWorldInstance(request));
       assertFixtureDenied(
           () -> restartedService.activatePreparedWorldInstance(tenantId, gameInstanceId, 1L));
       assertThat(postgresState()).isEqualTo(before);
       verifyNoInteractions(repository, restartedRepository);
-      org.mockito.Mockito.verify(restartedProvider, org.mockito.Mockito.never())
+      org.mockito.Mockito.verify(restartedProvider, org.mockito.Mockito.times(1))
           .requireAuthenticatedEvidence();
-      verifyNoUpstreamReads();
+      verifyNoUpstreamReads(3);
     } finally {
       dsl.execute("DELETE FROM world_instance WHERE tenant_id = ?", tenantId);
     }
@@ -207,6 +215,38 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
                   .orElseThrow())
           .usingRecursiveComparison()
           .isEqualTo(stored);
+
+      Map<String, List<String>> beforeLifecycleDenials = postgresState();
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE world_instance SET status = 'ACTIVE' WHERE id = ?", stored.getId()))
+          .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class)
+          .rootCause()
+          .hasMessageContaining("lifecycle transitions are disabled");
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE world_instance SET lifecycle_epoch = lifecycle_epoch + 1 WHERE id = ?",
+                      stored.getId()))
+          .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class)
+          .rootCause()
+          .hasMessageContaining("lifecycle transitions are disabled");
+      // Direct SQL cannot create an ACTIVE row from a passive fixture storage image either.
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "INSERT INTO world_instance SELECT (jsonb_populate_record(NULL::world_instance, "
+                          + "to_jsonb(w) || jsonb_build_object('id', ?, 'game_instance_id', ?, "
+                          + "'control_plane_request_id', ?, 'status', 'ACTIVE'))).* FROM world_instance w WHERE id = ?",
+                      uniqueId(),
+                      uniqueId(),
+                      operationId(),
+                      stored.getId()))
+          .hasRootCauseInstanceOf(org.postgresql.util.PSQLException.class)
+          .rootCause()
+          .hasMessageContaining("must begin PREPARING");
+      assertThat(postgresState()).isEqualTo(beforeLifecycleDenials);
 
       WorldInstance staleCopy =
           repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
@@ -284,6 +324,10 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
     long gameInstanceId = uniqueId();
     PreparedWorldInstanceRequest request = request(tenantId, gameInstanceId, operationId());
     when(fixtureProvider.isEnabled()).thenReturn(true);
+    when(fixtureProvider.requireAuthenticatedEvidence())
+        .thenThrow(
+            new IllegalArgumentException(
+                "RUN_OWNED_WORLD_LAUNCH_EVIDENCE_UNAVAILABLE: controlled unavailable authenticated evidence"));
     clearInvocations(
         repository,
         fixtureEvidence,
@@ -300,7 +344,7 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
               () -> {
                 ready.countDown();
                 await(start);
-                assertFixtureDenied(() -> lifecycleService.prepareWorldInstance(request));
+                assertFixturePrepareDenied(() -> lifecycleService.prepareWorldInstance(request));
                 assertFixtureDenied(
                     () ->
                         lifecycleService.activatePreparedWorldInstance(
@@ -311,7 +355,7 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
               () -> {
                 ready.countDown();
                 await(start);
-                assertFixtureDenied(() -> lifecycleService.prepareWorldInstance(request));
+                assertFixturePrepareDenied(() -> lifecycleService.prepareWorldInstance(request));
                 assertFixtureDenied(
                     () ->
                         lifecycleService.activatePreparedWorldInstance(
@@ -323,7 +367,7 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
       second.get(20, TimeUnit.SECONDS);
       assertThat(postgresState()).isEqualTo(before);
       verifyNoInteractions(repository);
-      verifyNoUpstreamReads();
+      verifyNoUpstreamReads(2);
     } finally {
       start.countDown();
     }
@@ -336,8 +380,16 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
         .hasMessageStartingWith("RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE:");
   }
 
-  private void verifyNoUpstreamReads() {
-    org.mockito.Mockito.verify(fixtureProvider, org.mockito.Mockito.never())
+  private static void assertFixturePrepareDenied(
+      org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+    assertThatThrownBy(call)
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageStartingWith("RUN_OWNED_WORLD_LAUNCH_EVIDENCE_UNAVAILABLE:");
+  }
+
+  private void verifyNoUpstreamReads(int preparationVerifications) {
+    // Only preparation enters the controlled verifier; activation remains before-effects denied.
+    org.mockito.Mockito.verify(fixtureProvider, org.mockito.Mockito.times(preparationVerifications))
         .requireAuthenticatedEvidence();
     verifyNoInteractions(
         fixtureEvidence,

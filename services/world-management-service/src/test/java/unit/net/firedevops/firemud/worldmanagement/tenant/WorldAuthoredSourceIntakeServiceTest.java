@@ -3,8 +3,11 @@ package net.firedevops.firemud.worldmanagement.tenant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -13,13 +16,17 @@ import io.grpc.Context;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec.ReadRequest;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidenceTestFixtures;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -48,6 +55,211 @@ class WorldAuthoredSourceIntakeServiceTest {
   @AfterEach
   void clearTransactionState() {
     TransactionSynchronizationManager.clear();
+  }
+
+  @Test
+  void fixtureIntakeRevalidatesPeerAndCallerBeforeAnyOwnerReadOrTransaction() {
+    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    WorldAuthoredSourceIntakeService fixtureService = fixtureService();
+    assertThatThrownBy(() -> withoutPeer(() -> fixtureService.intakeRunOwnedFixture(evidence)))
+        .isInstanceOf(SecurityException.class);
+    for (String[] candidate :
+        new String[][] {
+          {"dev", "world-management-service", "a".repeat(64)},
+          {"other", "game-session-service", "a".repeat(64)},
+          {"dev", "game-session-service", "d".repeat(64)},
+          {"dev", "game-session-service", null}
+        }) {
+      assertThatThrownBy(
+              () ->
+                  withFixturePeer(
+                      candidate[0],
+                      candidate[1],
+                      candidate[2],
+                      () -> fixtureService.intakeRunOwnedFixture(evidence)))
+          .isInstanceOf(SecurityException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                withFixturePeer(
+                    "dev",
+                    "game-session-service",
+                    "a".repeat(64),
+                    () -> withCallerContext(() -> fixtureService.intakeRunOwnedFixture(evidence))))
+        .isInstanceOf(SecurityException.class);
+    verifyNoInteractions(client, repository);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void fixtureIntakeReadsControlledSourceBeforeSqlAndIndependentlyReadsExactReceiptAndRetry() {
+    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    AuthoredWorldSourceEvidence source = evidence.sourceReceipt().sourceEvidence();
+    AtomicInteger reads = new AtomicInteger();
+    AtomicReference<WorldAuthoredSourceIntakeReceipt> committed = new AtomicReference<>();
+    when(repository.read(eq("dev"), any(UUID.class)))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              if (reads.incrementAndGet() == 1) {
+                committed.set(receipt(source, 9001L, call.getArgument(1)));
+                return Optional.empty();
+              }
+              return Optional.of(committed.get());
+            });
+    when(client.read(any(ReadRequest.class)))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(transactionManager.startedWith).isNull();
+              ReadRequest request = call.getArgument(0);
+              assertThat(request.targetNamespace()).isEqualTo("dev");
+              assertThat(request.operationId()).isEqualTo(source.operationId());
+              assertThat(request.canonicalTenantId()).isEqualTo(source.canonicalTenantId());
+              assertThat(request.worldSlug()).isEqualTo(source.worldSlug());
+              assertThat(request.requestId()).isNotEqualTo(committed.get().intakeRequestId());
+              return source;
+            });
+    when(repository.acceptFresh(eq("dev"), any(UUID.class), eq(source)))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                  .isFalse();
+              assertThat(call.<UUID>getArgument(1)).isEqualTo(committed.get().intakeRequestId());
+              return committed.get();
+            });
+    WorldAuthoredSourceIntakeService fixtureService = fixtureService();
+    WorldAuthoredSourceIntakeReceipt result =
+        withFixturePeer(
+            "dev",
+            "game-session-service",
+            "a".repeat(64),
+            () -> fixtureService.intakeRunOwnedFixture(evidence));
+    assertThat(result).isSameAs(committed.get());
+    assertThat(result.localTenantKey()).isEqualTo(9001L);
+    assertThat(result.localTenantKey()).isNotEqualTo(evidence.capability().tenantId());
+    assertThat(result.intakeRequestId())
+        .isNotEqualTo(UUID.fromString(evidence.capability().operationId()));
+    assertThat(
+            withFixturePeer(
+                "dev",
+                "game-session-service",
+                "a".repeat(64),
+                () -> fixtureService.intakeRunOwnedFixture(evidence)))
+        .isSameAs(result);
+    var order = inOrder(repository, client);
+    order.verify(repository).read("dev", result.intakeRequestId());
+    order.verify(client).read(any(ReadRequest.class));
+    order.verify(repository).acceptFresh("dev", result.intakeRequestId(), source);
+    order.verify(repository, times(2)).read("dev", result.intakeRequestId());
+    verify(client, times(1)).read(any(ReadRequest.class));
+    assertThat(transactionManager.startedWith.getIsolationLevel())
+        .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    assertThat(transactionManager.startedWith.getPropagationBehavior())
+        .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+  }
+
+  @Test
+  void fixtureIntakeDeniesChangedRemoteSourceBeforeSql() {
+    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    when(repository.read(eq("dev"), any(UUID.class))).thenReturn(Optional.empty());
+    when(client.read(any(ReadRequest.class)))
+        .thenReturn(source("other", TENANT, SOURCE_OPERATION, WORLD));
+    assertThatThrownBy(
+            () ->
+                withFixturePeer(
+                    "dev",
+                    "game-session-service",
+                    "a".repeat(64),
+                    () -> fixtureService().intakeRunOwnedFixture(evidence)))
+        .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class);
+    verify(repository, never()).acceptFresh(any(), any(), any());
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void fixtureIntakeDeniesMissingIndependentReceiptAfterOwnerTransaction() {
+    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    var source = evidence.sourceReceipt().sourceEvidence();
+    when(repository.read(eq("dev"), any(UUID.class))).thenReturn(Optional.empty());
+    when(client.read(any(ReadRequest.class))).thenReturn(source);
+    when(repository.acceptFresh(eq("dev"), any(UUID.class), eq(source)))
+        .thenAnswer(call -> receipt(source, 9001L, call.getArgument(1)));
+    assertThatThrownBy(
+            () ->
+                withFixturePeer(
+                    "dev",
+                    "game-session-service",
+                    "a".repeat(64),
+                    () -> fixtureService().intakeRunOwnedFixture(evidence)))
+        .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class)
+        .hasMessageContaining("missing after its owner commit");
+    verify(repository).acceptFresh(eq("dev"), any(UUID.class), eq(source));
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+  }
+
+  @Test
+  void fixtureIntakeDeniesChangedIndependentReceiptAfterOwnerTransaction() {
+    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    var source = evidence.sourceReceipt().sourceEvidence();
+    AtomicInteger reads = new AtomicInteger();
+    when(repository.read(eq("dev"), any(UUID.class)))
+        .thenAnswer(
+            call ->
+                reads.incrementAndGet() == 1
+                    ? Optional.empty()
+                    : Optional.of(receipt(source, 9002L, call.getArgument(1))));
+    when(client.read(any(ReadRequest.class))).thenReturn(source);
+    when(repository.acceptFresh(eq("dev"), any(UUID.class), eq(source)))
+        .thenAnswer(call -> receipt(source, 9001L, call.getArgument(1)));
+    assertThatThrownBy(
+            () ->
+                withFixturePeer(
+                    "dev",
+                    "game-session-service",
+                    "a".repeat(64),
+                    () -> fixtureService().intakeRunOwnedFixture(evidence)))
+        .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class)
+        .hasMessageContaining("changed during independent commit readback");
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+  }
+
+  @Test
+  void fixtureIntakeDeniesAmbientTransactionBeforeOwnerAccess() {
+    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    assertThatThrownBy(
+            () ->
+                withFixturePeer(
+                    "dev",
+                    "game-session-service",
+                    "a".repeat(64),
+                    () -> fixtureService().intakeRunOwnedFixture(evidence)))
+        .isInstanceOf(IllegalStateException.class);
+    verifyNoInteractions(client, repository);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  private WorldAuthoredSourceIntakeService fixtureService() {
+    return new WorldAuthoredSourceIntakeService(client, repository, transactionManager, "dev");
+  }
+
+  private static <T> T withFixturePeer(
+      String namespace, String service, String leaf, Supplier<T> action) {
+    Context context =
+        Context.ROOT.withValue(GrpcPeerIdentity.CONTEXT_KEY, peer(namespace, service));
+    if (leaf != null) {
+      GrpcPeerCertificateEvidence certificate = mock(GrpcPeerCertificateEvidence.class);
+      when(certificate.leafSha256()).thenReturn(leaf);
+      context = context.withValue(GrpcPeerCertificateEvidence.CONTEXT_KEY, certificate);
+    }
+    Context previous = context.attach();
+    try {
+      return action.get();
+    } finally {
+      context.detach(previous);
+    }
   }
 
   @Test
@@ -664,13 +876,19 @@ class WorldAuthoredSourceIntakeServiceTest {
 
   private static WorldAuthoredSourceIntakeReceipt receipt(
       AuthoredWorldSourceEvidence source, long localTenantKey) {
+    return receipt(source, localTenantKey, INTAKE_REQUEST);
+  }
+
+  private static WorldAuthoredSourceIntakeReceipt receipt(
+      AuthoredWorldSourceEvidence source, long localTenantKey, UUID intakeRequest) {
     String requestDigest =
-        WorldAuthoredSourceIntakeDigest.requestDigest(NAMESPACE, INTAKE_REQUEST, source);
+        WorldAuthoredSourceIntakeDigest.requestDigest(
+            source.targetNamespace(), intakeRequest, source);
     UUID operationId = UUID.fromString("55555555-5555-4555-8555-555555555555");
     return new WorldAuthoredSourceIntakeReceipt(
         1,
-        NAMESPACE,
-        INTAKE_REQUEST,
+        source.targetNamespace(),
+        intakeRequest,
         operationId,
         source.canonicalTenantId(),
         source.worldSlug(),
@@ -678,7 +896,7 @@ class WorldAuthoredSourceIntakeServiceTest {
         source.evidenceDigest(),
         requestDigest,
         WorldAuthoredSourceIntakeDigest.receiptDigest(
-            NAMESPACE, operationId, requestDigest, source, localTenantKey),
+            source.targetNamespace(), operationId, requestDigest, source, localTenantKey),
         localTenantKey,
         source);
   }

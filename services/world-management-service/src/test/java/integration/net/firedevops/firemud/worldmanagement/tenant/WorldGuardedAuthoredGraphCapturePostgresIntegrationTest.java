@@ -66,6 +66,9 @@ import tools.jackson.databind.json.JsonMapper;
  * Bounded native upgrade from the literal d7c8f84 World/Saga parent. External source and Version
  * values are controlled; real World repositories retain them with all storage guards enabled. The
  * parent World row is legacy storage, not a Human frozen graph or canonical activation claim.
+ * Positive component storage and the 40-migration endpoint are explicitly historical at 1007.1; the
+ * retained schema-2 snapshot separately upgrades through the current default frontier. These
+ * historical component cases do not qualify current Account permission or genuine Human authority.
  * Physical Docker execution with zero skips is required to qualify this definition.
  */
 @Testcontainers(disabledWithoutDocker = true)
@@ -184,7 +187,7 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
-  void exactParentWithRetainedOwnerAndLegacyWorldRowsUpgradesInDefaultOrder(
+  void exactParentWithRetainedOwnerAndLegacyWorldRowsUpgradesToHistoricalGuardedFrontier(
       @TempDir Path parentMigrations) throws Exception {
     Path root = repositoryRoot();
     Path worldMigrations =
@@ -315,9 +318,10 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
         assertThat(originalRows.get(table)).isNotEmpty();
       }
 
-      // Actual service filesystem locations, including Saga; no repair, baseline, or outOfOrder.
+      // Historical 40-migration frontier from actual World/Saga locations, with every guard on.
+      // Current default-frontier retention is a separate native proof, not inferred here.
       Flyway current =
-          flyway(
+          historicalGuardedStage(
               dataSource, schema, "filesystem:" + worldMigrations, "filesystem:" + sagaMigrations);
       assertThat(current.getConfiguration().isOutOfOrder()).isFalse();
       current.migrate();
@@ -604,6 +608,8 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       List<String> before = retainedRows(dsl, "world_authored_graph_snapshot", columns);
       assertThat(before).hasSize(1);
 
+      // Keep the default current frontier: historical bytes/xmin remain retained storage
+      // through later guards, not newly minted schema-3 or Account-protected capture authority.
       flyway(source, schema, worldLocation, sagaLocation).migrate();
 
       assertThat(
@@ -630,8 +636,10 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
   }
 
   @Test
-  void actualGuardedStoreReplaysAndRejectsNakedWritesAndMissingCommitCheckpoint() throws Exception {
-    String schema = "world_guarded_graph_" + UUID.randomUUID().toString().replace("-", "");
+  void historicalGuardedStoreReplaysAndRejectsNakedWritesAndMissingCommitCheckpoint()
+      throws Exception {
+    String schema =
+        "world_historical_guarded_graph_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
@@ -643,7 +651,9 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     Path root = repositoryRoot();
     try {
-      flyway(
+      // Controlled permission-unverified component storage at the historical guarded frontier.
+      // Later Account/APPLIED owners retain their default-current denial requirements.
+      historicalGuardedStage(
               source,
               schema,
               "filesystem:"
@@ -843,7 +853,8 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
               "f".repeat(64),
               1L,
               workflow);
-      // The checkpoint comes from the actual current digest writer. It does not prove APPLIED.
+      // The checkpoint comes from the actual historical component digest writer. It does not prove
+      // APPLIED.
       var frozen =
           Objects.requireNonNull(
               write.execute(
@@ -882,7 +893,8 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
               actual.contentDigest(),
               actual.digestSchemaVersion(),
               tuples);
-      // Current capture must deny the actual synthetic checkpoint rather than invent APPLIED rows.
+      // Historical schema-3 capture must deny the synthetic checkpoint without invented APPLIED
+      // rows.
       var snapshotRepository = new WorldAuthoredGraphSnapshotRepository(dsl);
       var graphCapture =
           new WorldAuthoredGraphSnapshotCapture(dsl, digest, snapshotRepository, mapper);
@@ -1091,6 +1103,19 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
             77L,
             "parent-source-owner",
             "NEW_GAME_ROW"));
+  }
+
+  private static Flyway historicalGuardedStage(
+      DriverManagerDataSource source, String schema, String... locations) {
+    return Flyway.configure()
+        .dataSource(source)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table(HISTORY)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations(locations)
+        .target(MigrationVersion.fromVersion("1007.1"))
+        .load();
   }
 
   private static Flyway flyway(DriverManagerDataSource source, String schema, String... locations) {

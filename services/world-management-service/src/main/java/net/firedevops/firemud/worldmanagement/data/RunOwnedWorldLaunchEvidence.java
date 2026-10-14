@@ -8,6 +8,9 @@ import java.util.HexFormat;
 import java.util.Objects;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 
@@ -58,6 +61,28 @@ public final class RunOwnedWorldLaunchEvidence {
     this.caCertificateSha256 = Objects.requireNonNull(caCertificateSha256, "caCertificateSha256");
     this.gameSessionAssociation =
         Objects.requireNonNull(gameSessionAssociation, "gameSessionAssociation");
+  }
+
+  /** Revalidates the original fixed caller before a subsequent source-owner operation. */
+  public void requireFixedGameSessionPeer() {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    GrpcPeerCertificateEvidence certificate = GrpcPeerCertificateEvidence.current();
+    if (SessionContext.hasAuthenticatedCallerContext()
+        || peer == null
+        || certificate == null
+        || !peer.isService("game-session-service")
+        || !peer.isInNamespace("dev")
+        || !peer.uri().equals(capability.gameSessionUriSan())
+        || !certificate.leafSha256().equals(capability.gameSessionLeafSha256())
+        || !certificate.leafSha256().equals(gameSessionLeafSha256)) {
+      throw new SecurityException(
+          "Run-owned fixture owner operation requires its original fixed Game Session peer");
+    }
+  }
+
+  /** Retained policy provenance only; the digest alone supplies no owner authority. */
+  public String fixtureProvenanceDigest() {
+    return sourceReceipt.fixturePolicySeal().evidenceDigest();
   }
 
   public RunOwnedInitialAdmissionFixtureWireCodec.Capability capability() {
