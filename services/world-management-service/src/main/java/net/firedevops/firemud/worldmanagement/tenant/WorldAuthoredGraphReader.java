@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshotRepository.SnapshotConflictException;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -54,6 +55,12 @@ final class WorldAuthoredGraphReader {
   private static final Field<String> ENTITY_TEMPLATE_TYPE =
       field("entity_template_type", String.class);
   private static final Field<Long> ENTITY_TEMPLATE_ID = field("entity_template_id", Long.class);
+  private static final Field<UUID> ENTITY_CANONICAL_TENANT_ID =
+      field("entity_canonical_tenant_id", UUID.class);
+  private static final Field<UUID> ENTITY_CANONICAL_VERSION_ID =
+      field("entity_canonical_version_id", UUID.class);
+  private static final Field<UUID> ENTITY_CANONICAL_TEMPLATE_ID =
+      field("entity_canonical_template_id", UUID.class);
   private static final Field<Integer> SPAWN_COUNT = field("spawn_count", Integer.class);
   private static final Field<Integer> RESPAWN_DELAY_SECONDS =
       field("respawn_delay_seconds", Integer.class);
@@ -218,7 +225,7 @@ final class WorldAuthoredGraphReader {
       rules.add(item);
     }
 
-    Set<String> spawnKeys = new HashSet<>();
+    Set<List<Object>> spawnKeys = new HashSet<>();
     for (Record row : bindingRows) {
       requireExactScope(row, tenantKey, versionKey);
       long id = positive(row, ID, "world_entity_spawn_binding.id");
@@ -230,17 +237,16 @@ final class WorldAuthoredGraphReader {
             "spawn room is missing or belongs to another tenant/Version");
       }
       String entityType = required(row, ENTITY_TEMPLATE_TYPE);
-      Long entityId = required(row, ENTITY_TEMPLATE_ID);
+      Map<String, Object> entityReference = entityReference(row, id);
       Integer spawnCount = required(row, SPAWN_COUNT);
       Integer delay = required(row, RESPAWN_DELAY_SECONDS);
       if ((!"ITEM".equals(entityType) && !"NPC".equals(entityType))
-          || entityId <= 0L
           || spawnCount <= 0
           || delay < 0) {
         throw incomplete(
             "world_entity_spawn_binding", id, "unsupported required spawn binding data");
       }
-      String spawnKey = roomId + "\u0000" + entityType + "\u0000" + entityId;
+      List<Object> spawnKey = List.of(roomId, entityType, entityReference);
       if (!spawnKeys.add(spawnKey)) {
         throw incomplete("world_entity_spawn_binding", id, "duplicate spawn binding identity");
       }
@@ -248,12 +254,43 @@ final class WorldAuthoredGraphReader {
       item.put("id", id);
       item.put("roomId", roomId);
       item.put("entityTemplateType", entityType);
-      item.put("entityTemplateId", entityId);
+      item.put("entityReference", entityReference);
       item.put("spawnCount", spawnCount);
       item.put("respawnDelaySeconds", delay);
       bindings.add(item);
     }
     return new WorldAuthoredGraph(regions, zones, rooms, exits, rules, bindings);
+  }
+
+  private Map<String, Object> entityReference(Record row, long id) {
+    Long numeric = row.get(ENTITY_TEMPLATE_ID, Long.class);
+    UUID tenant = row.get(ENTITY_CANONICAL_TENANT_ID, UUID.class);
+    UUID version = row.get(ENTITY_CANONICAL_VERSION_ID, UUID.class);
+    UUID template = row.get(ENTITY_CANONICAL_TEMPLATE_ID, UUID.class);
+    LinkedHashMap<String, Object> reference = new LinkedHashMap<>();
+    if (numeric != null) {
+      if (numeric <= 0L || tenant != null || version != null || template != null) {
+        throw incomplete("world_entity_spawn_binding", id, "mixed or nonpositive Entity reference");
+      }
+      reference.put("kind", "RETAINED_PRIVATE_KEY");
+      reference.put("templateId", numeric.toString());
+    } else {
+      UUID nil = new UUID(0L, 0L);
+      if (tenant == null
+          || version == null
+          || template == null
+          || tenant.equals(nil)
+          || version.equals(nil)
+          || template.equals(nil)) {
+        throw incomplete(
+            "world_entity_spawn_binding", id, "partial or nil canonical Entity reference");
+      }
+      reference.put("kind", "CANONICAL_UUID");
+      reference.put("tenantId", tenant.toString());
+      reference.put("versionId", version.toString());
+      reference.put("templateId", template.toString());
+    }
+    return reference;
   }
 
   private List<Record> fetch(Table<?> table, long tenantKey, long versionKey) {

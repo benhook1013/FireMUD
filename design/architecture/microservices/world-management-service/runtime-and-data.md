@@ -180,7 +180,7 @@ Implementation Notes:
 - Current concrete `room` digest fields include `id`, `zoneId`, `name`, `description`, `nameLocalizedVariantsJson`, and `descriptionLocalizedVariantsJson`.
 - Current concrete `room_exit` digest fields include `id`, `fromRoomId`, `toRoomId`, `direction`, and `cost`.
 - Current concrete `generation_rule` digest fields include `id`, `name`, `scopeType`, `scopeId`, and `value`; generation-rule mutations that carry a subtree scope must validate that declared scope, share the same scope epoch, and participate in `REPLACE_SCOPE` / `SEED_APPEND_ONLY` enforcement.
-- Current concrete `world_entity_spawn_binding` digest fields include `id`, `roomId`, `entityTemplateType`, `entityTemplateId`, `spawnCount`, and `respawnDelaySeconds`.
+- Current concrete `world_entity_spawn_binding` digest fields include `id`, `roomId`, `entityTemplateType`, `entityReference`, `spawnCount`, and `respawnDelaySeconds`.
 
 - Included objects:
   - version-scoped topology tables such as `region_template`, `zone_template`, `room_template`, `terrain_template`, `room_exit_template`, and equivalent normalized topology relations;
@@ -197,7 +197,7 @@ Implementation Notes:
   - primary-key ordering within each table;
   - deterministic encoding for included semantic fields.
 - Current implementation note: the concrete first-slice table order is `regions`, `zones`, `rooms`, `roomExits`, `generationRules`, then `worldEntitySpawnBindings`, each ordered by ascending primary key. Null string values are canonicalized as empty strings before hashing. The current ordinary World digest schema version is `3`; scoped generation-rule metadata and tagged Entity spawn references are included in its deterministic projection.
-- Spawn references use an explicit tagged representation: retained positive numeric private keys remain numeric evidence; canonical references retain exact non-nil tenant, Version and Entity template UUIDs. Mixed or partial representations are rejected.
+- `entityReference` uses an explicit tagged representation. `RETAINED_PRIVATE_KEY` carries a positive private numeric key in `templateId`, encoded as a canonical decimal string; `CANONICAL_UUID` carries exact non-nil UUID values for `tenantId`, `versionId`, and `templateId`. Mixed or partial representations are rejected.
 - `digestSchemaVersion` must increment whenever included tables, field-selection rules, or canonical serialization semantics change.
 
 Publish gating fails closed if World Management cannot attest a digest consistent with this manifest.
