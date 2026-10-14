@@ -57,6 +57,44 @@ class CompleteLaunchBindingServiceImplTest {
   }
 
   @Test
+  void completeLaunchBindingRejectsObsoleteOrUnselectedWorldSchemas() {
+    for (int schema : List.of(2, 4)) {
+      var participants = new java.util.ArrayList<>(bundle.participantDigests());
+      var world = participants.getFirst();
+      participants.set(
+          0,
+          new PublishParticipantDigestDto(
+              world.participantKey(),
+              world.scopeValue(),
+              world.baseVersionId(),
+              world.appliedCommitId(),
+              world.contentDigest(),
+              schema,
+              world.abilitySchemaDigest(),
+              world.errorCode(),
+              world.errorMessage()));
+      givenBundle(
+          copyBundle(
+              bundle,
+              BUNDLE_ID,
+              PRIVATE_TENANT_KEY,
+              VERSION_ID,
+              VERSION_NUMBER,
+              BUNDLE_REF,
+              CANONICAL_TENANT_ID,
+              CANONICAL_VERSION_ID,
+              bundle.requiredManifestAssetKeys(),
+              participants,
+              bundle.manifestSchemaVersion(),
+              bundle.manifestHash(),
+              bundle.artifactDigests(),
+              false,
+              null));
+      assertDenied("PARTICIPANT_EVIDENCE_INVALID");
+    }
+  }
+
+  @Test
   void selectorV2RejectsLegacyGameDesignControlPlaneParticipantSchema() throws Exception {
     var selector = selectorEvidence();
     givenBundle(

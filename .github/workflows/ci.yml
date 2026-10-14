@@ -990,8 +990,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # Account and World PostgreSQL proofs can run close to 20 minutes before Gradle post-job cleanup.
-    timeout-minutes: ${{ (matrix.module == 'account-service' || matrix.module == 'world-management-service') && 30 || 20 }}
+    # Account, World and Game Session proofs can run close to 20 minutes before Gradle post-job cleanup.
+    timeout-minutes: ${{ (matrix.module == 'account-service' || matrix.module == 'world-management-service' || matrix.module == 'game-session-service') && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
