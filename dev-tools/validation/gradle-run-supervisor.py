@@ -4,20 +4,25 @@
 import argparse
 import datetime
 import fcntl
+import json
 import math
 import os
 import queue
+import re
 import secrets
 import select
 import shlex
 import signal
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
 
 MARKER = "FIREMUD_GRADLE_RUN_OWNER"
+SESSION_PROCESS_MARKER = "FIREMUD_LOCAL_RESOURCE_PROCESS_OWNER"
 
 
 # A bounded daemon writer may block on the caller's pipe; supervision never does.
@@ -88,7 +93,7 @@ class OwnedProcess:
         os.close(self.descriptor)
 
 
-def admit_process(pid, token=None):
+def admit_process(pid, token=None, marker=MARKER):
     descriptor = os.pidfd_open(pid)
     owned = None
     try:
@@ -104,7 +109,7 @@ def admit_process(pid, token=None):
         current = identity(pid)
         if current is None or current[1] == "Z":
             return None
-        if token is not None and f"{MARKER}={token}".encode() not in (path / "environ").read_bytes().split(b"\0"):
+        if token is not None and f"{marker}={token}".encode() not in (path / "environ").read_bytes().split(b"\0"):
             return None
         latest = identity(pid)
         if latest is None or latest[0] != current[0] or latest[1] == "Z":
@@ -119,7 +124,7 @@ def admit_process(pid, token=None):
             owned.close()
 
 
-def owned_processes(token, remembered):
+def owned_processes(token, remembered, marker=MARKER):
     found = {}
     try:
         for path in Path("/proc").iterdir():
@@ -128,7 +133,7 @@ def owned_processes(token, remembered):
             try:
                 if path.stat().st_uid != os.getuid():
                     continue
-                process = admit_process(int(path.name), token)
+                process = admit_process(int(path.name), token, marker)
                 if process is not None:
                     found[process.pid] = process
             except (FileNotFoundError, ProcessLookupError, PermissionError):
@@ -168,6 +173,155 @@ def positive_env(name, default):
     return seconds
 
 
+SESSION_FD = "FIREMUD_LOCAL_RESOURCE_SESSION_FD"
+SESSION_PID = "FIREMUD_LOCAL_RESOURCE_SESSION_PID"
+SESSION_START = "FIREMUD_LOCAL_RESOURCE_SESSION_START"
+SESSION_TOKEN = "FIREMUD_LOCAL_RESOURCE_SESSION_OWNER"
+
+
+def resource_directory():
+    return Path(os.environ.get(
+        "FIREMUD_LOCK_GRADLE_RESOURCE_DIR",
+        str(Path(os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache"))
+            / "firemud" / "gradle-validation"),
+    ))
+
+
+def read_resource_metadata(path):
+    lines = path.read_text().splitlines()
+    if len(lines) not in {5, 6}:
+        raise ValueError("local resource metadata is malformed; scoped recovery is required")
+    projects = []
+    if len(lines) == 6:
+        state = json.loads(lines[5])
+        if not isinstance(state, dict) or set(state) != {"runtimeProjects"}:
+            raise ValueError("local runtime resource state is malformed")
+        projects = state["runtimeProjects"]
+        if not isinstance(projects, list) or any(not isinstance(project, str) for project in projects):
+            raise ValueError("local runtime project identities are malformed")
+        if len(projects) != len(set(projects)):
+            raise ValueError("local runtime project identities are malformed")
+        for project in projects:
+            if not isinstance(project, str) or not re.fullmatch(r"(?:firemud-smoke-|smoke-full-)[a-z0-9][a-z0-9-]{0,127}", project):
+                raise ValueError("local runtime project identity is malformed")
+    return lines[:5], projects
+
+
+def check_runtime_projects(projects):
+    """Inspect only recorded projects, never enumerate other Docker deployments."""
+    for project in projects:
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "-a", "--filter", f"label=com.docker.compose.project={project}",
+                 "--format", "{{.State}}"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, timeout=5, check=True,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise ValueError(
+                f"Unresolved local runtime project {project}: container state is unavailable; "
+                "retry after restoring Docker inspection or perform original-capability scoped teardown"
+            ) from error
+        states = result.stdout.splitlines()
+        if any(state not in {"created", "exited", "dead"} for state in states):
+            raise ValueError(
+                f"Unresolved local runtime project {project}: running or unknown container state; "
+                "perform original-capability scoped teardown, then retry"
+            )
+
+
+def register_runtime_project(project):
+    fd = verify_resource_session()
+    if not re.fullmatch(r"(?:firemud-smoke-|smoke-full-)[a-z0-9][a-z0-9-]{0,127}", project):
+        raise ValueError("invalid exact runtime project identity")
+    # POSIX byte-range locking on the existing canonical resource inode serializes
+    # metadata updates among children sharing its inherited flock description.
+    fcntl.lockf(fd, fcntl.LOCK_EX)
+    try:
+        metadata = resource_directory() / "local-resource.meta"
+        lines, projects = read_resource_metadata(metadata)
+        if lines[0] != os.environ[SESSION_PID] or lines[4] != os.environ[SESSION_TOKEN]:
+            raise ValueError("runtime registration no longer matches the owning session")
+        if project not in projects:
+            projects.append(project)
+        payload = "\n".join(lines) + "\n" + json.dumps({"runtimeProjects": projects}) + "\n"
+        # Atomic durable replacement prevents owner death from tearing identities.
+        temporary_fd, temporary_name = tempfile.mkstemp(dir=metadata.parent, prefix=".resource-meta-")
+        try:
+            with os.fdopen(temporary_fd, "w") as target:
+                target.write(payload)
+                target.flush()
+                os.fsync(target.fileno())
+            os.replace(temporary_name, metadata)
+            directory_fd = os.open(metadata.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            try:
+                os.unlink(temporary_name)
+            except FileNotFoundError:
+                pass
+    finally:
+        fcntl.lockf(fd, fcntl.LOCK_UN)
+
+
+def verify_resource_session():
+    """Verify inherited open-file-description ownership, never an env flag."""
+    try:
+        fd = int(os.environ[SESSION_FD])
+        pid = int(os.environ[SESSION_PID])
+        started = os.environ[SESSION_START]
+        token = os.environ[SESSION_TOKEN]
+        if fd < 3 or not token or not started.isdecimal():
+            raise ValueError("invalid session identity")
+        require_pidfds()
+        owner = admit_process(pid)
+        if owner is None:
+            raise ValueError("resource session owner is not live")
+        try:
+            directory = resource_directory()
+            if directory.is_symlink() or directory.stat().st_uid != os.getuid() or directory.stat().st_mode & 0o077:
+                raise ValueError("invalid resource directory")
+            expected = (directory / "local-resource.lock").stat()
+            inherited = os.fstat(fd)
+            original = Path(f"/proc/{pid}/fd/{fd}").stat()
+            if not stat.S_ISREG(inherited.st_mode) or inherited.st_uid != os.getuid():
+                raise ValueError("invalid inherited lock descriptor")
+            if any((item.st_dev, item.st_ino) != (expected.st_dev, expected.st_ino)
+                   for item in (inherited, original)):
+                raise ValueError("resource descriptor does not match owning session")
+            metadata, _projects = read_resource_metadata(directory / "local-resource.meta")
+            if metadata[0] != str(pid) or metadata[4] != token:
+                raise ValueError("resource session metadata does not match")
+            if owner.started != started or not owner.running():
+                raise ValueError("resource session owner changed")
+            # fdinfo describes locks owned by this open file description;
+            # checking never turns an unheld/foreign descriptor into admission.
+            lock_lines = Path(f"/proc/self/fdinfo/{fd}").read_text().splitlines()
+            held = [line.split() for line in lock_lines if line.startswith("lock:")]
+            if not any(len(fields) >= 9 and fields[2:5] == ["FLOCK", "ADVISORY", "WRITE"]
+                       and fields[5] == str(pid) for fields in held):
+                raise ValueError("inherited descriptor has no exclusive session ownership")
+            contender = (directory / "local-resource.lock").open("a")
+            try:
+                try:
+                    fcntl.flock(contender.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    pass
+                else:
+                    raise ValueError("resource session does not exclude contenders")
+            finally:
+                contender.close()
+            if not owner.running():
+                raise ValueError("resource session owner ended")
+            return fd
+        finally:
+            owner.close()
+    except (KeyError, ValueError, OSError) as error:
+        raise ValueError(f"Invalid inherited local resource session: {error}") from error
+
+
 class Supervisor:
     def __init__(self, args):
         if not sys.platform.startswith("linux") or not Path("/proc/self/environ").exists():
@@ -185,7 +339,10 @@ class Supervisor:
         self.failed = False
         self.run_deadline = None
         self.cancellation_started = None
-        self.local = os.environ.get("CI", "").lower() not in {"true", "1"}
+        self.session_fd = verify_resource_session() if SESSION_FD in os.environ else None
+        self.resource_session = getattr(args, "resource_session", False)
+        self.owns_resource_session = self.resource_session and self.session_fd is None
+        self.local = self.session_fd is not None or os.environ.get("CI", "").lower() not in {"true", "1"}
         self.client_admitted = False
         if self.local:
             require_pidfds()
@@ -236,7 +393,10 @@ class Supervisor:
                     if not process.running():
                         process.close()
                         del self.owned[pid]
-                self.owned.update(owned_processes(self.token, self.owned))
+                if self.owns_resource_session:
+                    self.owned.update(owned_processes(self.token, self.owned, SESSION_PROCESS_MARKER))
+                else:
+                    self.owned.update(owned_processes(self.token, self.owned))
             return dict(self.owned)
         except OSError as error:
             self.fail(error)
@@ -271,9 +431,16 @@ class Supervisor:
                     return False
                 time.sleep(min(0.1, max(0, self.deadline - time.monotonic())))
         if not shared:
+            if target == "local-resource" and meta.exists():
+                try:
+                    _old_owner, projects = read_resource_metadata(meta)
+                    check_runtime_projects(projects)
+                except (ValueError, OSError) as error:
+                    report(str(error), error=True)
+                    return False
             meta.write_text(
                 f"{os.getpid()}\n{datetime.datetime.now(datetime.timezone.utc).isoformat()}\n"
-                f"{Path.cwd()}\n{shlex.join(self.args.command)}\n{self.token}\n"
+                f"{json.dumps(str(Path.cwd()))}\n{json.dumps(shlex.join(self.args.command))}\n{self.token}\n"
             )
         return True
 
@@ -287,10 +454,16 @@ class Supervisor:
         for handle, meta, exclusive in reversed(self.locks):
             if exclusive:
                 try:
-                    if meta.read_text().splitlines()[-1] == self.token:
+                    if meta.name == "local-resource.meta":
+                        owner, projects = read_resource_metadata(meta)
+                        if owner[4] == self.token and not projects:
+                            meta.unlink()
+                    elif meta.read_text().splitlines()[-1] == self.token:
                         meta.unlink()
                 except FileNotFoundError:
                     pass
+                except (ValueError, OSError) as error:
+                    report(f"Retaining unresolved local resource metadata: {error}", error=True)
             handle.close()
 
     def signal_owned(self, sig):
@@ -320,18 +493,17 @@ class Supervisor:
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, self.cancel)
         if self.local:
-            if "--daemon" in self.args.command:
+            if not self.resource_session and "--daemon" in self.args.command:
                 raise ValueError("Local serialized proof uses --no-daemon; explicit --daemon is unsupported")
-            resource = Path(os.environ.get(
-                "FIREMUD_LOCK_GRADLE_RESOURCE_DIR",
-                str(Path(os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache"))
-                    / "firemud" / "gradle-validation"),
-            ))
+            resource = resource_directory()
             resource.mkdir(mode=0o700, parents=True, exist_ok=True)
             if resource.is_symlink() or resource.stat().st_uid != os.getuid() or resource.stat().st_mode & 0o077:
                 raise ValueError("Local Gradle resource directory must be private, caller-owned, and not a symlink")
-            if not self.acquire(resource, "local-resource"):
-                return self.cancel_status or (143 if self.wrapper_gone() else 1)
+            if self.session_fd is None:
+                if not self.acquire(resource, "local-resource"):
+                    return self.cancel_status or (143 if self.wrapper_gone() else 1)
+                if self.resource_session:
+                    self.session_fd = self.locks[-1][0].fileno()
         directory = Path(self.args.root) / ".gradle" / "firemud-validation-locks"
         for item in self.args.lock:
             mode, target = item.split("=", 1)
@@ -341,12 +513,18 @@ class Supervisor:
         command = list(self.args.command)
         env = dict(os.environ)
         if self.local:
-            command.append("--no-daemon")
+            if not self.resource_session:
+                command.append("--no-daemon")
             env[MARKER] = self.token
         if self.local:
             # An unreaped direct child cannot have its PID reused before admission.
             signal.signal(signal.SIGCHLD, signal.SIG_DFL)
-        self.child = subprocess.Popen(command, env=env, start_new_session=True, close_fds=True)
+        if self.local and self.resource_session and SESSION_FD not in env:
+            env.update({SESSION_FD: str(self.session_fd), SESSION_PID: str(os.getpid()),
+                        SESSION_START: identity(os.getpid())[0], SESSION_TOKEN: self.token,
+                        SESSION_PROCESS_MARKER: self.token})
+        pass_fds = (self.session_fd,) if self.session_fd is not None else ()
+        self.child = subprocess.Popen(command, env=env, start_new_session=True, close_fds=True, pass_fds=pass_fds)
         self.run_deadline = time.monotonic() + self.run_seconds if self.run_seconds is not None else None
         try:
             self.admit_client()
@@ -357,6 +535,7 @@ class Supervisor:
         return self.supervise()
 
     def supervise(self):
+        term_sent = False
         while True:
             try:
                 self.check_cancel()
@@ -389,7 +568,9 @@ class Supervisor:
                     self.cancellation_started = time.monotonic()
                 sig = signal.SIGTERM if time.monotonic() - self.cancellation_started < self.grace_seconds else signal.SIGKILL
                 if self.local:
-                    self.signal_owned(sig)
+                    if sig == signal.SIGKILL or not self.resource_session or not term_sent:
+                        self.signal_owned(sig)
+                        term_sent = True
                 elif status is None:
                     try:
                         os.killpg(self.child.pid, sig)
@@ -404,6 +585,24 @@ class Supervisor:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--verify-resource-session", action="store_true")
+    if len(sys.argv) == 3 and sys.argv[1] == "--register-runtime-project":
+        try:
+            register_runtime_project(sys.argv[2])
+            return 0
+        except (ValueError, OSError) as error:
+            report(str(error), error=True)
+            LAST_DIAGNOSTIC.wait(0.05)
+            return 1
+    if sys.argv[1:] == ["--verify-resource-session"]:
+        try:
+            verify_resource_session()
+            return 0
+        except ValueError as error:
+            report(str(error), error=True)
+            LAST_DIAGNOSTIC.wait(0.05)
+            return 1
+    parser.add_argument("--resource-session", action="store_true")
     parser.add_argument("--root", required=True)
     parser.add_argument("--wrapper-pid", required=True, type=int)
     parser.add_argument("--wrapper-start", required=True)

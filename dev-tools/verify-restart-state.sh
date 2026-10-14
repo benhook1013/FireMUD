@@ -37,10 +37,14 @@ case "$SMOKE_MUTATION_EXTENSION" in
     ;;
 esac
 
+initialize_run_owned_compose_proof "$@"
+install_run_owned_compose_proof_traps
+
 echo "Restart-state proof: preserve local compose volumes, restart the stack, then run WebSocket/Telnet LOGIN -> PLAY -> LOOK baseline proofs."
-echo "Local volumes are left intact."
+echo "Local volumes are preserved during restart; default final proof cleanup disposes the run-owned deployment."
 
 require_run_owned_compose_project
+FIREMUD_SMOKE_PROOF_CLAIMED=true
 export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
 bash "$ENSURE_ENV_SCRIPT"
 bash "$ENSURE_CERTS_SCRIPT" --compose-mtls "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
