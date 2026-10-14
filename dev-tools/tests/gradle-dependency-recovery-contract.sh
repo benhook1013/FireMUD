@@ -505,6 +505,7 @@ echo compile-input-refreshed; exit 0"
 
 run_compile_input_case test-source-input-resolution compileTestJava testCompileClasspath
 run_compile_input_case integration-test-source-input-resolution compileIntegrationTestJava integrationTestCompileClasspath
+run_compile_input_case cross-service-source-input-resolution compileCrossServiceTestJava crossServiceTestCompileClasspath
 
 # A compiler diagnostic from test-source compilation and a completed compile
 # task both remain final failures, even with dependency-shaped output present.

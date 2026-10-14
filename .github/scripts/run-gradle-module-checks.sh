@@ -175,7 +175,7 @@ classify_failure_body() {
 
       if (line ~ /^> Could not resolve all (artifacts|files) for configuration .+\.$/) {
         resolver_roots++
-        if (line ~ /(compileClasspath|testCompileClasspath|integrationTestCompileClasspath)/) {
+        if (line ~ /(compileClasspath|testCompileClasspath|integrationTestCompileClasspath|crossServiceTestCompileClasspath)/) {
           compile_classpath_roots++
         }
         next
