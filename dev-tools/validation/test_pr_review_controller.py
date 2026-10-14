@@ -3654,6 +3654,65 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(evidence[(1, "hosted")][0]["checkpoint"], "hosted-old-head")
         self.assertGreaterEqual(len(evidence.stop_audit_calls), 3)
 
+    def stopped_count_fixture(self, rows):
+        history = {(1, "cli"): [self.allocation_evidence(checkpoint="baseline", channel="cli")]}
+        controller = self.grant_bounded_allocation(channel="cli", evidence=history, checkpoint="baseline",
+                                                    minimum=4, cap=4, sqlite=True)
+        history[(1, "cli")].extend(rows)
+        state = controller.store.load()
+        allocation = dataclasses.replace(state.allocations["1:cli"], stop_basis="direct_human",
+            stop_checkpoint="administrative-stop", stop_reviewed_head=HEAD_1,
+            stop_reviewed_patch_id=f"patch-{HEAD_1[:4]}", stop_head=HEAD_1,
+            stop_parent_identity="develop", stop_parent_head=BASE, stop_merge_base=BASE,
+            stop_patch_id=f"patch-{HEAD_1[:4]}", stop_reason="Human stopped discovery")
+        controller.store.update(lambda value: dataclasses.replace(value, allocations={**value.allocations, "1:cli": allocation}))
+        return controller, history, allocation
+
+    def test_stopped_bounded_allocation_counts_four_reviews_not_stop_checkpoint(self):
+        rows = [self.allocation_evidence(checkpoint=f"completed-{index}", channel="cli",
+                                        source_run_id=f"run.completed{index}") for index in range(4)]
+        controller, _, allocation = self.stopped_count_fixture(rows)
+        report = controller.status()["prs"][0]
+        view = report["allocations"]["cli"]
+        self.assertEqual(view["completed_count"], 4)
+        self.assertEqual(view["status"], "STOPPED")
+        self.assertEqual(view["stop_checkpoint"], "administrative-stop")
+        self.assertEqual(view["stop_reason"], "Human stopped discovery")
+        self.assertEqual(report["channels"]["cli"], "HUMAN_STOPPED")
+        progress = report["review_progress"]["cli"]
+        self.assertEqual(progress["rule"]["completed"], 4)
+        self.assertEqual(progress["rule"]["required_remaining"], 0)
+        self.assertEqual(progress["status"], "HUMAN_STOPPED")
+        self.assertEqual(progress["label"], "Stopped")
+        self.assertEqual(progress["rule"]["kind"], "human_stop")
+        self.assertEqual(progress["rule"]["label"], "Human stop")
+        self.assertEqual(controller.store.load().allocations["1:cli"], allocation)
+
+    def test_stopped_bounded_allocation_preserves_partial_zero_and_unknown_counts(self):
+        cases = (
+            ([], 0, False),
+            ([self.allocation_evidence(checkpoint="partial", channel="cli", completed=False)], 0, False),
+            ([self.allocation_evidence(checkpoint="unanchored", channel="cli", anchored=False)], 0, False),
+            ([self.allocation_evidence(checkpoint="valid", channel="cli"),
+              self.allocation_evidence(checkpoint="correction", channel="cli", correction=True)], 1, False),
+            ([self.allocation_evidence(checkpoint="valid", channel="cli")], None, True),
+            ([self.allocation_evidence(checkpoint="bad-anchor", channel="cli", parent_head="unknown")], None, False),
+        )
+        for rows, expected, missing_timeline in cases:
+            with self.subTest(expected=expected, missing_timeline=missing_timeline):
+                controller, history, allocation = self.stopped_count_fixture(rows)
+                if missing_timeline:
+                    history[(1, "cli")] = [row for row in history[(1, "cli")] if not row.get("scope_timeline")]
+                report = controller.status()["prs"][0]
+                self.assertEqual(report["allocations"]["cli"]["completed_count"], expected)
+                self.assertEqual(report["allocations"]["cli"]["status"], "STOPPED")
+                self.assertEqual(report["channels"]["cli"], "HUMAN_STOPPED")
+                self.assertEqual(report["review_progress"]["cli"]["rule"]["completed"], expected)
+                self.assertEqual(report["review_progress"]["cli"]["rule"]["label"], "Human stop")
+                self.assertEqual(controller.store.load().allocations["1:cli"], allocation)
+                durable = controller._durable_stop_allocations(controller.store.load(), 1)["cli"]
+                self.assertIsNone(durable["completed_count"])
+
     def test_bounded_hosted_extra_review_preserves_existing_taper_history(self):
         controller, _ = self.hosted_judgment_allocation_fixture(sqlite=True)
 
