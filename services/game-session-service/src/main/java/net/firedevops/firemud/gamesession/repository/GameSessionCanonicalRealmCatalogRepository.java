@@ -140,15 +140,6 @@ public class GameSessionCanonicalRealmCatalogRepository {
    */
   @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
   public PreparedInitialPublicProduction prepareInitialPublicProduction(
-      CreateCanonicalRealmCatalogRequest request) {
-    Objects.requireNonNull(request, "request");
-    requireCommittedRead();
-    throw new InvalidCatalogEvidenceException(
-        "Complete immutable published policy evidence is required");
-  }
-
-  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
-  public PreparedInitialPublicProduction prepareInitialPublicProduction(
       CreateCanonicalRealmCatalogRequest request,
       RealmPolicyPublishedEvidence.PublishedSet publishedSet) {
     Objects.requireNonNull(request, "request");
