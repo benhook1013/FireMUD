@@ -26,7 +26,7 @@ from typing import Any
 from .state import ReviewState, StateError, StateLockTimeout, _locked, sqlite_state_path
 
 SQLITE_SCHEMA_VERSION = 1
-WRITER_BUILD = 11
+WRITER_BUILD = 12
 PREVIOUS_DATA_MODEL_VERSION = 1
 INTERMEDIATE_DATA_MODEL_VERSION = 2
 STATUS_VERSION = 1

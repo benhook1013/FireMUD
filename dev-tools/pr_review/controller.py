@@ -3619,8 +3619,8 @@ class ReviewController:
 
         if allocation.stop_basis is None:
             return invalid("the allocation has no canonical stop decision")
-        # decide_stop audits the evidence and exact live identity before it
-        # persists this decision. Re-reading live topology or review evidence
+        # A direct administrative stop asserts policy only; evidence-bound
+        # stops retain their separately audited result and live identity. Re-reading live topology or review evidence
         # here would make an audited human stop expire as heads move.
         return {
             "status": "STOPPED",
@@ -3805,6 +3805,28 @@ class ReviewController:
                     "in_flight": 0,
                     "error": "scope-change evidence is incomplete or ambiguous; renewed human judgment is required",
                 }
+            if allocation.administrative_local:
+                # Public source timestamps can prove a historical marker's
+                # ordering without refreshing history at administrative write.
+                created_at = parse_timestamp(_field(value, "created_at"))
+                updated_text = _field(value, "updated_at")
+                effective_text = _field(value, "created_at") if updated_text is None else updated_text
+                effective_at = parse_timestamp(effective_text)
+                cutoff = parse_timestamp(allocation.administrative_recorded_at)
+                comment_id = _field(value, "comment_id")
+                if (
+                    _field(value, "scope_change_malformed") is not True
+                    and _field(value, "kind") != "scope_change_malformed"
+                    and type(comment_id) is int
+                    and comment_id > 0
+                    and _field(value, "checkpoint") == f"scope-change:{comment_id}"
+                    and created_at is not None
+                    and effective_at is not None
+                    and cutoff is not None
+                    and created_at <= effective_at < cutoff
+                    and _field(value, "observed_at") == effective_text
+                ):
+                    continue
             relevant_scope_rows.append(value)
 
         if (
@@ -4032,6 +4054,11 @@ class ReviewController:
                 )
             ):
                 continue
+            if allocation.administrative_local:
+                completed_at = parse_timestamp(_field(value, "verified_completed_at"))
+                cutoff = parse_timestamp(allocation.administrative_recorded_at)
+                if allocation.stop_basis is None and (completed_at is None or cutoff is None or completed_at <= cutoff):
+                    continue
             if _field(value, "pr") != allocation.pr:
                 return {
                     "baseline": baseline,
@@ -4520,6 +4547,15 @@ class ReviewController:
             item
             for item in history
             if _field(item, "correction") is not True and _field(item, "checkpoint", "checkpoint_id") not in baseline
+            and _source_run_identity(item) not in allocation.baseline_source_run_ids
+            and (
+                not allocation.administrative_local
+                or (
+                    parse_timestamp(_field(item, "verified_completed_at")) is not None
+                    and parse_timestamp(_field(item, "verified_completed_at"))
+                    > parse_timestamp(allocation.administrative_recorded_at)
+                )
+            )
         ]
         checkpoints = [_field(item, "checkpoint", "checkpoint_id") for item in subsequent]
         if any(not isinstance(value, str) or not value for value in checkpoints) or len(checkpoints) != len(
@@ -5045,14 +5081,19 @@ class ReviewController:
         ):
             return decision
 
-        if not (
+        # Local settings carry no verified grant-time anchor. Use the freshly
+        # reconciled live candidate and the evidence audit below; caller head
+        # metadata is neither proof nor a replacement for these checks.
+        if reconciliation.status_for(pr) != stack.ReconciliationStatus.COHERENT:
+            return judgment_hold("bounded Hosted allocation has no coherent current stack identity")
+        if not allocation.administrative_local and not (
             allocation.head.casefold() == current.child_head.casefold()
             and allocation.parent_identity == current.parent_identity
+            and isinstance(allocation.parent_head, str)
             and allocation.parent_head.casefold() == current.parent_head.casefold()
             and isinstance(allocation.merge_base, str)
             and allocation.merge_base.casefold() == current.merge_base.casefold()
             and allocation.patch_id == current.patch_id
-            and reconciliation.status_for(pr) == stack.ReconciliationStatus.COHERENT
         ):
             return judgment_hold("bounded Hosted allocation no longer matches the current stack identity")
 
@@ -6862,10 +6903,14 @@ class ReviewController:
         parent: stack.ParentLink,
     ) -> bool:
         for allocation in state.allocations.values():
-            if allocation.pr == pr and (
-                allocation.head.casefold() != item.head.casefold()
-                or allocation.parent_identity != parent.identity
-                or allocation.parent_head.casefold() != parent.parent_head.casefold()
+            if (
+                allocation.pr == pr
+                and not allocation.administrative_local
+                and (
+                    allocation.head.casefold() != item.head.casefold()
+                    or allocation.parent_identity != parent.identity
+                    or allocation.parent_head.casefold() != parent.parent_head.casefold()
+                )
             ):
                 return True
         for decision in state.reconciliations:
@@ -8046,6 +8091,20 @@ class ReviewController:
         )
         if action == "renew" and previous_is_bounded and not bounded_replacement:
             raise ControllerError("renewing a bounded allocation requires a new minimum or maximum")
+        if isinstance(self.store, SqliteStateStore) and self.github is None:
+            return self._decide_local_allocation(
+                action=action,
+                pr=pr,
+                channel=selected.value,
+                head=normalized_head,
+                reason=reason,
+                checkpoint=checkpoint,
+                minimum=min_additional_completed,
+                maximum=max_additional_completed,
+                fresh_taper=fresh_taper,
+                observed_state=state,
+                previous=previous,
+            )
         # Human allowance recording is policy, not request admission. Capture
         # the actual PR identity without requiring stack or local Git proof.
         item = _live(self._require_github().pull_request(pr), pr)
@@ -8180,6 +8239,145 @@ class ReviewController:
         if progress is not None:
             result["progress"] = progress
         return result
+
+    def _decide_local_allocation(
+        self,
+        *,
+        action: str,
+        pr: int,
+        channel: str,
+        head: str,
+        reason: str,
+        checkpoint: str | None,
+        minimum: int | None,
+        maximum: int | None,
+        fresh_taper: bool,
+        observed_state: ReviewState,
+        previous: ReviewAllocation | None,
+    ) -> dict[str, Any]:
+        """Record policy from one native SQLite snapshot, with no live anchor claim."""
+        from .sqlite_review_records import SqliteReviewRecords
+
+        outcome: dict[str, Any] = {}
+        identity = f"{pr}:{channel}"
+
+        def persist(current: ReviewState, connection: Any) -> ReviewState:
+            if current.ordered_prs != observed_state.ordered_prs or current.allocations.get(identity) != previous:
+                raise ControllerError("review stack or allocation changed concurrently; reread before deciding")
+            values = dict(current.allocations)
+            if action == "cancel":
+                values.pop(identity)
+            else:
+                history = SqliteReviewRecords(self.store.path).history(
+                    pr, include_display=False, _connection=connection
+                )
+                attempts = [
+                    item for item in history["attempts"] if item["channel"] == channel and item["state"] == "completed"
+                ]
+                runs = [
+                    item for item in history["runs"] if item["channel"] == channel and item["outcome"] == "completed"
+                ]
+                checkpoints = {item["checkpoint_id"] for item in attempts if item.get("checkpoint_id")}
+                source_ids = {
+                    identifier
+                    for item in attempts
+                    for identifier in (item["attempt_id"], item.get("run_id"))
+                    if identifier
+                }
+                source_ids.update(item["run_id"] for item in runs)
+                source_ids.update(
+                    f"hosted-review:{item['provider_review_id']}" for item in attempts if item.get("provider_review_id")
+                )
+                for origin in history.get("provider_origins", []):
+                    if origin["channel"] == channel and origin["run_id"] in source_ids:
+                        checkpoints.add(origin["checkpoint_id"])
+                        if channel == "hosted":
+                            source_ids.add(f"hosted-review:{origin['provider_id']}")
+                if checkpoint is not None and checkpoint not in checkpoints:
+                    raise ControllerError("allocation checkpoint is not a retained completed native result")
+                allocation = ReviewAllocation(
+                    pr=pr,
+                    channel=channel,
+                    head=head,
+                    parent_identity=None,
+                    parent_head=None,
+                    merge_base=None,
+                    patch_id=None,
+                    baseline_checkpoints=tuple(sorted(checkpoints)),
+                    reason=reason,
+                    baseline_source_run_ids=tuple(sorted(source_ids)),
+                    baseline_checkpoint=checkpoint,
+                    min_additional_completed=minimum,
+                    max_additional_completed=maximum,
+                    reopens_taper=fresh_taper,
+                    administrative_local=True,
+                    administrative_recorded_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                )
+                values[identity] = allocation
+                outcome["allocation"] = allocation.to_dict()
+            outcome.update(action=action, pr=pr, channel=channel, allocations=list(values))
+            return dataclasses.replace(current, allocations=values)
+
+        self.store.update(lambda current: current, transaction_mutate=persist)
+        return outcome
+
+    def _decide_local_stop(
+        self,
+        *,
+        pr: int,
+        channel: str,
+        head: str | None,
+        reason: str,
+        observed_state: ReviewState,
+        previous: ReviewAllocation | None,
+    ) -> dict[str, Any]:
+        identity = f"{pr}:{channel}"
+        outcome: dict[str, Any] = {}
+
+        def persist(current: ReviewState) -> ReviewState:
+            if current.ordered_prs != observed_state.ordered_prs or current.allocations.get(identity) != previous:
+                raise ControllerError("review stack or allocation changed concurrently; reread before stopping")
+            if previous is not None and previous.stop_basis is not None:
+                raise ControllerError("review discovery is already stopped for this PR and channel")
+            allocation = ReviewAllocation(
+                pr=pr,
+                channel=channel,
+                head=head,
+                parent_identity=None,
+                parent_head=None,
+                merge_base=None,
+                patch_id=None,
+                baseline_checkpoints=previous.baseline_checkpoints if previous else (),
+                reason=previous.reason if previous else reason,
+                baseline_source_run_ids=previous.baseline_source_run_ids if previous else (),
+                baseline_checkpoint=previous.baseline_checkpoint if previous else None,
+                min_additional_completed=previous.min_additional_completed if previous else None,
+                max_additional_completed=previous.max_additional_completed if previous else None,
+                reopens_taper=previous.reopens_taper if previous else False,
+                administrative_local=True,
+                administrative_recorded_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                stop_basis="direct_human",
+                stop_head=head,
+                stop_reason=reason,
+                stop_summary_disposition_fingerprints=self._stop_summary_fingerprints(current, pr),
+            )
+            values = dict(current.allocations)
+            values[identity] = allocation
+            outcome.update(
+                action="stop",
+                allocation=allocation.to_dict(),
+                allocations=list(values),
+                checkpoint=None,
+                reviewed_head=None,
+                stop_head=head,
+                stop_basis="direct_human",
+                reason=reason,
+                retained_ambiguous_fingerprints=[],
+            )
+            return dataclasses.replace(current, allocations=values)
+
+        self.store.update(persist)
+        return outcome
 
     def decide_period_reset(
         self,
@@ -8360,6 +8558,27 @@ class ReviewController:
             raise ControllerError("over-ceiling acknowledgment is available only to a direct human stop")
         if previous is not None and previous.handoff_checkpoint is not None:
             raise ControllerError("this channel already has a legacy completed handoff")
+        if (
+            isinstance(self.store, SqliteStateStore)
+            and self.github is None
+            and checkpoint is None
+            and not retained_fingerprint_values
+            and not acknowledge_over_ceiling
+            and (
+                previous is None
+                or previous.stop_basis is not None
+                or previous.min_additional_completed is not None
+                or previous.max_additional_completed is not None
+            )
+        ):
+            return self._decide_local_stop(
+                pr=pr,
+                channel=selected.value,
+                head=normalized_head,
+                reason=normalized_reason,
+                observed_state=state,
+                previous=previous,
+            )
         item = _live(self._require_github().pull_request(pr), pr)
         if normalized_head is not None and normalized_head.casefold() != item.head.casefold():
             raise ControllerError("review stop head does not match the live pull-request head")
@@ -8460,6 +8679,15 @@ class ReviewController:
                 value
                 for value in history
                 if _field(value, "checkpoint") not in previous.baseline_checkpoints
+                and _source_run_identity(value) not in previous.baseline_source_run_ids
+                and (
+                    not previous.administrative_local
+                    or (
+                        parse_timestamp(_field(value, "verified_completed_at")) is not None
+                        and parse_timestamp(_field(value, "verified_completed_at"))
+                        > parse_timestamp(previous.administrative_recorded_at)
+                    )
+                )
                 and _field(value, "completed") is True
                 and _field(value, "attributable") is True
                 and _field(value, "anchored") is True
@@ -8477,6 +8705,17 @@ class ReviewController:
 
         if previous is not None:
             original_values = dataclasses.asdict(previous)
+            if previous.administrative_local:
+                # This special evidence-bound path has obtained actual anchor facts.
+                original_values.update(
+                    administrative_local=False,
+                    administrative_recorded_at=None,
+                    head=current.child_head,
+                    parent_identity=current.parent_identity,
+                    parent_head=current.parent_head,
+                    merge_base=current.merge_base,
+                    patch_id=current.patch_id,
+                )
         else:
             checkpoints = (_field(latest, "checkpoint", "checkpoint_id"),) if latest is not None else ()
             original_values = {
