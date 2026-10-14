@@ -918,6 +918,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       var retainedRowsAtV1042 = new LinkedHashMap<>(allRows(connection));
       retainedRowsAtV1042.remove(HISTORY);
       var historyAtV1042 = history(connection);
+      String guardProcedure = schema + ".world_guard_canonical_activation_transition()";
+      var originalGuardIdentity =
+          connection.fetchSingle(
+              "SELECT oid::text, prosecdef, proacl::text FROM pg_proc WHERE oid = to_regprocedure(?)",
+              guardProcedure);
       var full = migration(source, schema, null);
       full.migrate();
       full.validate();
@@ -937,6 +942,62 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       assertThat(retainedRowsAtDefaultFrontier)
           .as("all retained row values and xmin from V1042 through the default frontier")
           .isEqualTo(retainedRowsAtV1042);
+      assertThat(
+              connection.fetchSingle(
+                  "SELECT oid::text, prosecdef, proacl::text FROM pg_proc WHERE oid = to_regprocedure(?)",
+                  guardProcedure))
+          .isEqualTo(originalGuardIdentity);
+      List<String> deniedMetadataUpdates =
+          List.of(
+              "failure_reason = 'fixture failure'",
+              "termination_request_id = 'fixture termination'",
+              "terminated_at = clock_timestamp()");
+      for (String mutation : deniedMetadataUpdates) {
+        assertSqlState(
+            () ->
+                connection.execute(
+                    "UPDATE world_instance SET " + mutation + " WHERE id = ?",
+                    fixtureAssociation.worldInstanceId()),
+            "23514",
+            "World tenant key is reserved for a canonical authored source");
+      }
+      // The earlier owner-manifest trigger denies naked production writes first. Exercise the
+      // actual installed activation guard separately on a connection-local copy of that same row;
+      // no production trigger is disabled and no owner execution manifest is fabricated.
+      try (var probeConnection = source.getConnection()) {
+        var probe = DSL.using(probeConnection, SQLDialect.POSTGRES);
+        probe.execute(
+            "CREATE TEMP TABLE fixture_row_guard_probe AS TABLE "
+                + DSL.name(schema, "world_instance")
+                + " WITH NO DATA");
+        probe.execute(
+            "INSERT INTO pg_temp.fixture_row_guard_probe SELECT * FROM "
+                + DSL.name(schema, "world_instance")
+                + " WHERE id = ?",
+            fixtureAssociation.worldInstanceId());
+        probe.execute(
+            "CREATE TRIGGER fixture_row_guard BEFORE UPDATE ON pg_temp.fixture_row_guard_probe "
+                + "FOR EACH ROW EXECUTE FUNCTION "
+                + DSL.name(schema, "world_guard_canonical_activation_transition")
+                + "()");
+        var probeRowsBefore =
+            probe.fetch(
+                "SELECT row_to_json(t)::text, xmin::text FROM pg_temp.fixture_row_guard_probe t");
+        for (String mutation : deniedMetadataUpdates) {
+          assertSqlState(
+              () -> probe.execute("UPDATE pg_temp.fixture_row_guard_probe SET " + mutation),
+              "23514",
+              "Run-owned fixture World row mutations are disabled");
+        }
+        assertThat(
+                probe.fetch(
+                    "SELECT row_to_json(t)::text, xmin::text FROM pg_temp.fixture_row_guard_probe t"))
+            .isEqualTo(probeRowsBefore);
+      }
+      assertThat(allRows(connection).get("world_instance"))
+          .as(
+              "fixture row remains byte-for-byte and xmin stable after denied lifecycle metadata writes")
+          .isEqualTo(retainedRowsAtV1042.get("world_instance"));
       assertThat(sourceOwner.read("dev", intakeRequest)).contains(intake);
       assertThat(
               versionOwner.readByCanonicalVersion(
@@ -1817,6 +1878,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     List<String> versions = new ArrayList<>(remainingVersionsThrough(1042));
     versions.add("1042.1");
     versions.add("1042.2");
+    versions.add("1042.3");
     return List.copyOf(versions);
   }
 
