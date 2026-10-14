@@ -40,11 +40,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Runs V1003/V1004/V1004.1/V1004.2 against the actual Account PostgreSQL schema and assembled
- * source-writer guard. The integrity and currentness fixtures seed related owner rows with upstream
- * producer triggers disabled. Protection acquisition, child completeness, settlement and
- * source-writer guards remain enabled; they prove SQL currentness/exclusion/immutability only, not
- * authenticated activation-protection production.
+ * Runs V1003/V1004/V1004.1/V1004.2/V1004.3 against the actual Account PostgreSQL schema and
+ * assembled source-writer guard. The integrity and currentness fixtures seed related owner rows
+ * with upstream producer triggers disabled. Protection acquisition, child completeness, settlement
+ * and source-writer guards remain enabled; they prove SQL currentness/exclusion/immutability only,
+ * not authenticated activation-protection production.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountStartSessionActivationProtectionPostgresIntegrationTest {
@@ -220,6 +220,36 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                     "SELECT to_regprocedure('account_ss_activation_settlement_lifecycle_guard()')::TEXT")
                 .get(0, String.class))
         .isNotNull();
+
+    String preCanonicalCarrierUpgradeHistoryQuery =
+        "SELECT installed_rank || ':' || version || ':' || script || ':' "
+            + "|| checksum || ':' || success FROM flyway_schema_history "
+            + "WHERE version IS NOT NULL AND version <> '1004.3' ORDER BY installed_rank";
+    var preCanonicalCarrierUpgradeHistory =
+        fixture.dsl().fetch(preCanonicalCarrierUpgradeHistoryQuery).getValues(0, String.class);
+    Flyway canonicalCarrierUpgrade = activationFlyway(fixture.dataSource(), "1004.3");
+    assertThat(canonicalCarrierUpgrade.migrate().migrationsExecuted).isEqualTo(1);
+    canonicalCarrierUpgrade.validate();
+    assertThat(
+            fixture.dsl().fetch(preCanonicalCarrierUpgradeHistoryQuery).getValues(0, String.class))
+        .isEqualTo(preCanonicalCarrierUpgradeHistory);
+    assertThat(fixture.dsl().fetch(protectionRowsQuery).getValues(0, String.class))
+        .isEqualTo(pendingRows);
+    assertThat(fixture.dsl().fetch(sourceRowsQuery).getValues(0, String.class))
+        .isEqualTo(retainedSources);
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle("SELECT to_regprocedure('account_ss_activation_insert_guard()')::TEXT")
+                .get(0, String.class))
+        .isNotNull();
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT max(version::numeric) FROM flyway_schema_history WHERE version ~ '^[0-9]+(\\.[0-9]+)?$'")
+                .get(0, java.math.BigDecimal.class))
+        .isEqualByComparingTo("1004.3");
 
     fixture
         .dsl()
@@ -789,6 +819,87 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                     .execute(
                         "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
                         sourceKey));
+  }
+
+  @Test
+  void noncanonicalActivationBase64CarriersCannotAcquireProtectionOrBlockSourceWriters()
+      throws Exception {
+    Map<String, Character> whitespaceVariants = new LinkedHashMap<>();
+    whitespaceVariants.put("newline", '\n');
+    whitespaceVariants.put("space", ' ');
+    whitespaceVariants.put("tab", '\t');
+    whitespaceVariants.put("carriage return", '\r');
+    Map<String, String> carrierFields = new LinkedHashMap<>();
+    carrierFields.put("tuple", "originalPostAuthorizationTupleBytesBase64");
+    carrierFields.put("projection", "accountRedemptionProjectionBytesBase64");
+    carrierFields.put("launch read", "gameSessionLaunchReadEvidenceBytesBase64");
+    carrierFields.put("PREPARING lifecycle", "preparingEvidenceBytesBase64");
+
+    for (Map.Entry<String, String> carrier : carrierFields.entrySet()) {
+      for (Map.Entry<String, Character> whitespace : whitespaceVariants.entrySet()) {
+        Fixture fixture = fixture("1004.2");
+        Flyway upgrade = activationFlyway(fixture.dataSource(), "1004.3");
+        assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
+        upgrade.validate();
+
+        CurrentnessCase valid = currentnessCase(fixture, Instant.now().plusSeconds(120));
+        Map<String, Object> request = readJson(valid.requestBytes());
+        String canonicalBase64 = (String) request.get(carrier.getValue());
+        request.put(
+            carrier.getValue(),
+            canonicalBase64.substring(0, 4) + whitespace.getValue() + canonicalBase64.substring(4));
+        CurrentnessCase noncanonical =
+            new CurrentnessCase(
+                jsonBytes(request),
+                valid.operationIdentityBytes(),
+                valid.operationIdentityDigest(),
+                valid.ownerAttemptId(),
+                valid.expiryText());
+
+        assertThatThrownBy(() -> acquireProtection(fixture, noncanonical))
+            .as(
+                "%s Base64 carrier with %s must be rejected before protection acquisition",
+                carrier.getKey(), whitespace.getKey())
+            .isInstanceOf(RuntimeException.class)
+            .hasMessageContaining(
+                "Activation protection Base64 fields must use canonical encodings")
+            .satisfies(
+                failure -> {
+                  Throwable postgresFailure = failure;
+                  while (postgresFailure.getCause() != null) {
+                    postgresFailure = postgresFailure.getCause();
+                  }
+                  assertThat(postgresFailure)
+                      .isInstanceOfSatisfying(
+                          org.postgresql.util.PSQLException.class,
+                          sqlFailure -> assertThat(sqlFailure.getSQLState()).isEqualTo("23514"));
+                });
+        assertThat(
+                fixture.dsl().fetchCount(DSL.table("account_start_session_activation_protections")))
+            .isZero();
+        assertThat(
+                fixture
+                    .dsl()
+                    .fetchCount(DSL.table("account_start_session_activation_protection_sources")))
+            .isZero();
+        String sourceKey =
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT source_key FROM account_start_session_world_participation_sources "
+                        + "ORDER BY source_key LIMIT 1")
+                .get("source_key", String.class);
+        fixture
+            .transaction()
+            .executeWithoutResult(
+                status ->
+                    fixture
+                        .dsl()
+                        .execute(
+                            "SELECT account_control_ui_hold_required_sources(ARRAY[?]::text[])",
+                            sourceKey));
+      }
+    }
   }
 
   @Test

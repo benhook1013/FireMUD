@@ -256,6 +256,117 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
   }
 
   @Test
+  void historicalCatalogAndAssociationRemainUnchangedWithoutPoisoningFreshDiscovery() {
+    Fixture fixture = fixture(false, MigrationVersion.fromVersion("40"));
+    IntakeReceipt historicalSource =
+        fixture.register(tenant(40), "historical-world", "Historical World", "NEW_GAME_ROW");
+    CreateCanonicalRealmCatalogRequest historicalRequest =
+        request(
+            historicalSource,
+            uuid(1040),
+            "historical-realm",
+            "Historical Realm",
+            "ALLOW_NEW",
+            "ISOLATED");
+    insertHistoricalFreshAssociation(fixture, historicalSource);
+    insertCatalogRow(fixture, historicalSource, historicalRequest, java.util.Map.of());
+    Record catalogBefore = retainedCatalogState(fixture, historicalRequest.requestId());
+    Record associationBefore = retainedAssociationState(fixture, tenant(40));
+
+    fixture.migrateToLatest();
+
+    assertThat(retainedCatalogState(fixture, historicalRequest.requestId()))
+        .isEqualTo(catalogBefore);
+    assertThat(retainedAssociationState(fixture, tenant(40))).isEqualTo(associationBefore);
+    assertThat(
+            requiredRecord(
+                    fixture.dsl,
+                    "SELECT complete_policy_set_evidence IS NULL AND fixture_policy_request_bytes IS NULL "
+                        + "AND fixture_policy_seal_operation_id IS NULL AND fixture_policy_seal_request_digest IS NULL "
+                        + "AND fixture_policy_seal_evidence_digest IS NULL AS historical "
+                        + "FROM game_session_canonical_realm_catalog WHERE creation_request_id = ?",
+                    historicalRequest.requestId())
+                .get("historical", Boolean.class))
+        .isTrue();
+    assertThat(
+            requiredRecord(
+                    fixture.dsl,
+                    "SELECT complete_source_evidence FROM game_session_fresh_tenant_association WHERE canonical_tenant_id = ?",
+                    tenant(40))
+                .get("complete_source_evidence"))
+        .isNull();
+    assertThat(fixture.catalogRepository.readVisiblePublicProductionSnapshots(NAMESPACE)).isEmpty();
+    assertThatThrownBy(
+            () -> fixture.catalogRepository.readByRequest(NAMESPACE, historicalRequest.requestId()))
+        .isInstanceOf(InvalidCatalogEvidenceException.class)
+        .hasMessageContaining("Exactly one complete catalog policy provenance required");
+    assertThatThrownBy(
+            () ->
+                fixture.catalogRepository.readUniqueVisiblePublicProduction(NAMESPACE, tenant(40)))
+        .isInstanceOf(InvalidCatalogEvidenceException.class);
+
+    IntakeReceipt freshSource =
+        fixture.register(tenant(41), "fresh-world", "Fresh World", "NEW_GAME_ROW");
+    CanonicalRealmCatalogSnapshot fresh =
+        fixture.create(
+            request(
+                freshSource, uuid(1041), "fresh-realm", "Fresh Realm", "PRESEEDED_ONLY", "SHARED"));
+    assertThat(fixture.catalogRepository.readVisiblePublicProductionSnapshots(NAMESPACE))
+        .containsExactly(fresh);
+    assertThat(retainedCatalogState(fixture, historicalRequest.requestId()))
+        .isEqualTo(catalogBefore);
+    assertThat(retainedAssociationState(fixture, tenant(40))).isEqualTo(associationBefore);
+  }
+
+  @Test
+  void discoveryStillRejectsMalformedEvidenceAndDatabaseRejectsPartialOrBothProvenances() {
+    Fixture fixture = fixture(false);
+    IntakeReceipt source =
+        fixture.register(tenant(42), "invalid-world", "Invalid World", "NEW_GAME_ROW");
+    CreateCanonicalRealmCatalogRequest request =
+        request(source, uuid(1042), "invalid-realm", "Invalid Realm", "ALLOW_NEW", "ISOLATED");
+    for (String column :
+        java.util.List.of(
+            "fixture_policy_request_bytes", "fixture_policy_seal_operation_id",
+            "fixture_policy_seal_request_digest", "fixture_policy_seal_evidence_digest")) {
+      Object value =
+          column.endsWith("bytes")
+              ? new byte[] {1}
+              : column.endsWith("operation_id") ? uuid(1043) : "sha256:" + "a".repeat(64);
+      assertThatThrownBy(
+              () -> insertCatalogRow(fixture, source, request, java.util.Map.of(column, value)))
+          .isInstanceOf(DataAccessException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                insertCatalogRow(
+                    fixture,
+                    source,
+                    request,
+                    java.util.Map.of(
+                        "complete_policy_set_evidence",
+                        new byte[] {1},
+                        "fixture_policy_request_bytes",
+                        new byte[] {1},
+                        "fixture_policy_seal_operation_id",
+                        uuid(1043),
+                        "fixture_policy_seal_request_digest",
+                        "sha256:" + "a".repeat(64),
+                        "fixture_policy_seal_evidence_digest",
+                        "sha256:" + "b".repeat(64))))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(() -> insertCatalogRow(fixture, source, request, java.util.Map.of()))
+        .isInstanceOf(DataAccessException.class);
+
+    // The insert guard checks presence; authoritative readback validates the actual policy bytes.
+    insertCatalogRow(
+        fixture, source, request, java.util.Map.of("complete_policy_set_evidence", new byte[] {1}));
+    assertThatThrownBy(
+            () -> fixture.catalogRepository.readVisiblePublicProductionSnapshots(NAMESPACE))
+        .isInstanceOf(InvalidCatalogEvidenceException.class);
+  }
+
+  @Test
   void requiresOwnerWriteTransactionRejectsChangedRequestAndDeniesRetainedProvenance() {
     Fixture fixture = fixture(false);
     IntakeReceipt source = fixture.register(tenant(2), "world-two", "World Two", "NEW_GAME_ROW");
@@ -872,6 +983,199 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
         dataSource,
         schema,
         new java.util.concurrent.ConcurrentHashMap<>());
+  }
+
+  private static Record retainedCatalogState(Fixture fixture, UUID requestId) {
+    return requiredRecord(
+        fixture.dsl,
+        "SELECT xmin::text AS xmin, (to_jsonb(catalog) - ARRAY['complete_policy_set_evidence', "
+            + "'fixture_policy_request_bytes', 'fixture_policy_seal_operation_id', "
+            + "'fixture_policy_seal_request_digest', 'fixture_policy_seal_evidence_digest'])::text AS bytes "
+            + "FROM game_session_canonical_realm_catalog catalog WHERE creation_request_id = ?",
+        requestId);
+  }
+
+  private static Record retainedAssociationState(Fixture fixture, UUID tenantId) {
+    return requiredRecord(
+        fixture.dsl,
+        "SELECT xmin::text AS xmin, (to_jsonb(association) - 'complete_source_evidence')::text AS bytes "
+            + "FROM game_session_fresh_tenant_association association WHERE canonical_tenant_id = ?",
+        tenantId);
+  }
+
+  private static void insertHistoricalFreshAssociation(Fixture fixture, IntakeReceipt receipt) {
+    AuthoredWorldSourceEvidence source = receipt.source();
+    UUID operationId = uuid(1044);
+    long privateTenantId = 1044L;
+    fixture.transactions.execute(
+        status -> {
+          fixture.dsl.execute(
+              "INSERT INTO game_session_tenant_scope_reservation "
+                  + "(game_session_tenant_id, reservation_kind) VALUES (?, 'FRESH_SOURCE_BOUND')",
+              privateTenantId);
+          fixture.dsl.execute(
+              "INSERT INTO game_session_tenant_canonical_claim "
+                  + "(target_namespace, canonical_tenant_id, legacy_game_session_tenant_id, association_kind, "
+                  + "reservation_kind, association_operation_id, association_request_id) "
+                  + "VALUES (?, ?, ?, 'FRESH_SOURCE_BOUND', 'FRESH_SOURCE_BOUND', ?, ?)",
+              NAMESPACE,
+              source.canonicalTenantId(),
+              privateTenantId,
+              operationId,
+              source.registrationRequestId());
+          fixture.dsl.execute(
+              "INSERT INTO game_session_fresh_tenant_association "
+                  + "(association_operation_id, target_namespace, association_request_id, source_schema_version, "
+                  + "source_target_namespace, source_request_id, source_canonical_tenant_id, canonical_tenant_id, "
+                  + "legacy_game_session_tenant_id, source_game_row_id, source_game_tenant_key, provenance_kind) "
+                  + "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW')",
+              operationId,
+              NAMESPACE,
+              source.registrationRequestId(),
+              NAMESPACE,
+              source.registrationRequestId(),
+              source.canonicalTenantId(),
+              source.canonicalTenantId(),
+              privateTenantId,
+              source.sourceGameRowId(),
+              source.sourceGameTenantKey());
+          return null;
+        });
+  }
+
+  private static void insertCatalogRow(
+      Fixture fixture,
+      IntakeReceipt receipt,
+      CreateCanonicalRealmCatalogRequest request,
+      java.util.Map<String, Object> provenance) {
+    Record intake =
+        requiredRecord(
+            fixture.dsl,
+            "SELECT * FROM game_session_authored_world_source_intake WHERE operation_id = ?",
+            receipt.operationId());
+    java.util.Map<String, Object> values = new java.util.LinkedHashMap<>();
+    for (String field :
+        java.util.List.of("target_namespace", "canonical_tenant_id", "tenant_slug", "world_slug")) {
+      values.put(field, intake.get(field));
+    }
+    UUID realmId = request.requestId();
+    UUID namespaceId =
+        UUID.nameUUIDFromBytes(
+            ("historical-namespace/" + realmId).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    String requestDigest = historicalRequestDigest(request, receipt);
+    values.put("realm_id", realmId);
+    values.put("realm_slug", request.realmSlug());
+    values.put("realm_display_name", request.realmDisplayName());
+    values.put("visible", true);
+    values.put("public_production", true);
+    values.put("state_scope", request.stateScope());
+    values.put("playable_state_namespace_id", namespaceId);
+    values.put("character_creation_policy", request.characterCreationPolicy());
+    values.put("catalog_revision", 1L);
+    values.put("creation_request_id", request.requestId());
+    values.put("request_digest", requestDigest);
+    values.put(
+        "receipt_digest",
+        historicalReceiptDigest(request, receipt, realmId, namespaceId, requestDigest));
+    values.put("source_intake_operation_id", receipt.operationId());
+    values.put("source_intake_schema_version", 1);
+    values.put("source_intake_request_id", receipt.intakeRequestId());
+    values.put("source_intake_request_digest", receipt.requestDigest());
+    values.put("source_intake_receipt_digest", receipt.receiptDigest());
+    for (String field :
+        java.util.List.of(
+            "source_schema_version",
+            "source_registration_request_id",
+            "source_operation_id",
+            "source_request_digest",
+            "source_game_row_id",
+            "source_game_tenant_key",
+            "source_provenance_kind",
+            "source_evidence_digest")) {
+      values.put(field, intake.get(field));
+    }
+    values.put("source_world_display_name", intake.get("world_display_name"));
+    values.putAll(provenance);
+    fixture
+        .dsl
+        .insertInto(DSL.table(DSL.name("game_session_canonical_realm_catalog")))
+        .columns(values.keySet().stream().map(name -> DSL.field(DSL.name(name))).toList())
+        .values(values.values())
+        .execute();
+  }
+
+  private static String historicalRequestDigest(
+      CreateCanonicalRealmCatalogRequest request, IntakeReceipt receipt) {
+    AuthoredWorldSourceEvidence source = receipt.source();
+    // Independent V23 framing: decimal UTF-8 byte length, colon, then exact bytes per field.
+    return historicalDigest(
+        java.util.List.of(
+            "game-session-canonical-realm-catalog-request/v1",
+            "1",
+            request.requestId().toString(),
+            request.targetNamespace(),
+            request.canonicalTenantId().toString(),
+            request.sourceIntakeOperationId().toString(),
+            receipt.intakeRequestId().toString(),
+            receipt.requestDigest(),
+            receipt.receiptDigest(),
+            Integer.toString(source.schemaVersion()),
+            source.registrationRequestId().toString(),
+            source.operationId().toString(),
+            source.requestDigest(),
+            source.canonicalTenantId().toString(),
+            source.tenantSlug(),
+            source.worldSlug(),
+            source.worldDisplayName(),
+            Long.toString(source.sourceGameRowId()),
+            source.sourceGameTenantKey(),
+            source.provenanceKind(),
+            source.evidenceDigest(),
+            request.realmSlug(),
+            request.realmDisplayName(),
+            Boolean.toString(request.visible()),
+            Boolean.toString(request.publicProduction()),
+            request.stateScope(),
+            request.characterCreationPolicy(),
+            "ABSENT",
+            "ABSENT"));
+  }
+
+  private static String historicalReceiptDigest(
+      CreateCanonicalRealmCatalogRequest request,
+      IntakeReceipt receipt,
+      UUID realmId,
+      UUID namespaceId,
+      String requestDigest) {
+    return historicalDigest(
+        java.util.List.of(
+            "game-session-canonical-realm-catalog-receipt/v1",
+            "1",
+            request.targetNamespace(),
+            request.canonicalTenantId().toString(),
+            request.requestId().toString(),
+            requestDigest,
+            realmId.toString(),
+            namespaceId.toString(),
+            "1",
+            receipt.operationId().toString(),
+            receipt.receiptDigest()));
+  }
+
+  private static String historicalDigest(java.util.List<String> fields) {
+    try {
+      java.security.MessageDigest hash = java.security.MessageDigest.getInstance("SHA-256");
+      for (String value : fields) {
+        byte[] bytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        hash.update(
+            Integer.toString(bytes.length).getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        hash.update((byte) ':');
+        hash.update(bytes);
+      }
+      return "sha256:" + java.util.HexFormat.of().formatHex(hash.digest());
+    } catch (java.security.NoSuchAlgorithmException exception) {
+      throw new IllegalStateException(exception);
+    }
   }
 
   private static UUID tenant(int value) {
