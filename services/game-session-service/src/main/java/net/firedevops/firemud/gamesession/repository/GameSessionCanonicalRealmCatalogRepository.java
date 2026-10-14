@@ -456,7 +456,21 @@ public class GameSessionCanonicalRealmCatalogRepository {
     }
     requireCommittedRead();
     return dsl.selectFrom(CATALOG)
-        .where(TARGET_NAMESPACE.eq(targetNamespace).and(PUBLIC_PRODUCTION.isTrue()))
+        .where(
+            TARGET_NAMESPACE
+                .eq(targetNamespace)
+                .and(PUBLIC_PRODUCTION.isTrue())
+                // V23/V25 history has no policy provenance and is not current authority.
+                // Keep every evidence-bearing or partial candidate for strict validation.
+                .and(
+                    DSL.field(DSL.name("complete_policy_set_evidence"))
+                        .isNotNull()
+                        .or(DSL.field(DSL.name("fixture_policy_request_bytes")).isNotNull())
+                        .or(DSL.field(DSL.name("fixture_policy_seal_operation_id")).isNotNull())
+                        .or(DSL.field(DSL.name("fixture_policy_seal_request_digest")).isNotNull())
+                        .or(
+                            DSL.field(DSL.name("fixture_policy_seal_evidence_digest"))
+                                .isNotNull())))
         .orderBy(CANONICAL_TENANT_ID.asc(), REALM_ID.asc())
         .fetch()
         .map(this::toSnapshot);

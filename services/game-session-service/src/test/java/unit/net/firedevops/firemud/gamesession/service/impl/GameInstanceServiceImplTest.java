@@ -34,7 +34,6 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
-import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
@@ -1285,25 +1284,6 @@ class GameInstanceServiceImplTest {
                             .setPublishedReleaseBundleRef(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                             .build())
                     .build());
-    when(gameDesignClient.resolveLaunchDescriptor(
-            any(Long.class), any(Long.class), anyString(), any(AuthoredWorldSourceEvidence.class)))
-        .thenAnswer(
-            invocation -> {
-              long tenantId = invocation.getArgument(0, Long.class);
-              long gameTemplateId = invocation.getArgument(1, Long.class);
-              String controlPlaneRequestId = invocation.getArgument(2, String.class);
-              AuthoredWorldSourceEvidence sourceEvidence = invocation.getArgument(3);
-              LaunchDescriptor descriptor =
-                  RunOwnedInitialAdmissionLaunchEvidenceTestFixture.create(
-                          new StartSessionRequest(
-                              tenantId, gameTemplateId, controlPlaneRequestId, 42L),
-                          sourceEvidence,
-                          runOwnedBundleRef(tenantId))
-                      .launchDescriptor();
-              return ResolveLaunchDescriptorResponse.newBuilder()
-                  .setLaunchDescriptor(descriptor)
-                  .build();
-            });
     when(gameDesignClient.getPublishedReleaseBundle(any(Long.class), any(Long.class)))
         .thenReturn(
             GetPublishedReleaseBundleResponse.newBuilder()

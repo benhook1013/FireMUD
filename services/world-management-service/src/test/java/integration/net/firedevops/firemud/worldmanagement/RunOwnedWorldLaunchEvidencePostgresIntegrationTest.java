@@ -40,6 +40,9 @@ import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository
 import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldLifecycleCommandService;
+import net.firedevops.firemud.worldmanagement.service.impl.InitialAdmissionBindHoldReconciler;
+import net.firedevops.firemud.worldmanagement.service.impl.InstanceServiceImpl;
+import net.firedevops.firemud.worldmanagement.service.impl.WorldEventServiceImpl;
 import net.firedevops.firemud.worldmanagement.service.impl.WorldLifecycleCommandServiceImpl;
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
@@ -99,6 +102,10 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private GrpcGameSessionInitialAdmissionBindProofClient bindProofClient;
+  // Keep unrelated scheduled writers inert so whole-schema snapshots measure fixture effects.
+  @MockitoBean private InitialAdmissionBindHoldReconciler initialAdmissionBindHoldReconciler;
+  @MockitoBean private WorldEventServiceImpl worldEventService;
+  @MockitoBean private InstanceServiceImpl instanceService;
 
   @Test
   void fixturePrepareAndActivationRetryAndRestartDenyBeforeReadsOrPostgresEffects() {
