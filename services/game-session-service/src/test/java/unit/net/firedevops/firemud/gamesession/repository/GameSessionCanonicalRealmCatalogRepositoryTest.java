@@ -2,6 +2,8 @@ package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.util.UUID;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
@@ -9,6 +11,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 
 class GameSessionCanonicalRealmCatalogRepositoryTest {
@@ -17,6 +20,22 @@ class GameSessionCanonicalRealmCatalogRepositoryTest {
   private static final UUID INTAKE_OPERATION_ID = uuid(2);
   private static final UUID INTAKE_REQUEST_ID = uuid(3);
   private static final UUID CREATE_REQUEST_ID = uuid(4);
+
+  @Test
+  void fixturePublicMethodsRejectLegacyDslOnlyCompositionBeforeStorageAccess() {
+    DSLContext dsl = mock(DSLContext.class);
+    GameSessionCanonicalRealmCatalogRepository repository =
+        new GameSessionCanonicalRealmCatalogRepository(dsl);
+
+    assertThatThrownBy(() -> repository.establishVerifiedFixtureRealm(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Explicit owner transaction composition");
+    assertThatThrownBy(() -> repository.readVerifiedFixtureRealm(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Explicit owner transaction composition");
+
+    verifyNoInteractions(dsl);
+  }
 
   @Test
   void explicitPublicRequestPreservesRealmSelectorAndOpaqueOwnerPolicyExactly() {

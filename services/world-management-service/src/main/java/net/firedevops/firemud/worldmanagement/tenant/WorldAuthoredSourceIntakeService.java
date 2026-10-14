@@ -239,6 +239,10 @@ public class WorldAuthoredSourceIntakeService {
     WorldAuthoredSourceIntakeReceipt accepted =
         ownerTransaction.execute(
             status -> repository.acceptFresh(workloadNamespace, intakeRequestId, current));
+    if (accepted == null) {
+      throw new WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException(
+          "Run-owned fixture source intake owner transaction returned no receipt");
+    }
     requireReceiptForRequest(
         accepted,
         intakeRequestId,

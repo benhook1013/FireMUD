@@ -94,14 +94,19 @@ public final class RunOwnedWorldFixedPresetResources {
       RunOwnedWorldLaunchEvidence evidence,
       WorldAuthoredSourceIntakeReceipt sourceReceipt,
       WorldAuthoredVersionIdentityReceipt versionReceipt) {
-    Objects.requireNonNull(evidence, "evidence").requireFixedGameSessionPeer();
+    RunOwnedWorldLaunchEvidence typedEvidence = Objects.requireNonNull(evidence, "evidence");
+    typedEvidence.requireFixedGameSessionPeer();
+    var descriptor = typedEvidence.launchDescriptor();
+    if (descriptor.scriptPatchVersionPresent() || descriptor.remapSetIdPresent()) {
+      throw new IllegalArgumentException(
+          "RUN_OWNED_WORLD_FIXED_PRESET_OVERRIDES_UNSUPPORTED: fixed preset requires absent script patch and remap set overrides");
+    }
     Objects.requireNonNull(sourceReceipt, "sourceReceipt");
     Objects.requireNonNull(versionReceipt, "versionReceipt");
 
-    var fixture = evidence.sourceReceipt();
-    var capability = evidence.capability();
-    var descriptor = evidence.launchDescriptor();
-    var gameSession = evidence.gameSessionAssociation();
+    var fixture = typedEvidence.sourceReceipt();
+    var capability = typedEvidence.capability();
+    var gameSession = typedEvidence.gameSessionAssociation();
     var versionState = versionReceipt.versionStateEvidence();
     var bundle = fixture.launchReadEvidence().publishedReleaseBundle();
     var artifact = fixture.launchReadEvidence().versionAssetArtifactState();
@@ -116,7 +121,7 @@ public final class RunOwnedWorldFixedPresetResources {
     if (gameSession == null
         || !sourceReceipt.source().equals(fixture.sourceEvidence())
         || !sourceReceipt.targetNamespace().equals(descriptor.targetNamespace())
-        || !capability.worldManagementUriSan().equals(evidence.worldManagementUriSan())
+        || !capability.worldManagementUriSan().equals(typedEvidence.worldManagementUriSan())
         || !sourceReceipt.canonicalTenantId().equals(descriptor.canonicalTenantId())
         || !sourceReceipt.worldSlug().equals(descriptor.worldSlug())
         || !sourceReceipt.sourceOperationId().equals(descriptor.authoredWorldSourceOperationId())
@@ -147,7 +152,10 @@ public final class RunOwnedWorldFixedPresetResources {
         || !fixture.fixturePolicySeal().operationId().toString().equals(capability.operationId())
         || !gameSession.canonicalTenantId().equals(sourceReceipt.canonicalTenantId())
         || !gameSession.fixturePolicySeal().equals(fixture.fixturePolicySeal())
-        || !fixture.fixturePolicySeal().evidenceDigest().equals(evidence.fixtureProvenanceDigest())
+        || !fixture
+            .fixturePolicySeal()
+            .evidenceDigest()
+            .equals(typedEvidence.fixtureProvenanceDigest())
         || !gameSession
             .request()
             .expectedFixturePolicyEvidenceDigest()
@@ -184,8 +192,8 @@ public final class RunOwnedWorldFixedPresetResources {
             descriptor.publishedReleaseBundleRef(),
             descriptor.versionStateEpoch(),
             descriptor.remapSetIdPresent() ? descriptor.remapSetId() : null);
-    evidence.requireMatches(originalRequest);
-    String lifecycleBindingDigest = "sha256:" + evidence.bindingDigest(originalRequest, 1L);
+    typedEvidence.requireMatches(originalRequest);
+    String lifecycleBindingDigest = "sha256:" + typedEvidence.bindingDigest(originalRequest, 1L);
     String gameSessionResponseBytesDigest =
         sha256Raw(
             CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toFixtureResponse(gameSession)

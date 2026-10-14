@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -510,6 +511,62 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
         .doesNotContain("fixture-run", "firemud-fixture-run");
   }
 
+  @Test
+  void blankWorkloadNamespaceFailsBeforeCreatingFixtureClient() throws Exception {
+    ProviderFixture fixture = providerFixture();
+    for (String namespace : new String[] {null, "", "   "}) {
+      GameDesignClient gameDesignClient = mockDescriptorReader(fixture.evidence());
+      RunOwnedWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory = mock();
+      RunOwnedWorldLaunchEvidenceProvider provider =
+          provider(
+              fixture,
+              gameDesignClient,
+              null,
+              fixture.endpoints(),
+              fixture.tlsProperties(),
+              factory,
+              namespace);
+
+      try (PeerContext ignored = fixture.attachGameSessionPeer()) {
+        assertThatThrownBy(provider::requireAuthenticatedEvidence)
+            .isInstanceOf(
+                RunOwnedWorldLaunchEvidenceProvider.InvalidRunOwnedWorldLaunchEvidenceException
+                    .class)
+            .hasMessage("Run-owned World launch evidence is invalid");
+      }
+
+      verifyNoInteractions(factory);
+    }
+  }
+
+  @Test
+  void configuredWorkloadNamespaceIsPassedToFixtureClientFactory() throws Exception {
+    ProviderFixture fixture = providerFixture();
+    GameDesignClient gameDesignClient = mockDescriptorReader(fixture.evidence());
+    CanonicalGameInstanceLaunchAssociationClient fixtureClient = mock();
+    when(fixtureClient.readFixture(any(), anyString()))
+        .thenAnswer(invocation -> fixture.association(invocation.getArgument(0)));
+    RunOwnedWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory = mock();
+    when(factory.create(any(), any(), any(), anyString())).thenReturn(fixtureClient);
+    RunOwnedWorldLaunchEvidenceProvider provider =
+        provider(
+            fixture,
+            gameDesignClient,
+            fixtureClient,
+            fixture.endpoints(),
+            fixture.tlsProperties(),
+            factory,
+            "dev");
+
+    try (PeerContext ignored = fixture.attachGameSessionPeer()) {
+      provider.requireAuthenticatedEvidence();
+    } finally {
+      provider.closeGameSessionFixtureClient();
+    }
+
+    verify(factory).create(any(), any(), any(), eq("dev"));
+  }
+
   private static void assertFileRejectionStoppedBeforeWireParse(CapturedOutput output) {
     assertThat(output)
         .contains("Run-owned World launch evidence verification rejected; stage=CAPABILITY_FILE")
@@ -538,6 +595,18 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       RunOwnedWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory) {
+    return provider(
+        fixture, gameDesignClient, fixtureClient, endpoints, tlsProperties, factory, "dev");
+  }
+
+  private RunOwnedWorldLaunchEvidenceProvider provider(
+      ProviderFixture fixture,
+      GameDesignClient gameDesignClient,
+      CanonicalGameInstanceLaunchAssociationClient fixtureClient,
+      ServiceEndpointsProperties endpoints,
+      CommonGrpcClientProperties tlsProperties,
+      RunOwnedWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory,
+      String namespace) {
     return new RunOwnedWorldLaunchEvidenceProvider(
         true,
         fixture.capabilityPath().toString(),
@@ -548,7 +617,7 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
         gameDesignClient,
         endpoints,
         new GrpcChannelFactory(),
-        "dev",
+        namespace,
         factory);
   }
 

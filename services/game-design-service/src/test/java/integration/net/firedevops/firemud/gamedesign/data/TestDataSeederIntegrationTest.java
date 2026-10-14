@@ -717,7 +717,7 @@ class TestDataSeederIntegrationTest {
                     "SELECT count(*) AS count FROM flyway_schema_history "
                         + "WHERE success AND type='SQL' AND version IS NOT NULL")
                 .get("count", Long.class))
-        .isEqualTo(75L);
+        .isEqualTo(76L);
     assertThat(
             worldDatabase
                 .dsl()
@@ -1478,7 +1478,7 @@ class TestDataSeederIntegrationTest {
   @Test
   void publishesExactOwnerReceiptOnlyAfterCommitAndLeavesNoReceiptOnRollback(
       @TempDir Path testDirectory) throws Exception {
-    Fixture fixture = prepareFixture(testDirectory);
+    Fixture fixture = prepareFixture(testDirectory, false);
     configureSeeder(fixture);
     Path receiptPath = fixture.receiptPath();
 
@@ -1496,10 +1496,18 @@ class TestDataSeederIntegrationTest {
         .isZero();
     assertThat(dsl.fetchCount(SOURCE_DELIVERIES, REGISTRATION_REQUEST_ID.eq(fixture.operationId())))
         .isZero();
+    assertThat(gameRepository.findByTenantId("1")).isNull();
+    assertThat(creationRepository.read(fixture.operationId(), NAMESPACE)).isEmpty();
     assertThat(
             launchDescriptorRepository.findByPrivateRequest("1", fixture.operationId().toString()))
         .isEmpty();
+    assertThat(dsl.fetchCount(DSL.table(DSL.name("game_design_published_realm_policy_set"))))
+        .isZero();
 
+    // PostgreSQL sequences advance on rollback; reset this disposable schema so the capability's
+    // template ID matches the independently fresh committed first-entry attempt.
+    flyway.clean();
+    flyway.migrate();
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
     assertThat(receiptPath).isRegularFile();
@@ -1551,6 +1559,8 @@ class TestDataSeederIntegrationTest {
             envelope.get("creationEvidence"),
             net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence.class);
     assertThat(creationRepository.read(fixture.operationId(), NAMESPACE)).contains(creation);
+    assertThat(gameRepository.findByTenantId("1").getCanonicalTenantId())
+        .isEqualTo(creation.canonicalTenantId());
     var policySeal =
         objectMapper.treeToValue(
             envelope.get("fixturePolicySeal"),
@@ -2115,6 +2125,11 @@ class TestDataSeederIntegrationTest {
   }
 
   private Fixture prepareFixture(Path testDirectory) throws Exception {
+    return prepareFixture(testDirectory, true);
+  }
+
+  private Fixture prepareFixture(Path testDirectory, boolean prepareExistingOwner)
+      throws Exception {
     Path certificateDirectory = Files.createDirectory(testDirectory.resolve("certificates"));
     Path caKey = certificateDirectory.resolve("ca.key");
     Path caCertificate = certificateDirectory.resolve("ca.crt");
@@ -2325,13 +2340,15 @@ class TestDataSeederIntegrationTest {
     // Disposable test schema only: create the real fixture owner from inception, never backfill.
     flyway.clean();
     flyway.migrate();
-    new TransactionTemplate(transactionManager)
-        .executeWithoutResult(
-            status ->
-                creationRepository.createCandidate(
-                    NAMESPACE, operationId, "1", "Demo Game", "Seed game"));
-    ReflectionTestUtils.setField(seeder, "initialAdmissionFixtureEnabled", false);
-    seeder.run(new DefaultApplicationArguments(new String[] {}));
+    if (prepareExistingOwner) {
+      new TransactionTemplate(transactionManager)
+          .executeWithoutResult(
+              status ->
+                  creationRepository.createCandidate(
+                      NAMESPACE, operationId, "1", "Demo Game", "Seed game"));
+      ReflectionTestUtils.setField(seeder, "initialAdmissionFixtureEnabled", false);
+      seeder.run(new DefaultApplicationArguments(new String[] {}));
+    }
     return fixture;
   }
 

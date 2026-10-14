@@ -149,6 +149,13 @@ public class CharacterRepository {
     this.dsl = dsl;
   }
 
+  static Condition legacyCharacterExists(Field<Long> characterId) {
+    return DSL.exists(
+        DSL.selectOne()
+            .from(CHARACTERS)
+            .where(CHARACTERS.ID.eq(characterId).and(legacyCharacterRow())));
+  }
+
   static Condition legacyCharacterRow() {
     return CHARACTERS
         .ACTOR_IDENTITY_STATUS

@@ -179,6 +179,30 @@ class WorldAuthoredSourceIntakeServiceTest {
   }
 
   @Test
+  void fixtureIntakeDeniesNullOwnerReceiptBeforeIndependentReadback() {
+    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    AuthoredWorldSourceEvidence source = evidence.sourceReceipt().sourceEvidence();
+    when(repository.read(eq("dev"), any(UUID.class))).thenReturn(Optional.empty());
+    when(client.read(any(ReadRequest.class))).thenReturn(source);
+
+    assertThatThrownBy(
+            () ->
+                withFixturePeer(
+                    "dev",
+                    "game-session-service",
+                    "a".repeat(64),
+                    () -> fixtureService().intakeRunOwnedFixture(evidence)))
+        .isInstanceOf(WorldAuthoredSourceIntakeRepository.InvalidIntakeEvidenceException.class)
+        .hasMessageContaining("owner transaction returned no receipt");
+
+    verify(repository).acceptFresh(eq("dev"), any(UUID.class), eq(source));
+    verify(repository, times(1)).read(eq("dev"), any(UUID.class));
+    assertThat(transactionManager.startedWith.getPropagationBehavior())
+        .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+  }
+
+  @Test
   void fixtureIntakeDeniesMissingIndependentReceiptAfterOwnerTransaction() {
     RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
     var source = evidence.sourceReceipt().sourceEvidence();

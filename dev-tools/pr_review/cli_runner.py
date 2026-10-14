@@ -1480,6 +1480,7 @@ def run_cli_review(
                     if records_warning:
                         _add_exception_note(timeout_failure, records_warning)
                     raise timeout_failure from error
+                capture_terminal_at = datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
                 finished = monotonic_ns()
                 if finished < started:
                     raise ReviewRunnerError("process clock moved backwards while measuring review duration")
@@ -1490,7 +1491,9 @@ def run_cli_review(
                 (capture_dir / "stderr").write_bytes(stderr_bytes)
                 (capture_dir / "exit-status").write_text(f"{process.returncode}\n", encoding="utf-8")
                 (capture_dir / "review-duration-seconds").write_text(f"{duration}\n", encoding="utf-8")
-                metadata.update({"duration_seconds": duration, "exit_status": process.returncode})
+                metadata.update({"duration_seconds": duration, "exit_status": process.returncode,
+                                 "capture_terminal_at": capture_terminal_at,
+                                 "capture_terminal_basis": "provider_process_exit"})
                 _atomic_json(capture_dir / "metadata.json", metadata)
                 with (capture_dir / "metadata").open("a", encoding="utf-8") as legacy_file:
                     legacy_file.write(f"review_duration_seconds={duration}\n")
@@ -1538,7 +1541,7 @@ def run_cli_review(
                 if records is not None:
                     try:
                         if result_state == "completed":
-                            completed_at = hosted.utc_now()
+                            completed_at = capture_terminal_at
                             observations = []
                             for index, finding in enumerate(parsed_findings, 1):
                                 instructions = finding.get("codegenInstructions")

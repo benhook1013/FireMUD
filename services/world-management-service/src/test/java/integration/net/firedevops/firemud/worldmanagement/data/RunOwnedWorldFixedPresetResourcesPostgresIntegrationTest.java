@@ -318,6 +318,12 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
               "V1039__canonical_activation_preparation_schema.sql",
               "b744728b0cda73934bcb69fb6cd4c07c1cb50e516bf11cbd4e218e396017b875"),
           Map.entry(
+              "V1040__world_run_owned_fixture_canonical_association.sql",
+              "5707339f2f028df888a181b34864acfc87a4a06bc76a5d4c74200a0fa47d2a60"),
+          Map.entry(
+              "V1041__world_run_owned_fixed_preset_preparation.sql",
+              "c702cbb04c60f07fdf319c05a3f14f155c01ae8b0f1c9f5830ca152d5be5fbc4"),
+          Map.entry(
               "V1007.1__world_restore_stable_legacy_update_fastpath.sql",
               "56efb5521ba235ce413caa8ed6ce54dad2c169064f9478e1d31bf1dd869743ed"),
           Map.entry(
@@ -393,10 +399,10 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             .as("literal migration %s", artifact.getKey())
             .isEqualTo(artifact.getValue());
       }
-    assertThat(versions(dsl)).hasSize(75);
+    assertThat(versions(dsl)).hasSize(76);
     assertThat(versions(dsl).subList(34, 40))
         .containsExactly("1003", "1004", "1005", "1006", "1007", "1007.1");
-    assertThat(versions(dsl).subList(40, 75)).containsExactlyElementsOf(remainingVersions());
+    assertThat(versions(dsl).subList(40, 76)).containsExactlyElementsOf(remainingVersions());
     var configured =
         migration(dataSource("world_management_service"), "world_management_service", null);
     assertThat(configured.getConfiguration().isOutOfOrder()).isFalse();
@@ -728,7 +734,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   @Test
-  void installed34ThroughParent40ToFull75RetainsOriginalRowsXminAndStableLegacyUpdates()
+  void installed34ThroughParent40ToLatest76RetainsRowsXminAndStableLegacyUpdates()
       throws Exception {
     String schema = "world_fixture_upgrade_" + UUID.randomUUID().toString().replace("-", "");
     var source = dataSource(schema);
@@ -835,18 +841,97 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
         assertThat(retainedRows(connection, schema, entry.getKey(), entry.getValue()))
             .isEqualTo(originalRows.get(entry.getKey()));
       var parentHistory = history(connection);
+      var preparing = migration(source, schema, "1041");
+      preparing.migrate();
+      preparing.validate();
+      assertThat(preparing.getConfiguration().isOutOfOrder()).isFalse();
+      assertThat(versions(connection)).hasSize(75);
+      assertThat(versions(connection).subList(40, 75))
+          .containsExactlyElementsOf(remainingVersionsThrough(1041));
+      assertThat(history(connection).subList(0, 40)).isEqualTo(parentHistory);
+      for (var entry : originalColumns.entrySet())
+        assertThat(retainedRows(connection, schema, entry.getKey(), entry.getValue()))
+            .isEqualTo(originalRows.get(entry.getKey()));
+
+      // Create and materialize a controlled schema-3 fixture through the existing World owners at
+      // the V1041 checkpoint, then prove V1042 retains every stored row image and xmin.
+      var fixtureAssociations =
+          new WorldCanonicalInstanceAssociationRepository(
+              connection,
+              new WorldCompleteLaunchBindingRepository(connection),
+              sourceOwner,
+              versionOwner);
+      var fixtureFence = new WorldDesignPublicationFenceRepository(connection, sourceOwner);
+      var gsAssociation = evidence.gameSessionAssociation();
+      var descriptor = evidence.launchDescriptor();
+      var fixtureRequest =
+          new PreparedWorldInstanceRequest(
+              gsAssociation.gameSessionTenantId(),
+              gsAssociation.gameInstanceId(),
+              descriptor.gameTemplateId(),
+              evidence.capability().operationId(),
+              descriptor.launchDescriptorId(),
+              descriptor.versionId(),
+              null,
+              descriptor.runtimeFlagsJson(),
+              descriptor.generationConfigRevision(),
+              descriptor.releaseBundleId(),
+              descriptor.publishedReleaseBundleRef(),
+              descriptor.versionStateEpoch(),
+              null);
+      WorldCanonicalInstanceAssociation allocatedFixture =
+          write.execute(
+              status -> {
+                fixtureFence.lockOpen(binding(intake, version));
+                return fixtureAssociations.allocateRunOwnedFixtureInOwnerTransaction(
+                    evidence, fixtureRequest, intake, version);
+              });
+      assertThat(allocatedFixture).isNotNull();
+      var fixtureAssociation =
+          fixtureAssociations.readRunOwnedFixtureAssociation(evidence, fixtureRequest);
+      var fixturePlan = RunOwnedWorldFixedPresetResources.plan(fixtureAssociation, intake, version);
+      write.executeWithoutResult(
+          status ->
+              RunOwnedWorldFixedPresetResources.materialize(
+                  connection,
+                  evidence,
+                  fixturePlan,
+                  fixtureAssociation.worldInstanceId(),
+                  fixtureAssociation.worldPrivateKeys().gameInstanceId()));
+      var preparedFixture =
+          connection.fetchSingle(
+              "SELECT status, lifecycle_epoch, row_version FROM world_instance WHERE id = ?",
+              fixtureAssociation.worldInstanceId());
+      assertThat(preparedFixture.get(0, String.class)).isEqualTo("PREPARING");
+      assertThat(preparedFixture.get(1, Long.class)).isEqualTo(1L);
+      assertThat(preparedFixture.get(2, Long.class)).isZero();
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT count(*) FROM world_canonical_instance_association WHERE world_instance_id = ? AND schema_version = 3 AND canonical_authority_kind = 'RUN_OWNED_FIXTURE'",
+                      fixtureAssociation.worldInstanceId())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+
+      var rowsAt75 = new LinkedHashMap<>(allRows(connection));
+      rowsAt75.remove(HISTORY);
+      var historyAt75 = history(connection);
       var full = migration(source, schema, null);
       full.migrate();
       full.validate();
       assertThat(full.getConfiguration().isOutOfOrder()).isFalse();
-      assertThat(versions(connection)).hasSize(75);
-      assertThat(versions(connection).subList(40, 75))
+      assertThat(versions(connection)).hasSize(76);
+      assertThat(versions(connection).subList(40, 76))
           .containsExactlyElementsOf(remainingVersions());
       assertThat(history(connection).subList(0, 40)).isEqualTo(parentHistory);
+      assertThat(history(connection).subList(0, 75)).isEqualTo(historyAt75);
       for (var entry : originalColumns.entrySet())
         assertThat(retainedRows(connection, schema, entry.getKey(), entry.getValue()))
             .as("all original values and xmin for %s", entry.getKey())
-            .isEqualTo(originalRows.get(entry.getKey()));
+            .containsAll(originalRows.get(entry.getKey()));
+      var rowsAt76 = new LinkedHashMap<>(allRows(connection));
+      rowsAt76.remove(HISTORY);
+      assertThat(rowsAt76).as("all retained row values and xmin across V1042").isEqualTo(rowsAt75);
       assertThat(sourceOwner.read("dev", intakeRequest)).contains(intake);
       assertThat(
               versionOwner.readByCanonicalVersion(
@@ -871,7 +956,9 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
           .isNull();
       assertThat(
               connection
-                  .fetchSingle("SELECT count(*) FROM world_canonical_instance_association")
+                  .fetchSingle(
+                      "SELECT count(*) FROM world_canonical_instance_association WHERE world_instance_id = ?",
+                      worldId)
                   .get(0, Long.class))
           .isZero();
       assertThat(
@@ -882,7 +969,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .get(0, Long.class))
           .isZero();
       // Stable UPDATE on disjoint rows remains independent even with the same legacy tenant.
-      // Roll both writes back, then recompare the complete original row images and xmin.
+      // Roll both writes back, then recompare the complete retained row images and xmin.
       try (var first = source.getConnection();
           var second = source.getConnection()) {
         first.setAutoCommit(false);
@@ -905,14 +992,66 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
           first.rollback();
         }
       }
-      for (var entry : originalColumns.entrySet())
-        assertThat(retainedRows(connection, schema, entry.getKey(), entry.getValue()))
-            .isEqualTo(originalRows.get(entry.getKey()));
+      var rowsAfterLegacyRollback = new LinkedHashMap<>(allRows(connection));
+      rowsAfterLegacyRollback.remove(HISTORY);
+      assertThat(rowsAfterLegacyRollback)
+          .as("all retained row values and xmin after legacy rollback")
+          .isEqualTo(rowsAt76);
       // No current Human protection is fabricated. Literal pre-extension legacy and owner
       // receipts are retained; a historical canonical Human association requires a separate donor.
     } finally {
       connection.execute("DROP SCHEMA IF EXISTS " + DSL.name(schema) + " CASCADE");
     }
+  }
+
+  @Test
+  void installedAssociationCheckExpressionsRejectRequiredNullsWithoutUnknowns() {
+    // This is a typed CHECK-expression/storage-shape proof, not authorized Human row creation.
+    String schemaCheck =
+        associationCheckExpression(dsl, "ck_world_canonical_instance_association_schema");
+    String digestCheck =
+        associationCheckExpression(dsl, "ck_world_canonical_instance_association_digests");
+
+    for (int schemaVersion : List.of(1, 2)) {
+      var humanShape = associationShape(schemaVersion);
+      assertThat(evaluateAssociationCheck(dsl, schemaCheck, humanShape))
+          .as("valid Human schema-%s storage shape", schemaVersion)
+          .isTrue();
+      assertThat(evaluateAssociationCheck(dsl, digestCheck, humanShape))
+          .as("valid Human schema-%s digest shape", schemaVersion)
+          .isTrue();
+
+      var missingBinding = new LinkedHashMap<>(humanShape);
+      missingBinding.put("canonical_launch_binding_operation_id", null);
+      assertThat(evaluateAssociationCheck(dsl, schemaCheck, missingBinding))
+          .as("Human schema-%s binding NULL evaluates FALSE", schemaVersion)
+          .isFalse();
+
+      var missingReleaseDigest = new LinkedHashMap<>(humanShape);
+      missingReleaseDigest.put("release_attestation_digest", null);
+      assertThat(evaluateAssociationCheck(dsl, digestCheck, missingReleaseDigest))
+          .as("Human schema-%s release digest NULL evaluates FALSE", schemaVersion)
+          .isFalse();
+    }
+
+    var schema2WithoutCatalog = associationShape(2);
+    schema2WithoutCatalog.put("catalog_revision", null);
+    assertThat(evaluateAssociationCheck(dsl, schemaCheck, schema2WithoutCatalog))
+        .as("Human schema-2 catalog NULL evaluates FALSE")
+        .isFalse();
+
+    var fixtureShape = associationShape(3);
+    assertThat(evaluateAssociationCheck(dsl, schemaCheck, fixtureShape))
+        .as("valid schema-3 fixture storage shape")
+        .isTrue();
+    assertThat(evaluateAssociationCheck(dsl, digestCheck, fixtureShape))
+        .as("schema-3 fixture retains absent Human release digest")
+        .isTrue();
+    var fixtureWithoutCatalog = new LinkedHashMap<>(fixtureShape);
+    fixtureWithoutCatalog.put("catalog_revision", null);
+    assertThat(evaluateAssociationCheck(dsl, schemaCheck, fixtureWithoutCatalog))
+        .as("schema-3 fixture catalog NULL evaluates FALSE")
+        .isFalse();
   }
 
   @Test
@@ -1593,8 +1732,13 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   private static List<String> remainingVersions() {
+    return remainingVersionsThrough(1042);
+  }
+
+  private static List<String> remainingVersionsThrough(int latestWorldVersion) {
     List<String> versions = new ArrayList<>(List.of("1008", "1009", "1009.1"));
-    for (int version = 1010; version <= 1041; version++) versions.add(Integer.toString(version));
+    for (int version = 1010; version <= latestWorldVersion; version++)
+      versions.add(Integer.toString(version));
     return List.copyOf(versions);
   }
 
@@ -1629,6 +1773,55 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
 
   private String scalarText(String sql, Object... bindings) {
     return Objects.requireNonNull(dsl.fetchSingle(sql, bindings).get(0, String.class));
+  }
+
+  private String associationCheckExpression(DSLContext connection, String constraintName) {
+    return Objects.requireNonNull(
+        connection
+            .fetchSingle(
+                "SELECT pg_get_expr(c.conbin, c.conrelid) FROM pg_constraint c "
+                    + "WHERE c.conrelid = 'world_canonical_instance_association'::regclass "
+                    + "AND c.contype = 'c' AND c.conname = ?",
+                constraintName)
+            .get(0, String.class));
+  }
+
+  private Boolean evaluateAssociationCheck(
+      DSLContext connection, String expression, Map<String, Object> typedShape) {
+    return connection
+        .fetchSingle(
+            "SELECT ("
+                + expression
+                + ") FROM jsonb_populate_record(NULL::world_canonical_instance_association, ?::jsonb) AS candidate",
+            json(typedShape))
+        .get(0, Boolean.class);
+  }
+
+  private static Map<String, Object> associationShape(int schemaVersion) {
+    Map<String, Object> shape = new LinkedHashMap<>();
+    shape.put("schema_version", schemaVersion);
+    shape.put("canonical_authority_kind", schemaVersion == 3 ? "RUN_OWNED_FIXTURE" : null);
+    shape.put("canonical_realm_id", schemaVersion == 1 ? null : UUID.randomUUID().toString());
+    shape.put("catalog_revision", schemaVersion == 1 ? null : 1L);
+    shape.put(
+        "canonical_launch_binding_operation_id",
+        schemaVersion == 3 ? null : UUID.randomUUID().toString());
+    shape.put("release_attestation_digest", schemaVersion == 3 ? null : VALID_DIGEST);
+    shape.put("source_evidence_digest", VALID_DIGEST);
+    shape.put("intake_request_digest", VALID_DIGEST);
+    shape.put("intake_receipt_digest", VALID_DIGEST);
+    shape.put("descriptor_request_digest", VALID_DIGEST);
+    shape.put("descriptor_result_digest", VALID_DIGEST);
+    if (schemaVersion == 3) {
+      shape.put("fixture_provenance_digest", VALID_DIGEST);
+      shape.put("game_session_tenant_id", 1L);
+      shape.put("game_session_game_instance_id", 1L);
+      shape.put("game_design_version_id", 1L);
+      shape.put("preparation_input_digest", VALID_DIGEST);
+      shape.put("preparing_lifecycle_epoch", 1L);
+      shape.put("game_session_association_response_bytes", "\\x01");
+    }
+    return shape;
   }
 
   private TransactionTemplate ownerTransaction() {
