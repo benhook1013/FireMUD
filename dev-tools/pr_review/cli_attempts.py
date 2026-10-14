@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import evidence
+from . import evidence, hosted
 from .sqlite_finding_text import _safe_finding_detail
 from .sqlite_provider_imports import _cli_detail, _cli_finding_title
 from .sqlite_review_records import (
@@ -137,7 +137,7 @@ def recover_failed_cli_observations(records: Any, database: Path, run_id: str) -
     ):
         raise ReviewRecordsError("native CLI capture metadata identity is invalid")
     original_metadata = {
-        key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out"}
+        key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out", "capture_terminal_at", "capture_terminal_basis"}
     }
     if original_metadata != attempt["metadata"]:
         raise ReviewRecordsError("native CLI capture metadata conflicts with its exact SQL attempt")
@@ -656,7 +656,7 @@ def _reconcile_failed_capture(records: Any, directory: Path) -> dict[str, Any] |
         if metadata.get("capture_completion_marker") != "capture-complete":
             return None
         original_metadata = {
-            key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out"}
+            key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out", "capture_terminal_at", "capture_terminal_basis"}
         }
         if original_metadata != attempt["metadata"]:
             return None
@@ -748,7 +748,7 @@ def _reconcile_incomplete_native_capture(records: Any, directory: Path) -> dict[
         if metadata.get("run_id") != directory.name or metadata.get("kind") != "cli":
             return None
         original_metadata = {
-            key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out"}
+            key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out", "capture_terminal_at", "capture_terminal_basis"}
         }
         if original_metadata != attempt["metadata"]:
             return None
@@ -838,7 +838,7 @@ def _successful_capture(directory: Path, attempt: dict[str, Any]) -> dict[str, A
     if attempt["channel"] != "cli" or attempt["source_pr"] != pr or attempt["candidate_sha"] != candidate_sha:
         raise _UnrecordableCapture("capture identity conflicts with the SQL attempt")
     initial_metadata = {
-        key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out"}
+        key: value for key, value in metadata.items() if key not in {"duration_seconds", "exit_status", "timed_out", "capture_terminal_at", "capture_terminal_basis"}
     }
     if attempt["metadata"] != initial_metadata:
         raise _UnrecordableCapture("capture metadata conflicts with the SQL attempt")
@@ -869,7 +869,17 @@ def _successful_capture(directory: Path, attempt: dict[str, Any]) -> dict[str, A
             )
         except ReviewRecordsError as error:
             raise _UnrecordableCapture("capture finding metadata is invalid") from error
-    finished_at = _capture_finished_at(directory / "exit-status")
+    if "capture_terminal_at" in metadata or "capture_terminal_basis" in metadata:
+        terminal_value = metadata.get("capture_terminal_at")
+        terminal = (hosted.parse_timestamp(terminal_value) if isinstance(terminal_value, str)
+                    and terminal_value.endswith(("Z", "+00:00")) else None)
+        if metadata.get("capture_terminal_basis") != "provider_process_exit" or terminal is None:
+            raise _UnrecordableCapture("capture terminal provenance is invalid")
+        finished_at = terminal.isoformat().replace("+00:00", "Z")
+    else:
+        # Historical file chronology remains usable for recovery/legacy history,
+        # but is not promoted to verified local-period completion provenance.
+        finished_at = _capture_finished_at(directory / "exit-status")
     _finished_at_not_before(finished_at, attempt["started_at"], fail_closed=True)
     return {
         "pr": pr,

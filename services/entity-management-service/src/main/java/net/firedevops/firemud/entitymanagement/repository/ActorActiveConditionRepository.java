@@ -2,16 +2,13 @@ package net.firedevops.firemud.entitymanagement.repository;
 
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.*;
 import static net.firedevops.firemud.entitymanagement.jooq.Tables.ACTOR_ACTIVE_CONDITIONS;
-import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTERS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
-import org.jooq.Condition;
 import org.jooq.DSLContext;
-import org.jooq.Field;
 import org.jooq.Record;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
@@ -36,7 +33,8 @@ public class ActorActiveConditionRepository {
                 .eq(tenantId)
                 .and(ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY.eq(playableStateKey))
                 .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(characterId))
-                .and(legacyCharacter(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID))
+                .and(
+                    CharacterRepository.legacyCharacterExists(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID))
                 .and(
                     ACTOR_ACTIVE_CONDITIONS
                         .EXPIRES_AT
@@ -66,7 +64,9 @@ public class ActorActiveConditionRepository {
                     .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(characterId))
                     .and(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE.eq(sourceType))
                     .and(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID.eq(sourceId))
-                    .and(legacyCharacter(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)))
+                    .and(
+                        CharacterRepository.legacyCharacterExists(
+                            ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)))
             .orderBy(ACTOR_ACTIVE_CONDITIONS.ID.asc())
             .limit(1)
             .fetchOne(this::toEntity));
@@ -103,7 +103,9 @@ public class ActorActiveConditionRepository {
                           DSL.val(entity.getEffectPayloadJson()),
                           DSL.val(toOffsetDateTime(entity.getCreatedAt())),
                           DSL.val(toOffsetDateTime(entity.getUpdatedAt())))
-                      .where(legacyCharacter(DSL.val(entity.getCharacterId()))))
+                      .where(
+                          CharacterRepository.legacyCharacterExists(
+                              DSL.val(entity.getCharacterId()))))
               .returningResult(ACTOR_ACTIVE_CONDITIONS.ID)
               .fetchOne(ACTOR_ACTIVE_CONDITIONS.ID);
       if (id == null) {
@@ -127,7 +129,9 @@ public class ActorActiveConditionRepository {
                 ACTOR_ACTIVE_CONDITIONS
                     .ID
                     .eq(entity.getId())
-                    .and(legacyCharacter(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)))
+                    .and(
+                        CharacterRepository.legacyCharacterExists(
+                            ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)))
             .execute();
     if (updated != 1) {
       throw new IllegalStateException("Legacy condition row is unavailable");
@@ -143,15 +147,10 @@ public class ActorActiveConditionRepository {
                 .EXPIRES_AT
                 .isNotNull()
                 .and(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT.le(toOffsetDateTime(now)))
-                .and(legacyCharacter(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)))
+                .and(
+                    CharacterRepository.legacyCharacterExists(
+                        ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)))
         .execute();
-  }
-
-  private static Condition legacyCharacter(Field<Long> characterId) {
-    return DSL.exists(
-        DSL.selectOne()
-            .from(CHARACTERS)
-            .where(CHARACTERS.ID.eq(characterId).and(CharacterRepository.legacyCharacterRow())));
   }
 
   private ActorActiveCondition toEntity(Record record) {
