@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociat
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -345,6 +346,7 @@ public class GameSessionFreshTenantAssociationRepository {
     }
     this.workloadNamespace = workloadNamespace;
     this.writeTransaction = new TransactionTemplate(Objects.requireNonNull(transactionManager));
+    this.writeTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
     this.readTransaction = new TransactionTemplate(transactionManager);
     this.readTransaction.setReadOnly(true);
   }

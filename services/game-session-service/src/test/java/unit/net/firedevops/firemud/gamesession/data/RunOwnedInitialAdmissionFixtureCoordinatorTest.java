@@ -210,7 +210,19 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
   void disabledCoordinatorDoesNotReadFixturePathsOrWriteLaunchOwner() {
     Fixture fixture = fixture(false);
 
-    fixture.coordinator.retryRunOwnedFixtureBootstrap();
+    try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> loader =
+        mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
+      fixture.coordinator.retryRunOwnedFixtureBootstrap();
+
+      loader.verify(
+          () -> RunOwnedInitialAdmissionFixtureCapability.load(any(), any(), any(), any()),
+          never());
+      loader.verify(
+          () ->
+              RunOwnedInitialAdmissionFixtureCapability.loadSourceReceipt(
+                  any(), any(), any(), any(), any()),
+          never());
+    }
 
     verifyNoInteractions(fixture.launchOwner);
   }
