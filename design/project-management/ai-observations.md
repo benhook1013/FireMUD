@@ -259,3 +259,9 @@ Entry format:
   - Recovery: coordinated controller promotion and actual-endpoint verification restored numeric limits; the owning controller job retains the rollout details.
 
 - 2026-10-15: Administrative review settings share a dispatch boundary with provider-backed commands. When removing latency from one setting command, inspect the neighbouring stop/allocation/reset dispatch family and prove each actual entrypoint with Git, GitHub and subprocess access forbidden; method-only fixtures can preserve legacy behavior while missing expensive controller construction. Retain evidence-bound consumption as a separate operation rather than weakening request admission.
+
+- `2026-10-14`: Native fix attribution needs the exact requested postimage
+  - Context: Gameplay recorded a requested AA-1.3 tracker-row repair as fixed after its nearby narrative and migration proof passed, while the named row still lacked the migration anchors.
+  - Observation: the next CLI review exposed the unchanged row. Documentation hygiene checks had passed because they do not verify that a requested semantic target changed. The original native fix record therefore overstated its proof.
+  - Expected pattern: inspect the exact requested row or declaration before recording an accepted-fix resolution; verify its named anchors instead of relying on a nearby paragraph or a broad substring replacement.
+  - Current status: the exact row is corrected and verified. An immutable audited resolution correction points to the published repair while retaining the original wrong attribution; the User and Overseer were informed.
