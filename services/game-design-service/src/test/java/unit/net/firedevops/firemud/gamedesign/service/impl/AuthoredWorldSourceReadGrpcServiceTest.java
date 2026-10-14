@@ -1,6 +1,7 @@
 package unit.net.firedevops.firemud.gamedesign.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -180,7 +181,7 @@ class AuthoredWorldSourceReadGrpcServiceTest {
   }
 
   private static void assertStorageFailure(WorldSourceObserver observer, Status.Code expectedCode) {
-    assertThat(observer.failure).isEqualTo(expectedCode);
+    assertThat(observer.failure).as("owner storage code").isEqualTo(expectedCode);
     assertThat(observer.response).isNull();
     assertThat(observer.completed).isFalse();
     assertThat(observer.failureDescription)
@@ -296,6 +297,34 @@ class AuthoredWorldSourceReadGrpcServiceTest {
     @Override
     public void onCompleted() {
       completed = true;
+    }
+  }
+
+  @Test
+  void storageFailureClassificationRetriesOnlyConnectionAndTimeoutTransactions() {
+    var failures =
+        new org.springframework.transaction.TransactionException[] {
+          new org.springframework.transaction.CannotCreateTransactionException(
+              "connection unavailable"),
+          new org.springframework.transaction.TransactionTimedOutException("timed out"),
+          new org.springframework.transaction.IllegalTransactionStateException(
+              "propagation mismatch"),
+          new org.springframework.transaction.UnexpectedRollbackException("rollback only"),
+          new org.springframework.transaction.NestedTransactionNotSupportedException(
+              "nested unsupported"),
+          new org.springframework.transaction.InvalidIsolationLevelException(
+              "isolation unsupported")
+        };
+    for (int index = 0; index < failures.length; index++) {
+      var failure = failures[index];
+      doThrow(failure)
+          .when(authoredWorldSourceRepository)
+          .read(SOURCE_OPERATION_ID, WORLD_TENANT_ID, WORLD_SLUG, "test");
+      var observer = callWorldSource(worldSourceRequest(), WORLD_URI);
+      assertThat(observer.failure)
+          .as("transaction %s", failure.getClass().getSimpleName())
+          .isEqualTo(index < 2 ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL);
+      assertStorageFailure(observer, index < 2 ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL);
     }
   }
 }
