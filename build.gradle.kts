@@ -33,7 +33,7 @@ plugins {
     alias(libs.plugins.flyway) apply false
     id("com.diffplug.spotless") version "8.10.4"
     id("checkstyle")
-    id("com.github.spotbugs") version "6.5.12"
+    id("com.github.spotbugs") version "6.5.13"
     jacoco
 }
 
@@ -92,7 +92,7 @@ tasks.register<JavaCompile>("compileBufGeneratedJava") {
 
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
 val checkstyleToolVersion = "14.3.0"
-val spotbugsToolVersion = "4.10.4"
+val spotbugsToolVersion = "4.10.5"
 val platformSettingsMetadataFiles = listOf(
     file("services/game-session-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json"),
     file("services/game-logic-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json")
