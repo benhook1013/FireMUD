@@ -236,12 +236,6 @@ Entry format:
   - Expected pattern: read the class’s declared package before specifying a test filter, and verify task execution rather than equating build success with every requested check passing. Enable the repository’s canonical full-check property when selecting static tasks.
   - Current status: corrected package selection passed 50 focused unit cases; the subsequent runtime fix passed 58 selected unit cases. A separate canonical `-PfullCheck` run executed the required static checks successfully. No validation requirement was waived.
 
-- `2026-10-13`: Fresh-bootstrap discovery needs every required Compose placeholder
-  - Context: the existing fresh-bootstrap wrapper failed before claiming a run or building images because its configuration-only service discovery supplied the mTLS certificate placeholder but omitted the required authored-world source receipt mount.
-  - Observation: Compose interpolation rejected the missing directory. The discovery command now supplies a configuration-only receipt path as well; this path is never used by the actual deployment, whose unchanged run-owned claim and capability create and bind the real receipt directory before Compose starts.
-  - Expected pattern: keep configuration-only placeholders aligned with required Compose mount and environment inputs, then run the existing validate-only preflight when those inputs change. A successful parse establishes configuration completeness, not deployment or owner authority.
-  - Current status: the existing smoke contract, shellcheck and actual configuration-only parsing pass. The subsequent fresh rebuilt packaged WebSocket and Telnet player-flow baselines pass with the unchanged real run-owned claim; this does not establish canonical owner provenance.
-
 - `2026-10-13`: Native Linux Docker proof can still invoke a Windows credential helper
   - Context: the claimed Gameplay fresh-bootstrap run rebuilt all service jars and images successfully, then failed before startup while pulling public Redis images. WSL reported `UtilAcceptVsock` and `accept4` timeout errors followed by a Docker credential lookup failure.
   - Observation: using the native Linux Docker socket does not select a separate client credential configuration. A run-scoped private client configuration can omit unavailable Windows credential helpers while preserving static registry settings and Compose plugin discovery; the global client configuration need not change.
@@ -295,3 +289,9 @@ Entry format:
   - Recovery: coordinated controller promotion and actual-endpoint verification restored numeric limits; the owning controller job retains the rollout details.
 
 - 2026-10-15: Administrative review settings share a dispatch boundary with provider-backed commands. When removing latency from one setting command, inspect the neighbouring stop/allocation/reset dispatch family and prove each actual entrypoint with Git, GitHub and subprocess access forbidden; method-only fixtures can preserve legacy behavior while missing expensive controller construction. Retain evidence-bound consumption as a separate operation rather than weakening request admission.
+
+- `2026-10-14`: Native fix attribution needs the exact requested postimage
+  - Context: Gameplay recorded a requested AA-1.3 tracker-row repair as fixed after its nearby narrative and migration proof passed, while the named row still lacked the migration anchors.
+  - Observation: the next CLI review exposed the unchanged row. Documentation hygiene checks had passed because they do not verify that a requested semantic target changed. The original native fix record therefore overstated its proof.
+  - Expected pattern: inspect the exact requested row or declaration before recording an accepted-fix resolution; verify its named anchors instead of relying on a nearby paragraph or a broad substring replacement.
+  - Current status: the exact row is corrected and verified. An immutable audited resolution correction points to the published repair while retaining the original wrong attribution; the User and Overseer were informed.

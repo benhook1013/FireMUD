@@ -91,21 +91,34 @@ public class ActorActiveConditionRepository {
                   ACTOR_ACTIVE_CONDITIONS.UPDATED_AT)
               .select(
                   dsl.select(
-                          DSL.val(entity.getTenantId()),
-                          DSL.val(entity.getPlayableStateKey()),
-                          DSL.val(entity.getCharacterId()),
-                          DSL.val(entity.getConditionKey()),
-                          DSL.val(entity.getStackCount()),
-                          DSL.val(entity.getSourceType()),
-                          DSL.val(entity.getSourceId()),
-                          DSL.val(toOffsetDateTime(entity.getStartedAt())),
-                          DSL.val(toOffsetDateTime(entity.getExpiresAt())),
-                          DSL.val(entity.getEffectPayloadJson()),
-                          DSL.val(toOffsetDateTime(entity.getCreatedAt())),
-                          DSL.val(toOffsetDateTime(entity.getUpdatedAt())))
+                          DSL.val(entity.getTenantId(), ACTOR_ACTIVE_CONDITIONS.TENANT_ID),
+                          DSL.val(
+                              entity.getPlayableStateKey(),
+                              ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY),
+                          DSL.val(entity.getCharacterId(), ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID),
+                          DSL.val(entity.getConditionKey(), ACTOR_ACTIVE_CONDITIONS.CONDITION_KEY),
+                          DSL.val(entity.getStackCount(), ACTOR_ACTIVE_CONDITIONS.STACK_COUNT),
+                          DSL.val(entity.getSourceType(), ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE),
+                          DSL.val(entity.getSourceId(), ACTOR_ACTIVE_CONDITIONS.SOURCE_ID),
+                          DSL.val(
+                              toOffsetDateTime(entity.getStartedAt()),
+                              ACTOR_ACTIVE_CONDITIONS.STARTED_AT),
+                          DSL.val(
+                              toOffsetDateTime(entity.getExpiresAt()),
+                              ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT),
+                          DSL.val(
+                              entity.getEffectPayloadJson(),
+                              ACTOR_ACTIVE_CONDITIONS.EFFECT_PAYLOAD_JSON),
+                          DSL.val(
+                              toOffsetDateTime(entity.getCreatedAt()),
+                              ACTOR_ACTIVE_CONDITIONS.CREATED_AT),
+                          DSL.val(
+                              toOffsetDateTime(entity.getUpdatedAt()),
+                              ACTOR_ACTIVE_CONDITIONS.UPDATED_AT))
                       .where(
                           CharacterRepository.legacyCharacterExists(
-                              DSL.val(entity.getCharacterId()))))
+                              DSL.val(
+                                  entity.getCharacterId(), ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID))))
               .returningResult(ACTOR_ACTIVE_CONDITIONS.ID)
               .fetchOne(ACTOR_ACTIVE_CONDITIONS.ID);
       if (id == null) {

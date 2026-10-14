@@ -332,6 +332,7 @@ def run_self_test() -> None:
         for explicit in (False, True):
             environment = dict(os.environ)
             environment.pop("GITHUB_EVENT_PATH", None)
+            environment.pop("GITHUB_EVENT_NAME", None)
             environment["FIREMUD_FLYWAY_BASE_REF"] = "0" * 40
             command = [sys.executable, str(Path(__file__).resolve()), "--root", tmp]
             if explicit:
