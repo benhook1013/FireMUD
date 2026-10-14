@@ -1122,7 +1122,7 @@ class LiveEvidence:
                     or item.get("correction") is True
                     or item.get("non_counting") is True
                     or type(item.get("accepted")) is not int
-                    or item["accepted"] <= 0
+                    or item["accepted"] < 0
                 ):
                     continue
                 label = f"{channel} accepted-finding source proof: {item.get('checkpoint')}"
@@ -2587,9 +2587,14 @@ class LiveEvidence:
                 anchor = dict(record["anchor"])
             source_resolution_status = (
                 self._source_resolution_status(pr, channel, checkpoint, exact_head)
-                if checkpoint.accepted > 0 and not checkpoint.correction
+                if (checkpoint.accepted > 0 or (channel == "cli" and completed)) and not checkpoint.correction
                 else None
             )
+            if (channel == "cli" and capture is not None and capture.checkpoint_decisions is not None
+                    and source_resolution_status is None):
+                # Corrected native attribution cannot fall back to legacy ancestry
+                # when its durable effective-finding resolver is unavailable.
+                source_resolution_status = "unavailable"
             anchor_complete = self._anchor_complete(anchor)
             value = {
                 "pr": pr,
