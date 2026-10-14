@@ -10,6 +10,7 @@ import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -44,6 +45,7 @@ public class TestDataSeeder implements ApplicationRunner {
   private final ZoneRepository zoneRepository;
   private final RoomRepository roomRepository;
   private final RoomExitRepository roomExitRepository;
+  private final WorldDesignPublicationFenceRepository publicationFenceRepository;
 
   @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:false}")
   private boolean runOwnedFixtureMode;
@@ -55,6 +57,12 @@ public class TestDataSeeder implements ApplicationRunner {
       log.warn(
           "RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE: fixture runtime seeding skipped until World-owned materialization is available");
       return;
+    }
+    try {
+      publicationFenceRepository.lockExistingOpenByPrivateKeys(DEMO_TENANT_ID, DEMO_VERSION_ID);
+    } catch (WorldDesignPublicationFenceRepository.ConflictException exception) {
+      throw new WorldDesignPublicationFenceRepository.ConflictException(
+          "DEMO_WORLD_SEEDING_UNAVAILABLE: " + exception.getMessage());
     }
     ensureDemoTopology();
   }

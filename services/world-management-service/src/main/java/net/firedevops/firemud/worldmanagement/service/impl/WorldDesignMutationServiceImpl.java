@@ -30,6 +30,7 @@ import net.firedevops.firemud.worldmanagement.repository.WorldDesignScopeEpochRe
 import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldDesignMutationService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -58,11 +59,14 @@ public class WorldDesignMutationServiceImpl implements WorldDesignMutationServic
   private final WorldDesignScopeEpochRepository scopeEpochRepository;
   private final GameDesignClient gameDesignClient;
   private final EntityManagementClient entityManagementClient;
+  private final WorldDesignPublicationFenceRepository publicationFenceRepository;
 
   @Override
   @Transactional
   public WorldDesignMutationResultDto applyMutation(WorldDesignMutationRequestDto request) {
     validateRequest(request);
+    publicationFenceRepository.lockExistingOpenByPrivateKeys(
+        request.tenantId(), request.versionId());
     requireDraftVersion(request.tenantId(), request.versionId());
 
     String requestedAggregateId = normalizeId(request.aggregateId());

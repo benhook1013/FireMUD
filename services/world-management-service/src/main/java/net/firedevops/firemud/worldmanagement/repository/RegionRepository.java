@@ -76,6 +76,19 @@ public class RegionRepository {
         .fetch(this::toEntity);
   }
 
+  /** Private Version locator only; this read acquires no region row lock. */
+  public Optional<Long> findVersionIdByTenantIdAndId(Long tenantId, Long regionId) {
+    return dsl.select(REGION.VERSION_ID)
+        .from(REGION)
+        .where(REGION.TENANT_ID.eq(tenantId).and(REGION.ID.eq(regionId)))
+        .fetchOptional(REGION.VERSION_ID);
+  }
+
+  /** Caller must acquire the publication owner lock before this region row lock. */
+  public Optional<Region> findByIdForUpdate(Long id) {
+    return dsl.selectFrom(REGION).where(REGION.ID.eq(id)).forUpdate().fetchOptional(this::toEntity);
+  }
+
   public Optional<Region> findById(Long id) {
     return dsl.selectFrom(REGION).where(REGION.ID.eq(id)).fetchOptional(this::toEntity);
   }
