@@ -58,18 +58,9 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
 
   /**
    * Captures an existing STARTING owner row and its exact launch binding in the same writable READ
-   * COMMITTED transaction. This method does not allocate or create a runtime row.
+   * COMMITTED transaction, binding the exact Human tuple and catalog identity. This method does not
+   * allocate or create a runtime row.
    */
-  public CanonicalGameInstanceLaunchAssociation capture(
-      FreshGameSessionTenantAssociation tenantAssociation,
-      long gameInstanceId,
-      CompleteLaunchBindingEvidence launchBindingEvidence) {
-    requireWritableReadCommittedOwnerTransaction();
-    throw new IllegalStateException(
-        "Original StartSession tuple is required for canonical launch capture");
-  }
-
-  /** Captures the exact Human tuple and actual catalog owner identity with the STARTING row. */
   public CanonicalGameInstanceLaunchAssociation capture(
       FreshGameSessionTenantAssociation tenantAssociation,
       long gameInstanceId,

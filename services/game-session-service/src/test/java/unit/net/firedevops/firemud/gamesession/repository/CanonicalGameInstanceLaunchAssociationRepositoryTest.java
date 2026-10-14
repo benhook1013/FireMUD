@@ -36,7 +36,7 @@ class CanonicalGameInstanceLaunchAssociationRepositoryTest {
     var repository = new CanonicalGameInstanceLaunchAssociationRepository(dsl, NAMESPACE);
     var tenant = freshTenant();
 
-    assertThatThrownBy(() -> repository.capture(tenant, 92L, null))
+    assertThatThrownBy(() -> repository.capture(tenant, 92L, null, null))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("writable owner transaction");
 

@@ -147,28 +147,31 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
                     .setUnknownFields(UNKNOWN_FIELD_SET))
             .build();
     assertInvalidReceipt(
-        sourceReceiptJson(
-            sourceEvidence(),
-            bundle(),
-            artifactState(),
-            versionState(),
-            descriptorWithNestedUnknownFields));
+        () ->
+            sourceReceiptJson(
+                sourceEvidence(),
+                bundle(),
+                artifactState(),
+                versionState(),
+                descriptorWithNestedUnknownFields));
 
     assertInvalidReceipt(
-        sourceReceiptJson(
-            sourceEvidence(),
-            bundle(),
-            artifactState(),
-            versionState(),
-            descriptorFor(12L, bundle().getId(), bundle().getPublishedReleaseBundleRef())));
+        () ->
+            sourceReceiptJson(
+                sourceEvidence(),
+                bundle(),
+                artifactState(),
+                versionState(),
+                descriptorFor(12L, bundle().getId(), bundle().getPublishedReleaseBundleRef())));
     assertInvalidReceipt(
-        sourceReceiptJson(
-            sourceEvidence(),
-            bundle(),
-            artifactState(),
-            versionState(),
-            descriptorFor(
-                bundle().getVersionId(), bundle().getId(), "different-owner-release-ref")));
+        () ->
+            sourceReceiptJson(
+                sourceEvidence(),
+                bundle(),
+                artifactState(),
+                versionState(),
+                descriptorFor(
+                    bundle().getVersionId(), bundle().getId(), "different-owner-release-ref")));
   }
 
   @Test
@@ -244,6 +247,13 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
           response.toBuilder()
               .setExpectedFixturePolicyEvidenceDigest("sha256:" + "0".repeat(64))
               .build(),
+          response.toBuilder().clearPlayableStateScope().build(),
+          response.toBuilder()
+              .setPlayableStateScope(
+                  net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                      .PLAYABLE_STATE_SCOPE_ISOLATED)
+              .build(),
+          response.toBuilder().setPlayableStateScopeValue(999).build(),
           response.toBuilder().setGameSessionTenantId(0L).build()
         }) {
       assertThatThrownBy(
@@ -323,6 +333,11 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
         .isInstanceOf(RunOwnedInitialAdmissionFixtureWireCodec.InvalidWireDataException.class);
   }
 
+  private static void assertInvalidReceipt(java.util.function.Supplier<String> json) {
+    assertThatThrownBy(() -> parseSourceReceipt(json.get(), capability()))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
   private static void assertInvalidReceipt(String json) {
     assertInvalidReceiptBytes(json.getBytes(StandardCharsets.UTF_8));
   }
@@ -398,13 +413,13 @@ class RunOwnedInitialAdmissionFixtureWireCodecTest {
         new LaunchReadEvidence(
             RunOwnedInitialAdmissionFixtureWireCodec.LAUNCH_READ_EVIDENCE_SCHEMA,
             17L,
-            bundle(),
-            artifactState(),
-            versionState(),
-            launchDescriptor());
+            bundle,
+            artifactState,
+            versionState,
+            descriptor);
     String requestDigest =
         RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestDigest(
-            capability(), creationEvidence(), sourceEvidence(), launch);
+            capability(), creationEvidence(), source, launch);
     var seal =
         new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal(
             RunOwnedInitialAdmissionFixtureWireCodec.FIXTURE_POLICY_SEAL_SCHEMA,

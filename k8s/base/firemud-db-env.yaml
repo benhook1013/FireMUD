@@ -5,6 +5,7 @@ metadata:
   namespace: firemud
   name: firemud-config
 data:
+  GAME_LOGIC_READINESS_URL: http://game-logic-service:8080/actuator/health/readiness
   FIREMUD_POSTGRES_HOST: postgres
   FIREMUD_POSTGRES_PORT: "5432"
   FIREMUD_POSTGRES_DB: firemud

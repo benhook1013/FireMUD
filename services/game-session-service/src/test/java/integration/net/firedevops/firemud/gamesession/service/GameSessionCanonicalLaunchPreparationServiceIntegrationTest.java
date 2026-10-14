@@ -1009,7 +1009,8 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
       assertThatThrownBy(
               () -> catalogRepository.readByRequest(NAMESPACE, preV24Catalog.creationRequestId()))
           .isInstanceOf(
-              GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException.class);
+              GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException.class)
+          .hasMessage("Exactly one complete catalog policy provenance required");
     }
 
     IntakeReceipt registerFreshSource() {

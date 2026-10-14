@@ -61,6 +61,8 @@ public final class RunOwnedWorldLaunchEvidence {
     this.caCertificateSha256 = Objects.requireNonNull(caCertificateSha256, "caCertificateSha256");
     this.gameSessionAssociation =
         Objects.requireNonNull(gameSessionAssociation, "gameSessionAssociation");
+    requireExactGameSessionFixtureAssociation(
+        this.capability, this.sourceReceipt, this.gameSessionAssociation);
   }
 
   /** Revalidates the original fixed caller before a subsequent source-owner operation. */
@@ -190,10 +192,13 @@ public final class RunOwnedWorldLaunchEvidence {
           "RUN_OWNED_WORLD_LAUNCH_EVIDENCE_MISMATCH: prepared request differs from committed fixture evidence");
     }
     requireGameSessionAllocation(request.tenantId(), request.gameInstanceId());
-    requireExactGameSessionFixtureAssociation();
+    requireExactGameSessionFixtureAssociation(capability, sourceReceipt, gameSessionAssociation);
   }
 
-  private void requireExactGameSessionFixtureAssociation() {
+  static void requireExactGameSessionFixtureAssociation(
+      RunOwnedInitialAdmissionFixtureWireCodec.Capability capability,
+      RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt sourceReceipt,
+      CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult gameSessionAssociation) {
     var expectedPolicy =
         new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicyRequest(
             capability,

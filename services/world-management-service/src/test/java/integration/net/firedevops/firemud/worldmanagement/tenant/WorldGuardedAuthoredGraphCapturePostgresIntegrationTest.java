@@ -662,6 +662,7 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
               "filesystem:"
                   + root.resolve("services/common-saga/src/main/resources/db/migration/saga"))
           .migrate();
+      assertCanonicalFrozenMutationTriggerBindings(dsl, schema);
       var upstream = controlledSource();
       var intake =
           Objects.requireNonNull(
@@ -708,6 +709,14 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
           .isEqualTo(WorldDraftTopologyCommitRepository.ownerBindingJson(plan.ownerBinding()))
           .isNotEqualTo(applicationMapper.writeValueAsString(plan.ownerBinding()));
       assertThat(topology.readCommitted(plan)).isPresent();
+      var defaultMapperTopology = new WorldDraftTopologyCommitRepository(dsl, fence, mapper);
+      var defaultMapperReadback = defaultMapperTopology.readCommitted(plan).orElseThrow();
+      assertThat(defaultMapperReadback.graphBytes()).isEqualTo(stored.graphBytes());
+      assertThat(defaultMapperReadback.resultBytes()).isEqualTo(stored.resultBytes());
+      var defaultMapperReplay =
+          Objects.requireNonNull(write.execute(status -> defaultMapperTopology.store(plan)));
+      assertThat(defaultMapperReplay.graphBytes()).isEqualTo(stored.graphBytes());
+      assertThat(defaultMapperReplay.resultBytes()).isEqualTo(stored.resultBytes());
       // Exercise the snapshot reader against actual V1005 canonical spawn storage. This is
       // graph/codec proof only: it does not supply the missing V19 complete-commit history.
       var authored =
@@ -823,8 +832,7 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
               new RoomRepository(dsl),
               new RoomExitRepository(dsl),
               new GenerationRuleRepository(dsl),
-              new WorldEntitySpawnBindingRepository(dsl),
-              mapper);
+              new WorldEntitySpawnBindingRepository(dsl));
       var actual =
           digest.getDraftDesignDigest(
               Long.toString(intake.localTenantKey()), Long.toString(version.localVersionKey()));
@@ -896,11 +904,134 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       // Historical schema-3 capture must deny the synthetic checkpoint without invented APPLIED
       // rows.
       var snapshotRepository = new WorldAuthoredGraphSnapshotRepository(dsl);
-      var graphCapture =
-          new WorldAuthoredGraphSnapshotCapture(dsl, digest, snapshotRepository, mapper);
+      var graphCapture = new WorldAuthoredGraphSnapshotCapture(dsl, digest, snapshotRepository);
       assertThatThrownBy(() -> write.execute(status -> graphCapture.capture(capture)))
           .isInstanceOf(WorldAuthoredGraphSnapshotRepository.MissingOwnerHistoryException.class)
           .hasMessageContaining("retained V19 revision history");
+
+      var originalRows =
+          dsl.fetchSingle(
+              "SELECT to_jsonb(v)::text AS identity_json, to_jsonb(i)::text AS intake_json "
+                  + "FROM world_authored_version_identity v "
+                  + "JOIN world_authored_source_intake i ON i.operation_id=v.intake_operation_id "
+                  + "WHERE v.operation_id=?",
+              owner.versionIdentityOperationId());
+      String identityJson = originalRows.get("identity_json", String.class);
+      String intakeJson = originalRows.get("intake_json", String.class);
+
+      // These candidates reuse real stored topology/source bytes and must be rejected before
+      // persistence; none supplies or claims V19 complete-commit/APPLIED evidence.
+      var schemaTwoCapture =
+          new WorldAuthoredGraphSnapshot.CaptureRequest(
+              capture.targetNamespace(),
+              capture.canonicalTenantId(),
+              capture.canonicalVersionId(),
+              capture.intakeRequestId(),
+              capture.publicationFence(),
+              capture.publicationRequestId(),
+              capture.requestDigest(),
+              capture.versionStateEpoch(),
+              capture.publishWorkflowId(),
+              capture.appliedCommitId(),
+              capture.contentDigest(),
+              2,
+              capture.suppliedOwnedAffectedTuples());
+      assertThatThrownBy(
+              () ->
+                  insertCanonicalFrozenCandidate(
+                      dsl,
+                      plan,
+                      capture,
+                      stored,
+                      mapper.writeValueAsString(schemaTwoCapture),
+                      identityJson,
+                      intakeJson))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("New canonical graph capture requires digest schema 3")
+          .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("23514"));
+
+      assertThatThrownBy(
+              () ->
+                  insertCanonicalFrozenCandidate(
+                      dsl,
+                      plan,
+                      capture,
+                      stored,
+                      "{\"digestSchemaVersion\":3}",
+                      identityJson,
+                      intakeJson))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Canonical frozen capture differs")
+          .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("23514"));
+
+      var changedCheckpointCapture =
+          new WorldAuthoredGraphSnapshot.CaptureRequest(
+              capture.targetNamespace(),
+              capture.canonicalTenantId(),
+              capture.canonicalVersionId(),
+              capture.intakeRequestId(),
+              capture.publicationFence(),
+              capture.publicationRequestId(),
+              capture.requestDigest(),
+              capture.versionStateEpoch(),
+              capture.publishWorkflowId(),
+              capture.appliedCommitId() + "-mismatch",
+              capture.contentDigest(),
+              capture.digestSchemaVersion(),
+              capture.suppliedOwnedAffectedTuples());
+      assertThatThrownBy(
+              () ->
+                  insertCanonicalFrozenCandidate(
+                      dsl,
+                      plan,
+                      capture,
+                      stored,
+                      mapper.writeValueAsString(changedCheckpointCapture),
+                      identityJson,
+                      intakeJson))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("Canonical frozen capture differs")
+          .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("23514"));
+
+      assertThat(
+              dsl.fetchSingle("SELECT count(*) FROM world_canonical_frozen_topology")
+                  .get(0, Long.class))
+          .isZero();
+
+      // Row-level V1006 UPDATE/DELETE guards cannot fire on an empty frozen table. Verify their
+      // installed shared-function bindings, and exercise UPDATE/DELETE on retained source rows.
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "UPDATE world_authored_source_intake SET tenant_slug=tenant_slug "
+                          + "WHERE operation_id=?",
+                      intake.operationId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("immutable")
+          .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("55000"));
+      assertThatThrownBy(
+              () ->
+                  dsl.execute(
+                      "DELETE FROM world_authored_source_intake WHERE operation_id=?",
+                      intake.operationId()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("immutable")
+          .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("55000"));
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) FROM world_authored_source_intake WHERE operation_id=?",
+                      intake.operationId())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+      assertThatThrownBy(() -> dsl.execute("TRUNCATE world_canonical_frozen_topology"))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("immutable")
+          .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("55000"));
+      assertThat(
+              dsl.fetchSingle("SELECT count(*) FROM world_canonical_frozen_topology")
+                  .get(0, Long.class))
+          .isZero();
+
       assertThat(
               dsl.fetchSingle("SELECT count(*) FROM world_authored_graph_snapshot")
                   .get(0, Long.class))
@@ -920,6 +1051,96 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
     } finally {
       dsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
     }
+  }
+
+  private static void assertCanonicalFrozenMutationTriggerBindings(DSLContext dsl, String schema) {
+    var triggers =
+        dsl.fetch(
+            "SELECT t.tgname AS trigger_name, p.proname AS function_name, "
+                + "pg_get_triggerdef(t.oid) AS trigger_definition, p.prosrc AS function_source "
+                + "FROM pg_trigger t "
+                + "JOIN pg_class c ON c.oid=t.tgrelid "
+                + "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                + "JOIN pg_proc p ON p.oid=t.tgfoid "
+                + "WHERE n.nspname=? AND c.relname='world_canonical_frozen_topology' "
+                + "AND NOT t.tgisinternal ORDER BY t.tgname",
+            schema);
+    assertThat(triggers.getValues("trigger_name", String.class))
+        .containsExactly(
+            "trg_world_canonical_frozen_00_schema3",
+            "trg_world_canonical_frozen_immutable",
+            "trg_world_canonical_frozen_insert",
+            "trg_world_canonical_frozen_no_truncate");
+    assertThat(triggers.getValues("function_name", String.class))
+        .containsExactly(
+            "world_require_new_digest_schema3_capture",
+            "world_reject_authored_source_history_mutation",
+            "world_check_canonical_frozen_capture",
+            "world_reject_authored_source_history_mutation");
+    assertThat(triggers.get(1).get("trigger_definition", String.class))
+        .contains(
+            "DELETE", "UPDATE", "FOR EACH ROW", "world_reject_authored_source_history_mutation");
+    assertThat(triggers.get(3).get("trigger_definition", String.class))
+        .contains(
+            "TRUNCATE", "FOR EACH STATEMENT", "world_reject_authored_source_history_mutation");
+    assertThat(triggers.get(1).get("function_source", String.class))
+        .contains("RAISE EXCEPTION", "ERRCODE = '55000'")
+        .doesNotContain("IF ");
+    var sourceFunctions =
+        dsl.fetch(
+                "SELECT p.proname AS function_name FROM pg_trigger t "
+                    + "JOIN pg_class c ON c.oid=t.tgrelid "
+                    + "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                    + "JOIN pg_proc p ON p.oid=t.tgfoid "
+                    + "WHERE n.nspname=? AND c.relname='world_authored_source_intake' "
+                    + "AND NOT t.tgisinternal ORDER BY t.tgname",
+                schema)
+            .getValues("function_name", String.class);
+    assertThat(sourceFunctions)
+        .containsExactly(
+            "world_reject_authored_source_history_mutation",
+            "world_reject_authored_source_history_mutation");
+  }
+
+  private static void insertCanonicalFrozenCandidate(
+      DSLContext dsl,
+      WorldDraftTopologyCommitPlan plan,
+      WorldAuthoredGraphSnapshot.CaptureRequest request,
+      WorldDraftTopologyCommitEvidence stored,
+      String freezeRequestJson,
+      String identityJson,
+      String intakeJson) {
+    dsl.execute(
+        "INSERT INTO world_canonical_frozen_topology (capture_id,publication_fence,"
+            + "request_id,commit_id,version_identity_operation_id,freeze_request_json,"
+            + "owner_binding_json,binding_json,binding_digest,identity_json,intake_json,"
+            + "graph_bytes,graph_sha256,storage_result_bytes,result_bytes,capture_status) "
+            + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        UUID.randomUUID(),
+        request.publicationFence(),
+        plan.binding().requestId(),
+        plan.binding().commitId(),
+        plan.ownerBinding().versionIdentityOperationId(),
+        freezeRequestJson,
+        WorldDraftTopologyCommitRepository.ownerBindingJson(plan.ownerBinding()),
+        plan.binding().canonicalJson(),
+        plan.binding().digest(),
+        identityJson,
+        intakeJson,
+        stored.graphBytes(),
+        WorldAuthoredGraphSnapshotCapture.sha256(stored.graphBytes()),
+        stored.resultBytes(),
+        stored.resultBytes(),
+        WorldCanonicalFrozenTopology.STATUS);
+  }
+
+  private static String sqlState(Throwable throwable) {
+    for (Throwable cause = throwable; cause != null; cause = cause.getCause()) {
+      if (cause instanceof java.sql.SQLException sqlException) {
+        return sqlException.getSQLState();
+      }
+    }
+    return null;
   }
 
   private static WorldDraftTopologyCommitPlan topologyPlan(

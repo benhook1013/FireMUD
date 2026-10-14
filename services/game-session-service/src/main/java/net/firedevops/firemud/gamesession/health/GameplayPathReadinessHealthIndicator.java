@@ -1,16 +1,17 @@
 package net.firedevops.firemud.gamesession.health;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
+import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.common.health.DependencyReadinessSupport;
+import net.firedevops.firemud.common.health.HttpEndpointAvailabilityChecker;
 import net.firedevops.firemud.common.health.ReadinessTransitionTracker;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
+import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.health.GameplayLocalPathReadinessProbe.ProbeResult;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.stereotype.Component;
@@ -20,15 +21,17 @@ import org.springframework.stereotype.Component;
 public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
   private static final String COMPONENT = "game-session-service";
   private static final String CONTRACT = "LOGIN->LOOK";
-  private static final String PROBE_TENANT_ID = "1";
   private static final String PROBE_EMAIL = "readiness-probe@example.invalid";
   private static final String PROBE_PASSWORD = "invalid";
-  private static final String PROBE_SESSION_ID = "1";
-  private static final String PROBE_PLAYER_ID = "1";
-  private static final String PROBE_GAME_INSTANCE_ID = "1";
-  private static final String PROBE_ROOM_ID = "R-1021";
 
   private final AccountClient accountClient;
+
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Configuration properties are a framework-managed singleton")
+  private final GameLogicProperties gameLogicProperties;
+
+  private final HttpEndpointAvailabilityChecker httpEndpointAvailabilityChecker;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -42,8 +45,12 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
       AccountClient accountClient,
       GameLogicClient gameLogicClient,
       GameplayLocalPathReadinessProbe gameplayLocalPathReadinessProbe,
-      ReadinessTransitionTracker readinessTransitionTracker) {
+      ReadinessTransitionTracker readinessTransitionTracker,
+      GameLogicProperties gameLogicProperties,
+      HttpEndpointAvailabilityChecker httpEndpointAvailabilityChecker) {
     this.accountClient = accountClient;
+    this.gameLogicProperties = gameLogicProperties;
+    this.httpEndpointAvailabilityChecker = httpEndpointAvailabilityChecker;
     this.gameLogicClient = gameLogicClient;
     this.gameplayLocalPathReadinessProbe = gameplayLocalPathReadinessProbe;
     this.readinessTransitionTracker = readinessTransitionTracker;
@@ -113,40 +120,25 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
             "roundTrip", "redis:tick-queue", commandQueueProbe.detail()));
 
     try {
-      gameLogicClient.resolveLookForReadiness(
-          PROBE_TENANT_ID,
-          PROBE_SESSION_ID,
-          PROBE_PLAYER_ID,
-          PROBE_GAME_INSTANCE_ID,
-          PROBE_ROOM_ID);
+      var ping = gameLogicClient.pingForReadiness();
+      if (ping == null || ping.hasError() || !"pong".equals(ping.getMessage())) {
+        throw new IllegalStateException("Game Logic authenticated Ping did not return pong");
+      }
+      URI endpoint = gameLogicProperties.readinessEndpoint();
+      if (endpoint == null || !httpEndpointAvailabilityChecker.isHealthy(endpoint)) {
+        throw new IllegalStateException(
+            "Game Logic dependency readiness unavailable or unconfigured");
+      }
       dependencies.put(
           "gameLogicService",
           DependencyReadinessSupport.upDependency(
-              "resolveLook", "grpc:GameLogicService#ResolveLook", "OK"));
-    } catch (StatusRuntimeException ex) {
-      if (isReachableAppStatus(ex.getStatus().getCode())) {
-        dependencies.put(
-            "gameLogicService",
-            DependencyReadinessSupport.upDependency(
-                "resolveLook",
-                "grpc:GameLogicService#ResolveLook",
-                DependencyReadinessSupport.normalizeOutcome(ex.getStatus().getCode().name())));
-      } else {
-        dependencies.put(
-            "gameLogicService",
-            DependencyReadinessSupport.downDependency(
-                "resolveLook",
-                "grpc:GameLogicService#ResolveLook",
-                DependencyReadinessSupport.message(ex)));
-        return DependencyReadinessSupport.recordOutOfService(
-            readinessTransitionTracker, COMPONENT, CONTRACT, "gameLogicService", dependencies);
-      }
+              "pingAndReadiness", "grpc:GameLogicService#Ping+http:actuator/readiness", "OK"));
     } catch (RuntimeException ex) {
       dependencies.put(
           "gameLogicService",
           DependencyReadinessSupport.downDependency(
-              "resolveLook",
-              "grpc:GameLogicService#ResolveLook",
+              "pingAndReadiness",
+              "grpc:GameLogicService#Ping+http:actuator/readiness",
               DependencyReadinessSupport.message(ex)));
       return DependencyReadinessSupport.recordOutOfService(
           readinessTransitionTracker, COMPONENT, CONTRACT, "gameLogicService", dependencies);
@@ -154,9 +146,5 @@ public class GameplayPathReadinessHealthIndicator implements HealthIndicator {
 
     return DependencyReadinessSupport.recordUp(
         readinessTransitionTracker, COMPONENT, CONTRACT, dependencies);
-  }
-
-  private static boolean isReachableAppStatus(Status.Code code) {
-    return code == Status.Code.INVALID_ARGUMENT || code == Status.Code.NOT_FOUND;
   }
 }

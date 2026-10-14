@@ -12,7 +12,6 @@ import java.security.NoSuchAlgorithmException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.HexFormat;
 import java.util.List;
@@ -69,6 +68,7 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
   private final GameDesignClient gameDesignClient;
   private final ServiceEndpointsProperties serviceEndpoints;
   private final GrpcChannelFactory grpcChannelFactory;
+  private final GameSessionFixtureClientFactory gameSessionFixtureClientFactory;
   private final String workloadNamespace;
   private volatile CanonicalGameInstanceLaunchAssociationClient gameSessionFixtureClient;
 
@@ -84,6 +84,34 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
       ServiceEndpointsProperties serviceEndpoints,
       GrpcChannelFactory grpcChannelFactory,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this(
+        enabled,
+        capabilityPath,
+        sourceReceiptPath,
+        runId,
+        composeProjectName,
+        grpcProperties,
+        gameDesignClient,
+        serviceEndpoints,
+        grpcChannelFactory,
+        workloadNamespace,
+        (endpoints, properties, factory, namespace) ->
+            new CanonicalGameInstanceLaunchAssociationClient(
+                endpoints, properties, factory, namespace));
+  }
+
+  RunOwnedWorldLaunchEvidenceProvider(
+      boolean enabled,
+      String capabilityPath,
+      String sourceReceiptPath,
+      String runId,
+      String composeProjectName,
+      CommonGrpcClientProperties grpcProperties,
+      GameDesignClient gameDesignClient,
+      ServiceEndpointsProperties serviceEndpoints,
+      GrpcChannelFactory grpcChannelFactory,
+      String workloadNamespace,
+      GameSessionFixtureClientFactory gameSessionFixtureClientFactory) {
     this.enabled = enabled;
     this.capabilityPath = capabilityPath;
     this.sourceReceiptPath = sourceReceiptPath;
@@ -93,6 +121,8 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
     this.gameDesignClient = Objects.requireNonNull(gameDesignClient, "gameDesignClient");
     this.serviceEndpoints = serviceEndpoints == null ? null : serviceEndpoints.copy();
     this.grpcChannelFactory = grpcChannelFactory;
+    this.gameSessionFixtureClientFactory =
+        Objects.requireNonNull(gameSessionFixtureClientFactory, "gameSessionFixtureClientFactory");
     this.workloadNamespace = workloadNamespace;
   }
 
@@ -181,7 +211,6 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
             gameSessionFixtureClient()
                 .readFixture(fixtureReadRequest, capability.gameSessionLeafSha256());
         stage = VerificationStage.GAME_SESSION_FIXTURE_COMPARE;
-        requireFixtureReadback(capability, receipt, gameSessionAssociation);
 
         return new RunOwnedWorldLaunchEvidence(
             capability,
@@ -206,41 +235,6 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
     }
   }
 
-  private static void requireFixtureReadback(
-      RunOwnedInitialAdmissionFixtureWireCodec.Capability capability,
-      RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt receipt,
-      CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult actual) {
-    var expectedPolicy =
-        new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicyRequest(
-            capability,
-            receipt.creationEvidence(),
-            receipt.sourceEvidence(),
-            receipt.launchReadEvidence());
-    byte[] expectedBytes =
-        RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestBytes(
-            capability,
-            receipt.creationEvidence(),
-            receipt.sourceEvidence(),
-            receipt.launchReadEvidence());
-    if (!actual.request().fixtureOperationId().toString().equals(capability.operationId())
-        || !actual.request().targetNamespace().equals(receipt.sourceEvidence().targetNamespace())
-        || !actual
-            .request()
-            .expectedFixturePolicyEvidenceDigest()
-            .equals(receipt.fixturePolicySeal().evidenceDigest())
-        || !actual.fixturePolicySeal().equals(receipt.fixturePolicySeal())
-        || !Objects.equals(actual.fixturePolicyRequest(), expectedPolicy)
-        || !Arrays.equals(actual.fixturePolicyRequestBytes(), expectedBytes)
-        || !actual.canonicalTenantId().equals(receipt.sourceEvidence().canonicalTenantId())
-        || !actual
-            .canonicalVersionId()
-            .toString()
-            .equals(
-                receipt.launchReadEvidence().publishedReleaseBundle().getCanonicalVersionId())) {
-      throw invalidEvidence();
-    }
-  }
-
   private static UUID freshFixtureReadRequestId(UUID fixtureOperationId) {
     UUID readRequestId;
     do {
@@ -257,7 +251,7 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
       throw invalidEvidence();
     }
     CanonicalGameInstanceLaunchAssociationClient created =
-        new CanonicalGameInstanceLaunchAssociationClient(
+        gameSessionFixtureClientFactory.create(
             serviceEndpoints, grpcProperties, grpcChannelFactory, workloadNamespace);
     try {
       created.init();
@@ -447,6 +441,15 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
   }
 
   private record CertificatePins(String leafSha256, String uriSan, String caSha256) {}
+
+  @FunctionalInterface
+  interface GameSessionFixtureClientFactory {
+    CanonicalGameInstanceLaunchAssociationClient create(
+        ServiceEndpointsProperties endpoints,
+        CommonGrpcClientProperties tlsProperties,
+        GrpcChannelFactory channelFactory,
+        String workloadNamespace);
+  }
 
   private enum VerificationStage {
     ENABLED,

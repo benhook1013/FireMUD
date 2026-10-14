@@ -6,8 +6,6 @@ import java.util.HashSet;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
@@ -235,8 +233,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   /**
-   * Starts or resumes a local fixture launch under a durable, tenant/request-bound owner identity.
-   * This method has no transport binding; the run-owned fixture coordinator is its only caller.
+   * Validates verified fixture launch evidence, then refuses before World materialization or first
+   * OPEN admission. Canonical STARTING allocation is owned by the fixture coordinator.
    */
   @Override
   @Timed(value = "gamesession.run_owned_initial_launch")
@@ -763,48 +761,6 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       throw new IllegalArgumentException(
           "RUN_OWNED_INITIAL_LAUNCH_SOURCE_MISMATCH: source evidence is not bound to this"
               + " fixture request");
-    }
-  }
-
-  private AuthoredWorldLaunchDescriptorEvidence requireExactAuthoredWorldDescriptorRequest(
-      StartSessionRequest request,
-      AuthoredWorldSourceEvidence sourceEvidence,
-      ResolveLaunchDescriptorResponse response) {
-    if (response == null) {
-      throw new IllegalStateException("launch descriptor authority returned no response");
-    }
-    if (response.hasError()) {
-      return null;
-    }
-    if (!response.hasLaunchDescriptor()) {
-      throw new IllegalArgumentException(
-          "AUTHORED_WORLD_LAUNCH_DESCRIPTOR_MISMATCH: Game Design returned no descriptor");
-    }
-    AuthoredWorldLaunchDescriptorEvidence.Request expectedRequest =
-        new AuthoredWorldLaunchDescriptorEvidence.Request(
-            sourceEvidence.targetNamespace(),
-            request.controlPlaneRequestId(),
-            sourceEvidence.canonicalTenantId(),
-            sourceEvidence.worldSlug(),
-            sourceEvidence.operationId(),
-            sourceEvidence.evidenceDigest(),
-            request.gameTemplateId(),
-            false,
-            null,
-            false,
-            null,
-            false,
-            null,
-            false,
-            null);
-    try {
-      return AuthoredWorldLaunchDescriptorGrpcCodec.fromLaunchDescriptorMessage(
-          expectedRequest, response.getLaunchDescriptor());
-    } catch (IllegalArgumentException exception) {
-      throw new IllegalArgumentException(
-          "AUTHORED_WORLD_LAUNCH_DESCRIPTOR_MISMATCH: Game Design response is not bound to the"
-              + " exact source request",
-          exception);
     }
   }
 

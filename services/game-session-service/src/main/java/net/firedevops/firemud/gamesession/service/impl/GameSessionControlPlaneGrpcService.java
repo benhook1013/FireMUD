@@ -385,7 +385,7 @@ public final class GameSessionControlPlaneGrpcService
               .withDescription("Exact fixed fixture launch owner read is unavailable")
               .asRuntimeException());
     } catch (RuntimeException failure) {
-      logger.error("GetRunOwnedFixtureLaunchAssociation failed");
+      logger.error("GetRunOwnedFixtureLaunchAssociation failed", failure);
       responseObserver.onError(
           Status.INTERNAL.withDescription("Fixture launch owner read failed").asRuntimeException());
     }

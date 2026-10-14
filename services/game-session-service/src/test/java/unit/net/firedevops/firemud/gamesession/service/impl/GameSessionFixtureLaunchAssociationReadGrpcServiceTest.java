@@ -96,7 +96,9 @@ class GameSessionFixtureLaunchAssociationReadGrpcServiceTest {
         response.getCanonicalVersionId());
     assertEquals(REALM_ID.toString(), response.getCanonicalRealmId());
     assertEquals(PLAYABLE_NAMESPACE_ID.toString(), response.getPlayableStateNamespaceId());
-    assertEquals("SHARED", response.getPlayableStateScope());
+    assertEquals(
+        net.firedevops.firemud.entitymanagement.v1.PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        response.getPlayableStateScope());
     assertEquals(1L, response.getCatalogRevision());
     assertEquals("STARTING", response.getCurrentGameInstanceStatus());
     assertEquals(0L, response.getCurrentRowVersion());

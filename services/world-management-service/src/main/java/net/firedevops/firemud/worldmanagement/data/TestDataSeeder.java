@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.data;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.RoomExit;
@@ -24,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
     havingValue = "true",
     matchIfMissing = false)
 @RequiredArgsConstructor
+@Slf4j
 public class TestDataSeeder implements ApplicationRunner {
   private static final long DEMO_TENANT_ID = 1L;
   private static final long DEMO_VERSION_ID = 1L;
@@ -50,8 +52,9 @@ public class TestDataSeeder implements ApplicationRunner {
   @Transactional
   public void run(ApplicationArguments args) {
     if (runOwnedFixtureMode) {
-      throw new IllegalStateException(
-          "RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE: fixture runtime seeding is disabled until World-owned materialization is available");
+      log.warn(
+          "RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE: fixture runtime seeding skipped until World-owned materialization is available");
+      return;
     }
     ensureDemoTopology();
   }

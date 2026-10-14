@@ -12,7 +12,6 @@ import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBinding
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import tools.jackson.databind.ObjectMapper;
 
 class WorldDraftDesignDigestServiceImplTest {
   @Test
@@ -32,8 +31,7 @@ class WorldDraftDesignDigestServiceImplTest {
             roomRepository,
             roomExitRepository,
             generationRuleRepository,
-            worldEntitySpawnBindingRepository,
-            new ObjectMapper());
+            worldEntitySpawnBindingRepository);
 
     assertThrows(IllegalArgumentException.class, () -> service.getDraftDesignDigest("0", "7"));
 
@@ -63,8 +61,7 @@ class WorldDraftDesignDigestServiceImplTest {
             roomRepository,
             roomExitRepository,
             generationRuleRepository,
-            worldEntitySpawnBindingRepository,
-            new ObjectMapper());
+            worldEntitySpawnBindingRepository);
 
     assertThrows(IllegalArgumentException.class, () -> service.getDraftDesignDigest("1", "0"));
 
@@ -106,8 +103,7 @@ class WorldDraftDesignDigestServiceImplTest {
             roomRepository,
             roomExitRepository,
             generationRuleRepository,
-            worldEntitySpawnBindingRepository,
-            new ObjectMapper());
+            worldEntitySpawnBindingRepository);
 
     var digest = service.getDraftDesignDigest("1", "7");
 
@@ -128,8 +124,7 @@ class WorldDraftDesignDigestServiceImplTest {
     var rules = Mockito.mock(GenerationRuleRepository.class);
     var spawns = Mockito.mock(WorldEntitySpawnBindingRepository.class);
     var service =
-        new WorldDraftDesignDigestServiceImpl(
-            regions, zones, rooms, exits, rules, spawns, new ObjectMapper());
+        new WorldDraftDesignDigestServiceImpl(regions, zones, rooms, exits, rules, spawns);
     var room = new net.firedevops.firemud.worldmanagement.entity.Room();
     room.setId(11L);
     var spawn = new net.firedevops.firemud.worldmanagement.entity.WorldEntitySpawnBinding();
