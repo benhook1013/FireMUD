@@ -38,6 +38,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /**
  * Fixed-server reader and verifier for the run-owned World launch fixture.
@@ -247,7 +248,9 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
     if (gameSessionFixtureClient != null) {
       return gameSessionFixtureClient;
     }
-    if (serviceEndpoints == null || grpcChannelFactory == null || workloadNamespace == null) {
+    if (serviceEndpoints == null
+        || grpcChannelFactory == null
+        || !StringUtils.hasText(workloadNamespace)) {
       throw invalidEvidence();
     }
     CanonicalGameInstanceLaunchAssociationClient created =

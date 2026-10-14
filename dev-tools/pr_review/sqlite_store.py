@@ -26,7 +26,7 @@ from typing import Any
 from .state import ReviewState, StateError, StateLockTimeout, _locked, sqlite_state_path
 
 SQLITE_SCHEMA_VERSION = 1
-WRITER_BUILD = 10
+WRITER_BUILD = 11
 PREVIOUS_DATA_MODEL_VERSION = 1
 INTERMEDIATE_DATA_MODEL_VERSION = 2
 STATUS_VERSION = 1
@@ -34,7 +34,7 @@ CUTOVER_VERSION = 1
 _DATA_MODEL_MIN_WRITER_BUILDS = {
     PREVIOUS_DATA_MODEL_VERSION: 1,
     INTERMEDIATE_DATA_MODEL_VERSION: 9,
-    3: WRITER_BUILD,
+    3: 10,
 }
 _METADATA_TABLE = "controller_metadata"
 _STATE_TABLE = "review_state"
@@ -220,6 +220,7 @@ class SqliteStateStore:
         *,
         deadline: float | None = None,
         deadline_active: Callable[[], bool] | None = None,
+        transaction_mutate: Callable[[ReviewState, sqlite3.Connection], ReviewState] | None = None,
     ) -> ReviewState:
         """Apply ``mutate`` and persist its validated result in one transaction."""
 
@@ -229,7 +230,7 @@ class SqliteStateStore:
             raise TypeError("deadline_active must be callable")
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self._exclusive_update_lock(deadline=deadline):
-            return self._update_locked(mutate, deadline=deadline, deadline_active=deadline_active)
+            return self._update_locked(mutate, deadline=deadline, deadline_active=deadline_active, transaction_mutate=transaction_mutate)
 
     def _update_locked(
         self,
@@ -237,6 +238,7 @@ class SqliteStateStore:
         *,
         deadline: float | None = None,
         deadline_active: Callable[[], bool] | None = None,
+        transaction_mutate: Callable[[ReviewState, sqlite3.Connection], ReviewState] | None = None,
     ) -> ReviewState:
         created_identity = self._create_empty_file_exclusively()
         connection: sqlite3.Connection | None = None
@@ -263,7 +265,7 @@ class SqliteStateStore:
             if self.writer_build < WRITER_BUILD:
                 raise StateError(f"SQLite review state requires writer build {WRITER_BUILD}")
             self._check_deadline(deadline)
-            updated = mutate(current)
+            updated = transaction_mutate(current, connection) if transaction_mutate is not None else mutate(current)
             if deadline is not None and deadline_active is not None and not deadline_active():
                 # Hosted admission has durably crossed the POST boundary. Keep
                 # SQLite completion independently bounded, but do not roll

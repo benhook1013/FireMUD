@@ -1327,6 +1327,7 @@ public class GameSessionCanonicalRealmCatalogRepository {
   /** Retains the trusted fixture policy in this catalog owner; it grants no Human authority. */
   public FixtureCanonicalRealmCatalog establishVerifiedFixtureRealm(
       RunOwnedInitialAdmissionLaunchEvidence evidence) {
+    requireFixtureComposition();
     requireNoActiveOwnerTransaction();
     evidence.requireVerifiedFixture();
     if (!workloadNamespace.equals(evidence.sourceEvidence().targetNamespace())) {
@@ -1371,6 +1372,7 @@ public class GameSessionCanonicalRealmCatalogRepository {
 
   public FixtureCanonicalRealmCatalog readVerifiedFixtureRealm(
       RunOwnedInitialAdmissionLaunchEvidence evidence) {
+    requireFixtureComposition();
     requireNoActiveOwnerTransaction();
     evidence.requireVerifiedFixture();
     FixtureCanonicalRealmCatalog readback =
@@ -1453,6 +1455,13 @@ public class GameSessionCanonicalRealmCatalogRepository {
   private final String workloadNamespace;
   private final TransactionTemplate writeTransaction;
   private final TransactionTemplate readTransaction;
+
+  private void requireFixtureComposition() {
+    if (workloadNamespace == null || writeTransaction == null || readTransaction == null) {
+      throw new IllegalStateException(
+          "Explicit owner transaction composition is required for fixture realm operations");
+    }
+  }
 
   @SuppressFBWarnings(
       value = "CT_CONSTRUCTOR_THROW",

@@ -557,20 +557,21 @@ jobs:
 
       - name: ⬇️ Checkout Code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
 
-      - name: Fetch manual Flyway parent when needed
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+      - name: Fetch exact Flyway parent
         env:
-          FLYWAY_BASE_SHA: ${{ inputs.flyway_base_sha }}
+          FLYWAY_BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.flyway_base_sha || github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          FLYWAY_EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [[ ! "$FLYWAY_BASE_SHA" =~ ^[[:xdigit:]]{40}$ ]]; then
-            echo "workflow_dispatch requires a full immutable 40-character Flyway base SHA" >&2
+          if [[ "$FLYWAY_BASE_SHA" == "0000000000000000000000000000000000000000" && "$FLYWAY_EVENT_NAME" != "workflow_dispatch" ]]; then
+            exit 0
+          fi
+          if [[ ! "$FLYWAY_BASE_SHA" =~ ^[[:xdigit:]]{40}$ || "$FLYWAY_BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            echo "Flyway parent requires a full nonzero immutable 40-character SHA" >&2
             exit 1
           fi
           if ! git cat-file -e "${FLYWAY_BASE_SHA}^{commit}" 2>/dev/null; then
-            git fetch --no-tags origin "$FLYWAY_BASE_SHA"
+            git fetch --no-tags --depth=1 origin "$FLYWAY_BASE_SHA"
           fi
           resolved_sha="$(git rev-parse --verify "${FLYWAY_BASE_SHA}^{commit}")"
           if [[ "${resolved_sha,,}" != "${FLYWAY_BASE_SHA,,}" ]]; then

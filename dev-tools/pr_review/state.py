@@ -1024,12 +1024,12 @@ class ReviewPeriodDecision:
     reviewed_merge_base: str | None
     reviewed_patch_id: str | None
     current_head: str
-    current_base_ref: str
-    current_base_tip: str
-    current_parent_identity: str
-    current_parent_head: str
-    current_merge_base: str
-    current_patch_id: str
+    current_base_ref: str | None
+    current_base_tip: str | None
+    current_parent_identity: str | None
+    current_parent_head: str | None
+    current_merge_base: str | None
+    current_patch_id: str | None
     baseline_checkpoints: tuple[str, ...]
     baseline_source_run_ids: tuple[str, ...]
     minimum_completed: int
@@ -1038,6 +1038,8 @@ class ReviewPeriodDecision:
     actor: str
     reason: str
     recorded_at: str
+    completion_cutoff: str | None = None
+    replace_stop: bool = False
     baseline_mode: str = "checkpoint"
     baseline_id: str | None = None
     baseline_complete: bool | None = None
@@ -1052,7 +1054,7 @@ class ReviewPeriodDecision:
             raise StateError("review-period PR must be a positive integer")
         if self.channel not in {"hosted", "cli"}:
             raise StateError("review-period channel must be hosted or cli")
-        if self.baseline_mode not in {"checkpoint", "current_history"}:
+        if self.baseline_mode not in {"checkpoint", "current_history", "native_history"}:
             raise StateError("review-period baseline mode is invalid")
         if self.baseline_mode == "checkpoint":
             if not isinstance(self.checkpoint, str) or not self.checkpoint.strip():
@@ -1080,7 +1082,7 @@ class ReviewPeriodDecision:
             ) or self.baseline_observation_fingerprints:
                 raise StateError("checkpoint review-period reset cannot contain a native-history baseline")
         else:
-            if self.checkpoint is not None or any(
+            if (self.checkpoint is not None and self.baseline_mode != "native_history") or any(
                 getattr(self, name) is not None
                 for name in (
                     "reviewed_head",
@@ -1121,15 +1123,19 @@ class ReviewPeriodDecision:
             ).encode("utf-8")
             if hashlib.sha256(digest_payload).hexdigest() != self.baseline_history_digest:
                 raise StateError("current-history period digest does not match its observation fingerprints")
+        if not isinstance(self.replace_stop, bool):
+            raise StateError("review-period replace-stop must be boolean")
         for name in (
             "current_head",
             "current_base_tip",
             "current_parent_head",
             "current_merge_base",
         ):
+            if self.baseline_mode == "native_history" and name != "current_head" and getattr(self, name) is None:
+                continue
             if not isinstance(getattr(self, name), str) or not EXACT_SHA.fullmatch(getattr(self, name)):
                 raise StateError(f"review-period {name} must be an exact SHA")
-        if not isinstance(self.current_base_ref, str) or not self.current_base_ref.strip():
+        if self.baseline_mode != "native_history" and (not isinstance(self.current_base_ref, str) or not self.current_base_ref.strip()):
             raise StateError("review-period current base ref must be non-empty")
         for name in (
             "current_parent_identity",
@@ -1138,6 +1144,8 @@ class ReviewPeriodDecision:
             "reason",
         ):
             value = getattr(self, name)
+            if self.baseline_mode == "native_history" and name in {"current_parent_identity", "current_patch_id"} and value is None:
+                continue
             if not isinstance(value, str) or not value.strip():
                 raise StateError(f"review-period {name.replace('_', ' ')} must be non-empty")
         if len(self.actor) > 100 or any(ord(character) < 0x20 for character in self.actor):
@@ -1173,6 +1181,15 @@ class ReviewPeriodDecision:
             raise StateError("review-period decision time must include a timezone")
         if recorded.utcoffset() is None or recorded.utcoffset().total_seconds() != 0:
             raise StateError("review-period decision time must be UTC")
+        if self.baseline_mode == "native_history":
+            try:
+                cutoff = datetime.fromisoformat(self.completion_cutoff.replace("Z", "+00:00"))
+            except (AttributeError, ValueError) as exc:
+                raise StateError("native-history period requires a source completion cutoff") from exc
+            if cutoff.tzinfo is None or cutoff.utcoffset().total_seconds() != 0 or cutoff > recorded:
+                raise StateError("native-history completion cutoff must be UTC and no later than decision time")
+        elif self.completion_cutoff is not None or self.replace_stop:
+            raise StateError("legacy review periods cannot contain native-history semantics")
         if self.superseded_allocation is None:
             if self.superseded_allocation_identity is not None:
                 raise StateError("review-period superseded allocation identity requires its snapshot")
@@ -1186,7 +1203,7 @@ class ReviewPeriodDecision:
 
     @property
     def period_id(self) -> str:
-        if self.baseline_mode == "current_history":
+        if self.baseline_mode in {"current_history", "native_history"}:
             identity = json.dumps(
                 {"pr": self.pr, "channel": self.channel, "baseline_id": self.baseline_id},
                 ensure_ascii=True,
@@ -1249,7 +1266,7 @@ class ReviewPeriodDecision:
                 self.superseded_allocation.to_dict() if self.superseded_allocation is not None else None
             ),
         }
-        if self.baseline_mode == "current_history":
+        if self.baseline_mode in {"current_history", "native_history"}:
             for name in (
                 "checkpoint",
                 "reviewed_head",
@@ -1259,6 +1276,10 @@ class ReviewPeriodDecision:
                 "reviewed_patch_id",
             ):
                 result.pop(name)
+            if self.baseline_mode == "native_history":
+                result["checkpoint"] = self.checkpoint
+                result["replace_stop"] = self.replace_stop
+                result["completion_cutoff"] = self.completion_cutoff
             result.update(
                 {
                     "baseline_mode": self.baseline_mode,
@@ -1298,6 +1319,8 @@ class ReviewPeriodDecision:
             "actor",
             "reason",
             "recorded_at",
+            "completion_cutoff",
+            "replace_stop",
             "baseline_mode",
             "baseline_id",
             "baseline_complete",
@@ -1344,6 +1367,8 @@ class ReviewPeriodDecision:
                 actor=value["actor"],
                 reason=value["reason"],
                 recorded_at=value["recorded_at"],
+                completion_cutoff=value.get("completion_cutoff"),
+                replace_stop=value.get("replace_stop", False),
                 baseline_mode=value.get("baseline_mode", "checkpoint"),
                 baseline_id=value.get("baseline_id"),
                 baseline_complete=value.get("baseline_complete"),

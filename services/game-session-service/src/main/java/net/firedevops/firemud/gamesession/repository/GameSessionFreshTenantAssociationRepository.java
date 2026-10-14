@@ -411,6 +411,13 @@ public class GameSessionFreshTenantAssociationRepository {
   private final TransactionTemplate writeTransaction;
   private final TransactionTemplate readTransaction;
 
+  private void requireExplicitOwnerComposition() {
+    if (workloadNamespace == null || writeTransaction == null || readTransaction == null) {
+      throw new IllegalStateException(
+          "Explicit owner transaction composition is required for fresh tenant reads");
+    }
+  }
+
   @SuppressFBWarnings(
       value = {"EI_EXPOSE_REP2", "CT_CONSTRUCTOR_THROW"},
       justification =
@@ -479,6 +486,7 @@ public class GameSessionFreshTenantAssociationRepository {
   /** Reads only complete, internally consistent stored evidence; it never calls Game Design. */
   public Optional<FreshTenantAssociation> readByCanonicalTenantId(UUID canonicalTenantId) {
     requireNoActiveOwnerTransaction();
+    requireExplicitOwnerComposition();
     if (canonicalTenantId == null || isNil(canonicalTenantId)) {
       throw new IllegalArgumentException("Canonical tenant UUID must be nonnil");
     }
