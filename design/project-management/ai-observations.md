@@ -235,3 +235,10 @@ Entry format:
   - Observation: the wrong class filter executed no tests and failed explicitly; the static tasks were reported `SKIPPED` despite a successful focused unit build. Neither result qualified the missing proof.
   - Expected pattern: read the class’s declared package before specifying a test filter, and verify task execution rather than equating build success with every requested check passing. Enable the repository’s canonical full-check property when selecting static tasks.
   - Current status: corrected package selection passed 50 focused unit cases; the subsequent runtime fix passed 58 selected unit cases. A separate canonical `-PfullCheck` run executed the required static checks successfully. No validation requirement was waived.
+
+- `2026-10-14`: Review-period bookkeeping must not contend for provider execution locks
+  - Context: the Overseer reported that Gameplay's three concurrent metadata reset batches encountered active-provider errors during the native rollout, with no actual provider active.
+  - Observation: reset-versus-reset global lock contention was reported as provider activity, and network/full-stack refresh made local counter bookkeeping slow and coupled to unrelated source readiness.
+  - Expected pattern: snapshot retained completed native results and append the channel period in one local SQLite transaction; preserve provider reservations and enforce external evidence only at ordinary review/status admission.
+  - Current status: local transactional implementation is prepared; installed-selector promotion and live rollout verification remain pending with the owning orchestrator.
+  - Reconsideration trigger: verify concurrent metadata batches after coordinated version-matched selector promotion.

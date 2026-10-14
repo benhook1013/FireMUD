@@ -54,12 +54,14 @@ def corrected_native_fixture(records, *, initial=("accepted", "accepted"), corre
     ) for i, item in enumerate(events, 1)]
     events.append({"type": "complete", "status": "review_completed", "findings": len(initial),
                    "reviewedFiles": ["a.py"]})
-    metadata.update(duration_seconds=9, exit_status=0, capture_completion_marker="capture-complete")
+    metadata.update(duration_seconds=9, exit_status=0, capture_completion_marker="capture-complete",
+                    capture_terminal_at="2026-10-01T00:00:09Z", capture_terminal_basis="provider_process_exit")
     records.complete_attempt_run(run_id, finish={"state": "completed", "duration_seconds": 9,
         "exit_status": 0, "finished_at": "2026-10-01T00:00:09Z",
         "artifacts": {"metadata": json.dumps(metadata), "cli_events": "\n".join(map(json.dumps, events))}},
         run={"run_id": run_id, "source_pr": pr, "channel": "cli", "source_head": head,
-             "reviewer": "CodeRabbit CLI", "scope": "broad", "findings": findings})
+             "reviewer": "CodeRabbit CLI", "scope": "broad", "findings": findings,
+             "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:09Z"})
     for i, decision in enumerate(initial, 1):
         records.record_source_decision(run_id, f"cli-run:{run_id}:finding:{i}", decision_id=f"initial-{i}",
             decision=decision, actor="owner", reason="Original adjudication", decided_at="2026-10-01T00:00:10Z")
@@ -2625,6 +2627,26 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 accepted_count=1,
             )
         )
+
+    def test_native_completion_time_uses_validated_capture_source_clock(self) -> None:
+        self.bootstrap()
+        run_id, _, _ = corrected_native_fixture(self.records)
+        self.assertEqual(self.records.native_completion_time(run_id, source_pr=42), "2026-10-01T00:00:09Z")
+        snapshot = self.records.cli_capture_snapshot(run_id, source_pr=42)
+        legacy = dict(snapshot)
+        legacy["artifacts"] = dict(snapshot["artifacts"])
+        metadata = json.loads(legacy["artifacts"]["metadata"])
+        metadata.pop("capture_terminal_at")
+        metadata.pop("capture_terminal_basis")
+        legacy["artifacts"]["metadata"] = json.dumps(metadata)
+        self.assertIsNone(evidence._cli_capture_from_sql(legacy, "owner/repo", 42).verified_completed_at)
+        snapshot["run"]["finished_at"] = "2026-10-12T00:00:00Z"
+        capture = evidence._cli_capture_from_sql(snapshot, "owner/repo", 42)
+        self.assertNotIn("completed_at", capture.metadata)
+        self.records.start_attempt(attempt_id="unknown-time", source_pr=42, channel="cli",
+            candidate_sha="a" * 40, started_at="2026-10-01T00:00:00Z")
+        self.records.finish_attempt("unknown-time", state="completed", finished_at="2026-10-01T00:00:01Z")
+        self.assertIsNone(self.records.native_completion_time("unknown-time", source_pr=42))
 
     def test_native_cli_capture_snapshot_binds_attempt_run_artifacts_and_decisions(self) -> None:
         self.bootstrap()

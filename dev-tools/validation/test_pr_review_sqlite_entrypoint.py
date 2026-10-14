@@ -18,7 +18,8 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as review_cli
 from pr_review import runtime
-from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD
+from pr_review.sqlite_review_records import SqliteReviewRecords
+from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
 from pr_review.state import ControllerStateStore, ReviewState, StateStore
 
 
@@ -106,6 +107,36 @@ class SqliteControllerEntrypointTest(unittest.TestCase):
 
         self.assertIsInstance(controller.store, ControllerStateStore)
         self.assertEqual(controller.store.path.name, "pr-review-stack.json")
+
+    def test_actual_period_reset_dispatch_uses_local_sqlite_without_external_calls(self) -> None:
+        common = self.root / ".git"
+        common.mkdir()
+        selected = common / "firemud" / "pr-review-stack.json"
+        StateStore(selected).save(ReviewState(ordered_prs=(42,)))
+        SqliteStateStore.migrate_legacy_json(selected, selected.with_suffix(".sqlite3"))
+        store = ControllerStateStore(selected)._active_store()
+        SqliteReviewRecords(store.path).bootstrap()
+        arguments = ["decide", "period", "reset", "--pr", "42", "--channel", "cli", "--head", "a" * 40,
+                     "--current-history-baseline", "--baseline-id", "actual-dispatch", "--actor", "operator",
+                     "--reason", "authorized renewal", "--json"]
+        with (patch.object(Path, "cwd", return_value=self.root),
+              patch.object(review_cli, "default_controller", side_effect=AssertionError("network controller")),
+              patch.object(review_cli.github, "infer_repo", side_effect=AssertionError("GitHub lookup")),
+              patch.object(review_cli.github, "repository_metadata", side_effect=AssertionError("GitHub metadata")),
+              patch.object(subprocess, "run", side_effect=AssertionError("external process"))):
+            first_status, first_stdout, first_stderr = self._run_cli(arguments)
+            replay_status, replay_stdout, replay_stderr = self._run_cli(arguments)
+            explicit_status, explicit_stdout, explicit_stderr = self._run_cli(
+                [*arguments, "--database", str(store.path)])
+        self.assertEqual(first_status, 0, first_stderr)
+        self.assertEqual(replay_status, 0, replay_stderr)
+        self.assertEqual(explicit_status, 0, explicit_stderr)
+        first, replay, explicit = map(json.loads, (first_stdout, replay_stdout, explicit_stdout))
+        self.assertEqual(first["status"], "recorded")
+        self.assertEqual(replay["status"], "already_recorded")
+        self.assertEqual(first["period"], replay["period"])
+        self.assertEqual(first["period"], explicit["period"])
+        self.assertEqual(len(store.load().review_period_decisions), 1)
 
     def test_stack_show_reads_the_migrated_store_without_github(self) -> None:
         StateStore(self.state_path).save(ReviewState(ordered_prs=(2828, 2879)))

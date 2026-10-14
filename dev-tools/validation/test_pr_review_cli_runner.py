@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from subprocess import CompletedProcess
 from types import SimpleNamespace
@@ -40,7 +41,7 @@ from pr_review.cli_runner import (
     run_cli_review,
     target_from_resolver,
 )
-from pr_review.controller import ControllerError, _SelectionChanged
+from pr_review.controller import ControllerError, ReviewController, _SelectionChanged
 from pr_review.patch_identity import patch_diff_args
 from pr_review.policy import Channel, taper_satisfied
 from pr_review.runtime import LiveEvidence, LiveGitHub
@@ -1519,6 +1520,59 @@ class CliReviewRunnerTests(unittest.TestCase):
                 [],
             )
 
+    def test_capture_terminal_clock_survives_parse_delay_and_same_second_reset(self):
+        output = ('{"type":"complete","status":"review_completed","findings":0,'
+                  '"reviewedFiles":["src/Representative.java"]}\n')
+        terminal = datetime(2026, 10, 14, 12, 0, 0, 200000, tzinfo=timezone.utc)
+        started = terminal.replace(microsecond=0)
+        for reset_before_terminal in (False, True):
+            with self.subTest(reset_before_terminal=reset_before_terminal), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / ".git").mkdir()
+                database = root / ".git" / "firemud" / "records.sqlite3"
+                database.parent.mkdir()
+                store = SqliteStateStore(database)
+                controller = ReviewController(store=store)
+                controller.store.update(lambda state: dataclasses.replace(state, ordered_prs=(42,)))
+                records = SqliteReviewRecords(database)
+                records.bootstrap()
+                commands = FakeCommands(root, review_output=output)
+                clock = Mock(wraps=datetime)
+                clock.now.side_effect = [started, terminal]
+                decision_clock = Mock(wraps=datetime)
+                decision_clock.now.return_value = terminal.replace(microsecond=100000 if reset_before_terminal else 300000)
+                original_marker = cli_runner._write_capture_complete_marker
+                original_run = commands.run
+                resets = []
+                def reset(resets=resets, controller=controller):
+                    resets.append(controller.decide_period_reset(pr=42, channel="cli", head=HEAD,
+                        current_history_baseline=True, baseline_id="race", actor="operator", reason="renew"))
+                def run_with_reset(argv, reset_before_terminal=reset_before_terminal, original_run=original_run, reset=reset, **kwargs):
+                    if reset_before_terminal and argv[0] == "coderabbit":
+                        reset()
+                    return original_run(argv, **kwargs)
+                def marker_with_reset(capture_dir, original_marker=original_marker, reset_before_terminal=reset_before_terminal, reset=reset):
+                    original_marker(capture_dir)
+                    if not reset_before_terminal:
+                        reset()
+                commands.run = run_with_reset
+                with (patch.object(cli_runner, "datetime", clock),
+                      patch("pr_review.controller.datetime", decision_clock),
+                      patch.object(cli_runner, "_write_capture_complete_marker", side_effect=marker_with_reset)):
+                    result = run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands, records=records)
+                self.assertEqual(len(resets), 1)
+                source_time = "2026-10-14T12:00:00.200000Z"
+                archived = json.loads(records.attempt_artifacts(result.run_id)["metadata"])
+                self.assertEqual(archived["capture_terminal_at"], source_time)
+                self.assertEqual(records.attempt(result.run_id)["finished_at"], source_time)
+                self.assertEqual(records.native_completion_time(result.run_id, source_pr=42), source_time)
+                row = {"pr": 42, "channel": "cli", "head": HEAD, "checkpoint": "published-later",
+                       "source_run_id": result.run_id, "verified_completed_at": source_time,
+                       "completed": True, "attributable": True, "anchored": True, "accepted": 0}
+                progress = ReviewController._default_period_progress(store.load(), 42, Channel.CLI, [row])
+                self.assertEqual(progress["used"], int(reset_before_terminal))
+                self.assertEqual(len(progress["taper_history"]), int(reset_before_terminal))
+
     def test_sqlite_attempt_is_written_before_provider_and_completed_with_json_events(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1666,13 +1720,27 @@ class CliReviewRunnerTests(unittest.TestCase):
                 f"{run_id}\n",
             )
             self.assertEqual(records.attempt(run_id)["state"], "started")
+            controller = ReviewController(store=SqliteStateStore(database))
+            controller.store.update(lambda state: dataclasses.replace(state, ordered_prs=(42,)))
+            reset = controller.decide_period_reset(pr=42, channel="cli", head=HEAD,
+                current_history_baseline=True, baseline_id="before-recovery", actor="operator", reason="renew")
+            self.assertNotIn(run_id, reset["period"]["baseline_source_run_ids"])
             report = cli_attempts.reconcile_legacy_failed_attempts(records, database)
             self.assertEqual(report["recovered"], [{"run_id": run_id, "pr": "42"}])
             self.assertEqual(report["terminally_classified"], [])
             attempt = records.attempt(run_id)
             self.assertEqual(attempt["state"], "completed")
             self.assertEqual(attempt["run_id"], run_id)
+            archived = json.loads(records.attempt_artifacts(run_id)["metadata"])
+            self.assertEqual(attempt["finished_at"], archived["capture_terminal_at"])
+            self.assertEqual(records.native_completion_time(run_id, source_pr=42), archived["capture_terminal_at"])
             self.assertEqual(records.history(42)["runs"][0]["counts"]["found"], 1)
+            row = {"pr": 42, "channel": "cli", "head": HEAD, "checkpoint": "recovered-publication",
+                   "source_run_id": run_id, "verified_completed_at": archived["capture_terminal_at"],
+                   "completed": True, "attributable": True, "anchored": True, "accepted": 0}
+            progress = ReviewController._default_period_progress(controller.store.load(), 42, Channel.CLI, [row])
+            self.assertEqual(progress["used"], 0)
+            self.assertEqual(progress["taper_history"], [])
 
     def test_provider_runs_when_optional_attempt_start_fails(self):
         for failure in (
