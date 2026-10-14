@@ -54,20 +54,27 @@ public class ActorResourceStateRepository {
                   ACTOR_RESOURCE_STATES.UPDATED_AT)
               .select(
                   dsl.select(
-                          DSL.val(entity.getTenantId()),
-                          DSL.val(entity.getPlayableStateKey()),
-                          DSL.val(entity.getCharacterId()),
-                          DSL.val(entity.getStatKey()),
-                          DSL.val(entity.getCurrentValue()),
-                          DSL.val(entity.getMaxValue()),
-                          DSL.val(entity.getBaseValue()),
-                          DSL.val(entity.getSourceType()),
-                          DSL.val(entity.getSourceId()),
-                          DSL.val(toOffsetDateTime(entity.getCreatedAt())),
-                          DSL.val(toOffsetDateTime(entity.getUpdatedAt())))
+                          DSL.val(entity.getTenantId(), ACTOR_RESOURCE_STATES.TENANT_ID),
+                          DSL.val(
+                              entity.getPlayableStateKey(),
+                              ACTOR_RESOURCE_STATES.PLAYABLE_STATE_KEY),
+                          DSL.val(entity.getCharacterId(), ACTOR_RESOURCE_STATES.CHARACTER_ID),
+                          DSL.val(entity.getStatKey(), ACTOR_RESOURCE_STATES.STAT_KEY),
+                          DSL.val(entity.getCurrentValue(), ACTOR_RESOURCE_STATES.CURRENT_VALUE),
+                          DSL.val(entity.getMaxValue(), ACTOR_RESOURCE_STATES.MAX_VALUE),
+                          DSL.val(entity.getBaseValue(), ACTOR_RESOURCE_STATES.BASE_VALUE),
+                          DSL.val(entity.getSourceType(), ACTOR_RESOURCE_STATES.SOURCE_TYPE),
+                          DSL.val(entity.getSourceId(), ACTOR_RESOURCE_STATES.SOURCE_ID),
+                          DSL.val(
+                              toOffsetDateTime(entity.getCreatedAt()),
+                              ACTOR_RESOURCE_STATES.CREATED_AT),
+                          DSL.val(
+                              toOffsetDateTime(entity.getUpdatedAt()),
+                              ACTOR_RESOURCE_STATES.UPDATED_AT))
                       .where(
                           CharacterRepository.legacyCharacterExists(
-                              DSL.val(entity.getCharacterId()))))
+                              DSL.val(
+                                  entity.getCharacterId(), ACTOR_RESOURCE_STATES.CHARACTER_ID))))
               .returningResult(ACTOR_RESOURCE_STATES.ID)
               .fetchOne(ACTOR_RESOURCE_STATES.ID);
       if (id == null) {
