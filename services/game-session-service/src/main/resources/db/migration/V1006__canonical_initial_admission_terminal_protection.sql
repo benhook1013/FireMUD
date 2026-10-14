@@ -42,24 +42,20 @@ ALTER TABLE game_session_canonical_initial_admission_attempt
                 AND original_owner_mutation_id IS NULL
                 AND original_owner_fence IS NULL
                 AND account_protection_evidence_bytes IS NULL)
-            OR (account_protection_evidence_version IS NOT NULL
-                AND account_protection_evidence_version = 1
+            OR (account_protection_evidence_version = 1
                 AND account_protection_id IS NOT NULL
                 AND account_protection_id <> '00000000-0000-0000-0000-000000000000'::UUID
-                AND account_protection_fence IS NOT NULL
                 AND account_protection_fence > 0
                 AND original_owner_attempt_id IS NOT NULL
                 AND original_owner_mutation_id IS NOT NULL
                 AND original_owner_mutation_id <> '00000000-0000-0000-0000-000000000000'::UUID
-                AND original_owner_fence IS NOT NULL
                 AND original_owner_fence > 0
                 AND account_protection_evidence_bytes IS NOT NULL
                 AND octet_length(account_protection_evidence_bytes) BETWEEN 1 AND 8388608)),
-    -- Enforce fresh terminal writes without reclassifying immutable pre1006 history.
     ADD CONSTRAINT chk_gs_initial_admission_terminal_requires_protection
         CHECK (status = 'PENDING'
-            OR (account_protection_evidence_version IS NOT NULL
-                AND account_protection_evidence_version = 1)) NOT VALID;
+            OR account_protection_evidence_version IS NULL
+            OR account_protection_evidence_version = 1);
 
 CREATE UNIQUE INDEX uq_gs_initial_admission_protected_original_attempt
     ON game_session_canonical_initial_admission_attempt (target_namespace, original_owner_attempt_id)

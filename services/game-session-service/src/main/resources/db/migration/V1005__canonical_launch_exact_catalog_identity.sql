@@ -62,7 +62,7 @@ BEGIN
 END;
 $$;
 
-CREATE TRIGGER gs_canonical_instance_launch_complete_catalog_identity
+CREATE TRIGGER game_session_canonical_instance_launch_complete_catalog_identity
     BEFORE INSERT ON game_session_canonical_instance_launch
     FOR EACH ROW EXECUTE FUNCTION require_complete_canonical_launch_catalog_identity();
 -- [jooq ignore stop]

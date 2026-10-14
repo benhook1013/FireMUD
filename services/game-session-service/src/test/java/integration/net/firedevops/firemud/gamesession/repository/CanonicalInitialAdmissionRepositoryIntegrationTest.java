@@ -7,7 +7,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
@@ -514,13 +517,13 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   @Test
   void terminalProtectionConstraintRejectsNewAndUpdatedUnprotectedTerminalRows() {
     Fixture fixture = fixture();
+    migration(fixture, null).validate();
+    launchGuardProjection(fixture, true);
     assertThat(
             fixture
                 .dsl
                 .fetchSingle(
-                    "SELECT count(*) FROM pg_trigger WHERE tgrelid = "
-                        + "'game_session_canonical_instance_launch'::regclass "
-                        + "AND tgname = 'gs_canonical_instance_launch_complete_catalog_identity'")
+                    "SELECT count(*) FROM flyway_schema_history WHERE version = '1011' AND success")
                 .get(0, Long.class))
         .isEqualTo(1L);
     PreparedAdmission prepared = prepareAdmission(fixture);
@@ -594,6 +597,64 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                     .hasStackTraceContaining(
                         "violates check constraint \"chk_gs_initial_admission_terminal_requires_protection\"");
               });
+      for (String missing :
+          List.of(
+              "account_protection_evidence_version",
+              "account_protection_fence",
+              "original_owner_fence")) {
+        var partial = new HashMap<>(terminalColumns);
+        putControlledPartialProtection(fixture, partial, missing);
+        assertThatThrownBy(
+                () ->
+                    fixture.transactions.executeWithoutResult(
+                        status ->
+                            fixture
+                                .dsl
+                                .insertInto(
+                                    DSL.table(
+                                        DSL.name(
+                                            "game_session_canonical_initial_admission_attempt")))
+                                .set(partial)
+                                .execute()))
+            .isInstanceOfSatisfying(
+                DataAccessException.class,
+                exception -> {
+                  assertThat(exception.sqlState()).isEqualTo("23514");
+                  assertThat(exception)
+                      .hasStackTraceContaining(
+                          "violates check constraint \"chk_gs_initial_admission_account_protection_evidence_complete\"");
+                });
+        assertThatThrownBy(
+                () ->
+                    fixture.transactions.executeWithoutResult(
+                        status ->
+                            fixture.dsl.execute(
+                                "UPDATE game_session_canonical_initial_admission_attempt SET status = 'ABORTED', "
+                                    + "abort_reason = ?, abort_proof_digest = ?, updated_at = updated_at + INTERVAL '1 second', "
+                                    + "terminal_at = updated_at + INTERVAL '1 second', account_protection_evidence_version = ?, "
+                                    + "account_protection_id = ?, account_protection_fence = ?, original_owner_attempt_id = ?, "
+                                    + "original_owner_mutation_id = ?, original_owner_fence = ?, account_protection_evidence_bytes = ? "
+                                    + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                                partial.get("abort_reason"),
+                                partial.get("abort_proof_digest"),
+                                partial.get("account_protection_evidence_version"),
+                                partial.get("account_protection_id"),
+                                partial.get("account_protection_fence"),
+                                partial.get("original_owner_attempt_id"),
+                                partial.get("original_owner_mutation_id"),
+                                partial.get("original_owner_fence"),
+                                partial.get("account_protection_evidence_bytes"),
+                                NAMESPACE,
+                                request.initialAdmissionRequestId())))
+            .isInstanceOfSatisfying(
+                DataAccessException.class,
+                exception -> {
+                  assertThat(exception.sqlState()).isEqualTo("23514");
+                  assertThat(exception)
+                      .hasStackTraceContaining(
+                          "violates check constraint \"chk_gs_initial_admission_account_protection_evidence_complete\"");
+                });
+      }
     } finally {
       fixture.dsl.execute(
           "ALTER TABLE game_session_canonical_initial_admission_attempt ENABLE TRIGGER "
@@ -613,103 +674,278 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
   }
 
   @Test
+  void originalProtectionMigrationBytesRemainUnchanged() throws Exception {
+    assertOriginalMigrationBlob(
+        "V1005__canonical_launch_exact_catalog_identity.sql",
+        "368bdf18472699e82f1bccd8b956b62f058b2a12");
+    assertOriginalMigrationBlob(
+        "V1006__canonical_initial_admission_terminal_protection.sql",
+        "ef093cb7262929d9e962f717220088e378f21e6d");
+  }
+
+  private static void assertOriginalMigrationBlob(String filename, String expected)
+      throws Exception {
+    byte[] bytes = Files.readAllBytes(Path.of("src/main/resources/db/migration", filename));
+    MessageDigest digest = MessageDigest.getInstance("SHA-1");
+    digest.update(("blob " + bytes.length + "\0").getBytes(StandardCharsets.UTF_8));
+    assertThat(HexFormat.of().formatHex(digest.digest(bytes))).isEqualTo(expected);
+  }
+
+  @Test
   void pre1006CommittedAndAbortedRowsSurviveForwardProtectionMigration() throws Exception {
-    for (boolean committed : List.of(true, false)) {
-      Fixture predecessor = fixture("1005");
-      PredecessorAdmission predecessorSources = preparePre1006Admission(predecessor);
-      PreparedAdmission prepared = predecessorSources.prepared();
-      CanonicalInitialAdmissionRequest request =
-          initialAdmissionRequest(
-              prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
-      reservePre1006Attempt(predecessor, predecessorSources.launch(), request);
-      // This is the real target1005 schema. Current terminal writers remain denied, and current
-      // typed catalog/terminal reads need columns introduced by1010. Only explicit predecessor SQL
-      // supplies the old row shape here; current owner readback is qualified after the upgrade.
-      seedPre1006Terminal(predecessor, prepared, predecessorSources.launch(), request, committed);
-      String originalSources = predecessorSourceProjection(predecessor);
-      String originalAttempt = predecessorAttemptProjection(predecessor, request);
-      String originalPointerAndAudit = pointerAndAuditProjection(predecessor);
-      String schema = predecessor.dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
-      var migration =
-          Flyway.configure()
-              .dataSource(Objects.requireNonNull(predecessor.transactionManager.getDataSource()))
-              .schemas(schema)
-              .defaultSchema(schema)
-              .table("flyway_schema_history")
-              .locations(MIGRATION_LOCATION)
-              .load();
-      migration.migrate();
-      assertThat(
-              predecessor
-                  .dsl
-                  .fetchSingle(
-                      "SELECT count(*) FROM flyway_schema_history WHERE version = '1006' AND success")
-                  .get(0, Long.class))
-          .isEqualTo(1L);
-      assertThat(
-              predecessor
-                  .dsl
-                  .fetchSingle(
-                      "SELECT count(*) FROM flyway_schema_history WHERE version = '1010' AND success")
-                  .get(0, Long.class))
-          .isEqualTo(1L);
-      assertThat(
-              predecessor
-                  .dsl
-                  .fetchSingle(
-                      "SELECT convalidated FROM pg_constraint WHERE conrelid = "
-                          + "'game_session_canonical_initial_admission_attempt'::regclass "
-                          + "AND conname = 'chk_gs_initial_admission_terminal_requires_protection'")
-                  .get(0, Boolean.class))
-          .isFalse();
-      assertThat(predecessorAttemptProjection(predecessor, request)).isEqualTo(originalAttempt);
-      assertThat(pointerAndAuditProjection(predecessor)).isEqualTo(originalPointerAndAudit);
-      assertThat(predecessorSourceProjection(predecessor)).isEqualTo(originalSources);
-      CanonicalInitialAdmissionOwnerProof retained =
-          predecessor
-              .initialAdmissionRepository
-              .read(NAMESPACE, request.initialAdmissionRequestId())
-              .orElseThrow();
-      assertThat(retained.outcome())
-          .isEqualTo(
-              committed
-                  ? CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED
-                  : CanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
-      assertThat(retained.requestDigest()).isEqualTo(request.requestDigest());
-      assertThat(retained.holdId()).isEqualTo(request.holdId());
-      if (committed) {
-        assertThat(retained.committedPointerVersion()).isEqualTo(1L);
-        assertThat(retained.auditEventId()).isPositive();
-      } else {
-        assertThat(retained.provesAbort()).isTrue();
-        assertThat(retained.committedPointerVersion()).isNull();
-        assertThat(retained.auditEventId()).isNull();
+    for (boolean stagedOriginalHistory : List.of(true, false)) {
+      for (boolean committed : List.of(true, false)) {
+        Fixture predecessor = fixture("1005");
+        PredecessorAdmission predecessorSources = preparePre1006Admission(predecessor);
+        PreparedAdmission prepared = predecessorSources.prepared();
+        CanonicalInitialAdmissionRequest request =
+            initialAdmissionRequest(
+                prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
+        reservePre1006Attempt(predecessor, predecessorSources.launch(), request);
+        // This is the real target1005 schema. Current terminal writers remain denied, and current
+        // typed catalog/terminal reads need columns introduced by1010. Only explicit predecessor
+        // SQL
+        // supplies the old row shape here; current owner readback is qualified after the upgrade.
+        seedPre1006Terminal(predecessor, prepared, predecessorSources.launch(), request, committed);
+        String originalSources = predecessorSourceProjection(predecessor);
+        String originalAttempt = predecessorAttemptProjection(predecessor, request);
+        String originalPointerAndAudit = pointerAndAuditProjection(predecessor);
+        String originalHistory = migrationHistoryProjection(predecessor, "1005");
+        String originalGuard = null;
+        String otherGuards = null;
+        String originalFullAttempt = null;
+        if (stagedOriginalHistory) {
+          migration(predecessor, "1010").migrate();
+          migration(predecessor, "1010").validate();
+          originalHistory = migrationHistoryProjection(predecessor, "1010");
+          originalGuard = launchGuardProjection(predecessor, false);
+          otherGuards = otherGuardProjection(predecessor);
+          originalFullAttempt = attemptProjection(predecessor, request);
+          assertThat(predecessorAttemptProjection(predecessor, request)).isEqualTo(originalAttempt);
+          assertThat(pointerAndAuditProjection(predecessor)).isEqualTo(originalPointerAndAudit);
+          assertThat(predecessorSourceProjection(predecessor)).isEqualTo(originalSources);
+        }
+        migration(predecessor, null).migrate();
+        migration(predecessor, null).validate();
+        assertThat(migrationHistoryProjection(predecessor, stagedOriginalHistory ? "1010" : "1005"))
+            .isEqualTo(originalHistory);
+        assertThat(
+                predecessor
+                    .dsl
+                    .fetchSingle(
+                        "SELECT count(*) FROM flyway_schema_history WHERE version = '1011' AND success")
+                    .get(0, Long.class))
+            .isEqualTo(1L);
+        if (stagedOriginalHistory) {
+          assertThat(launchGuardProjection(predecessor, true)).isEqualTo(originalGuard);
+          assertThat(otherGuardProjection(predecessor)).isEqualTo(otherGuards);
+          assertThat(attemptProjection(predecessor, request)).isEqualTo(originalFullAttempt);
+        } else {
+          launchGuardProjection(predecessor, true);
+        }
+        assertThat(
+                predecessor
+                    .dsl
+                    .fetchSingle(
+                        "SELECT count(*) FROM flyway_schema_history WHERE version = '1006' AND success")
+                    .get(0, Long.class))
+            .isEqualTo(1L);
+        assertThat(
+                predecessor
+                    .dsl
+                    .fetchSingle(
+                        "SELECT count(*) FROM flyway_schema_history WHERE version = '1010' AND success")
+                    .get(0, Long.class))
+            .isEqualTo(1L);
+        assertThat(
+                predecessor
+                    .dsl
+                    .fetchSingle(
+                        "SELECT convalidated FROM pg_constraint WHERE conrelid = "
+                            + "'game_session_canonical_initial_admission_attempt'::regclass "
+                            + "AND conname = 'chk_gs_initial_admission_terminal_requires_protection'")
+                    .get(0, Boolean.class))
+            .isFalse();
+        assertThat(predecessorAttemptProjection(predecessor, request)).isEqualTo(originalAttempt);
+        assertThat(pointerAndAuditProjection(predecessor)).isEqualTo(originalPointerAndAudit);
+        assertThat(predecessorSourceProjection(predecessor)).isEqualTo(originalSources);
+        CanonicalInitialAdmissionOwnerProof retained =
+            predecessor
+                .initialAdmissionRepository
+                .read(NAMESPACE, request.initialAdmissionRequestId())
+                .orElseThrow();
+        assertThat(retained.outcome())
+            .isEqualTo(
+                committed
+                    ? CanonicalInitialAdmissionOwnerProof.Outcome.COMMITTED
+                    : CanonicalInitialAdmissionOwnerProof.Outcome.ABORTED);
+        assertThat(retained.requestDigest()).isEqualTo(request.requestDigest());
+        assertThat(retained.holdId()).isEqualTo(request.holdId());
+        if (committed) {
+          assertThat(retained.committedPointerVersion()).isEqualTo(1L);
+          assertThat(retained.auditEventId()).isPositive();
+        } else {
+          assertThat(retained.provesAbort()).isTrue();
+          assertThat(retained.committedPointerVersion()).isNull();
+          assertThat(retained.auditEventId()).isNull();
+        }
+        assertThat(
+                predecessor
+                    .dsl
+                    .fetchSingle(
+                        "SELECT account_protection_evidence_version, account_protection_id, "
+                            + "account_protection_fence, original_owner_attempt_id, original_owner_mutation_id, "
+                            + "original_owner_fence, account_protection_evidence_bytes "
+                            + "FROM game_session_canonical_initial_admission_attempt "
+                            + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                        NAMESPACE,
+                        request.initialAdmissionRequestId())
+                    .intoArray())
+            .containsOnlyNulls();
+        assertHumanProtectionUnavailable(
+            () ->
+                predecessor.initialAdmissionRepository.commit(
+                    request, testWorldProof(request), null));
+        assertHumanProtectionUnavailable(
+            () ->
+                predecessor.initialAdmissionRepository.abort(
+                    request, null, "Current Human retry remains unprotected"));
+        assertThatThrownBy(
+                () ->
+                    predecessor.transactions.executeWithoutResult(
+                        status ->
+                            predecessor.dsl.execute(
+                                "UPDATE game_session_canonical_initial_admission_attempt SET updated_at = updated_at + INTERVAL '1 second' "
+                                    + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+                                NAMESPACE,
+                                request.initialAdmissionRequestId())))
+            .isInstanceOf(DataAccessException.class);
+        assertThat(predecessorAttemptProjection(predecessor, request)).isEqualTo(originalAttempt);
+        assertThat(pointerAndAuditProjection(predecessor)).isEqualTo(originalPointerAndAudit);
+        assertThat(predecessorSourceProjection(predecessor)).isEqualTo(originalSources);
       }
-      assertThat(
-              predecessor
-                  .dsl
-                  .fetchSingle(
-                      "SELECT account_protection_evidence_version, account_protection_id, "
-                          + "account_protection_fence, original_owner_attempt_id, original_owner_mutation_id, "
-                          + "original_owner_fence, account_protection_evidence_bytes "
-                          + "FROM game_session_canonical_initial_admission_attempt "
-                          + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
-                      NAMESPACE,
-                      request.initialAdmissionRequestId())
-                  .intoArray())
-          .containsOnlyNulls();
-      assertHumanProtectionUnavailable(
-          () ->
-              predecessor.initialAdmissionRepository.commit(
-                  request, testWorldProof(request), null));
-      assertHumanProtectionUnavailable(
-          () ->
-              predecessor.initialAdmissionRepository.abort(
-                  request, null, "Current Human retry remains unprotected"));
-      assertThat(predecessorAttemptProjection(predecessor, request)).isEqualTo(originalAttempt);
-      assertThat(pointerAndAuditProjection(predecessor)).isEqualTo(originalPointerAndAudit);
-      assertThat(predecessorSourceProjection(predecessor)).isEqualTo(originalSources);
     }
+  }
+
+  @Test
+  void malformedProtectedOriginalHistoryFailsCorrectionWithoutChangingRowsGuardsOrHistory()
+      throws Exception {
+    Fixture fixture = fixture("1005");
+    PredecessorAdmission predecessor = preparePre1006Admission(fixture);
+    var prepared = predecessor.prepared();
+    var request =
+        initialAdmissionRequest(
+            prepared.catalog(), prepared.binding(), prepared.gameInstanceUuid());
+    reservePre1006Attempt(fixture, predecessor.launch(), request);
+    seedPre1006Terminal(fixture, prepared, predecessor.launch(), request, false);
+    migration(fixture, "1010").migrate();
+    migration(fixture, "1010").validate();
+    var partial =
+        new HashMap<>(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT * FROM game_session_canonical_initial_admission_attempt WHERE target_namespace = ? "
+                        + "AND initial_admission_request_id = ?",
+                    NAMESPACE,
+                    request.initialAdmissionRequestId())
+                .intoMap());
+    partial.put("initial_admission_request_id", "malformed-retained-protected-attempt");
+    partial.put("hold_id", UUID.randomUUID());
+    partial.put("status", "PENDING");
+    partial.put("abort_reason", null);
+    partial.put("abort_proof_digest", null);
+    partial.put("terminal_at", null);
+    putControlledPartialProtection(fixture, partial, "account_protection_fence");
+    // Simulate historical corruption admitted by the original SQL's UNKNOWN CHECK branch.
+    // Only the original v44 protection trigger is isolated for this one pending INSERT; V28,
+    // source/owner FK, pointer/audit, launch and truncate guards remain active. This is not
+    // Account-produced terminal protection or a supported owner write.
+    fixture.dsl.execute(
+        "ALTER TABLE game_session_canonical_initial_admission_attempt DISABLE TRIGGER "
+            + "game_session_canonical_initial_admission_v44_terminal_evidence");
+    try {
+      fixture.transactions.executeWithoutResult(
+          status ->
+              fixture
+                  .dsl
+                  .insertInto(
+                      DSL.table(DSL.name("game_session_canonical_initial_admission_attempt")))
+                  .set(partial)
+                  .execute());
+    } finally {
+      fixture.dsl.execute(
+          "ALTER TABLE game_session_canonical_initial_admission_attempt ENABLE TRIGGER "
+              + "game_session_canonical_initial_admission_v44_terminal_evidence");
+    }
+    String rows = allAttemptProjection(fixture);
+    String sources = predecessorSourceProjection(fixture);
+    String pointers = pointerAndAuditProjection(fixture);
+    String history = migrationHistoryProjection(fixture, "1010");
+    String checks = constraintProjection(fixture);
+    String guards = otherGuardProjection(fixture);
+    String launchGuard = launchGuardProjection(fixture, false);
+    assertThatThrownBy(() -> migration(fixture, null).migrate())
+        .hasStackTraceContaining("23514")
+        .hasStackTraceContaining(
+            "Retained canonical initial-admission protection evidence is malformed or partial");
+    assertThat(allAttemptProjection(fixture)).isEqualTo(rows);
+    assertThat(predecessorSourceProjection(fixture)).isEqualTo(sources);
+    assertThat(pointerAndAuditProjection(fixture)).isEqualTo(pointers);
+    assertThat(migrationHistoryProjection(fixture, "1010")).isEqualTo(history);
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle("SELECT count(*) FROM flyway_schema_history WHERE version = '1011'")
+                .get(0, Long.class))
+        .isZero();
+    assertThat(constraintProjection(fixture)).isEqualTo(checks);
+    assertThat(otherGuardProjection(fixture)).isEqualTo(guards);
+    assertThat(launchGuardProjection(fixture, false)).isEqualTo(launchGuard);
+    migration(fixture, "1010").validate();
+  }
+
+  /**
+   * Deliberately incomplete synthetic bytes exercise SQL null semantics, never Account authority.
+   */
+  private static void putControlledPartialProtection(
+      Fixture fixture, HashMap<String, Object> row, String missing) {
+    row.put("account_protection_evidence_version", 1);
+    row.put("account_protection_id", UUID.randomUUID());
+    row.put("account_protection_fence", 1L);
+    row.put(
+        "original_owner_attempt_id",
+        fixture
+            .dsl
+            .fetchSingle(
+                "SELECT owner_attempt_id FROM game_session_start_session_operator_attempt "
+                    + "WHERE target_namespace = ? ORDER BY owner_attempt_id LIMIT 1",
+                NAMESPACE)
+            .get(0, UUID.class));
+    row.put("original_owner_mutation_id", UUID.randomUUID());
+    row.put("original_owner_fence", 1L);
+    row.put("account_protection_evidence_bytes", new byte[] {1, 2, 3});
+    row.put(missing, null);
+  }
+
+  private static String allAttemptProjection(Fixture fixture) {
+    return fixture
+        .dsl
+        .fetchSingle(
+            "SELECT jsonb_agg(jsonb_build_array(xmin::TEXT, to_jsonb(attempt)) "
+                + "ORDER BY initial_admission_request_id)::TEXT FROM game_session_canonical_initial_admission_attempt attempt")
+        .get(0, String.class);
+  }
+
+  private static String constraintProjection(Fixture fixture) {
+    return fixture
+        .dsl
+        .fetchSingle(
+            "SELECT jsonb_agg(to_jsonb(guard) ORDER BY oid)::TEXT FROM ("
+                + "SELECT oid, conname, convalidated, pg_get_constraintdef(oid) AS definition FROM pg_constraint "
+                + "WHERE conrelid IN ('game_session_canonical_initial_admission_attempt'::regclass, "
+                + "'game_session_canonical_instance_launch'::regclass)) guard")
+        .get(0, String.class);
   }
 
   /** Old-schema SQL is confined to rows whose current owners require unavailable1010 columns. */
@@ -1248,6 +1484,71 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::text, to_jsonb(pointer)) ORDER BY id) FROM gameplay_admission_pointer pointer),"
                 + "(SELECT jsonb_agg(jsonb_build_array(xmin::text, to_jsonb(event)) ORDER BY id) FROM gameplay_admission_pointer_event event))::text AS projection")
         .get("projection", String.class);
+  }
+
+  private static Flyway migration(Fixture fixture, String target) {
+    String schema = fixture.dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+    var configuration =
+        Flyway.configure()
+            .dataSource(Objects.requireNonNull(fixture.transactionManager.getDataSource()))
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table("flyway_schema_history")
+            .locations(MIGRATION_LOCATION);
+    if (target != null) {
+      configuration.target(MigrationVersion.fromVersion(target));
+    }
+    return configuration.load();
+  }
+
+  private static String migrationHistoryProjection(Fixture fixture, String frontier) {
+    return fixture
+        .dsl
+        .fetchSingle(
+            "SELECT jsonb_agg(to_jsonb(history) ORDER BY installed_rank)::TEXT FROM flyway_schema_history history "
+                + "WHERE version::NUMERIC <= ?::NUMERIC",
+            frontier)
+        .get(0, String.class);
+  }
+
+  /** Rename must preserve the actual trigger OID, function OID/body and INSERT event mask. */
+  private static String launchGuardProjection(Fixture fixture, boolean corrected) {
+    String name =
+        corrected
+            ? "gs_canonical_instance_launch_complete_catalog_identity"
+            : "game_session_canonical_instance_launch_complete_catalog_identit";
+    var guards =
+        fixture.dsl.fetch(
+            "SELECT trigger.oid::TEXT, tgfoid::TEXT, tgtype, tgenabled::TEXT, pg_get_functiondef(tgfoid) "
+                + "FROM pg_trigger trigger WHERE tgrelid = 'game_session_canonical_instance_launch'::regclass "
+                + "AND NOT tgisinternal AND tgfoid = 'require_complete_canonical_launch_catalog_identity()'::regprocedure");
+    assertThat(guards).hasSize(1);
+    assertThat(guards.get(0).get("tgtype", Short.class)).isEqualTo((short) 7);
+    assertThat(guards.get(0).get("tgenabled", String.class)).isEqualTo("O");
+    assertThat(guards.get(0).get(4, String.class))
+        .contains("fixture_policy", "complete_policy_set_evidence");
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT tgname::TEXT FROM pg_trigger WHERE oid = ?::OID",
+                    guards.get(0).get(0, String.class))
+                .get(0, String.class))
+        .isEqualTo(name);
+    return guards.get(0).formatJSON();
+  }
+
+  private static String otherGuardProjection(Fixture fixture) {
+    return fixture
+        .dsl
+        .fetchSingle(
+            "SELECT jsonb_agg(to_jsonb(guard) ORDER BY guard.oid)::TEXT FROM ("
+                + "SELECT oid, tgrelid, tgname, tgfoid, tgtype, tgenabled FROM pg_trigger "
+                + "WHERE tgrelid IN ('game_session_canonical_instance_launch'::regclass, "
+                + "'game_session_canonical_initial_admission_attempt'::regclass, "
+                + "'game_session_canonical_initial_admission_intent'::regclass) "
+                + "AND tgfoid <> 'require_complete_canonical_launch_catalog_identity()'::regprocedure) guard")
+        .get(0, String.class);
   }
 
   private Fixture fixture() {
