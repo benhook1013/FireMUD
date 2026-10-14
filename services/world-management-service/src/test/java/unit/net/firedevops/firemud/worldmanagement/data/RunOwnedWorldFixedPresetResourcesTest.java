@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
@@ -19,6 +20,39 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredVersionIdentit
 import org.junit.jupiter.api.Test;
 
 class RunOwnedWorldFixedPresetResourcesTest {
+  @Test
+  void runtimePresetMatchesTheOriginalMigrationLiterals() throws Exception {
+    String digest = "sha256:f817af2770072bab0384c30c19b8cd30fce7a5a33f7587faed0024aa7c0909bc";
+    String[] templates = {
+      "9affa11b-02f5-3cc9-a50e-6760083c71e9",
+      "936c4d65-c460-3b73-9f4e-6ee6295bca24",
+      "c6058518-f9e0-3f26-9b05-2bc786095089",
+      "e74cca03-3b53-3edc-84f5-890651f5fea8",
+      "18c4b7a2-6498-3865-a464-814b56e4d4c2",
+      "ab46ef8f-e74f-3197-be62-9785ef63242e"
+    };
+    var definition = RunOwnedWorldFixedPresetResources.definition();
+    assertThat(definition.expectedContentDigest()).isEqualTo(digest);
+    assertThat(
+            java.util.stream.Stream.concat(
+                    java.util.stream.Stream.of(
+                        definition.region().templateId(), definition.zone().templateId()),
+                    java.util.stream.Stream.concat(
+                        definition.rooms().stream().map(room -> room.templateId()),
+                        definition.exits().stream().map(exit -> exit.templateId())))
+                .map(UUID::toString)
+                .toList())
+        .containsExactly(templates);
+    try (var migration =
+        RunOwnedWorldFixedPresetResourcesTest.class.getResourceAsStream(
+            "/db/migration/V1041__world_run_owned_fixed_preset_preparation.sql")) {
+      assertThat(migration).isNotNull();
+      String sql = new String(migration.readAllBytes(), StandardCharsets.UTF_8);
+      assertThat(sql).contains("'" + digest + "'");
+      for (String template : templates) assertThat(sql).contains("'" + template + "'");
+    }
+  }
+
   @Test
   void rejectsResolvedScriptPatchOverrideAtInitialPlanBeforeMaterialization() {
     assertOverrideRejected(true, false);
