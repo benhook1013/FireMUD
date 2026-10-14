@@ -20,133 +20,74 @@ import net.firedevops.firemud.entitymanagement.service.PreseededActorStagingElig
 import net.firedevops.firemud.entitymanagement.service.RunOwnedPreseededActorAssignmentAuthorityAdapter;
 import net.firedevops.firemud.entitymanagement.service.RunOwnedPreseededAssignmentAuthority;
 import net.firedevops.firemud.entitymanagement.service.impl.GameSessionPreseededActorAssignmentOwnerEvidenceAdapter;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.ssl.SslBundles;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 
 /**
- * Wires the bounded Entity writer while leaving Account/owner evidence and run authorization denied
- * unless their explicitly enabled producers are present.
+ * Manual factories for passive preseeded-actor assignment source services.
+ *
+ * <p>This class is deliberately not a Spring configuration. Production component scanning does not
+ * register these factories, their services, or their owner-read clients.
  */
-@Configuration
 public class PreseededActorAssignmentConfiguration {
-  @Bean
-  @ConditionalOnProperty(
-      prefix = "firemud.run-owned-preseeded-actor-assignment",
-      name = "enabled",
-      havingValue = "false",
-      matchIfMissing = true)
-  @ConditionalOnMissingBean(PreseededActorAccountIdentityPort.class)
   public PreseededActorAccountIdentityPort disabledPreseededActorAccountIdentityPort() {
     return (accountUuid, assignmentUuid) -> {
       throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_IDENTITY_UNAVAILABLE");
     };
   }
 
-  @Bean(initMethod = "init", destroyMethod = "close")
-  @ConditionalOnProperty(
-      prefix = "firemud.run-owned-preseeded-actor-assignment",
-      name = "enabled",
-      havingValue = "true")
-  @ConditionalOnMissingBean({
-    PreseededActorAccountIdentityPort.class,
-    AccountRuntimeIdentityClient.class
-  })
+  /** Creates an Account identity client for an explicitly controlled composition. */
   public AccountRuntimeIdentityClient preseededActorAccountIdentityClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       GrpcChannelFactory channelFactory,
-      @org.springframework.beans.factory.annotation.Value("${firemud.grpc.workload-namespace:}")
-          String workloadNamespace) {
+      String workloadNamespace) {
     return new AccountRuntimeIdentityClient(
         endpoints, tlsProperties, channelFactory, workloadNamespace);
   }
 
-  @Bean
-  @ConditionalOnProperty(
-      prefix = "firemud.run-owned-preseeded-actor-assignment",
-      name = "enabled",
-      havingValue = "true")
-  @ConditionalOnMissingBean(PreseededActorAccountIdentityPort.class)
   public PreseededActorAccountIdentityPort enabledPreseededActorAccountIdentityPort(
       AccountRuntimeIdentityClient accountIdentityClient) {
     return accountIdentityClient::resolveRuntimeAccountIdentity;
   }
 
-  @Bean
-  @ConditionalOnProperty(
-      prefix = "firemud.run-owned-preseeded-actor-assignment",
-      name = "enabled",
-      havingValue = "false",
-      matchIfMissing = true)
-  @ConditionalOnMissingBean(PreseededActorStagingEligibilityPort.class)
   public PreseededActorStagingEligibilityPort disabledPreseededActorStagingEligibilityPort() {
     return (accountUuid, tenantUuid, assignmentUuid) -> {
       throw new IllegalStateException("PRESEEDED_ASSIGNMENT_ACCOUNT_STAGING_EVIDENCE_UNAVAILABLE");
     };
   }
 
-  @Bean(initMethod = "init", destroyMethod = "close")
-  @ConditionalOnProperty(
-      prefix = "firemud.run-owned-preseeded-actor-assignment",
-      name = "enabled",
-      havingValue = "true")
-  @ConditionalOnMissingBean({
-    PreseededActorStagingEligibilityPort.class,
-    AccountPreseededActorStagingEligibilityClient.class
-  })
+  /** Creates an Account staging client for an explicitly controlled composition. */
   public AccountPreseededActorStagingEligibilityClient preseededActorStagingEligibilityClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       GrpcChannelFactory channelFactory,
-      @org.springframework.beans.factory.annotation.Value("${firemud.grpc.workload-namespace:}")
-          String workloadNamespace) {
+      String workloadNamespace) {
     return new AccountPreseededActorStagingEligibilityClient(
         endpoints, tlsProperties, channelFactory, workloadNamespace);
   }
 
-  @Bean(initMethod = "init", destroyMethod = "close")
-  @ConditionalOnProperty(
-      prefix = "firemud.run-owned-preseeded-actor-assignment",
-      name = "enabled",
-      havingValue = "true")
-  @ConditionalOnMissingBean({
-    PreseededActorAssignmentOwnerEvidencePort.class,
-    GameSessionPreseededActorAssignmentOwnerReadClient.class
-  })
+  public PreseededActorStagingEligibilityPort enabledPreseededActorStagingEligibilityPort(
+      AccountPreseededActorStagingEligibilityClient stagingEligibilityClient) {
+    return stagingEligibilityClient::resolvePreseededActorStagingEligibility;
+  }
+
+  /** Creates a Game Session owner-read client for an explicitly controlled composition. */
   public GameSessionPreseededActorAssignmentOwnerReadClient preseededActorAssignmentOwnerReadClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProperties,
       GrpcChannelFactory channelFactory,
-      @org.springframework.beans.factory.annotation.Value("${firemud.grpc.workload-namespace:}")
-          String workloadNamespace) {
+      String workloadNamespace) {
     return new GameSessionPreseededActorAssignmentOwnerReadClient(
         endpoints, tlsProperties, channelFactory, workloadNamespace);
   }
 
-  @Bean
-  @ConditionalOnProperty(
-      prefix = "firemud.run-owned-preseeded-actor-assignment",
-      name = "enabled",
-      havingValue = "true")
-  @ConditionalOnMissingBean(PreseededActorAssignmentOwnerEvidencePort.class)
   public PreseededActorAssignmentOwnerEvidencePort preseededActorAssignmentOwnerEvidencePort(
       GameSessionPreseededActorAssignmentOwnerReadClient gameSessionClient,
-      @org.springframework.beans.factory.annotation.Value("${firemud.grpc.workload-namespace:}")
-          String workloadNamespace) {
+      String workloadNamespace) {
     return new GameSessionPreseededActorAssignmentOwnerEvidenceAdapter(
         gameSessionClient, workloadNamespace);
   }
 
-  @Bean
-  @ConditionalOnProperty(
-      prefix = "firemud.run-owned-preseeded-actor-assignment",
-      name = "enabled",
-      havingValue = "false",
-      matchIfMissing = true)
-  @ConditionalOnMissingBean(RunOwnedPreseededAssignmentAuthority.class)
   public RunOwnedPreseededAssignmentAuthority disabledRunOwnedPreseededAssignmentAuthority() {
     return new RunOwnedPreseededAssignmentAuthority() {
       @Override
@@ -166,29 +107,14 @@ public class PreseededActorAssignmentConfiguration {
     };
   }
 
-  @Bean
-  @ConditionalOnProperty(
-      prefix = "firemud.run-owned-preseeded-actor-assignment",
-      name = "enabled",
-      havingValue = "true")
-  @ConditionalOnMissingBean(RunOwnedPreseededAssignmentAuthority.class)
+  /** Creates run-owned authority from caller-supplied active server trust material. */
   public RunOwnedPreseededAssignmentAuthority runOwnedPreseededAssignmentAuthorityFromCapability(
-      @org.springframework.beans.factory.annotation.Value(
-              "${firemud.run-owned-preseeded-actor-assignment.capability-path:}")
-          String capabilityPath,
-      @org.springframework.beans.factory.annotation.Value(
-              "${firemud.run-owned-preseeded-actor-assignment.run-id:}")
-          String runId,
-      @org.springframework.beans.factory.annotation.Value(
-              "${firemud.run-owned-preseeded-actor-assignment.compose-project-name:}")
-          String composeProjectName,
-      @org.springframework.beans.factory.annotation.Value("${firemud.grpc.workload-namespace:}")
-          String workloadNamespace,
-      @org.springframework.beans.factory.annotation.Value(
-              "${spring.ssl.bundle.pem.firemud-grpc.truststore.certificate:}")
-          String entityServerTrustRoot,
-      @org.springframework.beans.factory.annotation.Value("${spring.grpc.server.ssl.bundle:}")
-          String activeServerTlsBundleName,
+      String capabilityPath,
+      String runId,
+      String composeProjectName,
+      String workloadNamespace,
+      String entityServerTrustRoot,
+      String activeServerTlsBundleName,
       SslBundles sslBundles) {
     return RunOwnedPreseededActorAssignmentAuthorityAdapter.forActiveServerTrustBundle(
         capabilityPath,
@@ -201,18 +127,9 @@ public class PreseededActorAssignmentConfiguration {
   }
 
   /**
-   * The enabled source adapter combines one current Account staging snapshot with exact current
-   * Game Session/Game Design selectors. Account status is a point-in-time observation, not a held
-   * JOIN authorization, PLAY grant, or gameplay admission decision; persisted assignments do not
-   * authorize runtime admission or activation.
+   * The manually selected unavailable source adapter fails closed; assignment remains
+   * non-admitting.
    */
-  @Bean
-  @ConditionalOnProperty(
-      prefix = "firemud.run-owned-preseeded-actor-assignment",
-      name = "enabled",
-      havingValue = "false",
-      matchIfMissing = true)
-  @ConditionalOnMissingBean(PreseededActorAssignmentOwnerEvidencePort.class)
   public PreseededActorAssignmentOwnerEvidencePort
       unavailablePreseededActorAssignmentOwnerEvidencePort() {
     return (PreseededActorAssignmentRequest request,
@@ -222,8 +139,6 @@ public class PreseededActorAssignmentConfiguration {
     };
   }
 
-  @Bean
-  @ConditionalOnMissingBean
   public PreseededActorAssignmentService preseededActorAssignmentService(
       RunOwnedPreseededAssignmentAuthority runAuthority,
       PreseededActorAccountIdentityPort accountIdentityPort,
@@ -239,8 +154,6 @@ public class PreseededActorAssignmentConfiguration {
   }
 
   /** Receipt reads are read-only and remain available when assignment creation is disabled. */
-  @Bean
-  @ConditionalOnMissingBean
   public PreseededActorAssignmentReceiptService preseededActorAssignmentReceiptService(
       CharacterRepository characterRepository) {
     return new PreseededActorAssignmentReceiptService(characterRepository);

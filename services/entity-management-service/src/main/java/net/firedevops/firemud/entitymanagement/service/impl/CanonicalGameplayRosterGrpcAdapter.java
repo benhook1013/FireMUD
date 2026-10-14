@@ -34,10 +34,8 @@ import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.jooq.exception.DataAccessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.grpc.server.service.GrpcService;
 
 /** Dedicated certificate-guarded non-admitting canonical roster gRPC boundary. */
-@GrpcService
 public final class CanonicalGameplayRosterGrpcAdapter
     extends CanonicalGameplayRosterServiceGrpc.CanonicalGameplayRosterServiceImplBase {
   private static final Logger LOGGER =

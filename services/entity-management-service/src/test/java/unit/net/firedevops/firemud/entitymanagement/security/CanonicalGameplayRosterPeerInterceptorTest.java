@@ -112,7 +112,7 @@ class CanonicalGameplayRosterPeerInterceptorTest {
   }
 
   @Test
-  void applicationYamlBypassesJwtForOnlyTheTwoExactRosterMethods() {
+  void applicationYamlKeepsRosterMethodsOutsideJwtBypassAllowlist() {
     var yaml = new YamlPropertiesFactoryBean();
     yaml.setResources(new FileSystemResource("src/main/resources/application.yml"));
     Properties properties = yaml.getObject();
@@ -126,12 +126,9 @@ class CanonicalGameplayRosterPeerInterceptorTest {
             .map(index -> properties.getProperty("firemud.auth.grpc.public-methods[" + index + "]"))
             .toList();
 
-    assertThat(
-            publicMethods.stream()
-                .filter(
-                    method ->
-                        method.startsWith("entity_management.v1.CanonicalGameplayRosterService/")))
-        .containsExactly(
+    assertThat(publicMethods)
+        .containsExactly("entity_management.v1.EntityManagementService/Ping")
+        .doesNotContain(
             CanonicalGameplayRosterPeerInterceptor.METHOD_NAME,
             CanonicalGameplayRosterPeerInterceptor.SELECTED_ASSIGNMENT_METHOD_NAME);
     assertThat(publicMethods).noneMatch(method -> method.contains("*"));
