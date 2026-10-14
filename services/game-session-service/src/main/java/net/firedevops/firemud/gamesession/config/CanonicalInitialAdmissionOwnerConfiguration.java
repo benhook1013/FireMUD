@@ -1,11 +1,9 @@
 package net.firedevops.firemud.gamesession.config;
 
-import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanceLaunchRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
-import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionService;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionWorldVerifier;
 import net.firedevops.firemud.gamesession.service.impl.DatabaseCanonicalInitialAdmissionService;
@@ -28,11 +26,8 @@ public class CanonicalInitialAdmissionOwnerConfiguration {
   CanonicalInitialAdmissionRepository canonicalInitialAdmissionRepository(
       DSLContext dsl,
       GameSessionCanonicalRealmCatalogRepository catalogRepository,
-      GameSessionCanonicalAdmissionPointerRepository pointerRepository,
-      CanonicalGameInstanceLaunchAssociationRepository launchRepository,
-      GameplayAdmissionPointerEventRepository eventRepository) {
-    return new CanonicalInitialAdmissionRepository(
-        dsl, catalogRepository, pointerRepository, launchRepository, eventRepository);
+      GameSessionCanonicalAdmissionPointerRepository pointerRepository) {
+    return new CanonicalInitialAdmissionRepository(dsl, catalogRepository, pointerRepository);
   }
 
   @Bean
