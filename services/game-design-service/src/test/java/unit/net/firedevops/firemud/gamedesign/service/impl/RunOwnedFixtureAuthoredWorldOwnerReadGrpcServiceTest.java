@@ -135,6 +135,25 @@ class RunOwnedFixtureAuthoredWorldOwnerReadGrpcServiceTest {
               new CannotCreateTransactionException("transaction unavailable"),
               Status.Code.UNAVAILABLE),
           new FailureCase(
+              new org.springframework.transaction.TransactionTimedOutException(
+                  "transaction timed out"),
+              Status.Code.UNAVAILABLE),
+          new FailureCase(
+              new org.springframework.transaction.IllegalTransactionStateException(
+                  "propagation mismatch"),
+              Status.Code.INTERNAL),
+          new FailureCase(
+              new org.springframework.transaction.UnexpectedRollbackException("rollback only"),
+              Status.Code.INTERNAL),
+          new FailureCase(
+              new org.springframework.transaction.NestedTransactionNotSupportedException(
+                  "nested unsupported"),
+              Status.Code.INTERNAL),
+          new FailureCase(
+              new org.springframework.transaction.InvalidIsolationLevelException(
+                  "isolation unsupported"),
+              Status.Code.INTERNAL),
+          new FailureCase(
               new DataIntegrityViolationException(
                   "connection failed", new SQLException("connection lost", "08006")),
               Status.Code.UNAVAILABLE),
@@ -160,6 +179,7 @@ class RunOwnedFixtureAuthoredWorldOwnerReadGrpcServiceTest {
               GetAuthoredWorldVersionStateRequest.getDefaultInstance(),
               refusingObserver(versionFailure));
       assertThat(Status.fromThrowable(sourceFailure.get()).getCode())
+          .as("source transaction/storage %s", failure.exception().getClass().getSimpleName())
           .isEqualTo(failure.expectedCode());
       assertThat(Status.fromThrowable(versionFailure.get()).getCode())
           .isEqualTo(failure.expectedCode());

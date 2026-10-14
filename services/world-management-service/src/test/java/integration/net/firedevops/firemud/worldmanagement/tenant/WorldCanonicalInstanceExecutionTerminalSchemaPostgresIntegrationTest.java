@@ -1,5 +1,10 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
+import static net.firedevops.firemud.worldmanagement.WorldPostgresMigrationTestSupport.HISTORY;
+import static net.firedevops.firemud.worldmanagement.WorldPostgresMigrationTestSupport.flyway;
+import static net.firedevops.firemud.worldmanagement.WorldPostgresMigrationTestSupport.repositoryRoot;
+import static net.firedevops.firemud.worldmanagement.WorldPostgresMigrationTestSupport.sagaMigrations;
+import static net.firedevops.firemud.worldmanagement.WorldPostgresMigrationTestSupport.worldMigrations;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -12,7 +17,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
@@ -36,7 +40,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class WorldCanonicalInstanceExecutionTerminalSchemaPostgresIntegrationTest {
-  private static final String HISTORY = "flyway_schema_history_world_management_service";
   private static final String V1035_FILE =
       "V1035__world_start_session_execution_terminal_fence.sql";
   private static final String V1035_SHA256 =
@@ -56,11 +59,8 @@ class WorldCanonicalInstanceExecutionTerminalSchemaPostgresIntegrationTest {
     source.setSchema(schema);
     DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
     Path root = repositoryRoot();
-    String worldLocation =
-        "filesystem:"
-            + root.resolve("services/world-management-service/src/main/resources/db/migration");
-    String sagaLocation =
-        "filesystem:" + root.resolve("services/common-saga/src/main/resources/db/migration/saga");
+    String worldLocation = worldMigrations(root);
+    String sagaLocation = sagaMigrations(root);
     String qualifiedExecutionTable = qualified(schema, "world_canonical_instance_execution");
     try {
       assertThat(
@@ -140,20 +140,6 @@ class WorldCanonicalInstanceExecutionTerminalSchemaPostgresIntegrationTest {
     } finally {
       dsl.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
     }
-  }
-
-  private static Flyway flyway(
-      DriverManagerDataSource source, String schema, MigrationVersion target, String... locations) {
-    var configuration =
-        Flyway.configure()
-            .dataSource(source)
-            .schemas(schema)
-            .defaultSchema(schema)
-            .table(HISTORY)
-            .placeholders(Map.of("serviceSchema", schema))
-            .locations(locations);
-    if (target != null) configuration.target(target);
-    return configuration.load();
   }
 
   private static ExecutionRow executionRow(String requestId) {
@@ -333,15 +319,6 @@ class WorldCanonicalInstanceExecutionTerminalSchemaPostgresIntegrationTest {
 
   private static String qualified(String schema, String object) {
     return "\"" + schema + "\".\"" + object + "\"";
-  }
-
-  private static Path repositoryRoot() {
-    Path candidate = Path.of("").toAbsolutePath();
-    while (candidate != null) {
-      if (Files.exists(candidate.resolve("settings.gradle.kts"))) return candidate;
-      candidate = candidate.getParent();
-    }
-    throw new IllegalStateException("Unable to locate repository filesystem migrations");
   }
 
   private record ExecutionRow(
