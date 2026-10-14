@@ -6031,15 +6031,17 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(known_audit["finding_only_findings"], ["one unresolved current review thread"])
         self.assertEqual(known_audit["unknown_review_evidence"], [])
 
-        for status in ("finding_pending", "pending", "unavailable", "unfinalized", {}, "resolved"):
-            with self.subTest(source_status=status):
+        for status, accepted in ((status, accepted) for status in
+                                 ("finding_pending", "pending", "unavailable", "unfinalized", {}, "resolved")
+                                 for accepted in (0, 1)):
+            with self.subTest(source_status=status, original_accepted=accepted):
                 source = {
                     "pr": 42,
                     "head": HEAD,
                     "checkpoint": "accepted-source",
                     "completed": True,
                     "attributable": True,
-                    "accepted": 1,
+                    "accepted": accepted,
                     "source_resolution_status": status,
                 }
                 source_audit = audit_for([source])
@@ -7869,6 +7871,46 @@ class RuntimeTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "no trusted original actor/time identity"):
                 self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
             self.assertTrue(path.exists())
+
+    def test_native_cli_corrected_publication_retains_review_and_effective_proof(self):
+        from test_pr_review_sqlite_review_records import corrected_native_fixture
+
+        for initial, correction, expected in ((("accepted", "accepted"), (1, "rejected"), 2),
+                                              (("rejected",), (1, "accepted"), 0)):
+            with self.subTest(initial=initial), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                database = common / "records.sqlite3"
+                sqlite_store.SqliteStateStore(database).update(lambda state: state)
+                records = sqlite_review_records.SqliteReviewRecords(database)
+                records.bootstrap()
+                run_id, checkpoint, comment = corrected_native_fixture(records, initial=initial, correction=correction)
+                nodes = [{"databaseId": comment["id"], "body": comment["body"],
+                          "createdAt": comment["created_at"], "updatedAt": comment["updated_at"],
+                          "author": {"login": "owner"}},
+                         {"databaseId": 790, "body": comment["body"].replace("CLI:", "Correction — CLI:", 1)
+                          .replace(f"<!-- firemud-cli-run: {run_id} -->", ""),
+                          "createdAt": "2026-10-01T00:00:15Z", "author": {"login": "owner"}}]
+                payload = self._payload(nodes, head="d" * 40)
+                payload["data"]["repository"]["pullRequest"]["changedFiles"] = 1
+                with patch.object(github, "fetch_pull_request", return_value=payload), patch.object(
+                        evidence, "resolve_cli_capture_context", return_value=(common, records)):
+                    observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
+                    history = observer.history(42, "cli")
+                    unbound = LiveEvidence("owner/repo", LiveGitHub("owner/repo")).history(42, "cli")
+                    self.assertEqual(next(item for item in unbound if item["checkpoint"] == "789")
+                                     ["source_resolution_status"], "unavailable")
+                original = next(item for item in history if item["checkpoint"] == "789")
+                self.assertTrue(original["completed"])
+                self.assertTrue(original["attributable"])
+                self.assertEqual(original["head"], "b" * 40)
+                self.assertEqual(original["accepted"], expected)
+                self.assertEqual(original["raw"], len(initial))
+                self.assertEqual(original["source_resolution_status"], "finding_pending")
+                self.assertEqual(sum(item["completed"] and not item["correction"] for item in history), 1)
+                accepted_index = 2 if expected else 1
+                records.record_source_resolution(run_id, f"cli-run:{run_id}:finding:{accepted_index}", source_pr=42,
+                    resolution_id="fixed-effective", fix_sha="e" * 40, actor="owner", proof_note="Verified effective fix")
+                self.assertEqual(observer._source_resolution_status(42, "cli", checkpoint, "b" * 40), "resolved")
 
     def test_duplicate_public_checkpoints_for_one_cli_capture_count_once(self) -> None:
         run_id = "run.Duplicate"

@@ -2302,12 +2302,14 @@ class ReviewController:
             _field(value, "completed") is True
             and _field(value, "attributable") is True
             and type(accepted) is int
-            and accepted > 0
+            and accepted >= 0
         ):
             return False
         has_source_resolution = _field(value, "source_resolution_status") is not None
         if has_source_resolution:
             return _field(value, "source_resolution_status") != "resolved"
+        if accepted == 0:
+            return False
         reviewed_head = _field(value, "head", "reviewed_head")
         if not isinstance(reviewed_head, str) or reviewed_head.casefold() == current_head.casefold():
             return True
@@ -3382,7 +3384,7 @@ class ReviewController:
                 ):
                     if type(evidence_value.accepted) is not int or evidence_value.accepted < 0:
                         raise ControllerError(f"{selected.value} channel has a malformed accepted finding count")
-                    if evidence_value.accepted > 0:
+                    if evidence_value.accepted > 0 or _field(value, "source_resolution_status") is not None:
                         has_source_resolution = _field(value, "source_resolution_status") is not None
                         if has_source_resolution:
                             source_status = _field(value, "source_resolution_status")
@@ -3579,7 +3581,7 @@ class ReviewController:
         reviewed_head = _field(latest, "head", "reviewed_head")
         has_source_resolution = _field(latest, "source_resolution_status") is not None
         if (
-            accepted > 0
+            (accepted > 0 or has_source_resolution)
             and reviewed_head.casefold() == current.child_head.casefold()
             and (not has_source_resolution or self._accepted_findings_pending(latest, current.child_head))
         ):
@@ -4334,7 +4336,10 @@ class ReviewController:
                 request_preparation_only=request_preparation_only,
             )
 
-        if any(completed["accepted"] > 0 for completed in snapshot["results"]):
+        if any(completed["accepted"] > 0 for completed in snapshot["results"]) or any(
+            self._accepted_findings_pending(value, current.child_head if current else allocation.head)
+            for value in history
+        ):
             if current is None or reconciliation_result is None:
                 cap_reached = cap is not None and used >= cap
                 return result(
@@ -4592,9 +4597,7 @@ class ReviewController:
                 and _field(item, "attributable") is True
                 and _field(item, "provisional") is not True
                 and _field(item, "correction") is not True
-                and _field(item, "head", "reviewed_head") == current.child_head
-                and type(_field(item, "accepted")) is int
-                and _field(item, "accepted") > 0
+                and self._accepted_findings_pending(item, current.child_head)
             ),
             None,
         )
