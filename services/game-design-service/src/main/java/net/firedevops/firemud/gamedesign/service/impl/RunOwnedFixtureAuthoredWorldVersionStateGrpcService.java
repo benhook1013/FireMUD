@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.service.impl;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.UUID;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateGrpcCodec;
 import net.firedevops.firemud.gamedesign.data.RunOwnedFixtureOwnerReadAuthorization;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
@@ -41,7 +42,12 @@ public final class RunOwnedFixtureAuthoredWorldVersionStateGrpcService
       StreamObserver<GetAuthoredWorldVersionStateResponse> observer) {
     try {
       var receipt = authorization.authorizeVersion(request);
-      var expected = AuthoredWorldVersionStateGrpcCodec.fromRequest(request);
+      final AuthoredWorldVersionStateEvidence.Request expected;
+      try {
+        expected = AuthoredWorldVersionStateGrpcCodec.fromRequest(request);
+      } catch (IllegalArgumentException invalidRequest) {
+        throw new RunOwnedFixtureOwnerReadAuthorization.RequestDecodingException(invalidRequest);
+      }
       kernel.getAuthoredWorldVersionState(
           request,
           new StreamObserver<>() {
@@ -89,15 +95,23 @@ public final class RunOwnedFixtureAuthoredWorldVersionStateGrpcService
           Status.PERMISSION_DENIED
               .withDescription("Fixed World fixture read denied")
               .asRuntimeException());
-    } catch (IllegalArgumentException invalid) {
+    } catch (RunOwnedFixtureOwnerReadAuthorization.RequestDecodingException invalid) {
       observer.onError(
           Status.INVALID_ARGUMENT
               .withDescription("Closed fixture Version request required")
               .asRuntimeException());
-    } catch (RuntimeException unavailable) {
+    } catch (IllegalArgumentException invalid) {
       observer.onError(
           Status.FAILED_PRECONDITION
-              .withDescription("Committed fixture authority unavailable")
+              .withDescription("Committed fixture authority does not match the request")
+              .asRuntimeException());
+    } catch (RuntimeException failure) {
+      Status storageStatus = AuthoredWorldSourceReadGrpcService.storageFailureStatus(failure);
+      observer.onError(
+          (storageStatus != null
+                  ? storageStatus
+                  : Status.FAILED_PRECONDITION.withDescription(
+                      "Committed fixture authority unavailable"))
               .asRuntimeException());
     }
   }

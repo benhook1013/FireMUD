@@ -821,7 +821,9 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
   @Timed(value = "world.failPreparedInstance")
   public WorldInstanceLifecycleSnapshotDto failPreparedWorldInstance(
       long tenantId, long gameInstanceId, long expectedLifecycleEpoch, String reason) {
+    if (fixtureModeEnabled()) throw fixtureWritesUnavailable();
     WorldInstance worldInstance = requireWorldInstance(tenantId, gameInstanceId);
+    rejectFixtureLifecycleMutation(worldInstance);
     requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
     if (STATUS_FAILED_PRE_ACTIVATION.equals(worldInstance.getStatus())) {
       return snapshot(worldInstance);
@@ -863,6 +865,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       long expectedLifecycleEpoch,
       String terminationRequestId,
       String reason) {
+    if (fixtureModeEnabled()) throw fixtureWritesUnavailable();
     if (terminationRequestId == null || terminationRequestId.isBlank()) {
       throw new IllegalArgumentException("INVALID_ARGUMENT: terminationRequestId is required");
     }
@@ -892,6 +895,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
             () -> {
               WorldInstance finalWorldInstance =
                   requireLockedWorldInstance(tenantId, gameInstanceId);
+              rejectFixtureLifecycleMutation(finalWorldInstance);
               if (!terminationRequestId.equals(finalWorldInstance.getTerminationRequestId())) {
                 throw new IllegalArgumentException(
                     "INVALID_WORLD_INSTANCE_STATE: world instance termination request changed before finalization");
@@ -924,6 +928,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       String terminationRequestId,
       String reason) {
     WorldInstance worldInstance = requireLockedWorldInstance(tenantId, gameInstanceId);
+    rejectFixtureLifecycleMutation(worldInstance);
     if (STATUS_TERMINATED.equals(worldInstance.getStatus())) {
       return worldInstance;
     }
@@ -972,6 +977,12 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     roomInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
     zoneInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
     regionInstanceRepository.deleteByTenantIdAndGameInstanceId(tenantId, gameInstanceId);
+  }
+
+  private static void rejectFixtureLifecycleMutation(WorldInstance worldInstance) {
+    if (worldInstance.getRunOwnedFixtureBindingSha256() != null) {
+      throw fixtureEvidenceUnavailable();
+    }
   }
 
   private void validatePrepareRequest(PreparedWorldInstanceRequest request) {
