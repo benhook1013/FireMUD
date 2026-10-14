@@ -275,3 +275,8 @@ Entry format:
   - Context: a canonical Game Session pin test established its real PostgreSQL INSERT lock wait, then expected a finite owner lease to have expired after a fixed host sleep. The database still reported the lease live, so the intended post-expiry race was not established.
   - Expected pattern: retain the original finite lease and exact blocker, poll the same PostgreSQL expiry predicate used by the owner within a bounded deadline, then release the lock and assert refusal without mutation. Do not change the lease, renew authority, weaken the refusal assertion or infer clock skew from the failed sleep assumption.
   - Current status: the test now waits for the database-owned expiry condition; current physical qualification remains required.
+
+- `2026-10-14`: Hold asynchronous recovery until failure-state assertions finish
+  - Context: the TLS certificate watcher callback-failure test signalled its first attempt before the watcher recorded an unhealthy state. A successful retry could restore health before the test observed that state.
+  - Expected pattern: gate the successful test callback until the existing unhealthy-state and aggregate-health assertions finish, release the gate in `finally`, then verify retry and recovered health. Preserve the production retry policy and every failure/recovery assertion.
+  - Current status: the test-only latch correction passed the full 486-case Common unit suite and static checks. The separate PostgreSQL refusal and cleanup chronology remains unexplained under the existing local PostgreSQL availability observation; later passing proof does not identify that cause.
