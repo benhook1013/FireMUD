@@ -35,6 +35,7 @@ import net.firedevops.firemud.accountservice.authordraft.DraftAuthorizationFence
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderClient;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.Owner;
+import net.firedevops.firemud.common.authoring.DraftBaseReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitOrderReadClient;
 import net.firedevops.firemud.common.authoring.DraftCommitOrderReadEvidence;
@@ -44,6 +45,7 @@ import net.firedevops.firemud.common.authoring.WorldOriginalDraftGraphApplyClien
 import net.firedevops.firemud.common.authoring.WorldOriginalDraftGraphApplyGrpcCodec;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient;
+import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -56,16 +58,17 @@ import net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalOperation;
 import net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalOutcome;
 import net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalOutcomeRepository;
 import net.firedevops.firemud.gamedesign.draft.GameDesignDraftTerminalReadGrpcService;
+import net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBaseRepository;
 import net.firedevops.firemud.gamedesign.draft.GameDesignWorldSourceCommitService;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
-import net.firedevops.firemud.gamedesign.publication.GameplayRuleSource;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceReadGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateGrpcService;
 import net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateService;
 import net.firedevops.firemud.gamedesign.service.impl.TenantIdentityGrpcService;
@@ -93,6 +96,9 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDraftTerminalReadServiceGrpc;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceClosureDeclaration;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.ZoneDesignMutation;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -121,8 +127,8 @@ import tools.jackson.databind.ObjectMapper;
  * platform, Redis coordination, and all three workload certificates are controlled test inputs; the
  * fixture persists those values through actual Account SQL owners and does not relax the current
  * deny-only authority. This does not prove production creator provenance, production Account
- * permission, service registration, runtime activation, or genuine handoff authority; those handoffs
- * remain open.
+ * permission, service registration, runtime activation, or genuine handoff authority; those
+ * handoffs remain open.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -227,13 +233,15 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
       endpoints.setAccountService("localhost:" + accountServer.getPort());
       var factory = new GrpcChannelFactory();
       var sourceRepository = new GameAuthoredWorldSourceRepository(gd.store().dsl());
+      // Registration is controlled owner setup (no creator-facing registration RPC exists); mount
+      // the standalone read adapter only on this test socket for the actual World owner read.
       register(
           gdHandlers,
           new TenantIdentityGrpcService(
               new GameTenantCreationRepository(
                   gd.store().dsl(), new GameRepository(gd.store().dsl())),
-              sourceRepository,
               NAMESPACE),
+          new AuthoredWorldSourceReadGrpcService(sourceRepository, NAMESPACE),
           new AuthoredWorldVersionStateGrpcService(
               new AuthoredWorldVersionStateService(gd.store().transactions(), sourceRepository),
               NAMESPACE));
@@ -348,7 +356,25 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
                     gd.target().gameDesignVersionRowId())
                 .orElseThrow();
         assertThat(identity.sourceIntakeReceipt()).isEqualTo(intake);
-        var binding = binding(gd.target());
+        var draftSources = new GameDesignSourceRepository(gd.store().dsl());
+        var genesis = draftSources.readGenesis(gd.target()).orElseThrow();
+        var binding = binding(gd.target(), "genesis:" + genesis.policy().receiptId());
+        var reviewedBaseOwner = new GameDesignReviewedBaseRepository(gd.store().dsl());
+        // This controlled review retains exact current policy/command/asset genesis owner evidence;
+        // it proves source lineage only, not reviewer identity or Account authorization.
+        transaction(gd.store())
+            .execute(
+                ignored -> {
+                  var reviewedBase =
+                      reviewedBaseOwner.resolve(
+                          gd.target(), DraftBaseReference.parse(binding.baseCommitId()));
+                  draftSources.claimReviewed(binding, reviewedBase);
+                  var retained = reviewedBaseOwner.requireCurrentRetained(binding);
+                  assertThat(retained.canonicalBytes())
+                      .containsExactly(reviewedBase.canonicalBytes());
+                  assertThat(retained.digest()).isEqualTo(reviewedBase.digest());
+                  return null;
+                });
         var request = account.prepareOriginalDraftOrder(binding, NAMESPACE);
         var original = request.original();
         register(
@@ -361,8 +387,7 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         var sources = new GameDesignSourceRepository(gd.store().dsl());
         var fence = new WorldDesignPublicationFenceRepository(world.dsl(), intakes);
         var mapper = new ObjectMapper();
-        var applications =
-            new WorldDraftGraphApplicationRepository(world.dsl(), fence, mapper);
+        var applications = new WorldDraftGraphApplicationRepository(world.dsl(), fence, mapper);
         var worldTerminals = new WorldDraftTerminalOutcomeRepository(world.dsl(), fence, mapper);
         register(gdHandlers, new GameDesignDraftTerminalReadGrpcService(terminals, NAMESPACE));
         var terminalReadUnavailable = new AtomicBoolean(failure == Failure.UNAVAILABLE);
@@ -518,8 +543,7 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         byte[] retainedGdsReadback =
             account.originalDraftOwnerReadback(original, Owner.GAME_DESIGN);
         byte[] retainedWorldReadback = account.originalDraftOwnerReadback(original, Owner.WORLD);
-        assertThat(retainedGdsReadback)
-            .isEqualTo(gdsOutcome.toOwnerReadback().canonicalBytes());
+        assertThat(retainedGdsReadback).isEqualTo(gdsOutcome.toOwnerReadback().canonicalBytes());
         assertThat(retainedWorldReadback).isEqualTo(actualWorld.ownerReadback().canonicalBytes());
         assertThat(terminalReconciler.reconcile(original.operationId()))
             .contains(Settlement.COMMITTED);
@@ -551,7 +575,19 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
         assertThat(worldOwner.status())
             .isEqualTo(DraftCommitCoordinatorRepository.OwnerStatus.APPLIED);
         assertThat(worldOwner.resultBytes()).isEqualTo(actualWorld.canonicalBytes());
-        assertThat(worldOwner.appliedEpochs()).isEqualTo(actualWorld.appliedEpochs());
+        assertThat(worldOwner.appliedEpochs())
+            .isEqualTo(
+                actualWorld.appliedEpochs().stream()
+                    .map(
+                        epoch ->
+                            new DraftCommitCoordinatorRepository.AppliedEpoch(
+                                epoch.aggregateType(),
+                                epoch.aggregateId(),
+                                epoch.scopeType(),
+                                epoch.scopeId(),
+                                epoch.expectedEpoch(),
+                                epoch.resultingEpoch()))
+                    .toList());
       }
     } finally {
       for (var server : List.of(accountServer, worldServer, gdServer)) {
@@ -602,12 +638,9 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
     return new ServerInterceptor() {
       @Override
       public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
-          ServerCall<ReqT, RespT> call,
-          Metadata headers,
-          ServerCallHandler<ReqT, RespT> next) {
+          ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
         String terminalReadMethod =
-            WorldDraftTerminalReadServiceGrpc
-                .getReadWorldDraftTerminalOutcomeMethod()
+            WorldDraftTerminalReadServiceGrpc.getReadWorldDraftTerminalOutcomeMethod()
                 .getFullMethodName();
         if (terminalReadMethod.equals(call.getMethodDescriptor().getFullMethodName())
             && unavailable.compareAndSet(true, false)) {
@@ -711,8 +744,8 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
       handlers.addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()));
   }
 
-  private static DraftCommitBinding binding(DraftCommitBinding.TargetProof target)
-      throws Exception {
+  private static DraftCommitBinding binding(
+      DraftCommitBinding.TargetProof target, String baseCommitId) throws Exception {
     UUID commit = UUID.randomUUID();
     UUID region = UUID.randomUUID();
     UUID zone = UUID.randomUUID();
@@ -737,11 +770,27 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
                       : 0)
               .build());
     }
+    // This controlled authored graph has no inbound participants; each supported family is
+    // explicitly declared empty before the complete canonical binding and Account order exist.
+    var inbound = WorldInboundSourceClosureDeclaration.newBuilder().setSchemaVersion(1);
+    for (WorldInboundSourceFamily family :
+        List.of(
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT,
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT,
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION,
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING,
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK,
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE,
+            WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING)) {
+      inbound.addFamilyCounts(
+          WorldInboundSourceFamilyCount.newBuilder().setFamily(family).setCount(0));
+    }
     var declaration =
         WorldFreshGraphDeclaration.newBuilder()
             .setTenantId(target.canonicalTenantId().toString())
             .setVersionId(target.canonicalVersionId().toString())
             .addAllFamilyCounts(familyCounts)
+            .setInboundSourceClosure(inbound.build())
             .setStartLocation(
                 net.firedevops.firemud.worldmanagement.v1.RoomTemplateRef.newBuilder()
                     .setTenantId(target.canonicalTenantId().toString())
@@ -820,7 +869,7 @@ class GenuineGameDesignWorldSourceCommitPostgresIntegrationTest {
               "0"));
     }
     return DraftCommitBinding.create(
-        target, UUID.randomUUID(), commit, "base-commit-0", revisions, units);
+        target, UUID.randomUUID(), commit, baseCommitId, revisions, units);
   }
 
   private static WorldDesignMutationRevision.Builder mutation(

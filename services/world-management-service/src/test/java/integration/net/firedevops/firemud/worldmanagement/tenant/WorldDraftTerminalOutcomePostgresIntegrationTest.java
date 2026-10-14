@@ -70,6 +70,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcome;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomeRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalOutcomeService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTerminalReadGrpcService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyCommitPlan;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
@@ -903,10 +904,6 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
         binding.baseCommitId(),
         revisions,
         binding.affectedUnits());
-  }
-
-  private WorldDraftTerminalOperation operation(Fixture f, DraftCommitBinding binding) {
-    return operation(f, binding, UUID.randomUUID(), UUID.randomUUID());
   }
 
   private WorldDraftTerminalOperation operation(
