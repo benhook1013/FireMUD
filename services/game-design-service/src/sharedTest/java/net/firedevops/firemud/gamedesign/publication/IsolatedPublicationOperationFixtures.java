@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.publication;
 
+import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -15,6 +16,7 @@ import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBi
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
+import net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures;
 import tools.jackson.databind.ObjectMapper;
 
 /**
@@ -113,6 +115,22 @@ public final class IsolatedPublicationOperationFixtures {
 
   public static GameDesignPublicationOperation forSelection(
       AuthoredDraftPublishSelectionBinding selected, WorldPublishedStartLocationEvidence seed) {
+    return selection(selected, seed, false);
+  }
+
+  /**
+   * Explicit pre-v2 fixture preimage for retained-schema tests only. Decoding these original three
+   * frames preserves history; it cannot provide complete inventory or fresh v2 authority.
+   */
+  public static GameDesignPublicationOperation historicalV1ForSelection(
+      AuthoredDraftPublishSelectionBinding selected, WorldPublishedStartLocationEvidence seed) {
+    return selection(selected, seed, true);
+  }
+
+  private static GameDesignPublicationOperation selection(
+      AuthoredDraftPublishSelectionBinding selected,
+      WorldPublishedStartLocationEvidence seed,
+      boolean historicalV1) {
     var originalDraftAccount =
         DraftAuthorizationFenceBinding.fromStored(seed.originalAccountBindingBytes());
     var target = selected.target();
@@ -168,6 +186,14 @@ public final class IsolatedPublicationOperationFixtures {
             seed.selectorReceiptBytes(),
             seed.originalAccountBindingBytes(),
             seed.appliedResultBytes());
-    return new GameDesignPublicationOperation(account, world);
+    if (historicalV1) {
+      var original = new ByteArrayOutputStream();
+      DraftAuthorizationFenceBinding.frame(original, "game-design-publication-operation/v1");
+      DraftAuthorizationFenceBinding.frame(original, account.canonicalBytes());
+      DraftAuthorizationFenceBinding.frame(original, world.canonicalBytes());
+      return GameDesignPublicationOperation.fromStored(original.toByteArray());
+    }
+    return new GameDesignPublicationOperation(
+        account, world, IsolatedWorldPublicationInventoryFixtures.stipulated(account, world));
   }
 }

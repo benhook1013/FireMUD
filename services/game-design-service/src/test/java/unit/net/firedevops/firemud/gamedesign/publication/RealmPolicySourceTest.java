@@ -7,11 +7,36 @@ import java.util.List;
 import java.util.UUID;
 import java.util.stream.IntStream;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
 
 class RealmPolicySourceTest {
+  @Test
+  void policyClassifierRecognizesKnownSiblingOwnersAndRejectsUnknownKinds() {
+    var policy =
+        policyRevision(
+            "0",
+            UUID.randomUUID(),
+            "{\"revisionKind\":\"REALM_ENTRY_POLICY\",\"logicalRevisionId\":\"main\",\"policy\":{}}");
+    var command =
+        policyRevision("1", UUID.randomUUID(), "{\"revisionKind\":\"COMMAND_DEFINITION\"}");
+    var asset =
+        policyRevision(
+            "2",
+            UUID.randomUUID(),
+            AssetSource.upsertPayload("41", "map", AssetSource.Requiredness.REQUIRED));
+    var unknown = policyRevision("3", UUID.randomUUID(), "{\"revisionKind\":\"UNSUPPORTED\"}");
+
+    assertThat(RealmPolicySource.isPolicyRevision(policy)).isTrue();
+    assertThat(RealmPolicySource.isPolicyRevision(command)).isFalse();
+    assertThat(RealmPolicySource.isPolicyRevision(asset)).isFalse();
+    assertThatThrownBy(() -> RealmPolicySource.isPolicyRevision(unknown))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Unsupported Game Design owner revision kind");
+  }
+
   @Test
   void draftPolicyStateCanBeEmptyOrIncompleteWithoutPublicationCardinality() {
     var empty = new RealmPolicySnapshot(binding(), "0", List.of());

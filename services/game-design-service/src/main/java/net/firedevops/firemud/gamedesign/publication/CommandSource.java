@@ -16,6 +16,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.command.CommandEffectDeclarationConstraints;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -141,9 +142,9 @@ public final class CommandSource {
   }
 
   /**
-   * Converts the closed Draft owner payloads to command mutations. Realm policy payloads are a
-   * separate Game Design owner scope and are deliberately left for their own source writer. Unknown
-   * kinds deny rather than being guessed from omitted or legacy rows.
+   * Converts the closed Draft owner payloads to command mutations. Realm policy and ordinary asset
+   * reference payloads are separate Game Design owner scopes and are left to their typed writers.
+   * Unknown kinds deny rather than being guessed from omitted or legacy rows.
    */
   public static List<Mutation> mutations(DraftCommitBinding binding) {
     Objects.requireNonNull(binding, "binding");
@@ -155,7 +156,8 @@ public final class CommandSource {
         throw new IllegalArgumentException("Closed Game Design owner revision kind is required");
       }
       String revisionKind = payload.path("revisionKind").asText();
-      if (REALM_POLICY_REVISION_KIND.equals(revisionKind)) continue;
+      if (REALM_POLICY_REVISION_KIND.equals(revisionKind)
+          || AssetSource.REVISION_KIND.equals(revisionKind)) continue;
       if (!REVISION_KIND.equals(revisionKind)) {
         throw new IllegalArgumentException("Unsupported Game Design command source revision kind");
       }
@@ -204,7 +206,8 @@ public final class CommandSource {
       String revisionKind = payload.path("revisionKind").asText();
       if (REALM_POLICY_REVISION_KIND.equals(revisionKind)) {
         found = true;
-      } else if (!REVISION_KIND.equals(revisionKind)) {
+      } else if (!REVISION_KIND.equals(revisionKind)
+          && !AssetSource.REVISION_KIND.equals(revisionKind)) {
         throw new IllegalArgumentException("Unsupported Game Design command source revision kind");
       }
     }

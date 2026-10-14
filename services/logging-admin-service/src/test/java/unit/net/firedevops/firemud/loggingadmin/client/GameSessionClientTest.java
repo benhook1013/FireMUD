@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -38,6 +39,7 @@ import net.firedevops.firemud.loggingadmin.operator.StartSessionPreAuthorization
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class GameSessionClientTest {
   @TempDir private Path tlsDirectory;
@@ -84,7 +86,7 @@ class GameSessionClientTest {
   @Test
   void sendsOneExactTypedHandoffAndValidatesSecretFreeOwnerEcho() throws Exception {
     GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
-    var handoff = handoff();
+    TransientOwnerExecutionHandoff handoff = handoff();
     StartSessionPostAuthorizationExecutionTuple tuple = handoff.postAuthorizationTuple();
     AuthorizeStartSessionResponse response =
         ownerResponse(
@@ -100,8 +102,7 @@ class GameSessionClientTest {
 
     GameSessionClient.StartSessionOwnerHandoffResult result = client.authorizeStartSession(handoff);
 
-    verify(stub, times(1))
-        .withDeadlineAfter(DEADLINE_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+    verify(stub, times(1)).withDeadlineAfter(DEADLINE_SECONDS, TimeUnit.SECONDS);
     verify(stub, times(1)).authorizeStartSession(requestCaptor.capture());
     verify(stub, never()).stopSession(any());
     assertThat(
@@ -132,7 +133,7 @@ class GameSessionClientTest {
   @Test
   void refusesOwnerResponseThatDoesNotEchoTheOriginalTuple() throws Exception {
     GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
-    var handoff = handoff();
+    TransientOwnerExecutionHandoff handoff = handoff();
     AuthorizeStartSessionResponse substitutedResponse =
         ownerResponse(
                 handoff.postAuthorizationTuple(),
@@ -187,6 +188,43 @@ class GameSessionClientTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("not internally bound")
         .hasMessageNotContaining(OPAQUE_REFERENCE);
+    verify(stub, never()).authorizeStartSession(any());
+  }
+
+  @Test
+  void refusesNullOpaqueReferenceBeforeOwnerRpc() throws Exception {
+    GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
+    TransientOwnerExecutionHandoff handoff = handoff();
+    when(handoff.accountResponse().operatorAuthorizationReference()).thenReturn(null);
+    assertThatThrownBy(() -> client(stub).authorizeStartSession(handoff))
+        .isInstanceOf(IllegalArgumentException.class);
+    verify(stub, never()).authorizeStartSession(any());
+  }
+
+  @Test
+  void refusesOwnerHandoffInsideAmbientSqlOrSynchronizationBeforeRpc() throws Exception {
+    GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
+    GameSessionClient client = client(stub);
+    TransientOwnerExecutionHandoff handoff = handoff();
+
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      assertThatThrownBy(() -> client.authorizeStartSession(handoff))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("no ambient SQL or synchronization");
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      assertThatThrownBy(() -> client.authorizeStartSession(handoff))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("no ambient SQL or synchronization");
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
     verify(stub, never()).authorizeStartSession(any());
   }
 
@@ -252,8 +290,7 @@ class GameSessionClientTest {
     var stub = mock(GameSessionServiceGrpc.GameSessionServiceBlockingStub.class);
     when(stub.withCallCredentials(any(CallCredentials.class))).thenReturn(stub);
     when(stub.withInterceptors(any(ClientInterceptor[].class))).thenReturn(stub);
-    when(stub.withDeadlineAfter(DEADLINE_SECONDS, java.util.concurrent.TimeUnit.SECONDS))
-        .thenReturn(stub);
+    when(stub.withDeadlineAfter(DEADLINE_SECONDS, TimeUnit.SECONDS)).thenReturn(stub);
     return stub;
   }
 

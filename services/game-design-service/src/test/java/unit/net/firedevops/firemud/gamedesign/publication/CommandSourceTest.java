@@ -12,6 +12,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import net.firedevops.firemud.gamedesign.publication.CommandApplication;
 import net.firedevops.firemud.gamedesign.publication.CommandSnapshot;
@@ -130,6 +131,11 @@ class CommandSourceTest {
             "1",
             UUID.randomUUID(),
             "{\"revisionKind\":\"REALM_ENTRY_POLICY\",\"logicalRevisionId\":\"main\",\"policy\":{}}");
+    var assetRevision =
+        revision(
+            "2",
+            UUID.randomUUID(),
+            AssetSource.upsertPayload("41", "map", AssetSource.Requiredness.REQUIRED));
     var policyScope =
         new DraftCommitBinding.AffectedUnit(
             Owner.GAME_DESIGN_CONTROL_PLANE,
@@ -141,11 +147,12 @@ class CommandSourceTest {
     var binding =
         binding(
             commitId,
-            List.of(commandRevision, policyRevision),
-            List.of(commandScope("0"), policyScope));
+            List.of(commandRevision, policyRevision, assetRevision),
+            List.of(commandScope("0"), policyScope, assetScope("0")));
 
     var mutations = CommandSource.mutations(binding);
     assertThat(mutations).hasSize(1);
+    assertThat(AssetSource.mutations(binding)).hasSize(1);
     assertThat(CommandSource.hasRealmPolicyRevision(binding)).isTrue();
     var snapshot =
         new CommandSnapshot(
@@ -169,6 +176,19 @@ class CommandSourceTest {
     assertThat(applicationBytes).isNotEmpty();
     assertThat(ByteBuffer.wrap(applicationBytes).getInt()).isEqualTo(schemaBytes.length);
     assertThat(ByteBuffer.wrap(applicationBytes).getInt(4 + schemaBytes.length)).isZero();
+  }
+
+  @Test
+  void unknownOwnerRevisionKindRemainsClosedForCommandClassification() {
+    var unknownRevision = revision("0", UUID.randomUUID(), "{\"revisionKind\":\"UNSUPPORTED\"}");
+    var binding = binding(UUID.randomUUID(), List.of(unknownRevision), List.of(commandScope("0")));
+
+    assertThatThrownBy(() -> CommandSource.mutations(binding))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Unsupported Game Design command source revision kind");
+    assertThatThrownBy(() -> CommandSource.hasRealmPolicyRevision(binding))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Unsupported Game Design command source revision kind");
   }
 
   @Test
@@ -269,6 +289,16 @@ class CommandSourceTest {
         TARGET.canonicalVersionId().toString(),
         CommandSource.SCOPE,
         CommandSource.SCOPE_ID,
+        epoch);
+  }
+
+  private static DraftCommitBinding.AffectedUnit assetScope(String epoch) {
+    return new DraftCommitBinding.AffectedUnit(
+        Owner.GAME_DESIGN_CONTROL_PLANE,
+        AssetSource.SCOPE,
+        TARGET.canonicalVersionId().toString(),
+        AssetSource.SCOPE,
+        AssetSource.SCOPE_ID,
         epoch);
   }
 

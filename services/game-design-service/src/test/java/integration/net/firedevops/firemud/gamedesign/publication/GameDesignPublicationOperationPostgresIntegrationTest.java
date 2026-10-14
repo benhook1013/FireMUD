@@ -32,10 +32,15 @@ import java.security.PrivateKey;
 import java.security.Security;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -570,7 +575,7 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
   @Test
   void retainedV50_6TerminalReadFailsPreconditionWithoutBackfillingEvidenceOrEpoch()
       throws Exception {
-    var fixture = fixture("50.6");
+    var fixture = historicalFixture("50.6");
     assertThat(fixture.candidate()).isNull();
     var op = fixture.operation();
     var old = new ByteArrayOutputStream();
@@ -620,8 +625,93 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
   }
 
   @Test
-  void publicationReceiptSurvivesAdditiveReleaseColumnAndFreshSealAfterAddition() throws Exception {
-    var retained = fixture();
+  void retainedPreV56V1OperationStaysByteExactReadableAndReadOnlyAfterV56AndV70() throws Exception {
+    var fixture = historicalOperationOnlyFixture("50.7");
+    var operation = fixture.operation();
+    byte[] originalRequest = operation.canonicalBytes();
+    new DraftAuthorizationFenceBinding.FrameReader(originalRequest)
+        .expect("game-design-publication-operation/v1");
+    var before = operationSnapshot(fixture);
+    assertThat(before.requestBytes()).isEqualTo(originalRequest);
+    assertThat(before.requestChecksum()).isEqualTo(sha256(originalRequest));
+    assertThatThrownBy(operation::inventory)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("HISTORICAL_PUBLICATION_INVENTORY_UNAVAILABLE");
+
+    fixture.completeMigration().run();
+
+    var afterMigration = operationSnapshot(fixture);
+    assertThat(afterMigration.rowJson()).isEqualTo(before.rowJson());
+    assertThat(afterMigration.requestBytes()).isEqualTo(before.requestBytes());
+    assertThat(afterMigration.requestChecksum()).isEqualTo(before.requestChecksum());
+    assertThat(afterMigration.rowChecksum()).isEqualTo(before.rowChecksum());
+    var retained = fixture.service().readExact(operation).orElseThrow();
+    assertThat(retained.operation().canonicalBytes()).isEqualTo(originalRequest);
+    assertThat(retained.outcome()).isEqualTo("PENDING");
+
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "INSERT INTO game_design_publication_operation "
+                            + "(publish_workflow_id, tenant_id, version_id, selection_digest, request_bytes) "
+                            + "VALUES (?, ?, ?, ?, ?)",
+                        operation.workflowId(),
+                        operation.tenantKey(),
+                        operation.versionId(),
+                        operation.selectionDigest(),
+                        originalRequest))
+        .hasMessageContaining("Truncated publication inventory frame");
+
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "UPDATE game_design_publication_operation SET outcome = 'NO_PUBLICATION', "
+                            + "revision = revision + 1, result_bytes = ? WHERE publish_workflow_id = ?",
+                        new byte[] {1},
+                        operation.workflowId()))
+        .hasMessageContaining("Truncated publication inventory frame");
+
+    var selection = operation.account().input().selection();
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "INSERT INTO game_design_realm_policy_capture "
+                            + "(canonical_tenant_id, canonical_version_id, publish_workflow_id, "
+                            + "commit_id, operation_bytes, capture_bytes) VALUES (?, ?, ?, ?, ?, ?)",
+                        operation.account().tenantId(),
+                        operation.world().request().canonicalVersionId(),
+                        operation.workflowId(),
+                        selection.selectedCommit().commitId(),
+                        originalRequest,
+                        new byte[] {1}))
+        .hasMessageContaining("Truncated publication inventory frame");
+
+    assertThat(
+            fixture
+                .dsl()
+                .fetchSingle(
+                    "SELECT count(*) FROM game_design_realm_policy_capture WHERE publish_workflow_id = ?",
+                    operation.workflowId())
+                .get(0, Long.class))
+        .isZero();
+    var afterDeniedWrites = operationSnapshot(fixture);
+    assertThat(afterDeniedWrites.rowJson()).isEqualTo(before.rowJson());
+    assertThat(afterDeniedWrites.requestBytes()).isEqualTo(before.requestBytes());
+    assertThat(afterDeniedWrites.requestChecksum()).isEqualTo(before.requestChecksum());
+    assertThat(afterDeniedWrites.rowChecksum()).isEqualTo(before.rowChecksum());
+    assertThat(fixture.service().readExact(operation).orElseThrow().outcome()).isEqualTo("PENDING");
+  }
+
+  @Test
+  void retainedPublicationReceiptSurvivesAdditiveReleaseColumnAndV1SealIsDeniedAfterV56()
+      throws Exception {
+    var retained = historicalFixture("50.7");
     publish(retained);
     var original = retained.service().readExact(retained.operation()).orElseThrow();
     String originalEvidence =
@@ -684,6 +774,24 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     assertThat(retained.service().readExact(retained.operation()).orElseThrow().receiptBytes())
         .isEqualTo(original.receiptBytes());
 
+    var retainedPending = historicalFixture("50.7");
+    var originalOperationBytes = retainedPending.operation().canonicalBytes();
+    retainedPending.completeMigration().run();
+    assertThatThrownBy(
+            () ->
+                retainedPending
+                    .dsl()
+                    .execute(
+                        "UPDATE game_design_publication_operation SET outcome = 'NO_PUBLICATION', "
+                            + "revision = revision + 1, result_bytes = ? WHERE publish_workflow_id = ?",
+                        new byte[] {1},
+                        retainedPending.operation().workflowId()))
+        .hasMessageContaining("Truncated publication inventory frame");
+    var stillPending =
+        retainedPending.service().readExact(retainedPending.operation()).orElseThrow();
+    assertThat(stillPending.outcome()).isEqualTo("PENDING");
+    assertThat(stillPending.operation().canonicalBytes()).isEqualTo(originalOperationBytes);
+
     var fresh = fixture();
     fresh.completeMigration().run();
     fresh
@@ -707,6 +815,24 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
       GameDesignPublicationTerminalReadEvidence.ReadRequest request,
       String service) {
     return readThroughHandler(fixture, request, service, fixture.service());
+  }
+
+  private OperationRowSnapshot operationSnapshot(Fixture fixture) {
+    var row =
+        java.util.Objects.requireNonNull(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT to_jsonb(o)::TEXT AS row_json, o.request_bytes, "
+                        + "'sha256:' || encode(sha256(o.request_bytes), 'hex') AS request_checksum "
+                        + "FROM game_design_publication_operation o WHERE publish_workflow_id = ?",
+                    fixture.operation().workflowId()));
+    String rowJson = row.get("row_json", String.class);
+    return new OperationRowSnapshot(
+        rowJson,
+        row.get("request_bytes", byte[].class),
+        row.get("request_checksum", String.class),
+        sha256(rowJson.getBytes(StandardCharsets.UTF_8)));
   }
 
   private ReadCollector readThroughHandler(
@@ -1124,14 +1250,31 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     version.setVersionState(VersionLifecycleState.PUBLISHED);
     version.setVersionStateEpoch(version.getVersionStateEpoch() + 1);
     fixture.versions().save(version);
-    var artifact =
-        fixture
-            .artifacts()
-            .findByTenantIdAndVersionIdForUpdate(op.tenantKey(), op.versionId())
-            .orElseThrow();
-    artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
-    artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
-    fixture.artifacts().save(artifact);
+    if (fixture.historicalV1()) {
+      int updatedArtifact =
+          fixture
+              .dsl()
+              .execute(
+                  "UPDATE version_asset_artifact SET artifact_state = 'PUBLISHED', "
+                      + "state_epoch = state_epoch + 1, updated_at = CURRENT_TIMESTAMP "
+                      + "WHERE tenant_id = ? AND version_id = ? AND artifact_state = 'STAGED' "
+                      + "AND state_epoch = 2 AND last_workflow_id = ?",
+                  op.tenantKey(),
+                  op.versionId(),
+                  op.workflowId());
+      if (updatedArtifact != 1) {
+        throw new IllegalStateException("HISTORICAL_ASSET_ARTIFACT_TRANSITION_CONFLICT");
+      }
+    } else {
+      var artifact =
+          fixture
+              .artifacts()
+              .findByTenantIdAndVersionIdForUpdate(op.tenantKey(), op.versionId())
+              .orElseThrow();
+      artifact.setArtifactState(VersionAssetArtifactState.PUBLISHED);
+      artifact.setStateEpoch(Math.addExact(artifact.getStateEpoch(), 1L));
+      fixture.artifacts().save(artifact);
+    }
     var attempt =
         fixture.attempts().findByPublishWorkflowIdForUpdate(op.workflowId()).orElseThrow();
     attempt.setStatus(PublishAttemptStatus.SUCCEEDED);
@@ -1239,10 +1382,6 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
             bundle.getWorldPublishedStartLocationEvidenceJson());
   }
 
-  private Fixture fixture() throws Exception {
-    return fixture("50.7");
-  }
-
   private Version insertRetainedVersion(
       DSLContext dsl, VersionRepository versions, Game game, int versionNumber) {
     var inserted =
@@ -1264,22 +1403,42 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     return versions.findById(inserted.get("id", Long.class)).orElseThrow();
   }
 
-  private Fixture fixture(String migrationTarget) throws Exception {
+  private Fixture fixture() throws Exception {
+    return fixture(null, false, true);
+  }
+
+  private Fixture historicalFixture(String migrationTarget) throws Exception {
+    return fixture(migrationTarget, true, true);
+  }
+
+  /** This profile proves retained operation history without seeding unrelated old asset rows. */
+  private Fixture historicalOperationOnlyFixture(String migrationTarget) throws Exception {
+    return fixture(migrationTarget, true, false);
+  }
+
+  private Fixture fixture(
+      String migrationTarget, boolean historicalV1, boolean includeAssetCandidate)
+      throws Exception {
+    if (historicalV1 && !List.of("50.6", "50.7").contains(migrationTarget)) {
+      throw new IllegalArgumentException("Historical operation fixture must target pre-V56 schema");
+    }
     String schema = "gd_pub_op_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
             postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     source.setSchema(schema);
-    Flyway.configure()
-        .dataSource(source)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(java.util.Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .table("flyway_schema_history_game_design_service")
-        .target(migrationTarget)
-        .load()
-        .migrate();
+    var flyway =
+        Flyway.configure()
+            .dataSource(source)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(java.util.Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration")
+            .table("flyway_schema_history_game_design_service");
+    if (migrationTarget != null) {
+      flyway.target(migrationTarget);
+    }
+    flyway.load().migrate();
     var transactions = new DataSourceTransactionManager(source);
     var write = new TransactionTemplate(transactions);
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -1303,10 +1462,16 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
               requested.setName("ISOLATED publication owner");
               return games.save(requested);
             });
-    // These V50.6/V50.7 cases model retained history. Insert the canonical owner row before V50.8
-    // so
-    // the current VersionRepository does not enroll it in post-V50.7 source storage.
-    Version version = write.execute(status -> insertRetainedVersion(dsl, versions, game, 1));
+    Version version;
+    if (historicalV1) {
+      // Retained pre-V56 rows use the original Version shape and operation framing.
+      version = write.execute(status -> insertRetainedVersion(dsl, versions, game, 1));
+    } else {
+      var requested = new Version();
+      requested.setTenantId(game.getTenantId());
+      requested.setVersionNumber(1);
+      version = write.execute(status -> versions.save(requested));
+    }
     var target =
         new TargetProof(
             version.getCanonicalTenantId(),
@@ -1316,21 +1481,10 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
             version.getIdentitySourceGameRowId(),
             version.getIdentitySourceGameTenantKey(),
             version.getIdentitySourceProvenanceKind());
-    var operation =
-        write.execute(
-            status -> {
-              try {
-                return IsolatedPublicationOwnerSetup.retain(
-                    dsl, target, version.getVersionStateEpoch());
-              } catch (Exception failure) {
-                throw new IllegalStateException(failure);
-              }
-            });
-    var operations = new GameDesignPublicationOperationRepository(dsl);
-    FrozenAssetExportCandidate readCandidate = null;
-    if (!"50.6".equals(migrationTarget)) {
+    GameAsset asset = null;
+    if (includeAssetCandidate && !"50.6".equals(migrationTarget)) {
       var gameAssets = new GameAssetRepository(dsl);
-      var asset =
+      asset =
           write.execute(
               status -> {
                 var requested = new GameAsset();
@@ -1340,54 +1494,73 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                 requested.setData(ASSET_BYTES);
                 return gameAssets.save(requested);
               });
-      var publicationRepository = new VersionAssetPublicationRepository(dsl);
-      write.executeWithoutResult(
-          status ->
-              publicationRepository.associateDraftAsset(
-                  game.getTenantId(), version.getId(), asset.getId(), "logo"));
-      var snapshot =
-          write.execute(
-              status ->
-                  publicationRepository.freezeOrReadSnapshot(
-                      game.getTenantId(), version.getVersionNumber()));
-      var artifactService =
-          new VersionAssetArtifactServiceImpl(
-              new VersionAssetArtifactRepository(dsl),
-              null,
-              versions,
-              null,
-              null,
-              null,
-              null,
-              null,
-              new ObjectMapper());
-      write.execute(
-          status ->
-              artifactService.stageExport(
-                  game.getTenantId(),
-                  version.getId(),
-                  version.getVersionNumber(),
-                  operation.workflowId()));
-      var artifacts = new VersionAssetArtifactRepository(dsl);
-      var candidateService =
-          new VersionAssetExportCandidateServiceImpl(
-              versions,
-              games,
-              new PublishAttemptRepository(dsl),
-              artifacts,
-              publicationRepository,
-              transactions,
-              new ObjectMapper());
-      var requestedCandidate = candidate(snapshot);
-      var committedCandidate =
-          candidateService.recordExportCandidate(
-              game.getTenantId(), version.getVersionNumber(), requestedCandidate);
-      readCandidate =
-          candidateService.readExportCandidate(game.getTenantId(), version.getVersionNumber());
-      assertThat(committedCandidate).isEqualTo(requestedCandidate);
-      assertThat(readCandidate).isEqualTo(committedCandidate);
     }
+    GameAsset fixtureAsset = asset;
+    var operation =
+        write.execute(
+            status -> {
+              try {
+                return historicalV1
+                    ? IsolatedPublicationOwnerSetup.retainHistoricalV1PreV56(
+                        dsl, target, version.getVersionStateEpoch())
+                    : IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
+                        dsl,
+                        target,
+                        version.getVersionStateEpoch(),
+                        "ISOLATED selected source and publication fixture",
+                        List.of(
+                            new IsolatedPublicationOwnerSetup.OrdinaryAsset(
+                                Objects.requireNonNull(fixtureAsset).getId(), ASSET_FILE_NAME)));
+              } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+              }
+            });
+    var operations = new GameDesignPublicationOperationRepository(dsl);
     var artifacts = new VersionAssetArtifactRepository(dsl);
+    FrozenAssetExportCandidate readCandidate = null;
+    if (includeAssetCandidate && !"50.6".equals(migrationTarget)) {
+      if (historicalV1) {
+        var snapshot =
+            seedHistoricalAssetSnapshot(
+                dsl, write, game, version, Objects.requireNonNull(fixtureAsset));
+        readCandidate =
+            seedHistoricalAssetCandidate(dsl, write, game, version, operation, snapshot);
+      } else {
+        var publicationRepository = new VersionAssetPublicationRepository(dsl);
+        var snapshot =
+            write.execute(
+                status ->
+                    publicationRepository.freezeOrReadSnapshot(
+                        game.getTenantId(), version.getVersionNumber()));
+        var artifactService =
+            new VersionAssetArtifactServiceImpl(
+                artifacts, null, versions, null, null, null, null, null, new ObjectMapper());
+        write.execute(
+            status ->
+                artifactService.stageExport(
+                    game.getTenantId(),
+                    version.getId(),
+                    version.getVersionNumber(),
+                    operation.workflowId()));
+        var candidateService =
+            new VersionAssetExportCandidateServiceImpl(
+                versions,
+                games,
+                new PublishAttemptRepository(dsl),
+                artifacts,
+                publicationRepository,
+                transactions,
+                new ObjectMapper());
+        var requestedCandidate = candidate(snapshot);
+        var committedCandidate =
+            candidateService.recordExportCandidate(
+                game.getTenantId(), version.getVersionNumber(), requestedCandidate);
+        readCandidate =
+            candidateService.readExportCandidate(game.getTenantId(), version.getVersionNumber());
+        assertThat(committedCandidate).isEqualTo(requestedCandidate);
+        assertThat(readCandidate).isEqualTo(committedCandidate);
+      }
+    }
     return new Fixture(
         dsl,
         write,
@@ -1399,6 +1572,7 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
         new GameDesignPublicationOperationService(operations, transactions),
         operation,
         readCandidate,
+        historicalV1,
         () ->
             Flyway.configure()
                 .dataSource(source)
@@ -1445,6 +1619,178 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
         PUBLIC_BASE_URL);
   }
 
+  /**
+   * Seeds the actual V37 mapping/export rows that existed before V55 introduced source projection.
+   * The old schema permits these owner rows directly; no modern ASSET_REFERENCE evidence is
+   * fabricated for a Version created before that contract existed.
+   */
+  private VersionAssetPublicationRepository.ExportSnapshot seedHistoricalAssetSnapshot(
+      DSLContext dsl, TransactionTemplate write, Game game, Version version, GameAsset asset) {
+    String contentDigest = sha256(ASSET_BYTES);
+    write.executeWithoutResult(
+        status -> {
+          dsl.execute(
+              "INSERT INTO version_asset (tenant_id, version_id, asset_id, usage_key, usage_type) "
+                  + "VALUES (?, ?, ?, ?, ?)",
+              game.getTenantId(),
+              version.getId(),
+              asset.getId(),
+              ASSET_FILE_NAME,
+              "logo");
+          dsl.execute(
+              "INSERT INTO version_asset_export_item "
+                  + "(tenant_id, version_id, usage_key, asset_id, content_type, content_hash, byte_size) "
+                  + "VALUES (?, ?, ?, ?, ?, ?, ?)",
+              game.getTenantId(),
+              version.getId(),
+              ASSET_FILE_NAME,
+              asset.getId(),
+              ASSET_CONTENT_TYPE,
+              contentDigest,
+              (long) ASSET_BYTES.length);
+          dsl.execute(
+              "INSERT INTO version_asset_export_snapshot "
+                  + "(tenant_id, version_id, canonical_tenant_id, canonical_version_id, "
+                  + "version_number, captured_version_state_epoch, item_count) "
+                  + "VALUES (?, ?, ?, ?, ?, ?, 1)",
+              game.getTenantId(),
+              version.getId(),
+              version.getCanonicalTenantId(),
+              version.getCanonicalVersionId(),
+              version.getVersionNumber(),
+              version.getVersionStateEpoch());
+        });
+    return new VersionAssetPublicationRepository(dsl)
+        .readFrozenSnapshot(game.getTenantId(), version.getVersionNumber());
+  }
+
+  /** Persists and rereads the original V38/V50 candidate shape without V65 inventory authority. */
+  private FrozenAssetExportCandidate seedHistoricalAssetCandidate(
+      DSLContext dsl,
+      TransactionTemplate write,
+      Game game,
+      Version version,
+      GameDesignPublicationOperation operation,
+      VersionAssetPublicationRepository.ExportSnapshot snapshot)
+      throws Exception {
+    var requested = candidate(snapshot);
+    var mapper = new ObjectMapper();
+    String artifactDigestsJson = mapper.writeValueAsString(requested.manifest().artifactDigests());
+    String objectProofsJson = historicalObjectProofsJson(requested, mapper);
+    String assetKeysJson =
+        mapper.writeValueAsString(requested.manifest().requiredManifestAssetKeys());
+    write.executeWithoutResult(
+        status ->
+            dsl.execute(
+                "INSERT INTO version_asset_artifact "
+                    + "(tenant_id, version_id, exported_version_number, artifact_state, state_epoch, "
+                    + "last_workflow_id, exported_manifest_asset_keys_json) "
+                    + "VALUES (?, ?, ?, 'STAGED', 1, ?, '[]')",
+                game.getTenantId(),
+                version.getId(),
+                version.getVersionNumber(),
+                operation.workflowId()));
+    var updated =
+        write.execute(
+            status ->
+                dsl.execute(
+                    "UPDATE version_asset_artifact SET manifest_hash = ?, manifest_schema_version = ?, "
+                        + "artifact_digests_json = ?, published_object_proofs_json = ?, "
+                        + "candidate_snapshot_version_id = ?, candidate_public_base_url = ?, "
+                        + "exported_manifest_asset_keys_json = ?, state_epoch = state_epoch + 1, "
+                        + "updated_at = CURRENT_TIMESTAMP "
+                        + "WHERE tenant_id = ? AND version_id = ? AND artifact_state = 'STAGED' "
+                        + "AND state_epoch = 1 AND manifest_schema_version IS NULL "
+                        + "AND last_workflow_id = ?",
+                    requested.manifest().manifestHash(),
+                    requested.manifest().manifestSchemaVersion(),
+                    artifactDigestsJson,
+                    objectProofsJson,
+                    version.getId(),
+                    requested.publicBaseUrl(),
+                    assetKeysJson,
+                    game.getTenantId(),
+                    version.getId(),
+                    operation.workflowId()));
+    if (updated == null || updated != 1) {
+      throw new IllegalStateException("HISTORICAL_ASSET_CANDIDATE_WRITE_CONFLICT");
+    }
+    var committed =
+        write.execute(
+            status -> readHistoricalAssetCandidate(dsl, game.getTenantId(), version, mapper));
+    assertThat(committed).isEqualTo(requested);
+    var readback =
+        write.execute(
+            status -> readHistoricalAssetCandidate(dsl, game.getTenantId(), version, mapper));
+    assertThat(readback).isEqualTo(committed);
+    return readback;
+  }
+
+  private FrozenAssetExportCandidate readHistoricalAssetCandidate(
+      DSLContext dsl, String tenantId, Version version, ObjectMapper mapper) {
+    var row =
+        dsl.fetchOne(
+            "SELECT manifest_hash, manifest_schema_version, artifact_digests_json, "
+                + "published_object_proofs_json, candidate_public_base_url, "
+                + "exported_manifest_asset_keys_json FROM version_asset_artifact "
+                + "WHERE tenant_id = ? AND version_id = ?",
+            tenantId,
+            version.getId());
+    if (row == null) {
+      throw new IllegalStateException("HISTORICAL_ASSET_CANDIDATE_UNAVAILABLE");
+    }
+    var keys = new ArrayList<String>();
+    for (var node : mapper.readTree(row.get("exported_manifest_asset_keys_json", String.class))) {
+      keys.add(node.textValue());
+    }
+    var digests = new ArrayList<PublishedArtifactDigest>();
+    for (var node : mapper.readTree(row.get("artifact_digests_json", String.class))) {
+      digests.add(
+          new PublishedArtifactDigest(
+              node.get("usageKey").textValue(),
+              node.get("artifactKind").textValue(),
+              node.get("immutableObjectKey").textValue(),
+              node.get("contentDigest").textValue(),
+              node.get("contentType").textValue(),
+              node.get("artifactSchemaVersion").intValue()));
+    }
+    var manifest =
+        new ExportedAssetManifest(
+            row.get("manifest_hash", String.class),
+            row.get("manifest_schema_version", Integer.class),
+            keys,
+            digests);
+    var candidate =
+        new FrozenAssetExportCandidate(
+            manifest, row.get("candidate_public_base_url", String.class));
+    if (!historicalObjectProofsJson(candidate, mapper)
+        .equals(row.get("published_object_proofs_json", String.class))) {
+      throw new IllegalStateException("HISTORICAL_ASSET_CANDIDATE_READBACK_CONFLICT");
+    }
+    return candidate;
+  }
+
+  private String historicalObjectProofsJson(
+      FrozenAssetExportCandidate candidate, ObjectMapper mapper) {
+    var proofs = new ArrayList<Map<String, String>>();
+    for (var digest : candidate.manifest().artifactDigests()) {
+      proofs.add(historicalObjectProof(digest.immutableObjectKey(), digest.contentDigest()));
+    }
+    String manifestHash = candidate.manifest().manifestHash();
+    proofs.add(
+        historicalObjectProof(
+            "manifests/sha256/" + manifestHash.substring("sha256:".length()), manifestHash));
+    proofs.sort(Comparator.comparing(proof -> proof.get("immutableObjectKey")));
+    return mapper.writeValueAsString(proofs);
+  }
+
+  private Map<String, String> historicalObjectProof(String objectKey, String contentDigest) {
+    var proof = new LinkedHashMap<String, String>();
+    proof.put("immutableObjectKey", objectKey);
+    proof.put("contentDigest", contentDigest);
+    return proof;
+  }
+
   private static String sha256(byte[] bytes) {
     try {
       return "sha256:"
@@ -1464,6 +1810,9 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     }
   }
 
+  private record OperationRowSnapshot(
+      String rowJson, byte[] requestBytes, String requestChecksum, String rowChecksum) {}
+
   private record Fixture(
       DSLContext dsl,
       TransactionTemplate write,
@@ -1475,5 +1824,6 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
       GameDesignPublicationOperationService service,
       GameDesignPublicationOperation operation,
       FrozenAssetExportCandidate candidate,
+      boolean historicalV1,
       Runnable completeMigration) {}
 }

@@ -8,11 +8,13 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftBaseReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.gamedesign.publication.AssetSnapshot;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 
 /** Exact versioned owner evidence frozen when a proposal is reviewed; grants no authorization. */
 public final class GameDesignReviewedBaseEvidence {
-  public static final String SCHEMA = "game-design-reviewed-draft-base/v1";
+  public static final String SCHEMA = "game-design-reviewed-draft-base/v2";
+  public static final String HISTORICAL_SCHEMA = "game-design-reviewed-draft-base/v1";
   private final TargetProof target;
   private final DraftBaseReference reference;
   private final byte[] bytes;
@@ -41,11 +43,13 @@ public final class GameDesignReviewedBaseEvidence {
 
   public static GameDesignReviewedBaseEvidence genesis(GameDesignSourceRepository.Genesis genesis) {
     Objects.requireNonNull(genesis, "genesis");
+    AssetSnapshot.Genesis asset = genesis.asset();
     ByteArrayOutputStream out = new ByteArrayOutputStream();
-    frame(out, "shared-policy-command-genesis/v1");
+    frame(out, "shared-policy-command-asset-genesis/v2");
     frame(out, genesis.policy().creationTransactionId());
     DraftAuthorizationFenceBinding.frame(out, genesis.policy().canonicalBytes());
     DraftAuthorizationFenceBinding.frame(out, genesis.command().canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(out, asset.canonicalBytes());
     return new GameDesignReviewedBaseEvidence(
         genesis.policy().target(),
         new DraftBaseReference(DraftBaseReference.Kind.GENESIS, genesis.policy().receiptId()),
@@ -57,6 +61,9 @@ public final class GameDesignReviewedBaseEvidence {
       DraftCommitCoordinatorRepository.CommitSnapshot retained) {
     Objects.requireNonNull(sources, "sources");
     Objects.requireNonNull(retained, "retained");
+    if (sources.assetEvidence().isEmpty()) {
+      throw new IllegalArgumentException("Reviewed authored base requires retained asset lineage");
+    }
     DraftCommitBinding binding = sources.command().binding();
     if (!binding.equals(retained.binding())
         || retained.workflowState() != DraftCommitCoordinatorRepository.WorkflowState.SYNCHRONIZED
@@ -65,10 +72,11 @@ public final class GameDesignReviewedBaseEvidence {
           "Exact retained synchronized base and owner vector required");
     }
     ByteArrayOutputStream out = new ByteArrayOutputStream();
-    frame(out, "retained-authored-policy-command-base/v1");
+    frame(out, "retained-authored-policy-command-asset-base/v2");
     DraftAuthorizationFenceBinding.frame(out, binding.canonicalBytes());
     DraftAuthorizationFenceBinding.frame(out, sources.policy().canonicalBytes());
     DraftAuthorizationFenceBinding.frame(out, sources.command().canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(out, sources.asset().canonicalBytes());
     frame(out, Integer.toString(binding.requiredOwners().size()));
     for (var owner : binding.requiredOwners()) {
       var state = retained.ownerStates().get(owner);

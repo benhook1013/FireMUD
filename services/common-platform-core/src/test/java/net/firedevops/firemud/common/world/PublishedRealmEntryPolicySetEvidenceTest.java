@@ -38,7 +38,7 @@ import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
 /** Fixed isolated fixtures prove carrier integrity, not owner producer, database, or mTLS proof. */
-class PublishedRealmEntryPolicySetEvidenceTest {
+public class PublishedRealmEntryPolicySetEvidenceTest {
   private static final String DIGEST = "sha256:" + "a".repeat(64);
   private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -639,7 +639,7 @@ class PublishedRealmEntryPolicySetEvidenceTest {
         operation.world());
   }
 
-  static GameDesignPublicationOperationBinding operation(long epoch) throws Exception {
+  public static GameDesignPublicationOperationBinding operation(long epoch) throws Exception {
     var seed = AuthoringFixtures.startLocationEvidence();
     var original = DraftAuthorizationFenceBinding.fromStored(seed.originalAccountBindingBytes());
     var draft =
@@ -707,7 +707,11 @@ class PublishedRealmEntryPolicySetEvidenceTest {
             seed.selectorReceiptBytes(),
             seed.originalAccountBindingBytes(),
             seed.appliedResultBytes());
-    return new GameDesignPublicationOperationBinding(account, world);
+    return new GameDesignPublicationOperationBinding(
+        account,
+        world,
+        net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures.stipulated(
+            account, world));
   }
 
   private static UUID uuid(String value) {
