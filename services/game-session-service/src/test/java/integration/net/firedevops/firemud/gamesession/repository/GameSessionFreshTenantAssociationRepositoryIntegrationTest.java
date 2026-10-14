@@ -2,8 +2,13 @@ package integration.net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -11,14 +16,17 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamesession.client.GameDesignFreshTenantCreationClient;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldIntakeDigest;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.FreshTenantAssociation;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.FreshTenantAssociationConflictException;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.InvalidFreshTenantAssociationException;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository.InvalidFreshTenantSourceException;
@@ -32,6 +40,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -92,6 +101,68 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
                     "expected fresh source-bound reservation row")
                 .get("reservation_kind", String.class))
         .isEqualTo("FRESH_SOURCE_BOUND");
+  }
+
+  @Test
+  void exactHumanRetryReadsCommittedAssociationAfterAdvisoryWaitOnRepeatableReadDefault()
+      throws Exception {
+    HumanRetryFixture humanFixture = fixtureWithRepeatableReadDefault();
+    Fixture fixture = humanFixture.fixture();
+    IntakeReceipt source =
+        fixture.registerSource(
+            uuid(641), uuid(642), uuid(643), UUID.randomUUID(), 966L, "human-retry-world");
+    FreshTenantCreationEvidence creation = creationEvidence(source.source());
+    when(humanFixture
+            .gameDesignClient()
+            .resolveCreation(creation.creationRequestId(), creation.requestDigest()))
+        .thenReturn(creation);
+    assertThat(
+            Objects.requireNonNull(
+                    fixture.dsl.fetchOne("SHOW default_transaction_isolation"),
+                    "PostgreSQL did not return the transaction isolation setting")
+                .get(0, String.class))
+        .isEqualTo("repeatable read");
+
+    String canonicalLockKey =
+        "fresh-tenant-canonical:" + creation.targetNamespace() + ":" + creation.canonicalTenantId();
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    AtomicReference<Future<FreshTenantAssociation>> retry = new AtomicReference<>();
+    try {
+      FreshGameSessionTenantAssociation first =
+          fixture.transactions.execute(
+              status -> {
+                fixture.dsl.fetch(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", canonicalLockKey);
+                retry.set(
+                    executor.submit(
+                        () ->
+                            fixture.associationRepository.associateFreshTenant(
+                                creation.creationRequestId(), creation.requestDigest())));
+                awaitAdvisoryWait(fixture, canonicalLockKey);
+                return fixture.associateFresh(uuid(640), NAMESPACE, source);
+              });
+
+      FreshTenantAssociation actualRetry = retry.get().get(15, TimeUnit.SECONDS);
+      assertThat(actualRetry.targetNamespace()).isEqualTo(creation.targetNamespace());
+      assertThat(actualRetry.canonicalTenantId()).isEqualTo(creation.canonicalTenantId());
+      assertThat(actualRetry.gameSessionTenantId()).isEqualTo(first.legacyGameSessionTenantId());
+      assertThat(actualRetry.associationOperationId()).isEqualTo(first.associationOperationId());
+      assertThat(actualRetry.sourceEvidence()).isEqualTo(creation);
+      assertThat(
+              fixture.associationRepository.readByCanonicalTenantId(creation.canonicalTenantId()))
+          .contains(actualRetry);
+      assertThat(first.sourceEvidence().requestId()).isEqualTo(creation.creationRequestId());
+      assertThat(first.sourceEvidence().canonicalTenantId())
+          .isEqualTo(creation.canonicalTenantId());
+      assertThat(first.sourceEvidence().sourceGameRowId()).isEqualTo(creation.sourceGameRowId());
+      assertThat(first.sourceEvidence().sourceGameTenantKey())
+          .isEqualTo(creation.sourceGameTenantKey());
+      assertThat(first.sourceEvidence().provenanceKind()).isEqualTo(creation.provenanceKind());
+      verify(humanFixture.gameDesignClient())
+          .resolveCreation(creation.creationRequestId(), creation.requestDigest());
+    } finally {
+      executor.shutdownNow();
+    }
   }
 
   @Test
@@ -568,4 +639,76 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
         new GameSessionAuthoredWorldSourceRepository(dsl),
         new GameSessionFreshTenantAssociationRepository(dsl));
   }
+
+  private HumanRetryFixture fixtureWithRepeatableReadDefault() {
+    String schema = "gs_fresh_tenant_rr_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource =
+        new DriverManagerDataSource() {
+          @Override
+          public Connection getConnection() throws SQLException {
+            Connection connection = super.getConnection();
+            connection.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ);
+            return connection;
+          }
+        };
+    dataSource.setDriverClassName("org.postgresql.Driver");
+    dataSource.setUrl(postgres.getJdbcUrl());
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    dataSource.setSchema(schema);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history")
+        .locations(MIGRATION_LOCATION)
+        .load()
+        .migrate();
+
+    DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
+    TransactionTemplate transactions = new TransactionTemplate(transactionManager);
+    transactions.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    GameSessionAuthoredWorldSourceRepository sourceRepository =
+        new GameSessionAuthoredWorldSourceRepository(dsl);
+    GameDesignFreshTenantCreationClient gameDesignClient =
+        mock(GameDesignFreshTenantCreationClient.class);
+    GameSessionFreshTenantAssociationRepository associationRepository =
+        new GameSessionFreshTenantAssociationRepository(
+            dsl, transactionManager, gameDesignClient, NAMESPACE);
+    return new HumanRetryFixture(
+        new Fixture(dsl, transactions, sourceRepository, associationRepository), gameDesignClient);
+  }
+
+  private static void awaitAdvisoryWait(Fixture fixture, String lockKey) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      Boolean waiting =
+          Objects.requireNonNull(
+                  fixture.dsl.fetchOne(
+                      "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' "
+                          + "AND NOT granted AND objsubid = 1 "
+                          + "AND classid = (((hashtextextended(?, 0) >> 32) & 4294967295)::oid) "
+                          + "AND objid = ((hashtextextended(?, 0) & 4294967295)::oid))",
+                      lockKey,
+                      lockKey),
+                  "PostgreSQL did not return the advisory-lock wait query result")
+              .get(0, Boolean.class);
+      if (Boolean.TRUE.equals(waiting)) {
+        return;
+      }
+      try {
+        Thread.sleep(10);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(
+            "Interrupted while awaiting the owner advisory lock", interrupted);
+      }
+    }
+    throw new AssertionError("Human retry did not wait for the canonical association owner lock");
+  }
+
+  private record HumanRetryFixture(
+      Fixture fixture, GameDesignFreshTenantCreationClient gameDesignClient) {}
 }
