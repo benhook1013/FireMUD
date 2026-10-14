@@ -12,6 +12,7 @@ import math
 import re
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -280,6 +281,7 @@ class CaptureData:
     unlinked_decisions: list[dict[str, Any]] = field(default_factory=list)
     decision_file_present: bool = False
     source_identity: str | None = None
+    checkpoint_decisions: dict[int, tuple[str, str]] | None = None
 
 
 @dataclass(frozen=True)
@@ -767,20 +769,21 @@ def _validate_event_archivability(event: dict[str, Any], number: int) -> None:
 
 
 def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureData) -> None:
+    decisions = capture.checkpoint_decisions if capture.checkpoint_decisions is not None else capture.decisions
     if checkpoint.raw_found == 0:
         return
-    if capture.unlinked_decisions or len(capture.decisions) != checkpoint.raw_found:
+    if capture.unlinked_decisions or len(decisions) != checkpoint.raw_found:
         raise CaptureInvalid("raw-positive CLI checkpoint has no complete linked findings decisions")
     # Historical CLI runs recorded rejected findings in rejections.tsv before
     # decisions.tsv existed.  That format is attributable only when every
     # finding is linked as rejected and the public checkpoint reports zero
     # accepted findings; all other raw-positive cases remain fail-closed.
     if not capture.decision_file_present and (
-        checkpoint.accepted != 0 or any(disposition != "rejected" for disposition, _ in capture.decisions.values())
+        checkpoint.accepted != 0 or any(disposition != "rejected" for disposition, _ in decisions.values())
     ):
         raise CaptureInvalid("historical rejection records cannot explain accepted CLI findings")
-    accepted = sum(disposition == "accepted" for disposition, _ in capture.decisions.values())
-    routed = sum(disposition == "routed" for disposition, _ in capture.decisions.values())
+    accepted = sum(disposition == "accepted" for disposition, _ in decisions.values())
+    routed = sum(disposition == "routed" for disposition, _ in decisions.values())
     if accepted != checkpoint.accepted:
         raise CaptureInvalid("CLI checkpoint accepted count does not match linked findings decisions")
     if checkpoint.routed is not None and routed != checkpoint.routed:
@@ -806,6 +809,53 @@ def _capture_metadata(metadata: dict[str, Any]) -> dict[str, str]:
             except (TypeError, ValueError) as exc:
                 raise CaptureInvalid("linked SQLite CLI metadata is malformed") from exc
     return result
+
+
+def _published_cli_decisions(snapshot: dict[str, Any], checkpoint: Checkpoint, repo: str,
+                             pr_number: int) -> dict[int, tuple[str, str]]:
+    """Bind an immutable original publication to the audited decisions at that time."""
+    intent = snapshot["attempt"]["metadata"].get("checkpoint_publication_intent")
+    history = snapshot.get("decision_history")
+    if (not isinstance(intent, dict) or not isinstance(intent.get("repository"), str)
+            or intent["repository"].casefold() != repo.casefold()
+            or intent.get("source_pr") != pr_number or intent.get("run_id") != checkpoint.run_id
+            or type(intent.get("repository_id")) is not int or intent["repository_id"] <= 0
+            or type(intent.get("actor_id")) is not int or intent["actor_id"] <= 0
+            or not isinstance(checkpoint.author_login, str)
+            or not isinstance(intent.get("actor_login"), str) or not intent["actor_login"].strip()
+            or intent["actor_login"].casefold() != checkpoint.author_login.casefold()
+            or not isinstance(intent.get("body"), str) or checkpoint.correction
+            or not isinstance(history, dict)):
+        raise CaptureInvalid("corrected CLI checkpoint lacks immutable original publication binding")
+    published, invalid = parse_checkpoint_comments([{
+        "body": intent["body"], "created_at": checkpoint.created_at,
+        "author_login": checkpoint.author_login,
+    }])
+    if invalid or len(published) != 1:
+        raise CaptureInvalid("corrected CLI publication intent is malformed")
+    original = published[0]
+    fields = ("type", "raw_found", "accepted", "routed", "file_count", "correction", "run_id",
+              "hosted_review_id", "duration_seconds", "duration_invalid")
+    if (any(getattr(original, key) != getattr(checkpoint, key) for key in fields)
+            or not checkpoint.reviewed_sha
+            or original.reviewed_sha != snapshot["run"]["source_head"]
+            or not original.reviewed_sha.casefold().startswith(checkpoint.reviewed_sha.casefold())):
+        raise CaptureInvalid("corrected CLI checkpoint conflicts with immutable publication intent")
+    try:
+        cutoff = datetime.fromisoformat(checkpoint.created_at.replace("Z", "+00:00"))
+        decisions = {}
+        for index, events in history.items():
+            before = []
+            for event in events:
+                at = datetime.fromisoformat(event["decided_at"].replace("Z", "+00:00"))
+                if at <= cutoff:
+                    before.append(event)
+            if not before:
+                raise CaptureInvalid("original CLI publication lacks complete original decisions")
+            decisions[index] = (before[-1]["decision"], before[-1]["reason"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CaptureInvalid("CLI publication decision audit is malformed") from exc
+    return decisions
 
 
 def _cli_capture_from_sql(
@@ -976,16 +1026,26 @@ def _cli_capture_from_sql(
             raise CaptureInvalid("checkpoint duration does not match linked SQLite CLI metadata")
         if run.get("finalized") is not True:
             raise CaptureInvalid("linked SQLite CLI source decisions are not finalized")
-        if counts.get("accepted") != checkpoint.accepted or (
+        histories = snapshot.get("decision_history", {})
+        corrected = any(len(events) > 1 for events in histories.values())
+        published_correction = corrected and (
+            checkpoint.comment_id is not None or "checkpoint_publication_intent" in attempt_metadata
+        )
+        if published_correction or counts.get("accepted") != checkpoint.accepted or (
             checkpoint.routed is not None and counts.get("routed") != checkpoint.routed
         ):
-            raise CaptureInvalid("CLI checkpoint counts do not match linked SQLite source decisions")
+            checkpoint_decisions = _published_cli_decisions(snapshot, checkpoint, repo, pr_number)
+        else:
+            checkpoint_decisions = None
+    else:
+        checkpoint_decisions = None
     capture = CaptureData(
         metadata=_capture_metadata(metadata_value),
         findings=findings,
         decisions=snapshot.get("decisions", {}),
         decision_file_present=True,
         source_identity=None,
+        checkpoint_decisions=checkpoint_decisions,
     )
     if checkpoint is not None:
         _validate_cli_checkpoint_decisions(checkpoint, capture)
