@@ -22,7 +22,7 @@ class GameSessionFreshTenantAssociationRepositoryTest {
     GameSessionFreshTenantAssociationRepository repository =
         new GameSessionFreshTenantAssociationRepository(dsl);
 
-    assertThatThrownBy(() -> repository.associateFresh(null, null, null))
+    assertThatThrownBy(() -> repository.associateFresh(null, null, null, null))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("writable owner transaction");
 
@@ -37,7 +37,7 @@ class GameSessionFreshTenantAssociationRepositoryTest {
     TransactionSynchronizationManager.setActualTransactionActive(true);
     TransactionSynchronizationManager.setCurrentTransactionReadOnly(true);
 
-    assertThatThrownBy(() -> repository.associateFresh(null, null, null))
+    assertThatThrownBy(() -> repository.associateFresh(null, null, null, null))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("writable owner transaction");
 

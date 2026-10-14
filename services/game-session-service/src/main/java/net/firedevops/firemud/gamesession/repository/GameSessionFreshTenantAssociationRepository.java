@@ -39,7 +39,6 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 public class GameSessionFreshTenantAssociationRepository {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
-  private static final String FRESH_KIND = "FRESH_SOURCE_BOUND";
 
   private final DSLContext dsl;
 
@@ -54,21 +53,6 @@ public class GameSessionFreshTenantAssociationRepository {
     this.workloadNamespace = null;
     this.writeTransaction = null;
     this.readTransaction = null;
-  }
-
-  /**
-   * Persists the fresh source-bound tenant mapping or returns its exact durable replay.
-   *
-   * <p>The association operation ID is the caller's stable mutation identity. The expected receipt
-   * is re-read, digest-validated, and compared with its immutable tenant-source binding under this
-   * same writable READ COMMITTED transaction before any private tenant ID is allocated.
-   */
-  @Transactional(propagation = Propagation.MANDATORY, isolation = Isolation.READ_COMMITTED)
-  public FreshGameSessionTenantAssociation associateFresh(
-      UUID associationOperationId, String targetNamespace, IntakeReceipt expectedSourceReceipt) {
-    requireWritableReadCommittedOwnerTransaction();
-    throw new InvalidFreshTenantSourceException(
-        "Complete immutable Game Design fresh-creation evidence is required before association");
   }
 
   /** Creates the existing owner association only from both exact committed source receipts. */
@@ -227,31 +211,6 @@ public class GameSessionFreshTenantAssociationRepository {
     }
   }
 
-  private RuntimeTenantIdentityEvidence requireFreshSource(
-      String targetNamespace, AuthoredWorldSourceEvidence source) {
-    if (!targetNamespace.equals(source.targetNamespace())) {
-      throw new InvalidFreshTenantSourceException(
-          "Authored-world source namespace differs from the association namespace");
-    }
-    if (!"NEW_GAME_ROW".equals(source.provenanceKind())) {
-      throw new InvalidFreshTenantSourceException(
-          "Fresh tenant association requires NEW_GAME_ROW source provenance");
-    }
-    try {
-      return new RuntimeTenantIdentityEvidence(
-          source.schemaVersion(),
-          source.targetNamespace(),
-          source.registrationRequestId(),
-          source.canonicalTenantId(),
-          source.sourceGameRowId(),
-          source.sourceGameTenantKey(),
-          source.provenanceKind());
-    } catch (IllegalArgumentException exception) {
-      throw new InvalidFreshTenantSourceException(
-          "Authored-world source cannot establish a fresh runtime tenant identity", exception);
-    }
-  }
-
   private Record findAssociationByOperation(UUID associationOperationId) {
     return dsl.fetchOne(
         "SELECT * FROM game_session_fresh_tenant_association "
@@ -264,56 +223,6 @@ public class GameSessionFreshTenantAssociationRepository {
         "SELECT * FROM game_session_tenant_canonical_claim "
             + "WHERE association_operation_id = ? FOR KEY SHARE",
         associationOperationId);
-  }
-
-  private Record findClaimByCanonicalTenant(String namespace, UUID canonicalTenantId) {
-    return dsl.fetchOne(
-        "SELECT * FROM game_session_tenant_canonical_claim "
-            + "WHERE target_namespace = ? AND canonical_tenant_id = ? FOR UPDATE",
-        namespace,
-        canonicalTenantId);
-  }
-
-  private Record findClaimByAssociationRequest(String namespace, UUID associationRequestId) {
-    return dsl.fetchOne(
-        "SELECT * FROM game_session_tenant_canonical_claim "
-            + "WHERE target_namespace = ? AND association_request_id = ? FOR UPDATE",
-        namespace,
-        associationRequestId);
-  }
-
-  private FreshGameSessionTenantAssociation requireExactAssociation(
-      Record association,
-      UUID expectedOperationId,
-      String expectedNamespace,
-      RuntimeTenantIdentityEvidence expectedSource) {
-    UUID associationOperationId = required(association.get("association_operation_id", UUID.class));
-    long privateTenantId = required(association.get("legacy_game_session_tenant_id", Long.class));
-    if (!expectedOperationId.equals(associationOperationId)
-        || !expectedNamespace.equals(association.get("target_namespace", String.class))
-        || !expectedSource.requestId().equals(association.get("association_request_id", UUID.class))
-        || !Integer.valueOf(expectedSource.schemaVersion())
-            .equals(association.get("source_schema_version", Integer.class))
-        || !expectedNamespace.equals(association.get("source_target_namespace", String.class))
-        || !expectedSource.requestId().equals(association.get("source_request_id", UUID.class))
-        || !expectedSource
-            .canonicalTenantId()
-            .equals(association.get("source_canonical_tenant_id", UUID.class))
-        || !expectedSource
-            .canonicalTenantId()
-            .equals(association.get("canonical_tenant_id", UUID.class))
-        || !Objects.equals(
-            expectedSource.sourceGameRowId(), association.get("source_game_row_id", Long.class))
-        || !expectedSource
-            .sourceGameTenantKey()
-            .equals(association.get("source_game_tenant_key", String.class))
-        || !expectedSource.provenanceKind().equals(association.get("provenance_kind", String.class))
-        || !FRESH_KIND.equals(association.get("association_kind", String.class))) {
-      throw new FreshTenantAssociationConflictException(
-          "Association operation ID is already bound to different source or namespace evidence");
-    }
-    return new FreshGameSessionTenantAssociation(
-        associationOperationId, privateTenantId, expectedSource);
   }
 
   private void requireWritableReadCommittedOwnerTransaction() {
