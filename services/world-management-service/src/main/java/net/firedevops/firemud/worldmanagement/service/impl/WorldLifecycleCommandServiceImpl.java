@@ -541,7 +541,25 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       throw fixtureEvidenceMismatch();
     }
     prepareCounter.increment();
-    return snapshot(materialized);
+    WorldInstanceLifecycleSnapshotDto materializedSnapshot = snapshot(materialized);
+    return new WorldInstanceLifecycleSnapshotDto(
+        originalGameSessionRequest.tenantId(),
+        originalGameSessionRequest.gameInstanceId(),
+        materializedSnapshot.gameTemplateId(),
+        materializedSnapshot.controlPlaneRequestId(),
+        materializedSnapshot.launchDescriptorId(),
+        originalGameSessionRequest.versionId(),
+        materializedSnapshot.releaseBundleId(),
+        materializedSnapshot.generationConfigRevision(),
+        materializedSnapshot.publishedReleaseBundleRef(),
+        materializedSnapshot.versionStateEpoch(),
+        materializedSnapshot.lifecycleEpoch(),
+        materializedSnapshot.status(),
+        materializedSnapshot.remapSetId(),
+        materializedSnapshot.workflowId(),
+        materializedSnapshot.workflowFamily(),
+        materializedSnapshot.workflowRunId(),
+        materializedSnapshot.workflowStatus());
   }
 
   private <T> T executeFixtureOwnerTransaction(Supplier<T> operation) {

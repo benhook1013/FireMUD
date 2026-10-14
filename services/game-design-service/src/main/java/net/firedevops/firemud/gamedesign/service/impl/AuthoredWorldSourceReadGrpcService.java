@@ -106,9 +106,21 @@ public final class AuthoredWorldSourceReadGrpcService
 
   /** Returns the existing owner storage classification, or {@code null} for non-storage errors. */
   static Status storageFailureStatus(Throwable failure) {
+    if (failure instanceof TransactionException) {
+      boolean retryable =
+          (failure instanceof org.springframework.transaction.CannotCreateTransactionException
+                  && !(failure
+                      instanceof
+                      org.springframework.transaction.NestedTransactionNotSupportedException))
+              || failure instanceof org.springframework.transaction.TransactionTimedOutException;
+      return Status.fromCode(retryable ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL)
+          .withDescription(
+              retryable
+                  ? "Authored-world source evidence is temporarily unavailable"
+                  : "Authored-world source evidence could not be read");
+    }
     if (failure instanceof DataAccessResourceFailureException
-        || failure instanceof TransientDataAccessException
-        || failure instanceof TransactionException) {
+        || failure instanceof TransientDataAccessException) {
       return Status.UNAVAILABLE.withDescription(
           "Authored-world source evidence is temporarily unavailable");
     }
