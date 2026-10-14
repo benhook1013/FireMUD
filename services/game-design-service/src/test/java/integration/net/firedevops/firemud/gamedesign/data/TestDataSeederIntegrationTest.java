@@ -717,7 +717,7 @@ class TestDataSeederIntegrationTest {
                     "SELECT count(*) AS count FROM flyway_schema_history "
                         + "WHERE success AND type='SQL' AND version IS NOT NULL")
                 .get("count", Long.class))
-        .isEqualTo(75L);
+        .isEqualTo(76L);
     assertThat(
             worldDatabase
                 .dsl()

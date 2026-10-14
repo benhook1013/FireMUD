@@ -44,6 +44,11 @@ public final class RunOwnedWorldLaunchEvidenceTestFixtures {
   }
 
   public static RunOwnedWorldLaunchEvidence create() {
+    return createWithDescriptorOverrides(false, false);
+  }
+
+  public static RunOwnedWorldLaunchEvidence createWithDescriptorOverrides(
+      boolean scriptPatchVersionPresent, boolean remapSetIdPresent) {
     UUID registrationId = UUID.fromString(OPERATION_ID);
     UUID sourceOperationId = UUID.fromString("3f773701-e812-44f5-8ae0-7268d543beed");
     UUID canonicalTenantId = UUID.fromString("ed5d1541-a33e-4f8b-9b54-38c27d76ba6d");
@@ -100,15 +105,15 @@ public final class RunOwnedWorldLaunchEvidenceTestFixtures {
             descriptorRequest,
             "launch-descriptor-fixture-11",
             11L,
-            false,
-            null,
+            scriptPatchVersionPresent,
+            scriptPatchVersionPresent ? "script-patch-fixture-11" : null,
             "{}",
             "genrev-11",
             77L,
             77L,
             RELEASE_REF,
-            false,
-            null);
+            remapSetIdPresent,
+            remapSetIdPresent ? "remap-set-fixture-11" : null);
     String manifestHash = "sha256:" + "c".repeat(64);
     var bundle =
         PublishedReleaseBundle.newBuilder()

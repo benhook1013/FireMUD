@@ -164,6 +164,41 @@ public record WorldCanonicalInstanceAssociation(
       return gameSessionAssociationResponseBytes.clone();
     }
 
+    @Override
+    public boolean equals(Object other) {
+      if (this == other) return true;
+      if (!(other instanceof RunOwnedFixture value)) return false;
+      return gameSessionTenantId == value.gameSessionTenantId
+          && gameSessionGameInstanceId == value.gameSessionGameInstanceId
+          && gameTemplateId == value.gameTemplateId
+          && preparingLifecycleEpoch == value.preparingLifecycleEpoch
+          && worldPrivateKeys.equals(value.worldPrivateKeys)
+          && fixtureOperationId.equals(value.fixtureOperationId)
+          && fixtureProvenanceDigest.equals(value.fixtureProvenanceDigest)
+          && preparationInputDigest.equals(value.preparationInputDigest)
+          && Arrays.equals(
+              gameSessionAssociationResponseBytes, value.gameSessionAssociationResponseBytes)
+          && gameSessionAssociation.equals(value.gameSessionAssociation)
+          && sourceIntakeReceipt.equals(value.sourceIntakeReceipt);
+    }
+
+    @Override
+    public int hashCode() {
+      int result =
+          Objects.hash(
+              worldPrivateKeys,
+              gameSessionTenantId,
+              gameSessionGameInstanceId,
+              gameTemplateId,
+              fixtureOperationId,
+              fixtureProvenanceDigest,
+              preparationInputDigest,
+              preparingLifecycleEpoch,
+              gameSessionAssociation,
+              sourceIntakeReceipt);
+      return 31 * result + Arrays.hashCode(gameSessionAssociationResponseBytes);
+    }
+
     public UUID canonicalVersionId() {
       return gameSessionAssociation.canonicalVersionId();
     }
