@@ -13,8 +13,12 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
+import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
 import net.firedevops.firemud.entitymanagement.entity.Character;
+import net.firedevops.firemud.entitymanagement.repository.ActorActiveConditionRepository;
 import net.firedevops.firemud.entitymanagement.repository.ActorIdentityRepository;
+import net.firedevops.firemud.entitymanagement.repository.ActorResourceStateRepository;
 import net.firedevops.firemud.entitymanagement.repository.CharacterRepository;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -74,6 +78,8 @@ class RetainedActorIdentityIntegrationTest {
 
   @Autowired private CharacterRepository characterRepository;
   @Autowired private ActorIdentityRepository actorIdentityRepository;
+  @Autowired private ActorActiveConditionRepository conditionRepository;
+  @Autowired private ActorResourceStateRepository resourceRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
   @Autowired private Flyway flyway;
 
@@ -138,6 +144,49 @@ class RetainedActorIdentityIntegrationTest {
             jdbcTemplate.queryForObject(
                 "SELECT character_uuid FROM characters WHERE id = ?", UUID.class, actorId))
         .isEqualTo(characterUuid);
+  }
+
+  @Test
+  void legacyConditionalInsertsPreserveNullablePostgresColumnTypes() {
+    Character actor = new Character();
+    actor.setTenantId(tenantId);
+    actor.setAccountId(accountId);
+    actor.setPlayableStateKey("instance:" + instanceId);
+    actor.setName("Nullable legacy values");
+    actor = characterRepository.save(actor);
+
+    ActorActiveCondition condition = new ActorActiveCondition();
+    condition.setTenantId(tenantId);
+    condition.setPlayableStateKey(actor.getPlayableStateKey());
+    condition.setCharacterId(actor.getId());
+    condition.setConditionKey("permanent-condition");
+    condition.setSourceType("TEST");
+    conditionRepository.save(condition);
+    assertThat(condition.getId()).isNotNull();
+    var conditions =
+        conditionRepository.findActiveForCharacter(
+            tenantId, actor.getPlayableStateKey(), actor.getId(), java.time.Instant.now());
+    assertThat(conditions).hasSize(1);
+    assertThat(conditions.getFirst().getExpiresAt()).isNull();
+    assertThat(conditions.getFirst().getSourceId()).isNull();
+    assertThat(conditions.getFirst().getEffectPayloadJson()).isNull();
+
+    ActorResourceState resource = new ActorResourceState();
+    resource.setTenantId(tenantId);
+    resource.setPlayableStateKey(actor.getPlayableStateKey());
+    resource.setCharacterId(actor.getId());
+    resource.setStatKey("nullable-stat");
+    resource.setCurrentValue(5L);
+    resourceRepository.save(resource);
+    assertThat(resource.getId()).isNotNull();
+    var resources =
+        resourceRepository.findByTenantIdAndPlayableStateKeyAndCharacterIdOrderByStatKeyAsc(
+            tenantId, actor.getPlayableStateKey(), actor.getId());
+    assertThat(resources).hasSize(1);
+    assertThat(resources.getFirst().getCurrentValue()).isEqualTo(5L);
+    assertThat(resources.getFirst().getMaxValue()).isNull();
+    assertThat(resources.getFirst().getBaseValue()).isNull();
+    assertThat(resources.getFirst().getSourceId()).isNull();
   }
 
   @Test
