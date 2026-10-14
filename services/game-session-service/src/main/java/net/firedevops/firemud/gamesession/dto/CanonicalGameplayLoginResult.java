@@ -114,12 +114,12 @@ public final class CanonicalGameplayLoginResult {
       if (!accountId.toString().equals(claims.get("accountId"))
           || !accountId.toString().equals(claims.get("sub"))
           || !jti.toString().equals(claims.get("jti"))
-          || epoch(claims.get("iat")) != response.getIssuedAtEpochSecond()
-          || epoch(claims.get("nbf")) != response.getNotBeforeEpochSecond()
-          || epoch(claims.get("exp")) != response.getExpiresAtEpochSecond()
+          || epoch(claims.get("iat")) != response.getIssuedAtEpochSeconds()
+          || epoch(claims.get("nbf")) != response.getNotBeforeEpochSeconds()
+          || epoch(claims.get("exp")) != response.getExpiresAtEpochSeconds()
           || !response.getTokenGeneration().equals(claims.get("tokenGeneration"))
           || !response.getIssuanceFence().equals(claims.get("issuanceFence"))
-          || response.getExpiresAtEpochSecond() <= clock.instant().getEpochSecond())
+          || response.getExpiresAtEpochSeconds() <= clock.instant().getEpochSecond())
         throw invalid();
       Object tuple =
           canonicalProjection(
@@ -139,9 +139,9 @@ public final class CanonicalGameplayLoginResult {
               jti,
               response.getTokenSha256(),
               response.getTokenProfile(),
-              response.getIssuedAtEpochSecond(),
-              response.getNotBeforeEpochSecond(),
-              response.getExpiresAtEpochSecond(),
+              response.getIssuedAtEpochSeconds(),
+              response.getNotBeforeEpochSeconds(),
+              response.getExpiresAtEpochSeconds(),
               response.getTokenGeneration(),
               response.getIssuanceFence(),
               response.getAuthorityTupleCanonicalJson(),

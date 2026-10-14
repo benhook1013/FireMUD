@@ -33,6 +33,7 @@ for conventions on schema evolution and error handling. See each service's
     - [ExportAccountResponse](#account-v1-ExportAccountResponse)
     - [ExportTenantDataRequest](#account-v1-ExportTenantDataRequest)
     - [ExportTenantDataResponse](#account-v1-ExportTenantDataResponse)
+    - [GameplayLoginSourceContext](#account-v1-GameplayLoginSourceContext)
     - [GetProfileRequest](#account-v1-GetProfileRequest)
     - [GetProfileResponse](#account-v1-GetProfileResponse)
     - [GetRealmAccessGrantForRuntimeRequest](#account-v1-GetRealmAccessGrantForRuntimeRequest)
@@ -41,6 +42,7 @@ for conventions on schema evolution and error handling. See each service's
     - [GetTenantEntitlementsForRuntimeResponse](#account-v1-GetTenantEntitlementsForRuntimeResponse)
     - [GetTenantMembershipForRuntimeRequest](#account-v1-GetTenantMembershipForRuntimeRequest)
     - [GetTenantMembershipForRuntimeResponse](#account-v1-GetTenantMembershipForRuntimeResponse)
+    - [InitialGameplayLoginTokenWitness](#account-v1-InitialGameplayLoginTokenWitness)
     - [IssueDirectTextConnectScopeRequest](#account-v1-IssueDirectTextConnectScopeRequest)
     - [IssueDirectTextConnectScopeResponse](#account-v1-IssueDirectTextConnectScopeResponse)
     - [JoinPublicProductionMembershipRequest](#account-v1-JoinPublicProductionMembershipRequest)
@@ -58,13 +60,48 @@ for conventions on schema evolution and error handling. See each service's
     - [RequestEmailVerificationResponse](#account-v1-RequestEmailVerificationResponse)
     - [RequestPasswordResetRequest](#account-v1-RequestPasswordResetRequest)
     - [RequestPasswordResetResponse](#account-v1-RequestPasswordResetResponse)
+    - [RetireInitialGameplayLoginRequest](#account-v1-RetireInitialGameplayLoginRequest)
+    - [RetireInitialGameplayLoginResponse](#account-v1-RetireInitialGameplayLoginResponse)
     - [UpdateProfileRequest](#account-v1-UpdateProfileRequest)
     - [UpdateProfileResponse](#account-v1-UpdateProfileResponse)
     - [VerifyEmailLoginOtpRequest](#account-v1-VerifyEmailLoginOtpRequest)
     - [VerifyEmailRequest](#account-v1-VerifyEmailRequest)
     - [VerifyEmailResponse](#account-v1-VerifyEmailResponse)
 
+    - [GameplayLoginTransportClass](#account-v1-GameplayLoginTransportClass)
+    - [InitialGameplayLoginDisposalDisposition](#account-v1-InitialGameplayLoginDisposalDisposition)
+    - [InitialGameplayLoginDisposalProofKind](#account-v1-InitialGameplayLoginDisposalProofKind)
+
     - [AccountService](#account-v1-AccountService)
+
+- [account/v1/actor_staging_eligibility.proto](#account_v1_actor_staging_eligibility-proto)
+    - [ResolvePreseededActorStagingEligibilityRequest](#account-v1-ResolvePreseededActorStagingEligibilityRequest)
+    - [ResolvePreseededActorStagingEligibilityResponse](#account-v1-ResolvePreseededActorStagingEligibilityResponse)
+
+    - [ActorStagingEligibilityCurrentness](#account-v1-ActorStagingEligibilityCurrentness)
+    - [ActorStagingEligibilityDecision](#account-v1-ActorStagingEligibilityDecision)
+    - [ActorStagingEligibilityPurpose](#account-v1-ActorStagingEligibilityPurpose)
+
+    - [AccountActorStagingEligibilityService](#account-v1-AccountActorStagingEligibilityService)
+
+- [account/v1/jwt_signer_materialization.proto](#account_v1_jwt_signer_materialization-proto)
+    - [ActiveSigner](#account-v1-ActiveSigner)
+    - [EnrollBootstrapRequest](#account-v1-EnrollBootstrapRequest)
+    - [EnrollBootstrapResponse](#account-v1-EnrollBootstrapResponse)
+    - [GetCurrentGenerationRequestRequest](#account-v1-GetCurrentGenerationRequestRequest)
+    - [GetCurrentGenerationRequestResponse](#account-v1-GetCurrentGenerationRequestResponse)
+    - [GetCurrentPromotionRequestRequest](#account-v1-GetCurrentPromotionRequestRequest)
+    - [GetCurrentPromotionRequestResponse](#account-v1-GetCurrentPromotionRequestResponse)
+    - [PromotionPublicKeyIdentity](#account-v1-PromotionPublicKeyIdentity)
+    - [RecordGenerationResultRequest](#account-v1-RecordGenerationResultRequest)
+    - [RecordGenerationResultResponse](#account-v1-RecordGenerationResultResponse)
+    - [RecordPrivatePromotionResultRequest](#account-v1-RecordPrivatePromotionResultRequest)
+    - [RecordPrivatePromotionResultResponse](#account-v1-RecordPrivatePromotionResultResponse)
+    - [RecordSecretObservationRequest](#account-v1-RecordSecretObservationRequest)
+
+    - [GetCurrentGenerationRequestResponse.Phase](#account-v1-GetCurrentGenerationRequestResponse-Phase)
+
+    - [AccountJwtSignerMaterializationService](#account-v1-AccountJwtSignerMaterializationService)
 
 - [account/v1/notification_service.proto](#account_v1_notification_service-proto)
     - [SendNotificationRequest](#account-v1-SendNotificationRequest)
@@ -83,6 +120,37 @@ for conventions on schema evolution and error handling. See each service's
     - [RefundPaymentResponse](#account-v1-RefundPaymentResponse)
 
     - [PaymentService](#account-v1-PaymentService)
+
+- [account/v1/runtime_account_identity_service.proto](#account_v1_runtime_account_identity_service-proto)
+    - [ResolveRuntimeAccountIdentityRequest](#account-v1-ResolveRuntimeAccountIdentityRequest)
+    - [ResolveRuntimeAccountIdentityResponse](#account-v1-ResolveRuntimeAccountIdentityResponse)
+
+    - [RuntimeAccountIdentityService](#account-v1-RuntimeAccountIdentityService)
+
+- [account/v1/start_session_operator_authorization.proto](#account_v1_start_session_operator_authorization-proto)
+    - [AuthorityEvidenceBundleReference](#account-v1-AuthorityEvidenceBundleReference)
+    - [IssueHumanOperatorAuthorizationReferenceRequest](#account-v1-IssueHumanOperatorAuthorizationReferenceRequest)
+    - [IssueHumanOperatorAuthorizationReferenceResponse](#account-v1-IssueHumanOperatorAuthorizationReferenceResponse)
+    - [ReadRedeemedOperationProjectionRequest](#account-v1-ReadRedeemedOperationProjectionRequest)
+    - [ReadRedeemedOperationProjectionResponse](#account-v1-ReadRedeemedOperationProjectionResponse)
+    - [RecoverOperatorAuthorizationReferenceRequest](#account-v1-RecoverOperatorAuthorizationReferenceRequest)
+    - [RecoverOperatorAuthorizationReferenceResponse](#account-v1-RecoverOperatorAuthorizationReferenceResponse)
+    - [RedeemOperatorAuthorizationRequest](#account-v1-RedeemOperatorAuthorizationRequest)
+    - [RedeemOperatorAuthorizationResponse](#account-v1-RedeemOperatorAuthorizationResponse)
+
+    - [StartSessionOperatorAuthorizationService](#account-v1-StartSessionOperatorAuthorizationService)
+
+- [account/v1/start_session_world_participation_acquisition.proto](#account_v1_start_session_world_participation_acquisition-proto)
+    - [AcquireStartSessionWorldParticipationRequest](#account-v1-AcquireStartSessionWorldParticipationRequest)
+    - [AcquireStartSessionWorldParticipationResponse](#account-v1-AcquireStartSessionWorldParticipationResponse)
+
+    - [AccountStartSessionWorldParticipationAcquisitionService](#account-v1-AccountStartSessionWorldParticipationAcquisitionService)
+
+- [account/v1/start_session_world_participation_read.proto](#account_v1_start_session_world_participation_read-proto)
+    - [ReadHistoricalStartSessionWorldParticipationRequest](#account-v1-ReadHistoricalStartSessionWorldParticipationRequest)
+    - [ReadHistoricalStartSessionWorldParticipationResponse](#account-v1-ReadHistoricalStartSessionWorldParticipationResponse)
+
+    - [AccountStartSessionWorldParticipationHistoricalReadService](#account-v1-AccountStartSessionWorldParticipationHistoricalReadService)
 
 - [account/v1/virtual_currency_service.proto](#account_v1_virtual_currency_service-proto)
     - [AddCurrencyRequest](#account-v1-AddCurrencyRequest)
@@ -191,6 +259,13 @@ for conventions on schema evolution and error handling. See each service's
     - [ActorResourceValue](#entity_management-v1-ActorResourceValue)
     - [ApplyActorConditionRequest](#entity_management-v1-ApplyActorConditionRequest)
     - [ApplyActorConditionResponse](#entity_management-v1-ApplyActorConditionResponse)
+    - [CanonicalGameplayRosterActor](#entity_management-v1-CanonicalGameplayRosterActor)
+    - [CanonicalGameplayRosterRequest](#entity_management-v1-CanonicalGameplayRosterRequest)
+    - [CanonicalGameplayRosterResponse](#entity_management-v1-CanonicalGameplayRosterResponse)
+    - [CanonicalGameplayRosterSelectedAssignmentRequest](#entity_management-v1-CanonicalGameplayRosterSelectedAssignmentRequest)
+    - [CanonicalGameplayRosterSelectedAssignmentResponse](#entity_management-v1-CanonicalGameplayRosterSelectedAssignmentResponse)
+    - [CanonicalGameplayRosterSnapshotReference](#entity_management-v1-CanonicalGameplayRosterSnapshotReference)
+    - [CanonicalGameplayRosterTarget](#entity_management-v1-CanonicalGameplayRosterTarget)
     - [Character](#entity_management-v1-Character)
     - [CleanupRuntimeInstanceRequest](#entity_management-v1-CleanupRuntimeInstanceRequest)
     - [CleanupRuntimeInstanceResponse](#entity_management-v1-CleanupRuntimeInstanceResponse)
@@ -240,18 +315,25 @@ for conventions on schema evolution and error handling. See each service's
     - [WearEquipmentItemRequest](#entity_management-v1-WearEquipmentItemRequest)
     - [WearEquipmentItemResponse](#entity_management-v1-WearEquipmentItemResponse)
 
+    - [CanonicalGameplayRosterActorKind](#entity_management-v1-CanonicalGameplayRosterActorKind)
+    - [CanonicalGameplayRosterEntryPolicy](#entity_management-v1-CanonicalGameplayRosterEntryPolicy)
     - [EntityTemplateReferenceType](#entity_management-v1-EntityTemplateReferenceType)
     - [EntityType](#entity_management-v1-EntityType)
     - [PlayableStateScope](#entity_management-v1-PlayableStateScope)
     - [ReloadHint](#entity_management-v1-ReloadHint)
     - [UpgradeValidationResult](#entity_management-v1-UpgradeValidationResult)
 
+    - [CanonicalGameplayRosterService](#entity_management-v1-CanonicalGameplayRosterService)
     - [EntityManagementService](#entity_management-v1-EntityManagementService)
 
 - [game-design/v1/game_design_service.proto](#game-design_v1_game_design_service-proto)
     - [AppliedWorldDesignMutation](#gamedesign-v1-AppliedWorldDesignMutation)
     - [ApproveTemplateRemapSetRequest](#gamedesign-v1-ApproveTemplateRemapSetRequest)
     - [ApproveTemplateRemapSetResponse](#gamedesign-v1-ApproveTemplateRemapSetResponse)
+    - [AuthoredWorldLaunchDescriptorEvidence](#gamedesign-v1-AuthoredWorldLaunchDescriptorEvidence)
+    - [AuthoredWorldReleaseAttestationEvidence](#gamedesign-v1-AuthoredWorldReleaseAttestationEvidence)
+    - [AuthoredWorldSourceReceipt](#gamedesign-v1-AuthoredWorldSourceReceipt)
+    - [AuthoredWorldVersionStateEvidence](#gamedesign-v1-AuthoredWorldVersionStateEvidence)
     - [BeginPurgeVersionAssetsRequest](#gamedesign-v1-BeginPurgeVersionAssetsRequest)
     - [BeginPurgeVersionAssetsResponse](#gamedesign-v1-BeginPurgeVersionAssetsResponse)
     - [CanDeleteVersionAssetsRequest](#gamedesign-v1-CanDeleteVersionAssetsRequest)
@@ -270,8 +352,13 @@ for conventions on schema evolution and error handling. See each service's
     - [DesignControlPlaneDigest](#gamedesign-v1-DesignControlPlaneDigest)
     - [FinalizePurgeVersionAssetsRequest](#gamedesign-v1-FinalizePurgeVersionAssetsRequest)
     - [FinalizePurgeVersionAssetsResponse](#gamedesign-v1-FinalizePurgeVersionAssetsResponse)
+    - [GetAuthoredWorldVersionStateRequest](#gamedesign-v1-GetAuthoredWorldVersionStateRequest)
+    - [GetAuthoredWorldVersionStateResponse](#gamedesign-v1-GetAuthoredWorldVersionStateResponse)
+    - [GetCompleteLaunchBindingResponse](#gamedesign-v1-GetCompleteLaunchBindingResponse)
     - [GetDesignControlPlaneDigestRequest](#gamedesign-v1-GetDesignControlPlaneDigestRequest)
     - [GetDesignControlPlaneDigestResponse](#gamedesign-v1-GetDesignControlPlaneDigestResponse)
+    - [GetLaunchDescriptorRequest](#gamedesign-v1-GetLaunchDescriptorRequest)
+    - [GetLaunchDescriptorResponse](#gamedesign-v1-GetLaunchDescriptorResponse)
     - [GetPublishedPluginVersionRequest](#gamedesign-v1-GetPublishedPluginVersionRequest)
     - [GetPublishedPluginVersionResponse](#gamedesign-v1-GetPublishedPluginVersionResponse)
     - [GetPublishedReleaseBundleRequest](#gamedesign-v1-GetPublishedReleaseBundleRequest)
@@ -312,6 +399,7 @@ for conventions on schema evolution and error handling. See each service's
     - [PublishScriptPatchVersionResponse](#gamedesign-v1-PublishScriptPatchVersionResponse)
     - [PublishVersionRequest](#gamedesign-v1-PublishVersionRequest)
     - [PublishVersionResponse](#gamedesign-v1-PublishVersionResponse)
+    - [PublishedArtifactDigest](#gamedesign-v1-PublishedArtifactDigest)
     - [PublishedPluginVersion](#gamedesign-v1-PublishedPluginVersion)
     - [PublishedReleaseBundle](#gamedesign-v1-PublishedReleaseBundle)
     - [PublishedScriptPatchVersion](#gamedesign-v1-PublishedScriptPatchVersion)
@@ -355,7 +443,43 @@ for conventions on schema evolution and error handling. See each service's
     - [VersionLifecycleState](#gamedesign-v1-VersionLifecycleState)
     - [WorldTopologyScopeModel](#gamedesign-v1-WorldTopologyScopeModel)
 
+    - [AuthoredWorldVersionStateService](#gamedesign-v1-AuthoredWorldVersionStateService)
     - [GameDesignService](#gamedesign-v1-GameDesignService)
+
+- [game-design/v1/publication_terminal_service.proto](#game-design_v1_publication_terminal_service-proto)
+    - [ReadGameDesignPublicationTerminalRequest](#game_design-v1-ReadGameDesignPublicationTerminalRequest)
+    - [ReadGameDesignPublicationTerminalResponse](#game_design-v1-ReadGameDesignPublicationTerminalResponse)
+
+    - [GameDesignPublicationTerminalReadService](#game_design-v1-GameDesignPublicationTerminalReadService)
+
+- [game-design/v1/published_realm_entry_policy_service.proto](#game-design_v1_published_realm_entry_policy_service-proto)
+    - [ListPublishedRealmEntryPoliciesRequest](#game_design-v1-ListPublishedRealmEntryPoliciesRequest)
+    - [ListPublishedRealmEntryPoliciesResponse](#game_design-v1-ListPublishedRealmEntryPoliciesResponse)
+    - [ResolvePublishedRealmEntryPolicyRequest](#game_design-v1-ResolvePublishedRealmEntryPolicyRequest)
+    - [ResolvePublishedRealmEntryPolicyResponse](#game_design-v1-ResolvePublishedRealmEntryPolicyResponse)
+
+    - [PublishedRealmEntryPolicyService](#game_design-v1-PublishedRealmEntryPolicyService)
+
+- [game-design/v1/start_session_template_association_service.proto](#game-design_v1_start_session_template_association_service-proto)
+    - [ReadStartSessionTemplateAssociationRequest](#game_design-v1-ReadStartSessionTemplateAssociationRequest)
+    - [ReadStartSessionTemplateAssociationResponse](#game_design-v1-ReadStartSessionTemplateAssociationResponse)
+    - [ResolveStartSessionLaunchDescriptorResponse](#game_design-v1-ResolveStartSessionLaunchDescriptorResponse)
+    - [StartSessionConfiguredTemplateSelection](#game_design-v1-StartSessionConfiguredTemplateSelection)
+    - [StartSessionExactTemplateAssociationSelection](#game_design-v1-StartSessionExactTemplateAssociationSelection)
+    - [StartSessionLaunchDescriptorApplicationFailure](#game_design-v1-StartSessionLaunchDescriptorApplicationFailure)
+    - [StartSessionTemplateWorldSourceAssociationEvidence](#game_design-v1-StartSessionTemplateWorldSourceAssociationEvidence)
+
+    - [GameDesignStartSessionLaunchDescriptorService](#game_design-v1-GameDesignStartSessionLaunchDescriptorService)
+    - [GameDesignStartSessionTemplateAssociationReadService](#game_design-v1-GameDesignStartSessionTemplateAssociationReadService)
+
+- [game-design/v1/tenant_identity_service.proto](#game-design_v1_tenant_identity_service-proto)
+    - [ResolveAuthoredWorldSourceRequest](#gamedesign-v1-ResolveAuthoredWorldSourceRequest)
+    - [ResolveAuthoredWorldSourceResponse](#gamedesign-v1-ResolveAuthoredWorldSourceResponse)
+    - [ResolveFreshTenantCreationRequest](#gamedesign-v1-ResolveFreshTenantCreationRequest)
+    - [ResolveFreshTenantCreationResponse](#gamedesign-v1-ResolveFreshTenantCreationResponse)
+
+    - [AuthoredWorldSourceReadService](#gamedesign-v1-AuthoredWorldSourceReadService)
+    - [TenantIdentityService](#gamedesign-v1-TenantIdentityService)
 
 - [game-logic/v1/game_logic_service.proto](#game-logic_v1_game_logic_service-proto)
     - [CommunicationRecipientView](#game_logic-v1-CommunicationRecipientView)
@@ -389,9 +513,19 @@ for conventions on schema evolution and error handling. See each service's
 
     - [GameLogicService](#game_logic-v1-GameLogicService)
 
+- [game-session/v1/canonical_gameplay_roster_owner_read.proto](#game-session_v1_canonical_gameplay_roster_owner_read-proto)
+    - [GetCanonicalGameplayRosterOwnerReadRequest](#game_session-v1-GetCanonicalGameplayRosterOwnerReadRequest)
+    - [GetCanonicalGameplayRosterOwnerReadResponse](#game_session-v1-GetCanonicalGameplayRosterOwnerReadResponse)
+    - [GetPreseededActorAssignmentOwnerReadRequest](#game_session-v1-GetPreseededActorAssignmentOwnerReadRequest)
+    - [GetPreseededActorAssignmentOwnerReadResponse](#game_session-v1-GetPreseededActorAssignmentOwnerReadResponse)
+
+    - [CanonicalGameplayRosterOwnerReadService](#game_session-v1-CanonicalGameplayRosterOwnerReadService)
+
 - [game-session/v1/game_session_service.proto](#game-session_v1_game_session_service-proto)
     - [AccountPresenceEntry](#game_session-v1-AccountPresenceEntry)
     - [AdmissionPointerControlPlaneEntry](#game_session-v1-AdmissionPointerControlPlaneEntry)
+    - [AuthorizeStartSessionRequest](#game_session-v1-AuthorizeStartSessionRequest)
+    - [AuthorizeStartSessionResponse](#game_session-v1-AuthorizeStartSessionResponse)
     - [CutoverParticipantResult](#game_session-v1-CutoverParticipantResult)
     - [EnqueueAutomationCommandIfAbsentRequest](#game_session-v1-EnqueueAutomationCommandIfAbsentRequest)
     - [EnqueueAutomationCommandIfAbsentResponse](#game_session-v1-EnqueueAutomationCommandIfAbsentResponse)
@@ -407,6 +541,10 @@ for conventions on schema evolution and error handling. See each service's
     - [GameplayWorld](#game_session-v1-GameplayWorld)
     - [GetAdmissionPointerRequest](#game_session-v1-GetAdmissionPointerRequest)
     - [GetAdmissionPointerResponse](#game_session-v1-GetAdmissionPointerResponse)
+    - [GetCanonicalGameInstanceLaunchAssociationRequest](#game_session-v1-GetCanonicalGameInstanceLaunchAssociationRequest)
+    - [GetCanonicalGameInstanceLaunchAssociationResponse](#game_session-v1-GetCanonicalGameInstanceLaunchAssociationResponse)
+    - [GetCanonicalInitialAdmissionOwnerProofRequest](#game_session-v1-GetCanonicalInitialAdmissionOwnerProofRequest)
+    - [GetCanonicalInitialAdmissionOwnerProofResponse](#game_session-v1-GetCanonicalInitialAdmissionOwnerProofResponse)
     - [GetGameInstanceRuntimeStateRequest](#game_session-v1-GetGameInstanceRuntimeStateRequest)
     - [GetGameInstanceRuntimeStateResponse](#game_session-v1-GetGameInstanceRuntimeStateResponse)
     - [GetGameSessionPinConvergenceRequest](#game_session-v1-GetGameSessionPinConvergenceRequest)
@@ -425,6 +563,8 @@ for conventions on schema evolution and error handling. See each service's
     - [GetRemoteFollowupResponse](#game_session-v1-GetRemoteFollowupResponse)
     - [GetRemoteFollowupResultRequest](#game_session-v1-GetRemoteFollowupResultRequest)
     - [GetRemoteFollowupResultResponse](#game_session-v1-GetRemoteFollowupResultResponse)
+    - [GetRunOwnedFixtureLaunchAssociationRequest](#game_session-v1-GetRunOwnedFixtureLaunchAssociationRequest)
+    - [GetRunOwnedFixtureLaunchAssociationResponse](#game_session-v1-GetRunOwnedFixtureLaunchAssociationResponse)
     - [GetRuntimeOwnershipStatusRequest](#game_session-v1-GetRuntimeOwnershipStatusRequest)
     - [GetRuntimeOwnershipStatusResponse](#game_session-v1-GetRuntimeOwnershipStatusResponse)
     - [GetTickStatusRequest](#game_session-v1-GetTickStatusRequest)
@@ -493,13 +633,29 @@ for conventions on schema evolution and error handling. See each service's
 
     - [AccountPresenceActivityState](#game_session-v1-AccountPresenceActivityState)
     - [AccountRecentPresenceDisposition](#game_session-v1-AccountRecentPresenceDisposition)
+    - [CanonicalInitialAdmissionOrigin](#game_session-v1-CanonicalInitialAdmissionOrigin)
+    - [CanonicalInitialAdmissionOwnerProofOutcome](#game_session-v1-CanonicalInitialAdmissionOwnerProofOutcome)
     - [CutoverCompatibilityResult](#game_session-v1-CutoverCompatibilityResult)
     - [ExpectedCurrentPin.Kind](#game_session-v1-ExpectedCurrentPin-Kind)
     - [InitialAdmissionBindOwnerProofOutcome](#game_session-v1-InitialAdmissionBindOwnerProofOutcome)
+    - [StartSessionOwnerAuthorizationProgress](#game_session-v1-StartSessionOwnerAuthorizationProgress)
     - [TickStatus](#game_session-v1-TickStatus)
 
+    - [CanonicalInitialAdmissionOwnerProofReadService](#game_session-v1-CanonicalInitialAdmissionOwnerProofReadService)
     - [GameSessionControlPlaneService](#game_session-v1-GameSessionControlPlaneService)
     - [GameSessionService](#game_session-v1-GameSessionService)
+
+- [game-session/v1/historical_original_start_session_owner_evidence.proto](#game-session_v1_historical_original_start_session_owner_evidence-proto)
+    - [ReadHistoricalOriginalStartSessionOwnerEvidenceRequest](#game_session-v1-ReadHistoricalOriginalStartSessionOwnerEvidenceRequest)
+    - [ReadHistoricalOriginalStartSessionOwnerEvidenceResponse](#game_session-v1-ReadHistoricalOriginalStartSessionOwnerEvidenceResponse)
+
+    - [HistoricalOriginalStartSessionOwnerEvidenceReadService](#game_session-v1-HistoricalOriginalStartSessionOwnerEvidenceReadService)
+
+- [game-session/v1/original_start_session_current_attempt_read.proto](#game-session_v1_original_start_session_current_attempt_read-proto)
+    - [ReadOriginalStartSessionCurrentAttemptRequest](#game_session-v1-ReadOriginalStartSessionCurrentAttemptRequest)
+    - [ReadOriginalStartSessionCurrentAttemptResponse](#game_session-v1-ReadOriginalStartSessionCurrentAttemptResponse)
+
+    - [OriginalStartSessionCurrentAttemptReadService](#game_session-v1-OriginalStartSessionCurrentAttemptReadService)
 
 - [logging-admin/v1/logging_admin_service.proto](#logging-admin_v1_logging_admin_service-proto)
     - [ApplyModerationActionRequest](#logging_admin-v1-ApplyModerationActionRequest)
@@ -512,6 +668,8 @@ for conventions on schema evolution and error handling. See each service's
     - [PingResponse](#logging_admin-v1-PingResponse)
     - [QueryLogsRequest](#logging_admin-v1-QueryLogsRequest)
     - [QueryLogsResponse](#logging_admin-v1-QueryLogsResponse)
+    - [ReadCurrentClaimEvidenceRequest](#logging_admin-v1-ReadCurrentClaimEvidenceRequest)
+    - [ReadCurrentClaimEvidenceResponse](#logging_admin-v1-ReadCurrentClaimEvidenceResponse)
     - [ReadLogEventReceiptRequest](#logging_admin-v1-ReadLogEventReceiptRequest)
     - [ReadLogEventReceiptResponse](#logging_admin-v1-ReadLogEventReceiptResponse)
     - [ToggleFeatureFlagRequest](#logging_admin-v1-ToggleFeatureFlagRequest)
@@ -520,8 +678,10 @@ for conventions on schema evolution and error handling. See each service's
     - [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome)
     - [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus)
     - [AccountAuditScope](#logging_admin-v1-AccountAuditScope)
+    - [StartSessionReservationEvidencePurpose](#logging_admin-v1-StartSessionReservationEvidencePurpose)
 
     - [LoggingAdminService](#logging_admin-v1-LoggingAdminService)
+    - [StartSessionReservationEvidenceService](#logging_admin-v1-StartSessionReservationEvidenceService)
 
 - [logging-admin/v1/report_service.proto](#logging-admin_v1_report_service-proto)
     - [CreateReportRequest](#logging_admin-v1-CreateReportRequest)
@@ -600,6 +760,36 @@ for conventions on schema evolution and error handling. See each service's
 
     - [TcpProxyService](#tcp_proxy-v1-TcpProxyService)
 
+- [world-management/v1/draft_terminal_service.proto](#world-management_v1_draft_terminal_service-proto)
+    - [ReadWorldDraftTerminalOutcomeRequest](#world_management-v1-ReadWorldDraftTerminalOutcomeRequest)
+    - [ReadWorldDraftTerminalOutcomeResponse](#world_management-v1-ReadWorldDraftTerminalOutcomeResponse)
+
+    - [WorldDraftTerminalReadStatus](#world_management-v1-WorldDraftTerminalReadStatus)
+
+    - [WorldDraftTerminalReadService](#world_management-v1-WorldDraftTerminalReadService)
+
+- [world-management/v1/world_authored_version_identity_service.proto](#world-management_v1_world_authored_version_identity_service-proto)
+    - [AssociateAuthoredWorldVersionRequest](#world_management-v1-AssociateAuthoredWorldVersionRequest)
+    - [AssociateAuthoredWorldVersionResponse](#world_management-v1-AssociateAuthoredWorldVersionResponse)
+
+    - [WorldAuthoredVersionIdentityService](#world_management-v1-WorldAuthoredVersionIdentityService)
+
+- [world-management/v1/world_canonical_initial_admission_hold.proto](#world-management_v1_world_canonical_initial_admission_hold-proto)
+    - [AcquireCanonicalInitialAdmissionHoldRequest](#world_management-v1-AcquireCanonicalInitialAdmissionHoldRequest)
+    - [AcquireCanonicalInitialAdmissionHoldResponse](#world_management-v1-AcquireCanonicalInitialAdmissionHoldResponse)
+    - [ReadCanonicalInitialAdmissionHoldIdentityRequest](#world_management-v1-ReadCanonicalInitialAdmissionHoldIdentityRequest)
+    - [ReadCanonicalInitialAdmissionHoldIdentityResponse](#world_management-v1-ReadCanonicalInitialAdmissionHoldIdentityResponse)
+    - [ReadCanonicalInitialAdmissionHoldStateRequest](#world_management-v1-ReadCanonicalInitialAdmissionHoldStateRequest)
+    - [ReadCanonicalInitialAdmissionHoldStateResponse](#world_management-v1-ReadCanonicalInitialAdmissionHoldStateResponse)
+
+    - [WorldCanonicalInitialAdmissionHoldService](#world_management-v1-WorldCanonicalInitialAdmissionHoldService)
+
+- [world-management/v1/world_canonical_instance_lifecycle_read.proto](#world-management_v1_world_canonical_instance_lifecycle_read-proto)
+    - [ReadWorldCanonicalInstanceLifecycleRequest](#world_management-v1-ReadWorldCanonicalInstanceLifecycleRequest)
+    - [ReadWorldCanonicalInstanceLifecycleResponse](#world_management-v1-ReadWorldCanonicalInstanceLifecycleResponse)
+
+    - [WorldCanonicalInstanceLifecycleReadService](#world_management-v1-WorldCanonicalInstanceLifecycleReadService)
+
 - [world-management/v1/world_management_service.proto](#world-management_v1_world_management_service-proto)
     - [AcquireInitialAdmissionBindHoldRequest](#world_management-v1-AcquireInitialAdmissionBindHoldRequest)
     - [AcquireInitialAdmissionBindHoldResponse](#world_management-v1-AcquireInitialAdmissionBindHoldResponse)
@@ -609,6 +799,8 @@ for conventions on schema evolution and error handling. See each service's
     - [ApplyRoomAmbientStatePatchResponse](#world_management-v1-ApplyRoomAmbientStatePatchResponse)
     - [ApplyWorldDesignMutationRequest](#world_management-v1-ApplyWorldDesignMutationRequest)
     - [ApplyWorldDesignMutationResponse](#world_management-v1-ApplyWorldDesignMutationResponse)
+    - [AuthoredWorldSourceEvidence](#world_management-v1-AuthoredWorldSourceEvidence)
+    - [AuthoredWorldSourceIntakePublicReceipt](#world_management-v1-AuthoredWorldSourceIntakePublicReceipt)
     - [DoorAmbientState](#world_management-v1-DoorAmbientState)
     - [FailPreparedWorldInstanceRequest](#world_management-v1-FailPreparedWorldInstanceRequest)
     - [FailPreparedWorldInstanceResponse](#world_management-v1-FailPreparedWorldInstanceResponse)
@@ -626,12 +818,20 @@ for conventions on schema evolution and error handling. See each service's
     - [GetWorldInstanceLifecycleResponse](#world_management-v1-GetWorldInstanceLifecycleResponse)
     - [HazardAmbientState](#world_management-v1-HazardAmbientState)
     - [InitialAdmissionBindHold](#world_management-v1-InitialAdmissionBindHold)
+    - [IntakeAuthoredWorldSourceRequest](#world_management-v1-IntakeAuthoredWorldSourceRequest)
+    - [IntakeAuthoredWorldSourceResponse](#world_management-v1-IntakeAuthoredWorldSourceResponse)
     - [ListRoomOccupantsRequest](#world_management-v1-ListRoomOccupantsRequest)
     - [ListRoomOccupantsResponse](#world_management-v1-ListRoomOccupantsResponse)
     - [PingRequest](#world_management-v1-PingRequest)
     - [PingResponse](#world_management-v1-PingResponse)
     - [PrepareWorldInstanceRequest](#world_management-v1-PrepareWorldInstanceRequest)
     - [PrepareWorldInstanceResponse](#world_management-v1-PrepareWorldInstanceResponse)
+    - [ReadAuthoredWorldSourceIntakeByIdRequest](#world_management-v1-ReadAuthoredWorldSourceIntakeByIdRequest)
+    - [ReadAuthoredWorldSourceIntakeByIdResponse](#world_management-v1-ReadAuthoredWorldSourceIntakeByIdResponse)
+    - [ReadAuthoredWorldSourceIntakeRequest](#world_management-v1-ReadAuthoredWorldSourceIntakeRequest)
+    - [ReadAuthoredWorldSourceIntakeResponse](#world_management-v1-ReadAuthoredWorldSourceIntakeResponse)
+    - [ReadWorldStartSessionExecutionTerminalRequest](#world_management-v1-ReadWorldStartSessionExecutionTerminalRequest)
+    - [ReadWorldStartSessionExecutionTerminalResponse](#world_management-v1-ReadWorldStartSessionExecutionTerminalResponse)
     - [RegionDesignMutation](#world_management-v1-RegionDesignMutation)
     - [RoomAmbientState](#world_management-v1-RoomAmbientState)
     - [RoomAmbientStatePatch](#world_management-v1-RoomAmbientStatePatch)
@@ -663,7 +863,16 @@ for conventions on schema evolution and error handling. See each service's
     - [WorldDesignScopeType](#world_management-v1-WorldDesignScopeType)
     - [WorldInstanceLifecycleStatus](#world_management-v1-WorldInstanceLifecycleStatus)
 
+    - [WorldAuthoredSourceIntakeService](#world_management-v1-WorldAuthoredSourceIntakeService)
     - [WorldManagementService](#world_management-v1-WorldManagementService)
+    - [WorldStartSessionExecutionTerminalReadService](#world_management-v1-WorldStartSessionExecutionTerminalReadService)
+
+- [world-management/v1/world_published_start_location_read.proto](#world-management_v1_world_published_start_location_read-proto)
+    - [ReadWorldPublishedStartLocationRequest](#world_management-v1-ReadWorldPublishedStartLocationRequest)
+    - [ReadWorldPublishedStartLocationResponse](#world_management-v1-ReadWorldPublishedStartLocationResponse)
+    - [WorldPublishedStartLocationAffectedTuple](#world_management-v1-WorldPublishedStartLocationAffectedTuple)
+
+    - [WorldPublishedStartLocationReadService](#world_management-v1-WorldPublishedStartLocationReadService)
 
 - [Scalar Value Types](#scalar-value-types)
 
@@ -686,6 +895,8 @@ for conventions on schema evolution and error handling. See each service's
 | ----- | ---- | ----- | ----------- |
 | password | [string](#string) |  |  |
 | email | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| source_context | [GameplayLoginSourceContext](#account-v1-GameplayLoginSourceContext) |  |  |
 
 
 
@@ -703,6 +914,19 @@ for conventions on schema evolution and error handling. See each service's
 | auth_token | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| request_id | [string](#string) |  |  |
+| caller_context_id | [string](#string) |  |  |
+| token_jti | [string](#string) |  |  |
+| token_sha256 | [string](#string) |  |  |
+| token_profile | [string](#string) |  |  |
+| issued_at_epoch_seconds | [int64](#int64) |  |  |
+| not_before_epoch_seconds | [int64](#int64) |  |  |
+| expires_at_epoch_seconds | [int64](#int64) |  |  |
+| token_generation | [string](#string) |  |  |
+| issuance_fence | [string](#string) |  |  |
+| authority_tuple_canonical_json | [bytes](#bytes) |  |  |
+| outbox_checkpoints_canonical_json | [bytes](#bytes) |  |  |
+| outbox_source_event_evidence_canonical_json | [bytes](#bytes) |  |  |
 
 
 
@@ -766,7 +990,7 @@ Result of a CreateAccount call.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| account_id | [string](#string) |  | Unique identifier of the newly created account. |
+| account_id | [string](#string) |  | Canonical non-nil Account UUID of the newly created account. |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  | Details about why the creation failed, if applicable. |
 
 
@@ -865,6 +1089,23 @@ Result of a CreateAccount call.
 | account_json | [string](#string) |  |  |
 | profile_json | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GameplayLoginSourceContext"></a>
+
+### GameplayLoginSourceContext
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| caller_context_id | [string](#string) |  |  |
+| canonical_client_address | [string](#string) |  |  |
+| transport_class | [GameplayLoginTransportClass](#account-v1-GameplayLoginTransportClass) |  |  |
 
 
 
@@ -1015,6 +1256,24 @@ Result of a CreateAccount call.
 | membership_exists | [bool](#bool) |  |  |
 | membership_lifecycle_state | [string](#string) |  |  |
 | membership_authority_generation | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="account-v1-InitialGameplayLoginTokenWitness"></a>
+
+### InitialGameplayLoginTokenWitness
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| token_jti | [string](#string) |  |  |
+| token_sha256 | [string](#string) |  |  |
+| token_generation | [int64](#int64) |  |  |
+| issuance_fence | [int64](#int64) |  |  |
 
 
 
@@ -1304,6 +1563,42 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="account-v1-RetireInitialGameplayLoginRequest"></a>
+
+### RetireInitialGameplayLoginRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  |  |
+| caller_context_id | [string](#string) |  |  |
+| token_witness | [InitialGameplayLoginTokenWitness](#account-v1-InitialGameplayLoginTokenWitness) |  | Optional, but if present all fields must match Account&#39;s original stored identity. |
+
+
+
+
+
+
+<a name="account-v1-RetireInitialGameplayLoginResponse"></a>
+
+### RetireInitialGameplayLoginResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  |  |
+| caller_context_id | [string](#string) |  |  |
+| disposal_operation_id | [string](#string) |  |  |
+| disposition | [InitialGameplayLoginDisposalDisposition](#account-v1-InitialGameplayLoginDisposalDisposition) |  |  |
+| proof_kind | [InitialGameplayLoginDisposalProofKind](#account-v1-InitialGameplayLoginDisposalProofKind) |  | PENDING uses UNSPECIFIED; each terminal disposition requires its exact proof variant. |
+
+
+
+
+
+
 <a name="account-v1-UpdateProfileRequest"></a>
 
 ### UpdateProfileRequest
@@ -1386,6 +1681,47 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="account-v1-GameplayLoginTransportClass"></a>
+
+### GameplayLoginTransportClass
+Credential-bearing LOGIN accepts only the authenticated TCP Proxy branch.
+FIRST_PARTY_WEB remains bootstrap-backed and cannot present credentials here.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| GAMEPLAY_LOGIN_TRANSPORT_CLASS_UNSPECIFIED | 0 |  |
+| GAMEPLAY_LOGIN_TRANSPORT_CLASS_TRUSTED_TCP_PROXY | 1 |  |
+| GAMEPLAY_LOGIN_TRANSPORT_CLASS_FIRST_PARTY_WEB | 2 |  |
+
+
+
+<a name="account-v1-InitialGameplayLoginDisposalDisposition"></a>
+
+### InitialGameplayLoginDisposalDisposition
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| INITIAL_GAMEPLAY_LOGIN_DISPOSAL_DISPOSITION_UNSPECIFIED | 0 |  |
+| INITIAL_GAMEPLAY_LOGIN_DISPOSAL_DISPOSITION_PENDING | 1 |  |
+| INITIAL_GAMEPLAY_LOGIN_DISPOSAL_DISPOSITION_RETIRED | 2 |  |
+| INITIAL_GAMEPLAY_LOGIN_DISPOSAL_DISPOSITION_NO_TOKEN | 3 | No registry-bound/exposed usable issuance exists or can later be created for this attempt. This does not claim that transient token bytes were never signed. |
+
+
+
+<a name="account-v1-InitialGameplayLoginDisposalProofKind"></a>
+
+### InitialGameplayLoginDisposalProofKind
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| INITIAL_GAMEPLAY_LOGIN_DISPOSAL_PROOF_KIND_UNSPECIFIED | 0 |  |
+| INITIAL_GAMEPLAY_LOGIN_DISPOSAL_PROOF_KIND_PHYSICAL_TOKEN_DENIAL | 1 |  |
+| INITIAL_GAMEPLAY_LOGIN_DISPOSAL_PROOF_KIND_NO_ISSUANCE_BINDING | 2 |  |
+
+
+
 
 
 
@@ -1400,6 +1736,7 @@ Basic ping response containing a greeting and optional error details.
 | Ping | [PingRequest](#account-v1-PingRequest) | [PingResponse](#account-v1-PingResponse) |  |
 | CreateAccount | [CreateAccountRequest](#account-v1-CreateAccountRequest) | [CreateAccountResponse](#account-v1-CreateAccountResponse) |  |
 | Authenticate | [AuthenticateRequest](#account-v1-AuthenticateRequest) | [AuthenticateResponse](#account-v1-AuthenticateResponse) |  |
+| RetireInitialGameplayLogin | [RetireInitialGameplayLoginRequest](#account-v1-RetireInitialGameplayLoginRequest) | [RetireInitialGameplayLoginResponse](#account-v1-RetireInitialGameplayLoginResponse) | Exact original Game Session mTLS caller; lifecycle disposal only, never credential recovery. |
 | RequestEmailLoginOtp | [RequestEmailLoginOtpRequest](#account-v1-RequestEmailLoginOtpRequest) | [RequestEmailLoginOtpResponse](#account-v1-RequestEmailLoginOtpResponse) |  |
 | VerifyEmailLoginOtp | [VerifyEmailLoginOtpRequest](#account-v1-VerifyEmailLoginOtpRequest) | [AuthenticateResponse](#account-v1-AuthenticateResponse) |  |
 | GetTenantMembershipForRuntime | [GetTenantMembershipForRuntimeRequest](#account-v1-GetTenantMembershipForRuntimeRequest) | [GetTenantMembershipForRuntimeResponse](#account-v1-GetTenantMembershipForRuntimeResponse) |  |
@@ -1418,6 +1755,491 @@ Basic ping response containing a greeting and optional error details.
 | LinkExternalAccount | [LinkExternalAccountRequest](#account-v1-LinkExternalAccountRequest) | [LinkExternalAccountResponse](#account-v1-LinkExternalAccountResponse) |  |
 | RequestEmailVerification | [RequestEmailVerificationRequest](#account-v1-RequestEmailVerificationRequest) | [RequestEmailVerificationResponse](#account-v1-RequestEmailVerificationResponse) |  |
 | VerifyEmail | [VerifyEmailRequest](#account-v1-VerifyEmailRequest) | [VerifyEmailResponse](#account-v1-VerifyEmailResponse) |  |
+
+
+
+
+
+<a name="account_v1_actor_staging_eligibility-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/actor_staging_eligibility.proto
+
+
+
+<a name="account-v1-ResolvePreseededActorStagingEligibilityRequest"></a>
+
+### ResolvePreseededActorStagingEligibilityRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| canonical_account_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| purpose | [ActorStagingEligibilityPurpose](#account-v1-ActorStagingEligibilityPurpose) |  |  |
+
+
+
+
+
+
+<a name="account-v1-ResolvePreseededActorStagingEligibilityResponse"></a>
+
+### ResolvePreseededActorStagingEligibilityResponse
+This response is a current Account and membership snapshot only. It does not assert that a
+realm is public, that its entry policy is PRESEEDED_ONLY, or that gameplay admission is allowed.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| canonical_account_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| purpose | [ActorStagingEligibilityPurpose](#account-v1-ActorStagingEligibilityPurpose) |  |  |
+| currentness | [ActorStagingEligibilityCurrentness](#account-v1-ActorStagingEligibilityCurrentness) |  |  |
+| observed_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| decision | [ActorStagingEligibilityDecision](#account-v1-ActorStagingEligibilityDecision) |  |  |
+| account_uuid_provenance | [string](#string) |  |  |
+| account_lifecycle_state | [string](#string) |  |  |
+| membership_lifecycle_state | [string](#string) |  |  |
+| gameplay_admission_allowed | [bool](#bool) |  |  |
+| membership_authority_provenance | [string](#string) |  |  |
+| membership_version | [int64](#int64) |  |  |
+| membership_authority_generation | [int64](#int64) |  |  |
+| tenant_provenance_kind | [string](#string) |  |  |
+| tenant_source_operation_id | [string](#string) |  |  |
+| tenant_provenance_digest | [string](#string) |  |  |
+| membership_event_sequence | [int64](#int64) |  |  |
+| membership_event_id | [string](#string) |  |  |
+| membership_event_digest | [string](#string) |  |  |
+| last_transition_invalidated | [bool](#bool) |  |  |
+| eligibility_decision_digest | [string](#string) |  | Bare lowercase SHA-256 hex values, domain-separated by digest purpose. |
+| authority_snapshot_digest | [string](#string) |  |  |
+
+
+
+
+
+
+
+
+<a name="account-v1-ActorStagingEligibilityCurrentness"></a>
+
+### ActorStagingEligibilityCurrentness
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACTOR_STAGING_ELIGIBILITY_CURRENTNESS_UNSPECIFIED | 0 |  |
+| CURRENT_AT_REVALIDATION | 1 |  |
+
+
+
+<a name="account-v1-ActorStagingEligibilityDecision"></a>
+
+### ActorStagingEligibilityDecision
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACTOR_STAGING_ELIGIBILITY_DECISION_UNSPECIFIED | 0 |  |
+| STAGING_ELIGIBLE | 1 |  |
+| STAGING_INELIGIBLE | 2 |  |
+
+
+
+<a name="account-v1-ActorStagingEligibilityPurpose"></a>
+
+### ActorStagingEligibilityPurpose
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACTOR_STAGING_ELIGIBILITY_PURPOSE_UNSPECIFIED | 0 |  |
+| PUBLIC_PRODUCTION_STAGING_ONLY | 1 |  |
+
+
+
+
+
+
+
+<a name="account-v1-AccountActorStagingEligibilityService"></a>
+
+### AccountActorStagingEligibilityService
+Read-only Account evidence for non-admitting, public-production actor staging.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ResolvePreseededActorStagingEligibility | [ResolvePreseededActorStagingEligibilityRequest](#account-v1-ResolvePreseededActorStagingEligibilityRequest) | [ResolvePreseededActorStagingEligibilityResponse](#account-v1-ResolvePreseededActorStagingEligibilityResponse) |  |
+
+
+
+
+
+<a name="account_v1_jwt_signer_materialization-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/jwt_signer_materialization.proto
+
+
+
+<a name="account-v1-ActiveSigner"></a>
+
+### ActiveSigner
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| generation | [string](#string) |  |  |
+| kid | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-EnrollBootstrapRequest"></a>
+
+### EnrollBootstrapRequest
+Selector-free, authenticated bootstrap enrollment. The acknowledgment contains only pinned
+identities and the fixed public ConfigMap observation; it carries no private material or
+lifecycle selection authority.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="account-v1-EnrollBootstrapResponse"></a>
+
+### EnrollBootstrapResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| environment_id | [string](#string) |  |  |
+| cluster_id | [string](#string) |  |  |
+| namespace | [string](#string) |  |  |
+| expected_cluster_incarnation_uid | [string](#string) |  |  |
+| expected_namespace_uid | [string](#string) |  |  |
+| materializer_trust_binding_digest | [string](#string) |  |  |
+| materializer_trust_config_revision | [string](#string) |  |  |
+| api_binding_digest | [string](#string) |  |  |
+| api_config_revision | [string](#string) |  |  |
+| api_server_url | [string](#string) |  |  |
+| api_tls_server_name | [string](#string) |  |  |
+| api_serving_ca_sha256 | [string](#string) |  |  |
+| api_expected_username | [string](#string) |  |  |
+| private_secret_name | [string](#string) |  |  |
+| public_config_map_name | [string](#string) |  |  |
+| public_config_map_uid | [string](#string) |  |  |
+| public_config_map_resource_version | [string](#string) |  |  |
+| public_config_map_snapshot_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetCurrentGenerationRequestRequest"></a>
+
+### GetCurrentGenerationRequestRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetCurrentGenerationRequestResponse"></a>
+
+### GetCurrentGenerationRequestResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| phase | [GetCurrentGenerationRequestResponse.Phase](#account-v1-GetCurrentGenerationRequestResponse-Phase) |  |  |
+| operation_id | [string](#string) |  |  |
+| operation_digest | [string](#string) |  |  |
+| generation_request_digest | [string](#string) |  |  |
+| desired_state_version | [string](#string) |  |  |
+| environment_id | [string](#string) |  |  |
+| cluster_id | [string](#string) |  |  |
+| namespace | [string](#string) |  |  |
+| expected_cluster_incarnation_uid | [string](#string) |  |  |
+| expected_namespace_uid | [string](#string) |  |  |
+| trust_binding_digest | [string](#string) |  |  |
+| trust_config_revision | [string](#string) |  |  |
+| private_secret_name | [string](#string) |  |  |
+| target_generation | [string](#string) |  |  |
+| target_kid | [string](#string) |  |  |
+| target_algorithm | [string](#string) |  |  |
+| operation_action | [string](#string) |  |  |
+| allowed_private_slots | [string](#string) | repeated |  |
+| expected_active | [ActiveSigner](#account-v1-ActiveSigner) |  |  |
+| secret_uid | [string](#string) |  |  |
+| expected_secret_resource_version | [string](#string) |  |  |
+| generation_receipt_digest | [string](#string) |  |  |
+| public_key_fingerprint | [string](#string) |  |  |
+| public_jwk_json | [string](#string) |  |  |
+| observed_secret_resource_version | [string](#string) |  |  |
+| expected_published_active | [ActiveSigner](#account-v1-ActiveSigner) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetCurrentPromotionRequestRequest"></a>
+
+### GetCurrentPromotionRequestRequest
+Account-authorized fixed-Secret slot transition. This peer response contains public identity
+fences only; it never selects or publishes the Account-owned JWKS ConfigMap and never commits
+the Account lifecycle.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetCurrentPromotionRequestResponse"></a>
+
+### GetCurrentPromotionRequestResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| promotion_operation_id | [string](#string) |  |  |
+| promotion_request_digest | [string](#string) |  |  |
+| generation_operation_id | [string](#string) |  |  |
+| generation_operation_digest | [string](#string) |  |  |
+| generation_receipt_digest | [string](#string) |  |  |
+| environment_id | [string](#string) |  |  |
+| cluster_id | [string](#string) |  |  |
+| namespace | [string](#string) |  |  |
+| expected_cluster_incarnation_uid | [string](#string) |  |  |
+| expected_namespace_uid | [string](#string) |  |  |
+| trust_binding_digest | [string](#string) |  |  |
+| trust_config_revision | [string](#string) |  |  |
+| private_secret_name | [string](#string) |  |  |
+| target_generation | [string](#string) |  |  |
+| target_kid | [string](#string) |  |  |
+| target_algorithm | [string](#string) |  |  |
+| target_public_key_fingerprint | [string](#string) |  |  |
+| expected_secret_uid | [string](#string) |  |  |
+| expected_secret_resource_version | [string](#string) |  |  |
+| expected_previous_generation | [string](#string) |  |  |
+| expected_previous_kid | [string](#string) |  |  |
+| expected_previous_public_key_fingerprint | [string](#string) |  |  |
+| allowed_private_slots | [string](#string) | repeated |  |
+| operation_action | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-PromotionPublicKeyIdentity"></a>
+
+### PromotionPublicKeyIdentity
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| generation | [string](#string) |  |  |
+| kid | [string](#string) |  |  |
+| public_key_fingerprint | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RecordGenerationResultRequest"></a>
+
+### RecordGenerationResultRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| operation_id | [string](#string) |  |  |
+| generation_request_digest | [string](#string) |  |  |
+| secret_uid | [string](#string) |  |  |
+| expected_prior_resource_version | [string](#string) |  |  |
+| observed_resource_version | [string](#string) |  |  |
+| public_jwk_json | [string](#string) |  | Exactly one bounded public RSA JWK; private RSA members and arbitrary resource names are not part of this schema. Account validates and canonicalizes the JWK and derives its fingerprint. |
+
+
+
+
+
+
+<a name="account-v1-RecordGenerationResultResponse"></a>
+
+### RecordGenerationResultResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| operation_id | [string](#string) |  |  |
+| operation_digest | [string](#string) |  |  |
+| generation_request_digest | [string](#string) |  |  |
+| generation_receipt_digest | [string](#string) |  |  |
+| desired_state_version | [string](#string) |  |  |
+| environment_id | [string](#string) |  |  |
+| cluster_id | [string](#string) |  |  |
+| namespace | [string](#string) |  |  |
+| expected_cluster_incarnation_uid | [string](#string) |  |  |
+| expected_namespace_uid | [string](#string) |  |  |
+| trust_binding_digest | [string](#string) |  |  |
+| trust_config_revision | [string](#string) |  |  |
+| private_secret_name | [string](#string) |  |  |
+| secret_uid | [string](#string) |  |  |
+| expected_prior_resource_version | [string](#string) |  |  |
+| observed_resource_version | [string](#string) |  |  |
+| target_generation | [string](#string) |  |  |
+| target_kid | [string](#string) |  |  |
+| target_algorithm | [string](#string) |  |  |
+| public_key_fingerprint | [string](#string) |  |  |
+| public_jwk_json | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RecordPrivatePromotionResultRequest"></a>
+
+### RecordPrivatePromotionResultRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| promotion_operation_id | [string](#string) |  |  |
+| promotion_request_digest | [string](#string) |  |  |
+| generation_operation_id | [string](#string) |  |  |
+| generation_operation_digest | [string](#string) |  |  |
+| secret_uid | [string](#string) |  |  |
+| expected_prior_resource_version | [string](#string) |  |  |
+| observed_resource_version | [string](#string) |  |  |
+| current | [PromotionPublicKeyIdentity](#account-v1-PromotionPublicKeyIdentity) |  |  |
+| previous | [PromotionPublicKeyIdentity](#account-v1-PromotionPublicKeyIdentity) |  |  |
+| resulting_slots | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="account-v1-RecordPrivatePromotionResultResponse"></a>
+
+### RecordPrivatePromotionResultResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| promotion_operation_id | [string](#string) |  |  |
+| generation_operation_id | [string](#string) |  |  |
+| observed_resource_version | [string](#string) |  |  |
+| public_receipt_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RecordSecretObservationRequest"></a>
+
+### RecordSecretObservationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| operation_id | [string](#string) |  |  |
+| operation_digest | [string](#string) |  |  |
+| secret_uid | [string](#string) |  |  |
+| observed_resource_version | [string](#string) |  |  |
+
+
+
+
+
+
+
+
+<a name="account-v1-GetCurrentGenerationRequestResponse-Phase"></a>
+
+### GetCurrentGenerationRequestResponse.Phase
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PHASE_UNSPECIFIED | 0 |  |
+| OBSERVE_PRIVATE_SECRET | 1 |  |
+| GENERATE_PENDING | 2 |  |
+| GENERATION_RECORDED | 3 |  |
+
+
+
+
+
+
+
+<a name="account-v1-AccountJwtSignerMaterializationService"></a>
+
+### AccountJwtSignerMaterializationService
+This exact authenticated peer performs only fixed-name Secret observation, pending-slot key
+generation, and an operation-bound private-slot transition after Account durably authorizes a
+PREPARED promotion. Account alone prepares/commits/promotes the lifecycle and publishes JWKS.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| EnrollBootstrap | [EnrollBootstrapRequest](#account-v1-EnrollBootstrapRequest) | [EnrollBootstrapResponse](#account-v1-EnrollBootstrapResponse) |  |
+| GetCurrentGenerationRequest | [GetCurrentGenerationRequestRequest](#account-v1-GetCurrentGenerationRequestRequest) | [GetCurrentGenerationRequestResponse](#account-v1-GetCurrentGenerationRequestResponse) |  |
+| RecordSecretObservation | [RecordSecretObservationRequest](#account-v1-RecordSecretObservationRequest) | [GetCurrentGenerationRequestResponse](#account-v1-GetCurrentGenerationRequestResponse) |  |
+| RecordGenerationResult | [RecordGenerationResultRequest](#account-v1-RecordGenerationResultRequest) | [RecordGenerationResultResponse](#account-v1-RecordGenerationResultResponse) |  |
+| GetCurrentPromotionRequest | [GetCurrentPromotionRequestRequest](#account-v1-GetCurrentPromotionRequestRequest) | [GetCurrentPromotionRequestResponse](#account-v1-GetCurrentPromotionRequestResponse) |  |
+| RecordPrivatePromotionResult | [RecordPrivatePromotionResultRequest](#account-v1-RecordPrivatePromotionResultRequest) | [RecordPrivatePromotionResultResponse](#account-v1-RecordPrivatePromotionResultResponse) |  |
 
 
 
@@ -1639,6 +2461,424 @@ Basic ping response containing a greeting and optional error details.
 | CreateSubscription | [CreateSubscriptionRequest](#account-v1-CreateSubscriptionRequest) | [CreateSubscriptionResponse](#account-v1-CreateSubscriptionResponse) |  |
 | CreateDonation | [CreateDonationRequest](#account-v1-CreateDonationRequest) | [CreateDonationResponse](#account-v1-CreateDonationResponse) |  |
 | RefundPayment | [RefundPaymentRequest](#account-v1-RefundPaymentRequest) | [RefundPaymentResponse](#account-v1-RefundPaymentResponse) |  |
+
+
+
+
+
+<a name="account_v1_runtime_account_identity_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/runtime_account_identity_service.proto
+
+
+
+<a name="account-v1-ResolveRuntimeAccountIdentityRequest"></a>
+
+### ResolveRuntimeAccountIdentityRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_account_id | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-ResolveRuntimeAccountIdentityResponse"></a>
+
+### ResolveRuntimeAccountIdentityResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| canonical_account_id | [string](#string) |  |  |
+| source_account_row_id | [int64](#int64) |  | Private Account provenance evidence; never use this row key as gameplay identity. |
+| account_uuid_provenance | [string](#string) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="account-v1-RuntimeAccountIdentityService"></a>
+
+### RuntimeAccountIdentityService
+Authenticated owner-local read of Account&#39;s persisted UUID identity provenance.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ResolveRuntimeAccountIdentity | [ResolveRuntimeAccountIdentityRequest](#account-v1-ResolveRuntimeAccountIdentityRequest) | [ResolveRuntimeAccountIdentityResponse](#account-v1-ResolveRuntimeAccountIdentityResponse) |  |
+
+
+
+
+
+<a name="account_v1_start_session_operator_authorization-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/start_session_operator_authorization.proto
+
+
+
+<a name="account-v1-AuthorityEvidenceBundleReference"></a>
+
+### AuthorityEvidenceBundleReference
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| bundle_version | [string](#string) |  |  |
+| source_version | [string](#string) |  |  |
+| source_fence | [string](#string) |  |  |
+| linearization | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-IssueHumanOperatorAuthorizationReferenceRequest"></a>
+
+### IssueHumanOperatorAuthorizationReferenceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_pre_authorization_tuple_bytes | [bytes](#bytes) |  | Exact canonical preAuthorizationReservationTuple/v1 JSON bytes. |
+| control_ui_jwt | [string](#string) |  | Forwarded control-ui token. It is consumed only by Account and is never returned. |
+| reservation_owner_id | [string](#string) |  |  |
+| reservation_claim_fence | [uint64](#uint64) |  |  |
+| current_claim_owner_id | [string](#string) |  |  |
+| current_claim_fence | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="account-v1-IssueHumanOperatorAuthorizationReferenceResponse"></a>
+
+### IssueHumanOperatorAuthorizationReferenceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| operator_authorization_reference | [string](#string) |  |  |
+| authorization_reference_fingerprint | [string](#string) |  |  |
+| expires_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| authority_evidence_bundle | [bytes](#bytes) |  |  |
+| bundle_reference | [AuthorityEvidenceBundleReference](#account-v1-AuthorityEvidenceBundleReference) |  |  |
+| authenticated_logging_workload_identity | [string](#string) |  | Exact Logging/Admin SPIFFE identity verified from the authenticated request TLS peer. |
+| original_account_post_authorization_tuple | [bytes](#bytes) |  | Account-derived canonical original postAuthorizationExecutionTuple/v1 bytes. |
+
+
+
+
+
+
+<a name="account-v1-ReadRedeemedOperationProjectionRequest"></a>
+
+### ReadRedeemedOperationProjectionRequest
+Read-only projection of the exact original operation after its owner redemption.
+It contains no JWT or opaque authorization reference.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_pre_authorization_tuple_bytes | [bytes](#bytes) |  | Exact canonical preAuthorizationReservationTuple/v1 JSON bytes. |
+| authorization_reference_fingerprint | [string](#string) |  |  |
+| reservation_owner_id | [string](#string) |  |  |
+| reservation_claim_fence | [uint64](#uint64) |  |  |
+| owner_attempt_id | [string](#string) |  |  |
+| owner_fence | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="account-v1-ReadRedeemedOperationProjectionResponse"></a>
+
+### ReadRedeemedOperationProjectionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| control_plane_request_id | [string](#string) |  |  |
+| canonical_pre_authorization_tuple_bytes | [bytes](#bytes) |  |  |
+| mutation_digest | [string](#string) |  |  |
+| authorization_reference_fingerprint | [string](#string) |  |  |
+| reservation_owner_id | [string](#string) |  |  |
+| reservation_claim_fence | [uint64](#uint64) |  |  |
+| authenticated_redeemer_workload_identity | [string](#string) |  | The original redeemer identity authenticated and recorded by Account at redemption. |
+| owner_attempt_id | [string](#string) |  |  |
+| owner_fence | [uint64](#uint64) |  |  |
+| reference_expires_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| redeemed_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| issuance_operation_id | [string](#string) |  |  |
+| issuance_fence | [uint64](#uint64) |  |  |
+| bundle_reference | [AuthorityEvidenceBundleReference](#account-v1-AuthorityEvidenceBundleReference) |  |  |
+| authority_evidence_bundle | [bytes](#bytes) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RecoverOperatorAuthorizationReferenceRequest"></a>
+
+### RecoverOperatorAuthorizationReferenceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_pre_authorization_tuple_bytes | [bytes](#bytes) |  | Exact canonical preAuthorizationReservationTuple/v1 JSON bytes. |
+| reservation_owner_id | [string](#string) |  |  |
+| reservation_claim_fence | [uint64](#uint64) |  |  |
+| current_claim_owner_id | [string](#string) |  |  |
+| current_claim_fence | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RecoverOperatorAuthorizationReferenceResponse"></a>
+
+### RecoverOperatorAuthorizationReferenceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| operator_authorization_reference | [string](#string) |  |  |
+| authorization_reference_fingerprint | [string](#string) |  |  |
+| expires_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| authority_evidence_bundle | [bytes](#bytes) |  |  |
+| bundle_reference | [AuthorityEvidenceBundleReference](#account-v1-AuthorityEvidenceBundleReference) |  |  |
+| authenticated_logging_workload_identity | [string](#string) |  | Exact Logging/Admin SPIFFE identity verified from the authenticated request TLS peer. |
+| original_account_post_authorization_tuple | [bytes](#bytes) |  | Exact original tuple re-derived from Account&#39;s retained issuance record and capture. |
+
+
+
+
+
+
+<a name="account-v1-RedeemOperatorAuthorizationRequest"></a>
+
+### RedeemOperatorAuthorizationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_pre_authorization_tuple_bytes | [bytes](#bytes) |  | Exact canonical preAuthorizationReservationTuple/v1 JSON bytes. |
+| operator_authorization_reference | [string](#string) |  | Transient only: sent over authenticated TLS and never persisted by Logging &amp; Admin. |
+| authorization_reference_fingerprint | [string](#string) |  |  |
+| reservation_owner_id | [string](#string) |  |  |
+| reservation_claim_fence | [uint64](#uint64) |  |  |
+| owner_attempt_id | [string](#string) |  |  |
+| owner_fence | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RedeemOperatorAuthorizationResponse"></a>
+
+### RedeemOperatorAuthorizationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| authorization_reference_fingerprint | [string](#string) |  |  |
+| authority_evidence_bundle | [bytes](#bytes) |  |  |
+| issuance_operation_id | [string](#string) |  |  |
+| issuance_fence | [uint64](#uint64) |  |  |
+| replay | [bool](#bool) |  |  |
+| original_account_post_authorization_tuple | [bytes](#bytes) |  | Exact original tuple re-derived from Account&#39;s durable issuance record. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="account-v1-StartSessionOperatorAuthorizationService"></a>
+
+### StartSessionOperatorAuthorizationService
+Internal mTLS-only Account boundary for the human tenant-admin StartSession authorization flow.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| IssueHumanOperatorAuthorizationReference | [IssueHumanOperatorAuthorizationReferenceRequest](#account-v1-IssueHumanOperatorAuthorizationReferenceRequest) | [IssueHumanOperatorAuthorizationReferenceResponse](#account-v1-IssueHumanOperatorAuthorizationReferenceResponse) |  |
+| RecoverOperatorAuthorizationReference | [RecoverOperatorAuthorizationReferenceRequest](#account-v1-RecoverOperatorAuthorizationReferenceRequest) | [RecoverOperatorAuthorizationReferenceResponse](#account-v1-RecoverOperatorAuthorizationReferenceResponse) |  |
+| RedeemOperatorAuthorization | [RedeemOperatorAuthorizationRequest](#account-v1-RedeemOperatorAuthorizationRequest) | [RedeemOperatorAuthorizationResponse](#account-v1-RedeemOperatorAuthorizationResponse) |  |
+| ReadRedeemedOperationProjection | [ReadRedeemedOperationProjectionRequest](#account-v1-ReadRedeemedOperationProjectionRequest) | [ReadRedeemedOperationProjectionResponse](#account-v1-ReadRedeemedOperationProjectionResponse) |  |
+
+
+
+
+
+<a name="account_v1_start_session_world_participation_acquisition-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/start_session_world_participation_acquisition.proto
+
+
+
+<a name="account-v1-AcquireStartSessionWorldParticipationRequest"></a>
+
+### AcquireStartSessionWorldParticipationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| acquisition_request_id | [string](#string) |  | Fresh correlation UUID; independent of all retained mutation and authority identities. |
+| target_namespace | [string](#string) |  |  |
+| original_post_authorization_tuple | [bytes](#bytes) |  |  |
+| game_session_owner_mutation_id | [string](#string) |  |  |
+| game_session_owner_attempt_id | [string](#string) |  |  |
+| game_session_owner_fence | [int64](#int64) |  |  |
+| canonical_game_instance_id | [string](#string) |  |  |
+| preparation_input_json | [string](#string) |  | Exact bounded World preparation JSON and its digest; these are not caller authority claims. |
+| preparation_input_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-AcquireStartSessionWorldParticipationResponse"></a>
+
+### AcquireStartSessionWorldParticipationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [AcquireStartSessionWorldParticipationRequest](#account-v1-AcquireStartSessionWorldParticipationRequest) |  | The complete exact request is echoed, including the independent acquisition correlation. |
+| account_world_participation_id | [string](#string) |  |  |
+| account_world_participation_fence | [int64](#int64) |  |  |
+| original_attempt_evidence | [game_session.v1.ReadOriginalStartSessionCurrentAttemptResponse](#game_session-v1-ReadOriginalStartSessionCurrentAttemptResponse) |  | Complete retained first original-attempt response, using the existing Game Session codec. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="account-v1-AccountStartSessionWorldParticipationAcquisitionService"></a>
+
+### AccountStartSessionWorldParticipationAcquisitionService
+Standalone and unregistered. This acquires Account-owned World source protection for one
+original human StartSession and does not establish World execution admission.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| AcquireStartSessionWorldParticipation | [AcquireStartSessionWorldParticipationRequest](#account-v1-AcquireStartSessionWorldParticipationRequest) | [AcquireStartSessionWorldParticipationResponse](#account-v1-AcquireStartSessionWorldParticipationResponse) |  |
+
+
+
+
+
+<a name="account_v1_start_session_world_participation_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## account/v1/start_session_world_participation_read.proto
+
+
+
+<a name="account-v1-ReadHistoricalStartSessionWorldParticipationRequest"></a>
+
+### ReadHistoricalStartSessionWorldParticipationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| read_request_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| original_post_authorization_tuple | [bytes](#bytes) |  |  |
+
+
+
+
+
+
+<a name="account-v1-ReadHistoricalStartSessionWorldParticipationResponse"></a>
+
+### ReadHistoricalStartSessionWorldParticipationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [ReadHistoricalStartSessionWorldParticipationRequest](#account-v1-ReadHistoricalStartSessionWorldParticipationRequest) |  |  |
+| game_session_owner_attempt_id | [string](#string) |  |  |
+| game_session_owner_fence | [int64](#int64) |  |  |
+| canonical_game_instance_id | [string](#string) |  |  |
+| preparation_input_json | [string](#string) |  | Byte-for-byte retained World preparation JSON, not fresh admission or currentness evidence. |
+| preparation_input_digest | [string](#string) |  |  |
+| account_world_participation_id | [string](#string) |  |  |
+| account_world_participation_fence | [int64](#int64) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="account-v1-AccountStartSessionWorldParticipationHistoricalReadService"></a>
+
+### AccountStartSessionWorldParticipationHistoricalReadService
+Standalone and unregistered. This exact historical read resolves retained participation
+coordinates from the unchanged original tuple; it neither admits execution nor renews Account
+authority. World must separately authenticate its original Game Session operation.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadHistoricalStartSessionWorldParticipation | [ReadHistoricalStartSessionWorldParticipationRequest](#account-v1-ReadHistoricalStartSessionWorldParticipationRequest) | [ReadHistoricalStartSessionWorldParticipationResponse](#account-v1-ReadHistoricalStartSessionWorldParticipationResponse) |  |
 
 
 
@@ -3777,6 +5017,147 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="entity_management-v1-CanonicalGameplayRosterActor"></a>
+
+### CanonicalGameplayRosterActor
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| character_uuid | [string](#string) |  |  |
+| display_name | [string](#string) |  |  |
+| actor_kind | [CanonicalGameplayRosterActorKind](#entity_management-v1-CanonicalGameplayRosterActorKind) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-CanonicalGameplayRosterRequest"></a>
+
+### CanonicalGameplayRosterRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_uuid | [string](#string) |  |  |
+| canonical_account_uuid | [string](#string) |  |  |
+| expected_target | [CanonicalGameplayRosterTarget](#entity_management-v1-CanonicalGameplayRosterTarget) |  |  |
+| player_execution_context | [shared.v1.PlayerExecutionContext](#shared-v1-PlayerExecutionContext) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-CanonicalGameplayRosterResponse"></a>
+
+### CanonicalGameplayRosterResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_account_uuid | [string](#string) |  |  |
+| target | [CanonicalGameplayRosterTarget](#entity_management-v1-CanonicalGameplayRosterTarget) |  |  |
+| snapshot_uuid | [string](#string) |  |  |
+| snapshot_digest | [string](#string) |  |  |
+| actors | [CanonicalGameplayRosterActor](#entity_management-v1-CanonicalGameplayRosterActor) | repeated |  |
+
+
+
+
+
+
+<a name="entity_management-v1-CanonicalGameplayRosterSelectedAssignmentRequest"></a>
+
+### CanonicalGameplayRosterSelectedAssignmentRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_uuid | [string](#string) |  |  |
+| canonical_account_uuid | [string](#string) |  |  |
+| selected_character_uuid | [string](#string) |  |  |
+| expected_target | [CanonicalGameplayRosterTarget](#entity_management-v1-CanonicalGameplayRosterTarget) |  |  |
+| expected_snapshot | [CanonicalGameplayRosterSnapshotReference](#entity_management-v1-CanonicalGameplayRosterSnapshotReference) |  | Exact snapshot_uuid and snapshot_digest returned by ListPreseededRoster. Retries must reuse these values and may not silently select against a changed roster. |
+| player_execution_context | [shared.v1.PlayerExecutionContext](#shared-v1-PlayerExecutionContext) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-CanonicalGameplayRosterSelectedAssignmentResponse"></a>
+
+### CanonicalGameplayRosterSelectedAssignmentResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_uuid | [string](#string) |  |  |
+| canonical_account_uuid | [string](#string) |  |  |
+| selected_character_uuid | [string](#string) |  |  |
+| target | [CanonicalGameplayRosterTarget](#entity_management-v1-CanonicalGameplayRosterTarget) |  |  |
+| assignment_uuid | [string](#string) |  | Original non-nil operation identity and immutable intent digest from the unique committed ASSIGNED PRESEEDED PLAYER receipt matching this exact account, actor, target, and owner proof. This read returns persisted owner evidence; it never mints an assignment identity or digest. |
+| intent_digest | [string](#string) |  |  |
+| snapshot | [CanonicalGameplayRosterSnapshotReference](#entity_management-v1-CanonicalGameplayRosterSnapshotReference) |  | Exact snapshot reference supplied by the caller and validated by this operation. The response echoes that binding alongside the original persisted assignment reference. The reference does not prove admission or current Account eligibility; placement must revalidate it with its owning Entity write/readback contract. |
+
+
+
+
+
+
+<a name="entity_management-v1-CanonicalGameplayRosterSnapshotReference"></a>
+
+### CanonicalGameplayRosterSnapshotReference
+Immutable identity and content digest of one exact roster snapshot.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| snapshot_uuid | [string](#string) |  |  |
+| snapshot_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-CanonicalGameplayRosterTarget"></a>
+
+### CanonicalGameplayRosterTarget
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_uuid | [string](#string) |  |  |
+| realm_uuid | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| game_instance_uuid | [string](#string) |  |  |
+| catalog_revision | [int64](#int64) |  |  |
+| published_policy_digest | [string](#string) |  |  |
+| published_release_bundle_ref | [string](#string) |  |  |
+| admission_pointer_snapshot_digest | [string](#string) |  |  |
+| published_owner_proof_digest | [string](#string) |  |  |
+| playable_state_namespace_uuid | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| entry_policy | [CanonicalGameplayRosterEntryPolicy](#entity_management-v1-CanonicalGameplayRosterEntryPolicy) |  |  |
+| canonical_version_uuid | [string](#string) |  |  |
+| pointer_version | [int64](#int64) |  | Exact positive counters observed from the current owning Game Session target. |
+| active_world_epoch | [int64](#int64) |  |  |
+
+
+
+
+
+
 <a name="entity_management-v1-Character"></a>
 
 ### Character
@@ -4696,6 +6077,32 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="entity_management-v1-CanonicalGameplayRosterActorKind"></a>
+
+### CanonicalGameplayRosterActorKind
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| CANONICAL_ROSTER_ACTOR_KIND_UNSPECIFIED | 0 |  |
+| CANONICAL_ROSTER_ACTOR_KIND_PLAYER | 1 |  |
+
+
+
+<a name="entity_management-v1-CanonicalGameplayRosterEntryPolicy"></a>
+
+### CanonicalGameplayRosterEntryPolicy
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| CANONICAL_ROSTER_ENTRY_POLICY_UNSPECIFIED | 0 |  |
+| CANONICAL_ROSTER_ENTRY_POLICY_PLAYER_CREATED | 1 |  |
+| CANONICAL_ROSTER_ENTRY_POLICY_PRESEEDED_ONLY | 2 |  |
+| CANONICAL_ROSTER_ENTRY_POLICY_AUTO_PROVISIONED | 3 |  |
+
+
+
 <a name="entity_management-v1-EntityTemplateReferenceType"></a>
 
 ### EntityTemplateReferenceType
@@ -4767,6 +6174,25 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+
+
+<a name="entity_management-v1-CanonicalGameplayRosterService"></a>
+
+### CanonicalGameplayRosterService
+Canonical gameplay roster discovery is a pre-admission, non-admitting boundary. Both methods
+are restricted to PRESEEDED_ONLY; other policy values are non-authorizing and fail with
+FAILED_PRECONDITION. This wire contract does not authorize the legacy numeric
+ListCharactersByAccount RPC for canonical gameplay. A valid ListPreseededRoster response may
+contain zero actors; that is a successful lookup. These RPCs use canonical non-OK gRPC statuses
+rather than in-response errors: malformed requests are INVALID_ARGUMENT, stale snapshots or
+selections not present in the bound snapshot are FAILED_PRECONDITION, unauthorized callers are
+UNAUTHENTICATED or PERMISSION_DENIED as applicable, and unavailable dependencies are
+UNAVAILABLE. No partial success is returned.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ListPreseededRoster | [CanonicalGameplayRosterRequest](#entity_management-v1-CanonicalGameplayRosterRequest) | [CanonicalGameplayRosterResponse](#entity_management-v1-CanonicalGameplayRosterResponse) | Returns the persisted preseeded roster for the exact expected target. The server requires an authenticated, server-derived PlayerExecutionContext and exact same-namespace Game Session mTLS caller allowlisting. Context account_id equals canonical_account_uuid; request_id equals request_uuid; tenant_id, realm_id, playable_state_namespace_id, playable_state_scope, and game_instance_id equal the corresponding expected_target values; session_id identifies the authenticated session. Context playable_state_scope is the exact text &#34;SHARED&#34; or &#34;ISOLATED&#34; corresponding to the target enum value; numeric enum text is invalid. No character_id is selected yet. The target policy must be PRESEEDED_ONLY. These equality checks do not require an additional Account lookup. A successful response includes its immutable snapshot UUID and digest, including when the roster is empty. |
+| ReadSelectedPreseededAssignment | [CanonicalGameplayRosterSelectedAssignmentRequest](#entity_management-v1-CanonicalGameplayRosterSelectedAssignmentRequest) | [CanonicalGameplayRosterSelectedAssignmentResponse](#entity_management-v1-CanonicalGameplayRosterSelectedAssignmentResponse) | Reads the selected assignment only if the supplied snapshot UUID and digest still identify the roster from which selected_character_uuid was chosen. The response echoes that exact snapshot reference. A changed snapshot or selection absent from it fails with FAILED_PRECONDITION. It has the same authenticated context and exact target equality requirements as ListPreseededRoster, and context.character_id must equal selected_character_uuid. The target policy must be PRESEEDED_ONLY. |
 
 
 <a name="entity_management-v1-EntityManagementService"></a>
@@ -4855,6 +6281,133 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | ----- | ---- | ----- | ----------- |
 | remap_set | [TemplateRemapSet](#gamedesign-v1-TemplateRemapSet) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-AuthoredWorldLaunchDescriptorEvidence"></a>
+
+### AuthoredWorldLaunchDescriptorEvidence
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| authored_world_source_operation_id | [string](#string) |  |  |
+| authored_world_source_evidence_digest | [string](#string) |  |  |
+| game_template_id | [int64](#int64) |  |  |
+| requested_script_patch_version | [string](#string) | optional |  |
+| source_version_id | [int64](#int64) | optional |  |
+| target_version_id | [int64](#int64) | optional |  |
+| requested_runtime_flags_json | [string](#string) | optional |  |
+| request_digest | [string](#string) |  |  |
+| launch_descriptor_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| script_patch_version | [string](#string) | optional |  |
+| runtime_flags_json | [string](#string) |  |  |
+| generation_config_revision | [string](#string) |  |  |
+| version_state_epoch | [int64](#int64) |  |  |
+| release_bundle_id | [int64](#int64) |  |  |
+| published_release_bundle_ref | [string](#string) |  |  |
+| remap_set_id | [string](#string) | optional |  |
+| result_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-AuthoredWorldReleaseAttestationEvidence"></a>
+
+### AuthoredWorldReleaseAttestationEvidence
+Separate closed evidence: never extends or reinterprets descriptor/v1.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| descriptor_result_digest | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| canonical_version_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| authored_world_source_operation_id | [string](#string) |  |  |
+| authored_world_source_evidence_digest | [string](#string) |  |  |
+| launch_descriptor_id | [string](#string) |  |  |
+| published_release_bundle_ref | [string](#string) |  |  |
+| version_state_epoch | [int64](#int64) |  |  |
+| publish_workflow_id | [string](#string) |  |  |
+| commit_id | [string](#string) |  |  |
+| participant_digests | [ParticipantDigest](#gamedesign-v1-ParticipantDigest) | repeated |  |
+| manifest_hash | [string](#string) |  |  |
+| manifest_schema_version | [int32](#int32) |  |  |
+| required_manifest_asset_keys | [string](#string) | repeated |  |
+| artifact_digests | [PublishedArtifactDigest](#gamedesign-v1-PublishedArtifactDigest) | repeated |  |
+| command_definitions | [string](#string) | repeated |  |
+| generation_config_revision | [string](#string) |  |  |
+| evidence_digest | [string](#string) |  |  |
+| world_start_location_evidence | [bytes](#bytes) | optional | Closed original World Account/APPLIED/receipt evidence. Absent in schema 1, required in 2/3. |
+
+
+
+
+
+
+<a name="gamedesign-v1-AuthoredWorldSourceReceipt"></a>
+
+### AuthoredWorldSourceReceipt
+Complete immutable registration receipt, without another RPC&#39;s transient read request ID.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| registration_request_id | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| tenant_slug | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| world_display_name | [string](#string) |  |  |
+| source_game_row_id | [int64](#int64) |  |  |
+| source_game_tenant_key | [string](#string) |  |  |
+| provenance_kind | [string](#string) |  |  |
+| evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-AuthoredWorldVersionStateEvidence"></a>
+
+### AuthoredWorldVersionStateEvidence
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| read_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| expected_source_evidence_digest | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| source_evidence | [AuthoredWorldSourceReceipt](#gamedesign-v1-AuthoredWorldSourceReceipt) |  |  |
+| version_state | [VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| version_state_epoch | [int64](#int64) |  |  |
+| evidence_digest | [string](#string) |  |  |
+| canonical_version_id | [string](#string) |  |  |
 
 
 
@@ -5164,6 +6717,61 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="gamedesign-v1-GetAuthoredWorldVersionStateRequest"></a>
+
+### GetAuthoredWorldVersionStateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| read_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| expected_source_evidence_digest | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetAuthoredWorldVersionStateResponse"></a>
+
+### GetAuthoredWorldVersionStateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| evidence | [AuthoredWorldVersionStateEvidence](#gamedesign-v1-AuthoredWorldVersionStateEvidence) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetCompleteLaunchBindingResponse"></a>
+
+### GetCompleteLaunchBindingResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  |  |
+| launch_descriptor | [LaunchDescriptor](#gamedesign-v1-LaunchDescriptor) |  |  |
+| release_attestation | [AuthoredWorldReleaseAttestationEvidence](#gamedesign-v1-AuthoredWorldReleaseAttestationEvidence) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="gamedesign-v1-GetDesignControlPlaneDigestRequest"></a>
 
 ### GetDesignControlPlaneDigestRequest
@@ -5191,6 +6799,43 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | digest | [DesignControlPlaneDigest](#gamedesign-v1-DesignControlPlaneDigest) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetLaunchDescriptorRequest"></a>
+
+### GetLaunchDescriptorRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| expected_request_digest | [string](#string) |  |  |
+| expected_result_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetLaunchDescriptorResponse"></a>
+
+### GetLaunchDescriptorResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  |  |
+| launch_descriptor | [LaunchDescriptor](#gamedesign-v1-LaunchDescriptor) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -5514,6 +7159,8 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | release_bundle_id | [int64](#int64) |  |  |
 | published_release_bundle_ref | [string](#string) |  |  |
 | remap_set_id | [string](#string) |  |  |
+| authored_world_binding | [AuthoredWorldLaunchDescriptorEvidence](#gamedesign-v1-AuthoredWorldLaunchDescriptorEvidence) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
 
 
 
@@ -5683,6 +7330,7 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | applied_commit_id | [string](#string) |  |  |
 | content_digest | [string](#string) |  |  |
 | digest_schema_version | [int32](#int32) |  |  |
+| ability_schema_digest | [string](#string) | optional |  |
 
 
 
@@ -5861,6 +7509,11 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | tenant_id | [string](#string) |  |  |
 | notes | [string](#string) |  |  |
 | publish_request_id | [string](#string) |  |  |
+| version_id | [string](#string) |  | Complete together for new publication: the exact existing Draft selection. When set, tenant_id, version_id, selected_commit_request_id, and selected_commit_id must be canonical lower-case non-nil UUIDs (tenant_id is the canonical tenant UUID, not the key). When all selection fields are empty, tenant_id is the legacy tenant key and only a retained terminal legacy retry is eligible. |
+| expected_version_state_epoch | [string](#string) |  |  |
+| selected_commit_request_id | [string](#string) |  |  |
+| selected_commit_id | [string](#string) |  |  |
+| selected_commit_digest | [string](#string) |  |  |
 
 
 
@@ -5877,6 +7530,26 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | ----- | ---- | ----- | ----------- |
 | version_id | [int64](#int64) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-PublishedArtifactDigest"></a>
+
+### PublishedArtifactDigest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| usage_key | [string](#string) |  |  |
+| artifact_kind | [string](#string) |  |  |
+| immutable_object_key | [string](#string) |  |  |
+| content_digest | [string](#string) |  |  |
+| content_type | [string](#string) |  |  |
+| artifact_schema_version | [int32](#int32) |  |  |
 
 
 
@@ -5937,6 +7610,11 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | workflow_status | [string](#string) |  |  |
 | workflow_family | [string](#string) |  |  |
 | command_definitions | [string](#string) | repeated |  |
+| published_release_bundle_ref | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| canonical_version_id | [string](#string) |  |  |
+| manifest_schema_version | [int32](#int32) | optional |  |
+| artifact_digests | [PublishedArtifactDigest](#gamedesign-v1-PublishedArtifactDigest) | repeated |  |
 
 
 
@@ -6163,6 +7841,10 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | source_version_id | [int64](#int64) | optional |  |
 | target_version_id | [int64](#int64) | optional |  |
 | requested_runtime_flags_json | [string](#string) | optional |  |
+| world_slug | [string](#string) |  |  |
+| authored_world_source_operation_id | [string](#string) |  |  |
+| expected_authored_world_source_evidence_digest | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  | Canonical source identity is distinct from the retained legacy tenant selector. |
 
 
 
@@ -6660,6 +8342,16 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="gamedesign-v1-AuthoredWorldVersionStateService"></a>
+
+### AuthoredWorldVersionStateService
+Standalone, unregistered exact version-state read for an already-intaken authored-world source.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetAuthoredWorldVersionState | [GetAuthoredWorldVersionStateRequest](#gamedesign-v1-GetAuthoredWorldVersionStateRequest) | [GetAuthoredWorldVersionStateResponse](#gamedesign-v1-GetAuthoredWorldVersionStateResponse) |  |
+
+
 <a name="gamedesign-v1-GameDesignService"></a>
 
 ### GameDesignService
@@ -6684,6 +8376,8 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | GetVersionState | [GetVersionStateRequest](#gamedesign-v1-GetVersionStateRequest) | [GetVersionStateResponse](#gamedesign-v1-GetVersionStateResponse) |  |
 | CompareAndSetVersionState | [CompareAndSetVersionStateRequest](#gamedesign-v1-CompareAndSetVersionStateRequest) | [CompareAndSetVersionStateResponse](#gamedesign-v1-CompareAndSetVersionStateResponse) |  |
 | ResolveLaunchDescriptor | [ResolveLaunchDescriptorRequest](#gamedesign-v1-ResolveLaunchDescriptorRequest) | [ResolveLaunchDescriptorResponse](#gamedesign-v1-ResolveLaunchDescriptorResponse) |  |
+| GetLaunchDescriptor | [GetLaunchDescriptorRequest](#gamedesign-v1-GetLaunchDescriptorRequest) | [GetLaunchDescriptorResponse](#gamedesign-v1-GetLaunchDescriptorResponse) |  |
+| GetCompleteLaunchBinding | [GetLaunchDescriptorRequest](#gamedesign-v1-GetLaunchDescriptorRequest) | [GetCompleteLaunchBindingResponse](#gamedesign-v1-GetCompleteLaunchBindingResponse) |  |
 | CreateTemplateRemapSet | [CreateTemplateRemapSetRequest](#gamedesign-v1-CreateTemplateRemapSetRequest) | [CreateTemplateRemapSetResponse](#gamedesign-v1-CreateTemplateRemapSetResponse) |  |
 | ApproveTemplateRemapSet | [ApproveTemplateRemapSetRequest](#gamedesign-v1-ApproveTemplateRemapSetRequest) | [ApproveTemplateRemapSetResponse](#gamedesign-v1-ApproveTemplateRemapSetResponse) |  |
 | GetTemplateRemapSet | [GetTemplateRemapSetRequest](#gamedesign-v1-GetTemplateRemapSetRequest) | [GetTemplateRemapSetResponse](#gamedesign-v1-GetTemplateRemapSetResponse) |  |
@@ -6701,6 +8395,459 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | PutHelpTopic | [PutHelpTopicRequest](#gamedesign-v1-PutHelpTopicRequest) | [PutHelpTopicResponse](#gamedesign-v1-PutHelpTopicResponse) |  |
 | ListHelpTopics | [ListHelpTopicsRequest](#gamedesign-v1-ListHelpTopicsRequest) | [ListHelpTopicsResponse](#gamedesign-v1-ListHelpTopicsResponse) |  |
 | DeleteHelpTopic | [DeleteHelpTopicRequest](#gamedesign-v1-DeleteHelpTopicRequest) | [DeleteHelpTopicResponse](#gamedesign-v1-DeleteHelpTopicResponse) |  |
+
+
+
+
+
+<a name="game-design_v1_publication_terminal_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-design/v1/publication_terminal_service.proto
+
+
+
+<a name="game_design-v1-ReadGameDesignPublicationTerminalRequest"></a>
+
+### ReadGameDesignPublicationTerminalRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_request_bytes | [bytes](#bytes) |  | Closed schema-1 namespace/read UUID/complete original operation carrier. |
+
+
+
+
+
+
+<a name="game_design-v1-ReadGameDesignPublicationTerminalResponse"></a>
+
+### ReadGameDesignPublicationTerminalResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_response_bytes | [bytes](#bytes) |  | Exact request echo plus UNKNOWN or the unchanged immutable terminal evidence. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="game_design-v1-GameDesignPublicationTerminalReadService"></a>
+
+### GameDesignPublicationTerminalReadService
+Explicit composition only; no runtime publication or lifecycle authority is enabled.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadGameDesignPublicationTerminal | [ReadGameDesignPublicationTerminalRequest](#game_design-v1-ReadGameDesignPublicationTerminalRequest) | [ReadGameDesignPublicationTerminalResponse](#game_design-v1-ReadGameDesignPublicationTerminalResponse) |  |
+
+
+
+
+
+<a name="game-design_v1_published_realm_entry_policy_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-design/v1/published_realm_entry_policy_service.proto
+
+
+
+<a name="game_design-v1-ListPublishedRealmEntryPoliciesRequest"></a>
+
+### ListPublishedRealmEntryPoliciesRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [uint32](#uint32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| read_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| canonical_version_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_design-v1-ListPublishedRealmEntryPoliciesResponse"></a>
+
+### ListPublishedRealmEntryPoliciesResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [ListPublishedRealmEntryPoliciesRequest](#game_design-v1-ListPublishedRealmEntryPoliciesRequest) |  |  |
+| policy_set_evidence | [bytes](#bytes) |  | Complete ordered set, count/digests and exact actual source/capture/terminal/release evidence. |
+
+
+
+
+
+
+<a name="game_design-v1-ResolvePublishedRealmEntryPolicyRequest"></a>
+
+### ResolvePublishedRealmEntryPolicyRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [uint32](#uint32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| read_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| canonical_version_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_design-v1-ResolvePublishedRealmEntryPolicyResponse"></a>
+
+### ResolvePublishedRealmEntryPolicyResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [ResolvePublishedRealmEntryPolicyRequest](#game_design-v1-ResolvePublishedRealmEntryPolicyRequest) |  |  |
+| policy_set_evidence | [bytes](#bytes) |  | Complete immutable set proves the selected row without weakening its publication binding. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="game_design-v1-PublishedRealmEntryPolicyService"></a>
+
+### PublishedRealmEntryPolicyService
+Exact same-namespace Game Session workload only; explicit composition, not runtime registration.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ResolvePublishedRealmEntryPolicy | [ResolvePublishedRealmEntryPolicyRequest](#game_design-v1-ResolvePublishedRealmEntryPolicyRequest) | [ResolvePublishedRealmEntryPolicyResponse](#game_design-v1-ResolvePublishedRealmEntryPolicyResponse) |  |
+| ListPublishedRealmEntryPolicies | [ListPublishedRealmEntryPoliciesRequest](#game_design-v1-ListPublishedRealmEntryPoliciesRequest) | [ListPublishedRealmEntryPoliciesResponse](#game_design-v1-ListPublishedRealmEntryPoliciesResponse) |  |
+
+
+
+
+
+<a name="game-design_v1_start_session_template_association_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-design/v1/start_session_template_association_service.proto
+
+
+
+<a name="game_design-v1-ReadStartSessionTemplateAssociationRequest"></a>
+
+### ReadStartSessionTemplateAssociationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| read_request_id | [string](#string) |  |  |
+| canonical_post_authorization_tuple | [bytes](#bytes) |  | Complete canonical StartSessionPostAuthorizationExecutionTuple bytes. No JWT or opaque authorization reference is forwarded here. |
+| owner_attempt_id | [string](#string) |  |  |
+| owner_fence | [int64](#int64) |  |  |
+| initial_configured | [StartSessionConfiguredTemplateSelection](#game_design-v1-StartSessionConfiguredTemplateSelection) |  |  |
+| exact_replay | [StartSessionExactTemplateAssociationSelection](#game_design-v1-StartSessionExactTemplateAssociationSelection) |  |  |
+
+
+
+
+
+
+<a name="game_design-v1-ReadStartSessionTemplateAssociationResponse"></a>
+
+### ReadStartSessionTemplateAssociationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [ReadStartSessionTemplateAssociationRequest](#game_design-v1-ReadStartSessionTemplateAssociationRequest) |  | Echo the entire exact request. Missing, ambiguous, unavailable or conflicting owner evidence is a non-OK RPC, never a partial or repaired result. |
+| association | [StartSessionTemplateWorldSourceAssociationEvidence](#game_design-v1-StartSessionTemplateWorldSourceAssociationEvidence) |  |  |
+| release_bundle | [gamedesign.v1.PublishedReleaseBundle](#gamedesign-v1-PublishedReleaseBundle) |  |  |
+| world_published_start_location_evidence | [bytes](#bytes) |  | Canonical typed World selector evidence committed with the original release terminal. This is not a launch descriptor and is not reconstructed from the source-intake receipt. |
+| reference_phase_epoch | [int64](#int64) |  | Positive, same-owner-snapshot phase evidence; neither a runtime lifecycle epoch nor independent admission permission. |
+
+
+
+
+
+
+<a name="game_design-v1-ResolveStartSessionLaunchDescriptorResponse"></a>
+
+### ResolveStartSessionLaunchDescriptorResponse
+Closed versioned result for one exact Game Session-pinned association replay. The association
+read is included unchanged as the source binding for either outcome. Exactly one of
+launch_descriptor and application_failure must be present.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| association_read | [ReadStartSessionTemplateAssociationResponse](#game_design-v1-ReadStartSessionTemplateAssociationResponse) |  |  |
+| launch_descriptor | [gamedesign.v1.LaunchDescriptor](#gamedesign-v1-LaunchDescriptor) |  |  |
+| application_failure | [StartSessionLaunchDescriptorApplicationFailure](#game_design-v1-StartSessionLaunchDescriptorApplicationFailure) |  |  |
+
+
+
+
+
+
+<a name="game_design-v1-StartSessionConfiguredTemplateSelection"></a>
+
+### StartSessionConfiguredTemplateSelection
+
+
+
+
+
+
+
+<a name="game_design-v1-StartSessionExactTemplateAssociationSelection"></a>
+
+### StartSessionExactTemplateAssociationSelection
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_version_id | [string](#string) |  |  |
+| selected_commit_id | [string](#string) |  |  |
+| publish_workflow_id | [string](#string) |  |  |
+| association_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_design-v1-StartSessionLaunchDescriptorApplicationFailure"></a>
+
+### StartSessionLaunchDescriptorApplicationFailure
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| code | [string](#string) |  |  |
+| message | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_design-v1-StartSessionTemplateWorldSourceAssociationEvidence"></a>
+
+### StartSessionTemplateWorldSourceAssociationEvidence
+Closed public projection of the immutable Game Design association. Private operation,
+capture, template snapshot, entry, and canonical-association bytes never cross this API.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_tenant_id | [string](#string) |  |  |
+| template_id | [int64](#int64) |  |  |
+| canonical_version_id | [string](#string) |  |  |
+| selected_commit_id | [string](#string) |  |  |
+| publish_workflow_id | [string](#string) |  |  |
+| publication_selection_digest | [string](#string) |  |  |
+| association_digest | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| intake_request_id | [string](#string) |  |  |
+| world_operation_id | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_evidence_digest | [string](#string) |  |  |
+| world_read_request | [world_management.v1.ReadAuthoredWorldSourceIntakeByIdRequest](#world_management-v1-ReadAuthoredWorldSourceIntakeByIdRequest) |  |  |
+| world_read_response | [world_management.v1.ReadAuthoredWorldSourceIntakeByIdResponse](#world_management-v1-ReadAuthoredWorldSourceIntakeByIdResponse) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="game_design-v1-GameDesignStartSessionLaunchDescriptorService"></a>
+
+### GameDesignStartSessionLaunchDescriptorService
+Standalone exact-replay descriptor projection for the existing authorized StartSession flow.
+The server authenticates the same-namespace Game Session workload before decoding or invoking
+the producer. This service is deliberately separate from the read-only association service.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ResolveStartSessionLaunchDescriptor | [ReadStartSessionTemplateAssociationRequest](#game_design-v1-ReadStartSessionTemplateAssociationRequest) | [ResolveStartSessionLaunchDescriptorResponse](#game_design-v1-ResolveStartSessionLaunchDescriptorResponse) |  |
+
+
+<a name="game_design-v1-GameDesignStartSessionTemplateAssociationReadService"></a>
+
+### GameDesignStartSessionTemplateAssociationReadService
+Standalone read-only handoff. Authenticate the exact same-namespace Game Session
+peer before decoding, then independently verify the original redeemed Account
+operation before reading content. This does not authorize source mutation,
+descriptor mutation, World preparation, or admission.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadStartSessionTemplateAssociation | [ReadStartSessionTemplateAssociationRequest](#game_design-v1-ReadStartSessionTemplateAssociationRequest) | [ReadStartSessionTemplateAssociationResponse](#game_design-v1-ReadStartSessionTemplateAssociationResponse) |  |
+
+
+
+
+
+<a name="game-design_v1_tenant_identity_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-design/v1/tenant_identity_service.proto
+
+
+
+<a name="gamedesign-v1-ResolveAuthoredWorldSourceRequest"></a>
+
+### ResolveAuthoredWorldSourceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveAuthoredWorldSourceResponse"></a>
+
+### ResolveAuthoredWorldSourceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| registration_request_id | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| tenant_slug | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| world_display_name | [string](#string) |  |  |
+| source_game_row_id | [int64](#int64) |  |  |
+| source_game_tenant_key | [string](#string) |  |  |
+| provenance_kind | [string](#string) |  |  |
+| evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveFreshTenantCreationRequest"></a>
+
+### ResolveFreshTenantCreationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| creation_request_id | [string](#string) |  |  |
+| expected_request_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveFreshTenantCreationResponse"></a>
+
+### ResolveFreshTenantCreationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| creation_request_id | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| source_game_row_id | [int64](#int64) |  |  |
+| source_game_tenant_key | [string](#string) |  |  |
+| provenance_kind | [string](#string) |  |  |
+| evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="gamedesign-v1-AuthoredWorldSourceReadService"></a>
+
+### AuthoredWorldSourceReadService
+Standalone, unregistered exact authored-world source read; no mutation or admission permission.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ResolveAuthoredWorldSource | [ResolveAuthoredWorldSourceRequest](#gamedesign-v1-ResolveAuthoredWorldSourceRequest) | [ResolveAuthoredWorldSourceResponse](#gamedesign-v1-ResolveAuthoredWorldSourceResponse) |  |
+
+
+<a name="gamedesign-v1-TenantIdentityService"></a>
+
+### TenantIdentityService
+Read-only exact Account/Game Session workload handoff for owner-created tenant evidence.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ResolveFreshTenantCreation | [ResolveFreshTenantCreationRequest](#gamedesign-v1-ResolveFreshTenantCreationRequest) | [ResolveFreshTenantCreationResponse](#gamedesign-v1-ResolveFreshTenantCreationResponse) |  |
 
 
 
@@ -7239,6 +9386,136 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="game-session_v1_canonical_gameplay_roster_owner_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-session/v1/canonical_gameplay_roster_owner_read.proto
+
+
+
+<a name="game_session-v1-GetCanonicalGameplayRosterOwnerReadRequest"></a>
+
+### GetCanonicalGameplayRosterOwnerReadRequest
+All UUID selectors are canonical non-nil UUID strings. Counters are positive signed int64s;
+callers must send the exact current values they observed and may not infer a version from them.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [uint32](#uint32) |  |  |
+| request_uuid | [string](#string) |  |  |
+| canonical_account_uuid | [string](#string) |  | Echo/binding only. Account remains the authority for membership and entitlements. |
+| target_namespace | [string](#string) |  |  |
+| canonical_tenant_uuid | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_uuid | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| playable_state_namespace_uuid | [string](#string) |  |  |
+| playable_state_scope | [string](#string) |  |  |
+| canonical_game_instance_uuid | [string](#string) |  |  |
+| canonical_version_uuid | [string](#string) |  |  |
+| expected_catalog_revision | [int64](#int64) |  |  |
+| expected_pointer_version | [int64](#int64) |  |  |
+| expected_active_world_epoch | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetCanonicalGameplayRosterOwnerReadResponse"></a>
+
+### GetCanonicalGameplayRosterOwnerReadResponse
+Successful responses echo the entire request and carry the complete canonical bytes of the
+existing Game Session World-hold-bound COMMITTED proof and Game Design sealed policy set, plus
+the Game Session-owned current-pointer snapshot digest.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [GetCanonicalGameplayRosterOwnerReadRequest](#game_session-v1-GetCanonicalGameplayRosterOwnerReadRequest) |  |  |
+| game_session_owner_proof | [bytes](#bytes) |  |  |
+| published_policy_set_evidence | [bytes](#bytes) |  |  |
+| admission_pointer_snapshot_digest | [string](#string) |  | Raw lowercase SHA-256 of the GS-owned canonical current-pointer projection, not the commit proof digest. |
+
+
+
+
+
+
+<a name="game_session-v1-GetPreseededActorAssignmentOwnerReadRequest"></a>
+
+### GetPreseededActorAssignmentOwnerReadRequest
+Assignment staging selects a canonical tenant and exact immutable target selectors. Game
+Session derives current pointer and World epoch counters from its owner rows; callers do not send
+guessed or stale counters. This source read is not Account membership, JOIN, PLAY, or admission.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [uint32](#uint32) |  |  |
+| assignment_uuid | [string](#string) |  |  |
+| canonical_account_uuid | [string](#string) |  | Echo/binding only. Account remains the authority for staging eligibility. |
+| target_namespace | [string](#string) |  |  |
+| canonical_tenant_uuid | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_uuid | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| playable_state_namespace_uuid | [string](#string) |  |  |
+| playable_state_scope | [string](#string) |  |  |
+| canonical_game_instance_uuid | [string](#string) |  |  |
+| canonical_version_uuid | [string](#string) |  |  |
+| expected_catalog_revision | [int64](#int64) |  |  |
+| expected_policy_digest | [string](#string) |  |  |
+| expected_published_release_bundle_ref | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetPreseededActorAssignmentOwnerReadResponse"></a>
+
+### GetPreseededActorAssignmentOwnerReadResponse
+Successful responses echo the selector request and carry the complete canonical bytes of the
+existing Game Session World-hold-bound COMMITTED proof and Game Design sealed policy set, plus
+the Game Session-owned current-pointer snapshot digest.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [GetPreseededActorAssignmentOwnerReadRequest](#game_session-v1-GetPreseededActorAssignmentOwnerReadRequest) |  |  |
+| game_session_owner_proof | [bytes](#bytes) |  |  |
+| published_policy_set_evidence | [bytes](#bytes) |  |  |
+| admission_pointer_snapshot_digest | [string](#string) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="game_session-v1-CanonicalGameplayRosterOwnerReadService"></a>
+
+### CanonicalGameplayRosterOwnerReadService
+Entity-only source read for a fresh public-production SHARED route and its complete sealed
+PRESEEDED_ONLY Game Design policy set. This read is not Account membership, PLAY admission, or
+actor-entry authorization.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetCanonicalGameplayRosterOwnerRead | [GetCanonicalGameplayRosterOwnerReadRequest](#game_session-v1-GetCanonicalGameplayRosterOwnerReadRequest) | [GetCanonicalGameplayRosterOwnerReadResponse](#game_session-v1-GetCanonicalGameplayRosterOwnerReadResponse) |  |
+| GetPreseededActorAssignmentOwnerRead | [GetPreseededActorAssignmentOwnerReadRequest](#game_session-v1-GetPreseededActorAssignmentOwnerReadRequest) | [GetPreseededActorAssignmentOwnerReadResponse](#game_session-v1-GetPreseededActorAssignmentOwnerReadResponse) |  |
+
+
+
+
+
 <a name="game-session_v1_game_session_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -7302,6 +9579,46 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | catalog_revision | [int64](#int64) | optional |  |
 | realm_id | [string](#string) |  | Empty for historical audit rows that predate durable pointer identity. |
 | playable_state_namespace_id | [string](#string) |  | Empty for historical audit rows that predate durable pointer identity. |
+
+
+
+
+
+
+<a name="game_session-v1-AuthorizeStartSessionRequest"></a>
+
+### AuthorizeStartSessionRequest
+Typed non-activating operator handoff. This transport only records Account redemption progress;
+it does not create or start a game instance and does not return a session identifier.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_post_authorization_execution_tuple_bytes | [bytes](#bytes) |  |  |
+| operator_authorization_reference | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-AuthorizeStartSessionResponse"></a>
+
+### AuthorizeStartSessionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| target_namespace | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| mutation_digest | [string](#string) |  |  |
+| owner_attempt_id | [string](#string) |  |  |
+| owner_mutation_id | [string](#string) |  |  |
+| owner_fence | [int64](#int64) |  |  |
+| owner_phase_state | [string](#string) |  |  |
+| progress | [StartSessionOwnerAuthorizationProgress](#game_session-v1-StartSessionOwnerAuthorizationProgress) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
 
@@ -7726,6 +10043,137 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="game_session-v1-GetCanonicalGameInstanceLaunchAssociationRequest"></a>
+
+### GetCanonicalGameInstanceLaunchAssociationRequest
+A transport retry has a separate read identity and cannot create a new launch operation.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_request_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| game_instance_uuid | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| launch_descriptor_id | [string](#string) |  |  |
+| expected_descriptor_request_digest | [string](#string) |  |  |
+| expected_descriptor_result_digest | [string](#string) |  |  |
+| expected_release_attestation_evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetCanonicalGameInstanceLaunchAssociationResponse"></a>
+
+### GetCanonicalGameInstanceLaunchAssociationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_request_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| game_instance_uuid | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| launch_descriptor_id | [string](#string) |  |  |
+| descriptor_request_digest | [string](#string) |  |  |
+| descriptor_result_digest | [string](#string) |  |  |
+| release_attestation_evidence_digest | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| current_game_instance_status | [string](#string) |  | Current Game Session row projection only; World lifecycle authority remains separate. |
+| current_row_version | [int64](#int64) |  |  |
+| launch_descriptor | [gamedesign.v1.LaunchDescriptor](#gamedesign-v1-LaunchDescriptor) |  |  |
+| release_attestation | [gamedesign.v1.AuthoredWorldReleaseAttestationEvidence](#gamedesign-v1-AuthoredWorldReleaseAttestationEvidence) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| public_production | [bool](#bool) |  |  |
+| owner_attempt_id | [string](#string) |  |  |
+| owner_fence | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetCanonicalInitialAdmissionOwnerProofRequest"></a>
+
+### GetCanonicalInitialAdmissionOwnerProofRequest
+World supplies the complete immutable request it acquired the hold for. No numeric runtime
+identifier is substituted for a canonical UUID, and World&#39;s hold digest remains distinct from
+the bare Game Session request digest.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| target_namespace | [string](#string) |  |  |
+| initial_admission_request_id | [string](#string) |  |  |
+| initial_admission_request_digest | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_id | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
+| playable_state_scope | [string](#string) |  |  |
+| canonical_game_instance_id | [string](#string) |  |  |
+| canonical_version_id | [string](#string) |  |  |
+| active_lifecycle_epoch | [int64](#int64) |  |  |
+| expected_catalog_revision | [int64](#int64) |  |  |
+| origin | [CanonicalInitialAdmissionOrigin](#game_session-v1-CanonicalInitialAdmissionOrigin) |  |  |
+| expected_prior_pointer_version | [int64](#int64) | optional |  |
+| hold_id | [string](#string) |  |  |
+| hold_fence | [string](#string) |  |  |
+| hold_binding_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetCanonicalInitialAdmissionOwnerProofResponse"></a>
+
+### GetCanonicalInitialAdmissionOwnerProofResponse
+Every successful domain result echoes the complete expected operation tuple. Only a COMMITTED
+pointer/audit result or a positively fenced durable ABORTED result is terminal proof. Missing
+owner attempts and reads that cannot establish an exact result use non-OK gRPC status, never a
+NOT_FOUND/UNAVAILABLE outcome or an inferred abort.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| target_namespace | [string](#string) |  |  |
+| initial_admission_request_id | [string](#string) |  |  |
+| initial_admission_request_digest | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_id | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
+| playable_state_scope | [string](#string) |  |  |
+| canonical_game_instance_id | [string](#string) |  |  |
+| canonical_version_id | [string](#string) |  |  |
+| active_lifecycle_epoch | [int64](#int64) |  |  |
+| expected_catalog_revision | [int64](#int64) |  |  |
+| origin | [CanonicalInitialAdmissionOrigin](#game_session-v1-CanonicalInitialAdmissionOrigin) |  |  |
+| expected_prior_pointer_version | [int64](#int64) | optional |  |
+| hold_id | [string](#string) |  |  |
+| hold_fence | [string](#string) |  |  |
+| hold_binding_digest | [string](#string) |  |  |
+| outcome | [CanonicalInitialAdmissionOwnerProofOutcome](#game_session-v1-CanonicalInitialAdmissionOwnerProofOutcome) |  |  |
+| committed_pointer_version | [int64](#int64) | optional |  |
+| audit_event_id | [int64](#int64) | optional |  |
+| proof_digest | [string](#string) |  | Terminal Game Session proof digest; sha256:-prefixed and distinct from the bare request digest. |
+| positive_durable_abort | [bool](#bool) |  |  |
+| terminal_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+
+
+
+
+
+
 <a name="game_session-v1-GetGameInstanceRuntimeStateRequest"></a>
 
 ### GetGameInstanceRuntimeStateRequest
@@ -8054,6 +10502,57 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | ----- | ---- | ----- | ----------- |
 | result | [RemoteFollowupResultEntry](#game_session-v1-RemoteFollowupResultEntry) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetRunOwnedFixtureLaunchAssociationRequest"></a>
+
+### GetRunOwnedFixtureLaunchAssociationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_request_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| fixture_operation_id | [string](#string) |  |  |
+| expected_fixture_policy_evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetRunOwnedFixtureLaunchAssociationResponse"></a>
+
+### GetRunOwnedFixtureLaunchAssociationResponse
+Complete immutable fixture provenance plus independently read GS allocations; no Human tuple.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_request_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| fixture_operation_id | [string](#string) |  |  |
+| expected_fixture_policy_evidence_digest | [string](#string) |  |  |
+| game_session_tenant_id | [int64](#int64) |  |  |
+| game_instance_id | [int64](#int64) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| game_instance_uuid | [string](#string) |  |  |
+| canonical_version_id | [string](#string) |  |  |
+| canonical_realm_id | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| catalog_revision | [int64](#int64) |  |  |
+| current_game_instance_status | [string](#string) |  |  |
+| current_row_version | [int64](#int64) |  |  |
+| fixture_policy_request_bytes | [bytes](#bytes) |  |  |
+| fixture_policy_seal_operation_id | [string](#string) |  |  |
+| fixture_policy_seal_request_digest | [string](#string) |  |  |
+| fixture_policy_seal_evidence_digest | [string](#string) |  |  |
 
 
 
@@ -9623,6 +12122,33 @@ Resume ticks after an authorized maintenance workflow completes.
 
 
 
+<a name="game_session-v1-CanonicalInitialAdmissionOrigin"></a>
+
+### CanonicalInitialAdmissionOrigin
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| CANONICAL_INITIAL_ADMISSION_ORIGIN_UNSPECIFIED | 0 |  |
+| CANONICAL_INITIAL_ADMISSION_ORIGIN_NO_PRIOR_POINTER | 1 |  |
+| CANONICAL_INITIAL_ADMISSION_ORIGIN_EXPECT_CLOSED | 2 |  |
+
+
+
+<a name="game_session-v1-CanonicalInitialAdmissionOwnerProofOutcome"></a>
+
+### CanonicalInitialAdmissionOwnerProofOutcome
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_UNSPECIFIED | 0 |  |
+| CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_PENDING | 1 |  |
+| CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_COMMITTED | 2 |  |
+| CANONICAL_INITIAL_ADMISSION_OWNER_PROOF_OUTCOME_ABORTED | 3 |  |
+
+
+
 <a name="game_session-v1-CutoverCompatibilityResult"></a>
 
 ### CutoverCompatibilityResult
@@ -9668,6 +12194,20 @@ Resume ticks after an authorized maintenance workflow completes.
 
 
 
+<a name="game_session-v1-StartSessionOwnerAuthorizationProgress"></a>
+
+### StartSessionOwnerAuthorizationProgress
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| START_SESSION_OWNER_AUTHORIZATION_PROGRESS_UNSPECIFIED | 0 |  |
+| START_SESSION_OWNER_AUTHORIZATION_PROGRESS_EXACT_REPLAY | 1 |  |
+| START_SESSION_OWNER_AUTHORIZATION_PROGRESS_ACCOUNT_OUTCOME_AMBIGUOUS | 2 |  |
+| START_SESSION_OWNER_AUTHORIZATION_PROGRESS_ACCOUNT_PROJECTION_ATTACHED | 3 |  |
+
+
+
 <a name="game_session-v1-TickStatus"></a>
 
 ### TickStatus
@@ -9685,6 +12225,16 @@ Resume ticks after an authorized maintenance workflow completes.
 
 
 
+<a name="game_session-v1-CanonicalInitialAdmissionOwnerProofReadService"></a>
+
+### CanonicalInitialAdmissionOwnerProofReadService
+Dedicated World-only read surface for canonical initial-admission owner proof.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| GetCanonicalInitialAdmissionOwnerProof | [GetCanonicalInitialAdmissionOwnerProofRequest](#game_session-v1-GetCanonicalInitialAdmissionOwnerProofRequest) | [GetCanonicalInitialAdmissionOwnerProofResponse](#game_session-v1-GetCanonicalInitialAdmissionOwnerProofResponse) | Read the exact canonical Game Session-owned initial-admission terminal outcome for World. |
+
+
 <a name="game_session-v1-GameSessionControlPlaneService"></a>
 
 ### GameSessionControlPlaneService
@@ -9697,6 +12247,8 @@ plus scoped tick pause/resume used for rollback safety.
 | GetGameSessionPinConvergence | [GetGameSessionPinConvergenceRequest](#game_session-v1-GetGameSessionPinConvergenceRequest) | [GetGameSessionPinConvergenceResponse](#game_session-v1-GetGameSessionPinConvergenceResponse) |  |
 | GetGameInstanceRuntimeState | [GetGameInstanceRuntimeStateRequest](#game_session-v1-GetGameInstanceRuntimeStateRequest) | [GetGameInstanceRuntimeStateResponse](#game_session-v1-GetGameInstanceRuntimeStateResponse) |  |
 | GetInitialAdmissionBindProof | [GetInitialAdmissionBindProofRequest](#game_session-v1-GetInitialAdmissionBindProofRequest) | [GetInitialAdmissionBindProofResponse](#game_session-v1-GetInitialAdmissionBindProofResponse) | Read exact durable owner proof for a World-owned initial-admission hold. |
+| GetCanonicalGameInstanceLaunchAssociation | [GetCanonicalGameInstanceLaunchAssociationRequest](#game_session-v1-GetCanonicalGameInstanceLaunchAssociationRequest) | [GetCanonicalGameInstanceLaunchAssociationResponse](#game_session-v1-GetCanonicalGameInstanceLaunchAssociationResponse) | Read the exact Game Session-owned STARTING launch association for World composition. |
+| GetRunOwnedFixtureLaunchAssociation | [GetRunOwnedFixtureLaunchAssociationRequest](#game_session-v1-GetRunOwnedFixtureLaunchAssociationRequest) | [GetRunOwnedFixtureLaunchAssociationResponse](#game_session-v1-GetRunOwnedFixtureLaunchAssociationResponse) | Fixed default-off run-owned fixture allocation read; exact World workload only. |
 | ValidateBuiltInCommandAlias | [ValidateBuiltInCommandAliasRequest](#game_session-v1-ValidateBuiltInCommandAliasRequest) | [ValidateBuiltInCommandAliasResponse](#game_session-v1-ValidateBuiltInCommandAliasResponse) |  |
 | ListAdmissionPointers | [ListAdmissionPointersRequest](#game_session-v1-ListAdmissionPointersRequest) | [ListAdmissionPointersResponse](#game_session-v1-ListAdmissionPointersResponse) |  |
 | ListAdmissionPointerAudit | [ListAdmissionPointerAuditRequest](#game_session-v1-ListAdmissionPointerAuditRequest) | [ListAdmissionPointerAuditResponse](#game_session-v1-ListAdmissionPointerAuditResponse) |  |
@@ -9732,6 +12284,7 @@ plus scoped tick pause/resume used for rollback safety.
 | ----------- | ------------ | ------------- | ------------|
 | Ping | [PingRequest](#game_session-v1-PingRequest) | [PingResponse](#game_session-v1-PingResponse) |  |
 | StartSession | [StartSessionRequest](#game_session-v1-StartSessionRequest) | [StartSessionResponse](#game_session-v1-StartSessionResponse) |  |
+| AuthorizeStartSession | [AuthorizeStartSessionRequest](#game_session-v1-AuthorizeStartSessionRequest) | [AuthorizeStartSessionResponse](#game_session-v1-AuthorizeStartSessionResponse) |  |
 | StopSession | [StopSessionRequest](#game_session-v1-StopSessionRequest) | [StopSessionResponse](#game_session-v1-StopSessionResponse) |  |
 | RestartSession | [RestartSessionRequest](#game_session-v1-RestartSessionRequest) | [RestartSessionResponse](#game_session-v1-RestartSessionResponse) |  |
 | EnqueueCommand | [EnqueueCommandRequest](#game_session-v1-EnqueueCommandRequest) | [EnqueueCommandResponse](#game_session-v1-EnqueueCommandResponse) |  |
@@ -9744,6 +12297,165 @@ plus scoped tick pause/resume used for rollback safety.
 | PauseTicks | [PauseTicksRequest](#game_session-v1-PauseTicksRequest) | [PauseTicksResponse](#game_session-v1-PauseTicksResponse) | Pause tick execution for an authorized maintenance workflow. |
 | ResumeTicks | [ResumeTicksRequest](#game_session-v1-ResumeTicksRequest) | [ResumeTicksResponse](#game_session-v1-ResumeTicksResponse) | Resume tick execution after the authorized maintenance workflow completes. |
 | GetTickStatus | [GetTickStatusRequest](#game_session-v1-GetTickStatusRequest) | [GetTickStatusResponse](#game_session-v1-GetTickStatusResponse) | Report whether ticks are currently paused. |
+
+
+
+
+
+<a name="game-session_v1_historical_original_start_session_owner_evidence-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-session/v1/historical_original_start_session_owner_evidence.proto
+
+
+
+<a name="game_session-v1-ReadHistoricalOriginalStartSessionOwnerEvidenceRequest"></a>
+
+### ReadHistoricalOriginalStartSessionOwnerEvidenceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| read_request_id | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| game_instance_uuid | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| launch_descriptor_id | [string](#string) |  |  |
+| expected_descriptor_request_digest | [string](#string) |  |  |
+| expected_descriptor_result_digest | [string](#string) |  |  |
+| expected_release_attestation_evidence_digest | [string](#string) |  |  |
+| expected_owner_attempt_id | [string](#string) |  |  |
+| expected_owner_fence | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ReadHistoricalOriginalStartSessionOwnerEvidenceResponse"></a>
+
+### ReadHistoricalOriginalStartSessionOwnerEvidenceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [ReadHistoricalOriginalStartSessionOwnerEvidenceRequest](#game_session-v1-ReadHistoricalOriginalStartSessionOwnerEvidenceRequest) |  |  |
+| canonical_post_authorization_tuple | [bytes](#bytes) |  |  |
+| owner_attempt_id | [string](#string) |  |  |
+| owner_fence | [int64](#int64) |  |  |
+| account_redemption_projection | [bytes](#bytes) |  |  |
+| template_association_request | [game_design.v1.ReadStartSessionTemplateAssociationRequest](#game_design-v1-ReadStartSessionTemplateAssociationRequest) |  |  |
+| template_association_response | [game_design.v1.ReadStartSessionTemplateAssociationResponse](#game_design-v1-ReadStartSessionTemplateAssociationResponse) |  |  |
+| template_association_request_digest | [string](#string) |  |  |
+| template_association_response_digest | [string](#string) |  |  |
+| descriptor_pin_response | [game_design.v1.ResolveStartSessionLaunchDescriptorResponse](#game_design-v1-ResolveStartSessionLaunchDescriptorResponse) |  |  |
+| descriptor_pin_request_digest | [string](#string) |  |  |
+| descriptor_pin_response_digest | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
+| playable_state_scope | [string](#string) |  |  |
+| public_production | [bool](#bool) |  |  |
+| captured_starting_row_version | [int64](#int64) |  |  |
+| launch_descriptor | [gamedesign.v1.LaunchDescriptor](#gamedesign-v1-LaunchDescriptor) |  |  |
+| release_attestation | [gamedesign.v1.AuthoredWorldReleaseAttestationEvidence](#gamedesign-v1-AuthoredWorldReleaseAttestationEvidence) |  |  |
+| association_target_namespace | [string](#string) |  |  |
+| association_canonical_tenant_id | [string](#string) |  |  |
+| association_world_slug | [string](#string) |  |  |
+| association_game_instance_uuid | [string](#string) |  |  |
+| association_control_plane_request_id | [string](#string) |  |  |
+| association_launch_descriptor_id | [string](#string) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="game_session-v1-HistoricalOriginalStartSessionOwnerEvidenceReadService"></a>
+
+### HistoricalOriginalStartSessionOwnerEvidenceReadService
+Unregistered, read-only historical evidence. This endpoint never grants StartSession
+continuation, mutation, current lease, or admission authority.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadHistoricalOriginalStartSessionOwnerEvidence | [ReadHistoricalOriginalStartSessionOwnerEvidenceRequest](#game_session-v1-ReadHistoricalOriginalStartSessionOwnerEvidenceRequest) | [ReadHistoricalOriginalStartSessionOwnerEvidenceResponse](#game_session-v1-ReadHistoricalOriginalStartSessionOwnerEvidenceResponse) |  |
+
+
+
+
+
+<a name="game-session_v1_original_start_session_current_attempt_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## game-session/v1/original_start_session_current_attempt_read.proto
+
+
+
+<a name="game_session-v1-ReadOriginalStartSessionCurrentAttemptRequest"></a>
+
+### ReadOriginalStartSessionCurrentAttemptRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| read_request_id | [string](#string) |  | Fresh correlation UUID for this observation; it is not a durable mutation identity. |
+| target_namespace | [string](#string) |  |  |
+| canonical_post_authorization_tuple | [bytes](#bytes) |  |  |
+| expected_owner_attempt_id | [string](#string) |  |  |
+| expected_owner_mutation_id | [string](#string) |  |  |
+| expected_owner_fence | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ReadOriginalStartSessionCurrentAttemptResponse"></a>
+
+### ReadOriginalStartSessionCurrentAttemptResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [ReadOriginalStartSessionCurrentAttemptRequest](#game_session-v1-ReadOriginalStartSessionCurrentAttemptRequest) |  |  |
+| phase_state | [string](#string) |  |  |
+| original_lease_expires_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| account_redemption_projection | [bytes](#bytes) |  |  |
+| account_redemption_projection_digest | [string](#string) |  | Raw lowercase SHA-256 of account_redemption_projection. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="game_session-v1-OriginalStartSessionCurrentAttemptReadService"></a>
+
+### OriginalStartSessionCurrentAttemptReadService
+Unregistered, observation-only read of one exact live original StartSession owner attempt.
+It exposes no claimant credential and grants no mutation, renewal, redemption, or admission authority.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadOriginalStartSessionCurrentAttempt | [ReadOriginalStartSessionCurrentAttemptRequest](#game_session-v1-ReadOriginalStartSessionCurrentAttemptRequest) | [ReadOriginalStartSessionCurrentAttemptResponse](#game_session-v1-ReadOriginalStartSessionCurrentAttemptResponse) |  |
 
 
 
@@ -9934,6 +12646,51 @@ plus scoped tick pause/resume used for rollback safety.
 
 
 
+<a name="logging_admin-v1-ReadCurrentClaimEvidenceRequest"></a>
+
+### ReadCurrentClaimEvidenceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| control_plane_request_id | [string](#string) |  |  |
+| pre_authorization_tuple_json | [bytes](#bytes) |  |  |
+| reservation_owner_id | [string](#string) |  |  |
+| reservation_claim_fence | [int64](#int64) |  |  |
+| claim_owner_id | [string](#string) |  |  |
+| claim_fence | [int64](#int64) |  |  |
+| purpose | [StartSessionReservationEvidencePurpose](#logging_admin-v1-StartSessionReservationEvidencePurpose) |  |  |
+
+
+
+
+
+
+<a name="logging_admin-v1-ReadCurrentClaimEvidenceResponse"></a>
+
+### ReadCurrentClaimEvidenceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| control_plane_request_id | [string](#string) |  |  |
+| pre_authorization_tuple_json | [bytes](#bytes) |  |  |
+| mutation_digest | [string](#string) |  |  |
+| reservation_owner_id | [string](#string) |  |  |
+| reservation_claim_fence | [int64](#int64) |  |  |
+| claim_owner_id | [string](#string) |  |  |
+| claim_fence | [int64](#int64) |  |  |
+| claim_expires_at_epoch_millis | [int64](#int64) |  |  |
+| observed_at_epoch_millis | [int64](#int64) |  |  |
+| purpose | [StartSessionReservationEvidencePurpose](#logging_admin-v1-StartSessionReservationEvidencePurpose) |  |  |
+
+
+
+
+
+
 <a name="logging_admin-v1-ReadLogEventReceiptRequest"></a>
 
 ### ReadLogEventReceiptRequest
@@ -10060,6 +12817,19 @@ plus scoped tick pause/resume used for rollback safety.
 
 
 
+<a name="logging_admin-v1-StartSessionReservationEvidencePurpose"></a>
+
+### StartSessionReservationEvidencePurpose
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| START_SESSION_RESERVATION_EVIDENCE_PURPOSE_UNSPECIFIED | 0 |  |
+| START_SESSION_RESERVATION_EVIDENCE_PURPOSE_ISSUE | 1 |  |
+| START_SESSION_RESERVATION_EVIDENCE_PURPOSE_RECOVER | 2 |  |
+
+
+
 
 
 
@@ -10078,6 +12848,16 @@ plus scoped tick pause/resume used for rollback safety.
 | ApplyModerationAction | [ApplyModerationActionRequest](#logging_admin-v1-ApplyModerationActionRequest) | [ApplyModerationActionResponse](#logging_admin-v1-ApplyModerationActionResponse) |  |
 | EvaluateModerationPolicy | [EvaluateModerationPolicyRequest](#logging_admin-v1-EvaluateModerationPolicyRequest) | [EvaluateModerationPolicyResponse](#logging_admin-v1-EvaluateModerationPolicyResponse) |  |
 | ToggleFeatureFlag | [ToggleFeatureFlagRequest](#logging_admin-v1-ToggleFeatureFlagRequest) | [ToggleFeatureFlagResponse](#logging_admin-v1-ToggleFeatureFlagResponse) |  |
+
+
+<a name="logging_admin-v1-StartSessionReservationEvidenceService"></a>
+
+### StartSessionReservationEvidenceService
+Read-only Account evidence for the current Logging/Admin StartSession reservation claim.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadCurrentClaimEvidence | [ReadCurrentClaimEvidenceRequest](#logging_admin-v1-ReadCurrentClaimEvidenceRequest) | [ReadCurrentClaimEvidenceResponse](#logging_admin-v1-ReadCurrentClaimEvidenceResponse) |  |
 
 
 
@@ -11168,6 +13948,332 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 
 
+<a name="world-management_v1_draft_terminal_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## world-management/v1/draft_terminal_service.proto
+
+
+
+<a name="world_management-v1-ReadWorldDraftTerminalOutcomeRequest"></a>
+
+### ReadWorldDraftTerminalOutcomeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| read_request_id | [string](#string) |  |  |
+| original_account_binding | [bytes](#bytes) |  | Complete canonical Account fence bytes; this is read identity, not permission. |
+
+
+
+
+
+
+<a name="world_management-v1-ReadWorldDraftTerminalOutcomeResponse"></a>
+
+### ReadWorldDraftTerminalOutcomeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  | The complete request tuple is echoed byte-for-byte, including the original Account binding. |
+| target_namespace | [string](#string) |  |  |
+| read_request_id | [string](#string) |  |  |
+| original_account_binding | [bytes](#bytes) |  |  |
+| status | [WorldDraftTerminalReadStatus](#world_management-v1-WorldDraftTerminalReadStatus) |  |  |
+| owner_readback_bytes | [bytes](#bytes) |  | Canonical account-draft-owner-readback/v1 or /v2 bytes; the version matches the original Account fence schema (fence v1 -&gt; readback v1, v2 -&gt; v2). Empty only for UNKNOWN. |
+
+
+
+
+
+
+
+
+<a name="world_management-v1-WorldDraftTerminalReadStatus"></a>
+
+### WorldDraftTerminalReadStatus
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| WORLD_DRAFT_TERMINAL_READ_STATUS_UNSPECIFIED | 0 |  |
+| WORLD_DRAFT_TERMINAL_READ_STATUS_UNKNOWN | 1 |  |
+| WORLD_DRAFT_TERMINAL_READ_STATUS_DEFINITIVELY_ABORTED | 2 |  |
+| WORLD_DRAFT_TERMINAL_READ_STATUS_COMMITTED | 3 |  |
+
+
+
+
+
+
+
+<a name="world_management-v1-WorldDraftTerminalReadService"></a>
+
+### WorldDraftTerminalReadService
+Opt-in authenticated readback of immutable World Draft terminal evidence.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadWorldDraftTerminalOutcome | [ReadWorldDraftTerminalOutcomeRequest](#world_management-v1-ReadWorldDraftTerminalOutcomeRequest) | [ReadWorldDraftTerminalOutcomeResponse](#world_management-v1-ReadWorldDraftTerminalOutcomeResponse) |  |
+
+
+
+
+
+<a name="world-management_v1_world_authored_version_identity_service-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## world-management/v1/world_authored_version_identity_service.proto
+
+
+
+<a name="world_management-v1-AssociateAuthoredWorldVersionRequest"></a>
+
+### AssociateAuthoredWorldVersionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| source_evidence_digest | [string](#string) |  |  |
+| expected_canonical_version_id | [string](#string) |  |  |
+| game_design_version_id | [int64](#int64) |  |  |
+| read_request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-AssociateAuthoredWorldVersionResponse"></a>
+
+### AssociateAuthoredWorldVersionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [AssociateAuthoredWorldVersionRequest](#world_management-v1-AssociateAuthoredWorldVersionRequest) |  |  |
+| operation_id | [string](#string) |  |  |
+| source_intake_receipt | [IntakeAuthoredWorldSourceResponse](#world_management-v1-IntakeAuthoredWorldSourceResponse) |  |  |
+| version_state_evidence | [gamedesign.v1.GetAuthoredWorldVersionStateResponse](#gamedesign-v1-GetAuthoredWorldVersionStateResponse) |  | Original committed proof, including its historical read correlation on retry. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="world_management-v1-WorldAuthoredVersionIdentityService"></a>
+
+### WorldAuthoredVersionIdentityService
+Standalone, unregistered, same-namespace Game Design association construction.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| AssociateAuthoredWorldVersion | [AssociateAuthoredWorldVersionRequest](#world_management-v1-AssociateAuthoredWorldVersionRequest) | [AssociateAuthoredWorldVersionResponse](#world_management-v1-AssociateAuthoredWorldVersionResponse) |  |
+
+
+
+
+
+<a name="world-management_v1_world_canonical_initial_admission_hold-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## world-management/v1/world_canonical_initial_admission_hold.proto
+
+
+
+<a name="world_management-v1-AcquireCanonicalInitialAdmissionHoldRequest"></a>
+
+### AcquireCanonicalInitialAdmissionHoldRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_hold_request_bytes | [bytes](#bytes) |  | Complete closed canonical World initial-admission hold request bytes. |
+| canonical_lifecycle_read_request_bytes | [bytes](#bytes) |  | Complete closed canonical World lifecycle read request bytes for the exact target. |
+
+
+
+
+
+
+<a name="world_management-v1-AcquireCanonicalInitialAdmissionHoldResponse"></a>
+
+### AcquireCanonicalInitialAdmissionHoldResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| hold_identity_bytes | [bytes](#bytes) |  | Immutable World-issued hold identity, including the exact request bytes and binding digest. |
+
+
+
+
+
+
+<a name="world_management-v1-ReadCanonicalInitialAdmissionHoldIdentityRequest"></a>
+
+### ReadCanonicalInitialAdmissionHoldIdentityRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_request_id | [string](#string) |  | Fresh non-nil UUID correlation for this read, in canonical lowercase form. |
+| canonical_hold_request_bytes | [bytes](#bytes) |  | Complete closed canonical World initial-admission hold request bytes. |
+
+
+
+
+
+
+<a name="world_management-v1-ReadCanonicalInitialAdmissionHoldIdentityResponse"></a>
+
+### ReadCanonicalInitialAdmissionHoldIdentityResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_request_id | [string](#string) |  | Exact correlation echoed from this read request. |
+| hold_identity_bytes | [bytes](#bytes) |  | Historical immutable acquisition identity only; this is not terminal state, current admission, or an absence checkpoint. |
+
+
+
+
+
+
+<a name="world_management-v1-ReadCanonicalInitialAdmissionHoldStateRequest"></a>
+
+### ReadCanonicalInitialAdmissionHoldStateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_request_id | [string](#string) |  | Fresh non-nil UUID correlation for this read, in canonical lowercase form. |
+| hold_identity_bytes | [bytes](#bytes) |  | Complete immutable World-issued hold identity bytes, not merely the acquisition request. |
+| canonical_lifecycle_read_request_bytes | [bytes](#bytes) |  | Complete closed canonical World lifecycle read request for the same target and read UUID. |
+
+
+
+
+
+
+<a name="world_management-v1-ReadCanonicalInitialAdmissionHoldStateResponse"></a>
+
+### ReadCanonicalInitialAdmissionHoldStateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_request_id | [string](#string) |  | Exact correlation echoed from this read request. |
+| hold_state_bytes | [bytes](#bytes) |  | Closed canonical same-snapshot hold status and complete lifecycle evidence. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="world_management-v1-WorldCanonicalInitialAdmissionHoldService"></a>
+
+### WorldCanonicalInitialAdmissionHoldService
+Canonical World initial-admission hold owner operations. Runtime composition is explicitly
+opt-in and default-disabled; each operation authenticates the exact Game Session workload.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| AcquireCanonicalInitialAdmissionHold | [AcquireCanonicalInitialAdmissionHoldRequest](#world_management-v1-AcquireCanonicalInitialAdmissionHoldRequest) | [AcquireCanonicalInitialAdmissionHoldResponse](#world_management-v1-AcquireCanonicalInitialAdmissionHoldResponse) |  |
+| ReadCanonicalInitialAdmissionHoldIdentity | [ReadCanonicalInitialAdmissionHoldIdentityRequest](#world_management-v1-ReadCanonicalInitialAdmissionHoldIdentityRequest) | [ReadCanonicalInitialAdmissionHoldIdentityResponse](#world_management-v1-ReadCanonicalInitialAdmissionHoldIdentityResponse) |  |
+| ReadCanonicalInitialAdmissionHoldState | [ReadCanonicalInitialAdmissionHoldStateRequest](#world_management-v1-ReadCanonicalInitialAdmissionHoldStateRequest) | [ReadCanonicalInitialAdmissionHoldStateResponse](#world_management-v1-ReadCanonicalInitialAdmissionHoldStateResponse) |  |
+
+
+
+
+
+<a name="world-management_v1_world_canonical_instance_lifecycle_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## world-management/v1/world_canonical_instance_lifecycle_read.proto
+
+
+
+<a name="world_management-v1-ReadWorldCanonicalInstanceLifecycleRequest"></a>
+
+### ReadWorldCanonicalInstanceLifecycleRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_request_bytes | [bytes](#bytes) |  | Complete closed versioned WorldCanonicalInstanceLifecycleEvidence.Request bytes. |
+
+
+
+
+
+
+<a name="world_management-v1-ReadWorldCanonicalInstanceLifecycleResponse"></a>
+
+### ReadWorldCanonicalInstanceLifecycleResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_response_bytes | [bytes](#bytes) |  | Complete closed evidence bytes, including the exact request echo and full launch binding. |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="world_management-v1-WorldCanonicalInstanceLifecycleReadService"></a>
+
+### WorldCanonicalInstanceLifecycleReadService
+Read-only complete canonical World lifecycle owner evidence for authenticated Game Session.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadWorldCanonicalInstanceLifecycle | [ReadWorldCanonicalInstanceLifecycleRequest](#world_management-v1-ReadWorldCanonicalInstanceLifecycleRequest) | [ReadWorldCanonicalInstanceLifecycleResponse](#world_management-v1-ReadWorldCanonicalInstanceLifecycleResponse) |  |
+
+
+
+
+
 <a name="world-management_v1_world_management_service-proto"></a>
 <p align="right"><a href="#top">Top</a></p>
 
@@ -11333,6 +14439,58 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | draft_revision_epoch | [int64](#int64) |  |  |
 | draft_scope_revision_epoch | [int64](#int64) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-AuthoredWorldSourceEvidence"></a>
+
+### AuthoredWorldSourceEvidence
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| registration_request_id | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| tenant_slug | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| world_display_name | [string](#string) |  |  |
+| source_game_row_id | [int64](#int64) |  |  |
+| source_game_tenant_key | [string](#string) |  |  |
+| provenance_kind | [string](#string) |  |  |
+| evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-AuthoredWorldSourceIntakePublicReceipt"></a>
+
+### AuthoredWorldSourceIntakePublicReceipt
+Public immutable receipt fields only. World-local tenant/version keys are deliberately omitted.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| intake_request_id | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| source_evidence_digest | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| receipt_digest | [string](#string) |  |  |
+| source | [AuthoredWorldSourceEvidence](#world_management-v1-AuthoredWorldSourceEvidence) |  |  |
 
 
 
@@ -11649,6 +14807,51 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 
 
+<a name="world_management-v1-IntakeAuthoredWorldSourceRequest"></a>
+
+### IntakeAuthoredWorldSourceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| intake_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| expected_source_evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-IntakeAuthoredWorldSourceResponse"></a>
+
+### IntakeAuthoredWorldSourceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| intake_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| expected_source_evidence_digest | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  | Recomputable from the echoed intake binding using the World request digest contract. |
+| receipt_digest | [string](#string) |  | Opaque authenticated World attestation; it binds private World state and is not client-recomputable. |
+
+
+
+
+
+
 <a name="world_management-v1-ListRoomOccupantsRequest"></a>
 
 ### ListRoomOccupantsRequest
@@ -11746,6 +14949,131 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | ----- | ---- | ----- | ----------- |
 | world_instance | [WorldInstanceLifecycleSnapshot](#world_management-v1-WorldInstanceLifecycleSnapshot) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ReadAuthoredWorldSourceIntakeByIdRequest"></a>
+
+### ReadAuthoredWorldSourceIntakeByIdRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| read_request_id | [string](#string) |  | A distinct caller-owned identity for this read; it is not the stored receipt key. |
+| intake_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ReadAuthoredWorldSourceIntakeByIdResponse"></a>
+
+### ReadAuthoredWorldSourceIntakeByIdResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| read_request_id | [string](#string) |  |  |
+| intake_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| receipt | [AuthoredWorldSourceIntakePublicReceipt](#world_management-v1-AuthoredWorldSourceIntakePublicReceipt) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ReadAuthoredWorldSourceIntakeRequest"></a>
+
+### ReadAuthoredWorldSourceIntakeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| request_id | [string](#string) |  | A distinct nonnil identity for this read; intake_request_id remains the stored receipt key. |
+| intake_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| expected_source_evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ReadAuthoredWorldSourceIntakeResponse"></a>
+
+### ReadAuthoredWorldSourceIntakeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| intake_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| expected_source_evidence_digest | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  | Recomputable from the echoed intake binding using the World request digest contract. |
+| receipt_digest | [string](#string) |  | Opaque authenticated World attestation; it binds private World state and is not client-recomputable. |
+
+
+
+
+
+
+<a name="world_management-v1-ReadWorldStartSessionExecutionTerminalRequest"></a>
+
+### ReadWorldStartSessionExecutionTerminalRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_request_id | [string](#string) |  | Fresh correlation identity for this read, distinct from all retained operation identities. |
+| target_namespace | [string](#string) |  |  |
+| original_post_authorization_tuple | [bytes](#bytes) |  |  |
+| account_world_participation_id | [string](#string) |  |  |
+| account_world_participation_fence | [int64](#int64) |  |  |
+| game_session_owner_attempt_id | [string](#string) |  |  |
+| game_session_owner_fence | [int64](#int64) |  |  |
+| canonical_game_instance_id | [string](#string) |  |  |
+| preparation_input_json | [string](#string) |  | Exact original preparation input; World never reparses or normalizes it during recovery. |
+
+
+
+
+
+
+<a name="world_management-v1-ReadWorldStartSessionExecutionTerminalResponse"></a>
+
+### ReadWorldStartSessionExecutionTerminalResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| read_request_id | [string](#string) |  |  |
+| canonical_terminal_bytes | [bytes](#bytes) |  | The only result is the existing closed WorldStartSessionExecutionTerminal carrier. |
 
 
 
@@ -12262,6 +15590,19 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 
 
+<a name="world_management-v1-WorldAuthoredSourceIntakeService"></a>
+
+### WorldAuthoredSourceIntakeService
+Explicitly unwired authenticated authored-source intake boundary. This service remains separate
+from the runtime WorldManagementService until its caller and deployment path are authorized.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| IntakeAuthoredWorldSource | [IntakeAuthoredWorldSourceRequest](#world_management-v1-IntakeAuthoredWorldSourceRequest) | [IntakeAuthoredWorldSourceResponse](#world_management-v1-IntakeAuthoredWorldSourceResponse) |  |
+| ReadAuthoredWorldSourceIntake | [ReadAuthoredWorldSourceIntakeRequest](#world_management-v1-ReadAuthoredWorldSourceIntakeRequest) | [ReadAuthoredWorldSourceIntakeResponse](#world_management-v1-ReadAuthoredWorldSourceIntakeResponse) |  |
+| ReadAuthoredWorldSourceIntakeById | [ReadAuthoredWorldSourceIntakeByIdRequest](#world_management-v1-ReadAuthoredWorldSourceIntakeByIdRequest) | [ReadAuthoredWorldSourceIntakeByIdResponse](#world_management-v1-ReadAuthoredWorldSourceIntakeByIdResponse) |  |
+
+
 <a name="world_management-v1-WorldManagementService"></a>
 
 ### WorldManagementService
@@ -12283,6 +15624,121 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | ValidateWorldUpgradeMappings | [ValidateWorldUpgradeMappingsRequest](#world_management-v1-ValidateWorldUpgradeMappingsRequest) | [ValidateWorldUpgradeMappingsResponse](#world_management-v1-ValidateWorldUpgradeMappingsResponse) |  |
 | ListRoomOccupants | [ListRoomOccupantsRequest](#world_management-v1-ListRoomOccupantsRequest) | [ListRoomOccupantsResponse](#world_management-v1-ListRoomOccupantsResponse) |  |
 | ApplyRoomAmbientStatePatch | [ApplyRoomAmbientStatePatchRequest](#world_management-v1-ApplyRoomAmbientStatePatchRequest) | [ApplyRoomAmbientStatePatchResponse](#world_management-v1-ApplyRoomAmbientStatePatchResponse) |  |
+
+
+<a name="world_management-v1-WorldStartSessionExecutionTerminalReadService"></a>
+
+### WorldStartSessionExecutionTerminalReadService
+Explicitly unwired Account-authenticated read of one original StartSession World terminal.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadWorldStartSessionExecutionTerminal | [ReadWorldStartSessionExecutionTerminalRequest](#world_management-v1-ReadWorldStartSessionExecutionTerminalRequest) | [ReadWorldStartSessionExecutionTerminalResponse](#world_management-v1-ReadWorldStartSessionExecutionTerminalResponse) |  |
+
+
+
+
+
+<a name="world-management_v1_world_published_start_location_read-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## world-management/v1/world_published_start_location_read.proto
+
+
+
+<a name="world_management-v1-ReadWorldPublishedStartLocationRequest"></a>
+
+### ReadWorldPublishedStartLocationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| canonical_version_id | [string](#string) |  |  |
+| intake_request_id | [string](#string) |  |  |
+| publication_fence | [string](#string) |  |  |
+| publication_request_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| version_state_epoch | [int64](#int64) |  |  |
+| publish_workflow_id | [string](#string) |  |  |
+| applied_commit_id | [string](#string) |  |  |
+| content_digest | [string](#string) |  |  |
+| digest_schema_version | [int32](#int32) |  |  |
+| world_affected_tuples | [WorldPublishedStartLocationAffectedTuple](#world_management-v1-WorldPublishedStartLocationAffectedTuple) | repeated |  |
+
+
+
+
+
+
+<a name="world_management-v1-ReadWorldPublishedStartLocationResponse"></a>
+
+### ReadWorldPublishedStartLocationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  | Exact echo of the complete immutable frozen selection request. |
+| target_namespace | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| canonical_version_id | [string](#string) |  |  |
+| intake_request_id | [string](#string) |  |  |
+| publication_fence | [string](#string) |  |  |
+| publication_request_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| version_state_epoch | [int64](#int64) |  |  |
+| publish_workflow_id | [string](#string) |  |  |
+| applied_commit_id | [string](#string) |  |  |
+| content_digest | [string](#string) |  |  |
+| digest_schema_version | [int32](#int32) |  |  |
+| world_affected_tuples | [WorldPublishedStartLocationAffectedTuple](#world_management-v1-WorldPublishedStartLocationAffectedTuple) | repeated |  |
+| selector_receipt_bytes | [bytes](#bytes) |  | Exact original World receipt, Account binding, and APPLIED result bytes. |
+| original_account_binding_bytes | [bytes](#bytes) |  |  |
+| applied_result_bytes | [bytes](#bytes) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-WorldPublishedStartLocationAffectedTuple"></a>
+
+### WorldPublishedStartLocationAffectedTuple
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| owner | [string](#string) |  |  |
+| aggregate_type | [string](#string) |  |  |
+| aggregate_id | [string](#string) |  |  |
+| scope_type | [string](#string) |  |  |
+| scope_id | [string](#string) |  |  |
+| expected_epoch | [string](#string) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="world_management-v1-WorldPublishedStartLocationReadService"></a>
+
+### WorldPublishedStartLocationReadService
+Opt-in authenticated readback of the selector in an exact frozen World publication capture.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| ReadWorldPublishedStartLocation | [ReadWorldPublishedStartLocationRequest](#world_management-v1-ReadWorldPublishedStartLocationRequest) | [ReadWorldPublishedStartLocationResponse](#world_management-v1-ReadWorldPublishedStartLocationResponse) |  |
 
 
 
