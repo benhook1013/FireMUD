@@ -714,9 +714,9 @@ class ReviewAllocation:
 
     pr: int
     channel: str
-    head: str
-    parent_identity: str
-    parent_head: str
+    head: str | None
+    parent_identity: str | None
+    parent_head: str | None
     merge_base: str | None
     patch_id: str | None
     baseline_checkpoints: tuple[str, ...]
@@ -742,21 +742,58 @@ class ReviewAllocation:
     max_additional_completed: int | None = None
     reopens_taper: bool = False
     baseline_source_run_ids: tuple[str, ...] = ()
+    administrative_local: bool = False
+    administrative_recorded_at: str | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.pr, bool) or not isinstance(self.pr, int) or self.pr <= 0:
             raise StateError("review allocation PR must be a positive integer")
         if self.channel not in {"hosted", "cli"}:
             raise StateError("review allocation channel must be hosted or cli")
+        if not isinstance(self.administrative_local, bool):
+            raise StateError("administrative-local provenance must be boolean")
+        if self.administrative_local:
+            try:
+                recorded = datetime.fromisoformat(self.administrative_recorded_at.replace("Z", "+00:00"))
+                if recorded.tzinfo is None or recorded.utcoffset() is None:
+                    raise ValueError
+            except (AttributeError, TypeError, ValueError) as exc:
+                raise StateError("local administrative decisions require a recording timestamp") from exc
+            if any(
+                value is not None for value in (self.parent_identity, self.parent_head, self.merge_base, self.patch_id)
+            ):
+                raise StateError("local administrative decisions cannot claim verified anchor facts")
+            if self.handoff_checkpoint is not None or self.stop_basis == "allocated":
+                raise StateError("local administrative decisions cannot claim completed handoff proof")
+            if any(
+                value is not None
+                for value in (
+                    self.stop_checkpoint,
+                    self.stop_reviewed_head,
+                    self.stop_reviewed_patch_id,
+                    self.stop_parent_identity,
+                    self.stop_parent_head,
+                    self.stop_merge_base,
+                    self.stop_patch_id,
+                )
+            ):
+                raise StateError("local administrative stops cannot claim verified review or anchor facts")
+            if self.stop_basis is not None and self.stop_head != self.head:
+                raise StateError("local administrative stop head must match caller audit metadata")
+        elif self.administrative_recorded_at is not None:
+            raise StateError("administrative recording timestamp requires local provenance")
         for name in ("head", "parent_head", "merge_base"):
             value = getattr(self, name)
-            if name == "merge_base" and value is None:
+            if value is None and (
+                name == "merge_base"
+                or (self.administrative_local and (name == "parent_head" or self.stop_basis == "direct_human"))
+            ):
                 continue
             if not isinstance(value, str) or not EXACT_SHA.fullmatch(value):
                 raise StateError(f"review allocation {name} must be an exact SHA")
         for name in ("parent_identity", "patch_id", "reason"):
             value = getattr(self, name)
-            if name == "patch_id" and value is None:
+            if value is None and (name == "patch_id" or (self.administrative_local and name == "parent_identity")):
                 continue
             if not isinstance(value, str) or not value.strip():
                 raise StateError(f"review allocation {name} must be a non-empty string")
@@ -830,7 +867,11 @@ class ReviewAllocation:
             no_reviewed_checkpoint = self.stop_basis == "direct_human" and all(
                 value is None for value in reviewed_values
             )
-            required_stop_values = (self.stop_head, self.stop_parent_identity, self.stop_parent_head, self.stop_reason)
+            required_stop_values = (
+                (self.stop_reason,)
+                if self.administrative_local
+                else (self.stop_head, self.stop_parent_identity, self.stop_parent_head, self.stop_reason)
+            )
             if self.stop_basis == "allocated":
                 required_stop_values += (self.stop_merge_base, self.stop_patch_id)
             if not all(isinstance(value, str) and value.strip() for value in required_stop_values) or (
@@ -843,6 +884,8 @@ class ReviewAllocation:
             ):
                 raise StateError("review allocation stop patch identity must be a non-empty string")
             for name in ("stop_reviewed_head", "stop_head", "stop_parent_head", "stop_merge_base"):
+                if self.administrative_local and getattr(self, name) is None:
+                    continue
                 if name == "stop_reviewed_head" and no_reviewed_checkpoint:
                     continue
                 if name == "stop_merge_base" and self.stop_basis == "direct_human" and self.stop_merge_base is None:
@@ -908,6 +951,9 @@ class ReviewAllocation:
             "retained_ambiguous_reason": self.retained_ambiguous_reason,
             "baseline_source_run_ids": list(self.baseline_source_run_ids),
         }
+        if self.administrative_local:
+            value["administrative_local"] = True
+            value["administrative_recorded_at"] = self.administrative_recorded_at
         if self.baseline_checkpoint is not None:
             value["baseline_checkpoint"] = self.baseline_checkpoint
         if self.min_additional_completed is not None:
@@ -921,6 +967,8 @@ class ReviewAllocation:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> ReviewAllocation:
         allowed = {
+            "administrative_local",
+            "administrative_recorded_at",
             "pr",
             "channel",
             "head",
@@ -976,6 +1024,8 @@ class ReviewAllocation:
             raise StateError("allocation baseline source-run identities must be a JSON array")
         try:
             return cls(
+                administrative_local=value.get("administrative_local", False),
+                administrative_recorded_at=value.get("administrative_recorded_at"),
                 pr=value["pr"],
                 channel=value["channel"],
                 head=value["head"],
