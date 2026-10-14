@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.grpc.Context;
 import io.grpc.ForwardingServerCall;
+import io.grpc.ForwardingServerCallListener;
 import io.grpc.Metadata;
 import io.grpc.Server;
 import io.grpc.ServerCall;
@@ -36,12 +37,14 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -61,6 +64,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.GameAsset;
@@ -90,6 +94,11 @@ import net.firedevops.firemud.gamedesign.service.impl.VersionAssetExportCandidat
 import net.firedevops.firemud.gamedesign.v1.ReadGameDesignPublicationTerminalResponse;
 import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.test.TlsTestSupport;
+import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminal;
+import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalCompletionGrpcService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalService;
+import net.firedevops.firemud.worldmanagement.v1.CompleteVersionPublicationRequest;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.BasicConstraints;
 import org.bouncycastle.asn1.x509.ExtendedKeyUsage;
@@ -115,6 +124,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -247,12 +257,424 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     }
   }
 
+  /** Actual GDS seals and owner read; real World transport/verifier ends at CONTROLLED storage. */
+  @Test
+  void actualProducerComposesRequiredMtlsWorldVerifierWithControlledStoreAndReplaysExactly(
+      @TempDir Path directory) throws Exception {
+    var pki = publicationReadPki();
+    int ownerIndex = 0;
+    for (var outcome :
+        List.of(
+            GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED,
+            GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION)) {
+      var fixture = fixture();
+      if (outcome == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED) publish(fixture);
+      else noPublication(fixture);
+
+      var ownerRead = fixture.service().readExact(fixture.operation()).orElseThrow();
+      assertThat(ownerRead.outcome()).isEqualTo(outcome.name());
+      byte[] originalOperationBytes = fixture.operation().canonicalBytes();
+      byte[] originalTerminalBytes = ownerRead.terminalEvidenceBytes();
+      var originalTerminal =
+          GameDesignPublicationTerminalEvidence.fromStored(originalTerminalBytes);
+      assertThat(originalTerminal.outcome()).isEqualTo(outcome);
+      assertThat(originalTerminal.operationBytes()).isEqualTo(originalOperationBytes);
+      var originalWorld = originalTerminal.worldEvidence().request();
+      var ownerBefore = terminalOwnerSnapshot(fixture);
+      var readHeaders = new AtomicInteger();
+      var readResponses = new AtomicInteger();
+      var readServer =
+          publicationReadServer(
+              fixture,
+              pki.server(),
+              pki.ca(),
+              readHeaders,
+              new AtomicBoolean(false),
+              readResponses);
+      var completionStore = controlledWorldRepository(readResponses);
+      Server completionServer = null;
+      try (var worldReadClient =
+          publicationReadClient(
+              readServer,
+              pki.worldManagement(),
+              pki.ca(),
+              directory.resolve("producer-world-reader-" + ownerIndex))) {
+        worldReadClient.init();
+        var worldOwner =
+            WorldPublicationTerminalService.authenticated(
+                completionStore.repository(), worldReadClient, "test");
+        var completionProbe = new CompletionProbe();
+        completionServer =
+            worldCompletionServer(worldOwner, pki.worldManagement(), pki.ca(), completionProbe);
+        var endpoints = publicationEndpoints(null, completionServer.getPort());
+        try (var producer =
+            GameDesignWorldPublicationTerminalProducer.usingFileBackedMtls(
+                fixture.service(),
+                endpoints,
+                publicationClientTls(
+                    pki.server(), pki.ca(), directory.resolve("producer-gds-" + ownerIndex)),
+                new GrpcChannelFactory(),
+                "test")) {
+          assertThatThrownBy(
+                  () ->
+                      fixture
+                          .write()
+                          .executeWithoutResult(
+                              status -> {
+                                producer.reconcile(
+                                    fixture.operation().tenantKey(),
+                                    fixture.operation().workflowId(),
+                                    fixture.operation().versionId(),
+                                    fixture.operation().selectionDigest(),
+                                    outcome);
+                              }))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessage("Independent World publication handoff required");
+          assertThat(completionProbe.calls).isEmpty();
+          assertThat(terminalOwnerSnapshot(fixture)).isEqualTo(ownerBefore);
+
+          assertThatThrownBy(
+                  () ->
+                      producer.reconcile(
+                          fixture.operation().tenantKey(),
+                          fixture.operation().workflowId(),
+                          fixture.operation().versionId(),
+                          fixture.operation().selectionDigest(),
+                          outcome))
+              .isInstanceOf(StatusRuntimeException.class)
+              .satisfies(
+                  failure ->
+                      assertThat(Status.fromThrowable(failure).getCode())
+                          .isEqualTo(Status.Code.UNAVAILABLE));
+
+          assertThat(completionProbe.calls).hasSize(1);
+          assertThat(completionStore.calls()).hasSize(1);
+          assertThat(completionStore.effects()).hasValue(1);
+          assertThat(readHeaders).hasValue(1);
+          assertThat(readResponses).hasValue(1);
+          assertThat(completionProbe.responses).hasValue(0);
+          assertThat(terminalOwnerSnapshot(fixture)).isEqualTo(ownerBefore);
+
+          var replayed =
+              producer.reconcile(
+                  fixture.operation().tenantKey(),
+                  fixture.operation().workflowId(),
+                  fixture.operation().versionId(),
+                  fixture.operation().selectionDigest(),
+                  outcome);
+
+          assertThat(replayed.canonicalBytes()).isEqualTo(originalTerminalBytes);
+          assertThat(replayed.operationBytes()).isEqualTo(originalOperationBytes);
+          assertThat(replayed.outcome()).isEqualTo(outcome);
+          assertThat(completionProbe.calls).hasSize(2);
+          assertThat(completionProbe.calls.get(0).requestId())
+              .isNotEqualTo(completionProbe.calls.get(1).requestId());
+          assertThat(completionProbe.calls)
+              .allSatisfy(
+                  call -> {
+                    assertThat(call.targetNamespace()).isEqualTo("test");
+                    assertThat(call.operationBytes()).isEqualTo(originalOperationBytes);
+                    assertThat(call.terminalBytes()).isEqualTo(originalTerminalBytes);
+                    assertThat(call.ownerTransactionActive()).isFalse();
+                    assertThat(call.ownerSynchronizationActive()).isFalse();
+                  });
+          assertThat(completionStore.calls())
+              .allSatisfy(
+                  call -> {
+                    assertThat(call.operationBytes()).isEqualTo(originalOperationBytes);
+                    assertThat(call.terminalBytes()).isEqualTo(originalTerminalBytes);
+                    assertThat(call.publicationFence()).isEqualTo(originalWorld.publicationFence());
+                    assertThat(call.publicationRequestId())
+                        .isEqualTo(originalWorld.publicationRequestId());
+                    assertThat(call.workflowId()).isEqualTo(fixture.operation().workflowId());
+                    assertThat(call.ownerTransactionActive()).isFalse();
+                    assertThat(call.ownerSynchronizationActive()).isFalse();
+                    assertThat(call.completedGdsReads()).isGreaterThan(0);
+                  });
+          assertThat(readHeaders).hasValue(2);
+          assertThat(readResponses).hasValue(2);
+          assertThat(completionProbe.responses).hasValue(1);
+          assertThat(completionStore.effects()).hasValue(1);
+          assertThat(completionStore.retainedTerminalBytes()).hasSize(1);
+          assertThat(completionStore.retainedTerminalBytes().getFirst())
+              .isEqualTo(originalTerminalBytes);
+          assertThat(terminalOwnerSnapshot(fixture)).isEqualTo(ownerBefore);
+          var finalOwnerRead = fixture.service().readExact(fixture.operation()).orElseThrow();
+          assertThat(finalOwnerRead.receiptBytes()).isEqualTo(ownerRead.receiptBytes());
+          assertThat(finalOwnerRead.terminalEvidenceBytes()).isEqualTo(originalTerminalBytes);
+
+          var oppositeOutcome =
+              outcome == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
+                  ? GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION
+                  : GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED;
+          assertThatThrownBy(
+                  () ->
+                      producer.reconcile(
+                          fixture.operation().tenantKey(),
+                          fixture.operation().workflowId(),
+                          fixture.operation().versionId(),
+                          fixture.operation().selectionDigest(),
+                          oppositeOutcome))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessage("PUBLICATION_TERMINAL_UNRESOLVED");
+          assertThat(completionProbe.calls).hasSize(2);
+          assertThat(completionStore.effects()).hasValue(1);
+          assertThat(terminalOwnerSnapshot(fixture)).isEqualTo(ownerBefore);
+        }
+      } finally {
+        if (completionServer != null) {
+          completionServer.shutdownNow();
+          assertThat(completionServer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+        }
+        readServer.shutdownNow();
+        assertThat(readServer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      }
+      ownerIndex++;
+    }
+  }
+
+  @Test
+  void producerDoesNotCallWorldForAbsentPendingOrHistoricalMissingTerminal(@TempDir Path directory)
+      throws Exception {
+    var pki = publicationReadPki();
+    var deniedOwner =
+        new WorldPublicationTerminalService(
+            org.mockito.Mockito.mock(WorldPublicationTerminalRepository.class));
+    var probe = new CompletionProbe();
+    var completionServer =
+        worldCompletionServer(deniedOwner, pki.worldManagement(), pki.ca(), probe);
+    try {
+      var pendingFixture = fixture();
+      var pendingBefore = terminalOwnerSnapshot(pendingFixture);
+      try (var producer =
+          GameDesignWorldPublicationTerminalProducer.usingFileBackedMtls(
+              pendingFixture.service(),
+              publicationEndpoints(null, completionServer.getPort()),
+              publicationClientTls(pki.server(), pki.ca(), directory.resolve("pending-producer")),
+              new GrpcChannelFactory(),
+              "test")) {
+        assertThatThrownBy(
+                () ->
+                    producer.reconcile(
+                        pendingFixture.operation().tenantKey(),
+                        pendingFixture.operation().workflowId() + "-absent",
+                        pendingFixture.operation().versionId(),
+                        pendingFixture.operation().selectionDigest(),
+                        GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("PUBLICATION_TERMINAL_PENDING");
+        assertThatThrownBy(
+                () ->
+                    producer.reconcile(
+                        pendingFixture.operation().tenantKey(),
+                        pendingFixture.operation().workflowId(),
+                        pendingFixture.operation().versionId(),
+                        pendingFixture.operation().selectionDigest(),
+                        GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("PUBLICATION_TERMINAL_UNRESOLVED");
+        assertThat(terminalOwnerSnapshot(pendingFixture)).isEqualTo(pendingBefore);
+      }
+
+      var historical = historicalFixture("50.6");
+      retainHistoricalNoPublicationWithoutCurrentTerminal(historical);
+      var historicalBefore = terminalOwnerSnapshot(historical);
+      try (var producer =
+          GameDesignWorldPublicationTerminalProducer.usingFileBackedMtls(
+              historical.service(),
+              publicationEndpoints(null, completionServer.getPort()),
+              publicationClientTls(
+                  pki.server(), pki.ca(), directory.resolve("historical-producer")),
+              new GrpcChannelFactory(),
+              "test")) {
+        assertThatThrownBy(
+                () ->
+                    producer.reconcile(
+                        historical.operation().tenantKey(),
+                        historical.operation().workflowId(),
+                        historical.operation().versionId(),
+                        historical.operation().selectionDigest(),
+                        GameDesignPublicationTerminalEvidence.Outcome.NO_PUBLICATION))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("PUBLICATION_TERMINAL_UNRESOLVED");
+        assertThat(terminalOwnerSnapshot(historical)).isEqualTo(historicalBefore);
+      }
+      assertThat(probe.calls).isEmpty();
+    } finally {
+      completionServer.shutdownNow();
+      assertThat(completionServer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @Test
+  void wrongPublicationWorkloadOrCallerContextIsDeniedBeforeEitherOwnerEffect(
+      @TempDir Path directory) throws Exception {
+    var pki = publicationReadPki();
+    var fixture = fixture();
+    publish(fixture);
+    var ownerBefore = terminalOwnerSnapshot(fixture);
+    var readHeaders = new AtomicInteger();
+    var readResponses = new AtomicInteger();
+    var readServer =
+        publicationReadServer(
+            fixture, pki.server(), pki.ca(), readHeaders, new AtomicBoolean(false), readResponses);
+    var controlled = controlledWorldRepository(readResponses);
+    Server completionServer = null;
+    try (var worldReadClient =
+        publicationReadClient(
+            readServer,
+            pki.worldManagement(),
+            pki.ca(),
+            directory.resolve("authorized-world-reader"))) {
+      worldReadClient.init();
+      var worldOwner =
+          WorldPublicationTerminalService.authenticated(
+              controlled.repository(), worldReadClient, "test");
+      var probe = new CompletionProbe();
+      completionServer = worldCompletionServer(worldOwner, pki.worldManagement(), pki.ca(), probe);
+      for (var invalidIdentity : List.of(pki.wrongCallerService(), pki.wrongServerNamespace())) {
+        try (var producer =
+            GameDesignWorldPublicationTerminalProducer.usingFileBackedMtls(
+                fixture.service(),
+                publicationEndpoints(null, completionServer.getPort()),
+                publicationClientTls(
+                    invalidIdentity,
+                    pki.ca(),
+                    directory.resolve("wrong-gds-" + invalidIdentity.label())),
+                new GrpcChannelFactory(),
+                "test")) {
+          assertThatThrownBy(
+                  () ->
+                      producer.reconcile(
+                          fixture.operation().tenantKey(),
+                          fixture.operation().workflowId(),
+                          fixture.operation().versionId(),
+                          fixture.operation().selectionDigest(),
+                          GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
+              .isInstanceOf(StatusRuntimeException.class)
+              .satisfies(
+                  failure ->
+                      assertThat(Status.fromThrowable(failure).getCode())
+                          .isEqualTo(Status.Code.PERMISSION_DENIED));
+        }
+      }
+      probe.injectCallerContext.set(true);
+      try (var producer =
+          GameDesignWorldPublicationTerminalProducer.usingFileBackedMtls(
+              fixture.service(),
+              publicationEndpoints(null, completionServer.getPort()),
+              publicationClientTls(
+                  pki.server(), pki.ca(), directory.resolve("caller-context-producer")),
+              new GrpcChannelFactory(),
+              "test")) {
+        assertThatThrownBy(
+                () ->
+                    producer.reconcile(
+                        fixture.operation().tenantKey(),
+                        fixture.operation().workflowId(),
+                        fixture.operation().versionId(),
+                        fixture.operation().selectionDigest(),
+                        GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(Status.fromThrowable(failure).getCode())
+                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+      }
+      probe.injectCallerContext.set(false);
+      assertThat(probe.calls).hasSize(3);
+      assertThat(readHeaders).hasValue(0);
+      assertThat(readResponses).hasValue(0);
+      assertThat(controlled.calls()).isEmpty();
+      assertThat(controlled.effects()).hasValue(0);
+      assertThat(terminalOwnerSnapshot(fixture)).isEqualTo(ownerBefore);
+    } finally {
+      if (completionServer != null) {
+        completionServer.shutdownNow();
+        assertThat(completionServer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      }
+      readServer.shutdownNow();
+      assertThat(readServer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+    }
+
+    var wrongWorldReadHeaders = new AtomicInteger();
+    var wrongWorldReadResponses = new AtomicInteger();
+    var wrongWorldReadServer =
+        publicationReadServer(
+            fixture,
+            pki.server(),
+            pki.ca(),
+            wrongWorldReadHeaders,
+            new AtomicBoolean(false),
+            wrongWorldReadResponses);
+    try (var wrongWorldReadClient =
+        publicationReadClient(
+            wrongWorldReadServer,
+            pki.wrongWorldNamespace(),
+            pki.ca(),
+            directory.resolve("wrong-world-namespace-reader"))) {
+      wrongWorldReadClient.init();
+      var wrongWorldControlled = controlledWorldRepository(wrongWorldReadResponses);
+      var wrongWorldOwner =
+          WorldPublicationTerminalService.authenticated(
+              wrongWorldControlled.repository(), wrongWorldReadClient, "test");
+      var wrongWorldProbe = new CompletionProbe();
+      var wrongWorldCompletionServer =
+          worldCompletionServer(wrongWorldOwner, pki.worldManagement(), pki.ca(), wrongWorldProbe);
+      try (var producer =
+          GameDesignWorldPublicationTerminalProducer.usingFileBackedMtls(
+              fixture.service(),
+              publicationEndpoints(null, wrongWorldCompletionServer.getPort()),
+              publicationClientTls(
+                  pki.server(), pki.ca(), directory.resolve("wrong-world-verifier-producer")),
+              new GrpcChannelFactory(),
+              "test")) {
+        assertThatThrownBy(
+                () ->
+                    producer.reconcile(
+                        fixture.operation().tenantKey(),
+                        fixture.operation().workflowId(),
+                        fixture.operation().versionId(),
+                        fixture.operation().selectionDigest(),
+                        GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED))
+            .isInstanceOf(StatusRuntimeException.class)
+            .satisfies(
+                failure ->
+                    assertThat(Status.fromThrowable(failure).getCode())
+                        .isEqualTo(Status.Code.PERMISSION_DENIED));
+        assertThat(wrongWorldProbe.calls).hasSize(1);
+        assertThat(wrongWorldReadHeaders).hasValue(1);
+        assertThat(wrongWorldReadResponses).hasValue(0);
+        assertThat(wrongWorldControlled.calls()).isEmpty();
+        assertThat(wrongWorldControlled.effects()).hasValue(0);
+        assertThat(terminalOwnerSnapshot(fixture)).isEqualTo(ownerBefore);
+      } finally {
+        wrongWorldCompletionServer.shutdownNow();
+        assertThat(wrongWorldCompletionServer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      }
+    } finally {
+      wrongWorldReadServer.shutdownNow();
+      assertThat(wrongWorldReadServer.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
   private Server publicationReadServer(
       Fixture fixture,
       TestCertificate identity,
       X509Certificate ca,
       AtomicInteger headers,
       AtomicBoolean loseResponse)
+      throws Exception {
+    return publicationReadServer(fixture, identity, ca, headers, loseResponse, null);
+  }
+
+  private Server publicationReadServer(
+      Fixture fixture,
+      TestCertificate identity,
+      X509Certificate ca,
+      AtomicInteger headers,
+      AtomicBoolean loseResponse,
+      AtomicInteger successfulResponses)
       throws Exception {
     ServerInterceptor responseLoss =
         new ServerInterceptor() {
@@ -269,7 +691,10 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                   @Override
                   public void sendMessage(RespT message) {
                     if (loseResponse.compareAndSet(true, false)) dropped = true;
-                    else super.sendMessage(message);
+                    else {
+                      super.sendMessage(message);
+                      if (successfulResponses != null) successfulResponses.incrementAndGet();
+                    }
                   }
 
                   @Override
@@ -304,6 +729,14 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
   private GameDesignPublicationTerminalClient publicationReadClient(
       Server server, TestCertificate identity, X509Certificate ca, Path directory)
       throws Exception {
+    var tls = publicationClientTls(identity, ca, directory);
+    var endpoints = publicationEndpoints(server.getPort(), null);
+    return new GameDesignPublicationTerminalClient(
+        endpoints, tls, new GrpcChannelFactory(), "test");
+  }
+
+  private CommonGrpcClientProperties publicationClientTls(
+      TestCertificate identity, X509Certificate ca, Path directory) throws Exception {
     Files.createDirectories(directory);
     var tls = new CommonGrpcClientProperties();
     tls.setCertChain(
@@ -316,10 +749,213 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
             .toString());
     tls.setCaCert(
         publicationReadPem(directory.resolve("ca.crt"), "CERTIFICATE", ca.getEncoded()).toString());
+    return tls;
+  }
+
+  private ServiceEndpointsProperties publicationEndpoints(
+      Integer gameDesignPort, Integer worldPort) {
     var endpoints = new ServiceEndpointsProperties();
-    endpoints.setGameDesignService("localhost:" + server.getPort());
-    return new GameDesignPublicationTerminalClient(
-        endpoints, tls, new GrpcChannelFactory(), "test");
+    if (gameDesignPort != null) endpoints.setGameDesignService("localhost:" + gameDesignPort);
+    if (worldPort != null) endpoints.setWorldManagementService("localhost:" + worldPort);
+    return endpoints;
+  }
+
+  private Server worldCompletionServer(
+      WorldPublicationTerminalService owner,
+      TestCertificate identity,
+      X509Certificate ca,
+      CompletionProbe probe)
+      throws Exception {
+    ServerInterceptor captureRequests =
+        new ServerInterceptor() {
+          @Override
+          public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+              ServerCall<ReqT, RespT> call,
+              Metadata metadata,
+              ServerCallHandler<ReqT, RespT> next) {
+            var listener = next.startCall(call, metadata);
+            return new ForwardingServerCallListener.SimpleForwardingServerCallListener<>(listener) {
+              @Override
+              public void onMessage(ReqT message) {
+                if (message instanceof CompleteVersionPublicationRequest request) {
+                  probe.calls.add(
+                      new CompletionTransportCall(
+                          request.getRequestId(),
+                          request.getTargetNamespace(),
+                          request.getOriginalOperation().toByteArray(),
+                          request.getGameDesignTerminalEvidence().toByteArray(),
+                          org.springframework.transaction.support.TransactionSynchronizationManager
+                              .isActualTransactionActive(),
+                          org.springframework.transaction.support.TransactionSynchronizationManager
+                              .isSynchronizationActive()));
+                }
+                super.onMessage(message);
+              }
+
+              @Override
+              public void onHalfClose() {
+                boolean callerContext = probe.injectCallerContext.get();
+                if (callerContext) {
+                  SessionContext.setContext("authenticated-user", List.of(), Map.of());
+                }
+                try {
+                  super.onHalfClose();
+                } finally {
+                  if (callerContext) SessionContext.clear();
+                }
+              }
+            };
+          }
+        };
+    ServerInterceptor loseFirstResponse =
+        new ServerInterceptor() {
+          @Override
+          public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+              ServerCall<ReqT, RespT> call,
+              Metadata metadata,
+              ServerCallHandler<ReqT, RespT> next) {
+            return next.startCall(
+                new ForwardingServerCall.SimpleForwardingServerCall<>(call) {
+                  private boolean dropped;
+
+                  @Override
+                  public void sendMessage(RespT message) {
+                    if (probe.loseFirstResponse.compareAndSet(true, false)) dropped = true;
+                    else {
+                      super.sendMessage(message);
+                      probe.responses.incrementAndGet();
+                    }
+                  }
+
+                  @Override
+                  public void close(Status status, Metadata trailers) {
+                    super.close(
+                        dropped
+                            ? Status.UNAVAILABLE.withDescription(
+                                "ISOLATED lost completion response after controlled owner effect")
+                            : status,
+                        trailers);
+                  }
+                },
+                metadata);
+          }
+        };
+    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+        .sslContext(
+            GrpcSslContexts.configure(
+                    SslContextBuilder.forServer(identity.privateKey(), identity.certificate()))
+                .trustManager(ca)
+                .clientAuth(ClientAuth.REQUIRE)
+                .build())
+        .addService(
+            ServerInterceptors.intercept(
+                new WorldPublicationTerminalCompletionGrpcService(owner, "test"),
+                captureRequests,
+                loseFirstResponse,
+                new GrpcPeerIdentityInterceptor()))
+        .build()
+        .start();
+  }
+
+  /**
+   * CONTROLLED World storage boundary: the real adapter, service, verifier, and mTLS GDS read run;
+   * this local store retains exact request bytes and holds authority across its modeled effect. It
+   * proves no physical World SQL commit.
+   */
+  private ControlledWorldRepository controlledWorldRepository(AtomicInteger completedGdsReads) {
+    var repository = org.mockito.Mockito.mock(WorldPublicationTerminalRepository.class);
+    var retained = new HashMap<UUID, ControlledTerminalRow>();
+    var calls = new CopyOnWriteArrayList<ControlledCompletionCall>();
+    var effects = new AtomicInteger();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              var request = invocation.getArgument(0, WorldPublicationTerminal.Request.class);
+              var authority =
+                  invocation.getArgument(
+                      1, WorldPublicationTerminalService.HeldTerminalAuthority.class);
+              var world = request.worldEvidence().request();
+              byte[] operationBytes = request.operationBytes();
+              byte[] terminalBytes = request.terminalBytes();
+              assertThat(completedGdsReads.get())
+                  .as(
+                      "real required-mTLS Game Design read completed before controlled World effect")
+                  .isGreaterThan(calls.size());
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
+              authority.requireHeld();
+              var prior = retained.get(world.publicationFence());
+              if (prior == null) {
+                retained.put(
+                    world.publicationFence(),
+                    new ControlledTerminalRow(operationBytes, terminalBytes));
+                effects.incrementAndGet();
+              } else {
+                assertThat(prior.operationBytes()).isEqualTo(operationBytes);
+                assertThat(prior.terminalBytes()).isEqualTo(terminalBytes);
+              }
+              calls.add(
+                  new ControlledCompletionCall(
+                      operationBytes,
+                      terminalBytes,
+                      world.publicationFence(),
+                      world.publicationRequestId(),
+                      world.publishWorkflowId(),
+                      completedGdsReads.get(),
+                      TransactionSynchronizationManager.isActualTransactionActive(),
+                      TransactionSynchronizationManager.isSynchronizationActive()));
+              authority.requireHeld();
+              return request.evidence();
+            })
+        .when(repository)
+        .complete(
+            org.mockito.ArgumentMatchers.any(WorldPublicationTerminal.Request.class),
+            org.mockito.ArgumentMatchers.any(
+                WorldPublicationTerminalService.HeldTerminalAuthority.class));
+    return new ControlledWorldRepository(repository, retained, calls, effects);
+  }
+
+  private TerminalOwnerSnapshot terminalOwnerSnapshot(Fixture fixture) {
+    var operation = fixture.operation();
+    return new TerminalOwnerSnapshot(
+        tableSnapshot(
+            fixture,
+            "game_design_publication_operation",
+            "publish_workflow_id = ?",
+            operation.workflowId()),
+        tableSnapshot(
+            fixture,
+            "published_release_bundle",
+            "tenant_id = ? AND version_id = ?",
+            operation.tenantKey(),
+            operation.versionId()),
+        tableSnapshot(
+            fixture,
+            "version",
+            "tenant_id = ? AND id = ?",
+            operation.tenantKey(),
+            operation.versionId()),
+        tableSnapshot(
+            fixture,
+            "version_asset_artifact",
+            "tenant_id = ? AND version_id = ?",
+            operation.tenantKey(),
+            operation.versionId()));
+  }
+
+  private TableSnapshot tableSnapshot(
+      Fixture fixture, String table, String predicate, Object... bindings) {
+    var row =
+        fixture
+            .dsl()
+            .fetchOne(
+                "SELECT to_jsonb(t)::TEXT AS row_json, t.xmin::TEXT AS owner_xmin FROM "
+                    + table
+                    + " t WHERE "
+                    + predicate,
+                bindings);
+    return row == null
+        ? null
+        : new TableSnapshot(row.get("row_json", String.class), row.get("owner_xmin", String.class));
   }
 
   private static Path publicationReadPem(Path path, String type, byte[] bytes) throws Exception {
@@ -358,6 +994,16 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
             keys.getPrivate(),
             "wrong-caller-namespace",
             "spiffe://firemud/ns/other/sa/account-service"),
+        publicationReadLeaf(
+            name,
+            keys.getPrivate(),
+            "world-management",
+            "spiffe://firemud/ns/test/sa/world-management-service"),
+        publicationReadLeaf(
+            name,
+            keys.getPrivate(),
+            "wrong-world-namespace",
+            "spiffe://firemud/ns/other/sa/world-management-service"),
         publicationReadLeaf(
             name,
             keys.getPrivate(),
@@ -449,6 +1095,8 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
       TestCertificate account,
       TestCertificate wrongCallerService,
       TestCertificate wrongCallerNamespace,
+      TestCertificate worldManagement,
+      TestCertificate wrongWorldNamespace,
       TestCertificate wrongServerService,
       TestCertificate wrongServerNamespace) {}
 
@@ -1211,6 +1859,41 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
     fixture.write().executeWithoutResult(status -> noPublicationInTransaction(fixture));
   }
 
+  private void retainHistoricalNoPublicationWithoutCurrentTerminal(Fixture fixture) {
+    var operation = fixture.operation();
+    var historicalReceipt = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(
+        historicalReceipt, "game-design-publication-owner-readback/v1");
+    DraftAuthorizationFenceBinding.frame(historicalReceipt, operation.canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(historicalReceipt, "NO_PUBLICATION");
+    // V50.6 retained a present, zero-byte release-row frame for NO_PUBLICATION.
+    DraftAuthorizationFenceBinding.frame(historicalReceipt, new byte[0]);
+    fixture
+        .write()
+        .executeWithoutResult(
+            status -> {
+              var attempt =
+                  fixture
+                      .attempts()
+                      .findByPublishWorkflowIdForUpdate(operation.workflowId())
+                      .orElseThrow();
+              attempt.setStatus(PublishAttemptStatus.FAILED);
+              fixture.attempts().save(attempt);
+              fixture
+                  .dsl()
+                  .execute(
+                      "UPDATE game_design_publication_operation SET outcome = 'NO_PUBLICATION', "
+                          + "revision = revision + 1, result_bytes = ? "
+                          + "WHERE publish_workflow_id = ?",
+                      historicalReceipt.toByteArray(),
+                      operation.workflowId());
+            });
+    fixture.completeMigration().run();
+    var retained = fixture.service().readExact(operation).orElseThrow();
+    assertThat(retained.outcome()).isEqualTo("NO_PUBLICATION");
+    assertThat(retained.terminalEvidenceBytes()).isNull();
+  }
+
   private void noPublicationInTransaction(Fixture fixture) {
     var op = fixture.operation();
     fixture
@@ -1816,6 +2499,81 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
 
   private record OperationRowSnapshot(
       String rowJson, byte[] requestBytes, String requestChecksum, String rowChecksum) {}
+
+  private record TableSnapshot(String rowJson, String xmin) {}
+
+  private record TerminalOwnerSnapshot(
+      TableSnapshot operation,
+      TableSnapshot release,
+      TableSnapshot version,
+      TableSnapshot artifact) {}
+
+  private record CompletionTransportCall(
+      String requestId,
+      String targetNamespace,
+      byte[] operationBytes,
+      byte[] terminalBytes,
+      boolean ownerTransactionActive,
+      boolean ownerSynchronizationActive) {}
+
+  private static final class CompletionProbe {
+    private final List<CompletionTransportCall> calls = new CopyOnWriteArrayList<>();
+    private final AtomicBoolean loseFirstResponse = new AtomicBoolean(true);
+    private final AtomicBoolean injectCallerContext = new AtomicBoolean();
+    private final AtomicInteger responses = new AtomicInteger();
+  }
+
+  private record ControlledTerminalRow(byte[] operationBytes, byte[] terminalBytes) {
+    private ControlledTerminalRow {
+      operationBytes = operationBytes.clone();
+      terminalBytes = terminalBytes.clone();
+    }
+
+    @Override
+    public byte[] operationBytes() {
+      return operationBytes.clone();
+    }
+
+    @Override
+    public byte[] terminalBytes() {
+      return terminalBytes.clone();
+    }
+  }
+
+  private record ControlledCompletionCall(
+      byte[] operationBytes,
+      byte[] terminalBytes,
+      UUID publicationFence,
+      String publicationRequestId,
+      String workflowId,
+      int completedGdsReads,
+      boolean ownerTransactionActive,
+      boolean ownerSynchronizationActive) {
+    private ControlledCompletionCall {
+      operationBytes = operationBytes.clone();
+      terminalBytes = terminalBytes.clone();
+    }
+
+    @Override
+    public byte[] operationBytes() {
+      return operationBytes.clone();
+    }
+
+    @Override
+    public byte[] terminalBytes() {
+      return terminalBytes.clone();
+    }
+  }
+
+  private record ControlledWorldRepository(
+      WorldPublicationTerminalRepository repository,
+      Map<UUID, ControlledTerminalRow> retained,
+      List<ControlledCompletionCall> calls,
+      AtomicInteger effects) {
+    private List<byte[]> retainedTerminalBytes() {
+      return retained.values().stream().map(ControlledTerminalRow::terminalBytes).toList();
+    }
+  }
 
   private record Fixture(
       DSLContext dsl,

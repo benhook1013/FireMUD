@@ -91,11 +91,30 @@ class VersionPublishCommandServiceImplTest {
   @Mock private AuthoredDraftPublishSelectionRepository authoredSelections;
   @Mock private WorldPublishedStartLocationEvidence capturedWorldPublicationEvidence;
 
+  @Mock
+  private net.firedevops.firemud.gamedesign.publication.GameDesignWorldPublicationTerminalProducer
+      worldProducer;
+
+  @Mock
+  private org.springframework.beans.factory.ObjectProvider<
+          net.firedevops.firemud.gamedesign.publication.GameDesignWorldPublicationTerminalProducer>
+      worldProducerProvider;
+
+  private final AtomicBoolean ownerCommitActive = new AtomicBoolean();
   private VersionPublishCommandServiceImpl service;
 
   @BeforeEach
   void setup() {
     MockitoAnnotations.openMocks(this);
+    when(worldProducerProvider.getIfAvailable()).thenReturn(worldProducer);
+    when(worldProducer.reconcile(
+            any(String.class), any(String.class), any(Long.class), any(String.class), any()))
+        .thenAnswer(
+            invocation -> {
+              org.junit.jupiter.api.Assertions.assertFalse(
+                  ownerCommitActive.get(), "World handoff ran before owner commit returned");
+              return null;
+            });
     when(publishedReleaseBundleService.findPublishedReleaseBundle(
             any(String.class), any(Long.class)))
         .thenReturn(Optional.empty());
@@ -121,10 +140,13 @@ class VersionPublishCommandServiceImplTest {
                     List.of()));
     org.mockito.Mockito.doAnswer(
             invocation -> {
+              ownerCommitActive.set(true);
               try {
                 return ((java.util.function.Supplier<?>) invocation.getArgument(0)).get();
               } catch (RuntimeException ex) {
                 throw new PublishAttemptService.FullVersionTransactionException(ex);
+              } finally {
+                ownerCommitActive.set(false);
               }
             })
         .when(publishAttemptService)
@@ -143,7 +165,8 @@ class VersionPublishCommandServiceImplTest {
             versionAssetArtifactService,
             publishedReleaseBundleService,
             recordedParticipantDigestService,
-            authoredSelections);
+            authoredSelections,
+            worldProducerProvider);
   }
 
   @Test
@@ -392,6 +415,14 @@ class VersionPublishCommandServiceImplTest {
     PublishWorkflowSnapshot snapshot = service.reconcileFullVersionPublish(fixture.request());
 
     assertEquals("SUCCEEDED", snapshot.status());
+    verify(worldProducer)
+        .reconcile(
+            "tenant-1",
+            fixture.request().publishWorkflowId(),
+            snapshot.versionId(),
+            fixture.attempt().getRequestDigest(),
+            net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome
+                .PUBLISHED);
     verify(publishAttemptRepository).requirePublishedOperation(fixture.attempt());
     verify(publishGateService)
         .assertGatePassed(
@@ -403,6 +434,26 @@ class VersionPublishCommandServiceImplTest {
         .collectFullVersionParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class));
     assertNoPublicationWrites();
+  }
+
+  @Test
+  void selectedSucceededReplayRemainsPendingWithoutProducerOrAfterLostWorldReply()
+      throws Exception {
+    var fixture = selectedSucceededReplayFixture(VersionLifecycleState.PUBLISHED);
+    when(worldProducerProvider.getIfAvailable()).thenReturn(null);
+    assertThrows(
+        VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+        () -> service.reconcileFullVersionPublish(fixture.request()));
+    when(worldProducerProvider.getIfAvailable()).thenReturn(worldProducer);
+    when(worldProducer.reconcile(
+            any(String.class), any(String.class), any(Long.class), any(String.class), any()))
+        .thenThrow(new IllegalStateException("lost World response"));
+    assertThrows(
+        VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+        () -> service.reconcileFullVersionPublish(fixture.request()));
+    verify(publishAttemptRepository, never())
+        .sealPublication(any(), org.mockito.ArgumentMatchers.anyBoolean());
+    verify(publishAttemptService, never()).markFullVersionFailed(any(), any(), any());
   }
 
   @Test
@@ -653,6 +704,14 @@ class VersionPublishCommandServiceImplTest {
         .thenReturn(Optional.of(attempt));
 
     assertEquals("FAILED", service.reconcileFullVersionPublish(request).status());
+    verify(worldProducer)
+        .reconcile(
+            "tenant-1",
+            request.publishWorkflowId(),
+            attempt.getVersionId(),
+            reservation.selection().digest(),
+            net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome
+                .NO_PUBLICATION);
     verify(publishAttemptRepository).requireNoPublicationOperation(attempt);
     org.mockito.Mockito.doThrow(
             new IllegalStateException("PUBLICATION_OPERATION_SEALED_OR_CHANGED"))
@@ -1181,6 +1240,17 @@ class VersionPublishCommandServiceImplTest {
             same(capturedWorldPublicationEvidence));
     verify(publishAttemptService).markFullVersionSucceeded(workflowId);
     verify(publishAttemptRepository).sealPublication(attempt, true);
+    var terminalOrder = inOrder(publishAttemptRepository, worldProducer);
+    terminalOrder.verify(publishAttemptRepository).sealPublication(attempt, true);
+    terminalOrder
+        .verify(worldProducer)
+        .reconcile(
+            "tenant-1",
+            request.publishWorkflowId(),
+            snapshot.versionId(),
+            attempt.getRequestDigest(),
+            net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome
+                .PUBLISHED);
   }
 
   @Test
@@ -1337,6 +1407,17 @@ class VersionPublishCommandServiceImplTest {
             "tenant-1", PublishType.FULL_VERSION, workflowId, participantDigests);
     verify(publishAttemptService).markFullVersionSucceeded(workflowId);
     verify(publishAttemptRepository).sealPublication(attempt, true);
+    var terminalOrder = inOrder(publishAttemptRepository, worldProducer);
+    terminalOrder.verify(publishAttemptRepository).sealPublication(attempt, true);
+    terminalOrder
+        .verify(worldProducer)
+        .reconcile(
+            "tenant-1",
+            request.publishWorkflowId(),
+            snapshot.versionId(),
+            attempt.getRequestDigest(),
+            net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome
+                .PUBLISHED);
   }
 
   @Test
@@ -1637,6 +1718,7 @@ class VersionPublishCommandServiceImplTest {
             "RECORDED_CONTENT_DIGEST_MISMATCH",
             "recorded digest mismatch");
     verify(publishAttemptRepository).sealPublication(fixture.attempt(), false);
+    org.mockito.Mockito.verifyNoInteractions(worldProducer);
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
     verify(assetExportService, never())
         .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
@@ -1842,6 +1924,17 @@ class VersionPublishCommandServiceImplTest {
         .recordFullVersionParticipantDigests(request.publishWorkflowId(), participantDigests);
     verify(publishAttemptRepository).requirePublicationPending(attempt);
     verify(publishAttemptRepository).sealPublication(attempt, true);
+    var terminalOrder = inOrder(publishAttemptRepository, worldProducer);
+    terminalOrder.verify(publishAttemptRepository).sealPublication(attempt, true);
+    terminalOrder
+        .verify(worldProducer)
+        .reconcile(
+            "tenant-1",
+            request.publishWorkflowId(),
+            snapshot.versionId(),
+            attempt.getRequestDigest(),
+            net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome
+                .PUBLISHED);
     verify(publishedReleaseBundleService)
         .createFullVersionBundle(
             any(VersionDto.class),
@@ -1923,6 +2016,14 @@ class VersionPublishCommandServiceImplTest {
             org.mockito.ArgumentMatchers.eq("RECORDED_CONTENT_DIGEST_MISMATCH"),
             org.mockito.ArgumentMatchers.eq("recorded digest mismatch"));
     verify(publishAttemptRepository).sealPublication(fixture.attempt(), false);
+    verify(worldProducer)
+        .reconcile(
+            "tenant-1",
+            fixture.request().publishWorkflowId(),
+            snapshot.versionId(),
+            fixture.attempt().getRequestDigest(),
+            net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome
+                .NO_PUBLICATION);
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
   }
 
@@ -1949,6 +2050,14 @@ class VersionPublishCommandServiceImplTest {
         .recordFullVersionParticipantDigests(any(String.class), any(List.class));
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
     verify(publishAttemptRepository).sealPublication(fixture.attempt(), false);
+    verify(worldProducer)
+        .reconcile(
+            "tenant-1",
+            fixture.request().publishWorkflowId(),
+            snapshot.versionId(),
+            fixture.attempt().getRequestDigest(),
+            net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome
+                .NO_PUBLICATION);
   }
 
   @Test
