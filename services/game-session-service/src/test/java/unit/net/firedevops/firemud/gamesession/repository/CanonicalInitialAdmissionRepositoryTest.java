@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 
 class CanonicalInitialAdmissionRepositoryTest {
   @Test
-  void incompleteHumanCommitAndAbortDenyBeforeAnyOwnerStorageInteraction() {
+  void incompleteHumanReserveCommitAndAbortDenyBeforeAnyOwnerStorageInteraction() {
     var dsl = mock(DSLContext.class);
     var catalog = mock(GameSessionCanonicalRealmCatalogRepository.class);
     var pointers = mock(GameSessionCanonicalAdmissionPointerRepository.class);
@@ -81,6 +81,11 @@ class CanonicalInitialAdmissionRepositoryTest {
             request.holdId(),
             request.holdFence(),
             request.holdBindingDigest());
+    assertThatThrownBy(() -> repository.reserve(request))
+        .isInstanceOf(
+            CanonicalInitialAdmissionRepository
+                .CanonicalHumanAdmissionProtectionUnavailableException.class)
+        .hasMessageContaining("Account terminal protection");
     assertThatThrownBy(() -> repository.commit(request, world, null))
         .isInstanceOf(
             CanonicalInitialAdmissionRepository
