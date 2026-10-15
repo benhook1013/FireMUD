@@ -96,7 +96,10 @@ public record AuthoredWorldReleaseAttestationEvidence(
     return supportedParticipantDigestSchema(participantKey, SCHEMA_VERSION);
   }
 
-  /** Selects owner schemas from the retained-v1, selected-v2, closure-selected-v3, or full-v4 contract. */
+  /**
+   * Selects owner schemas from the retained-v1, selected-v2, closure-selected-v3, or full-v4
+   * contract.
+   */
   public static int supportedParticipantDigestSchema(
       String participantKey, int attestationSchemaVersion) {
     if (attestationSchemaVersion != SCHEMA_VERSION

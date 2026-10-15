@@ -112,7 +112,11 @@ class AuthoredWorldReleaseAttestationSelectorTest {
   void v4BindsTheExactSelectedFullParticipantVectorInANewDomain() throws Exception {
     var selector = selectorEvidence(4);
     var descriptor = descriptor(selector);
-    var release = release(descriptor, selector, AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+    var release =
+        release(
+            descriptor,
+            selector,
+            AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
     var stored = JSON.writeValueAsString(release);
     var readback = JSON.readValue(stored, AuthoredWorldReleaseAttestationEvidence.class);
 
