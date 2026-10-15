@@ -13,6 +13,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -27,6 +30,7 @@ import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginDisposalResult.ProofKind;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginJournalSnapshot;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository;
+import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository.JournalConflictException;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginAttemptClosure.AcknowledgedClosure;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginCleanupOwner.CleanupObservation;
 import net.firedevops.firemud.gamesession.service.InitialGameplayLoginCleanupOwner.Status;
@@ -34,6 +38,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
@@ -156,6 +161,43 @@ class InitialGameplayLoginCleanupOwnerTest {
     verifyNoInteractions(fixture.account);
     if (failure.startsWith("abandon")) {
       verifyNoInteractions(fixture.closure);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"CONFLICT", "UNAVAILABLE"})
+  void heldCleanupLogsOnlyFixedFailureCategory(String reason) {
+    Fixture fixture = new Fixture();
+    String sensitiveMessage = "private SQL and caller evidence diagnostic";
+    RuntimeException failure =
+        reason.equals("CONFLICT")
+            ? new JournalConflictException()
+            : new IllegalStateException(sensitiveMessage);
+    doThrow(failure).when(fixture.journal).abandon(ORIGINAL);
+    Logger logger = (Logger) LoggerFactory.getLogger(InitialGameplayLoginCleanupOwner.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+
+    try {
+      CleanupObservation observation = fixture.owner.abandonAndRetire(ORIGINAL);
+      assertThat(observation.status()).isEqualTo(Status.HELD);
+      assertThat(observation.coordinates()).isEqualTo(ORIGINAL);
+      assertThat(appender.list).hasSize(1);
+      ILoggingEvent event = appender.list.getFirst();
+      assertThat(event.getFormattedMessage())
+          .isEqualTo("Initial LOGIN cleanup operation=ABANDON_AND_RETIRE reason=" + reason)
+          .doesNotContain(
+              sensitiveMessage,
+              ORIGINAL.requestId().toString(),
+              ORIGINAL.callerContextId().toString());
+      assertThat(event.getArgumentArray()).containsExactly(reason);
+      assertThat(event.getThrowableProxy()).isNull();
+      verify(fixture.journal).abandon(ORIGINAL);
+      verifyNoInteractions(fixture.closure, fixture.account);
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
     }
   }
 

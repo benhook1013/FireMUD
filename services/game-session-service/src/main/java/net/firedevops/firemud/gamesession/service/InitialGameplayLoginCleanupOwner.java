@@ -10,6 +10,8 @@ import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginJournalSnapsho
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository.JournalConflictException;
 import net.firedevops.firemud.gamesession.repository.InitialGameplayLoginCoordinationJournalRepository.JournalUnavailableException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -21,6 +23,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * loss is cleanup-only; all retained originals remain lifecycle owned without an expiry policy.
  */
 public final class InitialGameplayLoginCleanupOwner {
+  private static final Logger LOG = LoggerFactory.getLogger(InitialGameplayLoginCleanupOwner.class);
+
   private final InitialGameplayLoginCoordinationJournalRepository journal;
   private final InitialGameplayLoginAttemptClosure closure;
   private final CanonicalGameplayLoginAccountClient account;
@@ -91,6 +95,9 @@ public final class InitialGameplayLoginCleanupOwner {
           .orElseGet(() -> held(coordinates, previous));
     } catch (RuntimeException unavailableOrConflicting) {
       // No potentially sensitive transport/SQL/parser diagnostics become retained evidence.
+      String reason =
+          unavailableOrConflicting instanceof JournalConflictException ? "CONFLICT" : "UNAVAILABLE";
+      LOG.warn("Initial LOGIN cleanup operation=ABANDON_AND_RETIRE reason={}", reason);
       return held(coordinates, retainedReceipt);
     }
   }
