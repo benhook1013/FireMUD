@@ -19,7 +19,6 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.config.AccountJwtJwksApiBinding;
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding;
-import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec.Event;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.CompositeSnapshot;
@@ -40,6 +39,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipR
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec.Event;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier.ExplicitRouteProfilePolicy;

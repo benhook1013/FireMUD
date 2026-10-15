@@ -8,11 +8,11 @@ import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Cod
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec.Event;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
-import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.service.DemoTenantEntitlementException;
 import net.firedevops.firemud.accountservice.service.DemoTenantEntitlementException.Code;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;

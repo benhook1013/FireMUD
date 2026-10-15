@@ -107,9 +107,13 @@ public final class AuthoredWorldVersionStateGrpcService
                       : "Game Design owner storage could not be read")
               .asRuntimeException());
     } catch (TransactionException exception) {
+      Status storageStatus = AuthoredWorldSourceReadGrpcService.storageFailureStatus(exception);
       responseObserver.onError(
-          Status.UNAVAILABLE
-              .withDescription("Game Design owner snapshot is temporarily unavailable")
+          storageStatus
+              .withDescription(
+                  storageStatus.getCode() == Status.Code.UNAVAILABLE
+                      ? "Game Design owner snapshot is temporarily unavailable"
+                      : "Game Design owner snapshot could not be read")
               .asRuntimeException());
     } catch (IllegalStateException exception) {
       responseObserver.onError(

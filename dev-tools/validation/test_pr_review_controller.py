@@ -5911,7 +5911,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(stopped["stop_head"], HEAD_1)
         self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
 
-    def test_stacked_child_stop_records_parent_pr_identity_without_false_status_movement(self):
+    def test_stacked_child_stop_records_actual_base_ref_without_false_status_movement(self):
         controller = self.make(
             {
                 1: pr(1, HEAD_1),
@@ -5928,7 +5928,7 @@ class ControllerTests(unittest.TestCase):
             reason="stop further discovery on the stacked child",
         )
 
-        self.assertEqual(stopped["allocation"]["stop_parent_identity"], "1")
+        self.assertEqual(stopped["allocation"]["stop_parent_identity"], "feature-1")
         child = controller.status()["prs"][1]
         self.assertEqual(child["reconciliation"], "COHERENT")
         self.assertEqual(child["channels"]["hosted"], "HUMAN_STOPPED")
@@ -6706,8 +6706,69 @@ class ControllerTests(unittest.TestCase):
             heads={"feature-1": HEAD_1},
         )
         controller.set_stack([1])
+        with self.assertRaisesRegex(ControllerError, "does not match the live pull-request head"):
+            controller.decide_stop(pr=1, channel="hosted", head=HEAD_2, reason="stale head")
         with self.assertRaisesRegex(ControllerError, "does not match the latest attributable"):
             controller.decide_stop(pr=1, channel="hosted", checkpoint="stale", reason="human stop")
+
+    def test_checkpoint_pinned_stop_skips_reconciliation_and_unrelated_history(self):
+        evidence = CountingEvidence(
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted")],
+                (1, "cli"): [self.allocation_evidence(checkpoint="unrelated-cli")],
+            }
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}, sqlite=True
+        )
+        controller.set_stack([1])
+
+        with patch.object(controller, "_reconciliation", side_effect=AssertionError("full reconciliation")):
+            stopped = controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                checkpoint="latest-hosted",
+                reason="stop further Hosted discovery",
+            )
+
+        self.assertEqual(stopped["checkpoint"], "latest-hosted")
+        self.assertEqual(stopped["allocation"]["stop_parent_identity"], "develop")
+        self.assertEqual(evidence.history_reads, [(1, "hosted")])
+
+    def test_explicit_ambiguity_still_reads_both_channel_histories(self):
+        fingerprint = "f" * 64
+        evidence = CountingEvidence(
+            {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="latest-hosted")],
+                (1, "cli"): [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "terminal-cli-response",
+                        "terminal_ambiguous": True,
+                        "fingerprint": fingerprint,
+                    }
+                ],
+            }
+        )
+        controller = self.make(
+            {1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}, sqlite=True
+        )
+        controller.set_stack([1])
+
+        with (
+            patch.object(controller, "_stop_audit", return_value={}),
+            self.assertRaisesRegex(ControllerError, "did not retain every exact terminal response"),
+        ):
+            controller.decide_stop(
+                pr=1,
+                channel="hosted",
+                reason="stop with unresolved ambiguity",
+                retain_ambiguous_fingerprints=(fingerprint,),
+                ambiguity_reason="the response cannot be attributed",
+            )
+
+        self.assertEqual(evidence.history_reads, [(1, "hosted"), (1, "cli")])
 
     def test_all_terminal_ambiguous_responses_require_exact_non_counting_retention(self):
         fingerprints = ("f" * 64, "e" * 64)
@@ -10360,6 +10421,25 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual("STOPPED", tail["allocations"]["hosted"]["status"])
         self.assertEqual("NOT_CHECKED", tail["channels"]["cli"])
         self.assertNotIn("cli", tail["allocations"])
+        self.assertTrue(all(pr_number <= 4 for pr_number, _ in evidence.history_reads))
+
+    def test_status_overview_keeps_unchanged_stacked_stopped_tail_informational(self):
+        values, heads = _stacked_prs(6)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads, sqlite=True)
+        controller.set_stack(list(values))
+        controller.decide_stop(pr=6, channel="hosted", reason="stop tail Hosted discovery")
+        self._enable_batch_status(controller, values)
+        evidence.history_reads.clear()
+
+        report = controller.status_overview()
+
+        tail = report["prs"][5]
+        self.assertEqual(tail["detail_level"], "identity_only")
+        self.assertEqual(tail["reconciliation"], "UNKNOWN")
+        self.assertEqual(tail["evidence_status"], "unknown")
+        self.assertEqual(tail["reason"], "tail review evidence was not deeply checked in this status invocation")
+        self.assertEqual(tail["channels"]["hosted"], "HUMAN_STOPPED")
         self.assertTrue(all(pr_number <= 4 for pr_number, _ in evidence.history_reads))
 
     def test_status_overview_missing_batch_identity_fails_closed_without_deep_reads(self):
