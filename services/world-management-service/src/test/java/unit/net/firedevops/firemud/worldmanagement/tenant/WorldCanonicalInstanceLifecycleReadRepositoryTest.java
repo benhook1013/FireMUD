@@ -129,12 +129,14 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
     assertThat(expectedFrozenGraphSchemaVersion(full)).isEqualTo(3);
 
     for (String owner : List.of("WORLD_MANAGEMENT", "ENTITY_MANAGEMENT", "AUTOMATION_SCRIPTING")) {
-      int staleSchema = switch (owner) {
-        case "WORLD_MANAGEMENT" -> 3;
-        case "ENTITY_MANAGEMENT" -> 2;
-        default -> 5;
-      };
-      assertThatThrownBy(() -> selectedFull(full, participantDigestsWithSchema(full, owner, staleSchema)))
+      int staleSchema =
+          switch (owner) {
+            case "WORLD_MANAGEMENT" -> 3;
+            case "ENTITY_MANAGEMENT" -> 2;
+            default -> 5;
+          };
+      assertThatThrownBy(
+              () -> selectedFull(full, participantDigestsWithSchema(full, owner, staleSchema)))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageContaining("Participant digest schema is unsupported");
     }
@@ -161,8 +163,11 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
     WorldPublishedStartLocationEvidence selector =
         AuthoredWorldReleaseAttestationEvidence.requiresWorldStartLocationEvidence(schemaVersion)
             ? selectedWorldEvidence(
-                (schemaVersion == AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION
-                    || schemaVersion == AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION)
+                (schemaVersion
+                            == AuthoredWorldReleaseAttestationEvidence
+                                .CLOSURE_SELECTOR_SCHEMA_VERSION
+                        || schemaVersion
+                            == AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION)
                     ? 4
                     : 3)
             : null;
