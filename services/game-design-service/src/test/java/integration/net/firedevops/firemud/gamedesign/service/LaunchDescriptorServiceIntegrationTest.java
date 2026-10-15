@@ -217,8 +217,7 @@ class LaunchDescriptorServiceIntegrationTest {
             "unqualified template cannot be reassigned into managed source target");
     GameTemplate retainedTemplate =
         gameTemplateRepository
-            .findByTenantIdAndId(
-                fixture.privateSourceTenantKey(), fixture.template().getId())
+            .findByTenantIdAndId(fixture.privateSourceTenantKey(), fixture.template().getId())
             .orElseThrow();
     assertThat(retainedTemplate.getDefaultVersionId()).isEqualTo(fixture.version().getId());
     assertThat(retainedTemplate.getDefaultRuntimeFlagsJson()).isEqualTo("{\"changed\":true}");
