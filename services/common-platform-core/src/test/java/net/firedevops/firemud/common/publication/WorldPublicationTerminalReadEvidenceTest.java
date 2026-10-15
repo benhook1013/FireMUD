@@ -24,6 +24,32 @@ class WorldPublicationTerminalReadEvidenceTest {
   }
 
   @Test
+  void boundsCombinedWirePayloadBeforeCloningOrParsingTerminal() {
+    int operationBytes = GameDesignPublicationOperationBinding.MAX_OPERATION_BYTES;
+    int terminalAtBoundary =
+        WorldPublicationTerminalCompletionGrpcCodec.MAX_MESSAGE_BYTES
+            - WorldPublicationTerminalReadGrpcCodec.MESSAGE_ENVELOPE_OVERHEAD_RESERVE
+            - operationBytes;
+    byte[] operation = new byte[operationBytes];
+
+    assertThatThrownBy(
+            () ->
+                new WorldPublicationTerminalReadEvidence.Request(
+                    1, "test", UUID.randomUUID(), operation, new byte[terminalAtBoundary]))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Canonical complete publication operation and terminal evidence required")
+        .hasCauseInstanceOf(RuntimeException.class);
+
+    assertThatThrownBy(
+            () ->
+                new WorldPublicationTerminalReadEvidence.Request(
+                    1, "test", UUID.randomUUID(), operation, new byte[terminalAtBoundary + 1]))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("World publication terminal read exceeds the 32 MiB wire budget")
+        .hasNoCause();
+  }
+
+  @Test
   void wrapsMalformedOrNullWorldTerminalReadbackAsCanonicalInvalidInput() throws Exception {
     var operation = WorldPublicationTerminalTestFixtures.operation();
     var terminal = WorldPublicationTerminalTestFixtures.terminal(operation, Outcome.PUBLISHED);

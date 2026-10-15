@@ -13,25 +13,31 @@ import net.firedevops.firemud.worldmanagement.v1.WorldPublicationTerminalReadOut
 
 /** Closed World-owned transport mapping and exact echo/outcome validation. */
 public final class WorldPublicationTerminalReadGrpcCodec {
+  static final int MESSAGE_ENVELOPE_OVERHEAD_RESERVE = 256;
+
   private WorldPublicationTerminalReadGrpcCodec() {}
 
   public static ReadPublicationTerminalRequest toRequest(
       WorldPublicationTerminalReadEvidence.Request request) {
     Objects.requireNonNull(request, "request");
-    return ReadPublicationTerminalRequest.newBuilder()
-        .setSchemaVersion(request.schemaVersion())
-        .setTargetNamespace(request.targetNamespace())
-        .setReadRequestId(request.readRequestId().toString())
-        .setOriginalOperation(ByteString.copyFrom(request.originalOperation()))
-        .setExpectedGameDesignTerminalEvidence(
-            ByteString.copyFrom(request.expectedGameDesignTerminalEvidence()))
-        .build();
+    var wire =
+        ReadPublicationTerminalRequest.newBuilder()
+            .setSchemaVersion(request.schemaVersion())
+            .setTargetNamespace(request.targetNamespace())
+            .setReadRequestId(request.readRequestId().toString())
+            .setOriginalOperation(ByteString.copyFrom(request.originalOperation()))
+            .setExpectedGameDesignTerminalEvidence(
+                ByteString.copyFrom(request.expectedGameDesignTerminalEvidence()))
+            .build();
+    requireWireBudget(wire);
+    return wire;
   }
 
   /** Caller authenticates the exact Account peer before invoking this decoder. */
   public static WorldPublicationTerminalReadEvidence.Request fromRequest(
       ReadPublicationTerminalRequest request) {
     Objects.requireNonNull(request, "request");
+    requireWireBudget(request);
     noUnknownFields(request);
     try {
       return new WorldPublicationTerminalReadEvidence.Request(
@@ -53,8 +59,11 @@ public final class WorldPublicationTerminalReadGrpcCodec {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(terminal, "terminal");
     byte[] terminalBytes = terminal.canonicalBytes();
-    if (!Arrays.equals(request.originalOperation(), terminal.operationBytes())
-        || !Arrays.equals(request.expectedGameDesignTerminalEvidence(), terminalBytes)) {
+    byte[] originalOperation = request.originalOperation();
+    byte[] expectedTerminal = request.expectedGameDesignTerminalEvidence();
+    requireResponsePayloadBudget(originalOperation.length, terminalBytes.length);
+    if (!Arrays.equals(originalOperation, terminal.operationBytes())
+        || !Arrays.equals(expectedTerminal, terminalBytes)) {
       throw new IllegalArgumentException(
           "World terminal read differs from the exact operation, terminal, or owner phase");
     }
@@ -62,16 +71,18 @@ public final class WorldPublicationTerminalReadGrpcCodec {
         terminal.outcome() == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
             ? WorldOutcome.PUBLISHED
             : WorldOutcome.ABORTED;
-    return ReadPublicationTerminalResponse.newBuilder()
-        .setSchemaVersion(request.schemaVersion())
-        .setTargetNamespace(request.targetNamespace())
-        .setReadRequestId(request.readRequestId().toString())
-        .setOriginalOperation(ByteString.copyFrom(request.originalOperation()))
-        .setExpectedGameDesignTerminalEvidence(
-            ByteString.copyFrom(request.expectedGameDesignTerminalEvidence()))
-        .setWorldOutcome(toWireOutcome(outcome))
-        .setWorldTerminalEvidence(ByteString.copyFrom(terminalBytes))
-        .build();
+    var response =
+        ReadPublicationTerminalResponse.newBuilder()
+            .setSchemaVersion(request.schemaVersion())
+            .setTargetNamespace(request.targetNamespace())
+            .setReadRequestId(request.readRequestId().toString())
+            .setOriginalOperation(ByteString.copyFrom(originalOperation))
+            .setExpectedGameDesignTerminalEvidence(ByteString.copyFrom(expectedTerminal))
+            .setWorldOutcome(toWireOutcome(outcome))
+            .setWorldTerminalEvidence(ByteString.copyFrom(terminalBytes))
+            .build();
+    requireWireBudget(response);
+    return response;
   }
 
   /** Verifies complete echo, canonical terminal bytes, and World owner phase mapping. */
@@ -80,6 +91,7 @@ public final class WorldPublicationTerminalReadGrpcCodec {
       ReadPublicationTerminalResponse response) {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(response, "response");
+    requireWireBudget(response);
     noUnknownFields(response);
     if (response.getSchemaVersion() != request.schemaVersion()
         || !request.targetNamespace().equals(response.getTargetNamespace())
@@ -115,6 +127,24 @@ public final class WorldPublicationTerminalReadGrpcCodec {
   private static void noUnknownFields(Message message) {
     if (!message.getUnknownFields().asMap().isEmpty()) {
       throw new IllegalArgumentException("World publication terminal read has unsupported fields");
+    }
+  }
+
+  private static void requireWireBudget(Message message) {
+    if (message.getSerializedSize()
+        > WorldPublicationTerminalCompletionGrpcCodec.MAX_MESSAGE_BYTES) {
+      throw new IllegalArgumentException(
+          "World publication terminal read exceeds the 32 MiB wire budget");
+    }
+  }
+
+  private static void requireResponsePayloadBudget(
+      long originalOperationBytes, long terminalBytes) {
+    if (originalOperationBytes + 2L * terminalBytes
+        > WorldPublicationTerminalCompletionGrpcCodec.MAX_MESSAGE_BYTES
+            - MESSAGE_ENVELOPE_OVERHEAD_RESERVE) {
+      throw new IllegalArgumentException(
+          "World publication terminal read response exceeds the 32 MiB wire budget");
     }
   }
 

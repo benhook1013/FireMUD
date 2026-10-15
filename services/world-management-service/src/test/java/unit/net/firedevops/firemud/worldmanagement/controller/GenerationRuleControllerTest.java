@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.controller;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -67,6 +68,39 @@ class GenerationRuleControllerTest {
                 .content(
                     "{\"id\":7,\"tenantId\":1,\"versionId\":7,\"name\":\"room\",\"value\":\"{}\"}"))
         .andExpect(status().isForbidden());
+    verifyNoInteractions(generationRuleService);
+  }
+
+  @Test
+  void saveValidatesExplicitPositiveVersionBeforeServiceDispatch() throws Exception {
+    for (String versionField : List.of("", ",\"versionId\":0", ",\"versionId\":-2")) {
+      String body =
+          "{\"id\":7,\"tenantId\":1" + versionField + ",\"name\":\"room\",\"value\":\"{}\"}";
+      mockMvc
+          .perform(post("/generation/rules").contentType(MediaType.APPLICATION_JSON).content(body))
+          .andExpect(status().isBadRequest())
+          .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"));
+    }
+    verifyNoInteractions(generationRuleService);
+  }
+
+  @Test
+  void saveDispatchesAuthorizedValidVersion() throws Exception {
+    var saved = new GenerationRuleDto(7L, 1L, 7L, "room", "ZONE_SUBTREE", "12", "{}");
+    when(generationRuleService.saveRule(any(GenerationRuleDto.class))).thenReturn(saved);
+
+    mockMvc
+        .perform(
+            post("/generation/rules")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"id\":7,\"tenantId\":1,\"versionId\":7,\"name\":\"room\","
+                        + "\"scopeType\":\"ZONE_SUBTREE\",\"scopeId\":\"12\","
+                        + "\"value\":\"{}\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("SUCCESS"));
+
+    verify(generationRuleService).saveRule(any(GenerationRuleDto.class));
   }
 
   @Test

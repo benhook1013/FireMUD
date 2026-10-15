@@ -1,14 +1,13 @@
-package net.firedevops.firemud.common.publication;
+package net.firedevops.firemud.common.grpc;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 
-/** Shared validation for publication clients that require file-backed workload mTLS material. */
-final class FileBackedMtls {
+/** Shared validation for gRPC clients that require file-backed workload mTLS material. */
+public final class FileBackedMtls {
   private FileBackedMtls() {}
 
-  static CommonGrpcClientProperties require(
+  public static CommonGrpcClientProperties require(
       CommonGrpcClientProperties tlsProperties, String clientLabel) {
     if (tlsProperties == null || tlsProperties.isPlaintext()) {
       throw new IllegalArgumentException(clientLabel + " requires workload mTLS");
