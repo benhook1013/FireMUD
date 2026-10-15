@@ -246,18 +246,60 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
   }
 
   @Test
-  void originalSelectionPinIsAppendOnlyAndBoundToTheExactLiveAttemptAndLaunch() throws Exception {
+  void originalAssociationReadRequiresExactLiveOwnerAndActualPinsAreAppendOnly() throws Exception {
     try (Fixture fixture = newFixture()) {
       LaunchInputs launch = fixture.createLaunch();
       AttemptSnapshot attempt = launch.attempt();
       var tuple = launch.tuple();
-      LaunchPinBytes pinBytes = retainedLaunchPinBytes(fixture, launch);
-      byte[] selectionRequest = pinBytes.selectionRequest();
-      byte[] selectionResponse = pinBytes.selectionResponse();
-      byte[] descriptorRequest = pinBytes.descriptorRequest();
-      byte[] descriptorResponse = pinBytes.descriptorResponse();
       String operationId = tuple.controlPlaneRequestId();
       var owner = attempt;
+      LaunchPinBytes pinBytes = retainedLaunchPinBytes(fixture, launch);
+      assertThat(pinBytes.selectionRequest()).isNotEmpty();
+      assertThat(pinBytes.selectionResponse()).isNotEmpty();
+      assertThat(pinBytes.descriptorRequest()).isNotEmpty();
+      assertThat(pinBytes.descriptorResponse()).isNotEmpty();
+
+      RowSnapshot selectionBefore =
+          retainedRowSnapshot(
+              fixture,
+              "game_session_start_session_template_association_pin",
+              "target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              operationId);
+      RowSnapshot descriptorBefore =
+          retainedRowSnapshot(
+              fixture,
+              "game_session_start_session_launch_descriptor_pin",
+              "target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              operationId);
+      RowSnapshot attemptBefore =
+          retainedRowSnapshot(
+              fixture,
+              "game_session_start_session_operator_attempt",
+              "target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              operationId);
+      RowSnapshot launchBefore =
+          retainedRowSnapshot(
+              fixture,
+              "game_session_canonical_instance_launch",
+              "target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              operationId);
+
+      var associationReadRepository =
+          new CanonicalGameInstanceLaunchAssociationRepository(fixture.dsl(), NAMESPACE);
+      var exactSelector =
+          originalSelector(launch.association(), tuple, launch.claim());
+      OriginalStartSessionAssociation exactRead =
+          associationReadRepository.readOriginalStartSessionAssociation(exactSelector).orElseThrow();
+      assertThat(exactRead.association()).isEqualTo(launch.association());
+      assertThat(exactRead.postAuthorizationExecutionTuple().canonicalBytes())
+          .containsExactly(tuple.canonicalBytes());
+      assertThat(exactRead.ownerAttemptId()).isEqualTo(owner.ownerAttemptId());
+      assertThat(exactRead.ownerFence()).isEqualTo(owner.ownerFence());
+
       var attemptRepository =
           new GameSessionStartSessionOperatorAttemptRepository(
               fixture.dsl(), Duration.ofMinutes(5));
@@ -265,14 +307,97 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
               () ->
                   attemptRepository.readHistoricalOwnerAttempt(
                       tuple, UUID.randomUUID(), owner.ownerFence()))
-          .isInstanceOf(IllegalStateException.class);
+          .isInstanceOf(
+              GameSessionStartSessionOperatorAttemptRepository
+                  .StaleStartSessionOperatorAttemptClaimException.class)
+          .hasMessage("Historical owner read does not match the original owner attempt and fence");
       assertThatThrownBy(
               () ->
                   attemptRepository.readHistoricalOwnerAttempt(
                       tuple, owner.ownerAttemptId(), owner.ownerFence() + 1))
-          .isInstanceOf(IllegalStateException.class);
-      var exactSelector = historicalSelector(launch);
-      var mismatchedSelector =
+          .isInstanceOf(
+              GameSessionStartSessionOperatorAttemptRepository
+                  .StaleStartSessionOperatorAttemptClaimException.class)
+          .hasMessage("Historical owner read does not match the original owner attempt and fence");
+
+      var wrongTenantSelector =
+          new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+              UUID.randomUUID(),
+              exactSelector.targetNamespace(),
+              UUID.randomUUID(),
+              exactSelector.worldSlug(),
+              exactSelector.gameInstanceUuid(),
+              exactSelector.controlPlaneRequestId(),
+              exactSelector.launchDescriptorId(),
+              exactSelector.expectedDescriptorRequestDigest(),
+              exactSelector.expectedDescriptorResultDigest(),
+              exactSelector.expectedReleaseAttestationEvidenceDigest(),
+              exactSelector.originalOperation());
+      assertThat(associationReadRepository.readOriginalStartSessionAssociation(wrongTenantSelector))
+          .isEmpty();
+
+      var wrongOwnerSelector =
+          new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+              UUID.randomUUID(),
+              exactSelector.targetNamespace(),
+              exactSelector.canonicalTenantId(),
+              exactSelector.worldSlug(),
+              exactSelector.gameInstanceUuid(),
+              exactSelector.controlPlaneRequestId(),
+              exactSelector.launchDescriptorId(),
+              exactSelector.expectedDescriptorRequestDigest(),
+              exactSelector.expectedDescriptorResultDigest(),
+              exactSelector.expectedReleaseAttestationEvidenceDigest(),
+              new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(
+                  tuple.canonicalBytes(),
+                  owner.ownerMutationId(),
+                  UUID.randomUUID(),
+                  owner.ownerFence()));
+      assertThat(associationReadRepository.readOriginalStartSessionAssociation(wrongOwnerSelector))
+          .isEmpty();
+
+      var wrongFenceSelector =
+          new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+              UUID.randomUUID(),
+              exactSelector.targetNamespace(),
+              exactSelector.canonicalTenantId(),
+              exactSelector.worldSlug(),
+              exactSelector.gameInstanceUuid(),
+              exactSelector.controlPlaneRequestId(),
+              exactSelector.launchDescriptorId(),
+              exactSelector.expectedDescriptorRequestDigest(),
+              exactSelector.expectedDescriptorResultDigest(),
+              exactSelector.expectedReleaseAttestationEvidenceDigest(),
+              new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(
+                  tuple.canonicalBytes(),
+                  owner.ownerMutationId(),
+                  owner.ownerAttemptId(),
+                  owner.ownerFence() + 1));
+      assertThat(associationReadRepository.readOriginalStartSessionAssociation(wrongFenceSelector))
+          .isEmpty();
+
+      var wrongMutationSelector =
+          new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+              UUID.randomUUID(),
+              exactSelector.targetNamespace(),
+              exactSelector.canonicalTenantId(),
+              exactSelector.worldSlug(),
+              exactSelector.gameInstanceUuid(),
+              exactSelector.controlPlaneRequestId(),
+              exactSelector.launchDescriptorId(),
+              exactSelector.expectedDescriptorRequestDigest(),
+              exactSelector.expectedDescriptorResultDigest(),
+              exactSelector.expectedReleaseAttestationEvidenceDigest(),
+              new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(
+                  tuple.canonicalBytes(),
+                  UUID.randomUUID(),
+                  owner.ownerAttemptId(),
+                  owner.ownerFence()));
+      assertThat(
+              associationReadRepository.readOriginalStartSessionAssociation(wrongMutationSelector))
+          .isEmpty();
+
+      var wrongWorldSelector =
           new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
               UUID.randomUUID(),
               exactSelector.targetNamespace(),
@@ -283,155 +408,155 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
               exactSelector.launchDescriptorId(),
               exactSelector.expectedDescriptorRequestDigest(),
               exactSelector.expectedDescriptorResultDigest(),
-              exactSelector.expectedReleaseAttestationEvidenceDigest());
-      var associationReadRepository =
-          new CanonicalGameInstanceLaunchAssociationRepository(fixture.dsl(), NAMESPACE);
-      var mismatchedOriginalSelector =
-          new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
-              mismatchedSelector.readRequestId(),
-              mismatchedSelector.targetNamespace(),
-              mismatchedSelector.canonicalTenantId(),
-              mismatchedSelector.worldSlug(),
-              mismatchedSelector.gameInstanceUuid(),
-              mismatchedSelector.controlPlaneRequestId(),
-              mismatchedSelector.launchDescriptorId(),
-              mismatchedSelector.expectedDescriptorRequestDigest(),
-              mismatchedSelector.expectedDescriptorResultDigest(),
-              mismatchedSelector.expectedReleaseAttestationEvidenceDigest(),
-              new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(
-                  tuple.canonicalBytes(),
-                  owner.ownerMutationId(),
-                  owner.ownerAttemptId(),
-                  owner.ownerFence()));
+              exactSelector.expectedReleaseAttestationEvidenceDigest(),
+              exactSelector.originalOperation());
       assertThatThrownBy(
               () ->
-                  associationReadRepository.readOriginalStartSessionAssociation(
-                      mismatchedOriginalSelector))
+                  associationReadRepository.readOriginalStartSessionAssociation(wrongWorldSelector))
           .isInstanceOf(
               CanonicalGameInstanceLaunchAssociationRepository
                   .LaunchAssociationOwnerReadMismatchException.class)
           .hasMessage(
               "Canonical launch association differs from its exact original StartSession selector");
-      assertThatThrownBy(
-              () ->
-                  insertSelectionPin(
-                      fixture,
-                      launch,
-                      attempt,
-                      UUID.randomUUID(),
-                      selectionRequest,
-                      selectionResponse,
-                      descriptorRequest,
-                      descriptorResponse))
-          .isInstanceOf(RuntimeException.class);
-      assertThatThrownBy(
-              () ->
-                  insertSelectionPin(
-                      fixture,
-                      launch,
-                      attempt,
-                      launch.association().canonicalTenantId(),
-                      UUID.randomUUID(),
-                      UUID.randomUUID(),
-                      owner.ownerFence(),
-                      selectionRequest,
-                      selectionResponse,
-                      descriptorRequest,
-                      descriptorResponse))
-          .isInstanceOf(RuntimeException.class);
-      assertThatThrownBy(
-              () ->
-                  insertSelectionPin(
-                      fixture,
-                      launch,
-                      attempt,
-                      launch.association().canonicalTenantId(),
-                      owner.ownerAttemptId(),
-                      owner.ownerMutationId(),
-                      owner.ownerFence() + 1,
-                      selectionRequest,
-                      selectionResponse,
-                      descriptorRequest,
-                      descriptorResponse))
-          .isInstanceOf(RuntimeException.class);
-      insertSelectionPin(
-          fixture,
-          launch,
-          attempt,
-          launch.association().canonicalTenantId(),
-          selectionRequest,
-          selectionResponse,
-          descriptorRequest,
-          descriptorResponse);
 
-      var retained =
-          fixture
-              .dsl()
-              .fetchOne(
-                  "SELECT initial_selection_request_bytes, descriptor_pin_response_bytes"
-                      + " FROM game_session_original_start_session_selection_pin"
-                      + " WHERE target_namespace = ? AND control_plane_request_id = ?",
-                  NAMESPACE,
-                  operationId);
-      assertThat(retained.get("initial_selection_request_bytes", byte[].class))
-          .containsExactly(selectionRequest);
-      assertThat(retained.get("descriptor_pin_response_bytes", byte[].class))
-          .containsExactly(descriptorResponse);
       String where =
-          " WHERE target_namespace = '"
-              + NAMESPACE
-              + "' AND control_plane_request_id = '"
-              + operationId
-              + "'";
+          " WHERE target_namespace = '" + NAMESPACE + "' AND control_plane_request_id = '" + operationId + "'";
       assertThatThrownBy(
               () ->
                   fixture
                       .dsl()
                       .execute(
-                          "UPDATE game_session_original_start_session_selection_pin"
-                              + " SET initial_selection_response_digest = 'sha256:' || repeat('0', 64)"
+                          "UPDATE game_session_start_session_template_association_pin"
+                              + " SET association_response_digest = 'sha256:' || repeat('0', 64)"
                               + where))
-          .isInstanceOf(RuntimeException.class);
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasStackTraceContaining("StartSession template association pins are immutable");
       assertThatThrownBy(
               () ->
                   fixture
                       .dsl()
                       .execute(
-                          "DELETE FROM game_session_original_start_session_selection_pin" + where))
-          .isInstanceOf(RuntimeException.class);
+                          "UPDATE game_session_start_session_launch_descriptor_pin"
+                              + " SET descriptor_response_digest = 'sha256:' || repeat('0', 64)"
+                              + where))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasStackTraceContaining("StartSession launch descriptor pins are immutable");
       assertThatThrownBy(
               () ->
                   fixture
                       .dsl()
-                      .execute("TRUNCATE game_session_original_start_session_selection_pin"))
-          .isInstanceOf(RuntimeException.class);
+                      .execute(
+                          "DELETE FROM game_session_start_session_launch_descriptor_pin" + where))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasStackTraceContaining("StartSession launch descriptor pins are immutable");
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .dsl()
+                      .execute(
+                          "DELETE FROM game_session_start_session_template_association_pin" + where))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasStackTraceContaining("StartSession template association pins are immutable");
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .dsl()
+                      .execute("TRUNCATE game_session_start_session_launch_descriptor_pin"))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasStackTraceContaining("StartSession launch descriptor pins are immutable");
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .dsl()
+                      .execute("TRUNCATE game_session_start_session_template_association_pin"))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasStackTraceContaining("StartSession template association pins are immutable");
+
+      LaunchPinBytes pinBytesAfter = retainedLaunchPinBytes(fixture, launch);
+      assertThat(pinBytesAfter.selectionRequest()).containsExactly(pinBytes.selectionRequest());
+      assertThat(pinBytesAfter.selectionResponse()).containsExactly(pinBytes.selectionResponse());
+      assertThat(pinBytesAfter.descriptorRequest()).containsExactly(pinBytes.descriptorRequest());
+      assertThat(pinBytesAfter.descriptorResponse()).containsExactly(pinBytes.descriptorResponse());
+      assertRowUnchanged(
+          selectionBefore,
+          retainedRowSnapshot(
+              fixture,
+              "game_session_start_session_template_association_pin",
+              "target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              operationId));
+      assertRowUnchanged(
+          descriptorBefore,
+          retainedRowSnapshot(
+              fixture,
+              "game_session_start_session_launch_descriptor_pin",
+              "target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              operationId));
+      assertRowUnchanged(
+          attemptBefore,
+          retainedRowSnapshot(
+              fixture,
+              "game_session_start_session_operator_attempt",
+              "target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              operationId));
+      assertRowUnchanged(
+          launchBefore,
+          retainedRowSnapshot(
+              fixture,
+              "game_session_canonical_instance_launch",
+              "target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              operationId));
     }
 
     try (Fixture fixture = newFixture()) {
       LaunchInputs launch = fixture.createLaunch(Duration.ofSeconds(2));
-      AttemptSnapshot expiringAttempt = launch.attempt();
+      String operationId = launch.tuple().controlPlaneRequestId();
       LaunchPinBytes pinBytes = retainedLaunchPinBytes(fixture, launch);
+      RowSnapshot selectionBefore =
+          retainedRowSnapshot(
+              fixture,
+              "game_session_start_session_template_association_pin",
+              "target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              operationId);
+      RowSnapshot descriptorBefore =
+          retainedRowSnapshot(
+              fixture,
+              "game_session_start_session_launch_descriptor_pin",
+              "target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              operationId);
       Thread.sleep(Duration.ofMillis(2200).toMillis());
-      assertThatThrownBy(
-              () ->
-                  insertSelectionPin(
-                      fixture,
-                      launch,
-                      expiringAttempt,
-                      launch.association().canonicalTenantId(),
-                      pinBytes.selectionRequest(),
-                      pinBytes.selectionResponse(),
-                      pinBytes.descriptorRequest(),
-                      pinBytes.descriptorResponse()))
-          .isInstanceOf(RuntimeException.class);
-      var retainedCount =
-          Objects.requireNonNull(
-              fixture
-                  .dsl()
-                  .fetchOne(
-                      "SELECT count(*) AS retained FROM game_session_original_start_session_selection_pin"),
-              "expired-attempt selection-pin count query returned no row");
-      assertThat(retainedCount.get("retained", Long.class)).isZero();
+      var associationReadRepository =
+          new CanonicalGameInstanceLaunchAssociationRepository(fixture.dsl(), NAMESPACE);
+      assertThat(
+              associationReadRepository.readOriginalStartSessionAssociation(
+                  originalSelector(launch.association(), launch.tuple(), launch.claim())))
+          .isEmpty();
+      LaunchPinBytes pinBytesAfter = retainedLaunchPinBytes(fixture, launch);
+      assertThat(pinBytesAfter.selectionRequest()).containsExactly(pinBytes.selectionRequest());
+      assertThat(pinBytesAfter.selectionResponse()).containsExactly(pinBytes.selectionResponse());
+      assertThat(pinBytesAfter.descriptorRequest()).containsExactly(pinBytes.descriptorRequest());
+      assertThat(pinBytesAfter.descriptorResponse()).containsExactly(pinBytes.descriptorResponse());
+      assertRowUnchanged(
+          selectionBefore,
+          retainedRowSnapshot(
+              fixture,
+              "game_session_start_session_template_association_pin",
+              "target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              operationId));
+      assertRowUnchanged(
+          descriptorBefore,
+          retainedRowSnapshot(
+              fixture,
+              "game_session_start_session_launch_descriptor_pin",
+              "target_namespace = ? AND control_plane_request_id = ?",
+              NAMESPACE,
+              operationId));
     }
   }
 
@@ -492,76 +617,6 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
         Objects.requireNonNull(
             descriptor.get("descriptor_response_wire", byte[].class),
             "canonical descriptor response bytes are required"));
-  }
-
-  private static void insertSelectionPin(
-      Fixture fixture,
-      LaunchInputs launch,
-      AttemptSnapshot attempt,
-      UUID canonicalTenantId,
-      byte[] selectionRequest,
-      byte[] selectionResponse,
-      byte[] descriptorRequest,
-      byte[] descriptorResponse) {
-    insertSelectionPin(
-        fixture,
-        launch,
-        attempt,
-        canonicalTenantId,
-        attempt.ownerAttemptId(),
-        attempt.ownerMutationId(),
-        attempt.ownerFence(),
-        selectionRequest,
-        selectionResponse,
-        descriptorRequest,
-        descriptorResponse);
-  }
-
-  private static void insertSelectionPin(
-      Fixture fixture,
-      LaunchInputs launch,
-      AttemptSnapshot attempt,
-      UUID canonicalTenantId,
-      UUID ownerAttemptId,
-      UUID ownerMutationId,
-      long ownerFence,
-      byte[] selectionRequest,
-      byte[] selectionResponse,
-      byte[] descriptorRequest,
-      byte[] descriptorResponse) {
-    var tuple = launch.tuple();
-    fixture
-        .dsl()
-        .execute(
-            "INSERT INTO game_session_original_start_session_selection_pin"
-                + " (target_namespace, control_plane_request_id, canonical_tenant_id,"
-                + " game_instance_uuid, launch_descriptor_id, owner_attempt_id, owner_mutation_id,"
-                + " owner_fence, owner_lease_expires_at, original_post_authorization_tuple,"
-                + " account_redemption_projection, initial_selection_request_bytes,"
-                + " initial_selection_request_digest, initial_selection_response_bytes,"
-                + " initial_selection_response_digest, descriptor_pin_request_bytes,"
-                + " descriptor_pin_request_digest, descriptor_pin_response_bytes,"
-                + " descriptor_pin_response_digest)"
-                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS TIMESTAMPTZ), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            NAMESPACE,
-            tuple.controlPlaneRequestId(),
-            canonicalTenantId,
-            launch.association().gameInstanceUuid(),
-            launch.binding().descriptor().launchDescriptorId(),
-            ownerAttemptId,
-            ownerMutationId,
-            ownerFence,
-            java.time.OffsetDateTime.ofInstant(attempt.leaseExpiresAt(), java.time.ZoneOffset.UTC),
-            tuple.canonicalBytes(),
-            attempt.accountRedemptionProjection(),
-            selectionRequest,
-            sha256(selectionRequest),
-            selectionResponse,
-            sha256(selectionResponse),
-            descriptorRequest,
-            sha256(descriptorRequest),
-            descriptorResponse,
-            sha256(descriptorResponse));
   }
 
   private static Candidate candidate(
