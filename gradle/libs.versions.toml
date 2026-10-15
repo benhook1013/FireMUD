@@ -1,5 +1,8 @@
 [versions]
 spring-boot = "4.1.1"
+jackson-2 = "2.21.7"
+jackson-3 = "3.1.7"
+tomcat = "11.0.27"
 jooq = "3.21.9"
 flyway = "13.10.0"
 mapstruct = "1.6.3"
@@ -51,6 +54,10 @@ spring-boot-starter-webflux = { module = "org.springframework.boot:spring-boot-s
 spring-boot-flyway = { module = "org.springframework.boot:spring-boot-flyway", version.ref = "spring-boot" }
 spring-boot-configuration-processor = { module = "org.springframework.boot:spring-boot-configuration-processor", version.ref = "spring-boot" }
 spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+jackson-2-bom = { module = "com.fasterxml.jackson:jackson-bom", version.ref = "jackson-2" }
+jackson-3-bom = { module = "tools.jackson:jackson-bom", version.ref = "jackson-3" }
+# Version authority for both Tomcat groups aligned by the root build.
+tomcat-embed-core = { module = "org.apache.tomcat.embed:tomcat-embed-core", version.ref = "tomcat" }
 spring-data-commons = { module = "org.springframework.data:spring-data-commons" }
 spring-aop = { module = "org.springframework:spring-aop" }
 aspectjweaver = { module = "org.aspectj:aspectjweaver" }
