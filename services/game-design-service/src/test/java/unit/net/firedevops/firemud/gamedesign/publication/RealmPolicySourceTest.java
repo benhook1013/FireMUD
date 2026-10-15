@@ -8,6 +8,7 @@ import java.util.UUID;
 import java.util.stream.IntStream;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.ObjectMapper;
@@ -29,12 +30,18 @@ class RealmPolicySourceTest {
             AssetSource.upsertPayload("41", "map", AssetSource.Requiredness.REQUIRED));
     var template =
         policyRevision("3", UUID.randomUUID(), TemplateConfigSource.deletePayload("7"));
-    var unknown = policyRevision("4", UUID.randomUUID(), "{\"revisionKind\":\"UNSUPPORTED\"}");
+    var branding =
+        policyRevision(
+            "4",
+            UUID.randomUUID(),
+            "{\"revisionKind\":\"" + BrandingSource.REVISION_KIND + "\"}");
+    var unknown = policyRevision("5", UUID.randomUUID(), "{\"revisionKind\":\"UNSUPPORTED\"}");
 
     assertThat(RealmPolicySource.isPolicyRevision(policy)).isTrue();
     assertThat(RealmPolicySource.isPolicyRevision(command)).isFalse();
     assertThat(RealmPolicySource.isPolicyRevision(asset)).isFalse();
     assertThat(RealmPolicySource.isPolicyRevision(template)).isFalse();
+    assertThat(RealmPolicySource.isPolicyRevision(branding)).isFalse();
     assertThatThrownBy(() -> RealmPolicySource.isPolicyRevision(unknown))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Unsupported Game Design owner revision kind");

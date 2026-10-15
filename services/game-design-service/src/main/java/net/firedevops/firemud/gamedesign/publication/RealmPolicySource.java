@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.gamedesign.AssetSource;
+import net.firedevops.firemud.common.gamedesign.BrandingSource;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import tools.jackson.databind.JsonNode;
@@ -74,6 +75,7 @@ public final class RealmPolicySource {
     if (RealmEntryPolicy.REVISION_KIND.equals(kind)) return true;
     if ("COMMAND_DEFINITION".equals(kind)
         || AssetSource.REVISION_KIND.equals(kind)
+        || BrandingSource.REVISION_KIND.equals(kind)
         || net.firedevops.firemud.common.gamedesign.GameplayRuleSource.REVISION_KIND.equals(kind)
         || TemplateConfigSource.REVISION_KIND.equals(kind))
       return false;
