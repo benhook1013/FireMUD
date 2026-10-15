@@ -1687,6 +1687,8 @@ public class AccountGameplayDelegationIssuanceRepository {
 
   @Transactional(propagation = Propagation.MANDATORY)
   public void requireOriginalRequestNotDisposed(UUID requestId) {
+    // Self-calls from lockRequestId bypass Spring's proxy, so this explicit guard remains
+    // necessary.
     if (!TransactionSynchronizationManager.isActualTransactionActive())
       throw new StorageUnavailableException();
     if (dsl.fetchOne(

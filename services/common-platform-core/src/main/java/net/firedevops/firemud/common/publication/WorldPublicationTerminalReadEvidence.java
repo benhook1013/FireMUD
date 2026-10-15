@@ -100,6 +100,12 @@ public final class WorldPublicationTerminalReadEvidence {
           || expectedGameDesignTerminalEvidence.length == 0) {
         throw new IllegalArgumentException("Exact expected Game Design terminal evidence required");
       }
+      if ((long) originalOperation.length + expectedGameDesignTerminalEvidence.length
+          > WorldPublicationTerminalCompletionGrpcCodec.MAX_MESSAGE_BYTES
+              - WorldPublicationTerminalReadGrpcCodec.MESSAGE_ENVELOPE_OVERHEAD_RESERVE) {
+        throw new IllegalArgumentException(
+            "World publication terminal read exceeds the 32 MiB wire budget");
+      }
       originalOperation = originalOperation.clone();
       expectedGameDesignTerminalEvidence = expectedGameDesignTerminalEvidence.clone();
       GameDesignPublicationTerminalEvidence terminal;
