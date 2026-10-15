@@ -1209,9 +1209,9 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
                   .getValues(0, String.class))
           .isEqualTo(rowsBefore);
 
-      // Historical storage proof above is retained as such. Repeat the actual naked-write,
-      // schema-2 capture, wrong-checkpoint capture, and missing-owner-history denials after the
-      // complete current World/Saga migration frontier.
+      // Historical proof above remains separately attributed. These current-frontier denials
+      // cover refusal branches; the wrong-checkpoint probe does not isolate commit-mismatch
+      // causality.
       Flyway currentFrontier = flyway(source, schema, null, worldLocation, sagaLocation);
       currentFrontier.migrate();
       currentFrontier.validate();
@@ -1260,8 +1260,26 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
           .hasMessageContaining("New canonical graph capture requires selected closure schema 4")
           .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("23514"));
 
-      // The retained current DTO accepts only schema 3; its altered checkpoint is therefore
-      // rejected at the current schema-4 boundary before a schema-4 checkpoint comparison.
+      // Override only the serialized freeze-request schema to cover the schema-4 checkpoint
+      // refusal branch with the original appliedCommitId. This establishes branch coverage, not
+      // isolated commit-mismatch causality.
+      var currentMatchingCheckpointFreezeRequest =
+          (tools.jackson.databind.node.ObjectNode) mapper.valueToTree(capture);
+      currentMatchingCheckpointFreezeRequest.put("digestSchemaVersion", 4);
+      assertThatThrownBy(
+              () ->
+                  insertCanonicalFrozenCandidate(
+                      dsl,
+                      plan,
+                      capture,
+                      stored,
+                      mapper.writeValueAsString(currentMatchingCheckpointFreezeRequest),
+                      identityJson,
+                      intakeJson))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasMessageContaining("differs from exact FROZEN source and checkpoint")
+          .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("23514"));
+
       var currentWrongCheckpointCapture =
           new WorldAuthoredGraphSnapshot.CaptureRequest(
               capture.targetNamespace(),
@@ -1277,6 +1295,10 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
               capture.contentDigest(),
               3,
               capture.suppliedOwnedAffectedTuples());
+      var currentWrongCheckpointFreezeRequest =
+          (tools.jackson.databind.node.ObjectNode)
+              mapper.valueToTree(currentWrongCheckpointCapture);
+      currentWrongCheckpointFreezeRequest.put("digestSchemaVersion", 4);
       assertThatThrownBy(
               () ->
                   insertCanonicalFrozenCandidate(
@@ -1284,11 +1306,11 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
                       plan,
                       currentWrongCheckpointCapture,
                       stored,
-                      mapper.writeValueAsString(currentWrongCheckpointCapture),
+                      mapper.writeValueAsString(currentWrongCheckpointFreezeRequest),
                       identityJson,
                       intakeJson))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
-          .hasMessageContaining("New canonical graph capture requires selected closure schema 4")
+          .hasMessageContaining("differs from exact FROZEN source and checkpoint")
           .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("23514"));
       assertThat(
               dsl.fetchSingle("SELECT count(*) FROM world_canonical_frozen_topology")

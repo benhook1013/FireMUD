@@ -447,6 +447,14 @@ fi
 IFS=$'\t' read -r _prior_sort _prior_run _prior_check _prior_job prior_status prior_conclusion _prior_preserve_step <<< "${prior_row}"
 if [ "${prior_status}" = "completed" ]; then
   if [ "${prior_conclusion}" = "success" ]; then
+    # Opt-in provenance exposes the already selected source; it changes neither
+    # ordering nor candidate eligibility, and ordinary action output stays stable.
+    if [[ "${REQUIRED_GATE_INCLUDE_SOURCE:-false}" == true ]]; then
+      source_attempt="$(jq -er '.run_attempt | select(type == "number" and . > 0 and . == floor)' \
+        <<<"${job_cache[${_prior_job}]}")" || exit 1
+      printf 'source_run_id=%s\nsource_job_id=%s\nsource_check_run_id=%s\nsource_run_attempt=%s\n' \
+        "${_prior_run}" "${_prior_job}" "${_prior_check}" "${source_attempt}" >>"${GITHUB_OUTPUT}"
+    fi
     report_assessment success
     exit 0
   fi

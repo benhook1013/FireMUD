@@ -4,9 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -18,6 +21,7 @@ import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecu
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
@@ -275,6 +279,116 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
     assertNoStartingRows(missingRealm);
   }
 
+  @Test
+  void captureWaitsForRequestLockBeforeRejectingUnavailableOriginalPins() throws Exception {
+    Fixture fixture = fixture(true);
+    String requestId = CONTROL_PLANE_REQUEST_ID + "-without-pins";
+    StartSessionPostAuthorizationExecutionTuple unpinnedTuple =
+        CanonicalHumanPublicationOwnerTestFixtures.tuple(
+            NAMESPACE, TENANT, OWNER_ACCOUNT_UUID, GAME_TEMPLATE_ID, requestId);
+    CompleteLaunchBindingEvidence unpinnedBinding =
+        launchBinding(fixture.source().source(), fixture.publishedSet(), requestId);
+    CanonicalGameInstanceLaunchAssociationRepository associationRepository =
+        new CanonicalGameInstanceLaunchAssociationRepository(fixture.dsl(), NAMESPACE);
+    String lockKey = NAMESPACE + ":" + requestId;
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try (Connection lockConnection = fixture.dataSource().getConnection()) {
+      boolean lockHeld = false;
+      try {
+        try (PreparedStatement acquire =
+            lockConnection.prepareStatement(
+                "SELECT pg_advisory_lock(hashtextextended(? || ':' || ?, 0))")) {
+          acquire.setString(1, NAMESPACE);
+          acquire.setString(2, requestId);
+          acquire.execute();
+          lockHeld = true;
+        }
+
+        Future<?> capture =
+            executor.submit(
+                () ->
+                    fixture
+                        .transactions()
+                        .executeWithoutResult(
+                            status ->
+                                associationRepository.capture(
+                                    fixture.tenantAssociation(),
+                                    1L,
+                                    unpinnedBinding,
+                                    unpinnedTuple)));
+        awaitAdvisoryWaiter(fixture, lockKey, capture);
+        assertThat(capture.isDone()).isFalse();
+        assertNoStartingRows(fixture);
+        assertThat(fixture.dsl().fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
+            .isZero();
+
+        try (PreparedStatement release =
+            lockConnection.prepareStatement(
+                "SELECT pg_advisory_unlock(hashtextextended(? || ':' || ?, 0))")) {
+          release.setString(1, NAMESPACE);
+          release.setString(2, requestId);
+          release.execute();
+          lockHeld = false;
+        }
+
+        assertThatThrownBy(() -> capture.get(20, TimeUnit.SECONDS))
+            .isInstanceOf(ExecutionException.class)
+            .hasRootCauseInstanceOf(IllegalStateException.class)
+            .hasRootCauseMessage("Exact canonical pins are required before STARTING");
+        assertNoStartingRows(fixture);
+        assertThat(fixture.dsl().fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
+            .isZero();
+      } finally {
+        if (lockHeld) {
+          try (PreparedStatement release =
+              lockConnection.prepareStatement(
+                  "SELECT pg_advisory_unlock(hashtextextended(? || ':' || ?, 0))")) {
+            release.setString(1, NAMESPACE);
+            release.setString(2, requestId);
+            release.execute();
+          }
+        }
+      }
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  private static void awaitAdvisoryWaiter(Fixture fixture, String lockKey, Future<?> capture) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+    while (System.nanoTime() < deadline) {
+      Long waiting =
+          Objects.requireNonNull(
+                  fixture
+                      .dsl()
+                      .fetchOne(
+                          "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+                              + "AND NOT granted AND objsubid = 1 "
+                              + "AND classid = (((hashtextextended(?, 0) >> 32) "
+                              + "& 4294967295)::oid) "
+                              + "AND objid = ((hashtextextended(?, 0) & 4294967295)::oid)",
+                          lockKey,
+                          lockKey),
+                  "PostgreSQL did not return the advisory-lock waiter count")
+              .get(0, Long.class);
+      if (waiting == 1L) {
+        return;
+      }
+      if (capture.isDone()) {
+        throw new AssertionError(
+            "Capture completed before it waited on the request lock and checked original pins");
+      }
+      try {
+        Thread.sleep(10);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(
+            "Interrupted while awaiting the canonical request-lock waiter", interrupted);
+      }
+    }
+    throw new AssertionError("Capture did not wait on the canonical request advisory lock");
+  }
+
   private static StartingInstance contender(
       Fixture fixture,
       CompleteLaunchBindingEvidence binding,
@@ -390,6 +504,7 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
 
   private record Fixture(
       DSLContext dsl,
+      DriverManagerDataSource dataSource,
       TransactionTemplate transactions,
       GameSessionAuthoredWorldSourceRepository sourceRepository,
       GameSessionFreshTenantAssociationRepository tenantAssociationRepository,
@@ -497,6 +612,7 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
         dsl, transactions, ORIGINAL_TUPLE, source.source(), publishedSet, binding);
     return new Fixture(
         dsl,
+        dataSource,
         transactions,
         sourceRepository,
         tenantAssociationRepository,
