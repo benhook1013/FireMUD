@@ -68,7 +68,7 @@ public final class CanonicalInitialAdmissionIntentRepository {
     }
 
     try {
-      insertIntent(holdRequest, holdBytes, lifecycleBytes, sources.binding());
+      insertIntent(holdRequest, holdBytes, lifecycleBytes, sources);
     } catch (DataAccessException failure) {
       if ("23505".equals(failure.sqlState())) {
         throw conflict("A competing initial-admission intent already owns this request or realm");
@@ -185,7 +185,36 @@ public final class CanonicalInitialAdmissionIntentRepository {
             request.realmId(),
             request.canonicalGameInstanceId());
     SourceBinding source = sourceBinding(catalog, launch);
-    return new LockedSources(source);
+    Record retainedLaunch =
+        dsl.fetchOne(
+            "SELECT original_start_session_tuple, catalog_source_intake_operation_id, "
+                + "catalog_source_intake_request_id FROM game_session_canonical_instance_launch "
+                + "WHERE target_namespace = ? AND control_plane_request_id = ? "
+                + "AND canonical_tenant_id = ? AND canonical_realm_id = ? "
+                + "AND game_instance_uuid = ? AND game_session_tenant_id = ? "
+                + "AND game_instance_id = ? FOR UPDATE",
+            source.targetNamespace(),
+            source.controlPlaneRequestId(),
+            source.canonicalTenantId(),
+            source.realmId(),
+            source.canonicalGameInstanceId(),
+            source.gameSessionTenantId(),
+            source.gameInstanceId());
+    if (retainedLaunch == null) {
+      throw conflict("Exact captured original launch evidence is unavailable for intent storage");
+    }
+    byte[] originalTuple = required(retainedLaunch, "original_start_session_tuple", byte[].class);
+    UUID intakeOperation = catalog.sourceIntakeReceipt().operationId();
+    UUID intakeRequest = catalog.sourceIntakeReceipt().intakeRequestId();
+    if (originalTuple.length == 0
+        || originalTuple.length > 262_144
+        || !intakeOperation.equals(
+            required(retainedLaunch, "catalog_source_intake_operation_id", UUID.class))
+        || !intakeRequest.equals(
+            required(retainedLaunch, "catalog_source_intake_request_id", UUID.class))) {
+      throw conflict("Captured original launch differs from the locked catalog source identity");
+    }
+    return new LockedSources(source, originalTuple.clone(), intakeOperation, intakeRequest);
   }
 
   private static SourceBinding sourceBinding(
@@ -222,7 +251,8 @@ public final class CanonicalInitialAdmissionIntentRepository {
   }
 
   private void insertIntent(
-      Request request, byte[] holdBytes, byte[] lifecycleBytes, SourceBinding source) {
+      Request request, byte[] holdBytes, byte[] lifecycleBytes, LockedSources sources) {
+    SourceBinding source = sources.binding();
     dsl.execute(
         "INSERT INTO "
             + INTENT_TABLE
@@ -234,10 +264,11 @@ public final class CanonicalInitialAdmissionIntentRepository {
             + "game_instance_id, canonical_version_id, runtime_version_id, control_plane_request_id, "
             + "launch_descriptor_id, captured_starting_row_version, current_row_version, "
             + "descriptor_request_digest, descriptor_result_digest, release_attestation_digest, "
+            + "catalog_source_intake_operation_id, catalog_source_intake_request_id, original_start_session_tuple, "
             + "canonical_hold_request_bytes, canonical_lifecycle_request_bytes, hold_identity_bytes, "
             + "state, created_at, updated_at, terminal_at) "
             + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
-            + "?, ?, ?, ?, ?, NULL, ?, clock_timestamp(), clock_timestamp(), NULL)",
+            + "?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, clock_timestamp(), clock_timestamp(), NULL)",
         request.targetNamespace(),
         request.initialAdmissionRequestId(),
         request.initialAdmissionRequestDigest(),
@@ -265,6 +296,9 @@ public final class CanonicalInitialAdmissionIntentRepository {
         source.descriptorRequestDigest(),
         source.descriptorResultDigest(),
         source.releaseAttestationDigest(),
+        sources.catalogSourceIntakeOperationId(),
+        sources.catalogSourceIntakeRequestId(),
+        sources.originalStartSessionTuple(),
         holdBytes,
         lifecycleBytes,
         IntentState.PENDING_HOLD.name());
@@ -474,10 +508,10 @@ public final class CanonicalInitialAdmissionIntentRepository {
   private static void requireIntentRequestId(String value) {
     if (value == null
         || value.isBlank()
-        || value.codePointCount(0, value.length()) > 120
+        || value.codePointCount(0, value.length()) > 128
         || value.codePoints().anyMatch(Character::isISOControl)) {
       throw new IllegalArgumentException(
-          "Initial-admission request ID must fit the immutable V28 120-character intent column");
+          "Initial-admission request ID must fit the immutable V34.3 128-character intent column");
     }
   }
 
@@ -496,5 +530,18 @@ public final class CanonicalInitialAdmissionIntentRepository {
         message);
   }
 
-  private record LockedSources(SourceBinding binding) {}
+  private record LockedSources(
+      SourceBinding binding,
+      byte[] originalStartSessionTuple,
+      UUID catalogSourceIntakeOperationId,
+      UUID catalogSourceIntakeRequestId) {
+    private LockedSources {
+      originalStartSessionTuple = originalStartSessionTuple.clone();
+    }
+
+    @Override
+    public byte[] originalStartSessionTuple() {
+      return originalStartSessionTuple.clone();
+    }
+  }
 }

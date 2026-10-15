@@ -2,9 +2,7 @@ package unit.net.firedevops.firemud.gamesession.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -18,7 +16,6 @@ import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProo
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionOwnerProof.Outcome;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest;
 import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionRequest.OriginKind;
-import net.firedevops.firemud.gamesession.dto.CanonicalInitialAdmissionWorldProof;
 import net.firedevops.firemud.gamesession.repository.CanonicalInitialAdmissionRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.CanonicalInitialAdmissionWorldVerifier;
@@ -38,8 +35,7 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
       mock(GameSessionCanonicalAdmissionPointerRepository.class);
   private final CanonicalInitialAdmissionWorldVerifier worldVerifier =
       mock(CanonicalInitialAdmissionWorldVerifier.class);
-  private final RecordingTransactionManager transactionManager = new RecordingTransactionManager(0);
-  private int readbackCount;
+  private final RecordingTransactionManager transactionManager = new RecordingTransactionManager();
   private final DatabaseCanonicalInitialAdmissionService service =
       new DatabaseCanonicalInitialAdmissionService(
           repository, pointerRepository, worldVerifier, transactionManager);
@@ -47,140 +43,6 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
   @AfterEach
   void clearTransaction() {
     TransactionSynchronizationManager.clear();
-  }
-
-  @Test
-  void bindUsesWritableReadCommittedTransactionsAndKeepsRemoteAndReadbackOutside() {
-    CanonicalInitialAdmissionRequest request = request();
-    CanonicalInitialAdmissionOwnerProof pending = pendingProof(request);
-    CanonicalInitialAdmissionOwnerProof committed = committedProof(request);
-    CanonicalInitialAdmissionWorldProof worldProof = worldProof(request);
-
-    doAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              return null;
-            })
-        .when(repository)
-        .reserve(request);
-    doAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              return null;
-            })
-        .when(repository)
-        .commit(request, worldProof, null);
-    when(repository.read(request.targetNamespace(), request.initialAdmissionRequestId()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction();
-              return Optional.of(readbackCount++ == 0 ? pending : committed);
-            });
-    when(worldVerifier.verify(request))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction();
-              return worldProof;
-            });
-
-    assertThat(service.bind(request)).isEqualTo(committed);
-
-    verify(repository).reserve(request);
-    verify(repository).commit(request, worldProof, null);
-    verify(repository, times(2))
-        .read(request.targetNamespace(), request.initialAdmissionRequestId());
-    verify(worldVerifier).verify(request);
-    verifyNoInteractions(pointerRepository);
-    assertThat(transactionManager.settings)
-        .containsExactly(writableReadCommittedRequiresNew(), writableReadCommittedRequiresNew());
-    assertThat(transactionManager.commitCount).isEqualTo(2);
-    assertThat(transactionManager.rollbackCount).isZero();
-  }
-
-  @Test
-  void abortUsesWritableReadCommittedTransactionsAndReadsTerminalProofAfterCommit() {
-    CanonicalInitialAdmissionRequest request = request();
-    CanonicalInitialAdmissionOwnerProof pending = pendingProof(request);
-    CanonicalInitialAdmissionOwnerProof aborted = abortedProof(request);
-
-    doAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              return null;
-            })
-        .when(repository)
-        .reserve(request);
-    doAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              return null;
-            })
-        .when(repository)
-        .abort(request, null, "test abort");
-    when(repository.read(request.targetNamespace(), request.initialAdmissionRequestId()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction();
-              return Optional.of(readbackCount++ == 0 ? pending : aborted);
-            });
-
-    assertThat(service.abort(request, "test abort")).isEqualTo(aborted);
-
-    verify(repository).reserve(request);
-    verify(repository).abort(request, null, "test abort");
-    verify(repository, times(2))
-        .read(request.targetNamespace(), request.initialAdmissionRequestId());
-    verifyNoInteractions(pointerRepository, worldVerifier);
-    assertThat(transactionManager.settings)
-        .containsExactly(writableReadCommittedRequiresNew(), writableReadCommittedRequiresNew());
-    assertThat(transactionManager.commitCount).isEqualTo(2);
-    assertThat(transactionManager.rollbackCount).isZero();
-  }
-
-  @Test
-  void bindDoesNotReturnSuccessWhenOwnerCommitFails() {
-    transactionManager.failOnCommitNumber = 2;
-    CanonicalInitialAdmissionRequest request = request();
-    CanonicalInitialAdmissionOwnerProof pending = pendingProof(request);
-    CanonicalInitialAdmissionWorldProof worldProof = worldProof(request);
-
-    doAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              return null;
-            })
-        .when(repository)
-        .reserve(request);
-    doAnswer(
-            invocation -> {
-              assertWritableReadCommittedTransaction();
-              return null;
-            })
-        .when(repository)
-        .commit(request, worldProof, null);
-    when(repository.read(request.targetNamespace(), request.initialAdmissionRequestId()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction();
-              return Optional.of(pending);
-            });
-    when(worldVerifier.verify(request))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction();
-              return worldProof;
-            });
-
-    assertThatThrownBy(() -> service.bind(request))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("simulated transaction commit failure");
-
-    verify(repository).reserve(request);
-    verify(repository).commit(request, worldProof, null);
-    verify(repository, times(1))
-        .read(request.targetNamespace(), request.initialAdmissionRequestId());
-    verify(worldVerifier).verify(request);
-    assertThat(transactionManager.commitCount).isEqualTo(2);
   }
 
   @Test
@@ -204,22 +66,31 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
   }
 
   @Test
-  void committedReplayReturnsStoredOwnerProofWithoutWorldVerification() {
+  void humanBindAndAbortDenyBeforeReservationTransactionOrWorldAccess() {
+    assertThatThrownBy(() -> service.bind(request()))
+        .isInstanceOf(
+            CanonicalInitialAdmissionRepository
+                .CanonicalHumanAdmissionProtectionUnavailableException.class)
+        .hasMessageContaining("Account terminal protection");
+    assertThatThrownBy(() -> service.abort(request(), "Human abort"))
+        .isInstanceOf(
+            CanonicalInitialAdmissionRepository
+                .CanonicalHumanAdmissionProtectionUnavailableException.class);
+    verifyNoInteractions(repository, pointerRepository, worldVerifier);
+    assertThat(transactionManager.settings).isEmpty();
+  }
+
+  @Test
+  void explicitHumanOwnerReadReturnsStoredProofWithoutMutationOrWorldVerification() {
     CanonicalInitialAdmissionRequest request = request();
     CanonicalInitialAdmissionOwnerProof committed = committedProof(request);
     when(repository.read(request.targetNamespace(), request.initialAdmissionRequestId()))
-        .thenAnswer(
-            invocation -> {
-              assertOutsideTransaction();
-              return Optional.of(committed);
-            });
-
-    assertThat(service.bind(request)).isEqualTo(committed);
-
-    verify(repository).reserve(request);
+        .thenReturn(Optional.of(committed));
+    assertThat(service.read(request.targetNamespace(), request.initialAdmissionRequestId()))
+        .isEqualTo(committed);
     verify(repository).read(request.targetNamespace(), request.initialAdmissionRequestId());
     verifyNoInteractions(pointerRepository, worldVerifier);
-    assertThat(transactionManager.settings).containsExactly(writableReadCommittedRequiresNew());
+    assertThat(transactionManager.settings).isEmpty();
   }
 
   private void assertAmbientTransactionRejected(boolean readOnly, Runnable operation) {
@@ -232,25 +103,6 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
 
     verifyNoInteractions(repository, pointerRepository, worldVerifier);
     assertThat(transactionManager.settings).isEmpty();
-  }
-
-  private static void assertWritableReadCommittedTransaction() {
-    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-    assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
-    assertThat(TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
-        .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
-  }
-
-  private static void assertOutsideTransaction() {
-    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-    assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-  }
-
-  private static TransactionSettings writableReadCommittedRequiresNew() {
-    return new TransactionSettings(
-        TransactionDefinition.PROPAGATION_REQUIRES_NEW,
-        TransactionDefinition.ISOLATION_READ_COMMITTED,
-        false);
   }
 
   private static CanonicalInitialAdmissionRequest request() {
@@ -302,34 +154,6 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
         "sha256:" + "a".repeat(64));
   }
 
-  private static CanonicalInitialAdmissionOwnerProof pendingProof(
-      CanonicalInitialAdmissionRequest request) {
-    return new CanonicalInitialAdmissionOwnerProof(
-        Outcome.PENDING,
-        request.initialAdmissionRequestId(),
-        request.requestDigest(),
-        request.targetNamespace(),
-        request.canonicalTenantId(),
-        request.worldSlug(),
-        request.realmId(),
-        request.playableStateNamespaceId(),
-        request.playableStateScope(),
-        request.canonicalGameInstanceId(),
-        request.canonicalVersionId(),
-        request.activeLifecycleEpoch(),
-        request.expectedCatalogRevision(),
-        request.originKind(),
-        request.expectedPriorPointerVersion(),
-        request.holdId(),
-        request.holdFence(),
-        request.holdBindingDigest(),
-        null,
-        null,
-        null,
-        false,
-        null);
-  }
-
   private static CanonicalInitialAdmissionOwnerProof committedProof(
       CanonicalInitialAdmissionRequest request) {
     return new CanonicalInitialAdmissionOwnerProof(
@@ -358,57 +182,6 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
         Instant.parse("2026-10-10T00:00:00Z"));
   }
 
-  private static CanonicalInitialAdmissionOwnerProof abortedProof(
-      CanonicalInitialAdmissionRequest request) {
-    return new CanonicalInitialAdmissionOwnerProof(
-        Outcome.ABORTED,
-        request.initialAdmissionRequestId(),
-        request.requestDigest(),
-        request.targetNamespace(),
-        request.canonicalTenantId(),
-        request.worldSlug(),
-        request.realmId(),
-        request.playableStateNamespaceId(),
-        request.playableStateScope(),
-        request.canonicalGameInstanceId(),
-        request.canonicalVersionId(),
-        request.activeLifecycleEpoch(),
-        request.expectedCatalogRevision(),
-        request.originKind(),
-        request.expectedPriorPointerVersion(),
-        request.holdId(),
-        request.holdFence(),
-        request.holdBindingDigest(),
-        null,
-        null,
-        "sha256:" + "c".repeat(64),
-        true,
-        Instant.parse("2026-10-10T00:00:00Z"));
-  }
-
-  private static CanonicalInitialAdmissionWorldProof worldProof(
-      CanonicalInitialAdmissionRequest request) {
-    return new CanonicalInitialAdmissionWorldProof(
-        request.initialAdmissionRequestId(),
-        request.requestDigest(),
-        request.targetNamespace(),
-        request.canonicalTenantId(),
-        request.worldSlug(),
-        request.realmId(),
-        request.playableStateNamespaceId(),
-        request.playableStateScope(),
-        request.canonicalGameInstanceId(),
-        request.canonicalVersionId(),
-        "ACTIVE",
-        request.activeLifecycleEpoch(),
-        request.originKind(),
-        request.expectedCatalogRevision(),
-        request.expectedPriorPointerVersion(),
-        request.holdId(),
-        request.holdFence(),
-        request.holdBindingDigest());
-  }
-
   private static UUID uuid(String value) {
     return UUID.fromString(value);
   }
@@ -417,13 +190,6 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
 
   private static final class RecordingTransactionManager implements PlatformTransactionManager {
     private final List<TransactionSettings> settings = new ArrayList<>();
-    private int commitCount;
-    private int rollbackCount;
-    private int failOnCommitNumber;
-
-    private RecordingTransactionManager(int failOnCommitNumber) {
-      this.failOnCommitNumber = failOnCommitNumber;
-    }
 
     @Override
     public TransactionStatus getTransaction(TransactionDefinition definition) {
@@ -442,16 +208,11 @@ class DatabaseCanonicalInitialAdmissionServiceTest {
 
     @Override
     public void commit(TransactionStatus status) {
-      commitCount++;
       TransactionSynchronizationManager.clear();
-      if (commitCount == failOnCommitNumber) {
-        throw new IllegalStateException("simulated transaction commit failure");
-      }
     }
 
     @Override
     public void rollback(TransactionStatus status) {
-      rollbackCount++;
       TransactionSynchronizationManager.clear();
     }
   }

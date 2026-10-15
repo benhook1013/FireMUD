@@ -4,26 +4,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
-import java.util.List;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
-import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository.CanonicalGameInstanceLaunchAssociationConflictException;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalStartingInstanceRepository;
-import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalStartingInstanceRepository.CanonicalStartingInstanceConflictException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalStartingInstanceRepository.InvalidCanonicalStartingInstanceEvidenceException;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalStartingInstanceRepository.StartingInstance;
 import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
@@ -61,10 +63,13 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
   private static final UUID CANONICAL_VERSION_ID = uuid(207);
   private static final UUID OWNER_ACCOUNT_UUID = uuid(208);
   private static final String CONTROL_PLANE_REQUEST_ID = "canonical-starting-control-request-1";
-  private static final String REQUEST_DIGEST = "a".repeat(64);
+  private static final StartSessionPostAuthorizationExecutionTuple ORIGINAL_TUPLE =
+      CanonicalHumanPublicationOwnerTestFixtures.tuple(
+          NAMESPACE, TENANT, OWNER_ACCOUNT_UUID, 301L, CONTROL_PLANE_REQUEST_ID);
+  private static final String REQUEST_DIGEST = ORIGINAL_TUPLE.mutationDigest();
   private static final String OTHER_REQUEST_DIGEST = "b".repeat(64);
-  private static final String RUNTIME_FLAGS_JSON = "{\"eventMode\":true}";
-  private static final String OTHER_RUNTIME_FLAGS_JSON = "{\"eventMode\":false}";
+  private static final String RUNTIME_FLAGS_JSON = "{}";
+  private static final String CHANGED_LAUNCH_DESCRIPTOR_ID = "descriptor-for-starting-changed";
   private static final long GAME_TEMPLATE_ID = 301L;
   private static final long VERSION_ID = 302L;
   private static final long RELEASE_BUNDLE_ID = 303L;
@@ -81,7 +86,7 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
   void createsUuidOwnedStartingRowAndAssociationAndExactRetryReturnsOriginalIdentity() {
     Fixture fixture = fixture(true);
     CompleteLaunchBindingEvidence binding =
-        launchBinding(fixture.source().source(), CONTROL_PLANE_REQUEST_ID, RUNTIME_FLAGS_JSON);
+        launchBinding(fixture.source().source(), fixture.publishedSet(), CONTROL_PLANE_REQUEST_ID);
 
     StartingInstance first =
         fixture.start(OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, REQUEST_DIGEST, binding);
@@ -91,9 +96,10 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
     assertThat(retry).isEqualTo(first);
     assertThat(first.gameInstanceId()).isPositive();
     assertThat(first.gameInstanceUuid()).isNotEqualTo(new UUID(0L, 0L));
-    assertThat(first.gameInstanceId()).isNotEqualTo(SOURCE_GAME_ROW_ID);
-    assertThat(fixture.tenantAssociation().legacyGameSessionTenantId())
-        .isNotEqualTo(SOURCE_GAME_ROW_ID);
+    assertThat(fixture.tenantAssociation().sourceEvidence().sourceGameRowId())
+        .isEqualTo(fixture.source().source().sourceGameRowId());
+    assertThat(fixture.tenantAssociation().sourceEvidence().sourceGameTenantKey())
+        .isEqualTo(fixture.source().source().sourceGameTenantKey());
     assertThat(first.launchAssociation().gameInstanceUuid()).isEqualTo(first.gameInstanceUuid());
     assertThat(first.launchAssociation().currentGameInstanceStatus().name()).isEqualTo("STARTING");
     assertThat(first.launchAssociation().capturedStartingRowVersion()).isZero();
@@ -134,16 +140,27 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
             fixture.dsl(),
             "SELECT complete_launch_binding_evidence -> 'descriptor' ->> 'runtimeFlagsJson' "
                 + "AS runtime_flags, complete_launch_binding_evidence -> 'descriptor' "
-                + "->> 'scriptPatchVersion' AS candidate_script_patch, game_instance_uuid "
+                + "->> 'scriptPatchVersion' AS candidate_script_patch, game_instance_uuid, "
+                + "original_start_session_tuple, catalog_creation_request_id, catalog_revision "
                 + "FROM game_session_canonical_instance_launch "
                 + "WHERE target_namespace = ? AND control_plane_request_id = ?",
             NAMESPACE,
             CONTROL_PLANE_REQUEST_ID);
     assertThat(association.get("runtime_flags", String.class)).isEqualTo(RUNTIME_FLAGS_JSON);
-    assertThat(association.get("candidate_script_patch", String.class))
-        .isEqualTo("candidate-script-v1");
+    assertThat(association.get("candidate_script_patch", String.class)).isNull();
     assertThat(association.get("game_instance_uuid", UUID.class))
         .isEqualTo(first.gameInstanceUuid());
+    assertThat(association.get("original_start_session_tuple", byte[].class))
+        .containsExactly(fixture.originalTuple().canonicalBytes());
+    assertThat(association.get("catalog_creation_request_id", UUID.class))
+        .isEqualTo(CATALOG_REQUEST_ID);
+    assertThat(association.get("catalog_revision", Long.class))
+        .isEqualTo(
+            fixture
+                .catalogRepository()
+                .readByRequest(NAMESPACE, CATALOG_REQUEST_ID)
+                .orElseThrow()
+                .catalogRevision());
     assertThat(fixture.dsl().fetchCount(DSL.table(DSL.name("game_instances")))).isEqualTo(1);
     assertThat(
             fixture.dsl().fetchCount(DSL.table(DSL.name("game_session_canonical_instance_launch"))))
@@ -156,7 +173,7 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
   void sameRequestContendersReturnOneOriginalRowAndAssociation() throws Exception {
     Fixture fixture = fixture(true);
     CompleteLaunchBindingEvidence binding =
-        launchBinding(fixture.source().source(), CONTROL_PLANE_REQUEST_ID, RUNTIME_FLAGS_JSON);
+        launchBinding(fixture.source().source(), fixture.publishedSet(), CONTROL_PLANE_REQUEST_ID);
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -187,30 +204,34 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
   void changedOwnerDigestOrBindingConflictsWithoutCreatingAnotherRuntimeRow() {
     Fixture fixture = fixture(true);
     CompleteLaunchBindingEvidence binding =
-        launchBinding(fixture.source().source(), CONTROL_PLANE_REQUEST_ID, RUNTIME_FLAGS_JSON);
+        launchBinding(fixture.source().source(), fixture.publishedSet(), CONTROL_PLANE_REQUEST_ID);
     StartingInstance original =
         fixture.start(OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, REQUEST_DIGEST, binding);
 
     assertThatThrownBy(
             () -> fixture.start(uuid(209), CONTROL_PLANE_REQUEST_ID, REQUEST_DIGEST, binding))
-        .isInstanceOf(CanonicalStartingInstanceConflictException.class)
+        .isInstanceOf(InvalidCanonicalStartingInstanceEvidenceException.class)
         .hasMessageContaining("owner");
     assertThatThrownBy(
             () ->
                 fixture.start(
                     OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, OTHER_REQUEST_DIGEST, binding))
-        .isInstanceOf(CanonicalStartingInstanceConflictException.class)
-        .hasMessageContaining("request digest");
+        .isInstanceOf(InvalidCanonicalStartingInstanceEvidenceException.class)
+        .hasMessageContaining("launch request");
 
     CompleteLaunchBindingEvidence changedBinding =
         launchBinding(
-            fixture.source().source(), CONTROL_PLANE_REQUEST_ID, OTHER_RUNTIME_FLAGS_JSON);
+            fixture.source().source(),
+            fixture.publishedSet(),
+            CONTROL_PLANE_REQUEST_ID,
+            CHANGED_LAUNCH_DESCRIPTOR_ID,
+            fixture.source().source().operationId());
     assertThatThrownBy(
             () ->
                 fixture.start(
                     OWNER_ACCOUNT_UUID, CONTROL_PLANE_REQUEST_ID, REQUEST_DIGEST, changedBinding))
-        .isInstanceOf(CanonicalGameInstanceLaunchAssociationConflictException.class)
-        .hasMessageContaining("changed tenant, instance, or source binding");
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Canonical descriptor pin differs from complete launch binding");
 
     assertThat(
             requiredRecord(
@@ -232,7 +253,11 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
     Fixture fixture = fixture(true);
     CompleteLaunchBindingEvidence mismatchedSource =
         launchBinding(
-            fixture.source().source(), CONTROL_PLANE_REQUEST_ID, RUNTIME_FLAGS_JSON, uuid(299));
+            fixture.source().source(),
+            fixture.publishedSet(),
+            CONTROL_PLANE_REQUEST_ID,
+            "descriptor-for-starting",
+            uuid(299));
     assertThatThrownBy(
             () ->
                 fixture.start(
@@ -243,7 +268,8 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
 
     Fixture missingRealm = fixture(false);
     CompleteLaunchBindingEvidence validBinding =
-        launchBinding(missingRealm.source().source(), CONTROL_PLANE_REQUEST_ID, RUNTIME_FLAGS_JSON);
+        launchBinding(
+            missingRealm.source().source(), missingRealm.publishedSet(), CONTROL_PLANE_REQUEST_ID);
     assertThatThrownBy(
             () ->
                 missingRealm.start(
@@ -251,6 +277,116 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("visible public SHARED realm");
     assertNoStartingRows(missingRealm);
+  }
+
+  @Test
+  void captureWaitsForRequestLockBeforeRejectingUnavailableOriginalPins() throws Exception {
+    Fixture fixture = fixture(true);
+    String requestId = CONTROL_PLANE_REQUEST_ID + "-without-pins";
+    StartSessionPostAuthorizationExecutionTuple unpinnedTuple =
+        CanonicalHumanPublicationOwnerTestFixtures.tuple(
+            NAMESPACE, TENANT, OWNER_ACCOUNT_UUID, GAME_TEMPLATE_ID, requestId);
+    CompleteLaunchBindingEvidence unpinnedBinding =
+        launchBinding(fixture.source().source(), fixture.publishedSet(), requestId);
+    CanonicalGameInstanceLaunchAssociationRepository associationRepository =
+        new CanonicalGameInstanceLaunchAssociationRepository(fixture.dsl(), NAMESPACE);
+    String lockKey = NAMESPACE + ":" + requestId;
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    try (Connection lockConnection = fixture.dataSource().getConnection()) {
+      boolean lockHeld = false;
+      try {
+        try (PreparedStatement acquire =
+            lockConnection.prepareStatement(
+                "SELECT pg_advisory_lock(hashtextextended(? || ':' || ?, 0))")) {
+          acquire.setString(1, NAMESPACE);
+          acquire.setString(2, requestId);
+          acquire.execute();
+          lockHeld = true;
+        }
+
+        Future<?> capture =
+            executor.submit(
+                () ->
+                    fixture
+                        .transactions()
+                        .executeWithoutResult(
+                            status ->
+                                associationRepository.capture(
+                                    fixture.tenantAssociation(),
+                                    1L,
+                                    unpinnedBinding,
+                                    unpinnedTuple)));
+        awaitAdvisoryWaiter(fixture, lockKey, capture);
+        assertThat(capture.isDone()).isFalse();
+        assertNoStartingRows(fixture);
+        assertThat(fixture.dsl().fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
+            .isZero();
+
+        try (PreparedStatement release =
+            lockConnection.prepareStatement(
+                "SELECT pg_advisory_unlock(hashtextextended(? || ':' || ?, 0))")) {
+          release.setString(1, NAMESPACE);
+          release.setString(2, requestId);
+          release.execute();
+          lockHeld = false;
+        }
+
+        assertThatThrownBy(() -> capture.get(20, TimeUnit.SECONDS))
+            .isInstanceOf(ExecutionException.class)
+            .hasRootCauseInstanceOf(IllegalStateException.class)
+            .hasRootCauseMessage("Exact canonical pins are required before STARTING");
+        assertNoStartingRows(fixture);
+        assertThat(fixture.dsl().fetchCount(DSL.table(DSL.name("gameplay_admission_pointer"))))
+            .isZero();
+      } finally {
+        if (lockHeld) {
+          try (PreparedStatement release =
+              lockConnection.prepareStatement(
+                  "SELECT pg_advisory_unlock(hashtextextended(? || ':' || ?, 0))")) {
+            release.setString(1, NAMESPACE);
+            release.setString(2, requestId);
+            release.execute();
+          }
+        }
+      }
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  private static void awaitAdvisoryWaiter(Fixture fixture, String lockKey, Future<?> capture) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+    while (System.nanoTime() < deadline) {
+      Long waiting =
+          Objects.requireNonNull(
+                  fixture
+                      .dsl()
+                      .fetchOne(
+                          "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+                              + "AND NOT granted AND objsubid = 1 "
+                              + "AND classid = (((hashtextextended(?, 0) >> 32) "
+                              + "& 4294967295)::oid) "
+                              + "AND objid = ((hashtextextended(?, 0) & 4294967295)::oid)",
+                          lockKey,
+                          lockKey),
+                  "PostgreSQL did not return the advisory-lock waiter count")
+              .get(0, Long.class);
+      if (waiting == 1L) {
+        return;
+      }
+      if (capture.isDone()) {
+        throw new AssertionError(
+            "Capture completed before it waited on the request lock and checked original pins");
+      }
+      try {
+        Thread.sleep(10);
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(
+            "Interrupted while awaiting the canonical request-lock waiter", interrupted);
+      }
+    }
+    throw new AssertionError("Capture did not wait on the canonical request advisory lock");
   }
 
   private static StartingInstance contender(
@@ -274,14 +410,18 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
   }
 
   private static CompleteLaunchBindingEvidence launchBinding(
-      AuthoredWorldSourceEvidence source, String requestId, String runtimeFlagsJson) {
-    return launchBinding(source, requestId, runtimeFlagsJson, source.operationId());
+      AuthoredWorldSourceEvidence source,
+      RealmPolicyPublishedEvidence.PublishedSet publishedSet,
+      String requestId) {
+    return launchBinding(
+        source, publishedSet, requestId, "descriptor-for-starting", source.operationId());
   }
 
   private static CompleteLaunchBindingEvidence launchBinding(
       AuthoredWorldSourceEvidence source,
+      RealmPolicyPublishedEvidence.PublishedSet publishedSet,
       String requestId,
-      String runtimeFlagsJson,
+      String launchDescriptorId,
       UUID authoredWorldSourceOperationId) {
     AuthoredWorldLaunchDescriptorEvidence.Request descriptorRequest =
         new AuthoredWorldLaunchDescriptorEvidence.Request(
@@ -292,66 +432,29 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
             authoredWorldSourceOperationId,
             source.evidenceDigest(),
             GAME_TEMPLATE_ID,
-            true,
-            "candidate-script-v1",
             false,
             null,
             false,
             null,
+            false,
+            null,
             true,
-            runtimeFlagsJson);
+            RUNTIME_FLAGS_JSON);
     AuthoredWorldLaunchDescriptorEvidence descriptor =
         AuthoredWorldLaunchDescriptorEvidence.create(
             descriptorRequest,
-            "descriptor-for-starting",
+            launchDescriptorId,
             VERSION_ID,
-            true,
-            "candidate-script-v1",
-            runtimeFlagsJson,
+            false,
+            null,
+            RUNTIME_FLAGS_JSON,
             "generation-config-8",
             VERSION_STATE_EPOCH,
             RELEASE_BUNDLE_ID,
             "published-release-bundle-303",
             false,
             null);
-    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
-        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(VERSION_ID),
-                        false,
-                        null,
-                        "commit-starting-303",
-                        "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null))
-            .toList();
-    AuthoredWorldReleaseAttestationEvidence release =
-        AuthoredWorldReleaseAttestationEvidence.create(
-            NAMESPACE,
-            descriptor.resultDigest(),
-            source.canonicalTenantId(),
-            CANONICAL_VERSION_ID,
-            source.worldSlug(),
-            authoredWorldSourceOperationId,
-            source.evidenceDigest(),
-            descriptor.launchDescriptorId(),
-            descriptor.publishedReleaseBundleRef(),
-            descriptor.versionStateEpoch(),
-            "publish-starting-303",
-            "commit-starting-303",
-            participants,
-            "sha256:" + "e".repeat(64),
-            1,
-            List.of(),
-            List.of(),
-            List.of("LOOK"),
-            descriptor.generationConfigRevision());
-    return new CompleteLaunchBindingEvidence(descriptor, release);
+    return CanonicalHumanPublicationOwnerTestFixtures.completeBinding(descriptor, publishedSet);
   }
 
   private static AuthoredWorldSourceEvidence freshSource() {
@@ -401,13 +504,16 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
 
   private record Fixture(
       DSLContext dsl,
+      DriverManagerDataSource dataSource,
       TransactionTemplate transactions,
       GameSessionAuthoredWorldSourceRepository sourceRepository,
       GameSessionFreshTenantAssociationRepository tenantAssociationRepository,
       GameSessionCanonicalRealmCatalogRepository catalogRepository,
       GameSessionCanonicalStartingInstanceRepository startingRepository,
       IntakeReceipt source,
-      FreshGameSessionTenantAssociation tenantAssociation) {
+      FreshGameSessionTenantAssociation tenantAssociation,
+      StartSessionPostAuthorizationExecutionTuple originalTuple,
+      RealmPolicyPublishedEvidence.PublishedSet publishedSet) {
     StartingInstance start(
         UUID ownerAccountUuid,
         String controlPlaneRequestId,
@@ -421,7 +527,8 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
                       binding,
                       ownerAccountUuid,
                       controlPlaneRequestId,
-                      requestDigest)),
+                      requestDigest,
+                      originalTuple)),
           "canonical STARTING owner result");
     }
   }
@@ -461,39 +568,59 @@ class GameSessionCanonicalStartingInstanceRepositoryIntegrationTest {
             transactions.execute(
                 status -> sourceRepository.register(INTAKE_REQUEST_ID, freshSource())),
             "registered authored-world source receipt");
-    if (createRealm) {
-      var request =
-          new CreateCanonicalRealmCatalogRequest(
-              CATALOG_REQUEST_ID,
-              NAMESPACE,
-              TENANT,
-              source.operationId(),
-              "amber-realm",
-              "Amber Realm",
-              true,
-              true,
-              "SHARED",
-              "explicit-policy-v1",
-              null,
-              null);
-      var prepared = catalogRepository.prepareInitialPublicProduction(request);
-      transactions.execute(status -> catalogRepository.createInitialPublicProduction(prepared));
-    }
     FreshGameSessionTenantAssociation tenantAssociation =
         Objects.requireNonNull(
             transactions.execute(
                 status ->
                     tenantAssociationRepository.associateFresh(
-                        TENANT_ASSOCIATION_OPERATION_ID, NAMESPACE, source)),
-            "fresh source-bound Game Session tenant association");
+                        TENANT_ASSOCIATION_OPERATION_ID,
+                        NAMESPACE,
+                        source,
+                        CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
+                            source.source()))),
+            "fresh complete source-bound Game Session tenant association");
+    var request =
+        new CreateCanonicalRealmCatalogRequest(
+            CATALOG_REQUEST_ID,
+            NAMESPACE,
+            TENANT,
+            source.operationId(),
+            "amber-realm",
+            "Amber Realm",
+            true,
+            true,
+            "SHARED",
+            "PRESEEDED_ONLY",
+            null,
+            null);
+    var publishedSet =
+        CanonicalHumanPublicationOwnerTestFixtures.publishedSet(
+            request,
+            source.source(),
+            CANONICAL_VERSION_ID,
+            VERSION_ID,
+            "publication-for-starting-303",
+            "published-release-bundle-303",
+            "generation-config-8",
+            VERSION_STATE_EPOCH);
+    if (createRealm) {
+      var prepared = catalogRepository.prepareInitialPublicProduction(request, publishedSet);
+      transactions.execute(status -> catalogRepository.createInitialPublicProduction(prepared));
+    }
+    var binding = launchBinding(source.source(), publishedSet, CONTROL_PLANE_REQUEST_ID);
+    CanonicalHumanPublicationOwnerTestFixtures.pinLaunch(
+        dsl, transactions, ORIGINAL_TUPLE, source.source(), publishedSet, binding);
     return new Fixture(
         dsl,
+        dataSource,
         transactions,
         sourceRepository,
         tenantAssociationRepository,
         catalogRepository,
         startingRepository,
         source,
-        tenantAssociation);
+        tenantAssociation,
+        ORIGINAL_TUPLE,
+        publishedSet);
   }
 }

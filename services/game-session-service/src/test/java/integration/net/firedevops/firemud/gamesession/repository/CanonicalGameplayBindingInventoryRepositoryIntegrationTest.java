@@ -181,7 +181,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   void persistsFirstBindingAccountIndexReadbackWithoutPriorObligation() {
     TestSchema testSchema = newTestSchema("gs_binding_first_projection_");
     try {
-      LeaseBoundFirstBinding fixture = prepareLeaseBoundFirstBinding(testSchema.dsl());
+      LeaseBoundFirstBinding fixture =
+          prepareLeaseBoundFirstBinding(testSchema.dataSource(), testSchema.dsl());
       assertThat(fixture.evidence().expectedPrior()).isNull();
       String member =
           CanonicalGameplayAccountIndexMember.of(fixture.evidence().candidate()).value();
@@ -214,7 +215,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   void readsLeaseBoundAdmissionDecisionInReadOnlyTransaction() {
     TestSchema testSchema = newTestSchema("gs_binding_readonly_decision_");
     try {
-      LeaseBoundFirstBinding fixture = prepareLeaseBoundFirstBinding(testSchema.dsl());
+      LeaseBoundFirstBinding fixture =
+          prepareLeaseBoundFirstBinding(testSchema.dataSource(), testSchema.dsl());
 
       var decision =
           fixture.repository().readAdmissionDecision(TRANSITION_ID, fixture.leaseEvidence());
@@ -232,7 +234,8 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   void persistsLeaseBoundAdmissionTerminalTimestampAsPostgresTimestamptz() {
     TestSchema testSchema = newTestSchema("gs_binding_terminal_timestamp_");
     try {
-      LeaseBoundFirstBinding fixture = prepareLeaseBoundFirstBinding(testSchema.dsl());
+      LeaseBoundFirstBinding fixture =
+          prepareLeaseBoundFirstBinding(testSchema.dataSource(), testSchema.dsl());
 
       var decision =
           fixture.repository().readAdmissionDecision(TRANSITION_ID, fixture.leaseEvidence());
@@ -264,7 +267,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
     CountDownLatch allowRuntimeMutation = new CountDownLatch(1);
     try {
       PreparedLeaseBoundFirstBinding fixture =
-          prepareLeaseBoundFirstBindingDecision(testSchema.dsl());
+          prepareLeaseBoundFirstBindingDecision(testSchema.dataSource(), testSchema.dsl());
       CanonicalPlayableTarget target = fixture.runtimeTarget().playableTarget();
       long initialRowVersion =
           Objects.requireNonNull(
@@ -527,8 +530,21 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
         null);
   }
 
-  private static LeaseBoundFirstBinding prepareLeaseBoundFirstBinding(DSLContext dsl) {
-    PreparedLeaseBoundFirstBinding prepared = prepareLeaseBoundFirstBindingDecision(dsl);
+  private static CanonicalGameplayBindingTransitionRequest request(
+      String sessionId, CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget runtimeTarget) {
+    return new CanonicalGameplayBindingTransitionRequest(
+        TRANSITION_ID,
+        ACCOUNT_INDEX_FENCE,
+        identity(sessionId, runtimeTarget),
+        reservation(RESERVATION_FENCE),
+        null,
+        null);
+  }
+
+  private static LeaseBoundFirstBinding prepareLeaseBoundFirstBinding(
+      DriverManagerDataSource dataSource, DSLContext dsl) {
+    PreparedLeaseBoundFirstBinding prepared =
+        prepareLeaseBoundFirstBindingDecision(dataSource, dsl);
     prepared.repository().markProvisional(prepared.evidence(), prepared.decision());
     return new LeaseBoundFirstBinding(
         prepared.repository(),
@@ -537,16 +553,15 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   }
 
   private static PreparedLeaseBoundFirstBinding prepareLeaseBoundFirstBindingDecision(
-      DSLContext dsl) {
+      DriverManagerDataSource dataSource, DSLContext dsl) {
     var runtimeTarget =
-        CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(
-            dsl, TENANT_ID, 1L, RUNTIME_GAME_INSTANCE_ID, INSTANCE_ID, NAMESPACE_ID);
+        CanonicalGameplayBindingRuntimeTestFixtures.seedRunningLaunch(dataSource, TENANT_ID);
     // This synthetic disposition opens the repository branch for proof; it is not real migration
     // or bootstrap authorization.
     seedSyntheticVerifiedLegacyDisposition(dsl);
     CanonicalGameplayBindingInventoryRepository repository =
         new CanonicalGameplayBindingInventoryRepository(dsl);
-    CanonicalGameplayBindingTransitionRequest request = request(candidateSession(1));
+    CanonicalGameplayBindingTransitionRequest request = request(candidateSession(1), runtimeTarget);
     repository.prepare(request);
     CanonicalGameplayBindingProvisionalCasEvidence preparedEvidence =
         repository.readProvisionalCasEvidence(TRANSITION_ID);
@@ -679,7 +694,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
         .locations(MIGRATION_LOCATION)
         .load()
         .migrate();
-    return new TestSchema(schema, dslForSchema(dataSource, schema));
+    return new TestSchema(schema, dataSource, dslForSchema(dataSource, schema));
   }
 
   private static void awaitLatch(CountDownLatch latch) {
@@ -729,7 +744,7 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
       CanonicalGameplayAdmissionDecision decision,
       CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget runtimeTarget) {}
 
-  private record TestSchema(String schema, DSLContext dsl) {}
+  private record TestSchema(String schema, DriverManagerDataSource dataSource, DSLContext dsl) {}
 
   private static CanonicalGameplayBindingTransitionRequest transferRequest(
       String candidateSessionId, CanonicalGameplayBindingIdentity prior) {
@@ -743,14 +758,33 @@ class CanonicalGameplayBindingInventoryRepositoryIntegrationTest {
   }
 
   static CanonicalGameplayBindingIdentity identity(String sessionId) {
+    return identity(sessionId, TENANT_ID, NAMESPACE_ID, INSTANCE_ID, RUNTIME_GAME_INSTANCE_ID);
+  }
+
+  private static CanonicalGameplayBindingIdentity identity(
+      String sessionId, CanonicalGameplayBindingRuntimeTestFixtures.RuntimeTarget runtimeTarget) {
+    return identity(
+        sessionId,
+        runtimeTarget.canonicalTenantId(),
+        runtimeTarget.playableStateNamespaceId(),
+        runtimeTarget.gameInstanceUuid(),
+        runtimeTarget.gameInstanceId());
+  }
+
+  private static CanonicalGameplayBindingIdentity identity(
+      String sessionId,
+      UUID canonicalTenantId,
+      UUID playableStateNamespaceId,
+      UUID gameInstanceUuid,
+      long runtimeGameInstanceId) {
     return new CanonicalGameplayBindingIdentity(
         ACCOUNT_ID,
-        TENANT_ID,
-        NAMESPACE_ID,
+        canonicalTenantId,
+        playableStateNamespaceId,
         CHARACTER_ID,
         "SHARED",
-        INSTANCE_ID,
-        RUNTIME_GAME_INSTANCE_ID,
+        gameInstanceUuid,
+        runtimeGameInstanceId,
         sessionId,
         REGION_ID,
         BigInteger.valueOf(12),

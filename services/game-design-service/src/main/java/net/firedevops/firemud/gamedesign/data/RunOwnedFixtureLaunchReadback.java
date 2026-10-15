@@ -51,6 +51,8 @@ public class RunOwnedFixtureLaunchReadback {
   private final VersionService versionService;
   private final VersionAssetArtifactService artifactService;
   private final LaunchDescriptorService launchDescriptorService;
+  private final net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
+      creationRepository;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
@@ -64,7 +66,9 @@ public class RunOwnedFixtureLaunchReadback {
       GameAuthoredWorldSourceRepository sourceRepository,
       VersionService versionService,
       VersionAssetArtifactService artifactService,
-      LaunchDescriptorService launchDescriptorService) {
+      LaunchDescriptorService launchDescriptorService,
+      net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
+          creationRepository) {
     this.gameRepository = gameRepository;
     this.templateRepository = templateRepository;
     this.versionRepository = versionRepository;
@@ -73,6 +77,7 @@ public class RunOwnedFixtureLaunchReadback {
     this.versionService = versionService;
     this.artifactService = artifactService;
     this.launchDescriptorService = launchDescriptorService;
+    this.creationRepository = creationRepository;
   }
 
   @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
@@ -113,6 +118,21 @@ public class RunOwnedFixtureLaunchReadback {
           "Committed launch owner readback differs from the captured fixture snapshot");
     }
     return readback;
+  }
+
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence readCommittedCreation(
+      net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence captured) {
+    var committed =
+        creationRepository
+            .read(captured.creationRequestId(), captured.targetNamespace())
+            .orElseThrow(
+                () -> new IllegalStateException("Committed fixture creation receipt unavailable"));
+    if (!captured.equals(committed)) {
+      throw new IllegalStateException(
+          "Committed fixture creation differs from its original operation");
+    }
+    return committed;
   }
 
   /** Resolves and independently reads the committed descriptor outside the seeder transaction. */

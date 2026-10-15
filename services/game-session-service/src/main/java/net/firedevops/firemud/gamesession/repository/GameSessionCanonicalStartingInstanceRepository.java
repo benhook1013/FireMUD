@@ -5,6 +5,8 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.RuntimeTenantIdentityEvidence;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
@@ -18,8 +20,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  *
  * <p>This repository is deliberately not a Spring component and is not an Account grant or
  * redemption adapter. Its caller must already have independently redeemed the exact Account
- * authorization and supply the resulting canonical owner UUID and immutable operator request
- * identity/digest. This class has no World lifecycle, pointer, or runtime-projection dependency.
+ * authorization and supply the resulting original post-authorization tuple, canonical owner UUID,
+ * and immutable operator request identity/digest. Existing canonical selection and descriptor pins
+ * must retain that exact tuple under a live original owner lease before allocation. This class has
+ * no World lifecycle, pointer, or runtime-projection dependency.
  */
 public final class GameSessionCanonicalStartingInstanceRepository {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
@@ -54,8 +58,10 @@ public final class GameSessionCanonicalStartingInstanceRepository {
       CompleteLaunchBindingEvidence launchBinding,
       UUID canonicalOwnerAccountUuid,
       String controlPlaneRequestId,
-      String canonicalRequestDigest) {
+      String canonicalRequestDigest,
+      StartSessionPostAuthorizationExecutionTuple originalTuple) {
     requireWritableReadCommittedOwnerTransaction();
+    Objects.requireNonNull(originalTuple, "originalTuple");
     Objects.requireNonNull(tenantAssociation, "tenantAssociation");
     Objects.requireNonNull(launchBinding, "launchBinding");
     requireNonNil(canonicalOwnerAccountUuid, "canonicalOwnerAccountUuid");
@@ -71,10 +77,25 @@ public final class GameSessionCanonicalStartingInstanceRepository {
           "Operator request identity or workload namespace differs from the complete launch binding");
     }
     requireFreshTenantTuple(tenantAssociation, descriptor);
+    var action = originalTuple.preAuthorizationTuple().action();
+    if (!"human_operator".equals(originalTuple.issuanceKind())
+        || !"StartSession".equals(originalTuple.preAuthorizationTuple().actionFamily())
+        || !"game-session-service".equals(originalTuple.preAuthorizationTuple().targetOwner())
+        || !workloadNamespace.equals(action.scope().targetNamespace())
+        || !descriptor.canonicalTenantId().equals(action.scope().tenantId())
+        || descriptor.gameTemplateId() != action.target().gameTemplateId()
+        || !canonicalOwnerAccountUuid.equals(action.target().ownerAccountId())
+        || !controlPlaneRequestId.equals(originalTuple.controlPlaneRequestId())
+        || !canonicalRequestDigest.equals(originalTuple.mutationDigest())) {
+      throw new InvalidCanonicalStartingInstanceEvidenceException(
+          "Original StartSession tuple differs from the exact owner, action, or launch request");
+    }
 
     // This is the same serialization key used by association capture, before any owner lookup.
     launchAssociationRepository.lockRequestForStartingGameInstance(controlPlaneRequestId);
-    requireExactPersistedSource(tenantAssociation.sourceEvidence(), launchBinding);
+    requireExactPersistedSource(tenantAssociation, launchBinding);
+    launchAssociationRepository.requireOriginalPinsBeforeStarting(originalTuple, launchBinding);
+    requireLiveOriginalOwner(originalTuple);
 
     Record existingAssociation = findLaunchAssociationForRequest(controlPlaneRequestId);
     if (existingAssociation != null) {
@@ -96,7 +117,8 @@ public final class GameSessionCanonicalStartingInstanceRepository {
           storedInstanceUuid);
 
       CanonicalGameInstanceLaunchAssociation association =
-          launchAssociationRepository.capture(tenantAssociation, storedInstanceId, launchBinding);
+          launchAssociationRepository.capture(
+              tenantAssociation, storedInstanceId, launchBinding, originalTuple);
       requireAssociationMatches(association, storedTenantId, storedInstanceUuid);
       return new StartingInstance(storedInstanceId, storedInstanceUuid, association);
     }
@@ -125,7 +147,8 @@ public final class GameSessionCanonicalStartingInstanceRepository {
 
     // V26's initially deferred owner trigger requires this association before transaction commit.
     CanonicalGameInstanceLaunchAssociation association =
-        launchAssociationRepository.capture(tenantAssociation, gameInstanceId, launchBinding);
+        launchAssociationRepository.capture(
+            tenantAssociation, gameInstanceId, launchBinding, originalTuple);
     Record persistedRuntime =
         lockRuntime(tenantAssociation.legacyGameSessionTenantId(), gameInstanceId);
     requireRequestOwnerAndRuntime(
@@ -144,6 +167,33 @@ public final class GameSessionCanonicalStartingInstanceRepository {
     requireAssociationMatches(
         association, tenantAssociation.legacyGameSessionTenantId(), gameInstanceUuid);
     return new StartingInstance(gameInstanceId, gameInstanceUuid, association);
+  }
+
+  private void requireLiveOriginalOwner(StartSessionPostAuthorizationExecutionTuple tuple) {
+    String referenceExpiresAt =
+        StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes())
+            .authorizationExpiresAt();
+    Record owner =
+        dsl.fetchOne(
+            "SELECT isfinite(lease_expires_at) AND lease_expires_at > clock_timestamp() "
+                + "AND ?::timestamptz > clock_timestamp() AS live "
+                + "FROM game_session_start_session_operator_attempt "
+                + "WHERE target_namespace = ? AND control_plane_request_id = ? "
+                + "AND canonical_tenant_id = ? AND post_authorization_execution_tuple = ? "
+                + "AND mutation_digest = ? AND authorization_reference_fingerprint = ? "
+                + "AND phase_state = 'OWNER_EXECUTION_PENDING' "
+                + "AND account_redemption_projection IS NOT NULL FOR UPDATE",
+            referenceExpiresAt,
+            workloadNamespace,
+            tuple.controlPlaneRequestId(),
+            tuple.preAuthorizationTuple().action().scope().tenantId(),
+            tuple.canonicalBytes(),
+            tuple.mutationDigest(),
+            tuple.authorizationReferenceFingerprint());
+    if (owner == null || !Boolean.TRUE.equals(owner.get("live", Boolean.class))) {
+      throw new InvalidCanonicalStartingInstanceEvidenceException(
+          "Exact original StartSession owner lease or Account reference is unavailable or expired");
+    }
   }
 
   private long insertStartingRuntime(
@@ -258,7 +308,8 @@ public final class GameSessionCanonicalStartingInstanceRepository {
   }
 
   private void requireExactPersistedSource(
-      RuntimeTenantIdentityEvidence expected, CompleteLaunchBindingEvidence launchBinding) {
+      FreshGameSessionTenantAssociation association, CompleteLaunchBindingEvidence launchBinding) {
+    RuntimeTenantIdentityEvidence expected = association.sourceEvidence();
     var descriptor = launchBinding.descriptor();
     Record row =
         dsl.fetchOne(
@@ -279,11 +330,35 @@ public final class GameSessionCanonicalStartingInstanceRepository {
                 + "AND binding.source_game_row_id = intake.source_game_row_id "
                 + "AND binding.source_game_tenant_key = intake.source_game_tenant_key "
                 + "AND binding.provenance_kind = intake.source_provenance_kind "
+                + "JOIN game_session_fresh_tenant_association fresh "
+                + "ON fresh.target_namespace = intake.target_namespace "
+                + "AND fresh.canonical_tenant_id = intake.canonical_tenant_id "
+                + "AND fresh.source_game_row_id = intake.source_game_row_id "
+                + "AND fresh.source_game_tenant_key = intake.source_game_tenant_key "
+                + "AND fresh.provenance_kind = intake.source_provenance_kind "
+                + "JOIN game_session_tenant_canonical_claim claim "
+                + "ON claim.target_namespace = fresh.target_namespace "
+                + "AND claim.canonical_tenant_id = fresh.canonical_tenant_id "
+                + "AND claim.legacy_game_session_tenant_id = fresh.legacy_game_session_tenant_id "
+                + "AND claim.association_operation_id = fresh.association_operation_id "
+                + "AND claim.association_request_id = fresh.association_request_id "
+                + "AND claim.association_kind = 'FRESH_SOURCE_BOUND' "
+                + "AND claim.reservation_kind = 'FRESH_SOURCE_BOUND' "
+                + "JOIN game_session_tenant_scope_reservation reservation "
+                + "ON reservation.game_session_tenant_id = fresh.legacy_game_session_tenant_id "
+                + "AND reservation.reservation_kind = 'FRESH_SOURCE_BOUND' "
                 + "WHERE intake.target_namespace = ? "
-                + "AND intake.source_registration_request_id = ? "
-                + "AND intake.source_operation_id = ? FOR KEY SHARE OF intake, binding",
+                + "AND fresh.association_request_id = ? "
+                + "AND fresh.association_operation_id = ? "
+                + "AND fresh.legacy_game_session_tenant_id = ? "
+                + "AND fresh.association_kind = 'FRESH_SOURCE_BOUND' "
+                + "AND fresh.complete_source_evidence IS NOT NULL "
+                + "AND fresh.complete_source_evidence ->> 'creationRequestId' = fresh.association_request_id::text "
+                + "AND intake.source_operation_id = ? FOR KEY SHARE OF intake, binding, fresh, claim, reservation",
             workloadNamespace,
             expected.requestId(),
+            association.associationOperationId(),
+            association.legacyGameSessionTenantId(),
             descriptor.authoredWorldSourceOperationId());
     if (row == null) {
       throw new InvalidCanonicalStartingInstanceEvidenceException(
@@ -314,7 +389,6 @@ public final class GameSessionCanonicalStartingInstanceRepository {
 
     if (!"NEW_GAME_ROW".equals(persisted.provenanceKind())
         || !expected.targetNamespace().equals(persisted.targetNamespace())
-        || !expected.requestId().equals(persisted.registrationRequestId())
         || !expected.canonicalTenantId().equals(persisted.canonicalTenantId())
         || expected.sourceGameRowId() != persisted.sourceGameRowId()
         || !expected.sourceGameTenantKey().equals(persisted.sourceGameTenantKey())

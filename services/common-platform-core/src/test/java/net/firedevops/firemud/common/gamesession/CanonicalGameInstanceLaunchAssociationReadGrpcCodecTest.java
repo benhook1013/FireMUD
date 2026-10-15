@@ -43,6 +43,12 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
     var result =
         CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(request, response);
 
+    assertThat(CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toResponse(result))
+        .isEqualTo(response);
+    assertThat(
+            CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromRequest(
+                CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toRequest(request)))
+        .isEqualTo(request);
     assertThat(result.ownerAttemptId()).isEqualTo(OWNER_ATTEMPT_ID);
     assertThat(result.ownerFence()).isEqualTo(4L);
     assertThat(result.playableStateScope()).isEqualTo(RealmEntryPolicy.StateScope.SHARED);

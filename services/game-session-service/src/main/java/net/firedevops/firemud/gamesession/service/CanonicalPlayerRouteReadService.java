@@ -1,6 +1,5 @@
 package net.firedevops.firemud.gamesession.service;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -27,10 +26,6 @@ public final class CanonicalPlayerRouteReadService {
   private final CanonicalInitialAdmissionRepository admissionRepository;
   private final CanonicalGameInstanceLaunchAssociationRepository launchRepository;
 
-  @SuppressFBWarnings(
-      value = "EI_EXPOSE_REP2",
-      justification =
-          "Injected repository collaborators are retained only for this service's read composition")
   public CanonicalPlayerRouteReadService(
       String targetNamespace,
       GameSessionCanonicalRealmCatalogRepository catalogRepository,

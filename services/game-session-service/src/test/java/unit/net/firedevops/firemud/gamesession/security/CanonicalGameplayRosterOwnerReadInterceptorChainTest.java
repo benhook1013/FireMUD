@@ -118,6 +118,7 @@ class CanonicalGameplayRosterOwnerReadInterceptorChainTest {
     assertThat(configured)
         .containsExactly(
             "game_session.v1.GameSessionService/Ping",
+            "game_session.v1.GameSessionControlPlaneService/GetRunOwnedFixtureLaunchAssociation",
             METHOD,
             "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetPreseededActorAssignmentOwnerRead",
             "game_session.v1.GameSessionService/AuthorizeStartSession")

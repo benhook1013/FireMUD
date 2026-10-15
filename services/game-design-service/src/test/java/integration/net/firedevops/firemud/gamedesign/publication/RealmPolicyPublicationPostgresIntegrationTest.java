@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -87,6 +88,55 @@ class RealmPolicyPublicationPostgresIntegrationTest {
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void fixtureOwnerMigrationPreservesGenuineHumanPolicyRowsAndExactRetry() throws Exception {
+    // Account and remote-owner authority remain the existing ISOLATED test inputs; capture,
+    // publication, header and policy children are produced by the actual Game Design owners.
+    Fixture fixture = fixture(true, "1026");
+    GameDesignPublicationOperation operation = fixture.prepare(true);
+    fixture.writePublish(operation, false);
+    var original = fixture.publicationReads().readPublishedSet(fixture.target()).orElseThrow();
+    var originalRows = retainedPolicyOwnerRows(fixture);
+    originalRows.forEach((table, rows) -> assertThat(rows).as(table).hasSize(1));
+
+    var source =
+        (DriverManagerDataSource)
+            java.util.Objects.requireNonNull(
+                fixture.transactions().getDataSource(), "fixture transaction data source");
+    migrate(source, source.getSchema(), "1031");
+
+    assertThat(retainedPolicyOwnerRows(fixture)).isEqualTo(originalRows);
+    var retained = fixture.publicationReads().readPublishedSet(fixture.target()).orElseThrow();
+    assertPublishedSetUnchanged(original, retained);
+    var retainedHeader =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "SELECT * FROM game_design_published_realm_policy_set "
+                    + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                fixture.target().canonicalTenantId(),
+                fixture.target().canonicalVersionId());
+    for (String fixtureField :
+        List.of(
+            "fixture_operation_id",
+            "fixture_request_bytes",
+            "fixture_request_digest",
+            "fixture_evidence_digest",
+            "fixture_binding_json",
+            "fixture_policy_json")) {
+      assertThat(retainedHeader.get(fixtureField)).as(fixtureField).isNull();
+    }
+    var retry =
+        fixture.tx(
+            () ->
+                fixture
+                    .publicationWrites()
+                    .retainSealedPublished(operation.workflowId())
+                    .orElseThrow());
+    assertPublishedSetUnchanged(original, retry);
+    assertThat(retainedPolicyOwnerRows(fixture)).isEqualTo(originalRows);
+  }
 
   @Test
   void retainedAndFreshPolicyPublicationsSurviveAdditiveReleaseColumn() throws Exception {
@@ -425,12 +475,17 @@ class RealmPolicyPublicationPostgresIntegrationTest {
   }
 
   private static Fixture fixture(boolean isolatedPolicyBaseline) throws Exception {
+    return fixture(isolatedPolicyBaseline, null);
+  }
+
+  private static Fixture fixture(boolean isolatedPolicyBaseline, String migrationTarget)
+      throws Exception {
     String schema = "gd_realm_policy_pub_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
             POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
     source.setSchema(schema);
-    migrate(source, schema);
+    migrate(source, schema, migrationTarget);
     var transactions = new DataSourceTransactionManager(source);
     var write = new TransactionTemplate(transactions);
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -487,16 +542,45 @@ class RealmPolicyPublicationPostgresIntegrationTest {
         publicationReads);
   }
 
-  private static void migrate(DriverManagerDataSource source, String schema) {
-    Flyway.configure()
-        .dataSource(source)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration")
-        .table("flyway_schema_history_game_design_service")
-        .load()
-        .migrate();
+  private static void migrate(
+      DriverManagerDataSource source, String schema, String migrationTarget) {
+    var configuration =
+        Flyway.configure()
+            .dataSource(source)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration")
+            .table("flyway_schema_history_game_design_service");
+    if (migrationTarget != null) configuration.target(migrationTarget);
+    configuration.load().migrate();
+  }
+
+  private static Map<String, List<String>> retainedPolicyOwnerRows(Fixture fixture) {
+    Map<String, List<String>> rows = new LinkedHashMap<>();
+    for (String table :
+        List.of(
+            "game_design_published_realm_policy_set",
+            "game_design_realm_policy_capture",
+            "game_design_published_realm_policy")) {
+      rows.put(
+          table,
+          fixture
+              .dsl()
+              .fetch(
+                  "SELECT jsonb_build_object('row', to_jsonb(owner) - "
+                      + "ARRAY['fixture_operation_id', 'fixture_request_bytes', 'fixture_request_digest', "
+                      + "'fixture_evidence_digest', 'fixture_binding_json', 'fixture_policy_json'], "
+                      + "'xmin', owner.xmin::text, 'ctid', owner.ctid::text)::text AS retained_row "
+                      + "FROM "
+                      + table
+                      + " owner WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
+                      + "ORDER BY owner.ctid",
+                  fixture.target().canonicalTenantId(),
+                  fixture.target().canonicalVersionId())
+              .getValues("retained_row", String.class));
+    }
+    return rows;
   }
 
   private static DraftCommitBinding baseline(

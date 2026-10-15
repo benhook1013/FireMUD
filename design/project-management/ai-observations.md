@@ -265,6 +265,12 @@ Entry format:
   - Expected pattern: bound optional external uploads within the containing job's budget and preserve time for required proof artifacts. `continue-on-error` alone cannot protect against whole-job cancellation. Keep cancelled aggregate proof separate from successful individual checks.
   - Current status: the Codecov step is bounded to two minutes with its existing failure tolerance retained. New-head cloud validation remains required to verify the workflow outcome.
 
+- `2026-10-14`: Wait for the database-owned expiry condition in lock-race proof
+  - Context: a canonical Game Session pin test established its real PostgreSQL INSERT lock wait, then expected a finite owner lease to have expired after a fixed host sleep.
+  - Observation: the database still reported the lease live after the sleep, so the intended post-expiry race was not established.
+  - Expected pattern: retain the original finite lease and exact blocker, poll the same PostgreSQL expiry predicate used by the owner within a bounded deadline, then release the lock and assert refusal without mutation. Do not change the lease, renew authority, weaken the refusal assertion or infer clock skew from the failed sleep assumption.
+  - Current status: the test now waits for the database-owned expiry condition; current physical qualification remains required.
+
 - `2026-10-14`: Review-period bookkeeping must not contend for provider execution locks
   - Context: the Overseer reported that Gameplay's three concurrent metadata reset batches encountered active-provider errors during the native rollout, with no actual provider active.
   - Observation: reset-versus-reset global lock contention was reported as provider activity, and network/full-stack refresh made local counter bookkeeping slow and coupled to unrelated source readiness.
@@ -289,6 +295,17 @@ Entry format:
   - Observation: the next CLI review exposed the unchanged row. Documentation hygiene checks had passed because they do not verify that a requested semantic target changed. The original native fix record therefore overstated its proof.
   - Expected pattern: inspect the exact requested row or declaration before recording an accepted-fix resolution; verify its named anchors instead of relying on a nearby paragraph or a broad substring replacement.
   - Current status: the exact row is corrected and verified. An immutable audited resolution correction points to the published repair while retaining the original wrong attribution; the User and Overseer were informed.
+
+- `2026-10-14`: Follow typed construction before accepting a missing validation finding.
+  - Context: A CLI finding claimed World accepted non-STARTING fixture allocations.
+  - Observation: Main initially accepted it after reading the codec and client but missed the shared result constructor's existing STARTING requirement; the attempted negative fixture failed before reaching World.
+  - Recovery: The redundant production guard was removed, the decision was corrected in the immutable controller audit, and the public checkpoint correction preserves the original review credit. Focused wire-response rejection proof verifies the actual transitive boundary.
+  - Expected pattern: Follow the complete typed construction path before adjudicating an absent check. A local consumer need not repeat an invariant already enforced by every constructible input; retained findings and changed code alone are not fix proof.
+
+- `2026-10-14`: Selected-PR status can exhaust its deadline while reading historical targets
+  - Observation: Gameplay's full `reviews status --pr 3206` failed at its 120-second deadline in `target_history_pr_3162_cli`, after 99 prior phases, so it produced no completed readiness result. The existing `--summary --json` projection subsequently succeeded; no safety guard was bypassed.
+  - Consequence and unknowns: the timeout delayed current-front adjudication. The diagnostic identifies historical evidence work, but does not establish which lookup caused the overall latency or that the summary avoids that work.
+  - Current status: the exact diagnostic was reported to Overseer for the controller owner's existing performance work. Prefer the documented summary projection for routine status and retain an explicit unavailable result when a required inspection times out; reconsider at the owner's next measured performance checkpoint.
 
 - `2026-10-15`: Keep Gradle metadata refresh behind a confirmed resolution failure
   - Context: Validation's module matrix globally refreshed all dependency metadata to recover a cached negative Spring Boot 4.1.1 result. Later warm-cache builds still made remote Maven requests; retained CI logs show both a Maven Central rate limit and a separate Netty POM connection reset before tests.

@@ -55,8 +55,11 @@ import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.GrpcClientAuth;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.ArtifactState;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
@@ -99,7 +102,7 @@ import tools.jackson.databind.json.JsonMapper;
 class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
   private static final String RUN_ID = "world-mtls-fixture-test";
   private static final String PROJECT = "firemud-world-mtls-fixture-test";
-  private static final String OPERATION_ID = "7f1e5306-e9a7-46d9-b5cf-75348e20ffbd";
+  private static final String CLAIM_DIGEST = sha256Hex("controlled-world-mtls-fixture-claim-v1");
   private static final String GS_URI = "spiffe://firemud/ns/dev/sa/game-session-service";
   private static final String WORLD_URI = "spiffe://firemud/ns/dev/sa/world-management-service";
   private static final String GDS_URI = "spiffe://firemud/ns/dev/sa/game-design-service";
@@ -251,7 +254,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
                   .setTenantId("42")
                   .setGameInstanceId("101")
                   .setGameTemplateId("17")
-                  .setControlPlaneRequestId(OPERATION_ID)
+                  .setControlPlaneRequestId(fixture.operationId())
                   .setLaunchDescriptorId("launch-descriptor-fixture-11")
                   .setVersionId("11")
                   .setRuntimeFlagsJson("{}")
@@ -272,7 +275,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
                   .setTenantId("42")
                   .setGameInstanceId("101")
                   .setGameTemplateId("17")
-                  .setControlPlaneRequestId(OPERATION_ID)
+                  .setControlPlaneRequestId(fixture.operationId())
                   .setLaunchDescriptorId("launch-descriptor-fixture-11")
                   .setVersionId("11")
                   .setRuntimeFlagsJson("{}")
@@ -325,7 +328,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
           .isEqualTo(fixture.descriptorEvidence().request().canonicalTenantId().toString());
       assertThat(requestAtOwner.get().getWorldSlug())
           .isEqualTo(fixture.descriptorEvidence().worldSlug());
-      assertThat(requestAtOwner.get().getControlPlaneRequestId()).isEqualTo(OPERATION_ID);
+      assertThat(requestAtOwner.get().getControlPlaneRequestId()).isEqualTo(fixture.operationId());
       assertThat(requestAtOwner.get().getExpectedRequestDigest())
           .isEqualTo(fixture.descriptorEvidence().requestDigest());
       assertThat(requestAtOwner.get().getExpectedResultDigest())
@@ -479,7 +482,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
                       .setTenantId("42")
                       .setGameInstanceId("202")
                       .setGameTemplateId("17")
-                      .setControlPlaneRequestId(OPERATION_ID)
+                      .setControlPlaneRequestId(fixture.operationId())
                       .setLaunchDescriptorId("launch-descriptor-fixture-11")
                       .setVersionId("11")
                       .setRuntimeFlagsJson("{}")
@@ -667,9 +670,9 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
                     .canonicalTenantId()
                     .toString()
                     .equals(request.getCanonicalTenantId())
-                || !isExpectedReadRequestId(request.getRequestId())
+                || !isExpectedReadRequestId(request.getRequestId(), fixture.operationId())
                 || !fixture.descriptorEvidence().worldSlug().equals(request.getWorldSlug())
-                || !OPERATION_ID.equals(request.getControlPlaneRequestId())
+                || !fixture.operationId().equals(request.getControlPlaneRequestId())
                 || !fixture
                     .descriptorEvidence()
                     .requestDigest()
@@ -753,9 +756,9 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
         .build();
   }
 
-  private static boolean isExpectedReadRequestId(String requestId) {
+  private static boolean isExpectedReadRequestId(String requestId, String operationId) {
     try {
-      return !OPERATION_ID.equals(UUID.fromString(requestId).toString());
+      return !operationId.equals(UUID.fromString(requestId).toString());
     } catch (RuntimeException malformed) {
       return false;
     }
@@ -877,6 +880,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
     return commandService;
   }
 
+  /** Controlled closed local evidence; the launch descriptor is checked against the TLS owner. */
   private static final class Fixture {
     private final TestPki pki;
     private final Path directory;
@@ -892,13 +896,22 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
     private final VersionStateSnapshot version;
     private final LaunchDescriptor launchDescriptor;
     private final AuthoredWorldLaunchDescriptorEvidence descriptorEvidence;
+    private final String operationId;
 
     private Fixture(Path parent, TestPki pki) throws Exception {
       this.pki = pki;
       directory = Files.createDirectories(parent.resolve("world-fixture-" + UUID.randomUUID()));
       capabilityPath = directory.resolve("capability.json");
       receiptPath = directory.resolve("source-receipt.json");
-      source = sourceEvidence();
+      operationId =
+          RunOwnedInitialAdmissionFixtureWireCodec.fixtureOperationId(
+                  CLAIM_DIGEST,
+                  RUN_ID,
+                  PROJECT,
+                  fingerprint(pki.gameSessionClient().certificate()),
+                  fingerprint(pki.caCertificateValue()))
+              .toString();
+      source = sourceEvidence(operationId);
       bundle = publishedBundle(source);
       artifact = artifactState();
       version = versionState();
@@ -907,8 +920,38 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
               source, bundle, version);
       launchDescriptor =
           AuthoredWorldLaunchDescriptorGrpcCodec.toLaunchDescriptorMessage(descriptorEvidence);
-      capabilityJson = capabilityJson(pki);
-      receiptJson = receiptJson(source, bundle, artifact, version, launchDescriptor, pki);
+      var capability = capability(pki, operationId);
+      var creationEvidence = creationEvidence(source);
+      var launchReadEvidence =
+          new RunOwnedInitialAdmissionFixtureWireCodec.LaunchReadEvidence(
+              RunOwnedInitialAdmissionFixtureWireCodec.LAUNCH_READ_EVIDENCE_SCHEMA,
+              17L,
+              bundle,
+              artifact,
+              version,
+              launchDescriptor);
+      String policyRequestDigest =
+          RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestDigest(
+              capability, creationEvidence, source, launchReadEvidence);
+      var policySeal =
+          new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal(
+              RunOwnedInitialAdmissionFixtureWireCodec.FIXTURE_POLICY_SEAL_SCHEMA,
+              RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_OWNER_SERVICE,
+              UUID.fromString(operationId),
+              policyRequestDigest,
+              RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+                  UUID.fromString(operationId), policyRequestDigest));
+      capabilityJson = capabilityJson(capability);
+      receiptJson =
+          receiptJson(
+              source,
+              bundle,
+              artifact,
+              version,
+              launchDescriptor,
+              creationEvidence,
+              policySeal,
+              pki);
       originalCapabilityJson = capabilityJson;
       originalReceiptJson = receiptJson;
       writeReadonly(capabilityPath, capabilityJson.getBytes(StandardCharsets.UTF_8));
@@ -937,6 +980,10 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
 
     AuthoredWorldLaunchDescriptorEvidence descriptorEvidence() {
       return descriptorEvidence;
+    }
+
+    String operationId() {
+      return operationId;
     }
 
     void reset() throws IOException {
@@ -976,8 +1023,8 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
     }
   }
 
-  private static AuthoredWorldSourceEvidence sourceEvidence() {
-    UUID registrationId = UUID.fromString(OPERATION_ID);
+  private static AuthoredWorldSourceEvidence sourceEvidence(String operationId) {
+    UUID registrationId = UUID.fromString(operationId);
     UUID tenant = UUID.fromString("ed5d1541-a33e-4f8b-9b54-38c27d76ba6d");
     String requestDigest =
         AuthoredWorldSourceDigest.requestDigest(
@@ -1063,7 +1110,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       AuthoredWorldSourceEvidence source) {
     return new AuthoredWorldLaunchDescriptorEvidence.Request(
         "dev",
-        OPERATION_ID,
+        source.registrationRequestId().toString(),
         source.canonicalTenantId(),
         source.worldSlug(),
         source.operationId(),
@@ -1098,19 +1145,92 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
         null);
   }
 
-  private static String capabilityJson(TestPki pki) throws Exception {
+  private static RunOwnedInitialAdmissionFixtureWireCodec.Capability capability(
+      TestPki pki, String operationId) throws Exception {
+    return new RunOwnedInitialAdmissionFixtureWireCodec.Capability(
+        RunOwnedInitialAdmissionFixtureWireCodec.CAPABILITY_SCHEMA,
+        RUN_ID,
+        PROJECT,
+        operationId,
+        42L,
+        17L,
+        9L,
+        "demo",
+        "Demo World",
+        "production",
+        "Live Realm",
+        true,
+        true,
+        false,
+        "SHARED",
+        "ALLOW_NEW",
+        fingerprint(pki.gameSessionClient().certificate()),
+        GS_URI,
+        fingerprint(pki.caCertificateValue()),
+        WORLD_URI,
+        fingerprint(pki.worldManagement().certificate()),
+        CLAIM_DIGEST);
+  }
+
+  private static String capabilityJson(
+      RunOwnedInitialAdmissionFixtureWireCodec.Capability capability) {
     return """
-        {"schema":"firemud.run-owned-initial-admission-fixture.v1","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":42,"gameTemplateId":17,"ownerAccountId":9,"worldSlug":"demo","worldDisplayName":"Demo World","realmSlug":"production","realmDisplayName":"Live Realm","visible":true,"publicProductionRealm":true,"requiresCharacterSelection":false,"stateScope":"SHARED","characterCreationPolicy":"ALLOW_NEW","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s"}\
+        {"schema":"%s","runId":"%s","composeProjectName":"%s","operationId":"%s","tenantId":%d,"gameTemplateId":%d,"ownerAccountId":%d,"worldSlug":"%s","worldDisplayName":"%s","realmSlug":"%s","realmDisplayName":"%s","visible":%s,"publicProductionRealm":%s,"requiresCharacterSelection":%s,"stateScope":"%s","characterCreationPolicy":"%s","gameSessionLeafSha256":"%s","gameSessionUriSan":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","claimDigest":"%s"}\
         """
         .formatted(
-            RUN_ID,
-            PROJECT,
-            OPERATION_ID,
-            fingerprint(pki.gameSessionClient().certificate()),
-            GS_URI,
-            fingerprint(pki.caCertificateValue()),
-            WORLD_URI,
-            fingerprint(pki.worldManagement().certificate()));
+            capability.schema(),
+            capability.runId(),
+            capability.composeProjectName(),
+            capability.operationId(),
+            capability.tenantId(),
+            capability.gameTemplateId(),
+            capability.ownerAccountId(),
+            capability.worldSlug(),
+            capability.worldDisplayName(),
+            capability.realmSlug(),
+            capability.realmDisplayName(),
+            capability.visible(),
+            capability.publicProductionRealm(),
+            capability.requiresCharacterSelection(),
+            capability.stateScope(),
+            capability.characterCreationPolicy(),
+            capability.gameSessionLeafSha256(),
+            capability.gameSessionUriSan(),
+            capability.caCertificateSha256(),
+            capability.worldManagementUriSan(),
+            capability.worldManagementLeafSha256(),
+            capability.claimDigest());
+  }
+
+  private static FreshTenantCreationEvidence creationEvidence(AuthoredWorldSourceEvidence source) {
+    UUID requestId = UUID.fromString("21a3b51a-444e-4c08-bbd5-31d40f643ba2");
+    UUID operationId = UUID.fromString("3a78e019-c907-49ba-a80a-6d132aeb2135");
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            source.targetNamespace(),
+            requestId,
+            source.sourceGameTenantKey(),
+            source.worldDisplayName(),
+            null);
+    return new FreshTenantCreationEvidence(
+        1,
+        source.targetNamespace(),
+        requestId,
+        operationId,
+        requestDigest,
+        source.canonicalTenantId(),
+        source.sourceGameRowId(),
+        source.sourceGameTenantKey(),
+        source.provenanceKind(),
+        GameTenantCreationDigest.evidenceDigest(
+            source.targetNamespace(),
+            requestId,
+            operationId,
+            requestDigest,
+            source.canonicalTenantId(),
+            source.sourceGameRowId(),
+            source.sourceGameTenantKey(),
+            source.provenanceKind()));
   }
 
   private static String receiptJson(
@@ -1119,15 +1239,17 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       VersionAssetArtifactState artifact,
       VersionStateSnapshot version,
       LaunchDescriptor descriptor,
+      FreshTenantCreationEvidence creation,
+      RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal policySeal,
       TestPki pki)
       throws Exception {
     return """
-        {"schema":"firemud.run-owned-authored-world-source-receipt.v1","runId":"%s","composeProjectName":"%s","fixtureOperationId":"%s","ownerService":"game-design-service","gameSessionUriSan":"%s","gameSessionLeafSha256":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","sourceEvidence":{"schemaVersion":1,"targetNamespace":"dev","registrationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","tenantSlug":"%s","worldSlug":"%s","worldDisplayName":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"launchReadEvidence":{"schema":"firemud.run-owned-v1-launch-read-evidence.v1","gameTemplateId":17,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s","launchDescriptorBase64":"%s"}}\
+        {"schema":"firemud.run-owned-authored-world-source-receipt.v1","runId":"%s","composeProjectName":"%s","fixtureOperationId":"%s","ownerService":"game-design-service","gameSessionUriSan":"%s","gameSessionLeafSha256":"%s","caCertificateSha256":"%s","worldManagementUriSan":"%s","worldManagementLeafSha256":"%s","sourceEvidence":{"schemaVersion":1,"targetNamespace":"dev","registrationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","tenantSlug":"%s","worldSlug":"%s","worldDisplayName":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"launchReadEvidence":{"schema":"firemud.run-owned-v1-launch-read-evidence.v1","gameTemplateId":17,"publishedReleaseBundleBase64":"%s","versionAssetArtifactStateBase64":"%s","versionStateBase64":"%s","launchDescriptorBase64":"%s"},"creationEvidence":{"schemaVersion":%d,"targetNamespace":"%s","creationRequestId":"%s","operationId":"%s","requestDigest":"%s","canonicalTenantId":"%s","sourceGameRowId":%d,"sourceGameTenantKey":"%s","provenanceKind":"%s","evidenceDigest":"%s"},"fixturePolicySeal":{"schema":"%s","ownerService":"%s","operationId":"%s","requestDigest":"%s","evidenceDigest":"%s"}}\
         """
         .formatted(
             RUN_ID,
             PROJECT,
-            OPERATION_ID,
+            source.registrationRequestId(),
             GS_URI,
             fingerprint(pki.gameSessionClient().certificate()),
             fingerprint(pki.caCertificateValue()),
@@ -1147,7 +1269,22 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
             encode(bundle.toByteArray()),
             encode(artifact.toByteArray()),
             encode(version.toByteArray()),
-            encode(descriptor.toByteArray()));
+            encode(descriptor.toByteArray()),
+            creation.schemaVersion(),
+            creation.targetNamespace(),
+            creation.creationRequestId(),
+            creation.operationId(),
+            creation.requestDigest(),
+            creation.canonicalTenantId(),
+            creation.sourceGameRowId(),
+            creation.sourceGameTenantKey(),
+            creation.provenanceKind(),
+            creation.evidenceDigest(),
+            policySeal.schema(),
+            policySeal.ownerService(),
+            policySeal.operationId(),
+            policySeal.requestDigest(),
+            policySeal.evidenceDigest());
   }
 
   private static String encode(byte[] bytes) {
@@ -1157,6 +1294,16 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
   private static String fingerprint(X509Certificate certificate) throws Exception {
     return HexFormat.of()
         .formatHex(MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded()));
+  }
+
+  private static String sha256Hex(String value) {
+    try {
+      return HexFormat.of()
+          .formatHex(
+              MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException exception) {
+      throw new IllegalStateException("SHA-256 is required", exception);
+    }
   }
 
   private static void writeReadonly(Path path, byte[] value) throws IOException {

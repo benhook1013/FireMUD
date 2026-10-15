@@ -4,25 +4,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
 import java.sql.DriverManager;
-import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec.GetRequest;
-import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
-import net.firedevops.firemud.common.tenant.RuntimeTenantIdentityEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInitialAdmissionHold;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
@@ -41,7 +38,8 @@ import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSou
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalLaunchPreparationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
-import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalStartingInstanceRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssociationRepository;
 import net.firedevops.firemud.gamesession.service.GameSessionCanonicalLaunchPreparationService;
 import net.firedevops.firemud.gamesession.service.impl.CanonicalInitialAdmissionHoldPreparation;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -54,7 +52,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -70,7 +67,6 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
   private static final UUID INTAKE_REQUEST = uuid(403);
   private static final UUID CATALOG_REQUEST = uuid(404);
   private static final UUID ACTOR = uuid(405);
-  private static final UUID GAME_INSTANCE_UUID = uuid(406);
   private static final UUID CANONICAL_VERSION = uuid(407);
   private static final UUID ASSOCIATION_OPERATION = uuid(408);
   private static final String CONTROL_PLANE_REQUEST_ID = "canonical-intent-launch-1";
@@ -82,7 +78,7 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
-  void reservesExactIntentAndAttachesOnlyTheMatchingWorldIdentity() {
+  void reservesExactIntentAndAttachesOnlyTheMatchingWorldIdentity() throws java.sql.SQLException {
     Harness harness = harness();
     try {
       OwnerTarget target = harness.seed();
@@ -106,7 +102,8 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
           .isEqualTo(CanonicalInitialAdmissionIntentSnapshot.IntentState.PENDING_HOLD);
       assertThat(reserved.holdIdentity()).isNull();
       assertThat(reserved.sourceBinding().gameInstanceId()).isEqualTo(target.gameInstanceId());
-      assertThat(reserved.sourceBinding().currentRowVersion()).isPositive();
+      assertThat(reserved.sourceBinding().currentRowVersion())
+          .isEqualTo(target.launch().association().currentRowVersion());
       assertThat(
               target.intents().read(target.targetNamespace(), request.initialAdmissionRequestId()))
           .contains(reserved);
@@ -126,6 +123,27 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
       assertThat(retry.sourceBinding().currentRowVersion())
           .isEqualTo(reserved.sourceBinding().currentRowVersion());
 
+      var intentEvidence =
+          harness.dsl.fetchSingle(
+              "SELECT original_start_session_tuple, catalog_source_intake_operation_id, "
+                  + "catalog_source_intake_request_id FROM game_session_canonical_initial_admission_intent "
+                  + "WHERE target_namespace = ? AND initial_admission_request_id = ?",
+              request.targetNamespace(),
+              request.initialAdmissionRequestId());
+      var launchEvidence =
+          harness.dsl.fetchSingle(
+              "SELECT original_start_session_tuple, catalog_source_intake_operation_id, "
+                  + "catalog_source_intake_request_id FROM game_session_canonical_instance_launch "
+                  + "WHERE target_namespace = ? AND control_plane_request_id = ?",
+              request.targetNamespace(),
+              reserved.sourceBinding().controlPlaneRequestId());
+      assertThat(intentEvidence.get("original_start_session_tuple", byte[].class))
+          .containsExactly(launchEvidence.get("original_start_session_tuple", byte[].class));
+      assertThat(intentEvidence.get("catalog_source_intake_operation_id", UUID.class))
+          .isEqualTo(target.catalog().sourceIntakeReceipt().operationId());
+      assertThat(intentEvidence.get("catalog_source_intake_request_id", UUID.class))
+          .isEqualTo(target.catalog().sourceIntakeReceipt().intakeRequestId());
+      assertPendingIntentVisibleFromSeparateConnection(harness, request, lifecycle);
       var changedLifecycle = target.lifecycleRequest(uuid(413));
       assertThatThrownBy(
               () ->
@@ -195,78 +213,32 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
   }
 
   @Test
-  void commitsPendingHoldBeforeWorldAcquireAndRetriesTheSameIntentAfterAcquireFailure()
-      throws Exception {
+  void incompleteHumanPreparationDeniesBeforeIntentReservationOrWorldAcquire() {
     Harness harness = harness();
     try {
       OwnerTarget target = harness.seed();
-      var request = holdRequest(target, "intent-coordinator-ordering");
+      var request = holdRequest(target, "intent-unprotected-human");
       var lifecycle = target.lifecycleRequest(uuid(418));
-      var identity =
-          new WorldCanonicalInitialAdmissionHold.HoldIdentity(request, uuid(419), uuid(420));
       WorldCanonicalInitialAdmissionHoldClient worldClient =
           mock(WorldCanonicalInitialAdmissionHoldClient.class);
-      AtomicInteger acquireCalls = new AtomicInteger();
-
-      when(worldClient.acquire(any(), any()))
-          .thenAnswer(
-              invocation -> {
-                var acquireRequest =
-                    invocation.getArgument(0, WorldCanonicalInitialAdmissionHold.Request.class);
-                var acquireLifecycle =
-                    invocation.getArgument(
-                        1, WorldCanonicalInstanceLifecycleEvidence.Request.class);
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-                assertThat(acquireRequest.canonicalRequestBytes())
-                    .containsExactly(request.canonicalRequestBytes());
-                assertThat(acquireLifecycle.canonicalBytes())
-                    .containsExactly(lifecycle.canonicalBytes());
-                assertPendingIntentVisibleFromSeparateConnection(
-                    harness, acquireRequest, acquireLifecycle);
-
-                if (acquireCalls.incrementAndGet() == 1) {
-                  throw new IllegalStateException("simulated World acquire failure");
-                }
-                return identity;
-              });
-
       var preparation =
           new CanonicalInitialAdmissionHoldPreparation(
               target.intents(), worldClient, harness.transactionManager);
-
-      assertThatThrownBy(() -> preparation.prepare(request, lifecycle))
-          .isInstanceOf(IllegalStateException.class)
-          .hasMessage("simulated World acquire failure");
-      var pending =
-          target
-              .intents()
-              .read(target.targetNamespace(), request.initialAdmissionRequestId())
-              .orElseThrow();
-      assertThat(pending.state())
-          .isEqualTo(CanonicalInitialAdmissionIntentSnapshot.IntentState.PENDING_HOLD);
-      assertThat(pending.holdRequest().canonicalRequestBytes())
-          .containsExactly(request.canonicalRequestBytes());
-      assertThat(pending.lifecycleRequest().canonicalBytes())
-          .containsExactly(lifecycle.canonicalBytes());
-      assertThat(pending.holdIdentity()).isNull();
-
-      var attached = preparation.prepare(request, lifecycle);
-      assertThat(acquireCalls).hasValue(2);
-      assertThat(attached.state())
-          .isEqualTo(CanonicalInitialAdmissionIntentSnapshot.IntentState.HOLD_ATTACHED);
-      assertThat(attached.holdRequest().canonicalRequestBytes())
-          .containsExactly(request.canonicalRequestBytes());
-      assertThat(attached.lifecycleRequest().canonicalBytes())
-          .containsExactly(lifecycle.canonicalBytes());
-      assertThat(attached.holdIdentity()).isEqualTo(identity);
+      for (int retry = 0; retry < 2; retry++) {
+        assertThatThrownBy(() -> preparation.prepare(request, lifecycle))
+            .isInstanceOf(
+                CanonicalInitialAdmissionRepository
+                    .CanonicalHumanAdmissionProtectionUnavailableException.class)
+            .hasMessageContaining("Account terminal protection");
+      }
+      verifyNoInteractions(worldClient);
       assertThat(
               target.intents().read(target.targetNamespace(), request.initialAdmissionRequestId()))
-          .contains(attached);
+          .isEmpty();
       assertThat(
               harness.dsl.fetchCount(
                   DSL.table(DSL.name("game_session_canonical_initial_admission_intent"))))
-          .isEqualTo(1);
+          .isZero();
       assertNoAdmissionMutation(harness.dsl);
     } finally {
       harness.close();
@@ -687,7 +659,7 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
         true,
         true,
         "SHARED",
-        "explicit-policy-v1",
+        "PRESEEDED_ONLY",
         null,
         null);
   }
@@ -710,8 +682,8 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
         null,
         false,
         null,
-        false,
-        null);
+        true,
+        "{}");
   }
 
   private static AuthoredWorldLaunchDescriptorClient syntheticGameDesignClient(
@@ -733,7 +705,9 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
             "published-bundle-intent",
             false,
             null);
-    CompleteLaunchBindingEvidence binding = completeBinding(descriptor);
+    CompleteLaunchBindingEvidence binding =
+        CanonicalHumanPublicationOwnerTestFixtures.completeBinding(
+            descriptor, publishedPolicy(source));
     when(client.resolve(any(AuthoredWorldLaunchDescriptorEvidence.Request.class)))
         .thenReturn(descriptor);
     when(client.get(any(GetRequest.class))).thenReturn(descriptor);
@@ -741,47 +715,17 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
     return client;
   }
 
-  private static CompleteLaunchBindingEvidence completeBinding(
-      AuthoredWorldLaunchDescriptorEvidence descriptor) {
-    String commitId = "publish-commit-canonical-intent";
-    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
-        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                owner ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        owner,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        commitId,
-                        "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            owner),
-                        "GAME_LOGIC".equals(owner),
-                        "GAME_LOGIC".equals(owner) ? digest("d") : null))
-            .toList();
-    AuthoredWorldReleaseAttestationEvidence attestation =
-        AuthoredWorldReleaseAttestationEvidence.create(
-            descriptor.targetNamespace(),
-            descriptor.resultDigest(),
-            descriptor.canonicalTenantId(),
-            CANONICAL_VERSION,
-            descriptor.worldSlug(),
-            descriptor.authoredWorldSourceOperationId(),
-            descriptor.authoredWorldSourceEvidenceDigest(),
-            descriptor.launchDescriptorId(),
-            descriptor.publishedReleaseBundleRef(),
-            descriptor.versionStateEpoch(),
-            "publish-canonical-intent",
-            commitId,
-            participants,
-            digest("b"),
-            1,
-            List.of(),
-            List.of(),
-            List.of(),
-            descriptor.generationConfigRevision());
-    return new CompleteLaunchBindingEvidence(descriptor, attestation);
+  private static net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence.PublishedSet
+      publishedPolicy(IntakeReceipt source) {
+    return CanonicalHumanPublicationOwnerTestFixtures.publishedSet(
+        catalogRequest(source),
+        source.source(),
+        CANONICAL_VERSION,
+        72L,
+        "publish-canonical-intent",
+        "published-bundle-intent",
+        "generation-1",
+        3L);
   }
 
   private static String digest(String letter) {
@@ -831,8 +775,18 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
           Objects.requireNonNull(
               transactions.execute(
                   status -> sourceRepository.register(INTAKE_REQUEST, freshSource())));
+      transactions.execute(
+          status ->
+              new GameSessionFreshTenantAssociationRepository(dsl)
+                  .associateFresh(
+                      ASSOCIATION_OPERATION,
+                      NAMESPACE,
+                      source,
+                      CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
+                          source.source())));
       var preparedCatalog =
-          catalogRepository.prepareInitialPublicProduction(catalogRequest(source));
+          catalogRepository.prepareInitialPublicProduction(
+              catalogRequest(source), publishedPolicy(source));
       CanonicalRealmCatalogSnapshot catalog =
           Objects.requireNonNull(
               transactions.execute(
@@ -849,96 +803,57 @@ class CanonicalInitialAdmissionIntentRepositoryIntegrationTest {
       var preparedLaunch = preparationService.prepare(preparationRequest);
       CompleteLaunchBindingEvidence binding =
           preparationService.readCompleteBinding(preparedLaunch);
-      createTestOnlyFreshMappingAndRunningLaunch(source, binding, launchRepository);
+      UUID allocatedInstanceUuid =
+          createTestOnlyFreshMappingAndRunningLaunch(source, binding, launchRepository);
       CanonicalInitialAdmissionLaunchTarget launch =
           launchRepository
-              .readForInitialAdmission(NAMESPACE, TENANT, catalog.realmId(), GAME_INSTANCE_UUID)
+              .readForInitialAdmission(NAMESPACE, TENANT, catalog.realmId(), allocatedInstanceUuid)
               .orElseThrow();
       var intentRepository =
           new CanonicalInitialAdmissionIntentRepository(dsl, catalogRepository, launchRepository);
       return new OwnerTarget(this, catalog, launch, intentRepository);
     }
 
-    private void createTestOnlyFreshMappingAndRunningLaunch(
+    private UUID createTestOnlyFreshMappingAndRunningLaunch(
         IntakeReceipt source,
         CompleteLaunchBindingEvidence binding,
         CanonicalGameInstanceLaunchAssociationRepository launchRepository) {
-      RuntimeTenantIdentityEvidence sourceIdentity =
-          new RuntimeTenantIdentityEvidence(
-              1,
+      var tuple =
+          CanonicalHumanPublicationOwnerTestFixtures.tuple(
               NAMESPACE,
-              source.source().registrationRequestId(),
               TENANT,
-              source.source().sourceGameRowId(),
-              source.source().sourceGameTenantKey(),
-              source.source().provenanceKind());
-      transactions.execute(
-          status -> {
-            Record reservation =
-                Objects.requireNonNull(
-                    dsl.fetchOne(
-                        "INSERT INTO game_session_tenant_scope_reservation "
-                            + "(reservation_kind) VALUES ('FRESH_SOURCE_BOUND') "
-                            + "RETURNING game_session_tenant_id"));
-            long tenantId = reservation.get("game_session_tenant_id", Long.class);
-            var tenantAssociation =
-                new FreshGameSessionTenantAssociation(
-                    ASSOCIATION_OPERATION, tenantId, sourceIdentity);
-            dsl.execute(
-                "INSERT INTO game_session_tenant_canonical_claim "
-                    + "(target_namespace, canonical_tenant_id, legacy_game_session_tenant_id, "
-                    + "association_kind, reservation_kind, association_operation_id, "
-                    + "association_request_id) "
-                    + "VALUES (?, ?, ?, 'FRESH_SOURCE_BOUND', 'FRESH_SOURCE_BOUND', ?, ?)",
-                NAMESPACE,
-                TENANT,
-                tenantId,
-                ASSOCIATION_OPERATION,
-                source.source().registrationRequestId());
-            dsl.execute(
-                "INSERT INTO game_session_fresh_tenant_association "
-                    + "(association_operation_id, target_namespace, association_request_id, "
-                    + "source_schema_version, source_target_namespace, source_request_id, "
-                    + "source_canonical_tenant_id, canonical_tenant_id, "
-                    + "legacy_game_session_tenant_id, source_game_row_id, "
-                    + "source_game_tenant_key, provenance_kind, association_kind) "
-                    + "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', 'FRESH_SOURCE_BOUND')",
-                ASSOCIATION_OPERATION,
-                NAMESPACE,
-                source.source().registrationRequestId(),
-                NAMESPACE,
-                source.source().registrationRequestId(),
-                TENANT,
-                TENANT,
-                tenantId,
-                source.source().sourceGameRowId(),
-                source.source().sourceGameTenantKey());
-            Record instance =
-                Objects.requireNonNull(
-                    dsl.fetchOne(
-                        "INSERT INTO game_instances "
-                            + "(tenant_id, runtime_version, game_template_id, launch_descriptor_id, "
-                            + "version_id, release_bundle_id, generation_config_revision, "
-                            + "version_state_epoch, owner_account_id, status, row_version, "
-                            + "game_instance_uuid, run_owned_start_request_id, "
-                            + "run_owned_start_request_digest, run_owned_start_published_release_bundle_ref, "
-                            + "run_owned_start_preparing_epoch, run_owned_start_active_epoch) "
-                            + "VALUES (?, '72', 404, ?, 72, 73, 'generation-1', 3, 77, 'STARTING', "
-                            + "1, ?, ?, ?, ?, 1, 2) RETURNING id",
-                        tenantId,
-                        binding.descriptor().launchDescriptorId(),
-                        GAME_INSTANCE_UUID,
-                        CONTROL_PLANE_REQUEST_ID,
-                        "c".repeat(64),
-                        binding.descriptor().publishedReleaseBundleRef()));
-            long gameInstanceId = instance.get("id", Long.class);
-            launchRepository.capture(tenantAssociation, gameInstanceId, binding);
-            dsl.execute(
-                "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
-                tenantId,
-                gameInstanceId);
-            return null;
-          });
+              ACTOR,
+              binding.descriptor().gameTemplateId(),
+              binding.descriptor().controlPlaneRequestId());
+      CanonicalHumanPublicationOwnerTestFixtures.pinLaunch(
+          dsl, transactions, tuple, source.source(), publishedPolicy(source), binding);
+      return Objects.requireNonNull(
+          transactions.execute(
+              status -> {
+                var association =
+                    new GameSessionFreshTenantAssociationRepository(dsl)
+                        .associateFresh(
+                            ASSOCIATION_OPERATION,
+                            NAMESPACE,
+                            source,
+                            CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
+                                source.source()));
+                var starting =
+                    new GameSessionCanonicalStartingInstanceRepository(dsl, NAMESPACE)
+                        .createStarting(
+                            association,
+                            binding,
+                            ACTOR,
+                            tuple.controlPlaneRequestId(),
+                            tuple.mutationDigest(),
+                            tuple);
+                dsl.execute(
+                    "UPDATE game_instances SET status = 'RUNNING' WHERE tenant_id = ? AND id = ?",
+                    association.legacyGameSessionTenantId(),
+                    starting.gameInstanceId());
+                return starting.gameInstanceUuid();
+              }),
+          "Actual owner-allocated canonical instance UUID");
     }
 
     void close() {

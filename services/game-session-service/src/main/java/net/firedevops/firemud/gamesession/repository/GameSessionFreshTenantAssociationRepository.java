@@ -1,20 +1,36 @@
 package net.firedevops.firemud.gamesession.repository;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.IOException;
 import java.sql.Connection;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.tenant.RuntimeTenantIdentityEvidence;
+import net.firedevops.firemud.gamesession.client.GameDesignFreshTenantCreationClient;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.service.FreshGameSessionTenantAssociation;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Game Session's owner for immutable fresh canonical-tenant to private tenant-key association.
@@ -24,7 +40,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  */
 public class GameSessionFreshTenantAssociationRepository {
   private static final UUID NIL_UUID = new UUID(0L, 0L);
-  private static final String FRESH_KIND = "FRESH_SOURCE_BOUND";
+  private static final int MAX_TENANT_ID_ALLOCATION_ATTEMPTS = 64;
 
   private final DSLContext dsl;
 
@@ -35,76 +51,50 @@ public class GameSessionFreshTenantAssociationRepository {
               + " remains non-final for transaction proxying.")
   public GameSessionFreshTenantAssociationRepository(DSLContext dsl) {
     this.dsl = Objects.requireNonNull(dsl, "dsl must not be null");
+    this.gameDesignClient = null;
+    this.workloadNamespace = null;
+    this.writeTransaction = null;
+    this.readTransaction = null;
   }
 
-  /**
-   * Persists the fresh source-bound tenant mapping or returns its exact durable replay.
-   *
-   * <p>The association operation ID is the caller's stable mutation identity. The expected receipt
-   * is re-read, digest-validated, and compared with its immutable tenant-source binding under this
-   * same writable READ COMMITTED transaction before any private tenant ID is allocated.
-   */
+  /** Creates the existing owner association only from both exact committed source receipts. */
   @Transactional(propagation = Propagation.MANDATORY, isolation = Isolation.READ_COMMITTED)
   public FreshGameSessionTenantAssociation associateFresh(
-      UUID associationOperationId, String targetNamespace, IntakeReceipt expectedSourceReceipt) {
+      UUID associationOperationId,
+      String targetNamespace,
+      IntakeReceipt expectedSourceReceipt,
+      FreshTenantCreationEvidence creationEvidence) {
     requireWritableReadCommittedOwnerTransaction();
     requireNonNil(associationOperationId, "associationOperationId");
-    if (!GrpcPeerIdentity.isValidNamespace(targetNamespace)) {
-      throw new IllegalArgumentException("Target namespace must be one canonical DNS label");
-    }
     Objects.requireNonNull(expectedSourceReceipt, "expectedSourceReceipt");
-    if (!targetNamespace.equals(expectedSourceReceipt.source().targetNamespace())) {
-      throw new FreshTenantAssociationConflictException(
-          "Source receipt namespace differs from the requested association namespace");
+    Objects.requireNonNull(creationEvidence, "creationEvidence");
+    if (!GrpcPeerIdentity.isValidNamespace(targetNamespace)
+        || !targetNamespace.equals(creationEvidence.targetNamespace())) {
+      throw new InvalidFreshTenantSourceException("Exact configured source namespace is required");
     }
-
-    lockAssociationOperation(associationOperationId);
-    IntakeReceipt persistedSource =
+    IntakeReceipt committed =
         readPersistedSourceReceipt(targetNamespace, expectedSourceReceipt.operationId());
-    if (!persistedSource.equals(expectedSourceReceipt)) {
+    AuthoredWorldSourceEvidence authored = committed.source();
+    if (!committed.equals(expectedSourceReceipt)
+        || !creationEvidence.canonicalTenantId().equals(authored.canonicalTenantId())
+        || creationEvidence.sourceGameRowId() != authored.sourceGameRowId()
+        || !creationEvidence.sourceGameTenantKey().equals(authored.sourceGameTenantKey())
+        || !creationEvidence.provenanceKind().equals(authored.provenanceKind())) {
       throw new InvalidFreshTenantSourceException(
-          "Persisted authored-world source receipt differs from the requested exact receipt");
+          "Complete creation and authored-source receipts differ");
     }
-    RuntimeTenantIdentityEvidence runtimeSource =
-        requireFreshSource(targetNamespace, persistedSource.source());
-
-    Record existingAssociation = findAssociationByOperation(associationOperationId);
-    if (existingAssociation != null) {
-      return requireExactAssociation(
-          existingAssociation, associationOperationId, targetNamespace, runtimeSource);
-    }
-
-    if (findClaimByOperation(associationOperationId) != null) {
-      throw new FreshTenantAssociationConflictException(
-          "Association operation ID is already owned by another tenant claim");
-    }
-    if (findClaimByCanonicalTenant(targetNamespace, runtimeSource.canonicalTenantId()) != null) {
-      throw new FreshTenantAssociationConflictException(
-          "Canonical tenant already has a Game Session tenant association");
-    }
-    if (findClaimByAssociationRequest(
-            targetNamespace, persistedSource.source().registrationRequestId())
-        != null) {
-      throw new FreshTenantAssociationConflictException(
-          "Source registration request is already owned by another tenant association");
-    }
-
-    long privateTenantId = allocateFreshPrivateTenantId();
-    insertCanonicalClaim(
-        targetNamespace,
-        runtimeSource.canonicalTenantId(),
-        privateTenantId,
-        associationOperationId,
-        persistedSource.source().registrationRequestId());
-    insertFreshAssociation(
-        associationOperationId, targetNamespace, privateTenantId, persistedSource.source());
-
-    Record committedAssociation = findAssociationByOperation(associationOperationId);
-    if (committedAssociation == null) {
-      throw new IllegalStateException("Committed fresh tenant association is missing");
-    }
-    return requireExactAssociation(
-        committedAssociation, associationOperationId, targetNamespace, runtimeSource);
+    FreshTenantAssociation complete = commitAssociation(creationEvidence, associationOperationId);
+    return new FreshGameSessionTenantAssociation(
+        complete.associationOperationId(),
+        complete.gameSessionTenantId(),
+        new RuntimeTenantIdentityEvidence(
+            creationEvidence.schemaVersion(),
+            creationEvidence.targetNamespace(),
+            creationEvidence.creationRequestId(),
+            creationEvidence.canonicalTenantId(),
+            creationEvidence.sourceGameRowId(),
+            creationEvidence.sourceGameTenantKey(),
+            creationEvidence.provenanceKind()));
   }
 
   private void lockAssociationOperation(UUID associationOperationId) {
@@ -223,31 +213,6 @@ public class GameSessionFreshTenantAssociationRepository {
     }
   }
 
-  private RuntimeTenantIdentityEvidence requireFreshSource(
-      String targetNamespace, AuthoredWorldSourceEvidence source) {
-    if (!targetNamespace.equals(source.targetNamespace())) {
-      throw new InvalidFreshTenantSourceException(
-          "Authored-world source namespace differs from the association namespace");
-    }
-    if (!"NEW_GAME_ROW".equals(source.provenanceKind())) {
-      throw new InvalidFreshTenantSourceException(
-          "Fresh tenant association requires NEW_GAME_ROW source provenance");
-    }
-    try {
-      return new RuntimeTenantIdentityEvidence(
-          source.schemaVersion(),
-          source.targetNamespace(),
-          source.registrationRequestId(),
-          source.canonicalTenantId(),
-          source.sourceGameRowId(),
-          source.sourceGameTenantKey(),
-          source.provenanceKind());
-    } catch (IllegalArgumentException exception) {
-      throw new InvalidFreshTenantSourceException(
-          "Authored-world source cannot establish a fresh runtime tenant identity", exception);
-    }
-  }
-
   private Record findAssociationByOperation(UUID associationOperationId) {
     return dsl.fetchOne(
         "SELECT * FROM game_session_fresh_tenant_association "
@@ -260,125 +225,6 @@ public class GameSessionFreshTenantAssociationRepository {
         "SELECT * FROM game_session_tenant_canonical_claim "
             + "WHERE association_operation_id = ? FOR KEY SHARE",
         associationOperationId);
-  }
-
-  private Record findClaimByCanonicalTenant(String namespace, UUID canonicalTenantId) {
-    return dsl.fetchOne(
-        "SELECT * FROM game_session_tenant_canonical_claim "
-            + "WHERE target_namespace = ? AND canonical_tenant_id = ? FOR UPDATE",
-        namespace,
-        canonicalTenantId);
-  }
-
-  private Record findClaimByAssociationRequest(String namespace, UUID associationRequestId) {
-    return dsl.fetchOne(
-        "SELECT * FROM game_session_tenant_canonical_claim "
-            + "WHERE target_namespace = ? AND association_request_id = ? FOR UPDATE",
-        namespace,
-        associationRequestId);
-  }
-
-  private long allocateFreshPrivateTenantId() {
-    Record reservation =
-        dsl.fetchOne(
-            "INSERT INTO game_session_tenant_scope_reservation (reservation_kind) "
-                + "VALUES ('FRESH_SOURCE_BOUND') RETURNING game_session_tenant_id");
-    if (reservation == null || reservation.get("game_session_tenant_id", Long.class) == null) {
-      throw new IllegalStateException("Game Session tenant ID reservation returned no identity");
-    }
-    long privateTenantId = reservation.get("game_session_tenant_id", Long.class);
-    if (privateTenantId <= 0) {
-      throw new IllegalStateException("Game Session tenant ID reservation was not positive");
-    }
-    return privateTenantId;
-  }
-
-  private void insertCanonicalClaim(
-      String namespace,
-      UUID canonicalTenantId,
-      long privateTenantId,
-      UUID associationOperationId,
-      UUID associationRequestId) {
-    int inserted =
-        dsl.execute(
-            "INSERT INTO game_session_tenant_canonical_claim "
-                + "(target_namespace, canonical_tenant_id, legacy_game_session_tenant_id, "
-                + "association_kind, reservation_kind, association_operation_id, "
-                + "association_request_id) "
-                + "VALUES (?, ?, ?, 'FRESH_SOURCE_BOUND', 'FRESH_SOURCE_BOUND', ?, ?)",
-            namespace,
-            canonicalTenantId,
-            privateTenantId,
-            associationOperationId,
-            associationRequestId);
-    if (inserted != 1) {
-      throw new IllegalStateException("Game Session canonical tenant claim was not persisted");
-    }
-  }
-
-  private void insertFreshAssociation(
-      UUID associationOperationId,
-      String namespace,
-      long privateTenantId,
-      AuthoredWorldSourceEvidence source) {
-    int inserted =
-        dsl.execute(
-            "INSERT INTO game_session_fresh_tenant_association "
-                + "(association_operation_id, target_namespace, association_request_id, "
-                + "source_schema_version, source_target_namespace, source_request_id, "
-                + "source_canonical_tenant_id, canonical_tenant_id, "
-                + "legacy_game_session_tenant_id, source_game_row_id, source_game_tenant_key, "
-                + "provenance_kind, association_kind) "
-                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NEW_GAME_ROW', "
-                + "'FRESH_SOURCE_BOUND')",
-            associationOperationId,
-            namespace,
-            source.registrationRequestId(),
-            source.schemaVersion(),
-            namespace,
-            source.registrationRequestId(),
-            source.canonicalTenantId(),
-            source.canonicalTenantId(),
-            privateTenantId,
-            source.sourceGameRowId(),
-            source.sourceGameTenantKey());
-    if (inserted != 1) {
-      throw new IllegalStateException("Game Session fresh tenant association was not persisted");
-    }
-  }
-
-  private FreshGameSessionTenantAssociation requireExactAssociation(
-      Record association,
-      UUID expectedOperationId,
-      String expectedNamespace,
-      RuntimeTenantIdentityEvidence expectedSource) {
-    UUID associationOperationId = required(association.get("association_operation_id", UUID.class));
-    long privateTenantId = required(association.get("legacy_game_session_tenant_id", Long.class));
-    if (!expectedOperationId.equals(associationOperationId)
-        || !expectedNamespace.equals(association.get("target_namespace", String.class))
-        || !expectedSource.requestId().equals(association.get("association_request_id", UUID.class))
-        || !Integer.valueOf(expectedSource.schemaVersion())
-            .equals(association.get("source_schema_version", Integer.class))
-        || !expectedNamespace.equals(association.get("source_target_namespace", String.class))
-        || !expectedSource.requestId().equals(association.get("source_request_id", UUID.class))
-        || !expectedSource
-            .canonicalTenantId()
-            .equals(association.get("source_canonical_tenant_id", UUID.class))
-        || !expectedSource
-            .canonicalTenantId()
-            .equals(association.get("canonical_tenant_id", UUID.class))
-        || !Objects.equals(
-            expectedSource.sourceGameRowId(), association.get("source_game_row_id", Long.class))
-        || !expectedSource
-            .sourceGameTenantKey()
-            .equals(association.get("source_game_tenant_key", String.class))
-        || !expectedSource.provenanceKind().equals(association.get("provenance_kind", String.class))
-        || !FRESH_KIND.equals(association.get("association_kind", String.class))) {
-      throw new FreshTenantAssociationConflictException(
-          "Association operation ID is already bound to different source or namespace evidence");
-    }
-    return new FreshGameSessionTenantAssociation(
-        associationOperationId, privateTenantId, expectedSource);
   }
 
   private void requireWritableReadCommittedOwnerTransaction() {
@@ -432,6 +278,570 @@ public class GameSessionFreshTenantAssociationRepository {
   public static final class FreshTenantAssociationConflictException extends IllegalStateException {
     public FreshTenantAssociationConflictException(String message) {
       super(message);
+    }
+  }
+
+  private static final ObjectMapper JSON = new ObjectMapper();
+  private static final Set<String> EVIDENCE_FIELDS =
+      Set.of(
+          "schemaVersion",
+          "targetNamespace",
+          "creationRequestId",
+          "operationId",
+          "requestDigest",
+          "canonicalTenantId",
+          "sourceGameRowId",
+          "sourceGameTenantKey",
+          "provenanceKind",
+          "evidenceDigest");
+  private static final String ASSOCIATION_SELECT =
+      "SELECT fresh.target_namespace, fresh.association_request_id, "
+          + "fresh.source_schema_version, fresh.source_target_namespace, "
+          + "fresh.source_request_id, fresh.source_canonical_tenant_id, "
+          + "fresh.canonical_tenant_id, fresh.legacy_game_session_tenant_id, "
+          + "fresh.source_game_row_id, fresh.source_game_tenant_key, fresh.provenance_kind, "
+          + "fresh.association_kind, fresh.association_operation_id, "
+          + "fresh.complete_source_evidence::text AS complete_source_evidence, "
+          + "claim.target_namespace AS claim_namespace, "
+          + "claim.canonical_tenant_id AS claim_canonical_tenant_id, "
+          + "claim.legacy_game_session_tenant_id AS claim_tenant_id, "
+          + "claim.association_kind AS claim_kind, "
+          + "claim.reservation_kind AS claim_reservation_kind, "
+          + "claim.association_operation_id AS claim_operation_id, "
+          + "claim.association_request_id AS claim_request_id, "
+          + "reservation.reservation_kind AS reservation_kind "
+          + "FROM game_session_fresh_tenant_association fresh "
+          + "LEFT JOIN game_session_tenant_canonical_claim claim "
+          + "ON claim.target_namespace = fresh.target_namespace "
+          + "AND claim.canonical_tenant_id = fresh.canonical_tenant_id "
+          + "LEFT JOIN game_session_tenant_scope_reservation reservation "
+          + "ON reservation.game_session_tenant_id = fresh.legacy_game_session_tenant_id ";
+
+  private final GameDesignFreshTenantCreationClient gameDesignClient;
+  private final String workloadNamespace;
+  private final TransactionTemplate writeTransaction;
+  private final TransactionTemplate readTransaction;
+
+  private void requireExplicitOwnerComposition() {
+    if (workloadNamespace == null || writeTransaction == null || readTransaction == null) {
+      throw new IllegalStateException(
+          "Explicit owner transaction composition is required for fresh tenant reads");
+    }
+  }
+
+  @SuppressFBWarnings(
+      value = {"EI_EXPOSE_REP2", "CT_CONSTRUCTOR_THROW"},
+      justification =
+          "The injected DSLContext is a shared jOOQ boundary retained for this repository's owner-scoped SQL. "
+              + "Constructor validation fails before this escapes; it acquires no cleanup-sensitive "
+              + "resource, registers no finalizer, and invokes no overridable callback.")
+  public GameSessionFreshTenantAssociationRepository(
+      DSLContext dsl,
+      PlatformTransactionManager transactionManager,
+      GameDesignFreshTenantCreationClient gameDesignClient,
+      String workloadNamespace) {
+    this.dsl = Objects.requireNonNull(dsl);
+    this.gameDesignClient = Objects.requireNonNull(gameDesignClient);
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
+      throw new IllegalArgumentException("Game Session workload namespace is missing or invalid");
+    }
+    this.workloadNamespace = workloadNamespace;
+    this.writeTransaction = new TransactionTemplate(Objects.requireNonNull(transactionManager));
+    this.writeTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    this.readTransaction = new TransactionTemplate(transactionManager);
+    this.readTransaction.setReadOnly(true);
+  }
+
+  /**
+   * Resolves the exact authenticated Game Design receipt outside SQL, atomically claims a new Game
+   * Session numeric tenant ID and association, then independently reads the committed row. Exact
+   * retries return the original allocation; a changed source receipt or incomplete legacy
+   * association fails closed.
+   */
+  public FreshTenantAssociation associateFreshTenant(
+      UUID creationRequestId, String expectedRequestDigest) {
+    requireNoActiveOwnerTransaction();
+    requireExactSelector(creationRequestId, expectedRequestDigest);
+    if (gameDesignClient == null || writeTransaction == null || readTransaction == null) {
+      throw new IllegalStateException(
+          "Explicit authenticated fresh-creation client composition is required");
+    }
+
+    FreshTenantCreationEvidence sourceEvidence =
+        Objects.requireNonNull(
+            gameDesignClient.resolveCreation(creationRequestId, expectedRequestDigest),
+            "Authenticated Game Design fresh-tenant evidence is required");
+    requireExactSource(sourceEvidence, creationRequestId, expectedRequestDigest);
+
+    FreshTenantAssociation committed =
+        writeTransaction.execute(status -> commitAssociation(sourceEvidence, null));
+    if (committed == null) {
+      throw new InvalidFreshTenantAssociationException(
+          "Game Session fresh tenant association transaction returned no result");
+    }
+
+    FreshTenantAssociation independentReadback =
+        readTransaction.execute(
+            status ->
+                readByCanonicalTenantIdInTransaction(
+                        sourceEvidence.targetNamespace(), sourceEvidence.canonicalTenantId())
+                    .orElse(null));
+    if (independentReadback == null
+        || !sourceEvidence.equals(independentReadback.sourceEvidence())
+        || !committed.equals(independentReadback)) {
+      throw new InvalidFreshTenantAssociationException(
+          "Committed Game Session fresh tenant association failed independent exact readback");
+    }
+    return independentReadback;
+  }
+
+  /** Reads only complete, internally consistent stored evidence; it never calls Game Design. */
+  public Optional<FreshTenantAssociation> readByCanonicalTenantId(UUID canonicalTenantId) {
+    requireNoActiveOwnerTransaction();
+    requireExplicitOwnerComposition();
+    if (canonicalTenantId == null || isNil(canonicalTenantId)) {
+      throw new IllegalArgumentException("Canonical tenant UUID must be nonnil");
+    }
+    Optional<FreshTenantAssociation> result =
+        readTransaction.execute(
+            status -> readByCanonicalTenantIdInTransaction(workloadNamespace, canonicalTenantId));
+    return Objects.requireNonNull(result, "Game Session read transaction returned no result");
+  }
+
+  FreshTenantAssociation associateVerifiedFixtureInOwnerTransaction(
+      net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidence evidence) {
+    requireWritableReadCommittedOwnerTransaction();
+    evidence.requireVerifiedFixture();
+    return commitAssociation(evidence.creationEvidence(), null);
+  }
+
+  private FreshTenantAssociation commitAssociation(
+      FreshTenantCreationEvidence sourceEvidence, UUID requestedOperationId) {
+    requireOwnerTransaction();
+    if (requestedOperationId != null) {
+      lockAssociationOperation(requestedOperationId);
+    }
+    lockSourceIdentity(sourceEvidence);
+
+    Optional<FreshTenantAssociation> prior =
+        readByRequestIdInTransaction(
+            sourceEvidence.targetNamespace(), sourceEvidence.creationRequestId());
+    if (prior.isPresent()) {
+      requireExactSource(sourceEvidence, prior.orElseThrow().sourceEvidence());
+      if (requestedOperationId != null
+          && !requestedOperationId.equals(prior.orElseThrow().associationOperationId())) {
+        throw new InvalidFreshTenantAssociationException(
+            "Association operation differs from its immutable original");
+      }
+      return prior.orElseThrow();
+    }
+
+    rejectOrphanOrRetainedClaim(sourceEvidence);
+    if (requestedOperationId != null
+        && (findAssociationByOperation(requestedOperationId) != null
+            || findClaimByOperation(requestedOperationId) != null)) {
+      throw new FreshTenantAssociationConflictException(
+          "Association operation ID is already bound to different source or namespace evidence");
+    }
+    long tenantId = allocateFreshTenantId();
+    UUID associationOperationId =
+        requestedOperationId == null
+            ? newAssociationOperationId(sourceEvidence.operationId())
+            : requestedOperationId;
+    if (associationOperationId.equals(sourceEvidence.operationId())) {
+      throw new InvalidFreshTenantAssociationException(
+          "Owner operation cannot reuse the Game Design operation identity");
+    }
+
+    int claimInsertCount =
+        dsl.execute(
+            "INSERT INTO game_session_tenant_canonical_claim"
+                + " (target_namespace, canonical_tenant_id, legacy_game_session_tenant_id,"
+                + " association_kind, reservation_kind, association_operation_id,"
+                + " association_request_id) VALUES (?, ?, ?, 'FRESH_SOURCE_BOUND',"
+                + " 'FRESH_SOURCE_BOUND', ?, ?)",
+            sourceEvidence.targetNamespace(),
+            sourceEvidence.canonicalTenantId(),
+            tenantId,
+            associationOperationId,
+            sourceEvidence.creationRequestId());
+    if (claimInsertCount != 1) {
+      throw new InvalidFreshTenantAssociationException(
+          "Game Session canonical tenant claim insert did not affect exactly one row");
+    }
+
+    int associationInsertCount =
+        dsl.execute(
+            "INSERT INTO game_session_fresh_tenant_association"
+                + " (association_operation_id, target_namespace, association_request_id,"
+                + " source_schema_version, source_target_namespace, source_request_id,"
+                + " source_canonical_tenant_id, canonical_tenant_id,"
+                + " legacy_game_session_tenant_id, source_game_row_id,"
+                + " source_game_tenant_key, provenance_kind, association_kind,"
+                + " complete_source_evidence)"
+                + " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'FRESH_SOURCE_BOUND', ?::jsonb)",
+            associationOperationId,
+            sourceEvidence.targetNamespace(),
+            sourceEvidence.creationRequestId(),
+            sourceEvidence.schemaVersion(),
+            sourceEvidence.targetNamespace(),
+            sourceEvidence.creationRequestId(),
+            sourceEvidence.canonicalTenantId(),
+            sourceEvidence.canonicalTenantId(),
+            tenantId,
+            sourceEvidence.sourceGameRowId(),
+            sourceEvidence.sourceGameTenantKey(),
+            sourceEvidence.provenanceKind(),
+            serializeEvidence(sourceEvidence));
+    if (associationInsertCount != 1) {
+      throw new InvalidFreshTenantAssociationException(
+          "Game Session fresh tenant association insert did not affect exactly one row");
+    }
+
+    FreshTenantAssociation readback =
+        readByCanonicalTenantIdInTransaction(
+                sourceEvidence.targetNamespace(), sourceEvidence.canonicalTenantId())
+            .orElseThrow(
+                () ->
+                    new InvalidFreshTenantAssociationException(
+                        "Game Session fresh tenant association did not read back in its owner transaction"));
+    requireExactSource(sourceEvidence, readback.sourceEvidence());
+    return readback;
+  }
+
+  private Optional<FreshTenantAssociation> readByCanonicalTenantIdInTransaction(
+      String namespace, UUID canonicalTenantId) {
+    requireOwnerTransaction();
+    return readCanonicalTenantAssociationSnapshot(namespace, canonicalTenantId);
+  }
+
+  /** One complete owner association/claim snapshot under the caller's established read boundary. */
+  Optional<FreshTenantAssociation> readCanonicalTenantAssociationSnapshot(
+      String namespace, UUID canonicalTenantId) {
+    if (canonicalTenantId == null || isNil(canonicalTenantId)) {
+      throw new IllegalArgumentException("Canonical tenant UUID must be nonnil");
+    }
+    Record row =
+        dsl.fetchOne(
+            ASSOCIATION_SELECT
+                + "WHERE fresh.target_namespace = ? AND fresh.canonical_tenant_id = ?",
+            namespace,
+            canonicalTenantId);
+    if (row == null) {
+      rejectClaimWithoutAssociation(namespace, canonicalTenantId, null);
+      return Optional.empty();
+    }
+    return Optional.of(toAssociation(row));
+  }
+
+  private Optional<FreshTenantAssociation> readByRequestIdInTransaction(
+      String namespace, UUID requestId) {
+    requireOwnerTransaction();
+    Record row =
+        dsl.fetchOne(
+            ASSOCIATION_SELECT
+                + "WHERE fresh.target_namespace = ? AND fresh.association_request_id = ?",
+            namespace,
+            requestId);
+    if (row == null) {
+      return Optional.empty();
+    }
+    return Optional.of(toAssociation(row));
+  }
+
+  private FreshTenantAssociation toAssociation(Record row) {
+    try {
+      String namespace = required(row, "target_namespace", String.class);
+      UUID canonicalTenantId = required(row, "canonical_tenant_id", UUID.class);
+      UUID requestId = required(row, "association_request_id", UUID.class);
+      UUID associationOperationId = required(row, "association_operation_id", UUID.class);
+      long tenantId = required(row, "legacy_game_session_tenant_id", Long.class);
+      FreshTenantCreationEvidence sourceEvidence =
+          parseEvidence(required(row, "complete_source_evidence", String.class));
+
+      if (workloadNamespace != null && !workloadNamespace.equals(namespace)
+          || !namespace.equals(required(row, "source_target_namespace", String.class))
+          || !requestId.equals(required(row, "source_request_id", UUID.class))
+          || !canonicalTenantId.equals(required(row, "source_canonical_tenant_id", UUID.class))
+          || required(row, "source_schema_version", Integer.class) != sourceEvidence.schemaVersion()
+          || required(row, "source_game_row_id", Long.class) != sourceEvidence.sourceGameRowId()
+          || !required(row, "source_game_tenant_key", String.class)
+              .equals(sourceEvidence.sourceGameTenantKey())
+          || !required(row, "provenance_kind", String.class).equals(sourceEvidence.provenanceKind())
+          || !"FRESH_SOURCE_BOUND".equals(required(row, "association_kind", String.class))
+          || !sourceEvidence.targetNamespace().equals(namespace)
+          || !sourceEvidence.creationRequestId().equals(requestId)
+          || !sourceEvidence.canonicalTenantId().equals(canonicalTenantId)
+          || isNil(associationOperationId)
+          || associationOperationId.equals(sourceEvidence.operationId())
+          || !"FRESH_SOURCE_BOUND".equals(required(row, "claim_kind", String.class))
+          || !"FRESH_SOURCE_BOUND".equals(required(row, "claim_reservation_kind", String.class))
+          || !"FRESH_SOURCE_BOUND".equals(required(row, "reservation_kind", String.class))
+          || !namespace.equals(required(row, "claim_namespace", String.class))
+          || !canonicalTenantId.equals(required(row, "claim_canonical_tenant_id", UUID.class))
+          || tenantId != required(row, "claim_tenant_id", Long.class)
+          || !associationOperationId.equals(required(row, "claim_operation_id", UUID.class))
+          || !requestId.equals(required(row, "claim_request_id", UUID.class))) {
+        throw new InvalidFreshTenantAssociationException(
+            "Game Session fresh tenant association differs from its complete source receipt or canonical claim");
+      }
+      return new FreshTenantAssociation(
+          namespace, canonicalTenantId, tenantId, associationOperationId, sourceEvidence);
+    } catch (IllegalArgumentException exception) {
+      throw new InvalidFreshTenantAssociationException(
+          "Game Session fresh tenant association contains invalid complete source evidence",
+          exception);
+    }
+  }
+
+  private void rejectOrphanOrRetainedClaim(FreshTenantCreationEvidence evidence) {
+    rejectClaimWithoutAssociation(
+        evidence.targetNamespace(), evidence.canonicalTenantId(), evidence.creationRequestId());
+  }
+
+  private void rejectClaimWithoutAssociation(
+      String namespace, UUID canonicalTenantId, UUID requestId) {
+    if (requestId != null
+        && readByCanonicalTenantIdInTransaction(namespace, canonicalTenantId).isPresent()) {
+      throw new FreshTenantAssociationConflictException(
+          "canonical tenant is already bound to a different complete fresh association");
+    }
+    Record claim =
+        dsl.fetchOne(
+            "SELECT target_namespace, canonical_tenant_id, legacy_game_session_tenant_id,"
+                + " association_kind, association_request_id FROM game_session_tenant_canonical_claim"
+                + " WHERE target_namespace = ? AND (canonical_tenant_id = ? OR association_request_id = ?)",
+            namespace,
+            canonicalTenantId,
+            requestId);
+    if (claim != null) {
+      throw new InvalidFreshTenantAssociationException(
+          "Game Session canonical tenant claim exists without its exact fresh association; retained or partial identity cannot be adopted");
+    }
+  }
+
+  private long allocateFreshTenantId() {
+    for (int attempt = 0; attempt < MAX_TENANT_ID_ALLOCATION_ATTEMPTS; attempt++) {
+      Record reservation =
+          dsl.fetchOne(
+              "INSERT INTO game_session_tenant_scope_reservation (reservation_kind)"
+                  + " VALUES ('FRESH_SOURCE_BOUND')"
+                  + " ON CONFLICT (game_session_tenant_id) DO NOTHING"
+                  + " RETURNING game_session_tenant_id, reservation_kind");
+      if (reservation == null) {
+        continue;
+      }
+      if (!"FRESH_SOURCE_BOUND".equals(required(reservation, "reservation_kind", String.class))) {
+        throw new InvalidFreshTenantAssociationException(
+            "Game Session numeric tenant reservation did not allocate a fresh source-bound key");
+      }
+      Long tenantId = required(reservation, "game_session_tenant_id", Long.class);
+      if (tenantId <= 0) {
+        throw new InvalidFreshTenantAssociationException(
+            "Game Session numeric tenant reservation is not positive");
+      }
+      return tenantId;
+    }
+    throw new InvalidFreshTenantAssociationException(
+        "Game Session numeric tenant reservation exhausted its bounded allocation attempts");
+  }
+
+  private void lockSourceIdentity(FreshTenantCreationEvidence evidence) {
+    List<String> lockKeys =
+        new ArrayList<>(
+            List.of(
+                "fresh-tenant-canonical:"
+                    + evidence.targetNamespace()
+                    + ":"
+                    + evidence.canonicalTenantId(),
+                "fresh-tenant-request:"
+                    + evidence.targetNamespace()
+                    + ":"
+                    + evidence.creationRequestId()));
+    lockKeys.sort(String::compareTo);
+    for (String key : lockKeys) {
+      dsl.fetch("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", key);
+    }
+  }
+
+  private static UUID newAssociationOperationId(UUID sourceOperationId) {
+    UUID operationId;
+    do {
+      operationId = UUID.randomUUID();
+    } while (operationId.equals(sourceOperationId) || isNil(operationId));
+    return operationId;
+  }
+
+  private static String serializeEvidence(FreshTenantCreationEvidence evidence) {
+    ObjectNode json = JSON.createObjectNode();
+    json.put("schemaVersion", evidence.schemaVersion());
+    json.put("targetNamespace", evidence.targetNamespace());
+    json.put("creationRequestId", evidence.creationRequestId().toString());
+    json.put("operationId", evidence.operationId().toString());
+    json.put("requestDigest", evidence.requestDigest());
+    json.put("canonicalTenantId", evidence.canonicalTenantId().toString());
+    json.put("sourceGameRowId", evidence.sourceGameRowId());
+    json.put("sourceGameTenantKey", evidence.sourceGameTenantKey());
+    json.put("provenanceKind", evidence.provenanceKind());
+    json.put("evidenceDigest", evidence.evidenceDigest());
+    try {
+      return JSON.writeValueAsString(json);
+    } catch (JsonProcessingException exception) {
+      throw new InvalidFreshTenantAssociationException(
+          "Complete Game Design source evidence could not be serialized", exception);
+    }
+  }
+
+  private static FreshTenantCreationEvidence parseEvidence(String serializedEvidence) {
+    try {
+      JsonNode json = JSON.readTree(serializedEvidence);
+      if (json == null || !json.isObject() || json.size() != EVIDENCE_FIELDS.size()) {
+        throw new IllegalArgumentException(
+            "Complete source evidence must be one closed JSON object");
+      }
+      Set<String> fields = new HashSet<>();
+      json.fieldNames().forEachRemaining(fields::add);
+      if (!fields.equals(EVIDENCE_FIELDS)) {
+        throw new IllegalArgumentException(
+            "Complete source evidence has an unknown or missing field");
+      }
+      return new FreshTenantCreationEvidence(
+          requiredInt(json, "schemaVersion"),
+          requiredText(json, "targetNamespace"),
+          parseUuid(requiredText(json, "creationRequestId")),
+          parseUuid(requiredText(json, "operationId")),
+          requiredText(json, "requestDigest"),
+          parseUuid(requiredText(json, "canonicalTenantId")),
+          requiredLong(json, "sourceGameRowId"),
+          requiredText(json, "sourceGameTenantKey"),
+          requiredText(json, "provenanceKind"),
+          requiredText(json, "evidenceDigest"));
+    } catch (IOException | IllegalArgumentException exception) {
+      throw new InvalidFreshTenantAssociationException(
+          "Stored Game Session complete source evidence is malformed or has an invalid digest",
+          exception);
+    }
+  }
+
+  private static String requiredText(JsonNode json, String field) {
+    JsonNode value = json.get(field);
+    if (value == null || !value.isTextual()) {
+      throw new IllegalArgumentException("Complete source evidence field must be text: " + field);
+    }
+    return value.textValue();
+  }
+
+  private static int requiredInt(JsonNode json, String field) {
+    JsonNode value = json.get(field);
+    if (value == null || !value.isIntegralNumber() || !value.canConvertToInt()) {
+      throw new IllegalArgumentException(
+          "Complete source evidence field must be an integer: " + field);
+    }
+    return value.intValue();
+  }
+
+  private static long requiredLong(JsonNode json, String field) {
+    JsonNode value = json.get(field);
+    if (value == null || !value.isIntegralNumber() || !value.canConvertToLong()) {
+      throw new IllegalArgumentException(
+          "Complete source evidence field must be an integer: " + field);
+    }
+    return value.longValue();
+  }
+
+  private static UUID parseUuid(String value) {
+    UUID parsed = UUID.fromString(value);
+    if (!parsed.toString().equals(value) || isNil(parsed)) {
+      throw new IllegalArgumentException(
+          "Complete source evidence UUID must be canonical and nonnil");
+    }
+    return parsed;
+  }
+
+  private static void requireExactSelector(UUID requestId, String expectedDigest) {
+    if (requestId == null || isNil(requestId)) {
+      throw new IllegalArgumentException("Canonical nonnil creation request ID is required");
+    }
+    if (!GameTenantCreationDigest.isDigest(expectedDigest)) {
+      throw new IllegalArgumentException("Canonical expected request digest is required");
+    }
+  }
+
+  private void requireExactSource(
+      FreshTenantCreationEvidence evidence, UUID requestId, String expectedDigest) {
+    if (evidence == null
+        || !workloadNamespace.equals(evidence.targetNamespace())
+        || !requestId.equals(evidence.creationRequestId())
+        || !expectedDigest.equals(evidence.requestDigest())) {
+      throw new InvalidFreshTenantAssociationException(
+          "Authenticated Game Design receipt differs from the exact Game Session request");
+    }
+  }
+
+  private static void requireExactSource(
+      FreshTenantCreationEvidence expected, FreshTenantCreationEvidence actual) {
+    if (!expected.equals(actual)) {
+      throw new InvalidFreshTenantAssociationException(
+          "Game Session association retry differs from the complete original Game Design receipt");
+    }
+  }
+
+  private static <T> T required(Record row, String field, Class<T> type) {
+    T value = row.get(field, type);
+    if (value == null) {
+      throw new InvalidFreshTenantAssociationException(
+          "Game Session fresh tenant association is missing required stored evidence: " + field);
+    }
+    return value;
+  }
+
+  private static void requireNoActiveOwnerTransaction() {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Game Design fresh tenant evidence must be resolved before opening a Game Session transaction");
+    }
+  }
+
+  private static void requireOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Game Session fresh tenant association storage access requires an active owner transaction");
+    }
+  }
+
+  private static boolean isNil(UUID value) {
+    return value != null && new UUID(0L, 0L).equals(value);
+  }
+
+  /** Exact immutable Game Session allocation and its complete Game Design owner receipt. */
+  public record FreshTenantAssociation(
+      String targetNamespace,
+      UUID canonicalTenantId,
+      long gameSessionTenantId,
+      UUID associationOperationId,
+      FreshTenantCreationEvidence sourceEvidence) {
+    public FreshTenantAssociation {
+      Objects.requireNonNull(targetNamespace);
+      Objects.requireNonNull(canonicalTenantId);
+      Objects.requireNonNull(associationOperationId);
+      Objects.requireNonNull(sourceEvidence);
+      if (gameSessionTenantId <= 0
+          || isNil(canonicalTenantId)
+          || isNil(associationOperationId)
+          || associationOperationId.equals(sourceEvidence.operationId())) {
+        throw new IllegalArgumentException("Stored fresh tenant association identity is invalid");
+      }
+    }
+  }
+
+  /** Stored association, canonical claim, or source receipt is incomplete or contradictory. */
+  public static final class InvalidFreshTenantAssociationException extends IllegalStateException {
+    public InvalidFreshTenantAssociationException(String message) {
+      super(message);
+    }
+
+    public InvalidFreshTenantAssociationException(String message, Throwable cause) {
+      super(message, cause);
     }
   }
 }

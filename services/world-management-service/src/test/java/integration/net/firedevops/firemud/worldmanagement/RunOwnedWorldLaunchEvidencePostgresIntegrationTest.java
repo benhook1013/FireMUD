@@ -89,6 +89,7 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
   @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+  // Controlled evidence inputs keep this proof focused on the real PostgreSQL lifecycle/CAS.
   @MockitoBean private RunOwnedWorldLaunchEvidenceProvider fixtureProvider;
   @MockitoBean private RunOwnedWorldLaunchEvidence fixtureEvidence;
   @MockitoBean private GameDesignClient gameDesignClient;

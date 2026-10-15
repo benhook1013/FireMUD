@@ -15,11 +15,12 @@ public final class ProtectedGameSessionLoginGrpcInterceptor implements ServerInt
       Set.of(
           "game_session.v1.GameSessionService/Ping",
           "game_session.v1.GameSessionControlPlaneService/GetInitialAdmissionBindProof",
+          "game_session.v1.GameSessionControlPlaneService/GetRunOwnedFixtureLaunchAssociation",
           "game_session.v1.GameSessionControlPlaneService/GetPublishedRealmAdmissionOwnerRead",
           "game_session.v1.GameSessionControlPlaneService/GetCanonicalGameplayAdmissionDecision",
           "game_session.v1.GameSessionControlPlaneService/GetCanonicalGameInstanceLaunchAssociation",
           "game_session.v1.GameSessionControlPlaneService/GetRuntimeRegionInitializationCheckpoint",
-          "game_session.v1.GameSessionControlPlaneService/GetCanonicalInitialAdmissionOwnerProof",
+          "game_session.v1.CanonicalInitialAdmissionOwnerProofReadService/GetCanonicalInitialAdmissionOwnerProof",
           "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetCanonicalGameplayRosterOwnerRead",
           "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetPreseededActorAssignmentOwnerRead");
 

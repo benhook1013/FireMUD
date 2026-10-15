@@ -123,6 +123,33 @@ class GrpcServerPeerIdentityClientInterceptorTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void runOwnedLeafPinDeniesSameWorkloadWithAnotherCertificateBeforeContent() throws Exception {
+    var session = session(EXPECTED);
+    var certificate = (X509Certificate) session.getPeerCertificates()[0];
+    byte[] der = "controlled-leaf-der".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    when(certificate.getEncoded()).thenReturn(der);
+    String pin =
+        java.util.HexFormat.of()
+            .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(der));
+    Fixture correct = fixture(session, pin);
+    correct.call.listener.onHeaders(new Metadata());
+    correct.call.listener.onMessage("owner evidence");
+    assertThat(correct.messages).containsExactly("owner evidence");
+    Fixture other = fixture(session, "0".repeat(64));
+    other.call.listener.onHeaders(new Metadata());
+    other.call.listener.onMessage("untrusted evidence");
+    assertThat(other.messages).isEmpty();
+    assertThat(other.headers).isEmpty();
+    assertThat(other.statuses)
+        .singleElement()
+        .extracting(Status::getCode)
+        .isEqualTo(Status.Code.UNAUTHENTICATED);
+    assertThat(other.call.cancelled).isTrue();
+    assertThatThrownBy(() -> new GrpcServerPeerIdentityClientInterceptor(EXPECTED, "wrong"))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
   private static SSLSession session(String... peerUris) throws Exception {
     SSLSession session = mock(SSLSession.class);
     X509Certificate certificate = mock(X509Certificate.class);
@@ -136,6 +163,10 @@ class GrpcServerPeerIdentityClientInterceptorTest {
   }
 
   private static Fixture fixture(SSLSession session) {
+    return fixture(session, null);
+  }
+
+  private static Fixture fixture(SSLSession session, String expectedLeafSha256) {
     var fixture = new Fixture();
     fixture.call.attributes =
         session == null
@@ -144,7 +175,7 @@ class GrpcServerPeerIdentityClientInterceptorTest {
     Channel channel = mock(Channel.class);
     when(channel.<Object, Object>newCall(null, CallOptions.DEFAULT)).thenReturn(fixture.call);
     ClientCall<Object, Object> intercepted =
-        new GrpcServerPeerIdentityClientInterceptor(EXPECTED)
+        new GrpcServerPeerIdentityClientInterceptor(EXPECTED, expectedLeafSha256)
             .interceptCall(null, CallOptions.DEFAULT, channel);
     intercepted.start(
         new ClientCall.Listener<>() {

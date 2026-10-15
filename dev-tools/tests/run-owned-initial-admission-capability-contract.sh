@@ -37,21 +37,23 @@ expect_failure() {
 }
 
 load_operation_id() {
-  python3 - "$1" <<'PY'
+  python3 - "$1" "$FIREMUD_SMOKE_INITIAL_ADMISSION_CLAIM_DIGEST" <<'PY'
 import json
 import pathlib
 import sys
 
 value = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+expected_claim_digest = sys.argv[2]
 expected_fields = {
     "schema", "runId", "composeProjectName", "operationId", "tenantId",
     "gameTemplateId", "ownerAccountId", "worldSlug", "worldDisplayName",
     "realmSlug", "realmDisplayName", "visible", "publicProductionRealm",
     "requiresCharacterSelection", "stateScope", "characterCreationPolicy",
     "gameSessionLeafSha256", "gameSessionUriSan", "worldManagementLeafSha256",
-    "worldManagementUriSan", "caCertificateSha256",
+    "worldManagementUriSan", "caCertificateSha256", "claimDigest",
 }
 assert set(value) == expected_fields, set(value)
+assert value["claimDigest"] == expected_claim_digest
 assert value["schema"] == "firemud.run-owned-initial-admission-fixture.v1"
 assert value["tenantId"] == 1
 assert value["gameTemplateId"] == 1
@@ -103,6 +105,37 @@ reject_symlinked_capability() {
 
 reject_replaced_capability() {
   ensure_run_owned_initial_admission_capability "$base_certificate_root" create-or-verify
+}
+
+reject_claim_digest_variant() {
+  local variant="$1"
+  local backup="$TEST_ROOT/capability-before-claim-digest-$variant.json"
+  local status=0
+  cp -p -- "$base_capability" "$backup"
+  python3 - "$TEST_ROOT/claim-digest-$variant.json" "$base_capability" "$variant" <<'PY'
+import json
+import pathlib
+import sys
+
+target, source, variant = sys.argv[1:]
+value = json.loads(pathlib.Path(source).read_text(encoding="utf-8"))
+if variant == "missing":
+    del value["claimDigest"]
+elif variant == "substituted":
+    value["claimDigest"] = "0" * 64
+else:
+    raise SystemExit("unknown claim digest test variant")
+pathlib.Path(target).write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+PY
+  chmod 444 "$TEST_ROOT/claim-digest-$variant.json"
+  mv -- "$TEST_ROOT/claim-digest-$variant.json" "$base_capability"
+  if ensure_run_owned_initial_admission_capability "$base_certificate_root" create-or-verify; then
+    status=0
+  else
+    status=$?
+  fi
+  mv -- "$backup" "$base_capability"
+  return "$status"
 }
 
 reject_missing_restart_capability() {
@@ -175,6 +208,8 @@ ensure_run_owned_initial_admission_capability "$base_certificate_root" reuse-onl
 [[ "$(load_operation_id "$base_capability")" == "$base_operation_id" ]]
 
 expect_failure wrong_claim reject_wrong_claim
+expect_failure missing_claim_digest reject_claim_digest_variant missing
+expect_failure substituted_claim_digest reject_claim_digest_variant substituted
 expect_failure wrong_run reject_wrong_run
 expect_failure wrong_project reject_wrong_project
 expect_failure symlinked_capability reject_symlinked_capability

@@ -31,7 +31,11 @@ import org.springframework.boot.test.system.OutputCaptureExtension;
 
 @ExtendWith(OutputCaptureExtension.class)
 class RunOwnedWorldLaunchEvidenceProviderTest {
-  private static final String OPERATION_ID = "7f1e5306-e9a7-46d9-b5cf-75348e20ffbd";
+  private static final String CLAIM_DIGEST = "d".repeat(64);
+  private static final String OPERATION_ID =
+      RunOwnedInitialAdmissionFixtureWireCodec.fixtureOperationId(
+              CLAIM_DIGEST, "fixture-run", "firemud-fixture-run", "a".repeat(64), "b".repeat(64))
+          .toString();
   private static final String RELEASE_REF = "8ce42642-53ae-4d07-aab8-37c43ce66e0c";
 
   @TempDir Path temporaryDirectory;
@@ -292,19 +296,28 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
         PublishedReleaseBundle.newBuilder()
             .setId(77L)
             .setVersionId(11L)
+            .setVersionNumber(1)
+            .setAttestationSchemaVersion("v1")
+            .setCanonicalTenantId(canonicalTenantId.toString())
+            .setCanonicalVersionId("10000000-0000-4000-8000-000000000011")
             .setPublishedReleaseBundleRef(RELEASE_REF)
             .setGenerationConfigRevision("genrev-11")
             .setManifestHash(manifestHash)
             .build();
     var artifact =
         VersionAssetArtifactState.newBuilder()
+            .setTenantId("42")
             .setVersionId(11L)
+            .setStateEpoch(2L)
+            .setExportedVersionNumber(1)
             .setArtifactState(ArtifactState.ARTIFACT_STATE_PUBLISHED)
             .setManifestHash(manifestHash)
             .build();
     var version =
         VersionStateSnapshot.newBuilder()
+            .setTenantId("42")
             .setVersionId(11L)
+            .setUpdatedAt("2026-10-15T03:00:00")
             .setVersionState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
             .setVersionStateEpoch(77L)
             .build();
@@ -330,7 +343,53 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
             RunOwnedInitialAdmissionFixtureWireCodec.GAME_SESSION_URI_SAN,
             "b".repeat(64),
             RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
-            "c".repeat(64));
+            "c".repeat(64),
+            CLAIM_DIGEST);
+    UUID creationRequestId = UUID.fromString(OPERATION_ID);
+    UUID creationOperationId = UUID.fromString("b2af0092-07d6-433b-93ae-21120d88dd51");
+    String creationRequestDigest =
+        net.firedevops.firemud.common.tenant.GameTenantCreationDigest.requestDigest(
+            "dev", creationRequestId, "42", "Demo World", null);
+    var creation =
+        new net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence(
+            1,
+            "dev",
+            creationRequestId,
+            creationOperationId,
+            creationRequestDigest,
+            canonicalTenantId,
+            29L,
+            "42",
+            "NEW_GAME_ROW",
+            net.firedevops.firemud.common.tenant.GameTenantCreationDigest.evidenceDigest(
+                "dev",
+                creationRequestId,
+                creationOperationId,
+                creationRequestDigest,
+                canonicalTenantId,
+                29L,
+                "42",
+                "NEW_GAME_ROW"));
+    var launchRead =
+        new RunOwnedInitialAdmissionFixtureWireCodec.LaunchReadEvidence(
+            RunOwnedInitialAdmissionFixtureWireCodec.LAUNCH_READ_EVIDENCE_SCHEMA,
+            17L,
+            bundle,
+            artifact,
+            version,
+            net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec
+                .toLaunchDescriptorMessage(descriptor));
+    String policyRequestDigest =
+        RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestDigest(
+            capability, creation, source, launchRead);
+    var seal =
+        new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal(
+            RunOwnedInitialAdmissionFixtureWireCodec.FIXTURE_POLICY_SEAL_SCHEMA,
+            RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_OWNER_SERVICE,
+            UUID.fromString(OPERATION_ID),
+            policyRequestDigest,
+            RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+                UUID.fromString(OPERATION_ID), policyRequestDigest));
     var receipt =
         new RunOwnedInitialAdmissionFixtureWireCodec.SourceReceipt(
             RunOwnedInitialAdmissionFixtureWireCodec.SOURCE_RECEIPT_SCHEMA,
@@ -344,14 +403,9 @@ class RunOwnedWorldLaunchEvidenceProviderTest {
             RunOwnedInitialAdmissionFixtureWireCodec.WORLD_MANAGEMENT_URI_SAN,
             "c".repeat(64),
             source,
-            new RunOwnedInitialAdmissionFixtureWireCodec.LaunchReadEvidence(
-                RunOwnedInitialAdmissionFixtureWireCodec.LAUNCH_READ_EVIDENCE_SCHEMA,
-                17L,
-                bundle,
-                artifact,
-                version,
-                net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec
-                    .toLaunchDescriptorMessage(descriptor)));
+            launchRead,
+            creation,
+            seal);
     return new RunOwnedWorldLaunchEvidence(
         capability,
         receipt,

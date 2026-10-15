@@ -28,6 +28,8 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
@@ -60,7 +62,18 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
   private static final String PROJECT_NAME = "firemud-smoke-compose-smoke-2939";
   private static final String CAPABILITY_PATH = "fixture/capability.json";
   private static final String SOURCE_RECEIPT_PATH = "fixture/source-receipt.json";
-  private static final String OPERATION_ID = "d2db8478-9c56-42ab-99c2-9fbead6841ba";
+  private static final String CLAIM_DIGEST = "d".repeat(64);
+  private static final String GAME_SESSION_LEAF_SHA256 = "a".repeat(64);
+  private static final String CA_CERTIFICATE_SHA256 = "b".repeat(64);
+  private static final String WORLD_MANAGEMENT_LEAF_SHA256 = "c".repeat(64);
+  private static final String OPERATION_ID =
+      RunOwnedInitialAdmissionFixtureWireCodec.fixtureOperationId(
+              CLAIM_DIGEST, RUN_ID, PROJECT_NAME, GAME_SESSION_LEAF_SHA256, CA_CERTIFICATE_SHA256)
+          .toString();
+  private static final UUID CREATION_REQUEST_ID =
+      UUID.fromString("57341fb9-55ee-42f4-842e-6e6305c22411");
+  private static final UUID CREATION_OPERATION_ID =
+      UUID.fromString("d156e17a-d759-4db5-a456-c082b5d74419");
   private static final UUID SOURCE_OPERATION_ID =
       UUID.fromString("3f773701-e812-44f5-8ae0-7268d543beed");
   private static final UUID REALM_ID = UUID.fromString("23d39978-9d44-4e1a-8659-998ff9239b01");
@@ -91,6 +104,10 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         .startRunOwnedInitialLaunch(any(), launchEvidence.capture());
     assertThat(launchEvidence.getValue().sourceEvidence())
         .isEqualTo(fixture.sourceReceipt.sourceEvidence());
+    assertThat(launchEvidence.getValue().creationEvidence())
+        .isEqualTo(fixture.sourceReceipt.creationEvidence());
+    assertThat(launchEvidence.getValue().fixturePolicySeal())
+        .isEqualTo(fixture.sourceReceipt.fixturePolicySeal());
     assertThat(launchEvidence.getValue().publishedReleaseBundle())
         .isEqualTo(fixture.sourceReceipt.launchReadEvidence().publishedReleaseBundle());
     assertThat(launchEvidence.getValue().launchDescriptor())
@@ -361,7 +378,8 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         .when(fixture.ownerService)
         .registerPublicSharedFixtureCatalog(any());
     var changedReceipt =
-        withPublishedReleaseBundleRef(fixture.sourceReceipt, "owner-release-ref-changed");
+        withPublishedReleaseBundleRef(
+            fixture.capability, fixture.sourceReceipt, "owner-release-ref-changed");
     try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
         mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
       capabilityLoader
@@ -657,11 +675,12 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             false,
             "SHARED",
             "ALLOW_NEW",
-            "a".repeat(64),
+            GAME_SESSION_LEAF_SHA256,
             RunOwnedInitialAdmissionFixtureCapability.GAME_SESSION_URI_SAN,
-            "b".repeat(64),
+            CA_CERTIFICATE_SHA256,
             RunOwnedInitialAdmissionFixtureCapability.WORLD_MANAGEMENT_URI_SAN,
-            "c".repeat(64));
+            WORLD_MANAGEMENT_LEAF_SHA256,
+            CLAIM_DIGEST);
     RunOwnedInitialAdmissionFixtureCapability.SourceReceipt sourceReceipt =
         sourceReceipt(capability, 29L);
     GameInstanceDto target =
@@ -868,6 +887,31 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
                 sourceGameRowId,
                 sourceGameTenantKey,
                 provenanceKind));
+    var launchRead = launchReadEvidence(capability, evidence);
+    String creationRequestDigest =
+        GameTenantCreationDigest.requestDigest(
+            targetNamespace, CREATION_REQUEST_ID, sourceGameTenantKey, worldDisplayName, null);
+    FreshTenantCreationEvidence creationEvidence =
+        new FreshTenantCreationEvidence(
+            1,
+            targetNamespace,
+            CREATION_REQUEST_ID,
+            CREATION_OPERATION_ID,
+            creationRequestDigest,
+            canonicalTenantId,
+            sourceGameRowId,
+            sourceGameTenantKey,
+            provenanceKind,
+            GameTenantCreationDigest.evidenceDigest(
+                targetNamespace,
+                CREATION_REQUEST_ID,
+                CREATION_OPERATION_ID,
+                creationRequestDigest,
+                canonicalTenantId,
+                sourceGameRowId,
+                sourceGameTenantKey,
+                provenanceKind));
+    var policySeal = fixturePolicySeal(capability, creationEvidence, evidence, launchRead);
     return new RunOwnedInitialAdmissionFixtureCapability.SourceReceipt(
         RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_SCHEMA,
         capability.runId(),
@@ -880,12 +924,16 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         capability.worldManagementUriSan(),
         capability.worldManagementLeafSha256(),
         evidence,
-        launchReadEvidence(capability, evidence));
+        launchRead,
+        creationEvidence,
+        policySeal);
   }
 
   private static RunOwnedInitialAdmissionFixtureCapability.SourceReceipt
       withPublishedReleaseBundleRef(
-          RunOwnedInitialAdmissionFixtureCapability.SourceReceipt receipt, String bundleRef) {
+          RunOwnedInitialAdmissionFixtureCapability capability,
+          RunOwnedInitialAdmissionFixtureCapability.SourceReceipt receipt,
+          String bundleRef) {
     var original = receipt.launchReadEvidence();
     var changedBundle =
         original.publishedReleaseBundle().toBuilder()
@@ -904,6 +952,9 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
                 original.versionState(),
                 original.gameTemplateId(),
                 receipt.fixtureOperationId()));
+    var changedPolicySeal =
+        fixturePolicySeal(
+            capability, receipt.creationEvidence(), receipt.sourceEvidence(), changedReadEvidence);
     return new RunOwnedInitialAdmissionFixtureCapability.SourceReceipt(
         receipt.schema(),
         receipt.runId(),
@@ -916,7 +967,38 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
         receipt.worldManagementUriSan(),
         receipt.worldManagementLeafSha256(),
         receipt.sourceEvidence(),
-        changedReadEvidence);
+        changedReadEvidence,
+        receipt.creationEvidence(),
+        changedPolicySeal);
+  }
+
+  private static RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal fixturePolicySeal(
+      RunOwnedInitialAdmissionFixtureCapability capability,
+      FreshTenantCreationEvidence creationEvidence,
+      AuthoredWorldSourceEvidence sourceEvidence,
+      RunOwnedInitialAdmissionFixtureCapability.LaunchReadEvidence launchReadEvidence) {
+    var wireLaunchRead =
+        new RunOwnedInitialAdmissionFixtureWireCodec.LaunchReadEvidence(
+            launchReadEvidence.schema(),
+            launchReadEvidence.gameTemplateId(),
+            launchReadEvidence.publishedReleaseBundle(),
+            launchReadEvidence.versionAssetArtifactState(),
+            launchReadEvidence.versionState(),
+            launchReadEvidence.launchDescriptor());
+    String requestDigest =
+        RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestDigest(
+            RunOwnedInitialAdmissionFixtureCapability.toWireCapability(capability),
+            creationEvidence,
+            sourceEvidence,
+            wireLaunchRead);
+    UUID fixtureOperationId = UUID.fromString(capability.operationId());
+    return new RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal(
+        RunOwnedInitialAdmissionFixtureWireCodec.FIXTURE_POLICY_SEAL_SCHEMA,
+        RunOwnedInitialAdmissionFixtureCapability.SOURCE_RECEIPT_OWNER_SERVICE,
+        fixtureOperationId,
+        requestDigest,
+        RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+            fixtureOperationId, requestDigest));
   }
 
   private static RunOwnedInitialAdmissionFixtureCapability.LaunchReadEvidence launchReadEvidence(

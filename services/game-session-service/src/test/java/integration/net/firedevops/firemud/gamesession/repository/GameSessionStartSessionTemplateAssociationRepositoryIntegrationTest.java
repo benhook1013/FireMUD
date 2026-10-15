@@ -540,8 +540,7 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
       int pinBackendPid = waiterPid.get(15, TimeUnit.SECONDS);
       int blockerBackendPid = blockerPid.get(15, TimeUnit.SECONDS);
       awaitPostgresLockWait(fixture.dsl, pinBackendPid, blockerBackendPid);
-      Thread.sleep(5_250L);
-      assertThat(fixture.leaseExpired(tuple.controlPlaneRequestId())).isTrue();
+      awaitOwnerClaimExpiry(fixture, tuple.controlPlaneRequestId());
       releaseBlocker.countDown();
 
       RuntimeException failure = waiter.get(15, TimeUnit.SECONDS);
@@ -649,6 +648,20 @@ class GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest {
     }
     assertThat(blockedByExpectedBackend)
         .as("association INSERT SELECT waits on the held PostgreSQL relation lock")
+        .isTrue();
+  }
+
+  private static void awaitOwnerClaimExpiry(Fixture fixture, String requestId)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+    while (System.nanoTime() < deadline) {
+      if (fixture.leaseExpired(requestId)) {
+        return;
+      }
+      Thread.sleep(10L);
+    }
+    assertThat(fixture.leaseExpired(requestId))
+        .as("original owner claim expires according to its PostgreSQL authority clock")
         .isTrue();
   }
 
