@@ -11,6 +11,8 @@ import net.firedevops.firemud.account.v1.ReadHeldPublicationAuthorizationRespons
 
 /** Closed wire mapping and exact request-echo validation for the Account authorization read. */
 public final class AccountPublicationAuthorizationReadGrpcCodec {
+  public static final int MAX_MESSAGE_BYTES =
+      AccountPublicationAuthorizationReadEvidence.MAX_BINDING_BYTES + 1024;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private AccountPublicationAuthorizationReadGrpcCodec() {}
@@ -32,6 +34,8 @@ public final class AccountPublicationAuthorizationReadGrpcCodec {
   public static AccountPublicationAuthorizationReadEvidence.Request fromRequest(
       ReadHeldPublicationAuthorizationRequest request) {
     Objects.requireNonNull(request, "request");
+    requireMessageSize(request.getSerializedSize(), "request");
+    requireBindingSize(request.getOriginalPublicationAuthorizationBinding().size());
     requireNoUnknownFields(request, "ReadHeldPublicationAuthorizationRequest");
     try {
       return new AccountPublicationAuthorizationReadEvidence.Request(
@@ -67,6 +71,8 @@ public final class AccountPublicationAuthorizationReadGrpcCodec {
       ReadHeldPublicationAuthorizationResponse response) {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(response, "response");
+    requireMessageSize(response.getSerializedSize(), "response");
+    requireBindingSize(response.getOriginalPublicationAuthorizationBinding().size());
     requireNoUnknownFields(response, "ReadHeldPublicationAuthorizationResponse");
     if (response.getSchemaVersion() != request.schemaVersion()
         || !response.getTargetNamespace().equals(request.targetNamespace())
@@ -90,6 +96,20 @@ public final class AccountPublicationAuthorizationReadGrpcCodec {
   private static void requireNoUnknownFields(Message message, String label) {
     if (!message.getUnknownFields().asMap().isEmpty()) {
       throw new IllegalArgumentException(label + " contains unsupported fields");
+    }
+  }
+
+  private static void requireMessageSize(int size, String label) {
+    if (size > MAX_MESSAGE_BYTES) {
+      throw new IllegalArgumentException(
+          "Account publication authorization read " + label + " exceeds size limit");
+    }
+  }
+
+  private static void requireBindingSize(int size) {
+    if (size > AccountPublicationAuthorizationReadEvidence.MAX_BINDING_BYTES) {
+      throw new IllegalArgumentException(
+          "Complete original Account publication authorization binding exceeds size limit");
     }
   }
 
