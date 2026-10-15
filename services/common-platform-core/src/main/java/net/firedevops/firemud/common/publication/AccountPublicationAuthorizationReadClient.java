@@ -90,6 +90,7 @@ public final class AccountPublicationAuthorizationReadClient
       buildStub(ManagedChannel channel) {
     String expectedPeerUri = "spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service";
     return AccountPublicationAuthorizationReadServiceGrpc.newBlockingStub(channel)
+        .withMaxInboundMessageSize(AccountPublicationAuthorizationReadGrpcCodec.MAX_MESSAGE_BYTES)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
