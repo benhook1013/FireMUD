@@ -163,13 +163,13 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
                 });
 
     assertThat(
-            dsl.fetchOne(
+            dsl.fetchSingle(
                     "SELECT count(*) FROM world_design_publication_account_binding WHERE publication_fence = ?",
                     publicationFence)
                 .get(0, Long.class))
         .isEqualTo(1L);
     assertThat(
-            dsl.fetchOne(
+            dsl.fetchSingle(
                     "SELECT count(*) FROM world_selected_publication_artifact_inventory WHERE publication_fence = ?",
                     publicationFence)
                 .get(0, Long.class))
@@ -181,7 +181,7 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
                     publicationFence))
         .hasMessageContaining("World publication-fence attempt history is immutable");
     assertThat(
-            dsl.fetchOne(
+            dsl.fetchSingle(
                     "SELECT count(*) FROM world_design_publication_fence_attempt WHERE publication_fence = ?",
                     publicationFence)
                 .get(0, Long.class))
@@ -297,13 +297,13 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
         .as("a late binding fails at the installed SELECT INTO STRICT attempt lookup")
         .isEqualTo(ownerBeforeLateAttachment);
     assertThat(
-            dsl.fetchOne(
+            dsl.fetchSingle(
                     "SELECT count(*) FROM world_design_publication_fence_attempt WHERE publication_fence = ?",
                     publicationFence)
                 .get(0, Long.class))
         .isEqualTo(1L);
     assertThat(
-            dsl.fetchOne(
+            dsl.fetchSingle(
                     "SELECT count(*) FROM world_design_publication_account_binding WHERE publication_fence = ?",
                     publicationFence)
                 .get(0, Long.class))
