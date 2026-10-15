@@ -129,8 +129,8 @@ public record WorldAuthoredGraphSnapshot(
 
   /**
    * Exact external binding. Schema 4 is reserved for selected-frozen-topology capture; ordinary
-   * snapshot capture accepts only schema 3, while stored snapshots retain schema 2 or 3. All private
-   * World keys are resolved from immutable owner records.
+   * snapshot capture accepts only schema 3, while stored snapshots retain schema 2 or 3. All
+   * private World keys are resolved from immutable owner records.
    */
   public record CaptureRequest(
       String targetNamespace,

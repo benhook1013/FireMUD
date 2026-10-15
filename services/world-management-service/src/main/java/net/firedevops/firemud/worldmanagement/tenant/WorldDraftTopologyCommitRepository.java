@@ -502,8 +502,7 @@ public class WorldDraftTopologyCommitRepository {
     plan.graph()
         .freshGraphDeclaration()
         .flatMap(WorldDraftTopologyInputGraph.FreshGraphDeclaration::inboundSourceClosure)
-        .ifPresent(
-            closure -> graph.put("inboundSourceClosure", closure.content()));
+        .ifPresent(closure -> graph.put("inboundSourceClosure", closure.content()));
     graph.put("rows", rows);
     return STABLE_JSON.writeValueAsBytes(graph);
   }
