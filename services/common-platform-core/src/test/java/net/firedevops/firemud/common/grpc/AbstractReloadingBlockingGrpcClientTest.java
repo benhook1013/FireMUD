@@ -43,6 +43,35 @@ class AbstractReloadingBlockingGrpcClientTest {
   }
 
   @Test
+  void explicitLifecycleInitializesOnceAndRejectsUseAfterClose() throws Exception {
+    CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    CountingChannelFactory factory = new CountingChannelFactory();
+    TestClient client = new TestClient(new ServiceEndpointsProperties(), grpc, factory);
+
+    assertThatThrownBy(client::requireExplicitStub)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("test client is not initialized and available");
+
+    client.initExplicit();
+    GameDesignServiceGrpc.GameDesignServiceBlockingStub initializedStub =
+        client.requireExplicitStub();
+    client.initExplicit();
+
+    assertThat(factory.buildAttempts.get()).isEqualTo(1);
+    assertThat(client.requireExplicitStub()).isSameAs(initializedStub);
+
+    client.close();
+
+    assertThatThrownBy(client::requireExplicitStub)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("test client is not initialized and available");
+    assertThatThrownBy(client::initExplicit)
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("test client is closed");
+  }
+
+  @Test
   void initialisationFailurePreventsLateReloadFromCreatingAnotherChannel(@TempDir Path directory)
       throws Exception {
     Path certificate = Files.writeString(directory.resolve("tls.crt"), "certificate-1");
@@ -207,6 +236,14 @@ class AbstractReloadingBlockingGrpcClientTest {
 
     private void init() throws Exception {
       initReloadingClient();
+    }
+
+    private void initExplicit() throws IOException, SSLException {
+      initOnce("test client is closed", "test client has no stub");
+    }
+
+    private GameDesignServiceGrpc.GameDesignServiceBlockingStub requireExplicitStub() {
+      return requireInitializedStub("test client is not initialized and available");
     }
 
     private GameDesignServiceGrpc.GameDesignServiceBlockingStub currentStub() {

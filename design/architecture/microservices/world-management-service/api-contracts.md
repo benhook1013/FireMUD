@@ -57,7 +57,9 @@ Expected response:
 
 - `GET /ping` – basic health check returning `"pong"`.
 - `GET /regions?tenantId=...` – list regions for a tenant.
+- `POST /regions/{id}/move` – current legacy region-move route; an exact V25 publication-owner conflict returns HTTP 409 with the fixed `CONFLICT` response, without exposing owner details.
 - `POST /generation/rules` and `GET /generation/rules?tenantId=...` – **current legacy routes**. The POST requires an explicit positive `versionId` and does not default to Version 1. Before its mutation effects, the writer locks and validates the existing V25 publication owner; it still does not enforce Game Design Draft/version authority and remains outside the supported design-time boundary. See [Procedural Generation Control](./procedural-generation-control.md) for the canonical owner and local consequence.
+- These two legacy mutation routes map only `WorldDesignPublicationFenceRepository.ConflictException` to HTTP 409 and error code `CONFLICT`; unrelated exceptions retain the shared error handling.
 - `POST /generation/runtime-defaults` and `GET /generation/runtime-defaults?tenantId=...` – **target-only, not implemented**. These operational WMS-owned routes must remain unavailable until their authenticated tenant binding, request identity/replay, durable persistence, and failure semantics are defined and proved.
 
 The service exposes an OpenAPI specification under `/v3/api-docs` with a Swagger UI at `/swagger-ui.html` when running locally.
