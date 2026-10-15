@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Explicit file-backed mTLS client for the exact same-namespace Account order read. */
 public final class DraftCommitOrderReadClient
@@ -46,6 +47,11 @@ public final class DraftCommitOrderReadClient
 
   /** Returns a validated HELD result only after exact Account server mTLS identity verification. */
   public DraftCommitOrderReadEvidence read(DraftCommitOrderReadEvidence.Request request) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "Account COMMIT_ORDER read must run outside an active transaction or synchronization");
+    }
     Objects.requireNonNull(request, "request");
     if (!workloadNamespace.equals(request.targetNamespace())) {
       throw new IllegalArgumentException(
