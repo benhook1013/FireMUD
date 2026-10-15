@@ -268,16 +268,14 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             draft.target().canonicalTenantId())) {
       var issuedCreator = accountFixture.issueCreator();
       var accountSources = issuedCreator.sources();
+      var publicationPki = new ProofPki(temporary.resolve("fresh-world-begin-pki"));
       var publicationAuthorization =
-          new AccountPublicationAuthorizationService(
-                  issuedCreator.actors(),
-                  accountSources.fences,
-                  new AccountPublicationAuthorizationRepository(accountSources.dsl))
-              .authorize(
-                  issuedCreator.compact(),
-                  AuthoredDraftPublishSelectionBinding.fromStored(
-                      selection.canonicalJson(), selection.digest()),
-                  issuedCreator.environment());
+          authenticatedAccountPublicationOrder(
+              gds,
+              issuedCreator,
+              AuthoredDraftPublishSelectionBinding.fromStored(
+                  selection.canonicalJson(), selection.digest()),
+              publicationPki);
       var worldOwners =
           freshAuthenticatedWorldFreeze(
               gds,
@@ -288,7 +286,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                   selection.canonicalJson(), selection.digest()),
               worldGraph,
               publicationAuthorization,
-              new ProofPki(temporary.resolve("fresh-world-begin-pki")));
+              publicationPki);
       assertThat(worldOwners.selectedWorldDigest().digestSchemaVersion()).isEqualTo(4);
       assertThat(worldOwners.appliedResultBytes()).isNotEmpty();
       assertThat(worldOwners.graphBytes()).isNotEmpty();
@@ -819,6 +817,103 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         stop(gameLogicServer);
       }
     }
+  }
+
+  /** Actual authenticated Account ordering consumes the real GDS immutable selection owner. */
+  private static net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding
+      authenticatedAccountPublicationOrder(
+          Store gds,
+          AccountControlUiOriginalOrderFixture.IssuedCreator issued,
+          AuthoredDraftPublishSelectionBinding selection,
+          ProofPki pki)
+          throws Exception {
+    var reads = new java.util.concurrent.atomic.AtomicInteger();
+    var unavailable = new java.util.concurrent.atomic.AtomicBoolean(true);
+    var selectionOwner =
+        new net.firedevops.firemud.gamedesign.draft
+            .GameDesignSelectedDraftPublicationReadGrpcService(
+            new AuthoredDraftPublishSelectionRepository(
+                gds.dsl(), new DraftCommitCoordinatorRepository(gds.dsl())),
+            NAMESPACE);
+    Server gdsServer =
+        ownerServer(pki, "game-design-service", observedRead(selectionOwner, reads, unavailable));
+    Server accountServer = null;
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setGameDesignService(loopback(gdsServer));
+    var channels = new GrpcChannelFactory();
+    var sources = issued.sources();
+    try (var selectionClient =
+        new net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient(
+            endpoints, pki.client("account-service"), channels, NAMESPACE)) {
+      selectionClient.init();
+      var repository = new AccountPublicationAuthorizationRepository(sources.dsl);
+      var owner =
+          new AccountSelectedDraftPublicationOrderService(
+              selectionClient,
+              new AccountPublicationAuthorizationService(
+                  issued.actors(), sources.fences, repository),
+              NAMESPACE);
+      accountServer =
+          ownerServer(
+              pki,
+              "account-service",
+              new AccountSelectedDraftPublicationOrderGrpcService(owner, sources.terms, NAMESPACE));
+      endpoints.setAccountService(loopback(accountServer));
+      try (var client =
+          new net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderClient(
+              endpoints, pki.client("game-design-service"), channels, NAMESPACE)) {
+        client.init();
+        var request =
+            net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderGrpcCodec
+                .Request.create(NAMESPACE, selection, issued.compact());
+        var before = publicationOrderRows(sources.dsl);
+        assertThat(before.get("account_selected_publication_authorizations")).isEmpty();
+        assertThat(before.get("account_selected_publication_sources")).isEmpty();
+        assertThatThrownBy(() -> client.authorize(request)).isInstanceOf(RuntimeException.class);
+        assertThat(publicationOrderRows(sources.dsl)).isEqualTo(before);
+        assertThat(reads.get()).isEqualTo(1);
+        unavailable.set(false);
+        var created = client.authorize(request);
+        assertThat(created.input().selection().canonicalBytes())
+            .containsExactly(selection.canonicalBytes());
+        var committed = publicationOrderRows(sources.dsl);
+        assertThat(committed.get("account_selected_publication_authorizations")).hasSize(1);
+        assertThat(committed.get("account_selected_publication_sources")).isNotEmpty();
+        assertThat(client.authorize(request).canonicalBytes())
+            .containsExactly(created.canonicalBytes());
+        assertThat(publicationOrderRows(sources.dsl)).isEqualTo(committed);
+        assertThat(reads.get()).isEqualTo(3);
+        assertThat(
+                sources
+                    .dsl
+                    .fetchSingle(
+                        "SELECT count(*) FROM account_control_ui_issuance_operations WHERE status = 'COMMITTED'")
+                    .get(0, Long.class))
+            .isEqualTo(1L);
+        return created;
+      }
+    } finally {
+      stop(accountServer);
+      stop(gdsServer);
+    }
+  }
+
+  private static java.util.Map<String, java.util.List<String>> publicationOrderRows(
+      org.jooq.DSLContext dsl) {
+    var result = new java.util.LinkedHashMap<String, java.util.List<String>>();
+    for (String table :
+        List.of(
+            "account_selected_publication_authorizations",
+            "account_selected_publication_sources",
+            "account_selected_publication_settlements",
+            "account_control_ui_issuance_operations")) {
+      result.put(
+          table,
+          dsl.fetch(
+                  "SELECT to_jsonb(r)::text || ':' || r.xmin::text FROM " + table + " r ORDER BY 1")
+              .getValues(0, String.class));
+    }
+    return result;
   }
 
   /** Fresh World begin uses real owner reads before any World freeze attempt exists. */
