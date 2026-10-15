@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -73,6 +74,16 @@ public final class WorldOriginalDraftGraphApplyGrpcService
     } catch (org.springframework.dao.DataAccessException
         | org.jooq.exception.DataAccessException unavailable) {
       deny(observer, Status.UNAVAILABLE, "World original apply storage unavailable");
+    } catch (StatusRuntimeException transportFailure) {
+      Status.Code code = transportFailure.getStatus().getCode();
+      if (code == Status.Code.UNAVAILABLE || code == Status.Code.DEADLINE_EXCEEDED) {
+        deny(observer, Status.UNAVAILABLE, "World original apply owner is temporarily unavailable");
+      } else {
+        deny(
+            observer,
+            Status.FAILED_PRECONDITION,
+            "World original apply owner did not accept the request");
+      }
     } catch (RuntimeException failure) {
       LOGGER.error(
           "World original graph application failed to establish committed evidence; "
