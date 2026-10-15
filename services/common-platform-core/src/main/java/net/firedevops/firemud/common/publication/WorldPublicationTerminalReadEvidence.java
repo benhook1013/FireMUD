@@ -20,7 +20,12 @@ public final class WorldPublicationTerminalReadEvidence {
       Request request, WorldOutcome worldOutcome, byte[] worldTerminalEvidence) {
     this.request = Objects.requireNonNull(request, "request");
     this.worldOutcome = Objects.requireNonNull(worldOutcome, "worldOutcome");
-    this.terminal = GameDesignPublicationTerminalEvidence.fromStored(worldTerminalEvidence);
+    try {
+      this.terminal = GameDesignPublicationTerminalEvidence.fromStored(worldTerminalEvidence);
+    } catch (RuntimeException malformed) {
+      throw new IllegalArgumentException(
+          "Canonical complete publication operation and terminal evidence required", malformed);
+    }
     if (!Arrays.equals(request.originalOperation(), terminal.operationBytes())
         || !Arrays.equals(request.expectedGameDesignTerminalEvidence(), terminal.canonicalBytes())
         || worldOutcome != worldOutcome(terminal.outcome())) {
