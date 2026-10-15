@@ -72,6 +72,7 @@ public final class RunOwnedCanonicalWorldLaunchEvidenceProvider {
   private final GameSessionFixtureClientFactory gameSessionFixtureClientFactory;
   private final String workloadNamespace;
   private volatile CanonicalGameInstanceLaunchAssociationClient gameSessionFixtureClient;
+  private boolean closed;
 
   @Autowired
   public RunOwnedCanonicalWorldLaunchEvidenceProvider(
@@ -245,6 +246,9 @@ public final class RunOwnedCanonicalWorldLaunchEvidenceProvider {
   }
 
   private synchronized CanonicalGameInstanceLaunchAssociationClient gameSessionFixtureClient() {
+    if (closed) {
+      throw invalidEvidence();
+    }
     if (gameSessionFixtureClient != null) {
       return gameSessionFixtureClient;
     }
@@ -272,6 +276,7 @@ public final class RunOwnedCanonicalWorldLaunchEvidenceProvider {
 
   @PreDestroy
   public synchronized void closeGameSessionFixtureClient() {
+    closed = true;
     CanonicalGameInstanceLaunchAssociationClient current = gameSessionFixtureClient;
     gameSessionFixtureClient = null;
     if (current != null) {
