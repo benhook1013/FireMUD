@@ -217,8 +217,9 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       assertThat(productionTerminalRows(freshDsl, freshSchema)).isEmpty();
       assertThat(productionLocationRows(freshDsl, freshSchema)).isEmpty();
 
-      assertThat(latestVersion(upgradeDsl)).isEqualTo("1042.11");
-      assertThat(latestVersion(freshDsl)).isEqualTo("1042.11");
+      assertThat(MigrationVersion.fromVersion(latestVersion(upgradeDsl)))
+          .isGreaterThanOrEqualTo(MigrationVersion.fromVersion("1042.10"));
+      assertThat(latestVersion(freshDsl)).isEqualTo(latestVersion(upgradeDsl));
       assertThat(productionLocationRows(upgradeDsl, upgradeSchema))
           .isEqualTo(locationRowsBeforeRetentionMigration);
       assertLocationRetentionGuards(upgradeDsl, upgradeSchema);

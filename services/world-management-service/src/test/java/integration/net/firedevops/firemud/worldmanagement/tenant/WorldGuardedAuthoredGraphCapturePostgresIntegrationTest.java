@@ -1260,8 +1260,8 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
           .hasMessageContaining("New canonical graph capture requires selected closure schema 4")
           .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("23514"));
 
-      // The retained current DTO accepts only schema 3; its altered checkpoint is therefore
-      // rejected at the current schema-4 boundary before a schema-4 checkpoint comparison.
+      // The retained current DTO accepts only schemas 2 and 3. Override only the serialized
+      // freeze-request schema so this controlled SQL probe reaches the schema-4 checkpoint guard.
       var currentWrongCheckpointCapture =
           new WorldAuthoredGraphSnapshot.CaptureRequest(
               capture.targetNamespace(),
@@ -1277,6 +1277,10 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
               capture.contentDigest(),
               3,
               capture.suppliedOwnedAffectedTuples());
+      var currentWrongCheckpointFreezeRequest =
+          (tools.jackson.databind.node.ObjectNode)
+              mapper.valueToTree(currentWrongCheckpointCapture);
+      currentWrongCheckpointFreezeRequest.put("digestSchemaVersion", 4);
       assertThatThrownBy(
               () ->
                   insertCanonicalFrozenCandidate(
@@ -1284,11 +1288,11 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
                       plan,
                       currentWrongCheckpointCapture,
                       stored,
-                      mapper.writeValueAsString(currentWrongCheckpointCapture),
+                      mapper.writeValueAsString(currentWrongCheckpointFreezeRequest),
                       identityJson,
                       intakeJson))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
-          .hasMessageContaining("New canonical graph capture requires selected closure schema 4")
+          .hasMessageContaining("differs from exact FROZEN source and checkpoint")
           .satisfies(exception -> assertThat(sqlState(exception)).isEqualTo("23514"));
       assertThat(
               dsl.fetchSingle("SELECT count(*) FROM world_canonical_frozen_topology")
