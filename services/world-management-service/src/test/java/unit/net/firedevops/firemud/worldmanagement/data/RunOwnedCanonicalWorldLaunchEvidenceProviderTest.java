@@ -13,6 +13,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
@@ -378,6 +380,98 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
         .contains(
             "Run-owned World launch evidence verification rejected; stage=GAME_SESSION_FIXTURE_READ")
         .doesNotContain("secret-owner-response", "IllegalStateException", "Caused by:");
+  }
+
+  @Test
+  void retryableGameDesignOwnerReadFailuresArePreservedAndStopBeforeGameSessionRead()
+      throws Exception {
+    for (Status.Code code :
+        new Status.Code[] {Status.Code.UNAVAILABLE, Status.Code.DEADLINE_EXCEEDED}) {
+      ProviderFixture fixture = providerFixture();
+      GameDesignClient gameDesignClient = mock(GameDesignClient.class);
+      StatusRuntimeException failure = Status.fromCode(code).asRuntimeException();
+      when(gameDesignClient.getLaunchDescriptor(any())).thenThrow(failure);
+      RunOwnedCanonicalWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory =
+          mock();
+      RunOwnedCanonicalWorldLaunchEvidenceProvider provider =
+          provider(
+              fixture,
+              gameDesignClient,
+              null,
+              fixture.endpoints(),
+              fixture.tlsProperties(),
+              factory);
+
+      try (PeerContext ignored = fixture.attachGameSessionPeer()) {
+        assertThatThrownBy(provider::requireAuthenticatedEvidence).isSameAs(failure);
+      }
+
+      verify(gameDesignClient).getLaunchDescriptor(any());
+      verifyNoInteractions(factory);
+    }
+  }
+
+  @Test
+  void retryableGameSessionOwnerReadFailuresArePreserved() throws Exception {
+    for (Status.Code code :
+        new Status.Code[] {Status.Code.UNAVAILABLE, Status.Code.DEADLINE_EXCEEDED}) {
+      ProviderFixture fixture = providerFixture();
+      GameDesignClient gameDesignClient = mockDescriptorReader(fixture.evidence());
+      CanonicalGameInstanceLaunchAssociationClient fixtureClient = mock();
+      StatusRuntimeException failure = Status.fromCode(code).asRuntimeException();
+      when(fixtureClient.readFixture(any(), anyString())).thenThrow(failure);
+      RunOwnedCanonicalWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory =
+          mock();
+      when(factory.create(any(), any(), any(), anyString())).thenReturn(fixtureClient);
+      RunOwnedCanonicalWorldLaunchEvidenceProvider provider =
+          provider(
+              fixture,
+              gameDesignClient,
+              null,
+              fixture.endpoints(),
+              fixture.tlsProperties(),
+              factory);
+
+      try (PeerContext ignored = fixture.attachGameSessionPeer()) {
+        assertThatThrownBy(provider::requireAuthenticatedEvidence).isSameAs(failure);
+      } finally {
+        provider.closeGameSessionFixtureClient();
+      }
+
+      verify(gameDesignClient).getLaunchDescriptor(any());
+      verify(factory).create(any(), any(), any(), eq("dev"));
+      verify(fixtureClient)
+          .readFixture(any(), eq(fixture.gameSessionLeafSha256()));
+      verify(fixtureClient).close();
+    }
+  }
+
+  @Test
+  void nonretryableGameDesignOwnerReadFailureRemainsInvalidEvidence() throws Exception {
+    ProviderFixture fixture = providerFixture();
+    GameDesignClient gameDesignClient = mock(GameDesignClient.class);
+    when(gameDesignClient.getLaunchDescriptor(any()))
+        .thenThrow(Status.PERMISSION_DENIED.asRuntimeException());
+    RunOwnedCanonicalWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory =
+        mock();
+    RunOwnedCanonicalWorldLaunchEvidenceProvider provider =
+        provider(
+            fixture,
+            gameDesignClient,
+            null,
+            fixture.endpoints(),
+            fixture.tlsProperties(),
+            factory);
+
+    try (PeerContext ignored = fixture.attachGameSessionPeer()) {
+      assertThatThrownBy(provider::requireAuthenticatedEvidence)
+          .isInstanceOf(
+              RunOwnedCanonicalWorldLaunchEvidenceProvider
+                  .InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class)
+          .hasMessage("Run-owned World launch evidence is invalid");
+    }
+
+    verifyNoInteractions(factory);
   }
 
   @Test

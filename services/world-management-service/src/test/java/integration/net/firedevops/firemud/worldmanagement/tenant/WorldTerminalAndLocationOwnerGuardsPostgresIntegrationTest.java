@@ -33,7 +33,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Exercises the V1042.6 and V1042.8 forward owner-guard repairs against native PostgreSQL.
+ * Exercises the V1042.6, V1042.8, and V1042.10 forward owner-guard repairs against native
+ * PostgreSQL.
  * Malformed terminal inputs run through test-local probes built from the installed function body;
  * they do not create production owner rows or claim Account-authorized admission.
  */
@@ -46,6 +47,13 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       "trg_world_require_initial_location_operation_result";
   private static final String TERMINAL_FUNCTION = "world_draft_terminal_outcome_guard";
   private static final String TERMINAL_TRIGGER = "trg_world_draft_terminal_outcome_guard";
+  private static final String LOCATION_DELETE_TRIGGER = "trg_world_reject_character_location_delete";
+  private static final String LOCATION_TRUNCATE_TRIGGER =
+      "trg_world_reject_character_location_truncate";
+  private static final String LOCATION_RETENTION_FUNCTION =
+      "world_reject_authored_source_history_mutation";
+  private static final String OPERATION_TRUNCATE_TRIGGER =
+      "trg_world_reject_initial_location_operation_truncate";
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -142,6 +150,35 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       List<String> terminalRowsBefore = productionTerminalRows(upgradeDsl, upgradeSchema);
       assertThat(terminalRowsBefore).isEmpty();
 
+      Flyway through10429 =
+          flyway(
+              upgradeSource,
+              upgradeSchema,
+              MigrationVersion.fromVersion("1042.9"),
+              worldLocation,
+              sagaLocation);
+      through10429.migrate();
+      through10429.validate();
+      assertThat(latestVersion(upgradeDsl)).isEqualTo("1042.9");
+      TriggerMetadata operationTruncateBefore =
+          triggerMetadata(
+              upgradeDsl,
+              upgradeSchema,
+              "world_canonical_initial_player_location_operation",
+              OPERATION_TRUNCATE_TRIGGER);
+      assertThat(operationTruncateBefore.enabled()).isEqualTo("O");
+      assertThat(operationTruncateBefore.definition()).contains("BEFORE TRUNCATE");
+      assertThat(
+              triggerCount(
+                  upgradeDsl, upgradeSchema, "character_location", LOCATION_DELETE_TRIGGER))
+          .isZero();
+      assertThat(
+              triggerCount(
+                  upgradeDsl, upgradeSchema, "character_location", LOCATION_TRUNCATE_TRIGGER))
+          .isZero();
+      List<String> locationRowsBeforeRetentionMigration =
+          productionLocationRows(upgradeDsl, upgradeSchema);
+
       Flyway current = flyway(upgradeSource, upgradeSchema, null, worldLocation, sagaLocation);
       current.migrate();
       current.validate();
@@ -179,6 +216,42 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           .isEqualTo(normalizeSchemaQualifier(terminalAfter.functionSource(), upgradeSchema));
       assertThat(productionTerminalRows(freshDsl, freshSchema)).isEmpty();
       assertThat(productionLocationRows(freshDsl, freshSchema)).isEmpty();
+
+      assertThat(latestVersion(upgradeDsl)).isEqualTo("1042.11");
+      assertThat(latestVersion(freshDsl)).isEqualTo("1042.11");
+      assertThat(productionLocationRows(upgradeDsl, upgradeSchema))
+          .isEqualTo(locationRowsBeforeRetentionMigration);
+      assertLocationRetentionGuards(upgradeDsl, upgradeSchema);
+      assertLocationRetentionGuards(freshDsl, freshSchema);
+      assertThat(
+              triggerMetadata(
+                      upgradeDsl,
+                      upgradeSchema,
+                      "world_canonical_initial_player_location_operation",
+                      OPERATION_TRUNCATE_TRIGGER))
+          .isEqualTo(operationTruncateBefore);
+      assertSqlState(
+          upgradeSource,
+          "TRUNCATE TABLE \""
+              + upgradeSchema
+              + "\".world_canonical_initial_player_location_operation, \""
+              + upgradeSchema
+              + "\".character_location",
+          "55000");
+      assertSqlState(
+          upgradeSource, "TRUNCATE TABLE \"" + upgradeSchema + "\".character_location", "55000");
+      exerciseCharacterLocationDeleteProbe(upgradeSource, upgradeSchema);
+      assertSqlState(
+          freshSource,
+          "TRUNCATE TABLE \""
+              + freshSchema
+              + "\".world_canonical_initial_player_location_operation, \""
+              + freshSchema
+              + "\".character_location",
+          "55000");
+      assertSqlState(
+          freshSource, "TRUNCATE TABLE \"" + freshSchema + "\".character_location", "55000");
+      exerciseCharacterLocationDeleteProbe(freshSource, freshSchema);
     } finally {
       dropSchema(upgradeSource, upgradeSchema);
       dropSchema(freshSource, freshSchema);
@@ -913,6 +986,94 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
         row.get("public_execute_grants", Long.class) > 0);
   }
 
+  private static TriggerMetadata triggerMetadata(
+      DSLContext dsl, String schema, String table, String trigger) {
+    var row =
+        dsl.fetchSingle(
+            "SELECT t.oid::bigint AS trigger_oid,t.tgfoid::bigint AS function_oid,"
+                + "t.tgenabled::text AS enabled,pg_get_triggerdef(t.oid) AS definition "
+                + "FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
+                + "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                + "WHERE n.nspname=? AND c.relname=? AND t.tgname=? AND NOT t.tgisinternal",
+            schema,
+            table,
+            trigger);
+    return new TriggerMetadata(
+        row.get("trigger_oid", Long.class),
+        row.get("function_oid", Long.class),
+        row.get("enabled", String.class),
+        row.get("definition", String.class));
+  }
+
+  private static long triggerCount(DSLContext dsl, String schema, String table, String trigger) {
+    return dsl.fetchSingle(
+            "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid "
+                + "JOIN pg_namespace n ON n.oid=c.relnamespace "
+                + "WHERE n.nspname=? AND c.relname=? AND t.tgname=? AND NOT t.tgisinternal",
+            schema,
+            table,
+            trigger)
+        .get(0, Long.class);
+  }
+
+  private static void assertLocationRetentionGuards(DSLContext dsl, String schema) {
+    long sharedFunctionOid =
+        dsl.fetchSingle(
+                "SELECT p.oid::bigint FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
+                    + "WHERE n.nspname=? AND p.proname=? AND pg_get_function_identity_arguments(p.oid)=''",
+                schema,
+                LOCATION_RETENTION_FUNCTION)
+            .get(0, Long.class);
+    TriggerMetadata delete =
+        triggerMetadata(dsl, schema, "character_location", LOCATION_DELETE_TRIGGER);
+    TriggerMetadata truncate =
+        triggerMetadata(dsl, schema, "character_location", LOCATION_TRUNCATE_TRIGGER);
+    assertThat(delete.enabled()).isEqualTo("O");
+    assertThat(delete.functionOid()).isEqualTo(sharedFunctionOid);
+    assertThat(delete.definition()).contains("BEFORE DELETE");
+    assertThat(truncate.enabled()).isEqualTo("O");
+    assertThat(truncate.functionOid()).isEqualTo(sharedFunctionOid);
+    assertThat(truncate.definition()).contains("BEFORE TRUNCATE");
+  }
+
+  private static void assertSqlState(
+      DriverManagerDataSource source, String sql, String expectedSqlState) throws SQLException {
+    try (Connection connection = source.getConnection();
+        Statement statement = connection.createStatement()) {
+      try {
+        statement.execute(sql);
+        throw new AssertionError("Expected SQLSTATE " + expectedSqlState + " for: " + sql);
+      } catch (SQLException failure) {
+        assertThat(failure.getSQLState()).isEqualTo(expectedSqlState);
+      }
+    }
+  }
+
+  private static void exerciseCharacterLocationDeleteProbe(
+      DriverManagerDataSource source, String schema) throws SQLException {
+    // Test-local probe: genuine APPLIED rows require future Account/World admission authority.
+    // This exercises the installed immutable-history function without fabricating that authority.
+    try (Connection connection = source.getConnection();
+        Statement statement = connection.createStatement()) {
+      statement.execute(
+          "CREATE TEMP TABLE character_location_delete_probe (marker INTEGER NOT NULL)");
+      statement.execute(
+          "CREATE TRIGGER trg_world_probe_character_location_delete BEFORE DELETE ON "
+              + "character_location_delete_probe FOR EACH ROW EXECUTE FUNCTION \""
+              + schema
+              + "\"."
+              + LOCATION_RETENTION_FUNCTION
+              + "()");
+      statement.execute("INSERT INTO character_location_delete_probe VALUES (1)");
+      try {
+        statement.execute("DELETE FROM character_location_delete_probe");
+        throw new AssertionError("Test-local character-location deletion probe was not rejected");
+      } catch (SQLException failure) {
+        assertThat(failure.getSQLState()).isEqualTo("55000");
+      }
+    }
+  }
+
   private static TerminalFunctionMetadata terminalFunctionMetadata(DSLContext dsl, String schema) {
     var row =
         dsl.fetchSingle(
@@ -1299,4 +1460,7 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       String triggerEnabled,
       String triggerDefinition,
       boolean publicExecuteGrant) {}
+
+  private record TriggerMetadata(
+      long triggerOid, long functionOid, String enabled, String definition) {}
 }

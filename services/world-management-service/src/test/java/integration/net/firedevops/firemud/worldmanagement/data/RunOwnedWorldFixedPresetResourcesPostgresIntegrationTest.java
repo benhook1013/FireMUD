@@ -774,12 +774,20 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                                   fixturePlan,
                                   allocatedFixture.worldInstanceId(),
                                   allocatedFixture.worldPrivateKeys().gameInstanceId()));
-                  assertThat(
-                          scalarText(
-                              "SELECT p.xmin::text FROM world_canonical_instance_preparation p "
-                                  + "WHERE p.world_instance_id = ?",
-                              allocatedFixture.worldInstanceId()))
-                      .isNotEqualTo(scalarText("SELECT (txid_current() % 4294967296)::text"));
+                  var preparationStamp =
+                      dsl.fetchSingle(
+                          "SELECT p.preparation_inserted_full_xid::text, p.xmin::text, "
+                              + "pg_current_xact_id()::text, "
+                              + "(txid_current() % 4294967296)::text "
+                              + "FROM world_canonical_instance_preparation p "
+                              + "WHERE p.world_instance_id = ?",
+                          allocatedFixture.worldInstanceId());
+                  assertThat(preparationStamp.get(0, String.class))
+                      .as("the BEFORE INSERT server stamp records the top-level full XID")
+                      .isEqualTo(preparationStamp.get(2, String.class));
+                  assertThat(preparationStamp.get(1, String.class))
+                      .as("the row inserted beneath the owner savepoint keeps its child xmin")
+                      .isNotEqualTo(preparationStamp.get(3, String.class));
                   return result;
                 });
     assertThat(materialized).isNotNull();
@@ -1114,6 +1122,14 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                       fixtureAssociation.worldInstanceId())
                   .get(0, Long.class))
           .isEqualTo(1L);
+      String retainedPreparationAt10428 =
+          connection
+              .fetchSingle(
+                  "SELECT (to_jsonb(p) - 'preparation_inserted_full_xid')::text "
+                      + "|| ':xmin=' || p.xmin::text "
+                      + "FROM world_canonical_instance_preparation p WHERE p.world_instance_id = ?",
+                  fixtureAssociation.worldInstanceId())
+              .get(0, String.class);
 
       var through10428 = migration(source, schema, "1042.8");
       through10428.migrate();
@@ -1222,7 +1238,9 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
           List.of(
               "world_validate_selected_publication_account_binding()",
               "world_validate_selected_publication_artifact_inventory()",
-              "world_retain_preparation_start_location()"))
+              "world_retain_preparation_start_location()",
+              "world_guard_preparation_start_location()",
+              "world_require_preparation_start_location(jsonb,jsonb,uuid)"))
         sameTransactionFunctionMetadata.put(
             function,
             connection
@@ -1241,7 +1259,9 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
               "trg_world_selected_publication_artifact_inventory_validate",
               "trg_world_selected_publication_artifact_inventory_immutable",
               "trg_world_selected_publication_artifact_inventory_no_truncate",
-              "trg_world_preparation_retain_start_location"))
+              "trg_world_preparation_retain_start_location",
+              "trg_world_preparation_start_location_guard",
+              "trg_world_preparation_start_location_no_truncate"))
         sameTransactionTriggerMetadata.put(
             trigger,
             connection
@@ -1335,15 +1355,96 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                     .get(0, String.class))
             .as("existing trigger identity and behavior for %s", entry.getKey())
             .isEqualTo(entry.getValue());
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT pg_get_functiondef(to_regprocedure(?))",
+                      schema + ".world_guard_preparation_start_location()")
+                  .get(0, String.class))
+          .contains("p.preparation_inserted_full_xid=pg_current_xact_id()")
+          .doesNotContain("p.xmin::TEXT");
+      var preparationStampFunction =
+          connection.fetchSingle(
+              "SELECT proowner::text, prosecdef, proconfig::text FROM pg_proc "
+                  + "WHERE oid = to_regprocedure(?)",
+              schema + ".world_stamp_preparation_insert_full_xid()");
+      assertThat(preparationStampFunction.get("prosecdef", Boolean.class)).isTrue();
+      assertThat(preparationStampFunction.get("proconfig", String.class))
+          .contains("pg_catalog")
+          .contains(schema);
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT count(*) FROM pg_proc p CROSS JOIN LATERAL "
+                          + "aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl "
+                          + "WHERE p.oid = to_regprocedure(?) AND acl.grantee = 0::oid "
+                          + "AND acl.privilege_type = 'EXECUTE'",
+                      schema + ".world_stamp_preparation_insert_full_xid()")
+                  .get(0, Long.class))
+          .as("the preparation stamp trigger function grants no EXECUTE to PUBLIC")
+          .isZero();
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT t.tgtype::text, t.tgenabled::text, t.tgfoid::text "
+                          + "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                          + "WHERE c.relnamespace = to_regnamespace(?) "
+                          + "AND c.relname = 'world_canonical_instance_preparation' "
+                          + "AND t.tgname = 'trg_world_preparation_full_xid_stamp'",
+                      schema))
+          .satisfies(
+              row -> {
+                assertThat(row.get(0, String.class)).isEqualTo("7");
+                assertThat(row.get(1, String.class)).isEqualTo("O");
+                assertThat(row.get(2, String.class))
+                    .isEqualTo(
+                        connection
+                            .fetchSingle(
+                                "SELECT oid::text FROM pg_proc WHERE oid = to_regprocedure(?)",
+                                schema + ".world_stamp_preparation_insert_full_xid()")
+                            .get(0, String.class));
+              });
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                          + "WHERE c.relnamespace = to_regnamespace(?) "
+                          + "AND c.relname = 'world_canonical_instance_preparation' "
+                          + "AND NOT t.tgisinternal AND (t.tgtype & 7) = 7",
+                      schema)
+                  .get(0, Long.class))
+          .as("the exact manifest validator and server stamp are the only BEFORE INSERT row triggers")
+          .isEqualTo(2L);
+      assertThat("trg_world_canonical_instance_preparation_exact_insert")
+          .isLessThan("trg_world_preparation_full_xid_stamp");
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT preparation_inserted_full_xid::text "
+                          + "FROM world_canonical_instance_preparation WHERE world_instance_id = ?",
+                      fixtureAssociation.worldInstanceId())
+                  .get(0, String.class))
+          .as("a preparation retained before V1042.11 remains unbackfilled")
+          .isNull();
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT (to_jsonb(p) - 'preparation_inserted_full_xid')::text "
+                          + "|| ':xmin=' || p.xmin::text "
+                          + "FROM world_canonical_instance_preparation p WHERE p.world_instance_id = ?",
+                      fixtureAssociation.worldInstanceId())
+                  .get(0, String.class))
+          .as("all original preparation columns and xmin survive the V1042.11 upgrade")
+          .isEqualTo(retainedPreparationAt10428);
       for (var entry : originalColumns.entrySet())
         assertThat(retainedRows(connection, schema, entry.getKey(), entry.getValue()))
             .as("all original values and xmin for %s", entry.getKey())
             .containsAll(originalRows.get(entry.getKey()));
       var retainedRowsAtDefaultFrontierOriginalColumns =
-          new LinkedHashMap<>(allRowsWithoutNewAttemptStamp(connection));
+          new LinkedHashMap<>(allRowsWithoutNewServerStamps(connection));
       retainedRowsAtDefaultFrontierOriginalColumns.remove(HISTORY);
       assertThat(retainedRowsAtDefaultFrontierOriginalColumns)
-          .as("all retained row values and xmin from V1042.8 through the V1042.9 repair")
+          .as("all retained original row values and xmin from V1042.8 through the V1042.11 repairs")
           .isEqualTo(retainedRowsAt10428);
       var retainedRowsAtDefaultFrontier = new LinkedHashMap<>(allRows(connection));
       retainedRowsAtDefaultFrontier.remove(HISTORY);
@@ -2227,7 +2328,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     return rows;
   }
 
-  private static Map<String, List<String>> allRowsWithoutNewAttemptStamp(DSLContext connection) {
+  private static Map<String, List<String>> allRowsWithoutNewServerStamps(DSLContext connection) {
     String schema = connection.fetchSingle("SELECT current_schema()").get(0, String.class);
     assertThat(schema).isNotBlank();
     var tables =
@@ -2239,9 +2340,13 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     Map<String, List<String>> rows = new LinkedHashMap<>();
     for (String table : tables) {
       String retainedRow =
-          table.equals("world_design_publication_fence_attempt")
-              ? "(to_jsonb(retained) - 'attempt_inserted_full_xid')"
-              : "to_jsonb(retained)";
+          switch (table) {
+            case "world_design_publication_fence_attempt" ->
+                "(to_jsonb(retained) - 'attempt_inserted_full_xid')";
+            case "world_canonical_instance_preparation" ->
+                "(to_jsonb(retained) - 'preparation_inserted_full_xid')";
+            default -> "to_jsonb(retained)";
+          };
       rows.put(
           table,
           connection
@@ -3030,6 +3135,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1042.7");
     versions.add("1042.8");
     versions.add("1042.9");
+    versions.add("1042.10");
+    versions.add("1042.11");
     return List.copyOf(versions);
   }
 
