@@ -193,7 +193,18 @@ public final class CanonicalGameplayLoginResult implements AutoCloseable {
     Object eventProjection =
         canonicalProjection(
             response.getOutboxSourceEventEvidenceCanonicalJson(), MAX_CHECKPOINT_PROJECTION_BYTES);
-    if (!(checkpointProjection instanceof List<?> checkpoints)
+    requireCheckpointEvidence(accountId, tuple, checkpointProjection, eventProjection);
+  }
+
+  /**
+   * Shared structural checkpoint validation for the authenticated response and live-context codec.
+   * This supplies no authentication, currentness, installation or gameplay authority.
+   */
+  public static void requireCheckpointEvidence(
+      UUID accountId, Map<?, ?> tuple, Object checkpointProjection, Object eventProjection) {
+    if (accountId == null
+        || tuple == null
+        || !(checkpointProjection instanceof List<?> checkpoints)
         || checkpoints.size() != 2
         || !(eventProjection instanceof List<?> events)
         || events.size() > 2) throw invalid();
