@@ -1,16 +1,25 @@
 package unit.net.firedevops.firemud.worldmanagement.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import com.google.protobuf.UnknownFieldSet;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalCompletionGrpcCodec;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.worldmanagement.tenant.WorldGameDesignPublicationTerminalVerifierTest;
 import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalCompletionGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalService;
 import net.firedevops.firemud.worldmanagement.v1.CompleteVersionPublicationRequest;
@@ -77,6 +86,41 @@ class WorldPublicationTerminalCompletionGrpcServiceTest {
     verifyNoInteractions(owner);
   }
 
+  @Test
+  void sanitizesUpstreamGameDesignStatusAndTrailersForValidRequest() throws Exception {
+    GameDesignPublicationOperationBinding operation =
+        WorldGameDesignPublicationTerminalVerifierTest.operation();
+    var terminal =
+        WorldGameDesignPublicationTerminalVerifierTest.terminal(operation, Outcome.PUBLISHED);
+    var request =
+        WorldPublicationTerminalCompletionGrpcCodec.Request.create(
+            "test", operation.canonicalBytes(), terminal.canonicalBytes());
+    var wire = WorldPublicationTerminalCompletionGrpcCodec.toRequest(request);
+    var owner = mock(WorldPublicationTerminalService.class);
+    var service = new WorldPublicationTerminalCompletionGrpcService(owner, "test");
+    Metadata.Key<String> secretKey =
+        Metadata.Key.of("upstream-secret", Metadata.ASCII_STRING_MARSHALLER);
+    Metadata trailers = new Metadata();
+    trailers.put(secretKey, "secret-upstream-trailer");
+    StatusRuntimeException upstream =
+        Status.UNAVAILABLE
+            .withDescription("secret upstream failure detail")
+            .asRuntimeException(trailers);
+    when(owner.complete(any(), any())).thenThrow(upstream);
+
+    Observation observation = invoke(service, peer("test", "game-design-service"), wire);
+
+    assertThat(Status.fromThrowable(observation.failure()).getCode())
+        .isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(Status.fromThrowable(observation.failure()).getDescription())
+        .isEqualTo("Game Design publication terminal request failed");
+    assertThat(observation.failure()).isInstanceOf(StatusRuntimeException.class);
+    assertThat(((StatusRuntimeException) observation.failure()).getTrailers()).isNull();
+    assertThat(observation.response()).isNull();
+    assertThat(observation.completed()).isFalse();
+    verify(owner).complete(any(), any());
+  }
+
   private static void assertFailure(Status.Code expected, Observation observation) {
     assertThat(observation.code()).isEqualTo(expected);
     assertThat(observation.response()).isNull();
@@ -98,6 +142,7 @@ class WorldPublicationTerminalCompletionGrpcServiceTest {
     }
     return new Observation(
         observer.failure == null ? null : Status.fromThrowable(observer.failure).getCode(),
+        observer.failure,
         observer.response,
         observer.completed);
   }
@@ -108,7 +153,10 @@ class WorldPublicationTerminalCompletionGrpcServiceTest {
   }
 
   private record Observation(
-      Status.Code code, CompleteVersionPublicationResponse response, boolean completed) {}
+      Status.Code code,
+      Throwable failure,
+      CompleteVersionPublicationResponse response,
+      boolean completed) {}
 
   private static final class Collector
       implements StreamObserver<CompleteVersionPublicationResponse> {

@@ -68,7 +68,10 @@ public final class WorldPublicationTerminalCompletionGrpcService
     try {
       committed = owner.complete(decoded.originalOperation(), decoded.gameDesignTerminalEvidence());
     } catch (StatusRuntimeException failure) {
-      observer.onError(failure);
+      fail(
+          observer,
+          Status.fromCode(failure.getStatus().getCode()),
+          "Game Design publication terminal request failed");
       return;
     } catch (DataAccessException | org.springframework.dao.DataAccessException unavailable) {
       fail(observer, Status.UNAVAILABLE, "World publication terminal storage is unavailable");
