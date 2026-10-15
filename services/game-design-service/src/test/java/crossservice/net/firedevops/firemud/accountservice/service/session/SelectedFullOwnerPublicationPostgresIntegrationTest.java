@@ -279,14 +279,16 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                       selection.canonicalJson(), selection.digest()),
                   issuedCreator.environment());
       var worldOwners =
-          WorldSelectedFullPublicationEvidenceFixture.applyFreezeAndCapture(
-              world.dsl(),
-              world.transactions(),
-              NAMESPACE,
+          freshAuthenticatedWorldFreeze(
+              gds,
+              world,
+              accountSources.dsl,
+              accountSources.manager,
               AuthoredDraftPublishSelectionBinding.fromStored(
                   selection.canonicalJson(), selection.digest()),
               worldGraph,
-              ignored -> publicationAuthorization);
+              publicationAuthorization,
+              new ProofPki(temporary.resolve("fresh-world-begin-pki")));
       assertThat(worldOwners.selectedWorldDigest().digestSchemaVersion()).isEqualTo(4);
       assertThat(worldOwners.appliedResultBytes()).isNotEmpty();
       assertThat(worldOwners.graphBytes()).isNotEmpty();
@@ -817,6 +819,217 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         stop(gameLogicServer);
       }
     }
+  }
+
+  /** Fresh World begin uses real owner reads before any World freeze attempt exists. */
+  private static WorldSelectedFullPublicationEvidenceFixture.Result freshAuthenticatedWorldFreeze(
+      Store gds,
+      Store world,
+      org.jooq.DSLContext accountDsl,
+      org.springframework.transaction.PlatformTransactionManager accountTransactions,
+      AuthoredDraftPublishSelectionBinding selection,
+      WorldSelectedFullPublicationEvidenceFixture.AppliedGraph graph,
+      net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding account,
+      ProofPki pki)
+      throws Exception {
+    var selectionCalls = new java.util.concurrent.atomic.AtomicInteger();
+    var versionCalls = new java.util.concurrent.atomic.AtomicInteger();
+    var heldCalls = new java.util.concurrent.atomic.AtomicInteger();
+    var unavailableAccount = new java.util.concurrent.atomic.AtomicBoolean(true);
+    var unavailableGds = new java.util.concurrent.atomic.AtomicBoolean();
+    var sources =
+        new net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository(
+            gds.dsl());
+    Server gdsServer =
+        ownerServer(
+            pki,
+            "game-design-service",
+            observedRead(
+                new net.firedevops.firemud.gamedesign.draft
+                    .GameDesignSelectedDraftPublicationReadGrpcService(
+                    new AuthoredDraftPublishSelectionRepository(
+                        gds.dsl(), new DraftCommitCoordinatorRepository(gds.dsl())),
+                    NAMESPACE),
+                selectionCalls,
+                unavailableGds),
+            observedRead(
+                new net.firedevops.firemud.gamedesign.service.impl
+                    .AuthoredWorldVersionStateGrpcService(
+                    new net.firedevops.firemud.gamedesign.service.impl
+                        .AuthoredWorldVersionStateService(gds.transactions(), sources),
+                    NAMESPACE),
+                versionCalls,
+                unavailableGds),
+            new net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceReadGrpcService(
+                sources, NAMESPACE));
+    Server accountServer = null;
+    Server worldServer = null;
+    try {
+      accountServer =
+          ownerServer(
+              pki,
+              "account-service",
+              observedRead(
+                  new AccountPublicationAuthorizationReadGrpcService(
+                      new AccountPublicationAuthorizationReadService(
+                          new AccountPublicationAuthorizationRepository(accountDsl),
+                          accountTransactions,
+                          NAMESPACE),
+                      NAMESPACE),
+                  heldCalls,
+                  unavailableAccount));
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setGameDesignService(loopback(gdsServer));
+      endpoints.setAccountService(loopback(accountServer));
+      var channels = new GrpcChannelFactory();
+      try (var selectionClient =
+              new net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient(
+                  endpoints, pki.client("world-management-service"), channels, NAMESPACE);
+          var versionClient =
+              new net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient(
+                  endpoints, pki.client("world-management-service"), channels, NAMESPACE);
+          var accountClient =
+              new net.firedevops.firemud.common.publication
+                  .AccountPublicationAuthorizationReadClient(
+                  endpoints, pki.client("world-management-service"), channels, NAMESPACE);
+          var sourceClient =
+              new net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient(
+                  endpoints, pki.client("world-management-service"), channels, NAMESPACE)) {
+        selectionClient.init();
+        versionClient.init();
+        accountClient.init();
+        sourceClient.init();
+        var handlers =
+            WorldSelectedFullPublicationEvidenceFixture.reservationReadEndpoints(
+                world.dsl(),
+                world.transactions(),
+                NAMESPACE,
+                selectionClient,
+                versionClient,
+                accountClient,
+                sourceClient);
+        worldServer =
+            ownerServer(
+                pki, "world-management-service", handlers.toArray(io.grpc.BindableService[]::new));
+        endpoints.setWorldManagementService(loopback(worldServer));
+        try (var freeze =
+            new net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient(
+                endpoints, pki.client("game-design-service"), channels, NAMESPACE)) {
+          freeze.init();
+          var intent = selection.intent();
+          var request =
+              net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence
+                  .Request.create(
+                  NAMESPACE,
+                  intent.canonicalTenantId(),
+                  intent.canonicalVersionId(),
+                  intent.publishRequestId(),
+                  Long.parseLong(intent.expectedVersionStateEpoch()),
+                  selection.digest().substring("sha256:".length()),
+                  account);
+          var before = freezeOwnerRows(world.dsl());
+          for (String empty :
+              List.of(
+                  "world_design_publication_fence_attempt",
+                  "world_design_publication_account_binding",
+                  "world_selected_publication_artifact_inventory",
+                  "world_canonical_frozen_topology")) {
+            assertThat(before.get(empty)).as("no prior %s", empty).isEmpty();
+          }
+          assertThat(
+                  world
+                      .dsl()
+                      .fetchSingle(
+                          "SELECT owner_freeze_phase FROM world_design_publication_fence_owner")
+                      .get(0, String.class))
+              .isEqualTo("OPEN");
+          assertThatThrownBy(() -> freeze.begin(request)).isInstanceOf(RuntimeException.class);
+          assertThat(freezeOwnerRows(world.dsl())).isEqualTo(before);
+          assertThat(selectionCalls.get()).isEqualTo(1);
+          assertThat(versionCalls.get()).isEqualTo(1);
+          assertThat(heldCalls.get()).isEqualTo(1);
+          unavailableAccount.set(false);
+          var created = freeze.begin(request);
+          assertThat(created.request()).isEqualTo(request);
+          assertThat(created.acknowledgement().ownerFreezePhase())
+              .isEqualTo(
+                  net.firedevops.firemud.common.publication
+                      .WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN);
+          assertThat(selectionCalls.get()).isEqualTo(2);
+          assertThat(versionCalls.get()).isEqualTo(2);
+          assertThat(heldCalls.get()).isEqualTo(2);
+          var retained =
+              WorldSelectedFullPublicationEvidenceFixture.readCommittedFreeze(
+                  world.dsl(), NAMESPACE, selection, graph, account, created);
+          var committed = freezeOwnerRows(world.dsl());
+          for (String written :
+              List.of(
+                  "world_design_publication_fence_attempt",
+                  "world_design_publication_account_binding",
+                  "world_selected_publication_artifact_inventory",
+                  "world_canonical_frozen_topology")) {
+            assertThat(committed.get(written)).as("one committed %s", written).hasSize(1);
+          }
+          unavailableAccount.set(true);
+          unavailableGds.set(true);
+          assertThat(freeze.begin(request)).isEqualTo(created);
+          assertThat(freezeOwnerRows(world.dsl())).isEqualTo(committed);
+          assertThat(selectionCalls.get()).isEqualTo(2);
+          assertThat(versionCalls.get()).isEqualTo(2);
+          assertThat(heldCalls.get()).isEqualTo(2);
+          return retained;
+        }
+      }
+    } finally {
+      stop(worldServer);
+      stop(accountServer);
+      stop(gdsServer);
+    }
+  }
+
+  private static java.util.Map<String, java.util.List<String>> freezeOwnerRows(
+      org.jooq.DSLContext dsl) {
+    var result = new java.util.LinkedHashMap<String, java.util.List<String>>();
+    for (String table :
+        List.of(
+            "world_design_publication_fence_owner",
+            "world_design_publication_fence_attempt",
+            "world_design_publication_account_binding",
+            "world_selected_publication_artifact_inventory",
+            "world_canonical_frozen_topology")) {
+      result.put(
+          table,
+          dsl.fetch(
+                  "SELECT to_jsonb(r)::text || ':' || r.xmin::text FROM " + table + " r ORDER BY 1")
+              .getValues(0, String.class));
+    }
+    return result;
+  }
+
+  private static io.grpc.BindableService observedRead(
+      io.grpc.BindableService owner,
+      java.util.concurrent.atomic.AtomicInteger calls,
+      java.util.concurrent.atomic.AtomicBoolean unavailable) {
+    return () ->
+        ServerInterceptors.intercept(
+            owner,
+            new io.grpc.ServerInterceptor() {
+              @Override
+              public <Q, A> io.grpc.ServerCall.Listener<Q> interceptCall(
+                  io.grpc.ServerCall<Q, A> call,
+                  io.grpc.Metadata metadata,
+                  io.grpc.ServerCallHandler<Q, A> next) {
+                calls.incrementAndGet();
+                if (unavailable.get()) {
+                  call.close(
+                      io.grpc.Status.UNAVAILABLE.withDescription(
+                          "test-only owner transport outage"),
+                      new io.grpc.Metadata());
+                  return new io.grpc.ServerCall.Listener<>() {};
+                }
+                return next.startCall(call, metadata);
+              }
+            });
   }
 
   /**
