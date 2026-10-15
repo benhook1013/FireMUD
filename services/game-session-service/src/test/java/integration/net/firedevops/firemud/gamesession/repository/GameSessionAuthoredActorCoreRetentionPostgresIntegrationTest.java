@@ -303,10 +303,15 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
                   owner.ownerMutationId(),
                   owner.ownerAttemptId(),
                   owner.ownerFence()));
-      assertThat(
-              associationReadRepository.readOriginalStartSessionAssociation(
-                  mismatchedOriginalSelector))
-          .isEmpty();
+      assertThatThrownBy(
+              () ->
+                  associationReadRepository.readOriginalStartSessionAssociation(
+                      mismatchedOriginalSelector))
+          .isInstanceOf(
+              CanonicalGameInstanceLaunchAssociationRepository
+                  .LaunchAssociationOwnerReadMismatchException.class)
+          .hasMessage(
+              "Canonical launch association differs from its exact original StartSession selector");
       assertThatThrownBy(
               () ->
                   insertSelectionPin(
