@@ -30,6 +30,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountGameplayDele
 import net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationRedisClient;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountSecurityCutoff;
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import org.junit.jupiter.api.Nested;
@@ -655,12 +656,11 @@ class AccountGameplayDelegationAuthorityProjectionTest {
 
     @Test
     void historicalActiveMembershipRemainsValidAfterProvedClosedAccountSecurityChange() {
-      SelectedOwnerFixture fixture =
-          new SelectedOwnerFixture(
-              net.firedevops.firemud.accountservice.service.session
-                  .AccountSelectedGameplayAuthorityProjectionTest.TENANT,
-              1L,
-              2L);
+      UUID tenant =
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.TENANT;
+      var tenantEvent = tenantEventWithDistinctBillingAndAuthorityCoordinates(tenant);
+      SelectedOwnerFixture fixture = new SelectedOwnerFixture(tenant, 1L, 2L, tenantEvent);
       when(fixture.redis.readSelectedAuthorityProjections(ACCOUNT_ID, fixture.tenant))
           .thenReturn(fixture.values);
       var observation = fixture.projection.observeSelectedCurrent(ACCOUNT_ID, fixture.tenant);
@@ -686,9 +686,11 @@ class AccountGameplayDelegationAuthorityProjectionTest {
                       "tenantBillingSequence",
                       "1",
                       "outboxStreamKey",
-                      "account:tenant-entitlement:v1:tenant/" + fixture.tenant,
+                      tenantEvent.outboxStreamKey(),
                       "outboxSequence",
-                      "1")));
+                      Long.toString(tenantEvent.outboxSequence()))));
+      assertThat(tenantEvent.outboxStreamKey()).isNotEqualTo(tenantEvent.tenantBillingStreamKey());
+      assertThat(tenantEvent.outboxSequence()).isNotEqualTo(tenantEvent.tenantBillingSequence());
       assertThat(observation.issuanceFence()).isEqualTo(2L);
       assertThat(observation.membershipVersion()).isEqualTo(2L);
       assertThat(observation.membershipAuthorityGeneration()).isEqualTo(1L);
@@ -743,6 +745,32 @@ class AccountGameplayDelegationAuthorityProjectionTest {
       org.mockito.Mockito.verifyNoInteractions(unsupported.redis);
     }
 
+    private static TenantAuthorityEventV1Codec.Event
+        tenantEventWithDistinctBillingAndAuthorityCoordinates(UUID tenant) {
+      var original =
+          net.firedevops.firemud.accountservice.service.session
+              .AccountSelectedGameplayAuthorityProjectionTest.tenant(tenant);
+      return TenantAuthorityEventV1Codec.seal(
+          new TenantAuthorityEventV1Codec.AuthorityRequest(
+              original.requestId(),
+              original.requestDigest(),
+              tenant,
+              original.sourceEvidence().creationRequestId(),
+              original.sourceEvidence().requestDigest()),
+          original.sourceEvidence(),
+          original.tenantAuthorityGeneration(),
+          original.tenantAuthoritySourceVersion(),
+          original.outboxSequence() + 3L,
+          new TenantAuthorityEventV1Codec.BillingReceipt(
+              tenant,
+              original.requestId(),
+              original.requestDigest(),
+              original.tenantBillingStreamKey(),
+              original.tenantBillingSequence(),
+              original.tenantBillingEventId(),
+              original.tenantBillingEventDigest()));
+    }
+
     private static final class SelectedOwnerFixture {
       final UUID tenant;
       final AccountAuthoritySourceEvidenceRepository sources =
@@ -789,6 +817,19 @@ class AccountGameplayDelegationAuthorityProjectionTest {
       }
 
       SelectedOwnerFixture(UUID tenant, long issuerGeneration, long accountGeneration) {
+        this(
+            tenant,
+            issuerGeneration,
+            accountGeneration,
+            net.firedevops.firemud.accountservice.service.session
+                .AccountSelectedGameplayAuthorityProjectionTest.tenant(tenant));
+      }
+
+      SelectedOwnerFixture(
+          UUID tenant,
+          long issuerGeneration,
+          long accountGeneration,
+          TenantAuthorityEventV1Codec.Event tenantEvent) {
         this.tenant = tenant;
         var source = snapshot(issuerGeneration, accountGeneration);
         when(sources.readCurrentIssuerAccountSources(
@@ -821,9 +862,6 @@ class AccountGameplayDelegationAuthorityProjectionTest {
                 List.of(tenant),
                 List.of(tenant)))
             .thenReturn(composite);
-        var tenantEvent =
-            net.firedevops.firemud.accountservice.service.session
-                .AccountSelectedGameplayAuthorityProjectionTest.tenant(tenant);
         when(tenantSources.readCurrentByTenant(tenant)).thenReturn(tenantEvent);
         var event =
             net.firedevops.firemud.accountservice.service.session
@@ -900,7 +938,7 @@ class AccountGameplayDelegationAuthorityProjectionTest {
         values =
             net.firedevops.firemud.accountservice.service.session
                 .AccountSelectedGameplayAuthorityProjectionTest.selected(
-                canonicalProjectionPairForFixture(source), ACCOUNT_ID, tenant);
+                canonicalProjectionPairForFixture(source), tenantEvent, event, 1L);
         projection =
             new AccountGameplayDelegationAuthorityProjection(
                 sources,
