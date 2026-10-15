@@ -8,7 +8,7 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ### Selected publication reservation preparation
 
-A separate unregistered reservation adapter is being reconciled from the remaining carrier. It independently reads the retained selection, exact Account HELD evidence, World freeze/inventory/selector and original World source/delivery before the existing local reservation transaction. Current client types and binding guards remain authoritative. Focused proof is pending. This preparation does not supply through-commit Account protection, failed-selection recovery, a reachable publication finalizer or a production entrypoint; fresh/PENDING publication and runtime authority remain denied.
+An unregistered reservation adapter independently reads the retained selection, exact Account HELD evidence, World freeze/inventory/selector and original World source/delivery before the existing local reservation transaction. Its ten focused ordering/refusal units and GDS static/format/docs pass; remote inputs remain transport doubles, not physical authenticated admission. The coherent continuation includes the missing Account selected-publication producer, HELD read, typed order transport and exact terminal-settlement owner over existing V93 storage; current-contract reconciliation and their focused/native proof remain pending. No migration or parallel terminal codec is introduced. Current client types and binding guards remain authoritative. This does not supply through-commit Account protection, failed-selection recovery, a reachable publication finalizer or a production entrypoint; fresh/PENDING publication and runtime authority remain denied.
 
 ### Selected-full owner publication preparation
 

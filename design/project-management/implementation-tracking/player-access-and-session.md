@@ -6,6 +6,11 @@ This is a non-normative implementation tracker for player access and session. Ca
 
 ## Current Status
 
+### Selected publication owner preparation
+
+The isolated continuation prepares Account's distinct selected-publication order, exact HELD read and authenticated two-terminal settlement composition over existing authorization/settlement storage. The owner reuses current creator issuance, sorted source locks and writer-exclusion guards; the typed Game Design order read completes before Account's local producer transaction. Source/currentness, caller, retention and focused physical proof remain pending. These owners remain unregistered and grant no publication finalizer, player admission or runtime authority.
+
+
 ### Selected recipient source intake preparation
 
 R31 freshly passes all eight Account final-authorization, exact Entity/Automation terminal-storage and retained-upgrade cases with zero skips. Account's 1,500 unit cases pass with four existing skips, Common's 811 units pass with zero skips, and World's 593 units retain the unchanged R30 pass. A real Java writer-exclusion omission exposed by R30 is corrected: the shared settlement check now includes the existing pending selected-owner reservation predicate, matching the retained SQL guard. The shared synthetic terminal codec fixture is carried at its first consumer. R35 freshly passes the successor disclosure composition at the actual V1008–V1010 repository frontier, including physical source-writer exclusion until exact reservation abort; its static, formatting and documentation checks pass. The earlier V1007-only source proof retains separate R33 attribution. Full-native PostgreSQL/Redis limits remain; controlled source, terminal and PKI inputs establish no genuine authority.
