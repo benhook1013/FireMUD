@@ -337,5 +337,4 @@ Entry format:
   - Observation: the repeated failures support a higher shared local daemon heap for serialized work; the passing run was mostly up-to-date and does not establish cold-build speedup or a total-memory guarantee.
   - Qualification: the 3 GiB setting is not a restoration of an earlier default; the shared 1500m setting predates the recent guard since August 28. Worker, test, and code-generation JVM memory remains additional, and the hosted module runner's explicit 2500m setting is unchanged.
 
-
 - `2026-10-15`: Classes-only foreign-owner proof artifacts intentionally omit application and Flyway resources. A composed test that reads another owner’s migrations from disk must declare those directories as task inputs; otherwise a SQL-only change can leave the composition up-to-date. The selected Game Logic proof exposed this after its forward migration was reconciled, and Game Design now tracks the foreign Game Logic and World migration directories.
