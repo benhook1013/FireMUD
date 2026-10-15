@@ -14,6 +14,8 @@ import java.sql.SQLException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -24,12 +26,18 @@ import java.util.function.Function;
 import javax.crypto.spec.SecretKeySpec;
 import net.firedevops.firemud.accountservice.client.StartSessionReservationEvidenceClient;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionOperatorAuthorizationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldOriginalAttemptEvidenceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.Candidate;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.StoredParticipation;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.StoredSettlement;
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.KeyMaterial;
 import net.firedevops.firemud.accountservice.service.session.AccountOperatorAuthorizationFingerprintKeyring.Snapshot;
+import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence;
+import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
@@ -571,6 +579,412 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
     }
     throw new AssertionError("Guard rejection must retain its SQL exception", failure);
   }
+
+  @Test
+  void predecessorScalarProjectionRemainsHistoricalAfterCurrentDefaultUpgrade() throws Exception {
+    try (var controlUi = predecessorFixture("scalar-child")) {
+      var original = issuedOriginal(controlUi, 31L);
+      var account = original.account();
+      var parentRepository = new AccountStartSessionWorldParticipationRepository(account.dsl);
+      var parent = createActualParent(original, parentRepository);
+      var request =
+          new OriginalStartSessionCurrentAttemptEvidence.Request(
+              UUID.randomUUID(),
+              NAMESPACE,
+              original.tuple().canonicalBytes(),
+              original.attempt(),
+              UUID.randomUUID(),
+              original.ownerFence());
+      Instant lease = Instant.now().truncatedTo(ChronoUnit.MICROS).plusSeconds(240);
+      byte[] scalar = predecessorScalarProjection(original.tuple());
+      var observation =
+          new OriginalStartSessionCurrentAttemptEvidence.Result(request, lease, scalar);
+      byte[] response =
+          OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(observation).toByteArray();
+      String responseDigest = digest(response);
+      // Controlled historical sender bytes, using the exact ccf0528c35^ scalar-v1 grammar. Account
+      // issuance/redemption and the parent are actual owners; no current GS producer is asserted.
+      // V160's intact parent/pending/lease/hash and append-only guards admit this predecessor row.
+      account.tx(
+          () -> {
+            account.dsl.execute(
+                "INSERT INTO account_start_session_world_original_attempt_evidence "
+                    + "(participation_id,target_namespace,game_session_owner_attempt_id,game_session_owner_mutation_id,game_session_owner_fence,original_lease_expires_at,original_response_bytes,original_response_digest) "
+                    + "VALUES (?,?,?,?,?,CAST(? AS TIMESTAMPTZ),?,?)",
+                parent.participationId(),
+                NAMESPACE,
+                original.attempt(),
+                request.expectedOwnerMutationId(),
+                original.ownerFence(),
+                OffsetDateTime.ofInstant(lease, java.time.ZoneOffset.UTC),
+                response,
+                responseDigest);
+            return null;
+          });
+      var before = retainedRows(account.dsl);
+      account.upgradeToCurrent();
+      assertThat(retainedRows(account.dsl)).isEqualTo(before);
+      var attempts = new AccountStartSessionWorldOriginalAttemptEvidenceRepository(account.dsl);
+      var historical =
+          account.tx(() -> attempts.findHistoricalExact(parent, request).orElseThrow());
+      assertThat(historical.originalResponseBytes()).containsExactly(response);
+      assertThat(historical.originalResponseDigest()).isEqualTo(responseDigest);
+      assertThat(historical.gameSessionOwnerMutationId())
+          .isEqualTo(request.expectedOwnerMutationId());
+      assertThat(historical.originalLeaseExpiresAt()).isEqualTo(lease);
+      assertThat(historical.result().accountRedemptionProjection()).containsExactly(scalar);
+      assertThat(historical.result().request()).isEqualTo(request);
+      assertThat(
+              account
+                  .tx(
+                      () ->
+                          parentRepository
+                              .findHistoricalExact(
+                                  parent.participationId(), parent.participationFence())
+                              .orElseThrow())
+                  .originalPostAuthorizationTuple())
+          .containsExactly(original.tuple().canonicalBytes());
+      assertThat(
+              account
+                  .dsl
+                  .fetchSingle(
+                      "SELECT original_lease_expires_at > clock_timestamp() FROM account_start_session_world_original_attempt_evidence WHERE participation_id=?",
+                      parent.participationId())
+                  .get(0, Boolean.class))
+          .isTrue();
+      assertThatThrownBy(() -> account.tx(() -> attempts.findCurrentExact(parent, request)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Exact original StartSession attempt evidence unavailable");
+      assertThatThrownBy(() -> account.tx(() -> attempts.retainCurrentExact(parent, observation)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(
+              "Original StartSession attempt evidence conflicts with its immutable binding");
+      assertThatThrownBy(
+              () ->
+                  OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(
+                      request,
+                      net.firedevops.firemud.gamesession.v1
+                          .ReadOriginalStartSessionCurrentAttemptResponse.parseFrom(response)))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThat(retainedRows(account.dsl)).isEqualTo(before);
+    }
+  }
+
+  @Test
+  void unsafeNumericPredecessorParentIsRetainedButNeverReinterpretedForTypedUse() throws Exception {
+    try (var controlUi = predecessorFixture("unsafe-parent")) {
+      // Exactly 2^53 was representable by the predecessor number spelling, but is explicitly
+      // outside today's safe numeric fence domain. It is distinct from scalar-v1 issuanceFence.
+      var original = issuedOriginal(controlUi, 9_007_199_254_740_992L);
+      var account = original.account();
+      var old =
+          JSON.readValue(
+              original.tuple().canonicalBytes(), new TypeReference<Map<String, Object>>() {});
+      old.put("reservationClaimFence", 9_007_199_254_740_992L);
+      byte[] predecessorBytes = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(old));
+      assertThat(predecessorBytes).isNotEqualTo(original.tuple().canonicalBytes());
+      UUID instance = UUID.randomUUID();
+      UUID participation = UUID.randomUUID();
+      String preparation =
+          preparationInput(
+              NAMESPACE,
+              account.tenant,
+              original.tuple().controlPlaneRequestId(),
+              instance,
+              "owner-proof-world",
+              ORIGINAL_GAME_TEMPLATE_ID);
+      String preparationDigest = digest(preparation);
+      // Historical setup reproduces the predecessor owner's V159 INSERT and exact source children
+      // inside actual Account currentness. Its intact guard compares the numeric JSON field to the
+      // original BIGINT authorization/capture. No current Java producer accepts this byte spelling.
+      long fence =
+          withWorldCurrentness(
+              original.authorizer(),
+              original.tuple(),
+              original.attempt(),
+              original.ownerFence(),
+              capture -> {
+                account.dsl.execute(
+                    "INSERT INTO account_start_session_world_participations "
+                        + "(participation_id,control_plane_request_id,original_post_authorization_tuple,target_namespace,canonical_tenant_id,canonical_game_instance_id,game_session_owner_attempt_id,game_session_owner_fence,preparation_input_json,preparation_input_digest) "
+                        + "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    participation,
+                    original.tuple().controlPlaneRequestId(),
+                    predecessorBytes,
+                    NAMESPACE,
+                    account.tenant,
+                    instance,
+                    original.attempt(),
+                    original.ownerFence(),
+                    preparation,
+                    preparationDigest);
+                try {
+                  for (String encoded : capturedSourceVector(capture)) {
+                    byte[] bytes = Base64.getDecoder().decode(encoded);
+                    SourceEvidence source = SourceEvidence.fromStored(bytes);
+                    account.dsl.execute(
+                        "INSERT INTO account_start_session_world_participation_sources (participation_id,source_key,source_evidence) VALUES (?,?,?)",
+                        participation,
+                        source.key(),
+                        bytes);
+                  }
+                } catch (Exception malformed) {
+                  throw new IllegalStateException(
+                      "Historical source fixture is invalid", malformed);
+                }
+                return account
+                    .dsl
+                    .fetchSingle(
+                        "SELECT participation_fence FROM account_start_session_world_participations WHERE participation_id=?",
+                        participation)
+                    .get(0, Long.class);
+              });
+      var before = retainedRows(account.dsl);
+      var raw =
+          account.dsl.fetchSingle(
+              "SELECT * FROM account_start_session_world_participations WHERE participation_id=?",
+              participation);
+      assertThat(raw.get("original_post_authorization_tuple", byte[].class))
+          .containsExactly(predecessorBytes);
+      assertThat(raw.get("game_session_owner_attempt_id", UUID.class))
+          .isEqualTo(original.attempt());
+      assertThat(raw.get("game_session_owner_fence", Long.class)).isEqualTo(original.ownerFence());
+      assertThat(
+              account
+                  .dsl
+                  .fetchSingle(
+                      "SELECT reservation_claim_fence FROM account_start_session_operator_authorizations WHERE control_plane_request_id=?",
+                      original.tuple().controlPlaneRequestId())
+                  .get(0, Long.class))
+          .isEqualTo(9_007_199_254_740_992L);
+      account.upgradeToCurrent();
+      assertThat(retainedRows(account.dsl)).isEqualTo(before);
+      var repository = new AccountStartSessionWorldParticipationRepository(account.dsl);
+      // Even the opaque-ID typed read fails closed at the retained tuple decoder. Raw storage
+      // comparison establishes preservation; it does not upgrade this row to historical authority.
+      assertThatThrownBy(
+              () -> account.tx(() -> repository.findHistoricalExact(participation, fence)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Exact StartSession World participation evidence unavailable");
+      assertThatThrownBy(
+              () -> account.tx(() -> repository.findHistoricalForOriginalTuple(predecessorBytes)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Exact StartSession World participation evidence unavailable");
+      assertThatThrownBy(
+              () ->
+                  withWorldCurrentness(
+                      original.authorizer(),
+                      original.tuple(),
+                      original.attempt(),
+                      original.ownerFence(),
+                      capture ->
+                          repository.findCurrentExact(
+                              candidate(
+                                  original.tuple(),
+                                  capture,
+                                  instance,
+                                  original.attempt(),
+                                  original.ownerFence(),
+                                  preparation,
+                                  preparationDigest))))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Exact StartSession World participation evidence unavailable");
+      assertThatThrownBy(() -> StartSessionPostAuthorizationExecutionTuple.decode(predecessorBytes))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThat(retainedRows(account.dsl)).isEqualTo(before);
+    }
+  }
+
+  private AccountControlUiOriginalOrderFixture predecessorFixture(String name) throws Exception {
+    return new AccountControlUiOriginalOrderFixture(
+        postgres.getJdbcUrl(),
+        postgres.getUsername(),
+        postgres.getPassword(),
+        redis.getHost(),
+        redis.getMappedPort(6379),
+        temporary.resolve(name),
+        UUID.randomUUID(),
+        Clock.systemUTC(),
+        "160.1");
+  }
+
+  /**
+   * Real Account owner operations, with stipulated Logging/GS identity and controlled issuer
+   * inputs.
+   */
+  private IssuedOriginal issuedOriginal(
+      AccountControlUiOriginalOrderFixture controlUi, long reservationFence) throws Exception {
+    var creator = controlUi.issueCreator();
+    var account = creator.sources();
+    String requestId = "retained-predecessor-" + UUID.randomUUID();
+    UUID reservation = UUID.randomUUID();
+    UUID attempt = UUID.randomUUID();
+    long ownerFence = 47L;
+    var pre =
+        StartSessionPreAuthorizationReservationTuple.createHuman(
+            requestId,
+            account.account.getAccountUuid(),
+            new StartSessionOperatorAction(
+                StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
+                StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+                new StartSessionOperatorAction.Scope(account.tenant, NAMESPACE),
+                new StartSessionOperatorAction.Target(
+                    ORIGINAL_GAME_TEMPLATE_ID, account.account.getAccountUuid()),
+                StartSessionOperatorAction.ExpectedVersion.ABSENT,
+                new StartSessionOperatorAction.Mutation(
+                    StartSessionOperatorAction.ClientIp.absent()),
+                "TEST_ONLY retained predecessor Account owner proof"));
+    var logging = mock(StartSessionReservationEvidenceClient.class);
+    when(logging.readCurrentClaimEvidence(
+            pre,
+            reservation,
+            reservationFence,
+            reservation,
+            reservationFence,
+            StartSessionReservationEvidenceClient.Purpose.ISSUE))
+        .thenReturn(stipulatedLoggingClaim(pre, reservation, reservationFence, Instant.now()));
+    var repository = new AccountStartSessionOperatorAuthorizationRepository(account.dsl);
+    var authorizer =
+        new AccountStartSessionOperatorAuthorizationService(
+            creator.actors(),
+            new AccountControlUiIssuanceRepository(account.dsl),
+            new AccountStartSessionAuthorityCaptureRepository(account.dsl),
+            logging,
+            repository,
+            fingerprintKeys(),
+            responseCryptography(temporary),
+            account.terms,
+            account.manager,
+            Clock.systemUTC(),
+            new SecureRandom(),
+            LOGGING_PEER_URI,
+            GAME_SESSION_PEER_URI,
+            Duration.ofMinutes(5),
+            Duration.ofSeconds(30));
+    var issued =
+        withPeer(
+            LOGGING_PEER_URI,
+            () ->
+                authorizer.issue(
+                    new AccountStartSessionOperatorAuthorizationService.IssueRequest(
+                        creator.compact(),
+                        pre.canonicalJson().getBytes(StandardCharsets.UTF_8),
+                        reservation,
+                        reservationFence,
+                        reservation,
+                        reservationFence)));
+    var redeemed =
+        withPeer(
+            GAME_SESSION_PEER_URI,
+            () ->
+                authorizer.redeem(
+                    new AccountStartSessionOperatorAuthorizationService.RedeemRequest(
+                        pre.canonicalJson().getBytes(StandardCharsets.UTF_8),
+                        issued.operatorAuthorizationReference(),
+                        issued.authorizationReferenceFingerprint(),
+                        reservation,
+                        reservationFence,
+                        attempt,
+                        ownerFence)));
+    assertThat(redeemed.originalAccountPostAuthorizationTuple())
+        .containsExactly(issued.originalAccountPostAuthorizationTuple());
+    var tuple =
+        StartSessionPostAuthorizationExecutionTuple.decode(
+            redeemed.originalAccountPostAuthorizationTuple());
+    assertThat(tuple.reservationClaimFence()).isEqualTo(reservationFence);
+    assertThat(
+            account
+                .tx(() -> repository.findByControlPlaneRequestId(requestId).orElseThrow())
+                .status())
+        .isEqualTo(AccountStartSessionOperatorAuthorizationRepository.Status.REDEEMED);
+    return new IssuedOriginal(account, authorizer, tuple, attempt, ownerFence);
+  }
+
+  private static StoredParticipation createActualParent(
+      IssuedOriginal original, AccountStartSessionWorldParticipationRepository repository)
+      throws Exception {
+    UUID instance = UUID.randomUUID();
+    String preparation =
+        preparationInput(
+            NAMESPACE,
+            original.account().tenant,
+            original.tuple().controlPlaneRequestId(),
+            instance,
+            "owner-proof-world",
+            ORIGINAL_GAME_TEMPLATE_ID);
+    String inputDigest = digest(preparation);
+    return withWorldCurrentness(
+        original.authorizer(),
+        original.tuple(),
+        original.attempt(),
+        original.ownerFence(),
+        capture ->
+            repository.createOrReadExact(
+                candidate(
+                    original.tuple(),
+                    capture,
+                    instance,
+                    original.attempt(),
+                    original.ownerFence(),
+                    preparation,
+                    inputDigest)));
+  }
+
+  /**
+   * Exact scalar-v1 grammar retained from ccf0528c35^; this is a historical fixture, not a
+   * producer.
+   */
+  private static byte[] predecessorScalarProjection(
+      StartSessionPostAuthorizationExecutionTuple tuple) throws Exception {
+    var bundle = StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes());
+    return Rfc8785CanonicalJson.canonicalizeUtf8(
+        JSON.writeValueAsString(
+            Map.of(
+                "projectionSchemaId",
+                "accountStartSessionRedemptionProjection",
+                "projectionSchemaVersion",
+                "1",
+                "authorizationReferenceFingerprint",
+                tuple.authorizationReferenceFingerprint(),
+                "authorityEvidenceBundle",
+                bundle.jsonValue(),
+                "issuanceOperationId",
+                bundle.issuanceOperationId().toString(),
+                "issuanceFence",
+                Long.parseLong(tuple.issuanceFence()))));
+  }
+
+  private static Map<String, List<String>> retainedRows(DSLContext dsl) {
+    Map<String, List<String>> result = new java.util.TreeMap<>();
+    for (String table :
+        List.of(
+            "account_start_session_operator_authorizations",
+            "account_start_session_authority_captures",
+            "account_start_session_world_participations",
+            "account_start_session_world_participation_sources",
+            "account_start_session_world_original_attempt_evidence",
+            "account_start_session_world_participation_settlements")) {
+      result.put(
+          table,
+          dsl.fetch(
+                  "SELECT row_to_json(t)::text AS body FROM "
+                      + table
+                      + " t ORDER BY row_to_json(t)::text")
+              .getValues("body", String.class));
+    }
+    return result;
+  }
+
+  private static String digest(byte[] bytes) throws Exception {
+    return "sha256:" + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+  }
+
+  private record IssuedOriginal(
+      AccountControlUiOwnerSourcesFixture account,
+      AccountStartSessionOperatorAuthorizationService authorizer,
+      StartSessionPostAuthorizationExecutionTuple tuple,
+      UUID attempt,
+      long ownerFence) {}
 
   private static Candidate candidate(
       StartSessionPostAuthorizationExecutionTuple originalTuple,

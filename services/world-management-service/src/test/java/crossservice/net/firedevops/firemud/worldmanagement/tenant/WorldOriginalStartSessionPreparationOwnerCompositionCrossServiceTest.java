@@ -6,6 +6,7 @@ import static org.awaitility.Awaitility.await;
 
 import com.google.protobuf.Empty;
 import com.google.protobuf.util.JsonFormat;
+import integration.net.firedevops.firemud.gamesession.repository.CanonicalHumanPublicationOwnerTestFixtures;
 import io.grpc.BindableService;
 import io.grpc.CallOptions;
 import io.grpc.MethodDescriptor;
@@ -29,6 +30,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -38,13 +40,12 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import integration.net.firedevops.firemud.gamesession.repository.CanonicalHumanPublicationOwnerTestFixtures;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
 import net.firedevops.firemud.accountservice.service.session.AccountControlUiOriginalOrderFixture;
 import net.firedevops.firemud.accountservice.service.session.AccountOriginalStartSessionAuthorizationProofFixture;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationAcquisitionGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationHistoricalReadGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationHistoricalReadService;
-import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationAcquisitionClient;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadClient;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -76,6 +77,9 @@ import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBi
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
+import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence;
@@ -91,9 +95,8 @@ import net.firedevops.firemud.gamesession.repository.GameSessionFreshTenantAssoc
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionLaunchDescriptorRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionTemplateAssociationRepository;
-import net.firedevops.firemud.gamesession.service.impl.OriginalStartSessionCurrentAttemptReadGrpcService;
 import net.firedevops.firemud.gamesession.service.impl.HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService;
-import net.firedevops.firemud.test.IsolatedWorldPublicationInventoryFixtures;
+import net.firedevops.firemud.gamesession.service.impl.OriginalStartSessionCurrentAttemptReadGrpcService;
 import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.repository.GenerationRuleRepository;
 import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
@@ -103,15 +106,12 @@ import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBinding
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.service.impl.WorldDraftDesignDigestServiceImpl;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
-import net.firedevops.firemud.worldmanagement.v1.EntityTemplateReferenceType;
-import net.firedevops.firemud.worldmanagement.v1.GenerationRuleDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomExitDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
-import net.firedevops.firemud.worldmanagement.v1.WorldEntitySpawnBindingDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
 import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceClosureDeclaration;
@@ -137,12 +137,15 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Current-default owner composition with actual Account issue/redemption/participation, GS SQL
- * attempts and authenticated current-attempt reads, and World guarded preparation/readback.
- * Logging claims, creator/environment/signer provisioning, GDS publication/complete binding and
- * ephemeral PKI are controlled upstream inputs. No genuine Human issuer/environment, production
- * complete-launch producer, registered endpoint, ACTIVE lifecycle, admission or Entity proof is
- * asserted. The small test-only World socket invokes the typed owner directly, not assembly.
+ * Current-default owner composition with actual Account StartSession
+ * issue/redemption/participation, GS SQL attempts and authenticated current-attempt reads, and
+ * World guarded graph application, first-freeze Account-binding retention, PUBLISHED terminal
+ * storage/readback, and preparation. The prior publication Account binding, GDS
+ * operation/terminal/release and complete-launch inputs, logging claims, creator/environment/signer
+ * provisioning, and ephemeral PKI are controlled upstream evidence. This proves World owner storage
+ * with those stipulated inputs, not a genuine GDS producer or authority. No genuine Human
+ * issuer/environment, registered endpoint, ACTIVE lifecycle, admission or Entity proof is asserted.
+ * The small test-only World socket invokes the typed owner directly, not assembly.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -150,298 +153,1060 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   private static final String NAMESPACE = "firemud";
   private static final tools.jackson.databind.ObjectMapper JSON = JsonMapper.builder().build();
   private static final Network NETWORK = Network.newNetwork();
-  @Container static final PostgreSQLContainer<?> WORLD = new PostgreSQLContainer<>(TestContainerImages.postgres());
-  @Container static final PostgreSQLContainer<?> GS = new PostgreSQLContainer<>(TestContainerImages.postgres());
-  @Container static final PostgreSQLContainer<?> ACCOUNT = new PostgreSQLContainer<>(TestContainerImages.postgres());
-  @Container static final GenericContainer<?> REDIS = new GenericContainer<>(TestContainerImages.redis())
-      .withNetwork(NETWORK).withNetworkAliases("original-prepare-primary").withExposedPorts(6379)
-      .withCommand("redis-server", "--bind", "0.0.0.0", "--protected-mode", "no", "--appendonly", "yes", "--appendfsync", "always");
-  @Container static final GenericContainer<?> REPLICA = new GenericContainer<>(TestContainerImages.redis())
-      .withNetwork(NETWORK).dependsOn(REDIS)
-      .withCommand("redis-server", "--bind", "0.0.0.0", "--protected-mode", "no", "--appendonly", "yes", "--appendfsync", "always", "--replicaof", "original-prepare-primary", "6379");
+
+  @Container
+  static final PostgreSQLContainer<?> WORLD =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static final PostgreSQLContainer<?> GS =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static final PostgreSQLContainer<?> ACCOUNT =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static final GenericContainer<?> REDIS =
+      new GenericContainer<>(TestContainerImages.redis())
+          .withNetwork(NETWORK)
+          .withNetworkAliases("original-prepare-primary")
+          .withExposedPorts(6379)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always");
+
+  @Container
+  static final GenericContainer<?> REPLICA =
+      new GenericContainer<>(TestContainerImages.redis())
+          .withNetwork(NETWORK)
+          .dependsOn(REDIS)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always",
+              "--replicaof",
+              "original-prepare-primary",
+              "6379");
+
   @TempDir Path temporary;
 
-  @Test void actualOwnersPrepareAndReplayOneExactOriginalOperation() throws Exception { compose(Refusal.NONE); }
-  @Test void mismatchedOwnerAttemptCannotAcquireParticipationOrMutateWorld() throws Exception { compose(Refusal.MISMATCHED_ATTEMPT); }
-  @Test void expiredActualOwnerLeaseCannotAcquireParticipationOrMutateWorld() throws Exception { compose(Refusal.EXPIRED_ATTEMPT); }
-  private enum Refusal { NONE, MISMATCHED_ATTEMPT, EXPIRED_ATTEMPT }
+  @Test
+  void actualOwnersPrepareAndReplayOneExactOriginalOperation() throws Exception {
+    compose(Refusal.NONE);
+  }
+
+  @Test
+  void mismatchedOwnerAttemptCannotAcquireParticipationOrMutateWorld() throws Exception {
+    compose(Refusal.MISMATCHED_ATTEMPT);
+  }
+
+  @Test
+  void expiredActualOwnerLeaseCannotAcquireParticipationOrMutateWorld() throws Exception {
+    compose(Refusal.EXPIRED_ATTEMPT);
+  }
+
+  private enum Refusal {
+    NONE,
+    MISMATCHED_ATTEMPT,
+    EXPIRED_ATTEMPT
+  }
 
   private void compose(Refusal refusal) throws Exception {
     UUID tenant = UUID.randomUUID();
-    try (var account = new AccountControlUiOriginalOrderFixture(ACCOUNT.getJdbcUrl(), ACCOUNT.getUsername(), ACCOUNT.getPassword(), REDIS.getHost(), REDIS.getMappedPort(6379), temporary.resolve("account"), tenant);
-         var world = database(WORLD, "world-management-service", true);
-         var gs = database(GS, "game-session-service", false)) {
-      var issuer = new AccountOriginalStartSessionAuthorizationProofFixture(account, temporary.resolve("issuer"), NAMESPACE);
-      Duration lease = refusal == Refusal.EXPIRED_ATTEMPT ? Duration.ofSeconds(30) : Duration.ofMinutes(5);
+    try (var account =
+            new AccountControlUiOriginalOrderFixture(
+                ACCOUNT.getJdbcUrl(),
+                ACCOUNT.getUsername(),
+                ACCOUNT.getPassword(),
+                REDIS.getHost(),
+                REDIS.getMappedPort(6379),
+                temporary.resolve("account"),
+                tenant);
+        var world = database(WORLD, "world-management-service", true);
+        var gs = database(GS, "game-session-service", false)) {
+      var issuer =
+          new AccountOriginalStartSessionAuthorizationProofFixture(
+              account, temporary.resolve("issuer"), NAMESPACE);
+      Duration lease =
+          refusal == Refusal.EXPIRED_ATTEMPT ? Duration.ofSeconds(30) : Duration.ofMinutes(5);
       var attempts = new GameSessionStartSessionOperatorAttemptRepository(gs.dsl(), lease);
-      var claim = new AtomicReference<GameSessionStartSessionOperatorAttemptRepository.AttemptClaim>();
-      var action = new StartSessionOperatorAction(StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID, StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
-          new StartSessionOperatorAction.Scope(tenant, NAMESPACE), new StartSessionOperatorAction.Target(91L, issuer.creatorAccountId()),
-          StartSessionOperatorAction.ExpectedVersion.ABSENT,
-          new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()), "TEST_ONLY owner composition");
+      var claim =
+          new AtomicReference<GameSessionStartSessionOperatorAttemptRepository.AttemptClaim>();
+      var action =
+          new StartSessionOperatorAction(
+              StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
+              StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+              new StartSessionOperatorAction.Scope(tenant, NAMESPACE),
+              new StartSessionOperatorAction.Target(91L, issuer.creatorAccountId()),
+              StartSessionOperatorAction.ExpectedVersion.ABSENT,
+              new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()),
+              "TEST_ONLY owner composition");
       String requestId = "controlled-original-prepare-" + UUID.randomUUID();
-      var original = issuer.issueAndRedeemOriginal(requestId, action, UUID.randomUUID(), 1L,
-          new AccountOriginalStartSessionAuthorizationProofFixture.OwnerAttemptLifecycle() {
-            @Override public AccountOriginalStartSessionAuthorizationProofFixture.OwnerClaim reserve(StartSessionPostAuthorizationExecutionTuple tuple) {
-              var retained = Objects.requireNonNull(gs.write().execute(status -> attempts.reserve(tuple))).claim().orElseThrow();
-              claim.set(retained);
-              return new AccountOriginalStartSessionAuthorizationProofFixture.OwnerClaim(retained.ownerAttemptId(), retained.ownerMutationId(), retained.ownerFence());
-            }
-            @Override public void attachAccountRedemptionProjection(AccountOriginalStartSessionAuthorizationProofFixture.OwnerClaim owner, StartSessionPostAuthorizationExecutionTuple tuple) {
-              gs.write().executeWithoutResult(status -> attempts.attachAccountRedemptionProjection(claim.get(),
-                  new GameSessionStartSessionOperatorAttemptRepository.AccountRedemptionProjection(tuple.authorizationReferenceFingerprint(), tuple.authorityEvidenceBundleBytes(), net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.decode(tuple.authorityEvidenceBundleBytes()).issuanceOperationId(), Long.parseLong(tuple.issuanceFence()), tuple.canonicalBytes())));
-            }
-          });
+      long reservationClaimFence = 9_007_199_254_740_993L;
+      var original =
+          issuer.issueAndRedeemOriginal(
+              requestId,
+              action,
+              UUID.randomUUID(),
+              reservationClaimFence,
+              new AccountOriginalStartSessionAuthorizationProofFixture.OwnerAttemptLifecycle() {
+                @Override
+                public AccountOriginalStartSessionAuthorizationProofFixture.OwnerClaim reserve(
+                    StartSessionPostAuthorizationExecutionTuple tuple) {
+                  var retained =
+                      Objects.requireNonNull(gs.write().execute(status -> attempts.reserve(tuple)))
+                          .claim()
+                          .orElseThrow();
+                  claim.set(retained);
+                  return new AccountOriginalStartSessionAuthorizationProofFixture.OwnerClaim(
+                      retained.ownerAttemptId(), retained.ownerMutationId(), retained.ownerFence());
+                }
+
+                @Override
+                public void attachAccountRedemptionProjection(
+                    AccountOriginalStartSessionAuthorizationProofFixture.OwnerClaim owner,
+                    StartSessionPostAuthorizationExecutionTuple tuple) {
+                  gs.write()
+                      .executeWithoutResult(
+                          status ->
+                              attempts.attachAccountRedemptionProjection(
+                                  claim.get(),
+                                  new GameSessionStartSessionOperatorAttemptRepository
+                                      .AccountRedemptionProjection(
+                                      tuple.authorizationReferenceFingerprint(),
+                                      tuple.authorityEvidenceBundleBytes(),
+                                      net.firedevops.firemud.common.operator
+                                          .StartSessionAuthorityEvidenceBundle.decode(
+                                              tuple.authorityEvidenceBundleBytes())
+                                          .issuanceOperationId(),
+                                      Long.parseLong(tuple.issuanceFence()),
+                                      tuple.canonicalBytes())));
+                }
+              });
       var tuple = original.originalTuple();
+      assertThat(original.reservationClaimFence()).isEqualTo(reservationClaimFence);
+      assertThat(tuple.reservationClaimFence()).isEqualTo(reservationClaimFence);
+      assertThat(
+              issuer
+                  .sourceDsl()
+                  .fetchSingle(
+                      "SELECT reservation_claim_fence FROM account_start_session_operator_authorizations WHERE control_plane_request_id=?",
+                      tuple.controlPlaneRequestId())
+                  .get(0, Long.class))
+          .isEqualTo(reservationClaimFence);
+      var storedAttempt =
+          gs.dsl()
+              .fetchSingle(
+                  "SELECT post_authorization_execution_tuple,account_redemption_projection FROM game_session_start_session_operator_attempt WHERE owner_attempt_id=?",
+                  claim.get().ownerAttemptId());
+      assertThat(storedAttempt.get("post_authorization_execution_tuple", byte[].class))
+          .containsExactly(tuple.canonicalBytes());
+      assertThat(storedAttempt.get("account_redemption_projection", byte[].class))
+          .containsExactly(tuple.canonicalBytes());
+
       var preparedInput = preparationInputs(world, gs, tuple, claim.get(), tenant);
-      var input = refusal == Refusal.MISMATCHED_ATTEMPT
-          ? new WorldCanonicalInstancePreparation.Input(preparedInput.gameSessionReadRequest(), preparedInput.gameSessionReadEvidence(), UUID.randomUUID(), preparedInput.gameSessionOwnerFence(), preparedInput.completeLaunchBinding(), preparedInput.versionIdentity(), preparedInput.topologyPlan())
-          : preparedInput;
-      var operation = new WorldCanonicalInstancePreparation.OriginalStartSessionOperationInput(tuple.canonicalBytes(), claim.get().ownerMutationId(),
-          input.gameSessionOwnerAttemptId(), claim.get().ownerFence());
+      var input =
+          refusal == Refusal.MISMATCHED_ATTEMPT
+              ? new WorldCanonicalInstancePreparation.Input(
+                  preparedInput.gameSessionReadRequest(),
+                  preparedInput.gameSessionReadEvidence(),
+                  UUID.randomUUID(),
+                  preparedInput.gameSessionOwnerFence(),
+                  preparedInput.completeLaunchBinding(),
+                  preparedInput.versionIdentity(),
+                  preparedInput.topologyPlan())
+              : preparedInput;
+      var operation =
+          new WorldCanonicalInstancePreparation.OriginalStartSessionOperationInput(
+              tuple.canonicalBytes(),
+              claim.get().ownerMutationId(),
+              input.gameSessionOwnerAttemptId(),
+              claim.get().ownerFence());
       var pki = new WorldOriginalStartSessionPreparationProofPki(temporary.resolve("pki"));
       var factory = new GrpcChannelFactory();
-      Server gsServer = server("game-session-service", pki,
-          new OriginalStartSessionCurrentAttemptReadGrpcService(attempts, gs.manager(), NAMESPACE),
-          new HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService(new CanonicalGameInstanceLaunchAssociationRepository(gs.dsl(), NAMESPACE), NAMESPACE));
+      Server gsServer =
+          server(
+              "game-session-service",
+              pki,
+              new OriginalStartSessionCurrentAttemptReadGrpcService(
+                  attempts, gs.manager(), NAMESPACE),
+              new HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService(
+                  new CanonicalGameInstanceLaunchAssociationRepository(gs.dsl(), NAMESPACE),
+                  NAMESPACE));
       var gsEndpoints = new ServiceEndpointsProperties();
       gsEndpoints.setGameSessionService("localhost:" + gsServer.getPort());
-      try (var currentAttempt = new GrpcOriginalStartSessionCurrentAttemptClient(gsEndpoints, pki.client("account-service"), factory, NAMESPACE)) {
+      try (var currentAttempt =
+          new GrpcOriginalStartSessionCurrentAttemptClient(
+              gsEndpoints, pki.client("account-service"), factory, NAMESPACE)) {
         currentAttempt.init();
-        Server accountServer = server("account-service", pki,
-            new AccountStartSessionWorldParticipationAcquisitionGrpcService(issuer.worldParticipationAcquisitionService(currentAttempt), NAMESPACE),
-            new AccountStartSessionWorldParticipationHistoricalReadGrpcService(new AccountStartSessionWorldParticipationHistoricalReadService(new AccountStartSessionWorldParticipationRepository(issuer.sourceDsl()), accountManager(issuer.sourceDsl()), NAMESPACE), NAMESPACE));
+        if (refusal == Refusal.NONE) {
+          var authenticatedCurrent =
+              currentAttempt.read(
+                  new net.firedevops.firemud.common.gamesession
+                      .OriginalStartSessionCurrentAttemptEvidence.Request(
+                      UUID.randomUUID(),
+                      NAMESPACE,
+                      tuple.canonicalBytes(),
+                      claim.get().ownerAttemptId(),
+                      claim.get().ownerMutationId(),
+                      claim.get().ownerFence()));
+          assertThat(authenticatedCurrent.request().originalTuple().reservationClaimFence())
+              .isEqualTo(reservationClaimFence);
+          assertThat(authenticatedCurrent.accountRedemptionProjection())
+              .containsExactly(tuple.canonicalBytes());
+        }
+
+        Server accountServer =
+            server(
+                "account-service",
+                pki,
+                new AccountStartSessionWorldParticipationAcquisitionGrpcService(
+                    issuer.worldParticipationAcquisitionService(currentAttempt), NAMESPACE),
+                new AccountStartSessionWorldParticipationHistoricalReadGrpcService(
+                    new AccountStartSessionWorldParticipationHistoricalReadService(
+                        new AccountStartSessionWorldParticipationRepository(issuer.sourceDsl()),
+                        accountManager(issuer.sourceDsl()),
+                        NAMESPACE),
+                    NAMESPACE));
         var accountEndpoints = new ServiceEndpointsProperties();
         accountEndpoints.setAccountService("localhost:" + accountServer.getPort());
-        try (var acquisition = new AccountStartSessionWorldParticipationAcquisitionClient(accountEndpoints, pki.client("world-management-service"), factory, NAMESPACE);
-             var historicalAccount = new AccountStartSessionWorldParticipationHistoricalReadClient(accountEndpoints, pki.client("world-management-service"), factory, NAMESPACE);
-             var historicalGs = new HistoricalOriginalStartSessionOwnerEvidenceReadClient(gsEndpoints, pki.client("world-management-service"), factory, NAMESPACE)) {
+        try (var acquisition =
+                new AccountStartSessionWorldParticipationAcquisitionClient(
+                    accountEndpoints, pki.client("world-management-service"), factory, NAMESPACE);
+            var historicalAccount =
+                new AccountStartSessionWorldParticipationHistoricalReadClient(
+                    accountEndpoints, pki.client("world-management-service"), factory, NAMESPACE);
+            var historicalGs =
+                new HistoricalOriginalStartSessionOwnerEvidenceReadClient(
+                    gsEndpoints, pki.client("world-management-service"), factory, NAMESPACE)) {
           acquisition.init();
           historicalAccount.init();
           historicalGs.init();
-          var association = new WorldCanonicalInstanceAssociationRepository(world.dsl(), new WorldCompleteLaunchBindingRepository(world.dsl()), new WorldAuthoredSourceIntakeRepository(world.dsl()), new WorldAuthoredVersionIdentityRepository(world.dsl()));
-          var repository = new WorldCanonicalInstancePreparationRepository(world.dsl(), world.manager(), association,
-              new WorldCanonicalFrozenTopologyRepository(world.dsl(), new WorldAuthoredGraphSnapshotRepository(world.dsl()),
-                  new WorldDraftTopologyCommitRepository(world.dsl(), new WorldDesignPublicationFenceRepository(world.dsl(), new WorldAuthoredSourceIntakeRepository(world.dsl())), JSON), digestService(world.dsl())), Duration.ofSeconds(10));
+          var association =
+              new WorldCanonicalInstanceAssociationRepository(
+                  world.dsl(),
+                  new WorldCompleteLaunchBindingRepository(world.dsl()),
+                  new WorldAuthoredSourceIntakeRepository(world.dsl()),
+                  new WorldAuthoredVersionIdentityRepository(world.dsl()));
+          var repository =
+              new WorldCanonicalInstancePreparationRepository(
+                  world.dsl(),
+                  world.manager(),
+                  association,
+                  new WorldCanonicalFrozenTopologyRepository(
+                      world.dsl(),
+                      new WorldAuthoredGraphSnapshotRepository(world.dsl()),
+                      new WorldDraftTopologyCommitRepository(
+                          world.dsl(),
+                          new WorldDesignPublicationFenceRepository(
+                              world.dsl(), new WorldAuthoredSourceIntakeRepository(world.dsl())),
+                          JSON),
+                      digestService(world.dsl())),
+                  Duration.ofSeconds(10));
           var verifier = new WorldStartSessionAccountParticipationVerifier(NAMESPACE, acquisition);
           var identity = new AtomicReference<WorldCanonicalInstanceExecutionIdentity>();
-          var service = new WorldCanonicalInstancePreparationService(repository,
-              (WorldCanonicalInstancePreparationService.OriginalOperationCommitAuthorityVerifier) (supplied, suppliedOperation) -> {
-                var held = verifier.verifyAndHold(supplied, suppliedOperation);
-                identity.set(held.executionIdentity());
-                return held;
-              }, new WorldCanonicalInstanceOriginalOperationRecoveryVerifier(historicalAccount, historicalGs));
+          var service =
+              new WorldCanonicalInstancePreparationService(
+                  repository,
+                  (WorldCanonicalInstancePreparationService
+                          .OriginalOperationCommitAuthorityVerifier)
+                      (supplied, suppliedOperation) -> {
+                        var held = verifier.verifyAndHold(supplied, suppliedOperation);
+                        identity.set(held.executionIdentity());
+                        return held;
+                      },
+                  new WorldCanonicalInstanceOriginalOperationRecoveryVerifier(
+                      historicalAccount, historicalGs));
           var result = new AtomicReference<WorldCanonicalInstancePreparation.Result>();
+          var ownerRefusal = new AtomicReference<RuntimeException>();
           var recovering = new AtomicBoolean();
-          var recovered = new AtomicReference<net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal>();
-          MethodDescriptor<Empty, Empty> method = MethodDescriptor.<Empty, Empty>newBuilder()
-              .setType(MethodDescriptor.MethodType.UNARY).setFullMethodName("controlled.proof.World/PrepareOriginal")
-              .setRequestMarshaller(ProtoUtils.marshaller(Empty.getDefaultInstance()))
-              .setResponseMarshaller(ProtoUtils.marshaller(Empty.getDefaultInstance())).build();
+          var recovered =
+              new AtomicReference<
+                  net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal>();
+          MethodDescriptor<Empty, Empty> method =
+              MethodDescriptor.<Empty, Empty>newBuilder()
+                  .setType(MethodDescriptor.MethodType.UNARY)
+                  .setFullMethodName("controlled.proof.World/PrepareOriginal")
+                  .setRequestMarshaller(ProtoUtils.marshaller(Empty.getDefaultInstance()))
+                  .setResponseMarshaller(ProtoUtils.marshaller(Empty.getDefaultInstance()))
+                  .build();
           // Controlled transport wrapper only. The real World verifier authenticates the peer;
           // Account and GS receivers below are their actual unregistered owner adapters.
-          var socket = ServerServiceDefinition.builder("controlled.proof.World")
-              .addMethod(method, ServerCalls.asyncUnaryCall((Empty ignored, io.grpc.stub.StreamObserver<Empty> observer) -> {
-                try {
-                  var peer = GrpcPeerIdentity.current();
-                  if (peer == null || !("spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service").equals(peer.uri())) throw new SecurityException("Controlled socket requires the exact GS peer");
-                  if (recovering.get()) recovered.set(service.recoverExactTerminal(identity.get()).orElseThrow());
-                  else result.set(service.prepare(input, operation));
-                  observer.onNext(Empty.getDefaultInstance()); observer.onCompleted();
-                }
-                catch (RuntimeException denied) { observer.onError(Status.FAILED_PRECONDITION.withDescription("Original World preparation denied").withCause(denied).asRuntimeException()); }
-              })).build();
+          var socket =
+              ServerServiceDefinition.builder("controlled.proof.World")
+                  .addMethod(
+                      method,
+                      ServerCalls.asyncUnaryCall(
+                          (Empty ignored, io.grpc.stub.StreamObserver<Empty> observer) -> {
+                            try {
+                              var peer = GrpcPeerIdentity.current();
+                              if (peer == null
+                                  || !("spiffe://firemud/ns/"
+                                          + NAMESPACE
+                                          + "/sa/game-session-service")
+                                      .equals(peer.uri()))
+                                throw new SecurityException(
+                                    "Controlled socket requires the exact GS peer");
+                              if (recovering.get())
+                                recovered.set(
+                                    service.recoverExactTerminal(identity.get()).orElseThrow());
+                              else result.set(service.prepare(input, operation));
+                              observer.onNext(Empty.getDefaultInstance());
+                              observer.onCompleted();
+                            } catch (RuntimeException denied) {
+                              ownerRefusal.set(denied);
+                              observer.onError(
+                                  Status.FAILED_PRECONDITION
+                                      .withDescription("Original World preparation denied")
+                                      .withCause(denied)
+                                      .asRuntimeException());
+                            }
+                          }))
+                  .build();
           Server worldServer = server("world-management-service", pki, () -> socket);
-          var channel = factory.buildChannel("localhost:" + worldServer.getPort(), 6565, pki.client("game-session-service"), false);
+          var channel =
+              factory.buildChannel(
+                  "localhost:" + worldServer.getPort(),
+                  6565,
+                  pki.client("game-session-service"),
+                  false);
           try {
-            Map<String, List<String>> worldBefore = rows(world.dsl(), "world_instance", "world_canonical_instance_association", "world_canonical_instance_preparation", "world_canonical_instance_execution");
-            Map<String, List<String>> accountBefore = rows(issuer.sourceDsl(), "account_start_session_operator_authorizations", "account_start_session_world_participations", "account_start_session_world_original_attempt_evidence", "account_start_session_world_participation_sources", "account_start_session_world_participation_settlements");
-            Map<String, List<String>> gsBefore = rows(gs.dsl(), "game_session_start_session_operator_attempt", "game_session_start_session_template_association_pin", "game_session_start_session_launch_descriptor_pin", "game_session_canonical_instance_launch");
+            Map<String, List<String>> worldBefore =
+                rows(
+                    world.dsl(),
+                    "world_instance",
+                    "world_canonical_instance_association",
+                    "world_canonical_instance_preparation",
+                    "world_canonical_instance_execution");
+            Map<String, List<String>> accountBefore =
+                rows(
+                    issuer.sourceDsl(),
+                    "account_start_session_operator_authorizations",
+                    "account_start_session_world_participations",
+                    "account_start_session_world_original_attempt_evidence",
+                    "account_start_session_world_participation_sources",
+                    "account_start_session_world_participation_settlements");
+            Map<String, List<String>> gsBefore =
+                rows(
+                    gs.dsl(),
+                    "game_session_start_session_operator_attempt",
+                    "game_session_start_session_template_association_pin",
+                    "game_session_start_session_launch_descriptor_pin",
+                    "game_session_canonical_instance_launch");
             if (refusal == Refusal.EXPIRED_ATTEMPT) {
               // The actual owner lease expires naturally; no SQL lease/history edits are used.
-              await().atMost(Duration.ofSeconds(60)).until(() -> gs.dsl().fetchSingle("SELECT lease_expires_at <= clock_timestamp() FROM game_session_start_session_operator_attempt WHERE owner_attempt_id=?", claim.get().ownerAttemptId()).get(0, Boolean.class));
+              await()
+                  .atMost(Duration.ofSeconds(60))
+                  .until(
+                      () ->
+                          gs.dsl()
+                              .fetchSingle(
+                                  "SELECT lease_expires_at <= clock_timestamp() FROM game_session_start_session_operator_attempt WHERE owner_attempt_id=?",
+                                  claim.get().ownerAttemptId())
+                              .get(0, Boolean.class));
             }
             if (refusal != Refusal.NONE) {
-              assertThatThrownBy(() -> ClientCalls.blockingUnaryCall(channel, method, CallOptions.DEFAULT.withDeadlineAfter(10, TimeUnit.SECONDS), Empty.getDefaultInstance())).isInstanceOf(StatusRuntimeException.class);
+              assertThatThrownBy(
+                      () ->
+                          ClientCalls.blockingUnaryCall(
+                              channel,
+                              method,
+                              CallOptions.DEFAULT.withDeadlineAfter(10, TimeUnit.SECONDS),
+                              Empty.getDefaultInstance()))
+                  .isInstanceOf(StatusRuntimeException.class);
               assertThat(result.get()).isNull();
-              assertThat(rows(world.dsl(), worldBefore.keySet().toArray(String[]::new))).isEqualTo(worldBefore);
-              assertThat(rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new))).isEqualTo(accountBefore);
-              assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new))).isEqualTo(gsBefore);
+              assertThat(rows(world.dsl(), worldBefore.keySet().toArray(String[]::new)))
+                  .isEqualTo(worldBefore);
+              assertThat(rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new)))
+                  .isEqualTo(accountBefore);
+              assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
+                  .isEqualTo(gsBefore);
               return;
             }
-            ClientCalls.blockingUnaryCall(channel, method, CallOptions.DEFAULT.withDeadlineAfter(10, TimeUnit.SECONDS), Empty.getDefaultInstance());
+            try {
+              ClientCalls.blockingUnaryCall(
+                  channel,
+                  method,
+                  CallOptions.DEFAULT.withDeadlineAfter(10, TimeUnit.SECONDS),
+                  Empty.getDefaultInstance());
+            } catch (StatusRuntimeException remoteFailure) {
+              throw new IllegalStateException(
+                  "Actual World owner refused supported preparation",
+                  ownerRefusal.get() == null ? remoteFailure : ownerRefusal.get());
+            }
             var prepared = result.get();
             assertThat(prepared).isNotNull();
-            assertThat(prepared.startLocation()).isEqualTo(input.topologyPlan().sourceBinding().plan().graph().freshGraphDeclaration().orElseThrow().startLocation());
+            assertThat(prepared.startLocation())
+                .isEqualTo(
+                    input
+                        .topologyPlan()
+                        .sourceBinding()
+                        .plan()
+                        .graph()
+                        .freshGraphDeclaration()
+                        .orElseThrow()
+                        .startLocation());
             assertThat(prepared.runtimeRoomInstanceId()).isPositive();
             var after = rows(world.dsl(), worldBefore.keySet().toArray(String[]::new));
-            var protectedAccount = rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new));
-            ClientCalls.blockingUnaryCall(channel, method, CallOptions.DEFAULT.withDeadlineAfter(10, TimeUnit.SECONDS), Empty.getDefaultInstance());
+            var protectedAccount =
+                rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new));
+            ClientCalls.blockingUnaryCall(
+                channel,
+                method,
+                CallOptions.DEFAULT.withDeadlineAfter(10, TimeUnit.SECONDS),
+                Empty.getDefaultInstance());
             assertThat(result.get()).isEqualTo(prepared);
-            assertThat(rows(world.dsl(), worldBefore.keySet().toArray(String[]::new))).isEqualTo(after);
-            assertThat(rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new))).isEqualTo(protectedAccount);
-            assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new))).isEqualTo(gsBefore);
-            assertThat(protectedAccount.get("account_start_session_world_participations")).hasSize(1);
-            assertThat(protectedAccount.get("account_start_session_world_original_attempt_evidence")).hasSize(1);
-            assertThat(protectedAccount.get("account_start_session_world_participation_sources")).isNotEmpty();
-            assertThat(protectedAccount.get("account_start_session_world_participation_settlements")).isEmpty();
-            assertThat(repository.readExactExecution(identity.get()).operation().orElseThrow().state())
+            assertThat(rows(world.dsl(), worldBefore.keySet().toArray(String[]::new)))
+                .isEqualTo(after);
+            assertThat(rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new)))
+                .isEqualTo(protectedAccount);
+            assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
+                .isEqualTo(gsBefore);
+            assertThat(protectedAccount.get("account_start_session_world_participations"))
+                .hasSize(1);
+            assertThat(
+                    protectedAccount.get("account_start_session_world_original_attempt_evidence"))
+                .hasSize(1);
+            assertThat(protectedAccount.get("account_start_session_world_participation_sources"))
+                .isNotEmpty();
+            assertThat(
+                    protectedAccount.get("account_start_session_world_participation_settlements"))
+                .isEmpty();
+            assertThat(
+                    repository.readExactExecution(identity.get()).operation().orElseThrow().state())
                 .isEqualTo(WorldCanonicalInstancePreparationRepository.ExecutionState.COMMITTED);
             var evidence = input.gameSessionReadEvidence();
-            var read = new WorldCanonicalInstanceLifecycleReadRepository(world.dsl(), world.manager(), association).read(
-                new WorldCanonicalInstanceLifecycleEvidence.Request(1, UUID.randomUUID(), NAMESPACE, tenant, evidence.worldSlug(), input.canonicalGameInstanceId(), evidence.playableStateNamespaceId(), "SHARED", true, requestId, input.versionIdentity().canonicalVersionId(), evidence.descriptorRequestDigest(), evidence.descriptorResultDigest(), evidence.releaseAttestationEvidenceDigest())).orElseThrow();
+            var read =
+                new WorldCanonicalInstanceLifecycleReadRepository(
+                        world.dsl(), world.manager(), association)
+                    .read(
+                        new WorldCanonicalInstanceLifecycleEvidence.Request(
+                            1,
+                            UUID.randomUUID(),
+                            NAMESPACE,
+                            tenant,
+                            evidence.worldSlug(),
+                            input.canonicalGameInstanceId(),
+                            evidence.playableStateNamespaceId(),
+                            "SHARED",
+                            true,
+                            requestId,
+                            input.versionIdentity().canonicalVersionId(),
+                            evidence.descriptorRequestDigest(),
+                            evidence.descriptorResultDigest(),
+                            evidence.releaseAttestationEvidenceDigest()))
+                    .orElseThrow();
             assertThat(read.lifecycleStatus()).isEqualTo("PREPARING");
             assertThat(read.lifecycleEpoch()).isEqualTo(1L);
             assertThat(read.launchBinding()).isEqualTo(input.completeLaunchBinding().evidence());
             assertThat(read.runtimeRoomInstanceId()).isEqualTo(prepared.runtimeRoomInstanceId());
             assertThat(read.preparationInputDigest()).isEqualTo(prepared.inputDigest());
             recovering.set(true);
-            ClientCalls.blockingUnaryCall(channel, method, CallOptions.DEFAULT.withDeadlineAfter(10, TimeUnit.SECONDS), Empty.getDefaultInstance());
-            assertThat(recovered.get().outcome()).isEqualTo(net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal.Outcome.COMMITTED);
-            assertThat(recovered.get().originalPostAuthorizationTuple()).containsExactly(tuple.canonicalBytes());
-            assertThat(recovered.get().preparationInputJson()).isEqualTo(identity.get().preparationInputJson());
-            assertThat(rows(world.dsl(), worldBefore.keySet().toArray(String[]::new))).isEqualTo(after);
-            assertThat(rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new))).isEqualTo(protectedAccount);
-            assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new))).isEqualTo(gsBefore);
+            ownerRefusal.set(null);
+            try {
+              ClientCalls.blockingUnaryCall(
+                  channel,
+                  method,
+                  CallOptions.DEFAULT.withDeadlineAfter(10, TimeUnit.SECONDS),
+                  Empty.getDefaultInstance());
+            } catch (StatusRuntimeException remoteFailure) {
+              throw new IllegalStateException(
+                  "Actual historical owner recovery refused exact operation",
+                  ownerRefusal.get() == null ? remoteFailure : ownerRefusal.get());
+            }
+            assertThat(recovered.get().outcome())
+                .isEqualTo(
+                    net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal.Outcome
+                        .COMMITTED);
+            assertThat(recovered.get().originalPostAuthorizationTuple())
+                .containsExactly(tuple.canonicalBytes());
+            assertThat(recovered.get().preparationInputJson())
+                .isEqualTo(identity.get().preparationInputJson());
+            assertThat(rows(world.dsl(), worldBefore.keySet().toArray(String[]::new)))
+                .isEqualTo(after);
+            assertThat(rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new)))
+                .isEqualTo(protectedAccount);
+            assertThat(rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new)))
+                .isEqualTo(gsBefore);
             // Historical recovery uses only actual owner reads, without acquisition or renewal.
             // This case does not wait for expiry and establishes no ACTIVE/admission or settlement.
-          } finally { channel.shutdownNow(); assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue(); shutdown(worldServer); }
-        } finally { shutdown(accountServer); }
-      } finally { shutdown(gsServer); }
+          } finally {
+            channel.shutdownNow();
+            assertThat(channel.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+            shutdown(worldServer);
+          }
+        } finally {
+          shutdown(accountServer);
+        }
+      } finally {
+        shutdown(gsServer);
+      }
     }
   }
-  private static WorldCanonicalInstancePreparation.Input preparationInputs(Database world, Database gs,
+
+  private static WorldCanonicalInstancePreparation.Input preparationInputs(
+      Database world,
+      Database gs,
       StartSessionPostAuthorizationExecutionTuple tuple,
-      GameSessionStartSessionOperatorAttemptRepository.AttemptClaim claim, UUID tenant) throws Exception {
+      GameSessionStartSessionOperatorAttemptRepository.AttemptClaim claim,
+      UUID tenant)
+      throws Exception {
     var intakeRepository = new WorldAuthoredSourceIntakeRepository(world.dsl());
     var versionRepository = new WorldAuthoredVersionIdentityRepository(world.dsl());
     var source = controlledSource("controlled-upstream", tenant);
-    var intake = Objects.requireNonNull(world.write().execute(s -> intakeRepository.acceptFresh(NAMESPACE, UUID.randomUUID(), source)));
-    var versionState = AuthoredWorldVersionStateEvidence.create(new AuthoredWorldVersionStateEvidence.Request(1, NAMESPACE, UUID.randomUUID(), tenant,
-        source.worldSlug(), source.operationId(), source.evidenceDigest(), 42L), source, UUID.randomUUID(), VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT, 1L);
-    var version = Objects.requireNonNull(world.write().execute(s -> versionRepository.acceptFresh(intake, versionState)));
+    var intake =
+        Objects.requireNonNull(
+            world
+                .write()
+                .execute(s -> intakeRepository.acceptFresh(NAMESPACE, UUID.randomUUID(), source)));
+    var versionState =
+        AuthoredWorldVersionStateEvidence.create(
+            new AuthoredWorldVersionStateEvidence.Request(
+                1,
+                NAMESPACE,
+                UUID.randomUUID(),
+                tenant,
+                source.worldSlug(),
+                source.operationId(),
+                source.evidenceDigest(),
+                42L),
+            source,
+            UUID.randomUUID(),
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+            1L);
+    var version =
+        Objects.requireNonNull(
+            world.write().execute(s -> versionRepository.acceptFresh(intake, versionState)));
     var owner = new OwnerFixture(source, intake, version);
     var fence = new WorldDesignPublicationFenceRepository(world.dsl(), intakeRepository);
     var topology = new WorldDraftTopologyCommitRepository(world.dsl(), fence, JSON);
     var applications = new WorldDraftGraphApplicationRepository(world.dsl(), fence, JSON);
-    var plan = topologyPlan(owner, true);
-    // The earlier Draft/publication upstream is controlled, not this proof's Account StartSession
-    // authority. Its graph and freeze effects and independent selector readback are actual owners.
+    var plan = topologyPlan(owner);
+    // The earlier Draft/publication issuer is controlled, not this proof's Account StartSession
+    // authority. World graph application, qualified first freeze, terminal, and selector readback
+    // below use their actual current owners.
     var application = application(plan);
-    var applied = new WorldDraftGraphApplicationService(applications, world.manager(),
-        operation -> new WorldDraftGraphApplicationService.CommitOrderProof(operation)).apply(application);
-    assertThat(applications.readCommitted(application).orElseThrow().canonicalBytes()).containsExactly(applied.canonicalBytes());
-    assertThat(topology.readCommitted(plan).orElseThrow().graphBytes()).containsExactly(applied.graphBytes());
+    var applied =
+        new WorldDraftGraphApplicationService(
+                applications,
+                world.manager(),
+                operation -> new WorldDraftGraphApplicationService.CommitOrderProof(operation))
+            .apply(application);
+    assertThat(applications.readCommitted(application).orElseThrow().canonicalBytes())
+        .containsExactly(applied.canonicalBytes());
+    assertThat(topology.readCommitted(plan).orElseThrow().graphBytes())
+        .containsExactly(applied.graphBytes());
     String publicationId = "controlled-publication-" + UUID.randomUUID();
     var selected = selection(plan.binding(), applied.canonicalBytes(), publicationId);
-    String workflow = PublicationDigestRequestBinding.full(tenant.toString(), "42", publicationId).derivedWorkflowIdentity();
-    var binding = plan.ownerBinding();
-    var freeze = new WorldDesignPublicationFenceEvidence(NAMESPACE, tenant, version.canonicalVersionId(), version.operationId(), 42L,
-        intake.intakeRequestId(), intake.operationId(), intake.requestDigest(), source.operationId(), source.evidenceDigest(), intake.receiptDigest(),
-        publicationId, selected.digest().substring(7), 1L, workflow);
+    var originalPublicationBinding =
+        DraftAuthorizationFenceBinding.fromStored(application.operation().accountBindingBytes());
+    var publicationAccountBinding =
+        publicationAccountBinding(
+            source,
+            originalPublicationBinding,
+            selected,
+            publicationId,
+            version.canonicalVersionId());
+    String workflow =
+        PublicationDigestRequestBinding.full(tenant.toString(), "42", publicationId)
+            .derivedWorkflowIdentity();
+    var freeze =
+        new WorldDesignPublicationFenceEvidence(
+            NAMESPACE,
+            tenant,
+            version.canonicalVersionId(),
+            version.operationId(),
+            42L,
+            intake.intakeRequestId(),
+            intake.operationId(),
+            intake.requestDigest(),
+            source.operationId(),
+            source.evidenceDigest(),
+            intake.receiptDigest(),
+            publicationId,
+            selected.digest().substring(7),
+            1L,
+            workflow);
     var digestService = digestService(world.dsl());
-    var frozenAttempt = Objects.requireNonNull(world.write().execute(s -> fence.claimFreeze(freeze, () -> {
-      var digest = digestService.getSelectedDraftDesignDigest(Long.toString(intake.localTenantKey()), Long.toString(version.localVersionKey()), plan.graph().freshGraphDeclaration().orElseThrow().inboundSourceClosure().orElseThrow());
-      return new WorldDesignPublicationFenceEvidence.Checkpoint(plan.binding().commitId().toString(), digest.contentDigest(), digest.digestSchemaVersion());
-    })));
-    var tuples = plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream().map(unit -> new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
-        unit.owner().name(), unit.aggregateType(), unit.aggregateId(), unit.scopeType(), unit.scopeId(), unit.expectedEpoch())).toList();
-    var captureRequest = new WorldAuthoredGraphSnapshot.CaptureRequest(NAMESPACE, tenant, version.canonicalVersionId(), intake.intakeRequestId(), frozenAttempt.publicationFence(),
-        publicationId, freeze.requestDigest(), 1L, workflow, plan.binding().commitId().toString(), frozenAttempt.checkpoint().contentDigest(), 4, tuples);
-    var frozenRepository = new WorldCanonicalFrozenTopologyRepository(world.dsl(), new WorldAuthoredGraphSnapshotRepository(world.dsl()), topology, digestService);
-    var captured = new WorldCanonicalFrozenTopologyService(frozenRepository, world.manager()).capture(new WorldCanonicalFrozenTopology.Request(plan, captureRequest));
-    assertThat(frozenRepository.readCommitted(captureRequest).orElseThrow().graphBytes()).containsExactly(captured.graphBytes());
-    var selector = publishedStartLocationEvidence(new WorldPublishedStartLocationRepository(world.dsl(), frozenRepository, applications).readCommitted(captureRequest).orElseThrow());
+    var authorizationRepository =
+        new WorldSelectedDraftPublicationAuthorizationRepository(world.dsl());
+    var inventoryRepository = new WorldSelectedPublicationArtifactInventoryRepository(world.dsl());
+    var checkpointRepository =
+        new WorldSelectedDraftPublicationCheckpointRepository(
+            fence, applications, topology, digestService);
+    var capturedCheckpoint =
+        new AtomicReference<WorldSelectedDraftPublicationCheckpointRepository.CapturedCheckpoint>();
+    var attemptCreatedInTransaction = new AtomicBoolean();
+    var frozenAttempt =
+        Objects.requireNonNull(
+            world
+                .write()
+                .execute(
+                    s -> {
+                      attemptCreatedInTransaction.set(false);
+                      var attempt =
+                          fence.claimFreeze(
+                              freeze,
+                              () -> {
+                                var captured = checkpointRepository.captureWithSource(freeze, plan);
+                                capturedCheckpoint.set(captured);
+                                attemptCreatedInTransaction.set(true);
+                                return captured.checkpoint();
+                              });
+                      var retained =
+                          authorizationRepository.retainOrRequireExact(
+                              attempt,
+                              publicationAccountBinding,
+                              attemptCreatedInTransaction.get());
+                      assertThat(retained.canonicalBytes())
+                          .containsExactly(publicationAccountBinding.canonicalBytes());
+                      inventoryRepository.retainOrRequireExact(
+                          attempt,
+                          retained,
+                          attemptCreatedInTransaction.get(),
+                          capturedCheckpoint.get());
+                      return attempt;
+                    }));
+    assertThat(authorizationRepository.readCommitted(frozenAttempt).orElseThrow().canonicalBytes())
+        .containsExactly(publicationAccountBinding.canonicalBytes());
+    var freezeRequest =
+        WorldSelectedDraftPublicationFreezeEvidence.Request.create(
+            NAMESPACE,
+            tenant,
+            version.canonicalVersionId(),
+            publicationId,
+            1L,
+            selected.digest().substring("sha256:".length()),
+            publicationAccountBinding);
+    var freezeAcknowledgement =
+        new WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement(
+            freezeRequest,
+            intake.intakeRequestId(),
+            1L,
+            frozenAttempt.publicationFence(),
+            WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN,
+            frozenAttempt.checkpoint().appliedCommitId(),
+            frozenAttempt.checkpoint().contentDigest(),
+            frozenAttempt.checkpoint().digestSchemaVersion());
+    var freezeEvidence =
+        WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
+            freezeRequest,
+            WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(freezeAcknowledgement));
+    WorldSelectedPublicationArtifactInventoryEvidence inventoryEvidence =
+        new WorldSelectedPublicationArtifactInventoryReadService(
+                NAMESPACE, fence, authorizationRepository, inventoryRepository)
+            .readRetained(freezeEvidence);
+    var tuples =
+        plan.binding().affectedUnits(Owner.WORLD_MANAGEMENT).stream()
+            .map(
+                unit ->
+                    new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                        unit.owner().name(),
+                        unit.aggregateType(),
+                        unit.aggregateId(),
+                        unit.scopeType(),
+                        unit.scopeId(),
+                        unit.expectedEpoch()))
+            .toList();
+    var captureRequest =
+        new WorldAuthoredGraphSnapshot.CaptureRequest(
+            NAMESPACE,
+            tenant,
+            version.canonicalVersionId(),
+            intake.intakeRequestId(),
+            frozenAttempt.publicationFence(),
+            publicationId,
+            freeze.requestDigest(),
+            1L,
+            workflow,
+            plan.binding().commitId().toString(),
+            frozenAttempt.checkpoint().contentDigest(),
+            4,
+            tuples);
+    var frozenRepository =
+        new WorldCanonicalFrozenTopologyRepository(
+            world.dsl(),
+            new WorldAuthoredGraphSnapshotRepository(world.dsl()),
+            topology,
+            digestService);
+    var captured =
+        new WorldCanonicalFrozenTopologyService(frozenRepository, world.manager())
+            .capture(new WorldCanonicalFrozenTopology.Request(plan, captureRequest));
+    assertThat(frozenRepository.readCommitted(captureRequest).orElseThrow().graphBytes())
+        .containsExactly(captured.graphBytes());
+    var selector =
+        publishedStartLocationEvidence(
+            new WorldPublishedStartLocationRepository(world.dsl(), frozenRepository, applications)
+                .readCommitted(captureRequest)
+                .orElseThrow());
 
     var gsSources = new GameSessionAuthoredWorldSourceRepository(gs.dsl());
-    var gsReceipt = Objects.requireNonNull(gs.write().execute(s -> gsSources.register(UUID.randomUUID(), source)));
-    var gsTenant = Objects.requireNonNull(gs.write().execute(s -> new GameSessionFreshTenantAssociationRepository(gs.dsl()).associateFresh(UUID.randomUUID(), NAMESPACE,
-        gsReceipt, CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(source))));
-    var catalogRequest = new CreateCanonicalRealmCatalogRequest(UUID.randomUUID(), NAMESPACE, tenant, gsReceipt.operationId(), source.worldSlug(), source.worldDisplayName(), true, true, "SHARED", "PRESEEDED_ONLY", null, null);
-    var publishedSet = publishedSet(catalogRequest, source, version.canonicalVersionId(), 42L, publicationId, "controlled-immutable-release", "controlled-generation-free", 2L, selector);
+    var gsReceipt =
+        Objects.requireNonNull(
+            gs.write().execute(s -> gsSources.register(UUID.randomUUID(), source)));
+    var gsTenant =
+        Objects.requireNonNull(
+            gs.write()
+                .execute(
+                    s ->
+                        new GameSessionFreshTenantAssociationRepository(gs.dsl())
+                            .associateFresh(
+                                UUID.randomUUID(),
+                                NAMESPACE,
+                                gsReceipt,
+                                CanonicalHumanPublicationOwnerTestFixtures.creationEvidence(
+                                    source))));
+    var catalogRequest =
+        new CreateCanonicalRealmCatalogRequest(
+            UUID.randomUUID(),
+            NAMESPACE,
+            tenant,
+            gsReceipt.operationId(),
+            source.worldSlug(),
+            source.worldDisplayName(),
+            true,
+            true,
+            "SHARED",
+            "PRESEEDED_ONLY",
+            null,
+            null);
+    var publishedSet =
+        publishedSet(
+            catalogRequest,
+            source,
+            version.canonicalVersionId(),
+            42L,
+            publicationId,
+            "controlled-immutable-release",
+            "controlled-generation-free",
+            2L,
+            selector,
+            inventoryEvidence);
+    assertThat(
+            GameDesignPublicationOperationBinding.fromStored(publishedSet.operationBytes())
+                .account()
+                .canonicalBytes())
+        .containsExactly(publicationAccountBinding.canonicalBytes());
+    commitControlledPublicationTerminal(world, publishedSet);
     var catalog = new GameSessionCanonicalRealmCatalogRepository(gs.dsl());
     var preparedCatalog = catalog.prepareInitialPublicProduction(catalogRequest, publishedSet);
     gs.write().executeWithoutResult(s -> catalog.createInitialPublicProduction(preparedCatalog));
-    var descriptorRequest = new AuthoredWorldLaunchDescriptorEvidence.Request(NAMESPACE, tuple.controlPlaneRequestId(), tenant, source.worldSlug(), source.operationId(), source.evidenceDigest(),
-        tuple.preAuthorizationTuple().action().target().gameTemplateId(), false, null, false, null, false, null, true, "{}");
-    var descriptor = AuthoredWorldLaunchDescriptorEvidence.create(descriptorRequest, "controlled-original-descriptor", 42L, false, null, "{}", "controlled-generation-free", 2L, 91L, "controlled-immutable-release", false, null);
+    var descriptorRequest =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            NAMESPACE,
+            tuple.controlPlaneRequestId(),
+            tenant,
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest(),
+            tuple.preAuthorizationTuple().action().target().gameTemplateId(),
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            true,
+            "{}");
+    var descriptor =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            descriptorRequest,
+            "controlled-original-descriptor",
+            42L,
+            false,
+            null,
+            "{}",
+            "controlled-generation-free",
+            2L,
+            91L,
+            "controlled-immutable-release",
+            false,
+            null);
     var complete = completeBinding(descriptor, publishedSet);
     pinLaunch(gs.dsl(), gs.write(), tuple, source, publishedSet, complete, claim, intake);
-    var starting = Objects.requireNonNull(gs.write().execute(s -> new GameSessionCanonicalStartingInstanceRepository(gs.dsl(), NAMESPACE).createStarting(gsTenant, complete,
-        tuple.preAuthorizationTuple().action().target().ownerAccountId(), tuple.controlPlaneRequestId(), tuple.mutationDigest(), tuple)));
-    var request = new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(UUID.randomUUID(), NAMESPACE, tenant, source.worldSlug(), starting.gameInstanceUuid(), tuple.controlPlaneRequestId(), descriptor.launchDescriptorId(), descriptor.requestDigest(), descriptor.resultDigest(), complete.releaseAttestation().evidenceDigest());
-    var retained = new CanonicalGameInstanceLaunchAssociationRepository(gs.dsl(), NAMESPACE).readOriginalStartSessionAssociation(request).orElseThrow();
+    var starting =
+        Objects.requireNonNull(
+            gs.write()
+                .execute(
+                    s ->
+                        new GameSessionCanonicalStartingInstanceRepository(gs.dsl(), NAMESPACE)
+                            .createStarting(
+                                gsTenant,
+                                complete,
+                                tuple.preAuthorizationTuple().action().target().ownerAccountId(),
+                                tuple.controlPlaneRequestId(),
+                                tuple.mutationDigest(),
+                                tuple)));
+    var request =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+            UUID.randomUUID(),
+            NAMESPACE,
+            tenant,
+            source.worldSlug(),
+            starting.gameInstanceUuid(),
+            tuple.controlPlaneRequestId(),
+            descriptor.launchDescriptorId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            complete.releaseAttestation().evidenceDigest());
+    var retained =
+        new CanonicalGameInstanceLaunchAssociationRepository(gs.dsl(), NAMESPACE)
+            .readOriginalStartSessionAssociation(request)
+            .orElseThrow();
     var association = retained.association();
-    assertThat(retained.postAuthorizationExecutionTuple().canonicalBytes()).containsExactly(tuple.canonicalBytes());
+    assertThat(retained.postAuthorizationExecutionTuple().canonicalBytes())
+        .containsExactly(tuple.canonicalBytes());
     assertThat(retained.ownerAttemptId()).isEqualTo(claim.ownerAttemptId());
     assertThat(retained.ownerFence()).isEqualTo(claim.ownerFence());
-    var readRequest = new WorldCanonicalInstanceAssociation.GameSessionReadRequest(request.readRequestId(), NAMESPACE, tenant, source.worldSlug(), starting.gameInstanceUuid(), tuple.controlPlaneRequestId(), descriptor.launchDescriptorId(), descriptor.requestDigest(), descriptor.resultDigest(), complete.releaseAttestation().evidenceDigest());
-    var readEvidence = new WorldCanonicalInstanceAssociation.GameSessionReadEvidence(request.readRequestId(), NAMESPACE, tenant, source.worldSlug(), starting.gameInstanceUuid(), tuple.controlPlaneRequestId(), descriptor.launchDescriptorId(), descriptor.requestDigest(), descriptor.resultDigest(), complete.releaseAttestation().evidenceDigest(),
-        association.playableStateNamespaceId(), association.playableStateScope().name(), association.publicProduction(), retained.canonicalRealmId(), retained.catalogRevision(), association.currentGameInstanceStatus().name(), association.currentRowVersion(), descriptor, complete.releaseAttestation());
-    var launchReceipt = Objects.requireNonNull(world.write().execute(s -> new WorldCompleteLaunchBindingRepository(world.dsl()).acceptFresh(NAMESPACE, intake, complete)));
-    return new WorldCanonicalInstancePreparation.Input(readRequest, readEvidence, claim.ownerAttemptId(), claim.ownerFence(), launchReceipt, version, WorldCanonicalInstanceTopologyPlan.create(captured));
+    var readRequest =
+        new WorldCanonicalInstanceAssociation.GameSessionReadRequest(
+            request.readRequestId(),
+            NAMESPACE,
+            tenant,
+            source.worldSlug(),
+            starting.gameInstanceUuid(),
+            tuple.controlPlaneRequestId(),
+            descriptor.launchDescriptorId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            complete.releaseAttestation().evidenceDigest());
+    var readEvidence =
+        new WorldCanonicalInstanceAssociation.GameSessionReadEvidence(
+            request.readRequestId(),
+            NAMESPACE,
+            tenant,
+            source.worldSlug(),
+            starting.gameInstanceUuid(),
+            tuple.controlPlaneRequestId(),
+            descriptor.launchDescriptorId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            complete.releaseAttestation().evidenceDigest(),
+            association.playableStateNamespaceId(),
+            association.playableStateScope().name(),
+            association.publicProduction(),
+            retained.canonicalRealmId(),
+            retained.catalogRevision(),
+            association.currentGameInstanceStatus().name(),
+            association.currentRowVersion(),
+            descriptor,
+            complete.releaseAttestation());
+    var launchReceipt =
+        Objects.requireNonNull(
+            world
+                .write()
+                .execute(
+                    s ->
+                        new WorldCompleteLaunchBindingRepository(world.dsl())
+                            .acceptFresh(NAMESPACE, intake, complete)));
+    return new WorldCanonicalInstancePreparation.Input(
+        readRequest,
+        readEvidence,
+        claim.ownerAttemptId(),
+        claim.ownerFence(),
+        launchReceipt,
+        version,
+        WorldCanonicalInstanceTopologyPlan.create(captured));
   }
 
   private static WorldDraftDesignDigestServiceImpl digestService(DSLContext dsl) {
-    return new WorldDraftDesignDigestServiceImpl(new RegionRepository(dsl), new ZoneRepository(dsl), new RoomRepository(dsl), new RoomExitRepository(dsl), new GenerationRuleRepository(dsl), new WorldEntitySpawnBindingRepository(dsl));
+    return new WorldDraftDesignDigestServiceImpl(
+        new RegionRepository(dsl),
+        new ZoneRepository(dsl),
+        new RoomRepository(dsl),
+        new RoomExitRepository(dsl),
+        new GenerationRuleRepository(dsl),
+        new WorldEntitySpawnBindingRepository(dsl));
   }
 
-  private static AuthoredDraftPublishSelectionBinding selection(DraftCommitBinding draft, byte[] appliedBytes, String publicationId) throws Exception {
-    var epochs = draft.affectedUnits(Owner.WORLD_MANAGEMENT).stream().map(unit -> Map.of("aggregateType", unit.aggregateType(), "aggregateId", unit.aggregateId(), "scopeType", unit.scopeType(), "scopeId", unit.scopeId(), "expectedEpoch", unit.expectedEpoch(), "resultingEpoch", new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString())).toList();
-    String vector = new String(net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(List.of(Map.of("owner", "WORLD_MANAGEMENT", "status", "APPLIED", "commitId", draft.commitId().toString(), "bindingDigest", draft.digest(), "resultIdentity", "TEST_ONLY-controlled-authoring", "resultBytesBase64", Base64.getEncoder().encodeToString(appliedBytes), "appliedEpochs", epochs)))), StandardCharsets.UTF_8);
-    var intent = new AuthoredDraftPublishSelectionBinding.PublishIntent(draft.target().canonicalTenantId(), draft.target().canonicalVersionId(), publicationId, "1", "TEST_ONLY controlled publication upstream", draft.requestId(), draft.commitId(), draft.digest());
-    return AuthoredDraftPublishSelectionBinding.capture(intent, draft.target(), draft, new AuthoredDraftPublishSelectionBinding.VisibilityFence(draft.target(), draft.requestId(), draft.commitId(), draft.digest(), vector, OffsetDateTime.parse("2026-10-14T00:00:00Z")));
+  private static AuthoredDraftPublishSelectionBinding selection(
+      DraftCommitBinding draft, byte[] appliedBytes, String publicationId) throws Exception {
+    var epochs =
+        draft.affectedUnits(Owner.WORLD_MANAGEMENT).stream()
+            .map(
+                unit ->
+                    Map.of(
+                        "aggregateType",
+                        unit.aggregateType(),
+                        "aggregateId",
+                        unit.aggregateId(),
+                        "scopeType",
+                        unit.scopeType(),
+                        "scopeId",
+                        unit.scopeId(),
+                        "expectedEpoch",
+                        unit.expectedEpoch(),
+                        "resultingEpoch",
+                        new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+            .toList();
+    String vector =
+        new String(
+            net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+                JSON.writeValueAsString(
+                    List.of(
+                        Map.of(
+                            "owner",
+                            "WORLD_MANAGEMENT",
+                            "status",
+                            "APPLIED",
+                            "commitId",
+                            draft.commitId().toString(),
+                            "bindingDigest",
+                            draft.digest(),
+                            "resultIdentity",
+                            "TEST_ONLY-controlled-authoring",
+                            "resultBytesBase64",
+                            Base64.getEncoder().encodeToString(appliedBytes),
+                            "appliedEpochs",
+                            epochs)))),
+            StandardCharsets.UTF_8);
+    var intent =
+        new AuthoredDraftPublishSelectionBinding.PublishIntent(
+            draft.target().canonicalTenantId(),
+            draft.target().canonicalVersionId(),
+            publicationId,
+            "1",
+            "TEST_ONLY controlled publication upstream",
+            draft.requestId(),
+            draft.commitId(),
+            draft.digest());
+    return AuthoredDraftPublishSelectionBinding.capture(
+        intent,
+        draft.target(),
+        draft,
+        new AuthoredDraftPublishSelectionBinding.VisibilityFence(
+            draft.target(),
+            draft.requestId(),
+            draft.commitId(),
+            draft.digest(),
+            vector,
+            OffsetDateTime.parse("2026-10-14T00:00:00Z")));
   }
 
-  private static Server server(String service, WorldOriginalStartSessionPreparationProofPki pki, BindableService... receivers) throws Exception {
+  private static Server server(
+      String service,
+      WorldOriginalStartSessionPreparationProofPki pki,
+      BindableService... receivers)
+      throws Exception {
     var identity = pki.server(service);
-    var builder = NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0)).sslContext(GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile()).trustManager(pki.ca().toFile()).clientAuth(ClientAuth.REQUIRE).build());
-    for (var receiver : receivers) builder.addService(ServerInterceptors.intercept(receiver, new GrpcPeerIdentityInterceptor()));
+    var builder =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
+                    .trustManager(pki.ca().toFile())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build());
+    for (var receiver : receivers)
+      builder.addService(ServerInterceptors.intercept(receiver, new GrpcPeerIdentityInterceptor()));
     return builder.build().start();
   }
+
   private static DataSourceTransactionManager accountManager(DSLContext account) {
     // Reuse this fixture's actual schema datasource; no second Account schema or owner rows.
-    var provider = (org.jooq.impl.DataSourceConnectionProvider) account.configuration().connectionProvider();
+    var provider =
+        (org.jooq.impl.DataSourceConnectionProvider) account.configuration().connectionProvider();
     var source = (TransactionAwareDataSourceProxy) provider.dataSource();
     return new DataSourceTransactionManager(Objects.requireNonNull(source.getTargetDataSource()));
   }
-  private static void shutdown(Server server) throws InterruptedException { server.shutdownNow(); assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue(); }
+
+  private static void shutdown(Server server) throws InterruptedException {
+    server.shutdownNow();
+    assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+  }
+
   private static Map<String, List<String>> rows(DSLContext dsl, String... tables) {
     var result = new TreeMap<String, List<String>>();
-    for (String table : tables) result.put(table, dsl.fetch("SELECT row_to_json(t)::text AS body FROM " + table + " t ORDER BY row_to_json(t)::text").getValues("body", String.class));
+    for (String table : tables)
+      result.put(
+          table,
+          dsl.fetch(
+                  "SELECT row_to_json(t)::text AS body FROM "
+                      + table
+                      + " t ORDER BY row_to_json(t)::text")
+              .getValues("body", String.class));
     return result;
   }
+
   private static Database database(PostgreSQLContainer<?> postgres, String service, boolean saga) {
     String schema = "original_prepare_" + UUID.randomUUID().toString().replace("-", "");
-    var source = new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    var source =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     source.setSchema(schema);
     var locations = new ArrayList<String>();
-    locations.add("filesystem:" + repositoryRoot().resolve("services/" + service + "/src/main/resources/db/migration"));
-    if (saga) locations.add("filesystem:" + repositoryRoot().resolve("services/common-saga/src/main/resources/db/migration/saga"));
-    Flyway.configure().dataSource(source).schemas(schema).defaultSchema(schema).table("flyway_schema_history").placeholders(Map.of("serviceSchema", schema)).locations(locations.toArray(String[]::new)).load().migrate();
+    locations.add(
+        "filesystem:"
+            + repositoryRoot().resolve("services/" + service + "/src/main/resources/db/migration"));
+    if (saga)
+      locations.add(
+          "filesystem:"
+              + repositoryRoot()
+                  .resolve("services/common-saga/src/main/resources/db/migration/saga"));
+    Flyway.configure()
+        .dataSource(source)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history")
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations(locations.toArray(String[]::new))
+        .load()
+        .migrate();
     var manager = new DataSourceTransactionManager(source);
     var write = new TransactionTemplate(manager);
     write.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
-    return new Database(schema, DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES), manager, write);
+    return new Database(
+        schema,
+        DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES),
+        manager,
+        write);
   }
-  private record Database(String schema, DSLContext dsl, DataSourceTransactionManager manager, TransactionTemplate write) implements AutoCloseable {
-    @Override public void close() { dsl.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE"); }
+
+  private record Database(
+      String schema,
+      DSLContext dsl,
+      DataSourceTransactionManager manager,
+      TransactionTemplate write)
+      implements AutoCloseable {
+    @Override
+    public void close() {
+      dsl.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
+    }
   }
+
   private static Path repositoryRoot() {
     Path current = Path.of("").toAbsolutePath();
-    while (current != null) { if (Files.exists(current.resolve("settings.gradle.kts"))) return current; current = current.getParent(); }
+    while (current != null) {
+      if (Files.exists(current.resolve("settings.gradle.kts"))) return current;
+      current = current.getParent();
+    }
     throw new IllegalStateException("Repository filesystem migrations unavailable");
   }
-  private static UUID id(String value) { return UUID.nameUUIDFromBytes(("TEST_ONLY:" + value).getBytes(StandardCharsets.UTF_8)); }
-  private static WorldDraftTopologyCommitPlan topologyPlan(
-      OwnerFixture owner, boolean omitGenerationRule) throws Exception {
+
+  private static UUID id(String value) {
+    return UUID.nameUUIDFromBytes(("TEST_ONLY:" + value).getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static WorldDraftTopologyCommitPlan topologyPlan(OwnerFixture owner) throws Exception {
     UUID commitId = UUID.randomUUID();
     UUID regionId = UUID.randomUUID();
     UUID zoneId = UUID.randomUUID();
     UUID firstRoomId = UUID.randomUUID();
     UUID secondRoomId = UUID.randomUUID();
-    UUID entityTemplateId = UUID.randomUUID();
     var mutations = new ArrayList<WorldDesignMutationRevision>();
     mutations.add(
         mutation(
@@ -496,33 +1261,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                     .setToRoomId(secondRoomId.toString())
                     .setDirection("EAST"))
             .build());
-    if (!omitGenerationRule) {
-      // Match the established guarded storage fixture. These remain opaque inputs that must
-      // trigger requiredness refusal; they are not recognized semantics or COMPLETE proof.
-      mutations.add(
-          mutation(
-                  commitId,
-                  UUID.randomUUID(),
-                  regionId,
-                  WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE)
-              .setGenerationRule(
-                  GenerationRuleDesignMutation.newBuilder().setName("rule").setValue("fixed"))
-              .build());
-    }
-    mutations.add(
-        mutation(
-                commitId,
-                UUID.randomUUID(),
-                regionId,
-                WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING)
-            .setWorldEntitySpawnBinding(
-                WorldEntitySpawnBindingDesignMutation.newBuilder()
-                    .setRoomId(firstRoomId.toString())
-                    .setEntityTemplateType(
-                        EntityTemplateReferenceType.ENTITY_TEMPLATE_REFERENCE_TYPE_NPC)
-                    .setEntityTemplateId(entityTemplateId.toString())
-                    .setSpawnCount(2))
-            .build());
+    // This original preparation proof declares zero generation and spawn intent.
+    // Nonempty published intent remains refused by the canonical production owner.
 
     WorldFreshGraphDeclaration declaration =
         declaration(
@@ -530,7 +1270,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             owner.intake().canonicalTenantId(),
             firstRoomId,
             mutations);
-    mutations.set(0, mutations.getFirst().toBuilder().setFreshGraphDeclaration(declaration).build());
+    mutations.set(
+        0, mutations.getFirst().toBuilder().setFreshGraphDeclaration(declaration).build());
 
     List<DraftCommitBinding.RevisionPayload> revisions = new ArrayList<>();
     List<AffectedUnit> affected = new ArrayList<>();
@@ -815,7 +1556,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       String publishRequestId,
       String bundleRef,
       String generationConfigRevision,
-      long publicationVersionStateEpoch, WorldPublishedStartLocationEvidence seed) {
+      long publicationVersionStateEpoch,
+      WorldPublishedStartLocationEvidence seed,
+      WorldSelectedPublicationArtifactInventoryEvidence inventoryEvidence) {
     try {
       TargetProof target =
           new TargetProof(
@@ -833,29 +1576,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               original.inputDigest());
       var selected = selection(draft, seed.appliedResultBytes(), publishRequestId);
       var account =
-          new AccountPublicationAuthorizationBinding(
-              id("publication-operation:" + publishRequestId + ":" + canonicalVersionId),
-              id("publication-fence:" + publishRequestId + ":" + canonicalVersionId),
-              new AccountPublicationAuthorizationBinding.PreallocationInput(
-                  original.actorAccountId(), selected),
-              java.util.Arrays.stream(SourceKind.values())
-                  .map(
-                      kind ->
-                          new SourceEvidence(
-                              kind,
-                              switch (kind) {
-                                case ACCOUNT, GLOBAL_ROLES -> original.actorAccountId().toString();
-                                case TENANT -> source.canonicalTenantId().toString();
-                                case MEMBERSHIP ->
-                                    original.actorAccountId() + "/" + source.canonicalTenantId();
-                                default -> "TEST_ONLY-" + kind;
-                              },
-                              "1",
-                              "1",
-                              null,
-                              null,
-                              ("TEST_ONLY-" + kind).getBytes(StandardCharsets.UTF_8)))
-                  .toList());
+          publicationAccountBinding(
+              source, original, selected, publishRequestId, canonicalVersionId);
       String workflow =
           PublicationDigestRequestBinding.full(
                   source.canonicalTenantId().toString(),
@@ -863,9 +1585,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                   publishRequestId)
               .derivedWorkflowIdentity();
       var world = seed;
-      var operation =
-          new GameDesignPublicationOperationBinding(
-              account, world, IsolatedWorldPublicationInventoryFixtures.stipulated(account, world));
+      var operation = new GameDesignPublicationOperationBinding(account, world, inventoryEvidence);
       String policyJson =
           RealmPolicySource.canonical(
               Map.of(
@@ -908,7 +1628,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                               : "c".repeat(64),
                           AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
                               owner,
-                              AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION),
+                              AuthoredWorldReleaseAttestationEvidence
+                                  .CLOSURE_SELECTOR_SCHEMA_VERSION),
                           "GAME_LOGIC".equals(owner) ? "sha256:" + "d".repeat(64) : null,
                           null,
                           null))
@@ -918,8 +1639,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               source.canonicalTenantId(),
               canonicalVersionId,
               bundleRef,
-              3,
-              "v2",
+              1,
+              "v3",
               workflow,
               "sha256:" + "b".repeat(64),
               1,
@@ -991,6 +1712,91 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     }
   }
 
+  private static AccountPublicationAuthorizationBinding publicationAccountBinding(
+      AuthoredWorldSourceEvidence source,
+      DraftAuthorizationFenceBinding original,
+      AuthoredDraftPublishSelectionBinding selected,
+      String publishRequestId,
+      UUID canonicalVersionId) {
+    return new AccountPublicationAuthorizationBinding(
+        id("publication-operation:" + publishRequestId + ":" + canonicalVersionId),
+        id("publication-fence:" + publishRequestId + ":" + canonicalVersionId),
+        new AccountPublicationAuthorizationBinding.PreallocationInput(
+            original.actorAccountId(), selected),
+        Arrays.stream(SourceKind.values())
+            .map(
+                kind ->
+                    new SourceEvidence(
+                        kind,
+                        switch (kind) {
+                          case ACCOUNT, GLOBAL_ROLES -> original.actorAccountId().toString();
+                          case TENANT -> source.canonicalTenantId().toString();
+                          case MEMBERSHIP ->
+                              original.actorAccountId() + "/" + source.canonicalTenantId();
+                          default -> "TEST_ONLY-" + kind;
+                        },
+                        "1",
+                        "1",
+                        null,
+                        null,
+                        ("TEST_ONLY-" + kind).getBytes(StandardCharsets.UTF_8)))
+            .toList());
+  }
+
+  private static GameDesignPublicationTerminalEvidence commitControlledPublicationTerminal(
+      Database world, RealmPolicyPublishedEvidence.PublishedSet publishedSet) {
+    byte[] operationBytes = publishedSet.operationBytes();
+    byte[] terminalBytes = publishedSet.terminalEvidenceBytes();
+    var repository = new WorldPublicationTerminalRepository(world.dsl(), world.manager());
+    // This isolated verifier stipulates only the controlled upstream GDS result. The actual World
+    // terminal service/repository still enforces owner guards, commits the transition, and reads it
+    // back independently.
+    var service =
+        new WorldPublicationTerminalService(
+            repository,
+            (submittedOperationBytes, submittedTerminalBytes) -> {
+              if (!Arrays.equals(operationBytes, submittedOperationBytes)
+                  || !Arrays.equals(terminalBytes, submittedTerminalBytes)) {
+                throw new SecurityException(
+                    "Controlled GDS terminal differs from the exact submitted publication");
+              }
+              var evidence =
+                  GameDesignPublicationTerminalEvidence.fromStored(submittedTerminalBytes);
+              if (evidence.outcome() != GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
+                  || !Arrays.equals(evidence.operationBytes(), submittedOperationBytes)) {
+                throw new SecurityException(
+                    "Controlled GDS terminal is not the exact PUBLISHED operation result");
+              }
+              var request = WorldPublicationTerminal.request(submittedTerminalBytes);
+              var held = new AtomicBoolean(true);
+              var authority =
+                  new WorldPublicationTerminalService.HeldTerminalAuthority() {
+                    @Override
+                    public void requireHeld() {
+                      if (!held.get()
+                          || !Arrays.equals(request.operationBytes(), operationBytes)
+                          || !request.exactBytes(terminalBytes)) {
+                        throw new IllegalStateException(
+                            "Controlled upstream terminal authority is no longer held");
+                      }
+                    }
+
+                    @Override
+                    public void close() {
+                      held.set(false);
+                    }
+                  };
+              return new WorldPublicationTerminalService.VerifiedTerminal(request, authority);
+            });
+
+    var completed = service.complete(operationBytes, terminalBytes);
+    assertThat(completed.canonicalBytes()).containsExactly(terminalBytes);
+    var committed =
+        repository.readCommitted(WorldPublicationTerminal.request(terminalBytes)).orElseThrow();
+    assertThat(committed.canonicalBytes()).containsExactly(terminalBytes);
+    return committed;
+  }
+
   private static net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence
       completeBinding(
           net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence descriptor,
@@ -1034,12 +1840,21 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             release.requiredManifestAssetKeys(),
             release.artifactDigests(),
             release.commandDefinitions(),
-            descriptor.generationConfigRevision(), release.worldStartLocationEvidence());
+            descriptor.generationConfigRevision(),
+            release.worldStartLocationEvidence());
     return new net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence(
         descriptor, evidence);
   }
 
-  private static void pinLaunch(DSLContext dsl, TransactionTemplate transactions, StartSessionPostAuthorizationExecutionTuple tuple, AuthoredWorldSourceEvidence source, RealmPolicyPublishedEvidence.PublishedSet publishedSet, CompleteLaunchBindingEvidence binding, GameSessionStartSessionOperatorAttemptRepository.AttemptClaim claim, WorldAuthoredSourceIntakeReceipt intake) {
+  private static void pinLaunch(
+      DSLContext dsl,
+      TransactionTemplate transactions,
+      StartSessionPostAuthorizationExecutionTuple tuple,
+      AuthoredWorldSourceEvidence source,
+      RealmPolicyPublishedEvidence.PublishedSet publishedSet,
+      CompleteLaunchBindingEvidence binding,
+      GameSessionStartSessionOperatorAttemptRepository.AttemptClaim claim,
+      WorldAuthoredSourceIntakeReceipt intake) {
     var attempts = new GameSessionStartSessionOperatorAttemptRepository(dsl, Duration.ofMinutes(5));
     var selections = new GameSessionStartSessionTemplateAssociationRepository(dsl, attempts);
     var descriptors = new GameSessionStartSessionLaunchDescriptorRepository(dsl, selections);
@@ -1048,7 +1863,19 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     var release = terminal.releaseContent();
     var world = release.worldStartLocationEvidence();
     var worldRequest = world.request();
-    var receipt = new net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.PublicReceipt(1, NAMESPACE, intake.intakeRequestId(), intake.operationId(), source.canonicalTenantId(), source.worldSlug(), source.operationId(), source.evidenceDigest(), intake.requestDigest(), intake.receiptDigest(), source);
+    var receipt =
+        new net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeGrpcCodec.PublicReceipt(
+            1,
+            NAMESPACE,
+            intake.intakeRequestId(),
+            intake.operationId(),
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest(),
+            intake.requestDigest(),
+            intake.receiptDigest(),
+            source);
     var selected =
         new net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence
             .Association(
@@ -1150,5 +1977,9 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 .DescriptorOutcome(binding.descriptor()));
     transactions.execute(status -> descriptors.pin(claim, resolved));
   }
-  private record OwnerFixture(AuthoredWorldSourceEvidence source, WorldAuthoredSourceIntakeReceipt intake, WorldAuthoredVersionIdentityReceipt version) {}
+
+  private record OwnerFixture(
+      AuthoredWorldSourceEvidence source,
+      WorldAuthoredSourceIntakeReceipt intake,
+      WorldAuthoredVersionIdentityReceipt version) {}
 }

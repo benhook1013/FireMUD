@@ -911,7 +911,7 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
           throw denied("Historical release does not bind the retained World Version scope");
         }
         var worldSelector = release.worldStartLocationEvidence();
-        if (schemaVersion == 2) {
+        if (schemaVersion == 2 || schemaVersion == 4) {
           if (worldSelector == null
               || !Base64.getEncoder()
                   .encodeToString(worldSelector.canonicalBytes())
@@ -919,7 +919,10 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
             throw denied("Historical release selector differs from the retained World input");
           }
         } else if (worldSelector != null) {
-          throw denied("Schema-1 retained World input cannot match a selected release selector");
+          throw denied(
+              "Schema-"
+                  + schemaVersion
+                  + " retained World input cannot match a selected release selector");
         }
       } catch (PreparationDeniedException denied) {
         throw denied;

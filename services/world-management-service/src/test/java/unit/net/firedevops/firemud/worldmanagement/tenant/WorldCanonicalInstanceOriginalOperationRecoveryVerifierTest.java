@@ -34,9 +34,9 @@ import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
-import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.testing.AuthoringFixtures;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeDigest;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
@@ -85,6 +85,29 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
   @Test
   void acceptsSerializerShapedSchemaTwoHistoricalEvidence() {
     acceptsExactHistoricalOwnerEvidenceAndUsesFreshReadCorrelations(fixture(false, true));
+  }
+
+  @Test
+  void acceptsSchemaFourFreshProjectionWithItsExactRetainedSelector() {
+    Fixture fixture = fixture(false, true, true);
+    assertThat(fixture.preparationInputJson())
+        .contains("\"schemaVersion\":4", "\"worldStartLocationEvidenceBase64\"");
+
+    acceptsExactHistoricalOwnerEvidenceAndUsesFreshReadCorrelations(fixture);
+  }
+
+  @Test
+  void acceptsSchemaThreeAndSchemaOneLegacyProjectionsWithoutSelectedSelector() {
+    Fixture schemaThree = fixture(false);
+    assertThat(schemaThree.preparationInputJson()).contains("\"schemaVersion\":3");
+    assertThat(schemaThree.preparationInputJson())
+        .doesNotContain("worldStartLocationEvidenceBase64");
+    acceptsExactHistoricalOwnerEvidenceAndUsesFreshReadCorrelations(schemaThree);
+
+    Fixture schemaOne = fixture(false, false, false);
+    assertThat(schemaOne.preparationInputJson()).contains("\"schemaVersion\":1");
+    assertThat(schemaOne.preparationInputJson()).doesNotContain("worldStartLocationEvidenceBase64");
+    acceptsExactHistoricalOwnerEvidenceAndUsesFreshReadCorrelations(schemaOne);
   }
 
   @Test
@@ -421,6 +444,101 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
                     fixture.launchAssociation()));
 
     assertDenied(verifier(account, gameSession), fixture.identity());
+  }
+
+  @Test
+  void rejectsSchemaFourSelectorSubstitutionAgainstTheRetainedRelease() {
+    Fixture fixture = fixture(false, true, true);
+    String selectedEvidence =
+        java.util.Base64.getEncoder()
+            .encodeToString(
+                fixture
+                    .launchAssociation()
+                    .launchBindingEvidence()
+                    .releaseAttestation()
+                    .worldStartLocationEvidence()
+                    .canonicalBytes());
+    String substitutedInput = fixture.preparationInputJson().replace(selectedEvidence, "e30=");
+    assertThat(substitutedInput)
+        .isNotEqualTo(fixture.preparationInputJson())
+        .contains("\"schemaVersion\":4", "\"worldStartLocationEvidenceBase64\":\"e30=\"");
+    when(fixture.identity().preparationInputJson()).thenReturn(substitutedInput);
+    when(fixture.identity().preparationInputDigest())
+        .thenReturn(sha256(substitutedInput.getBytes(StandardCharsets.UTF_8)));
+
+    var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
+    when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
+        .thenAnswer(
+            invocation ->
+                accountEvidence(
+                    invocation.getArgument(0),
+                    ORIGINAL_TUPLE,
+                    ATTEMPT_ID,
+                    GAME_SESSION_FENCE,
+                    substitutedInput));
+    var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
+    when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
+        .thenAnswer(
+            invocation ->
+                gameSessionEvidence(
+                    invocation.getArgument(0),
+                    fixture,
+                    ORIGINAL_TUPLE,
+                    ATTEMPT_ID,
+                    GAME_SESSION_FENCE,
+                    fixture.launchAssociation()));
+
+    assertDenied(verifier(account, gameSession), fixture.identity());
+  }
+
+  @Test
+  void rejectsSchemaFourWhenItsRetainedSelectorIsAbsentBeforeOwnerReads() throws Exception {
+    Fixture fixture = fixture(false, true, true);
+    var changed =
+        (tools.jackson.databind.node.ObjectNode) JSON.readTree(fixture.preparationInputJson());
+    changed.remove("worldStartLocationEvidenceBase64");
+    String changedInput = json(changed);
+    when(fixture.identity().preparationInputJson()).thenReturn(changedInput);
+    when(fixture.identity().preparationInputDigest())
+        .thenReturn(sha256(changedInput.getBytes(StandardCharsets.UTF_8)));
+
+    var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
+    var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
+    assertDenied(verifier(account, gameSession), fixture.identity());
+    verifyNoInteractions(account, gameSession);
+  }
+
+  @Test
+  void schemaOneAndThreeCannotPairTheirLegacyProjectionWithASelectedReleaseSelector() {
+    for (boolean capturedCatalog : new boolean[] {false, true}) {
+      var selector = retainedWorldSelector();
+      var source = sourceReceipt(false, selector.request().intakeRequestId());
+      var descriptor = descriptor(source, false);
+      var release = release(descriptor, selector);
+      Fixture fixture = fixture(source, descriptor, release, null, capturedCatalog);
+      int schemaVersion = capturedCatalog ? 3 : 1;
+      assertThat(fixture.preparationInputJson())
+          .contains("\"schemaVersion\":" + schemaVersion)
+          .doesNotContain("worldStartLocationEvidenceBase64");
+
+      var account = exactAccountClient(fixture);
+      var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
+      when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
+          .thenAnswer(
+              invocation ->
+                  gameSessionEvidence(
+                      invocation.getArgument(0),
+                      fixture,
+                      ORIGINAL_TUPLE,
+                      ATTEMPT_ID,
+                      GAME_SESSION_FENCE,
+                      fixture.launchAssociation()));
+
+      assertThatThrownBy(
+              () -> verifier(account, gameSession).verifyOriginalOperation(fixture.identity()))
+          .isInstanceOf(PreparationDeniedException.class)
+          .hasMessageContaining("Schema-" + schemaVersion + " retained World input cannot match");
+    }
   }
 
   @Test

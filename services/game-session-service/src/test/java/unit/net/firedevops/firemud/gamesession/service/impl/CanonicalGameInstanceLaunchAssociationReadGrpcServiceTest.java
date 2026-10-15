@@ -34,6 +34,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository.OriginalStartSessionAssociation;
+import net.firedevops.firemud.gamesession.service.impl.CanonicalGameInstanceLaunchAssociationReadGrpcService;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameInstanceLaunchAssociationRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameInstanceLaunchAssociationResponse;
 import org.jooq.exception.DataAccessException;
@@ -170,7 +171,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest {
   void missingOrNullOriginalRowsFailClosedWithoutReturningEvidence() {
     Fixture fixture = fixture();
     when(repository.readOriginalStartSessionAssociation(fixture.request()))
-        .thenReturn(Optional.empty(), null);
+        .thenReturn(Optional.empty())
+        .thenReturn(null);
 
     assertDenied(invokeWorld(fixture.wireRequest()), Status.Code.FAILED_PRECONDITION);
     assertDenied(invokeWorld(fixture.wireRequest()), Status.Code.FAILED_PRECONDITION);

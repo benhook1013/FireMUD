@@ -96,6 +96,8 @@ final class AccountControlUiOwnerSourcesFixture {
   final AccountControlUiAuthority authority;
   final AccountControlUiIssuanceService service;
   final DataSourceTransactionManager manager;
+  private final DriverManagerDataSource migrationSource;
+  private final String migrationSchema;
   final DraftAuthorizationFenceRepository fences;
   final AccountServiceImpl primary;
 
@@ -116,18 +118,35 @@ final class AccountControlUiOwnerSourcesFixture {
       boolean installNegativeIssuer,
       UUID tenant)
       throws Exception {
+    this(jdbcUrl, username, password, root, installNegativeIssuer, tenant, null);
+  }
+
+  /**
+   * Test-only predecessor frontier; production owners and the complete migration history remain
+   * unchanged.
+   */
+  AccountControlUiOwnerSourcesFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      Path root,
+      boolean installNegativeIssuer,
+      UUID tenant,
+      String migrationTarget)
+      throws Exception {
+    if (migrationTarget != null && !"160.1".equals(migrationTarget)) {
+      throw new IllegalArgumentException(
+          "Only the preserved 160.1 source-retention predecessor is supported");
+    }
     this.tenant = Objects.requireNonNull(tenant);
     String schema = "control_ui_owner_" + UUID.randomUUID().toString().replace("-", "");
     var dataSource = new DriverManagerDataSource(jdbcUrl, username, password);
     dataSource.setSchema(schema);
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(schema)
-        .defaultSchema(schema)
-        .placeholders(Map.of("serviceSchema", schema))
-        .locations("filesystem:" + accountMigrations())
-        .load()
-        .migrate();
+    migrationSource = dataSource;
+    migrationSchema = schema;
+    var migrations = migrationConfiguration();
+    if (migrationTarget != null) migrations.target(migrationTarget);
+    migrations.load().migrate();
     manager = new DataSourceTransactionManager(dataSource);
     transactions = new TransactionTemplate(manager);
     transactions.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -516,6 +535,20 @@ final class AccountControlUiOwnerSourcesFixture {
     } finally {
       argon.wipeArray(secret);
     }
+  }
+
+  /** Applies only the remaining real migrations, without rewriting retained fixture rows. */
+  void upgradeToCurrent() {
+    migrationConfiguration().load().migrate();
+  }
+
+  private org.flywaydb.core.api.configuration.FluentConfiguration migrationConfiguration() {
+    return Flyway.configure()
+        .dataSource(migrationSource)
+        .schemas(migrationSchema)
+        .defaultSchema(migrationSchema)
+        .placeholders(Map.of("serviceSchema", migrationSchema))
+        .locations("filesystem:" + accountMigrations());
   }
 
   private static Path accountMigrations() {

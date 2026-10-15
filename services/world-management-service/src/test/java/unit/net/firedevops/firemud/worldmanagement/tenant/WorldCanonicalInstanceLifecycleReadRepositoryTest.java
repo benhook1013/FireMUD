@@ -67,7 +67,7 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
     var selector = release(AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
     assertThat(selector.participantDigests())
         .extracting(AuthoredWorldReleaseAttestationEvidence.Participant::digestSchemaVersion)
-        .containsExactly(3, 2, 1, 5, 1);
+        .containsExactly(3, 2, 1, 5, 2);
     assertThat(selector.worldStartLocationEvidence()).isNotNull();
     assertThat(selector.worldStartLocationEvidence().request().digestSchemaVersion()).isEqualTo(3);
     assertThat(selector.worldStartLocationEvidence().request().canonicalTenantId())
