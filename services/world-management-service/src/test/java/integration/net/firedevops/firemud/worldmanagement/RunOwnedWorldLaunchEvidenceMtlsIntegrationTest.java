@@ -319,6 +319,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
                       .build());
       SessionContext.clear();
       assertThat(playerContextFailure.hasError()).isTrue();
+      assertThat(playerContextFailure.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
       assertThat(worldSaves).hasValue(writesAfterPrepare);
       assertThat(descriptorReads).hasValue(readsAfterPrepare);
 
@@ -402,6 +403,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
                       .build());
       SessionContext.clear();
       assertThat(ordinaryCaller.hasError()).isTrue();
+      assertThat(ordinaryCaller.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
       assertThat(worldSaves).hasValue(writesAfterActivation);
       assertThat(descriptorReads).hasValue(4);
 
@@ -664,8 +666,10 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
           authenticatedPlayerGameSessionStub().terminateWorldInstance(terminationRequest);
       SessionContext.clear();
       assertThat(playerContextTermination.hasError()).isTrue();
+      assertThat(playerContextTermination.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
       assertThat(worldSaves).hasValue(writesBeforeTermination);
       assertThat(entityCleanupCalls).hasValue(0);
+      assertThat(descriptorReads).hasValue(readsBeforeDeniedTermination);
 
       gameSessionChannel.shutdownNow();
       assertThat(gameSessionChannel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();

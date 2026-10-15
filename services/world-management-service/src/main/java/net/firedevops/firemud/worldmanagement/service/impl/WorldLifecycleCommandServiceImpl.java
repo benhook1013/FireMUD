@@ -1120,7 +1120,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     if (STATUS_TERMINATED.equals(worldInstance.getStatus())) {
       if (!terminationRequestId.equals(worldInstance.getTerminationRequestId())) {
         throw new IllegalArgumentException(
-            "INVALID_WORLD_INSTANCE_STATE: world instance terminated under a different request id");
+            "IDEMPOTENCY_CONFLICT: world instance terminated under a different request id");
       }
       return worldInstance;
     }

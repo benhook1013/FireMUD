@@ -12,7 +12,7 @@ The ordinary World producer emits digest schema 3 for its tagged Entity-referenc
 
 The coherent receiving successor for [PR #3196](https://github.com/benhook1013/FireMUD/pull/3196) is prepared on the latest qualified parent `d7f78ebbb5e2d13bfd73885202c0742c41e3f94b` from [PR #3189](https://github.com/benhook1013/FireMUD/pull/3189). Its coherent boundary includes Game Design/shared-contract/caller/proof paths, preserved Logging receiving paths, and bounded CI/process repairs. The PR’s generated scope section records its current path count. The ten earlier Account/process prerequisite paths are inherited from the preparation parent rather than duplicated. The current local composition gate and source proofs have the exact attribution below. The published CLI2 source `371f0dcedc75690aadb7cb267b4a19ddbc8c16ff` passed its exact-head Validation, CodeQL, License and Security gates. Current review fixes require new published-source CI; Hosted/CLI review and rebuilt packaged receiver proof remain separate gates. Earlier results retain their original source attribution.
 
-### Fixed fixture source and Version reads
+### Source-first World composition proof
 
 Game Design's fixed source and Version readers retain qualified controlled receiving proof through the readiness-child carries; the shared PREPARING composition and exact run attribution are recorded once in [World Runtime and Movement](./world-runtime-and-movement.md#fixed-fixture-preparing-owner-preparation).
 
