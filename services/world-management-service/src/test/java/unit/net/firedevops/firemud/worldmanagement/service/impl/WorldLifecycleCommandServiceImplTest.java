@@ -286,6 +286,65 @@ class WorldLifecycleCommandServiceImplTest {
   }
 
   @Test
+  void ordinaryActivationReplaysOriginalPreparingEpochAndCurrentActiveEpochWithoutEffects() {
+    WorldInstance instance = new WorldInstance();
+    instance.setTenantId(42L);
+    instance.setGameInstanceId(101L);
+    instance.setGameTemplateId(7L);
+    instance.setControlPlaneRequestId("cp-1");
+    instance.setLaunchDescriptorId("ld-1");
+    instance.setVersionId(11L);
+    instance.setRuntimeFlagsJson("{}");
+    instance.setGenerationConfigRevision("genrev-11");
+    instance.setReleaseBundleId(77L);
+    instance.setPublishedReleaseBundleRef(PUBLISHED_RELEASE_BUNDLE_REF);
+    instance.setVersionStateEpoch(77L);
+    instance.setLifecycleEpoch(1L);
+    instance.setStatus("PREPARING");
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(instance));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var activated = service.activatePreparedWorldInstance(42L, 101L, 1L);
+    var originalEpochReplay = service.activatePreparedWorldInstance(42L, 101L, 1L);
+    var currentEpochReplay = service.activatePreparedWorldInstance(42L, 101L, 2L);
+
+    assertEquals("ACTIVE", activated.status());
+    assertEquals(2L, activated.lifecycleEpoch());
+    assertEquals(activated, originalEpochReplay);
+    assertEquals(activated, currentEpochReplay);
+    verify(worldInstanceRepository, times(1)).save(any(WorldInstance.class));
+    verify(gameDesignClient, times(1)).getPublishedReleaseBundle(42L, 11L);
+    verify(gameDesignClient, times(1)).getVersionAssetArtifactState(42L, 11L);
+    verify(gameDesignClient, times(1)).getVersionState(42L, 11L);
+  }
+
+  @Test
+  void ordinaryActiveReplayRejectsStaleUnrelatedInvalidAndOverflowEpochsWithoutEffects() {
+    WorldInstance instance = activeWorldInstance();
+    instance.setLifecycleEpoch(3L);
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(instance));
+
+    for (long expectedEpoch : new long[] {1L, 4L, 0L, -1L, Long.MAX_VALUE}) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> service.activatePreparedWorldInstance(42L, 101L, expectedEpoch));
+    }
+
+    instance.setLifecycleEpoch(Long.MIN_VALUE);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.activatePreparedWorldInstance(42L, 101L, Long.MAX_VALUE));
+
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(anyLong(), anyLong());
+    verify(gameDesignClient, never()).getVersionAssetArtifactState(anyLong(), anyLong());
+    verify(gameDesignClient, never()).getVersionState(anyLong(), anyLong());
+  }
+
+  @Test
   void failPreparedWorldInstanceMarksPreparingRowFailed() {
     WorldInstance instance = new WorldInstance();
     instance.setTenantId(42L);
