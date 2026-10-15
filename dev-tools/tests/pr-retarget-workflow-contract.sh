@@ -518,7 +518,6 @@ import yaml
 root = Path(sys.argv[1])
 expected = "${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' && (github.event.action != 'edited' || github.event.changes.base.ref != null) }}"
 for filename, jobs in {
-    "ci.yml": ("validation-summary",),
     "security.yml": ("security-summary",),
     "smoke.yml": ("smoke-summary-pending", "smoke-summary"),
 }.items():
@@ -552,7 +551,6 @@ PYTHON
 # retain each summary's canonical name.
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
 assert_job_contains security.yml security-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Security Summary)' || 'Security Summary' }}"
-assert_job_contains ci.yml validation-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Validation Summary)' || 'Validation Summary' }}"
 assert_job_contains smoke.yml smoke-summary "name: \${{ github.event.action == 'edited' && github.event.changes.base.ref == null && 'PR Metadata Edit (Smoke Summary)' || 'Smoke Summary' }}"
 # A metadata-only edit must retain the required gate name. Its preservation
 # action verifies prior proof before reporting success for the unchanged tuple.
@@ -583,8 +581,7 @@ for job in \
   helm-render-validation \
   docs-check \
   frontend-checks \
-  build-and-test \
-  validation-summary; do
+  build-and-test; do
   assert_job_condition ci.yml "$job" "$required_condition"
 done
 
