@@ -493,7 +493,18 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
                       .dsl()
                       .execute("TRUNCATE game_session_start_session_template_association_pin"))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
-          .hasStackTraceContaining("StartSession template association pins are immutable");
+          .hasStackTraceContaining(
+              "cannot truncate a table referenced in a foreign key constraint")
+          .hasStackTraceContaining("game_session_start_session_launch_descriptor_pin")
+          .hasStackTraceContaining("game_session_start_session_template_association_pin");
+      assertThatThrownBy(
+              () ->
+                  fixture
+                      .dsl()
+                      .execute(
+                          "TRUNCATE game_session_start_session_template_association_pin CASCADE"))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .hasStackTraceContaining("pins are immutable");
 
       LaunchPinBytes pinBytesAfter = retainedLaunchPinBytes(fixture, launch);
       assertThat(pinBytesAfter.selectionRequest()).containsExactly(pinBytes.selectionRequest());
