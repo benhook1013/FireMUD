@@ -24,8 +24,6 @@ public final class AuthoredDraftPublishSelectionReadClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public AuthoredDraftPublishSelectionReadClient(
       ServiceEndpointsProperties endpoints,
@@ -43,18 +41,10 @@ public final class AuthoredDraftPublishSelectionReadClient
     this.workloadNamespace = workloadNamespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException(
-          "Game Design selected Draft publication read client is closed");
-    }
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException(
-          "Game Design selected Draft publication read stub unavailable");
-    }
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "Game Design selected Draft publication read client is closed",
+        "Game Design selected Draft publication read stub unavailable");
   }
 
   /**
@@ -74,7 +64,8 @@ public final class AuthoredDraftPublishSelectionReadClient
           "Game Design selected Draft publication read must use the configured workload namespace");
     }
     var response =
-        requireStub()
+        requireInitializedStub(
+                "Game Design selected Draft publication read client is not initialized and available")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .readSelectedDraftPublication(
                 AuthoredDraftPublishSelectionReadGrpcCodec.toRequest(request));
@@ -105,25 +96,5 @@ public final class AuthoredDraftPublishSelectionReadClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private GameDesignSelectedDraftPublicationReadServiceGrpc
-          .GameDesignSelectedDraftPublicationReadServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "Game Design selected Draft publication read client is not initialized and available");
-    }
-    return currentStub;
   }
 }
