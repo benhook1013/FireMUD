@@ -50,11 +50,14 @@ public record AuthoredWorldReleaseAttestationEvidence(
   public static final int SCHEMA_VERSION = 1;
   public static final int SELECTOR_SCHEMA_VERSION = 2;
   public static final int CLOSURE_SELECTOR_SCHEMA_VERSION = 3;
+  public static final int SELECTED_FULL_SCHEMA_VERSION = 4;
   private static final String EVIDENCE_DOMAIN = "game-design-authored-world-release-attestation/v1";
   private static final String SELECTOR_EVIDENCE_DOMAIN =
       "game-design-authored-world-release-attestation/v2";
   private static final String CLOSURE_SELECTOR_EVIDENCE_DOMAIN =
       "game-design-authored-world-release-attestation/v3";
+  private static final String SELECTED_FULL_EVIDENCE_DOMAIN =
+      "game-design-authored-world-release-attestation/v4";
   private static final Pattern SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
   private static final Pattern PARTICIPANT_CONTENT_DIGEST = Pattern.compile("[0-9a-f]{64}");
   private static final Pattern CANONICAL_POSITIVE_DECIMAL = Pattern.compile("[1-9][0-9]*");
@@ -93,12 +96,13 @@ public record AuthoredWorldReleaseAttestationEvidence(
     return supportedParticipantDigestSchema(participantKey, SCHEMA_VERSION);
   }
 
-  /** Selects owner schemas from the retained-v1, selected-v2, or closure-selected-v3 contract. */
+  /** Selects owner schemas from the retained-v1, selected-v2, closure-selected-v3, or full-v4 contract. */
   public static int supportedParticipantDigestSchema(
       String participantKey, int attestationSchemaVersion) {
     if (attestationSchemaVersion != SCHEMA_VERSION
         && attestationSchemaVersion != SELECTOR_SCHEMA_VERSION
-        && attestationSchemaVersion != CLOSURE_SELECTOR_SCHEMA_VERSION) {
+        && attestationSchemaVersion != CLOSURE_SELECTOR_SCHEMA_VERSION
+        && attestationSchemaVersion != SELECTED_FULL_SCHEMA_VERSION) {
       throw new IllegalArgumentException("Unsupported authored-world release-attestation schema");
     }
     Objects.requireNonNull(participantKey, "participantKey");
@@ -110,6 +114,16 @@ public record AuthoredWorldReleaseAttestationEvidence(
         && "WORLD_MANAGEMENT".equals(participantKey)) {
       return 4;
     }
+    if (attestationSchemaVersion == SELECTED_FULL_SCHEMA_VERSION) {
+      return switch (participantKey) {
+        case "WORLD_MANAGEMENT" -> 4;
+        case "ENTITY_MANAGEMENT" -> 3;
+        case "GAME_LOGIC" -> 1;
+        case "AUTOMATION_SCRIPTING" -> 6;
+        case "GAME_DESIGN_CONTROL_PLANE" -> 2;
+        default -> throw new IllegalArgumentException("Unsupported full-Version participant owner");
+      };
+    }
     return (attestationSchemaVersion == SELECTOR_SCHEMA_VERSION
                 || attestationSchemaVersion == CLOSURE_SELECTOR_SCHEMA_VERSION)
             && "GAME_DESIGN_CONTROL_PLANE".equals(participantKey)
@@ -119,7 +133,8 @@ public record AuthoredWorldReleaseAttestationEvidence(
 
   public static boolean requiresWorldStartLocationEvidence(int attestationSchemaVersion) {
     return attestationSchemaVersion == SELECTOR_SCHEMA_VERSION
-        || attestationSchemaVersion == CLOSURE_SELECTOR_SCHEMA_VERSION;
+        || attestationSchemaVersion == CLOSURE_SELECTOR_SCHEMA_VERSION
+        || attestationSchemaVersion == SELECTED_FULL_SCHEMA_VERSION;
   }
 
   /** One successful, immutable owner digest included in the release attestation. */
@@ -177,7 +192,8 @@ public record AuthoredWorldReleaseAttestationEvidence(
   public AuthoredWorldReleaseAttestationEvidence {
     if (schemaVersion != SCHEMA_VERSION
         && schemaVersion != SELECTOR_SCHEMA_VERSION
-        && schemaVersion != CLOSURE_SELECTOR_SCHEMA_VERSION) {
+        && schemaVersion != CLOSURE_SELECTOR_SCHEMA_VERSION
+        && schemaVersion != SELECTED_FULL_SCHEMA_VERSION) {
       throw new IllegalArgumentException("Unsupported authored-world release-attestation schema");
     }
     Objects.requireNonNull(targetNamespace, "targetNamespace");
@@ -353,6 +369,52 @@ public record AuthoredWorldReleaseAttestationEvidence(
       WorldPublishedStartLocationEvidence worldStartLocationEvidence) {
     return createSelected(
         CLOSURE_SELECTOR_SCHEMA_VERSION,
+        targetNamespace,
+        descriptorResultDigest,
+        canonicalTenantId,
+        canonicalVersionId,
+        worldSlug,
+        authoredWorldSourceOperationId,
+        authoredWorldSourceEvidenceDigest,
+        launchDescriptorId,
+        publishedReleaseBundleRef,
+        versionStateEpoch,
+        publishWorkflowId,
+        commitId,
+        participantDigests,
+        manifestHash,
+        manifestSchemaVersion,
+        requiredManifestAssetKeys,
+        artifactDigests,
+        commandDefinitions,
+        generationConfigRevision,
+        worldStartLocationEvidence);
+  }
+
+  /** Creates v4 from the exact selector and complete selected-full participant vector. */
+  public static AuthoredWorldReleaseAttestationEvidence createSelectedFull(
+      String targetNamespace,
+      String descriptorResultDigest,
+      UUID canonicalTenantId,
+      UUID canonicalVersionId,
+      String worldSlug,
+      UUID authoredWorldSourceOperationId,
+      String authoredWorldSourceEvidenceDigest,
+      String launchDescriptorId,
+      String publishedReleaseBundleRef,
+      long versionStateEpoch,
+      String publishWorkflowId,
+      String commitId,
+      List<Participant> participantDigests,
+      String manifestHash,
+      int manifestSchemaVersion,
+      List<String> requiredManifestAssetKeys,
+      List<Artifact> artifactDigests,
+      List<String> commandDefinitions,
+      String generationConfigRevision,
+      WorldPublishedStartLocationEvidence worldStartLocationEvidence) {
+    return createSelected(
+        SELECTED_FULL_SCHEMA_VERSION,
         targetNamespace,
         descriptorResultDigest,
         canonicalTenantId,
@@ -652,6 +714,7 @@ public record AuthoredWorldReleaseAttestationEvidence(
           case SCHEMA_VERSION -> EVIDENCE_DOMAIN;
           case SELECTOR_SCHEMA_VERSION -> SELECTOR_EVIDENCE_DOMAIN;
           case CLOSURE_SELECTOR_SCHEMA_VERSION -> CLOSURE_SELECTOR_EVIDENCE_DOMAIN;
+          case SELECTED_FULL_SCHEMA_VERSION -> SELECTED_FULL_EVIDENCE_DOMAIN;
           default -> throw new IllegalArgumentException("Unsupported release-attestation schema");
         };
     return preimage(domain, fields.toArray(Field[]::new));

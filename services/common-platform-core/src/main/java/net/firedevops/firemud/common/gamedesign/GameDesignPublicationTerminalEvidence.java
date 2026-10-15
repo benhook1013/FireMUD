@@ -83,12 +83,14 @@ public final class GameDesignPublicationTerminalEvidence {
           switch (attestationSchemaVersion) {
             case "v2" -> AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION;
             case "v3" -> AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION;
+            case "v4" -> AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION;
             default ->
                 throw new IllegalArgumentException(
-                    "Complete full-Version bundle/v2 or bundle/v3 required");
+                    "Complete full-Version bundle/v2, bundle/v3, or bundle/v4 required");
           };
       if (versionNumber <= 0 || manifestSchemaVersion != 1) {
-        throw new IllegalArgumentException("Complete full-Version bundle/v2 or bundle/v3 required");
+        throw new IllegalArgumentException(
+            "Complete full-Version bundle/v2, bundle/v3, or bundle/v4 required");
       }
       digest(manifestHash);
       artifactDigests = List.copyOf(artifactDigests);
