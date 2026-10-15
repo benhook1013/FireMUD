@@ -2,7 +2,7 @@
 
 ## Implementation Status
 
-The bounded canonical fixture launch successor reads the exact authenticated Game Session `STARTING` allocation as source evidence. World fixture bootstrap and prepare/activate refuse before repository effects while source/Version materialization, canonical World association and holds are unavailable. Ordinary demo topology remains under its existing separate configuration. This read neither adopts numeric source keys nor supplies an `ACTIVE` state, first admission bind, Entity placement or operational-region authority. The guarded graph owner's stored and capture states remain unverified; [the World tracker](../../../project-management/implementation-tracking/world-runtime-and-movement.md#current-status) records physical proof and remaining phases.
+The source-first stage retains the published World fixture verifier, demo seeder and prepare/activate dispatch until the canonical runtime swap. The strengthened fixed capability and Game Design receipt remain required; the active verifier does not adopt the new canonical Game Session allocation read. This retention supplies no new canonical activation, admission, Entity placement or operational-region authority. The canonical run-owned ordering remains defined in [Testing Strategy](../../system-architecture-testing.md#run-owned-v1-launch-read-evidence); [the World tracker](../../../project-management/implementation-tracking/world-runtime-and-movement.md#canonical-fixture-launch-receiving-boundary) records candidate proof and remaining handoffs.
 
 This API contract is target-state canonical; implementation coverage is partial and must not be inferred from target examples alone.
 

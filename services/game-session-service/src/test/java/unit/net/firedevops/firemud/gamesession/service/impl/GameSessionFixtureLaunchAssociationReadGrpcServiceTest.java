@@ -27,7 +27,7 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
-import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionFixtureCoordinator;
+import net.firedevops.firemud.gamesession.data.RunOwnedCanonicalLaunchPreparationOwner;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidence;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidenceTestFixture;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
@@ -228,8 +228,8 @@ class GameSessionFixtureLaunchAssociationReadGrpcServiceTest {
   private static Fixture fixture(boolean enabled, boolean withCoordinator) {
     RunOwnedInitialAdmissionLaunchEvidence evidence = evidence();
     FixtureCanonicalInstanceLaunch launch = launch(evidence);
-    RunOwnedInitialAdmissionFixtureCoordinator coordinator =
-        withCoordinator ? mock(RunOwnedInitialAdmissionFixtureCoordinator.class) : null;
+    RunOwnedCanonicalLaunchPreparationOwner coordinator =
+        withCoordinator ? mock(RunOwnedCanonicalLaunchPreparationOwner.class) : null;
     if (coordinator != null) {
       when(coordinator.loadFixedVerifiedEvidenceForWorldPeer())
           .thenAnswer(
@@ -428,7 +428,7 @@ class GameSessionFixtureLaunchAssociationReadGrpcServiceTest {
 
   private record Fixture(
       GameSessionControlPlaneGrpcService service,
-      RunOwnedInitialAdmissionFixtureCoordinator coordinator,
+      RunOwnedCanonicalLaunchPreparationOwner coordinator,
       RunOwnedInitialAdmissionLaunchEvidence evidence,
       FixtureCanonicalInstanceLaunch launch) {}
 }
