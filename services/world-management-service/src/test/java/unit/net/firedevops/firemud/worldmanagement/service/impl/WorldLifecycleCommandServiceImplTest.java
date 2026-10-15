@@ -9,11 +9,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -32,8 +32,10 @@ import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidenceProvider;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.entity.RegionInstance;
 import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.RoomExit;
 import net.firedevops.firemud.worldmanagement.entity.RoomInstance;
@@ -54,6 +56,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class WorldLifecycleCommandServiceImplTest {
   private static final String PUBLISHED_RELEASE_BUNDLE_REF = "8ce42642-53ae-4d07-aab8-37c43ce66e0c";
@@ -71,6 +74,7 @@ class WorldLifecycleCommandServiceImplTest {
   private GameDesignClient gameDesignClient;
   private AtomicBoolean localTransactionActive;
   private AtomicBoolean worldInstanceReadInLocalTransaction;
+  private TransactionOperations lifecycleTransactionOperations;
   private WorldLifecycleCommandServiceImpl service;
 
   @BeforeEach
@@ -88,7 +92,7 @@ class WorldLifecycleCommandServiceImplTest {
     gameDesignClient = mock(GameDesignClient.class);
     localTransactionActive = new AtomicBoolean();
     worldInstanceReadInLocalTransaction = new AtomicBoolean();
-    TransactionOperations transactionOperations =
+    lifecycleTransactionOperations =
         new TransactionOperations() {
           @Override
           public <T> T execute(TransactionCallback<T> action) {
@@ -118,7 +122,7 @@ class WorldLifecycleCommandServiceImplTest {
             gameDesignClient,
             entityManagementClient,
             new SimpleMeterRegistry(),
-            transactionOperations);
+            lifecycleTransactionOperations);
     service.initMetrics();
     when(gameDesignClient.getPublishedReleaseBundle(42L, 11L))
         .thenReturn(
@@ -268,6 +272,10 @@ class WorldLifecycleCommandServiceImplTest {
     instance.setStatus("PREPARING");
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
         .thenReturn(Optional.of(instance));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(instance));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(instance));
     when(worldInstanceRepository.save(any(WorldInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -275,6 +283,65 @@ class WorldLifecycleCommandServiceImplTest {
 
     assertEquals("ACTIVE", snapshot.status());
     assertEquals(2L, snapshot.lifecycleEpoch());
+  }
+
+  @Test
+  void ordinaryActivationReplaysOriginalPreparingEpochAndCurrentActiveEpochWithoutEffects() {
+    WorldInstance instance = new WorldInstance();
+    instance.setTenantId(42L);
+    instance.setGameInstanceId(101L);
+    instance.setGameTemplateId(7L);
+    instance.setControlPlaneRequestId("cp-1");
+    instance.setLaunchDescriptorId("ld-1");
+    instance.setVersionId(11L);
+    instance.setRuntimeFlagsJson("{}");
+    instance.setGenerationConfigRevision("genrev-11");
+    instance.setReleaseBundleId(77L);
+    instance.setPublishedReleaseBundleRef(PUBLISHED_RELEASE_BUNDLE_REF);
+    instance.setVersionStateEpoch(77L);
+    instance.setLifecycleEpoch(1L);
+    instance.setStatus("PREPARING");
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(instance));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var activated = service.activatePreparedWorldInstance(42L, 101L, 1L);
+    var originalEpochReplay = service.activatePreparedWorldInstance(42L, 101L, 1L);
+    var currentEpochReplay = service.activatePreparedWorldInstance(42L, 101L, 2L);
+
+    assertEquals("ACTIVE", activated.status());
+    assertEquals(2L, activated.lifecycleEpoch());
+    assertEquals(activated, originalEpochReplay);
+    assertEquals(activated, currentEpochReplay);
+    verify(worldInstanceRepository, times(1)).save(any(WorldInstance.class));
+    verify(gameDesignClient, times(1)).getPublishedReleaseBundle(42L, 11L);
+    verify(gameDesignClient, times(1)).getVersionAssetArtifactState(42L, 11L);
+    verify(gameDesignClient, times(1)).getVersionState(42L, 11L);
+  }
+
+  @Test
+  void ordinaryActiveReplayRejectsStaleUnrelatedInvalidAndOverflowEpochsWithoutEffects() {
+    WorldInstance instance = activeWorldInstance();
+    instance.setLifecycleEpoch(3L);
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(instance));
+
+    for (long expectedEpoch : new long[] {1L, 4L, 0L, -1L, Long.MAX_VALUE}) {
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> service.activatePreparedWorldInstance(42L, 101L, expectedEpoch));
+    }
+
+    instance.setLifecycleEpoch(Long.MIN_VALUE);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> service.activatePreparedWorldInstance(42L, 101L, Long.MAX_VALUE));
+
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(anyLong(), anyLong());
+    verify(gameDesignClient, never()).getVersionAssetArtifactState(anyLong(), anyLong());
+    verify(gameDesignClient, never()).getVersionState(anyLong(), anyLong());
   }
 
   @Test
@@ -294,6 +361,8 @@ class WorldLifecycleCommandServiceImplTest {
     instance.setStatus("PREPARING");
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
         .thenReturn(Optional.of(instance));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(instance));
     when(worldInstanceRepository.save(any(WorldInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -301,6 +370,83 @@ class WorldLifecycleCommandServiceImplTest {
 
     assertEquals("FAILED_PRE_ACTIVATION", snapshot.status());
     assertEquals(2L, snapshot.lifecycleEpoch());
+  }
+
+  @Test
+  void fixtureFailureRequiresExactOwnerAndUsesLockedLegacyRow() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence())
+        .thenAnswer(
+            invocation -> {
+              assertFalse(localTransactionActive.get());
+              return evidence;
+            });
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("c".repeat(64));
+    WorldInstance instance = boundFixtureInstance("PREPARING", 1L);
+    AtomicReference<WorldInstance> persisted = stubPersistedWorldInstance(instance);
+
+    var snapshot =
+        fixtureService(provider, lifecycleTransactionOperations)
+            .failPreparedWorldInstance(42L, 101L, 1L, "source failed");
+
+    assertEquals("FAILED_PRE_ACTIVATION", snapshot.status());
+    assertEquals(2L, snapshot.lifecycleEpoch());
+    assertEquals("c".repeat(64), persisted.get().getRunOwnedFixtureBindingSha256());
+    assertEquals(1L, persisted.get().getRunOwnedFixturePreparingLifecycleEpoch());
+    assertEquals(1L, persisted.get().getRowVersion());
+    verify(provider).requireAuthenticatedEvidence();
+    verify(worldInstanceRepository).findByTenantIdAndGameInstanceIdForUpdate(42L, 101L);
+  }
+
+  @Test
+  void fixtureFailureRejectsChangedBindingBeforeSaving() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("d".repeat(64));
+    WorldInstance instance = boundFixtureInstance("PREPARING", 1L);
+    stubPersistedWorldInstance(instance);
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                fixtureService(provider, lifecycleTransactionOperations)
+                    .failPreparedWorldInstance(42L, 101L, 1L, "source failed"));
+
+    assertTrue(error.getMessage().startsWith("RUN_OWNED_WORLD_LAUNCH_EVIDENCE_MISMATCH:"));
+    assertEquals("PREPARING", instance.getStatus());
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+  }
+
+  @Test
+  void fixtureFailureRejectsAmbientTransactionBeforeLoadingOwnerEvidence() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    when(provider.isEnabled()).thenReturn(true);
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    try {
+      IllegalStateException error =
+          assertThrows(
+              IllegalStateException.class,
+              () ->
+                  fixtureService(provider, lifecycleTransactionOperations)
+                      .failPreparedWorldInstance(42L, 101L, 1L, "source failed"));
+
+      assertTrue(error.getMessage().contains("no ambient transaction"));
+      verify(provider, never()).requireAuthenticatedEvidence();
+      verify(worldInstanceRepository, never()).findByTenantIdAndGameInstanceIdForUpdate(42L, 101L);
+      verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+      verify(gameDesignClient, never()).getPublishedReleaseBundle(42L, 11L);
+      verify(entityManagementClient, never())
+          .cleanupRuntimeInstance(anyLong(), anyLong(), anyString());
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
   }
 
   @Test
@@ -370,6 +516,109 @@ class WorldLifecycleCommandServiceImplTest {
         .cleanupRuntimeInstance(anyLong(), anyLong(), anyString());
     verify(worldInstanceRepository).findByTenantIdAndGameInstanceIdForUpdate(42L, 101L);
     verify(worldInstanceRepository, org.mockito.Mockito.never()).save(any(WorldInstance.class));
+  }
+
+  @Test
+  void fixtureTerminationKeepsActiveRowAndSkipsEntityWhenOwnerHoldIsUnresolved() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("c".repeat(64));
+    WorldInstance instance = boundFixtureInstance("ACTIVE", 2L);
+    stubPersistedWorldInstance(instance);
+    when(worldInstanceRepository.hasNonterminalInitialAdmissionBindHold(42L, 101L))
+        .thenAnswer(
+            invocation -> {
+              assertTrue(localTransactionActive.get());
+              return true;
+            });
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                fixtureService(provider, lifecycleTransactionOperations)
+                    .terminateWorldInstance(42L, 101L, 2L, "term-fixture", "stop"));
+
+    assertTrue(error.getMessage().startsWith("INITIAL_ADMISSION_BIND_HOLD_ACTIVE:"));
+    assertEquals("ACTIVE", instance.getStatus());
+    verify(provider).requireAuthenticatedEvidence();
+    verify(entityManagementClient, never())
+        .cleanupRuntimeInstance(anyLong(), anyLong(), anyString());
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verify(worldEventRepository, never()).deleteByTenantIdAndGameInstanceId(42L, 101L);
+  }
+
+  @Test
+  void fixtureEntityCleanupFailureRetainsTerminatingOwnerRowForSameRequestRetry() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("c".repeat(64));
+    WorldInstance instance = boundFixtureInstance("ACTIVE", 2L);
+    AtomicReference<WorldInstance> persisted = stubPersistedWorldInstance(instance);
+    doThrow(new IllegalStateException("Entity cleanup unavailable"))
+        .when(entityManagementClient)
+        .cleanupRuntimeInstance(42L, 101L, "term-fixture");
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            fixtureService(provider, lifecycleTransactionOperations)
+                .terminateWorldInstance(42L, 101L, 2L, "term-fixture", "stop"));
+
+    assertEquals("TERMINATING", persisted.get().getStatus());
+    assertEquals(3L, persisted.get().getLifecycleEpoch());
+    assertEquals("term-fixture", persisted.get().getTerminationRequestId());
+    assertEquals("c".repeat(64), persisted.get().getRunOwnedFixtureBindingSha256());
+    verify(worldInstanceRepository, times(1)).save(any(WorldInstance.class));
+    verify(worldEventRepository, never()).deleteByTenantIdAndGameInstanceId(42L, 101L);
+  }
+
+  @Test
+  void fixtureTerminatedReplayRequiresTheOriginalRequestIdAndDoesNotRepeatEffects() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("c".repeat(64));
+    WorldInstance instance = boundFixtureInstance("ACTIVE", 2L);
+    AtomicReference<WorldInstance> persisted = stubPersistedWorldInstance(instance);
+    when(entityManagementClient.cleanupRuntimeInstance(42L, 101L, "term-fixture"))
+        .thenReturn(CleanupRuntimeInstanceResponse.newBuilder().build());
+    WorldLifecycleCommandServiceImpl fixtureService =
+        fixtureService(provider, lifecycleTransactionOperations);
+
+    var terminated = fixtureService.terminateWorldInstance(42L, 101L, 2L, "term-fixture", "stop");
+    long terminalRowVersion = persisted.get().getRowVersion();
+    var replay = fixtureService.terminateWorldInstance(42L, 101L, 2L, "term-fixture", "stop");
+
+    assertEquals("TERMINATED", terminated.status());
+    assertEquals(4L, terminated.lifecycleEpoch());
+    assertEquals(terminated, replay);
+    assertEquals(terminalRowVersion, persisted.get().getRowVersion());
+    verify(entityManagementClient, times(1)).cleanupRuntimeInstance(42L, 101L, "term-fixture");
+    verify(worldInstanceRepository, times(2)).save(any(WorldInstance.class));
+
+    WorldInstance retainedTerminal = copyWorldInstance(persisted.get());
+    IllegalArgumentException conflict =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> fixtureService.terminateWorldInstance(42L, 101L, 2L, "term-other", "stop"));
+
+    assertTrue(conflict.getMessage().startsWith("IDEMPOTENCY_CONFLICT:"));
+    assertEquals("TERMINATED", persisted.get().getStatus());
+    assertEquals(retainedTerminal.getLifecycleEpoch(), persisted.get().getLifecycleEpoch());
+    assertEquals(
+        retainedTerminal.getTerminationRequestId(), persisted.get().getTerminationRequestId());
+    assertEquals(terminalRowVersion, persisted.get().getRowVersion());
+    verify(entityManagementClient, times(1)).cleanupRuntimeInstance(42L, 101L, "term-fixture");
+    verify(worldInstanceRepository, times(2)).save(any(WorldInstance.class));
   }
 
   @Test
@@ -750,142 +999,250 @@ class WorldLifecycleCommandServiceImplTest {
   }
 
   @Test
-  void fixturePrepareRejectsUnavailableAuthenticatedEvidenceBeforeRepositoryInteraction() {
+  void fixturePrepareBindsOriginalPreparingEpochAndExactRetryDoesNotRepeatMaterialization() {
     RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
     when(provider.isEnabled()).thenReturn(true);
-    IllegalArgumentException unavailable = new IllegalArgumentException("unverified fixture peer");
-    when(provider.requireAuthenticatedEvidence()).thenThrow(unavailable);
-    WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
-
-    IllegalArgumentException error =
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> fixtureService.prepareWorldInstance(ordinaryPreparedRequest()));
-
-    assertEquals(unavailable, error);
-    verify(provider).isEnabled();
-    verify(provider).requireAuthenticatedEvidence();
-    verifyNoWorldRepositoryOrOwnerInteraction();
-  }
-
-  @Test
-  void fixturePrepareRejectsAmbientTransactionBeforeRemoteEvidence() {
-    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
-    when(provider.isEnabled()).thenReturn(true);
-    WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
-    org.springframework.transaction.support.TransactionSynchronizationManager
-        .setActualTransactionActive(true);
-    try {
-      IllegalStateException error =
-          assertThrows(
-              IllegalStateException.class,
-              () -> fixtureService.prepareWorldInstance(ordinaryPreparedRequest()));
-      assertTrue(error.getMessage().contains("no ambient transaction"));
-      verify(provider, never()).requireAuthenticatedEvidence();
-      verifyNoWorldRepositoryOrOwnerInteraction();
-    } finally {
-      org.springframework.transaction.support.TransactionSynchronizationManager
-          .setActualTransactionActive(false);
-    }
-  }
-
-  @Test
-  void fixtureActivationRefusesBeforeWorldReadOrProviderEvidence() {
-    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
-    when(provider.isEnabled()).thenReturn(true);
-    WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
-
-    IllegalArgumentException error =
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> fixtureService.activatePreparedWorldInstance(42L, 101L, 1L));
-
-    assertTrue(error.getMessage().startsWith("RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE:"));
-    verify(provider).isEnabled();
-    verify(provider, never()).requireAuthenticatedEvidence();
-    verifyNoWorldRepositoryOrOwnerInteraction();
-  }
-
-  @Test
-  void fixtureFailureAndTerminationRefuseBeforeWorldReadOrOtherEffects() {
-    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
-    when(provider.isEnabled()).thenReturn(true);
-    WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
-
-    IllegalArgumentException failure =
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> fixtureService.failPreparedWorldInstance(42L, 101L, 1L, "failed"));
-    IllegalArgumentException termination =
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> fixtureService.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
-
-    assertTrue(failure.getMessage().startsWith("RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE:"));
-    assertTrue(termination.getMessage().startsWith("RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE:"));
-    verify(provider, times(2)).isEnabled();
-    verifyNoWorldRepositoryOrOwnerInteraction();
-  }
-
-  @Test
-  void failureRejectsRetainedFixtureBindingBeforeSaving() {
-    WorldInstance fixture = fixtureWorldInstance();
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
-        .thenReturn(Optional.of(fixture));
-
-    IllegalArgumentException error =
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> service.failPreparedWorldInstance(42L, 101L, 1L, "failed"));
-
-    assertTrue(error.getMessage().startsWith("RUN_OWNED_WORLD_LAUNCH_EVIDENCE_UNAVAILABLE:"));
-    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
-    verifyNoInteractionsWithRuntimeCleanupOwners();
-  }
-
-  @Test
-  void terminationRejectsRetainedFixtureBindingBeforeWriteOrCleanup() {
-    WorldInstance fixture = fixtureWorldInstance();
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("a".repeat(64));
+    AtomicReference<WorldInstance> persisted = new AtomicReference<>();
+    when(worldInstanceRepository.findRunOwnedFixtureByTenantIdAndControlPlaneRequestIdForUpdate(
+            42L, "cp-1"))
+        .thenAnswer(invocation -> Optional.ofNullable(persisted.get()));
     when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
-        .thenReturn(Optional.of(fixture));
+        .thenAnswer(invocation -> Optional.ofNullable(persisted.get()));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(
+            invocation -> {
+              WorldInstance submitted = invocation.getArgument(0);
+              submitted.setId(101L);
+              persisted.set(copyWorldInstance(submitted));
+              return submitted;
+            });
+    WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
+    PreparedWorldInstanceRequest request = ordinaryPreparedRequest();
+
+    var prepared = fixtureService.prepareWorldInstance(request);
+
+    assertEquals("PREPARING", prepared.status());
+    assertEquals(1L, prepared.lifecycleEpoch());
+    assertEquals("a".repeat(64), persisted.get().getRunOwnedFixtureBindingSha256());
+    assertEquals(1L, persisted.get().getRunOwnedFixturePreparingLifecycleEpoch());
+    verify(evidence).requireMatches(request);
+    verify(worldInstanceRepository).lockRunOwnedFixtureOperation(42L, "cp-1");
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(42L, 11L);
+    verify(gameDesignClient, never()).getVersionAssetArtifactState(42L, 11L);
+    verify(gameDesignClient, never()).getVersionState(42L, 11L);
+
+    var retry = fixtureService.prepareWorldInstance(request);
+
+    assertEquals(prepared, retry);
+    persisted.get().setStatus("ACTIVE");
+    persisted.get().setLifecycleEpoch(2L);
+
+    var activeReplay = fixtureService.prepareWorldInstance(request);
+
+    assertEquals("ACTIVE", activeReplay.status());
+    assertEquals(2L, activeReplay.lifecycleEpoch());
+    assertEquals("a".repeat(64), persisted.get().getRunOwnedFixtureBindingSha256());
+    assertEquals(1L, persisted.get().getRunOwnedFixturePreparingLifecycleEpoch());
+    verify(worldInstanceRepository, org.mockito.Mockito.times(1)).save(any(WorldInstance.class));
+    verify(regionInstanceRepository, org.mockito.Mockito.times(1)).save(any(RegionInstance.class));
+    verify(roomInstanceRepository, org.mockito.Mockito.times(1)).save(any(RoomInstance.class));
+    verify(evidence, org.mockito.Mockito.times(3)).requireMatches(request);
+  }
+
+  @Test
+  void fixturePrepareRejectsChangedBindingForExistingActiveRow() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("d".repeat(64));
+    WorldInstance active = boundFixtureInstance("ACTIVE", 2L);
+    when(worldInstanceRepository.findRunOwnedFixtureByTenantIdAndControlPlaneRequestIdForUpdate(
+            42L, "cp-1"))
+        .thenReturn(Optional.of(active));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(active));
 
     IllegalArgumentException error =
         assertThrows(
             IllegalArgumentException.class,
-            () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
+            () -> fixtureService(provider).prepareWorldInstance(ordinaryPreparedRequest()));
 
-    assertTrue(error.getMessage().startsWith("RUN_OWNED_WORLD_LAUNCH_EVIDENCE_UNAVAILABLE:"));
+    assertTrue(error.getMessage().startsWith("RUN_OWNED_WORLD_LAUNCH_EVIDENCE_MISMATCH:"));
     verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
-    verifyNoInteractions(entityManagementClient);
-    verifyNoInteractionsWithRuntimeCleanupOwners();
   }
 
-  private void verifyNoWorldRepositoryOrOwnerInteraction() {
-    org.mockito.Mockito.verifyNoInteractions(
-        worldInstanceRepository,
-        regionInstanceRepository,
-        zoneRepository,
-        zoneInstanceRepository,
-        roomRepository,
-        roomExitRepository,
-        roomInstanceRepository,
-        roomInstanceExitRepository,
-        worldEventRepository,
-        gameDesignClient,
-        entityManagementClient);
+  @Test
+  void fixtureOperationCannotBeAssignedToASecondWorldInstance() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("b".repeat(64));
+    WorldInstance operationInstance = new WorldInstance();
+    operationInstance.setGameInstanceId(101L);
+    when(worldInstanceRepository.findRunOwnedFixtureByTenantIdAndControlPlaneRequestIdForUpdate(
+            42L, "cp-1"))
+        .thenReturn(Optional.of(operationInstance));
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                fixtureService(provider)
+                    .prepareWorldInstance(
+                        new PreparedWorldInstanceRequest(
+                            42L,
+                            202L,
+                            7L,
+                            "cp-1",
+                            "ld-1",
+                            11L,
+                            null,
+                            "{}",
+                            "genrev-11",
+                            77L,
+                            PUBLISHED_RELEASE_BUNDLE_REF,
+                            77L)));
+
+    assertTrue(error.getMessage().startsWith("RUN_OWNED_WORLD_LAUNCH_IDENTITY_CONFLICT:"));
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(42L, 11L);
   }
 
-  private void verifyNoInteractionsWithRuntimeCleanupOwners() {
-    org.mockito.Mockito.verifyNoInteractions(
-        regionInstanceRepository,
-        zoneInstanceRepository,
-        roomInstanceRepository,
-        roomInstanceExitRepository,
-        worldEventRepository);
+  @Test
+  void fixtureActivationVerifiesBindingThenAllowsOnlyOriginalEpochActiveReplayWithoutWrite() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("c".repeat(64));
+    WorldInstance preparing = boundFixtureInstance("PREPARING", 1L);
+    AtomicReference<WorldInstance> persisted = new AtomicReference<>(copyWorldInstance(preparing));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenAnswer(invocation -> Optional.of(copyWorldInstance(persisted.get())));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenAnswer(invocation -> Optional.of(copyWorldInstance(persisted.get())));
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(
+            invocation -> {
+              WorldInstance submitted = invocation.getArgument(0);
+              submitted.setRowVersion(submitted.getRowVersion() + 1L);
+              persisted.set(copyWorldInstance(submitted));
+              return copyWorldInstance(submitted);
+            });
+    WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
+
+    var active = fixtureService.activatePreparedWorldInstance(42L, 101L, 1L);
+    assertEquals("ACTIVE", active.status());
+    assertEquals(2L, active.lifecycleEpoch());
+    assertEquals("c".repeat(64), persisted.get().getRunOwnedFixtureBindingSha256());
+
+    var replay = fixtureService.activatePreparedWorldInstance(42L, 101L, 1L);
+    assertEquals(active, replay);
+    verify(worldInstanceRepository, org.mockito.Mockito.times(1)).save(any(WorldInstance.class));
+    verify(provider, org.mockito.Mockito.times(2)).requireAuthenticatedEvidence();
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(42L, 11L);
+
+    var inOrder = inOrder(provider, worldInstanceRepository);
+    inOrder.verify(provider).requireAuthenticatedEvidence();
+    inOrder.verify(worldInstanceRepository).findByTenantIdAndGameInstanceIdForUpdate(42L, 101L);
+    inOrder.verify(provider).requireAuthenticatedEvidence();
+    inOrder.verify(worldInstanceRepository).findByTenantIdAndGameInstanceIdForUpdate(42L, 101L);
+  }
+
+  @Test
+  void configuredFixtureRejectsUnboundExistingRowsAndStaleActiveReplayEpoch() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("c".repeat(64));
+    WorldInstance unbound = activeWorldInstance();
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(unbound));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(unbound));
+
+    IllegalArgumentException unboundError =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> fixtureService(provider).activatePreparedWorldInstance(42L, 101L, 2L));
+    assertTrue(unboundError.getMessage().startsWith("RUN_OWNED_WORLD_LAUNCH_IDENTITY_CONFLICT:"));
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(42L, 11L);
+
+    WorldInstance active = boundFixtureInstance("ACTIVE", 2L);
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(active));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenReturn(Optional.of(active));
+    IllegalArgumentException stale =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> fixtureService(provider).activatePreparedWorldInstance(42L, 101L, 0L));
+    assertTrue(stale.getMessage().startsWith("WORLD_INSTANCE_LIFECYCLE_STALE:"));
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+  }
+
+  @Test
+  void fixtureActivationRejectsOriginalEpochForNonActiveRowsWithoutWrites() {
+    RunOwnedWorldLaunchEvidenceProvider provider = mock(RunOwnedWorldLaunchEvidenceProvider.class);
+    RunOwnedWorldLaunchEvidence evidence = mock(RunOwnedWorldLaunchEvidence.class);
+    when(provider.isEnabled()).thenReturn(true);
+    when(provider.requireAuthenticatedEvidence()).thenReturn(evidence);
+    when(evidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn("c".repeat(64));
+    WorldLifecycleCommandServiceImpl fixtureService = fixtureService(provider);
+    AtomicReference<WorldInstance> currentRow = new AtomicReference<>();
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenAnswer(invocation -> Optional.of(currentRow.get()));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenAnswer(invocation -> Optional.of(currentRow.get()));
+
+    String[] statuses = {"FAILED_PRE_ACTIVATION", "TERMINATING", "TERMINATED"};
+    long[] lifecycleEpochs = {2L, 3L, 4L};
+    for (int index = 0; index < statuses.length; index++) {
+      WorldInstance row = boundFixtureInstance(statuses[index], lifecycleEpochs[index]);
+      currentRow.set(row);
+
+      IllegalArgumentException stale =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> fixtureService.activatePreparedWorldInstance(42L, 101L, 1L));
+
+      assertTrue(stale.getMessage().startsWith("WORLD_INSTANCE_LIFECYCLE_STALE:"));
+      assertEquals(statuses[index], row.getStatus());
+      assertEquals(lifecycleEpochs[index], row.getLifecycleEpoch());
+    }
+
+    verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
+    verify(regionInstanceRepository, never()).save(any());
+    verify(zoneInstanceRepository, never()).save(any());
+    verify(roomInstanceRepository, never()).save(any());
+    verify(roomInstanceExitRepository, never()).save(any());
+    verify(worldEventRepository, never()).save(any());
+    verify(regionInstanceRepository, never()).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(zoneInstanceRepository, never()).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(roomInstanceRepository, never()).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(roomInstanceExitRepository, never()).deleteByTenantIdAndGameInstanceId(42L, 101L);
+    verify(worldEventRepository, never()).deleteByTenantIdAndGameInstanceId(42L, 101L);
   }
 
   private WorldLifecycleCommandServiceImpl fixtureService(
       RunOwnedWorldLaunchEvidenceProvider provider) {
+    return fixtureService(provider, null);
+  }
+
+  private WorldLifecycleCommandServiceImpl fixtureService(
+      RunOwnedWorldLaunchEvidenceProvider provider, TransactionOperations transactionOperations) {
     WorldProperties worldProperties = new WorldProperties();
     worldProperties.setLocalShardId(7);
     WorldLifecycleCommandServiceImpl fixtureService =
@@ -903,7 +1260,7 @@ class WorldLifecycleCommandServiceImplTest {
             gameDesignClient,
             entityManagementClient,
             new SimpleMeterRegistry(),
-            (TransactionOperations) null,
+            transactionOperations,
             provider);
     fixtureService.initMetrics();
     return fixtureService;
@@ -925,6 +1282,15 @@ class WorldLifecycleCommandServiceImplTest {
         77L);
   }
 
+  private WorldInstance boundFixtureInstance(String status, long lifecycleEpoch) {
+    WorldInstance instance = activeWorldInstance();
+    instance.setLifecycleEpoch(lifecycleEpoch);
+    instance.setStatus(status);
+    instance.setRunOwnedFixtureBindingSha256("c".repeat(64));
+    instance.setRunOwnedFixturePreparingLifecycleEpoch(1L);
+    return instance;
+  }
+
   private WorldInstance activeWorldInstance() {
     WorldInstance instance = new WorldInstance();
     instance.setId(101L);
@@ -942,16 +1308,6 @@ class WorldLifecycleCommandServiceImplTest {
     instance.setLifecycleEpoch(2L);
     instance.setStatus("ACTIVE");
     instance.setRowVersion(0L);
-    return instance;
-  }
-
-  private static WorldInstance fixtureWorldInstance() {
-    WorldInstance instance = new WorldInstance();
-    instance.setTenantId(42L);
-    instance.setGameInstanceId(101L);
-    instance.setLifecycleEpoch(1L);
-    instance.setStatus("PREPARING");
-    instance.setRunOwnedFixtureBindingSha256("a".repeat(64));
     return instance;
   }
 

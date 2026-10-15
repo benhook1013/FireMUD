@@ -107,6 +107,13 @@ public final class RunOwnedFixtureAuthoredWorldVersionStateGrpcService
               .asRuntimeException());
     } catch (RuntimeException failure) {
       Status storageStatus = AuthoredWorldSourceReadGrpcService.storageFailureStatus(failure);
+      if (storageStatus != null) {
+        storageStatus =
+            storageStatus.withDescription(
+                storageStatus.getCode() == Status.Code.UNAVAILABLE
+                    ? "Game Design Version state is temporarily unavailable"
+                    : "Game Design Version state could not be read");
+      }
       observer.onError(
           (storageStatus != null
                   ? storageStatus

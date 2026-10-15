@@ -2,25 +2,40 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-RUNNER="$ROOT_DIR/.github/scripts/run-gradle-module-checks.sh"
+MODULE_RUNNER="$ROOT_DIR/.github/scripts/run-gradle-module-checks.sh"
+RECOVERY_RUNNER="$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh"
+COMPOSE_JARS="$ROOT_DIR/dev-tools/build-compose-service-jars.sh"
 TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf -- "$TEMP_DIR"' EXIT
 
 fail() {
   echo "Gradle dependency-recovery contract: $*" >&2
+  if [[ -f "${CASE_DIR:-}/output" ]]; then
+    tail -n 80 "$CASE_DIR/output" >&2
+  fi
   exit 1
 }
 
 new_case() {
   CASE_DIR="$TEMP_DIR/$1"
-  mkdir -p "$CASE_DIR/bin"
-  cp "$RUNNER" "$CASE_DIR/run-gradle-module-checks.sh"
+  mkdir -p "$CASE_DIR/bin" "$CASE_DIR/.github/scripts" "$CASE_DIR/dev-tools/validation"
+  cp "$MODULE_RUNNER" "$CASE_DIR/.github/scripts/run-gradle-module-checks.sh"
+  cp "$RECOVERY_RUNNER" "$CASE_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh"
+  cp "$COMPOSE_JARS" "$CASE_DIR/dev-tools/build-compose-service-jars.sh"
+  cat > "$CASE_DIR/dev-tools/validation/run-locked-gradle.sh" <<'LOCKED'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "${FAKE_LOCK_CALL_LOG:?}"
+exec ./gradlew "$@"
+LOCKED
+  chmod +x "$CASE_DIR/dev-tools/validation/run-locked-gradle.sh"
   cat > "$CASE_DIR/bin/sleep" <<'SLEEP'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${FAKE_SLEEP_LOG:?}"
 SLEEP
   chmod +x "$CASE_DIR/bin/sleep"
   : > "$CASE_DIR/calls"
+  : > "$CASE_DIR/locked-calls"
   : > "$CASE_DIR/sleeps"
 }
 
@@ -36,22 +51,45 @@ EOF_WRAPPER
   chmod +x "$CASE_DIR/gradlew"
 }
 
+# shellcheck disable=SC2030,SC2031
 run_case() {
   local module="$1"
   local expected_status="$2"
   local actual_status=0
   if (
     cd "$CASE_DIR"
+    export CASE_DIR
     export FAKE_CALL_LOG="$CASE_DIR/calls"
+    export FAKE_LOCK_CALL_LOG="$CASE_DIR/locked-calls"
     export FAKE_SLEEP_LOG="$CASE_DIR/sleeps"
     export PATH="$CASE_DIR/bin:$PATH"
-    bash ./run-gradle-module-checks.sh "$module" > "$CASE_DIR/output" 2>&1
+    bash ./.github/scripts/run-gradle-module-checks.sh "$module" > "$CASE_DIR/output" 2>&1
   ); then
     actual_status=0
   else
     actual_status=$?
   fi
   [[ "$actual_status" -eq "$expected_status" ]] || fail "$CASE_DIR expected exit $expected_status, got $actual_status"
+}
+
+# shellcheck disable=SC2030,SC2031
+run_compose_case() {
+  local expected_status="$1"
+  local actual_status=0
+  if (
+    cd "$CASE_DIR"
+    export CASE_DIR
+    export FAKE_CALL_LOG="$CASE_DIR/calls"
+    export FAKE_LOCK_CALL_LOG="$CASE_DIR/locked-calls"
+    export FAKE_SLEEP_LOG="$CASE_DIR/sleeps"
+    export PATH="$CASE_DIR/bin:$PATH"
+    bash ./dev-tools/build-compose-service-jars.sh > "$CASE_DIR/output" 2>&1
+  ); then
+    actual_status=0
+  else
+    actual_status=$?
+  fi
+  [[ "$actual_status" -eq "$expected_status" ]] || fail "$CASE_DIR expected compose exit $expected_status, got $actual_status"
 }
 
 assert_call_count() {
@@ -239,6 +277,218 @@ assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2
 [[ "$(cat "$CASE_DIR/sleeps")" == 0 ]] || fail "cached absence added a transient-error delay"
 assert_output_contains "Could not find spring-boot-starter-jdbc-4.1.1.jar (org.springframework.boot:spring-boot-starter-jdbc:4.1.1)."
 assert_output_contains "refreshed-pinned-artifact-resolved"
+
+# The captured Account failure is a pre-execution JavaExec classpath resolution
+# failure wrapped by Gradle's configuration-cache serializer. It may refresh
+# only when the wrapper task and jooqCodegen configuration identify the same
+# module and the complete fatal cause contains only repository-resolution data.
+write_jooq_captured_cause() {
+  cat > "$CASE_DIR/jooq-cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Configuration cache state could not be cached: field `classpath` of `org.gradle.process.internal.DefaultJavaExecSpec_Decorated` bean found in field `javaExecSpec` of task `:account-service:generateJooq` of type `org.gradle.api.tasks.JavaExec`: error writing value of type 'org.gradle.api.internal.file.collections.DefaultConfigurableFileCollection'
+> Could not resolve all files for configuration ':account-service:jooqCodegen'.
+> Could not find jooq-codegen-3.21.9.jar (org.jooq:jooq-codegen:3.21.9).
+Searched in the following locations:
+https://repo.maven.apache.org/maven2/org/jooq/jooq-codegen/3.21.9/jooq-codegen-3.21.9.jar
+> Could not find jooq-meta-extensions-3.21.9.jar (org.jooq:jooq-meta-extensions:3.21.9).
+Searched in the following locations:
+https://repo.maven.apache.org/maven2/org/jooq/jooq-meta-extensions/3.21.9/jooq-meta-extensions-3.21.9.jar
+> Could not find jooq-meta-3.21.9.jar (org.jooq:jooq-meta:3.21.9).
+Searched in the following locations:
+https://repo.maven.apache.org/maven2/org/jooq/jooq-meta/3.21.9/jooq-meta-3.21.9.jar
+> Could not find jooq-3.21.9.jar (org.jooq:jooq:3.21.9).
+Searched in the following locations:
+https://repo.maven.apache.org/maven2/org/jooq/jooq/3.21.9/jooq-3.21.9.jar
+> Could not find h2-2.4.240.jar (com.h2database:h2:2.4.240).
+Searched in the following locations:
+https://repo.maven.apache.org/maven2/com/h2database/h2/2.4.240/h2-2.4.240.jar
+> Could not find r2dbc-spi-1.0.0.RELEASE.jar (io.r2dbc:r2dbc-spi:1.0.0.RELEASE).
+Searched in the following locations:
+https://repo.maven.apache.org/maven2/io/r2dbc/r2dbc-spi/1.0.0.RELEASE/r2dbc-spi-1.0.0.RELEASE.jar
+> Could not find jakarta.xml.bind-api-4.0.2.jar (jakarta.xml.bind:jakarta.xml.bind-api:4.0.2).
+Searched in the following locations:
+https://repo.maven.apache.org/maven2/jakarta/xml/bind/jakarta.xml.bind-api/4.0.2/jakarta.xml.bind-api-4.0.2.jar
+> Could not find reactive-streams-1.0.3.jar (org.reactivestreams:reactive-streams:1.0.3).
+Searched in the following locations:
+https://repo.maven.apache.org/maven2/org/reactivestreams/reactive-streams/1.0.3/reactive-streams-1.0.3.jar
+> Could not find jakarta.activation-api-2.1.3.jar (jakarta.activation:jakarta.activation-api:2.1.3).
+Searched in the following locations:
+https://repo.maven.apache.org/maven2/jakarta/activation/jakarta.activation-api/2.1.3/jakarta.activation-api-2.1.3.jar
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+LOG
+}
+
+write_jooq_wrapper() {
+  local progress_line="$1"
+  write_wrapper "if [[ \"\$call_count\" -eq 1 ]]; then
+  if [[ -n '$progress_line' ]]; then printf '%s\\n' '$progress_line'; fi
+  cat '$CASE_DIR/jooq-cause.log'
+  exit 1
+fi
+echo refreshed-captured-jooq-resolution; exit 0"
+}
+
+new_case captured-jooq-codegen-resolution
+write_jooq_captured_cause
+write_jooq_wrapper ''
+run_case account-service 0
+assert_call_count 2
+assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck"
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :account-service:check -PfullCheck"
+[[ "$(cat "$CASE_DIR/sleeps")" == 0 ]] || fail "captured jOOQ artifact miss added a transient-error delay"
+assert_output_contains "Configuration cache state could not be cached: field \`classpath\` of \`org.gradle.process.internal.DefaultJavaExecSpec_Decorated\`"
+assert_output_contains "refreshed-captured-jooq-resolution"
+
+# This retained runtime-image failure is a different narrow boundary: Gradle
+# marks generateJooq failed because its jooqCodegen classpath is unresolved,
+# before the JavaExec generator process can run.
+write_runtime_jooq_captured_cause() {
+  cat > "$CASE_DIR/runtime-jooq-cause.log" <<'LOG'
+> Task :buildSrc:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :buildSrc:compileKotlin FROM-CACHE
+> Task :buildSrc:compileJava NO-SOURCE
+> Task :buildSrc:compileGroovy NO-SOURCE
+> Task :buildSrc:pluginDescriptors
+> Task :buildSrc:processResources
+> Task :buildSrc:classes
+> Task :buildSrc:jar
+> Task :account-service:writeJooqConfig
+> Task :account-service:generateJooq FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':account-service:generateJooq' (registered by plugin 'net.firedevops.firemud.jooq-conventions').
+> Could not resolve all files for configuration ':account-service:jooqCodegen'.
+   > Could not find org.jooq:jooq-meta-extensions:3.21.9.
+
+      Searched in the following locations:
+         - https://repo.maven.apache.org/maven2/org/jooq/jooq-meta-extensions/3.21.9/jooq-meta-extensions-3.21.9.pom
+
+      Required by:
+          project ':account-service'
+   > Could not find org.postgresql:postgresql:42.7.14.
+      Searched in the following locations:
+         - https://repo.maven.apache.org/maven2/org/postgresql/postgresql/42.7.14/postgresql-42.7.14.pom
+      Required by:
+          project ':account-service'
+   > Could not find org.jooq:jooq-meta:3.21.9.
+      Searched in the following locations:
+         - https://repo.maven.apache.org/maven2/org/jooq/jooq-meta/3.21.9/jooq-meta-3.21.9.pom
+      Required by:
+          project ':account-service' > org.jooq:jooq-codegen:3.21.9
+> If the artifact you are trying to retrieve can be found in the repository but without metadata in 'Maven POM' format, you need to adjust the 'metadataSources { ... }' of the repository declaration.
+* Try:
+> Run with --stacktrace option to get the stack trace.
+BUILD FAILED in 17s
+LOG
+}
+
+compose_expected="--no-configuration-cache --max-workers=1 --no-parallel -Dorg.gradle.jvmargs=-Xmx2560m -Dfile.encoding=UTF-8 -PincludeLoadTesting=false :account-service:bootJar :automation-scripting-service:bootJar :entity-management-service:bootJar :game-design-service:bootJar :game-logic-service:bootJar :game-session-service:bootJar :logging-admin-service:bootJar :social-groups-service:bootJar :spring-cloud-gateway:bootJar :tcp-proxy-service:bootJar :world-management-service:bootJar"
+new_case runtime-jooq-classpath-resolution
+write_runtime_jooq_captured_cause
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then
+  cat "$CASE_DIR/runtime-jooq-cause.log"
+  exit 1
+fi
+echo refreshed-runtime-jooq-resolution
+exit 0'
+run_compose_case 0
+assert_call_count 2
+assert_call 1 "$compose_expected"
+assert_call 2 "--refresh-dependencies $compose_expected"
+[[ "$(wc -l < "$CASE_DIR/locked-calls")" -eq 2 ]] || fail "runtime refresh did not retain locked execution"
+[[ "$(sed -n '1p' "$CASE_DIR/locked-calls")" == "$compose_expected" ]] || fail "initial runtime task list changed before lock wrapper"
+[[ "$(sed -n '2p' "$CASE_DIR/locked-calls")" == "--refresh-dependencies $compose_expected" ]] || fail "refreshed runtime task list changed before lock wrapper"
+[[ "$(cat "$CASE_DIR/sleeps")" == 0 ]] || fail "missing runtime artifact added a transient-error delay"
+assert_output_contains "Could not resolve all files for configuration ':account-service:jooqCodegen'."
+assert_output_contains "refreshed-runtime-jooq-resolution"
+
+# The exact resolution root is not enough when other generator, compile/test,
+# or unknown failure work is present in the same complete command output.
+new_case runtime-jooq-other-generator-progress
+write_runtime_jooq_captured_cause
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then
+  echo "> Task :automation-scripting-service:generateJooq FROM-CACHE"
+  cat "$CASE_DIR/runtime-jooq-cause.log"
+  exit 1
+fi
+echo unexpected-retry
+exit 0'
+run_compose_case 1
+assert_no_retry
+
+new_case runtime-jooq-compile-progress
+write_runtime_jooq_captured_cause
+# shellcheck disable=SC2016
+write_wrapper 'if [[ "$call_count" -eq 1 ]]; then
+  echo "> Task :account-service:compileJava"
+  cat "$CASE_DIR/runtime-jooq-cause.log"
+  exit 1
+fi
+echo unexpected-retry
+exit 0'
+run_compose_case 1
+assert_no_retry
+
+new_case runtime-jooq-mixed-cause
+write_runtime_jooq_captured_cause
+awk '/^\* Try:$/ { print "Could not create task :account-service:check because of unsupported plugin configuration." } { print }' \
+  "$CASE_DIR/runtime-jooq-cause.log" > "$CASE_DIR/runtime-jooq-mixed-cause.log"
+mv "$CASE_DIR/runtime-jooq-mixed-cause.log" "$CASE_DIR/runtime-jooq-cause.log"
+# shellcheck disable=SC2016
+write_wrapper 'cat "$CASE_DIR/runtime-jooq-cause.log"
+exit 1'
+run_compose_case 1
+assert_no_retry
+
+# A real generator failure is not a dependency failure and must retain its
+# original result even though it came from the same JavaExec task.
+new_case jooq-codegen-execution-failure
+write_wrapper 'cat <<"LOG"
+> Task :account-service:generateJooq FAILED
+FAILURE: Build failed with an exception.
+* What went wrong:
+Execution failed for task '\'':account-service:generateJooq'\''.
+org.jooq.exception.DataAccessException: Invalid SQL migration syntax.
+* Try:
+> Run with --stacktrace option to get the stack trace.
+BUILD FAILED in 2s
+LOG
+exit 1'
+run_case account-service 1
+assert_no_retry
+
+# An additional cause in the exact captured shape makes it mixed and therefore
+# ineligible, even though its repository-resolution portion would otherwise retry.
+new_case captured-jooq-mixed-cause
+write_jooq_captured_cause
+awk '/^\* Try:$/ { print "Could not create task :account-service:check because of unsupported plugin configuration." } { print }' \
+  "$CASE_DIR/jooq-cause.log" > "$CASE_DIR/jooq-mixed-cause.log"
+mv "$CASE_DIR/jooq-mixed-cause.log" "$CASE_DIR/jooq-cause.log"
+write_jooq_wrapper ''
+run_case account-service 1
+assert_no_retry
+
+# Even the captured resolver/cache wrapper cannot retry after generator work or
+# substantive module compilation has started.
+new_case jooq-generator-already-started
+write_jooq_captured_cause
+write_jooq_wrapper '> Task :account-service:generateJooq FROM-CACHE'
+run_case account-service 1
+assert_no_retry
+
+new_case jooq-compile-already-started
+write_jooq_captured_cause
+write_jooq_wrapper '> Task :account-service:compileJava'
+run_case account-service 1
+assert_no_retry
 
 # The resolver retry is bounded and observes a logged numeric Retry-After.
 new_case http-429

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -9,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -30,10 +32,12 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
+import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
@@ -46,6 +50,7 @@ import net.firedevops.firemud.gamesession.mapper.GameInstanceMapper;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
+import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -68,6 +73,8 @@ class GameInstanceServiceImplTest {
   private GameInstanceServiceImpl service;
   private Map<Long, GameInstance> store;
   private AtomicLong nextId;
+  private String runOwnedBundleRefOverride;
+  private LaunchDescriptor runOwnedDescriptorOverride;
 
   @Test
   void legacyDtoConstructorRejectsNonblankPatchWithoutCompleteTuple() {
@@ -105,6 +112,8 @@ class GameInstanceServiceImplTest {
     meterRegistry = new SimpleMeterRegistry();
     store = new HashMap<>();
     nextId = new AtomicLong(10L);
+    runOwnedBundleRefOverride = null;
+    runOwnedDescriptorOverride = null;
     service =
         new GameInstanceServiceImpl(
             repository,
@@ -214,18 +223,505 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
-  void verifiedRunOwnedLaunchCannotEnterUnavailableWorldPhaseOrNumericAllocation() {
+  void runOwnedInitialLaunchExactRetryReturnsSameActiveTargetWithoutReplayingActivation() {
     StartSessionRequest request =
         new StartSessionRequest(
             1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
-    IllegalStateException denied =
+    configureRunOwnedWorld(request);
+
+    var first = service.startRunOwnedInitialLaunch(request, launchEvidence(request));
+    clearInvocations(stateService, worldManagementClient);
+    var retry = service.startRunOwnedInitialLaunch(request, launchEvidence(request));
+
+    assertEquals(first.gameInstance().id(), retry.gameInstance().id());
+    assertEquals(10L, retry.gameInstance().id());
+    assertEquals(11L, retry.gameInstance().versionId());
+    assertEquals(2L, retry.activeLifecycleEpoch());
+    assertEquals("RUNNING", store.get(10L).getStatus());
+    assertEquals(1L, store.get(10L).getRunOwnedStartPreparingEpoch());
+    assertEquals(2L, store.get(10L).getRunOwnedStartActiveEpoch());
+    assertEquals(64, store.get(10L).getRunOwnedStartRequestDigest().length());
+    ArgumentCaptor<GameInstanceDto> repairedState = ArgumentCaptor.forClass(GameInstanceDto.class);
+    verify(stateService).saveState(repairedState.capture());
+    assertEquals("RUNNING", repairedState.getValue().status());
+    verify(worldManagementClient).getWorldInstanceLifecycle(1L, 10L);
+    verifyNoMoreInteractions(worldManagementClient);
+  }
+
+  @Test
+  void runOwnedLaunchUsesOpaqueOwnerReferenceWithoutCallingDeniedReadRpcs() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    String opaqueBundleRef = "gds:owner-ref:immutable-release-77";
+    runOwnedBundleRefOverride = opaqueBundleRef;
+    configureRunOwnedWorld(request);
+
+    service.startRunOwnedInitialLaunch(
+        request,
+        RunOwnedInitialAdmissionLaunchEvidenceTestFixture.create(
+            request, sourceEvidence(request), opaqueBundleRef));
+
+    ArgumentCaptor<String> preparedBundleRef = ArgumentCaptor.forClass(String.class);
+    verify(worldManagementClient)
+        .prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            preparedBundleRef.capture(),
+            anyLong(),
+            any());
+    assertEquals(opaqueBundleRef, preparedBundleRef.getValue());
+    assertEquals(opaqueBundleRef, store.get(10L).getRunOwnedStartPublishedReleaseBundleRef());
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(anyLong(), anyLong());
+    verify(gameDesignClient, never()).getVersionAssetArtifactState(anyLong(), anyLong());
+    verify(gameDesignClient, never()).getVersionState(anyLong(), anyLong());
+  }
+
+  @Test
+  void runOwnedLaunchRejectsDifferentValidResolveDescriptorBeforeMutation() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    var ownerEvidence = launchEvidence(request);
+    runOwnedDescriptorOverride =
+        RunOwnedInitialAdmissionLaunchEvidenceTestFixture.create(
+                request, sourceEvidence(request), "gds:owner-ref:different-release")
+            .launchDescriptor();
+    assertFalse(
+        ownerEvidence
+            .launchDescriptor()
+            .getAuthoredWorldBinding()
+            .getResultDigest()
+            .equals(runOwnedDescriptorOverride.getAuthoredWorldBinding().getResultDigest()));
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.startRunOwnedInitialLaunch(request, ownerEvidence));
+
+    assertEquals(
+        "RUN_OWNED_LAUNCH_DESCRIPTOR_MISMATCH: resolved descriptor differs from the immutable"
+            + " owner receipt descriptor",
+        error.getMessage());
+    verifyNoInteractions(stateService, worldManagementClient);
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(anyLong(), anyLong());
+    verify(gameDesignClient, never()).getVersionAssetArtifactState(anyLong(), anyLong());
+    verify(gameDesignClient, never()).getVersionState(anyLong(), anyLong());
+  }
+
+  @Test
+  void runOwnedLaunchRejectsOwnerVersionEpochMismatchBeforeWorldPreparation() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    var original = launchEvidence(request);
+    var changed =
+        RunOwnedInitialAdmissionLaunchEvidenceTestFixture.create(
+            request,
+            sourceEvidence(request),
+            original.publishedReleaseBundle(),
+            original.versionAssetArtifactState(),
+            original.versionState().toBuilder().setVersionStateEpoch(78L).build());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.startRunOwnedInitialLaunch(request, changed));
+
+    assertEquals(
+        "RUN_OWNED_LAUNCH_DESCRIPTOR_MISMATCH: resolved descriptor differs from the immutable"
+            + " owner receipt descriptor",
+        error.getMessage());
+    assertTrue(store.isEmpty());
+    verifyNoInteractions(stateService, worldManagementClient);
+  }
+
+  @Test
+  void runOwnedLaunchRejectsUnrecognizedOwnerVersionStateBeforeWorldPreparation() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    var original = launchEvidence(request);
+    var unchecked =
+        RunOwnedInitialAdmissionLaunchEvidenceTestFixture.createUncheckedForServicePreflightTests(
+            request,
+            sourceEvidence(request),
+            original.publishedReleaseBundle(),
+            original.versionAssetArtifactState(),
+            original.versionState().toBuilder().setVersionStateValue(999).build());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.startRunOwnedInitialLaunch(request, unchecked));
+
+    assertEquals(
+        "RUN_OWNED_LAUNCH_READ_EVIDENCE_MISMATCH: owner snapshot differs from the exact launch descriptor",
+        error.getMessage());
+    verifyNoInteractions(worldManagementClient);
+    verify(gameDesignClient, never()).getPublishedReleaseBundle(anyLong(), anyLong());
+    verify(gameDesignClient, never()).getVersionAssetArtifactState(anyLong(), anyLong());
+    verify(gameDesignClient, never()).getVersionState(anyLong(), anyLong());
+  }
+
+  @Test
+  void runOwnedLaunchRejectsOwnerVersionIdentityMismatchBeforeWorldPreparation() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    var original = launchEvidence(request);
+    var changed =
+        RunOwnedInitialAdmissionLaunchEvidenceTestFixture.create(
+            request,
+            sourceEvidence(request),
+            original.publishedReleaseBundle().toBuilder()
+                .setVersionId(12L)
+                .setCanonicalVersionId("10000000-0000-4000-8000-000000000012")
+                .build(),
+            original.versionAssetArtifactState().toBuilder().setVersionId(12L).build(),
+            original.versionState().toBuilder().setVersionId(12L).build());
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.startRunOwnedInitialLaunch(request, changed));
+
+    assertEquals(
+        "RUN_OWNED_LAUNCH_DESCRIPTOR_MISMATCH: resolved descriptor differs from the immutable"
+            + " owner receipt descriptor",
+        error.getMessage());
+    assertTrue(store.isEmpty());
+    verifyNoInteractions(stateService, worldManagementClient);
+  }
+
+  @Test
+  void runOwnedRunningRetryRejectsContradictoryPreparingWorldWithoutRuntimeMutation() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    AtomicReference<WorldInstanceLifecycleSnapshot> worldState = configureRunOwnedWorld(request);
+    service.startRunOwnedInitialLaunch(request, launchEvidence(request));
+    clearInvocations(stateService, worldManagementClient);
+    worldState.set(
+        runOwnedWorldSnapshot(
+            request,
+            10L,
+            1L,
+            WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING));
+
+    IllegalStateException error =
         assertThrows(
             IllegalStateException.class,
             () -> service.startRunOwnedInitialLaunch(request, launchEvidence(request)));
-    assertTrue(denied.getMessage().startsWith("RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE:"));
-    assertTrue(store.isEmpty());
-    verify(repository, never()).save(any());
-    verifyNoInteractions(gameDesignClient, worldManagementClient, stateService);
+
+    assertEquals(
+        "RUN_OWNED_INITIAL_LAUNCH_STATE_MISMATCH: running owner row is not ACTIVE in World",
+        error.getMessage());
+    assertEquals("RUNNING", store.get(10L).getStatus());
+    assertEquals(2L, store.get(10L).getRunOwnedStartActiveEpoch());
+    verifyNoInteractions(stateService);
+    verify(worldManagementClient).getWorldInstanceLifecycle(1L, 10L);
+    verifyNoMoreInteractions(worldManagementClient);
+  }
+
+  @Test
+  void runOwnedInitialLaunchRetryReconcilesAmbiguousPrepareOnTheSameInstance() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    AtomicReference<WorldInstanceLifecycleSnapshot> worldState = configureRunOwnedWorld(request);
+    AtomicInteger prepareCalls = new AtomicInteger();
+    when(worldManagementClient.prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
+        .thenAnswer(
+            invocation -> {
+              if (prepareCalls.getAndIncrement() == 0) {
+                worldState.set(
+                    runOwnedWorldSnapshot(
+                        request,
+                        invocation.getArgument(1, Long.class),
+                        1L,
+                        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING));
+                throw new IllegalStateException("prepare response timed out");
+              }
+              return net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceResponse
+                  .newBuilder()
+                  .setWorldInstance(worldState.get())
+                  .build();
+            });
+
+    IllegalStateException pending =
+        assertThrows(
+            IllegalStateException.class,
+            () -> service.startRunOwnedInitialLaunch(request, launchEvidence(request)));
+
+    assertEquals("world preparation authority unavailable", pending.getMessage());
+    assertEquals(1, store.size());
+    assertEquals(10L, store.get(10L).getId());
+    assertNull(store.get(10L).getRunOwnedStartPreparingEpoch());
+
+    var resumed = service.startRunOwnedInitialLaunch(request, launchEvidence(request));
+
+    assertEquals(10L, resumed.gameInstance().id());
+    assertEquals(2L, resumed.activeLifecycleEpoch());
+    assertEquals(1, store.size());
+    assertEquals("RUNNING", store.get(10L).getStatus());
+    verify(worldManagementClient, times(2))
+        .prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any());
+  }
+
+  @Test
+  void runOwnedInitialLaunchRetryReconcilesAmbiguousActivationOnTheSameInstance() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    AtomicReference<WorldInstanceLifecycleSnapshot> worldState = configureRunOwnedWorld(request);
+    doThrow(new IllegalStateException("activation response timed out"))
+        .when(worldManagementClient)
+        .activatePreparedWorldInstance(1L, 10L, 1L);
+
+    IllegalStateException pending =
+        assertThrows(
+            IllegalStateException.class,
+            () -> service.startRunOwnedInitialLaunch(request, launchEvidence(request)));
+
+    assertEquals("world activation authority unavailable", pending.getMessage());
+    assertEquals("STARTING", store.get(10L).getStatus());
+    assertEquals(1L, store.get(10L).getRunOwnedStartPreparingEpoch());
+    assertNull(store.get(10L).getRunOwnedStartActiveEpoch());
+    worldState.set(
+        runOwnedWorldSnapshot(
+            request, 10L, 2L, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE));
+
+    var resumed = service.startRunOwnedInitialLaunch(request, launchEvidence(request));
+
+    assertEquals(10L, resumed.gameInstance().id());
+    assertEquals(2L, resumed.activeLifecycleEpoch());
+    assertEquals(1, store.size());
+    assertEquals("RUNNING", store.get(10L).getStatus());
+    verify(worldManagementClient, times(1)).activatePreparedWorldInstance(1L, 10L, 1L);
+    verify(repository, never()).deleteById(10L);
+  }
+
+  @Test
+  void runOwnedInitialLaunchRequestIdConflictsOnChangedOwnerOrTemplate() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    configureRunOwnedWorld(request);
+    service.startRunOwnedInitialLaunch(request, launchEvidence(request));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.startRunOwnedInitialLaunch(
+                new StartSessionRequest(
+                    1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 43L),
+                launchEvidence(request)));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.startRunOwnedInitialLaunch(
+                new StartSessionRequest(
+                    1L, 4L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L),
+                launchEvidence(
+                    new StartSessionRequest(
+                        1L,
+                        4L,
+                        RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(),
+                        42L))));
+
+    assertEquals(1, store.size());
+    assertEquals(10L, store.get(10L).getId());
+    verify(worldManagementClient, times(1))
+        .prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any());
+  }
+
+  @Test
+  void runOwnedInitialLaunchRequestIdConflictsOnChangedAuthoredWorldSource() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    configureRunOwnedWorld(request);
+    service.startRunOwnedInitialLaunch(request, launchEvidence(request));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.startRunOwnedInitialLaunch(
+                request, launchEvidence(request, sourceEvidence(request, 30L))));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.startRunOwnedInitialLaunch(
+                request,
+                launchEvidence(
+                    request,
+                    sourceEvidence(
+                        request, 29L, UUID.fromString("8f38bd13-8198-40f9-9daa-2373de047b1c")))));
+
+    assertEquals(1, store.size());
+    verify(worldManagementClient, times(1))
+        .prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any());
+  }
+
+  @Test
+  void runOwnedInitialLaunchRequestIdConflictsOnChangedOwnerReadSnapshot() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    configureRunOwnedWorld(request);
+    var original = launchEvidence(request);
+    service.startRunOwnedInitialLaunch(request, original);
+    var changed =
+        RunOwnedInitialAdmissionLaunchEvidenceTestFixture.create(
+            request,
+            sourceEvidence(request),
+            original.publishedReleaseBundle().toBuilder()
+                .setPublishWorkflowId("publish-11-replayed-with-changed-input")
+                .build(),
+            original.versionAssetArtifactState(),
+            original.versionState());
+
+    assertThrows(
+        IllegalStateException.class, () -> service.startRunOwnedInitialLaunch(request, changed));
+
+    assertEquals(1, store.size());
+    verify(worldManagementClient, times(1))
+        .prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any());
+  }
+
+  @Test
+  void runOwnedInitialLaunchRejectsWorldDescriptorMismatchAndRetainsIdentity() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    AtomicReference<WorldInstanceLifecycleSnapshot> worldState = configureRunOwnedWorld(request);
+    doAnswer(
+            invocation ->
+                GetWorldInstanceLifecycleResponse.newBuilder()
+                    .setWorldInstance(
+                        worldState.get().toBuilder()
+                            .setPublishedReleaseBundleRef("prb:1:11:78")
+                            .build())
+                    .build())
+        .when(worldManagementClient)
+        .getWorldInstanceLifecycle(anyLong(), anyLong());
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class,
+            () -> service.startRunOwnedInitialLaunch(request, launchEvidence(request)));
+
+    assertEquals(
+        "WORLD_AUTHORITY_DESCRIPTOR_MISMATCH: lifecycle readback differs from the resolved launch descriptor",
+        error.getMessage());
+    assertEquals(1, store.size());
+    assertEquals("STARTING", store.get(10L).getStatus());
+    assertEquals(1L, store.get(10L).getRunOwnedStartPreparingEpoch());
+    verify(worldManagementClient, never())
+        .activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
+  }
+
+  @Test
+  void runOwnedInitialLaunchRetainsTerminalIdentityAfterPreActivationFailure() {
+    StartSessionRequest request =
+        new StartSessionRequest(
+            1L, 3L, RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(), 42L);
+    AtomicReference<WorldInstanceLifecycleSnapshot> worldState = configureRunOwnedWorld(request);
+    worldState.set(
+        runOwnedWorldSnapshot(
+            request,
+            10L,
+            2L,
+            WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION));
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.startRunOwnedInitialLaunch(request, launchEvidence(request)));
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.startRunOwnedInitialLaunch(request, launchEvidence(request)));
+
+    assertEquals(1, store.size());
+    assertEquals(
+        RunOwnedInitialAdmissionLaunchEvidenceTestFixture.operationId(),
+        store.get(10L).getRunOwnedStartRequestId());
+    assertEquals("STARTING", store.get(10L).getStatus());
+    verify(worldManagementClient, never())
+        .activatePreparedWorldInstance(anyLong(), anyLong(), anyLong());
   }
 
   @Test
@@ -1284,6 +1780,28 @@ class GameInstanceServiceImplTest {
                             .setPublishedReleaseBundleRef(OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF)
                             .build())
                     .build());
+    when(gameDesignClient.resolveLaunchDescriptor(
+            any(Long.class), any(Long.class), anyString(), any(AuthoredWorldSourceEvidence.class)))
+        .thenAnswer(
+            invocation -> {
+              long tenantId = invocation.getArgument(0, Long.class);
+              long gameTemplateId = invocation.getArgument(1, Long.class);
+              String controlPlaneRequestId = invocation.getArgument(2, String.class);
+              AuthoredWorldSourceEvidence sourceEvidence = invocation.getArgument(3);
+              LaunchDescriptor descriptor = runOwnedDescriptorOverride;
+              if (descriptor == null) {
+                descriptor =
+                    RunOwnedInitialAdmissionLaunchEvidenceTestFixture.create(
+                            new StartSessionRequest(
+                                tenantId, gameTemplateId, controlPlaneRequestId, 42L),
+                            sourceEvidence,
+                            runOwnedBundleRef(tenantId))
+                        .launchDescriptor();
+              }
+              return ResolveLaunchDescriptorResponse.newBuilder()
+                  .setLaunchDescriptor(descriptor)
+                  .build();
+            });
     when(gameDesignClient.getPublishedReleaseBundle(any(Long.class), any(Long.class)))
         .thenReturn(
             GetPublishedReleaseBundleResponse.newBuilder()
@@ -1416,7 +1934,9 @@ class GameInstanceServiceImplTest {
   }
 
   private String runOwnedBundleRef(long tenantId) {
-    return "prb:" + tenantId + ":11:77";
+    return runOwnedBundleRefOverride == null
+        ? "prb:" + tenantId + ":11:77"
+        : runOwnedBundleRefOverride;
   }
 
   private static UUID sourceOperationId(StartSessionRequest request) {
@@ -1756,6 +2276,94 @@ class GameInstanceServiceImplTest {
                                     .WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED)
                             .build())
                     .build());
+  }
+
+  private AtomicReference<WorldInstanceLifecycleSnapshot> configureRunOwnedWorld(
+      StartSessionRequest request) {
+    AtomicReference<WorldInstanceLifecycleSnapshot> worldState = new AtomicReference<>();
+    when(worldManagementClient.prepareWorldInstance(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            anyLong(),
+            any(),
+            any(),
+            anyString(),
+            anyLong(),
+            anyString(),
+            anyLong(),
+            any()))
+        .thenAnswer(
+            invocation -> {
+              if (worldState.get() == null) {
+                worldState.set(
+                    runOwnedWorldSnapshot(
+                        request,
+                        invocation.getArgument(1, Long.class),
+                        1L,
+                        WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING,
+                        runOwnedBundleRef(request.tenantId())));
+              }
+              return PrepareWorldInstanceResponse.newBuilder()
+                  .setWorldInstance(worldState.get())
+                  .build();
+            });
+    when(worldManagementClient.getWorldInstanceLifecycle(anyLong(), anyLong()))
+        .thenAnswer(
+            invocation ->
+                GetWorldInstanceLifecycleResponse.newBuilder()
+                    .setWorldInstance(worldState.get())
+                    .build());
+    when(worldManagementClient.activatePreparedWorldInstance(anyLong(), anyLong(), anyLong()))
+        .thenAnswer(
+            invocation -> {
+              WorldInstanceLifecycleSnapshot active =
+                  runOwnedWorldSnapshot(
+                      request,
+                      invocation.getArgument(1, Long.class),
+                      invocation.getArgument(2, Long.class) + 1L,
+                      WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE,
+                      runOwnedBundleRef(request.tenantId()));
+              worldState.set(active);
+              return net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse
+                  .newBuilder()
+                  .setWorldInstance(active)
+                  .build();
+            });
+    return worldState;
+  }
+
+  private static WorldInstanceLifecycleSnapshot runOwnedWorldSnapshot(
+      StartSessionRequest request,
+      long gameInstanceId,
+      long lifecycleEpoch,
+      WorldInstanceLifecycleStatus status) {
+    return runOwnedWorldSnapshot(
+        request, gameInstanceId, lifecycleEpoch, status, "prb:" + request.tenantId() + ":11:77");
+  }
+
+  private static WorldInstanceLifecycleSnapshot runOwnedWorldSnapshot(
+      StartSessionRequest request,
+      long gameInstanceId,
+      long lifecycleEpoch,
+      WorldInstanceLifecycleStatus status,
+      String publishedReleaseBundleRef) {
+    return WorldInstanceLifecycleSnapshot.newBuilder()
+        .setTenantId(Long.toString(request.tenantId()))
+        .setGameInstanceId(Long.toString(gameInstanceId))
+        .setGameTemplateId(Long.toString(request.gameTemplateId()))
+        .setControlPlaneRequestId(request.controlPlaneRequestId())
+        .setLaunchDescriptorId("launch-descriptor-fixture-11")
+        .setVersionId("11")
+        .setReleaseBundleId("77")
+        .setGenerationConfigRevision("genrev-11")
+        .setPublishedReleaseBundleRef(publishedReleaseBundleRef)
+        .setVersionStateEpoch(77L)
+        .setLifecycleEpoch(lifecycleEpoch)
+        .setStatus(status)
+        .build();
   }
 
   private GameInstance persistExisting(

@@ -520,10 +520,12 @@ def _required_results(authority: dict[str, Any], inventory: dict[str, Any]) -> d
 
         app_id = expected["expected_app"].get("id")
         app_matches = (
-            [entry for entry in exact if (entry["app"] or {}).get("id") == app_id] if app_id is not None else exact
+            [entry for entry in exact if entry["kind"] == "CheckRun" and (entry["app"] or {}).get("id") == app_id]
+            if app_id is not None else exact
         )
         result = decisive(app_matches)
-        wrong_app_result = decisive(exact) if exact else None
+        native_exact = [entry for entry in exact if entry["kind"] == "CheckRun"]
+        wrong_app_result = decisive(native_exact or exact) if exact else None
         wrong_app_results = [
             {key: value for key, value in entry.items() if not key.startswith("_")}
             for entry in exact
@@ -535,6 +537,8 @@ def _required_results(authority: dict[str, Any], inventory: dict[str, Any]) -> d
             result = wrong_app_result
         if result is None:
             status = "stale" if matching else "missing"
+        elif app_id is not None and result["kind"] != "CheckRun":
+            status = "unknown"
         elif app_id is not None and (result["app"] or {}).get("id") != app_id:
             status = "wrong_app" if (result["app"] or {}).get("id") is not None else "unknown"
         elif result["outcome"] in FAILURE:
@@ -545,6 +549,15 @@ def _required_results(authority: dict[str, Any], inventory: dict[str, Any]) -> d
             status = "success"
         else:
             status = result["outcome"].lower()
+        # Commit Status creator IDs are user IDs, never native App authority.
+        # GitHub requires both namespaces when a required name exists in both.
+        barriers = [entry for entry in exact if entry["kind"] == "StatusContext"]
+        barrier = decisive(barriers)
+        if status == "success" and barrier is not None:
+            if barrier["outcome"] in FAILURE:
+                status = "failed"
+            elif barrier["outcome"] not in SUCCESS:
+                status = "pending" if barrier["outcome"] in PENDING else "unknown"
         rendered = {key: value for key, value in (result or {}).items() if not key.startswith("_")}
         results.append(
             {
@@ -554,6 +567,10 @@ def _required_results(authority: dict[str, Any], inventory: dict[str, Any]) -> d
                 "result": rendered or None,
                 "latest_exact_head": rendered or None,
                 "wrong_app_results": wrong_app_results,
+                "status_barriers": [
+                    {key: value for key, value in entry.items() if not key.startswith("_")}
+                    for entry in barriers
+                ],
             }
         )
     statuses = {item["status"] for item in results}
