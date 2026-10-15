@@ -1522,6 +1522,13 @@ elif scenario.startswith("bridge-") and endpoint.endswith("/actions/runs/200/att
                      ("Preserve successful required gate on metadata-only edit", "Publish pending required gate status")]}
     if scenario in {"bridge-running", "bridge-running-wrong-app"} and not state.get("metadata_completed"):
         job.update(status="in_progress", conclusion=None)
+        # The acknowledged POST is visible before publication completes; the
+        # preservation step has not yet appeared in this native snapshot.
+        job["steps"] = [{"name": "Publish pending required gate status", "status": "in_progress", "conclusion": None}]
+    if scenario == "bridge-failed-producer":
+        job["steps"][1]["conclusion"] = "failure"
+    if scenario == "bridge-failed-preservation":
+        job["steps"][0]["conclusion"] = "failure"
     if scenario == "bridge-no-producer":
         job["steps"].pop()
     result = [{"total_count": 2 if scenario == "bridge-incomplete-jobs" else 1, "jobs": [job]}]
@@ -1912,7 +1919,7 @@ if expected:
 assert not state.get("posts"), "bridge entered legacy rerun admission"
 PY_BRIDGE
 done
-for scenario in bridge-running-wrong-app bridge-no-producer bridge-incomplete-status bridge-incomplete-jobs bridge-wrong-app bridge-wrong-attempt bridge-wrong-title bridge-write-denied; do
+for scenario in bridge-failed-producer bridge-failed-preservation bridge-running-wrong-app bridge-no-producer bridge-incomplete-status bridge-incomplete-jobs bridge-wrong-app bridge-wrong-attempt bridge-wrong-title bridge-write-denied; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
   if run_resolver "$scenario" 100 no-local-workflow-file reconcile; then
     echo "unproved bridge settlement succeeded: $scenario" >&2; exit 1

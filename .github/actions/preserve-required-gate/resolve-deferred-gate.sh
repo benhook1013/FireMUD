@@ -173,10 +173,7 @@ if [[ "${resolution_phase}" == reconcile ]]; then
       | select((.status == "completed" and (.conclusion | type == "string" and length > 0)) or
           ((.status == "queued" or .status == "in_progress" or .status == "waiting" or
             .status == "pending" or .status == "requested") and .conclusion == null))
-      | select([.steps[]? | select(.name == "Publish pending required gate status" and
-          .status == "completed" and .conclusion == "success")] | length == 1)
-      | select([.steps[]? | select(.name == "Preserve successful required gate on metadata-only edit" and
-          .status == "completed" and .conclusion == "success")] | length == 1)' <<<"${jobs}")" || return 1
+' <<<"${jobs}")" || return 1
     check_id="$(jq -er '.check_run_url | capture("/check-runs/(?<id>[1-9][0-9]*)$").id' <<<"${jobs}")" || return 1
     check="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/check-runs/${check_id}")" || return 1
     jq -e --argjson id "${check_id}" --arg head "${head_sha}" --arg name "${gate_name}" \
@@ -193,6 +190,14 @@ if [[ "${resolution_phase}" == reconcile ]]; then
     echo "Bound metadata gate is still running; leave its supplementary barrier pending."
     exit 0
   fi
+  # Running identity is enough to wait; terminal settlement additionally needs
+  # both native producer/preservation steps to have completed successfully.
+  jq -e '
+    ([.job.steps[]? | select(.name == "Publish pending required gate status" and
+      .status == "completed" and .conclusion == "success")] | length == 1) and
+    ([.job.steps[]? | select(.name == "Preserve successful required gate on metadata-only edit" and
+      .status == "completed" and .conclusion == "success")] | length == 1)' <<<"${native}" >/dev/null ||
+    fail_closed "Terminal supplementary barrier lacks successful producer/preservation steps."
   assessment_output="$(mktemp)"
   trap 'rm -f "$assessment_output"' EXIT
   terminal_state=failure
