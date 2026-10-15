@@ -518,8 +518,7 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
 
     private static X509Certificate readCertificate(Path path) throws Exception {
       try (var input = Files.newInputStream(path)) {
-        return (X509Certificate)
-            CertificateFactory.getInstance("X.509").generateCertificate(input);
+        return (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
       }
     }
 

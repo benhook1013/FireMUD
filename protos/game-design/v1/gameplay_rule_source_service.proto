@@ -1,0 +1,28 @@
+syntax = "proto3";
+package game_design.v1;
+option java_package = "net.firedevops.firemud.gamedesign.v1";
+option java_multiple_files = true;
+
+// Unregistered exact immutable synchronized source read, allowlisted to Account and GL.
+service GameDesignGameplayRuleSourceReadService {
+  rpc ReadSelectedGameplayRuleSource(ReadSelectedGameplayRuleSourceRequest)
+      returns (ReadSelectedGameplayRuleSourceResponse);
+}
+message ReadSelectedGameplayRuleSourceRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string game_design_binding_json = 4;
+  string game_design_binding_digest = 5;
+  oneof authorization_proof {
+    bytes preliminary_source_scope = 6;
+    bytes finalized_intake_authorization = 7;
+  }
+  string authorization_proof_digest = 8;
+  string purpose = 9;
+}
+message ReadSelectedGameplayRuleSourceResponse {
+  ReadSelectedGameplayRuleSourceRequest request = 1;
+  string complete_source_snapshot_json = 2;
+  string complete_source_snapshot_digest = 3;
+}
