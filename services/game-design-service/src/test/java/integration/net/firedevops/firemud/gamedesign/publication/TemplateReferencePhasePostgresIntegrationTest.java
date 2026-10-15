@@ -7,9 +7,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftBaseReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
+import net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBaseRepository;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
@@ -192,12 +194,16 @@ class TemplateReferencePhasePostgresIntegrationTest {
                 + "\"automation\":{\"scripts\":[],\"scriptPatch\":{\"presence\":\"ABSENT\"}},"
                 + "\"supportedSettings\":[]}");
     UUID revisionId = UUID.randomUUID();
+    GameDesignSourceRepository sources = new GameDesignSourceRepository(fixture.dsl());
+    String baseReference =
+        "genesis:"
+            + sources.readGenesis(fixture.target()).orElseThrow().policy().receiptId();
     DraftCommitBinding binding =
         DraftCommitBinding.create(
             fixture.target(),
             UUID.randomUUID(),
             UUID.randomUUID(),
-            "base-commit-0",
+            baseReference,
             List.of(
                 new DraftCommitBinding.RevisionPayload(
                     "0",
@@ -217,11 +223,14 @@ class TemplateReferencePhasePostgresIntegrationTest {
         .executeWithoutResult(
             ignored -> {
               var coordinator = new DraftCommitCoordinatorRepository(fixture.dsl());
-              coordinator.claim(binding);
+              var reviewed = new GameDesignReviewedBaseRepository(fixture.dsl());
+              sources.claimReviewed(
+                  binding,
+                  reviewed.resolve(
+                      fixture.target(), DraftBaseReference.parse(binding.baseCommitId())));
               coordinator.claimApplicationSlot(binding);
               coordinator.markOwnerInProgress(
                   binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
-              GameDesignSourceRepository sources = new GameDesignSourceRepository(fixture.dsl());
               var applied = sources.apply(binding);
               if (automaticPhase) {
                 net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
