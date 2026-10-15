@@ -56,8 +56,8 @@ class GameLogicIntakeSourceReadTransportTest {
   private Server server;
   private GrpcGameLogicIntakeSourceReadClient client;
   private final AtomicInteger calls = new AtomicInteger();
-  private boolean stall;
-  private boolean substitute;
+  private volatile boolean stall;
+  private volatile boolean substitute;
 
   @BeforeAll
   static void certificates() throws Exception {
