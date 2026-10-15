@@ -37,8 +37,8 @@ import tools.jackson.databind.ObjectMapper;
 
 /**
  * Exercises the installed schema-4 preparation selector against isolated copies of its installed
- * table shapes and function bodies. The controlled rows establish SQL predicate behavior only;
- * they do not establish Account authorization or a genuine production owner handoff.
+ * table shapes and function bodies. The controlled rows establish SQL predicate behavior only; they
+ * do not establish Account authorization or a genuine production owner handoff.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
@@ -99,8 +99,7 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
   @Test
   void installedSchema4GuardAcceptsStampedSavepointPreparationAndRejectsLateOrHistoricalRows()
       throws Exception {
-    String installedSchema =
-        dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+    String installedSchema = dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
     String probeSchema = "world_preparation_guard_" + UUID.randomUUID().toString().replace("-", "");
     Fixture fixture = fixture();
     try {
@@ -120,7 +119,8 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
           outer.execute(
               status -> {
                 savepoint.executeWithoutResult(
-                    nested -> insertPreparation(probeSchema, fixture, 2, fixture.freshInstanceId()));
+                    nested ->
+                        insertPreparation(probeSchema, fixture, 2, fixture.freshInstanceId()));
                 var row =
                     dsl.fetchSingle(
                         "SELECT preparation_inserted_full_xid::text, xmin::text, "
@@ -188,8 +188,7 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
             "world_stamp_preparation_insert_full_xid()")) {
       String definition =
           scalarText(
-              "SELECT pg_get_functiondef(to_regprocedure(?))",
-              installedSchema + "." + signature);
+              "SELECT pg_get_functiondef(to_regprocedure(?))", installedSchema + "." + signature);
       definition =
           definition
               .replace("\"" + installedSchema + "\"", "\"" + probeSchema + "\"")
@@ -229,12 +228,7 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
   }
 
   private void seedHistoricalPreparation(String schema, Fixture fixture) throws Exception {
-    insertPreparation(
-        schema,
-        fixture,
-        1,
-        fixture.historicalInstanceId(),
-        null);
+    insertPreparation(schema, fixture, 1, fixture.historicalInstanceId(), null);
   }
 
   private void insertPreparation(String schema, Fixture fixture, long rowId, UUID gameInstanceId) {
@@ -277,9 +271,7 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
         TENANT_KEY,
         GAME_INSTANCE_KEY);
     dsl.execute(
-        "INSERT INTO "
-            + DSL.name(schema, "room")
-            + " (id, tenant_id, version_id) VALUES (?, ?, ?)",
+        "INSERT INTO " + DSL.name(schema, "room") + " (id, tenant_id, version_id) VALUES (?, ?, ?)",
         TEMPLATE_ROOM_KEY,
         TENANT_KEY,
         fixture.localVersionKey());
@@ -429,11 +421,13 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
     UUID captureId = UUID.randomUUID();
     UUID roomTemplateId = UUID.randomUUID();
     UUID bindingOperationId = UUID.randomUUID();
-    byte[] graphBytes = "{\"schemaVersion\":3,\"rows\":[{\"family\":\"ROOM\"}]}".getBytes(StandardCharsets.UTF_8);
+    byte[] graphBytes =
+        "{\"schemaVersion\":3,\"rows\":[{\"family\":\"ROOM\"}]}".getBytes(StandardCharsets.UTF_8);
     String graphSha256 = digestHex(graphBytes);
     String graphDigest = "sha256:" + graphSha256;
     String bindingDigest = "sha256:" + "b".repeat(64);
-    byte[] accountBindingBytes = "{\"accountBinding\":\"controlled\"}".getBytes(StandardCharsets.UTF_8);
+    byte[] accountBindingBytes =
+        "{\"accountBinding\":\"controlled\"}".getBytes(StandardCharsets.UTF_8);
     String accountBindingDigest = "sha256:" + digestHex(accountBindingBytes);
     byte[] selectorReceiptBytes = "{\"receipt\":\"controlled\"}".getBytes(StandardCharsets.UTF_8);
     byte[] appliedResultBytes =

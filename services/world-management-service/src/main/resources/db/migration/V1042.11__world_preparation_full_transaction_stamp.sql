@@ -1,9 +1,11 @@
 -- Preserve the exact V35 manifest row image before adding a server-owned top-level full-XID
 -- stamp. The later BEFORE INSERT trigger runs after the existing exact-row validator.
+-- PostgreSQL xid8 has no corresponding H2 DDL-interpreter domain; native PostgreSQL tests
+-- qualify this internal stamp together with the trigger and selector guard.
+-- [jooq ignore start]
 ALTER TABLE world_canonical_instance_preparation
     ADD COLUMN preparation_inserted_full_xid xid8;
 
--- [jooq ignore start]
 CREATE FUNCTION world_stamp_preparation_insert_full_xid()
 RETURNS TRIGGER
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, "${serviceSchema}"

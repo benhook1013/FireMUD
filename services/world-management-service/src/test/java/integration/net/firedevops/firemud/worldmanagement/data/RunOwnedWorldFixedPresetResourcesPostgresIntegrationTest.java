@@ -1384,14 +1384,13 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
           .as("the preparation stamp trigger function grants no EXECUTE to PUBLIC")
           .isZero();
       assertThat(
-              connection
-                  .fetchSingle(
-                      "SELECT t.tgtype::text, t.tgenabled::text, t.tgfoid::text "
-                          + "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
-                          + "WHERE c.relnamespace = to_regnamespace(?) "
-                          + "AND c.relname = 'world_canonical_instance_preparation' "
-                          + "AND t.tgname = 'trg_world_preparation_full_xid_stamp'",
-                      schema))
+              connection.fetchSingle(
+                  "SELECT t.tgtype::text, t.tgenabled::text, t.tgfoid::text "
+                      + "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                      + "WHERE c.relnamespace = to_regnamespace(?) "
+                      + "AND c.relname = 'world_canonical_instance_preparation' "
+                      + "AND t.tgname = 'trg_world_preparation_full_xid_stamp'",
+                  schema))
           .satisfies(
               row -> {
                 assertThat(row.get(0, String.class)).isEqualTo("7");
@@ -1413,7 +1412,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                           + "AND NOT t.tgisinternal AND (t.tgtype & 7) = 7",
                       schema)
                   .get(0, Long.class))
-          .as("the exact manifest validator and server stamp are the only BEFORE INSERT row triggers")
+          .as(
+              "the exact manifest validator and server stamp are the only BEFORE INSERT row triggers")
           .isEqualTo(2L);
       assertThat("trg_world_canonical_instance_preparation_exact_insert")
           .isLessThan("trg_world_preparation_full_xid_stamp");

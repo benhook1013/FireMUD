@@ -34,9 +34,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Exercises the V1042.6, V1042.8, and V1042.10 forward owner-guard repairs against native
- * PostgreSQL.
- * Malformed terminal inputs run through test-local probes built from the installed function body;
- * they do not create production owner rows or claim Account-authorized admission.
+ * PostgreSQL. Malformed terminal inputs run through test-local probes built from the installed
+ * function body; they do not create production owner rows or claim Account-authorized admission.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -47,7 +46,8 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       "trg_world_require_initial_location_operation_result";
   private static final String TERMINAL_FUNCTION = "world_draft_terminal_outcome_guard";
   private static final String TERMINAL_TRIGGER = "trg_world_draft_terminal_outcome_guard";
-  private static final String LOCATION_DELETE_TRIGGER = "trg_world_reject_character_location_delete";
+  private static final String LOCATION_DELETE_TRIGGER =
+      "trg_world_reject_character_location_delete";
   private static final String LOCATION_TRUNCATE_TRIGGER =
       "trg_world_reject_character_location_truncate";
   private static final String LOCATION_RETENTION_FUNCTION =
@@ -225,10 +225,10 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       assertLocationRetentionGuards(freshDsl, freshSchema);
       assertThat(
               triggerMetadata(
-                      upgradeDsl,
-                      upgradeSchema,
-                      "world_canonical_initial_player_location_operation",
-                      OPERATION_TRUNCATE_TRIGGER))
+                  upgradeDsl,
+                  upgradeSchema,
+                  "world_canonical_initial_player_location_operation",
+                  OPERATION_TRUNCATE_TRIGGER))
           .isEqualTo(operationTruncateBefore);
       assertSqlState(
           upgradeSource,

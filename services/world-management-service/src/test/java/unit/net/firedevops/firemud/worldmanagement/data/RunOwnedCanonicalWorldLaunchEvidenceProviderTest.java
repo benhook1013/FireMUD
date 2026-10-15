@@ -391,8 +391,7 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
       GameDesignClient gameDesignClient = mock(GameDesignClient.class);
       StatusRuntimeException failure = Status.fromCode(code).asRuntimeException();
       when(gameDesignClient.getLaunchDescriptor(any())).thenThrow(failure);
-      RunOwnedCanonicalWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory =
-          mock();
+      RunOwnedCanonicalWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory = mock();
       RunOwnedCanonicalWorldLaunchEvidenceProvider provider =
           provider(
               fixture,
@@ -420,8 +419,7 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
       CanonicalGameInstanceLaunchAssociationClient fixtureClient = mock();
       StatusRuntimeException failure = Status.fromCode(code).asRuntimeException();
       when(fixtureClient.readFixture(any(), anyString())).thenThrow(failure);
-      RunOwnedCanonicalWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory =
-          mock();
+      RunOwnedCanonicalWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory = mock();
       when(factory.create(any(), any(), any(), anyString())).thenReturn(fixtureClient);
       RunOwnedCanonicalWorldLaunchEvidenceProvider provider =
           provider(
@@ -440,8 +438,7 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
 
       verify(gameDesignClient).getLaunchDescriptor(any());
       verify(factory).create(any(), any(), any(), eq("dev"));
-      verify(fixtureClient)
-          .readFixture(any(), eq(fixture.gameSessionLeafSha256()));
+      verify(fixtureClient).readFixture(any(), eq(fixture.gameSessionLeafSha256()));
       verify(fixtureClient).close();
     }
   }
@@ -452,16 +449,10 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
     GameDesignClient gameDesignClient = mock(GameDesignClient.class);
     when(gameDesignClient.getLaunchDescriptor(any()))
         .thenThrow(Status.PERMISSION_DENIED.asRuntimeException());
-    RunOwnedCanonicalWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory =
-        mock();
+    RunOwnedCanonicalWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory = mock();
     RunOwnedCanonicalWorldLaunchEvidenceProvider provider =
         provider(
-            fixture,
-            gameDesignClient,
-            null,
-            fixture.endpoints(),
-            fixture.tlsProperties(),
-            factory);
+            fixture, gameDesignClient, null, fixture.endpoints(), fixture.tlsProperties(), factory);
 
     try (PeerContext ignored = fixture.attachGameSessionPeer()) {
       assertThatThrownBy(provider::requireAuthenticatedEvidence)
