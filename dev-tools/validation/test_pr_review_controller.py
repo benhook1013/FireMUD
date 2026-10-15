@@ -4595,10 +4595,38 @@ class ControllerTests(unittest.TestCase):
                 controller._ensure_runnable(target, force=True)
                 self.assertIn(target.status, (ReviewStatus.READY, ReviewStatus.PARENT_MOVED, ReviewStatus.UNRECONCILED))
 
+    def test_default_discovery_audits_legacy_findings_and_preserves_existing_clearance(self):
+        for channel in ("hosted", "cli"):
+            for proof in ("legacy_pending", "structured_resolved", "legacy_ancestor"):
+                with self.subTest(channel=channel, proof=proof):
+                    source = self.allocation_evidence(
+                        head=HEAD_2 if proof == "legacy_ancestor" else HEAD_1,
+                        checkpoint="source", channel=channel, accepted=1, raw=1,
+                    )
+                    if proof == "structured_resolved":
+                        source["source_resolution_status"] = "resolved"
+                    histories = {(1, channel): [source]}
+                    controller = self.make({1: pr(1, HEAD_1)}, histories, heads={"feature-1": HEAD_1})
+                    controller.set_stack([1])
+                    saved = controller._state()
+                    target = controller._target(channel, expected_pr=1)
+                    if proof == "legacy_pending":
+                        self.assertNotIn("source_resolution_status", source)
+                        self.assertEqual(target.status, ReviewStatus.HELD)
+                        self.assertTrue(controller._evidence_provider.stop_audit_calls)
+                        with self.assertRaises(ControllerError):
+                            controller._ensure_runnable(target, force=True)
+                    else:
+                        self.assertEqual(target.status, ReviewStatus.READY)
+                        self.assertFalse(controller._accepted_findings_pending(source, HEAD_1))
+                        if proof == "legacy_ancestor":
+                            self.assertIn((HEAD_2, HEAD_1), controller.git.is_ancestor_calls)
+                    self.assertEqual(controller._state(), saved)
+
     def test_reopened_allocation_minimum_requires_peer_source_authority_after_taper(self):
         for channel, peer in (("hosted", "cli"), ("cli", "hosted")):
             for after_dry in (False, True):
-                for proof in ("pending", "unavailable", "finding_pending"):
+                for proof in ("pending", "unavailable", "finding_pending", "legacy"):
                     with self.subTest(channel=channel, after_dry=after_dry, proof=proof):
                         dry_count = 1 if channel == "hosted" else 3
                         histories = {(1, channel): [
@@ -4625,6 +4653,8 @@ class ControllerTests(unittest.TestCase):
                             checkpoint="peer-source", channel=peer, accepted=1, raw=1,
                             source_resolution_status=proof,
                         )]
+                        if proof == "legacy":
+                            histories[(1, peer)][0].pop("source_resolution_status")
                         saved = controller._state()
                         target = controller._target(channel, expected_pr=1)
                         self.assertEqual(target.status, ReviewStatus.READY if proof == "finding_pending" else ReviewStatus.HELD)
@@ -10141,7 +10171,8 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack(list(values))
         for channel in ("hosted", "cli"):
             useful = self.review_evidence(controller, 1, channel, f"{channel}-front")
-            useful.update({"raw": 1, "accepted": 1})
+            # This fixture tests topology after accepted fixes have cleared.
+            useful.update({"raw": 1, "accepted": 1, "source_resolution_status": "resolved"})
             evidence[(1, channel)] = [useful]
         self._enable_batch_status(controller, values)
 
@@ -12403,6 +12434,7 @@ class ControllerTests(unittest.TestCase):
             "anchored": True,
             "corrected_state": True,
             "accepted": 1,
+            "source_resolution_status": "resolved",
             "child_head": HEAD_1,
             "parent_identity": "develop",
             "parent_head": BASE,
@@ -13096,7 +13128,7 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack([1])
 
         self.assertEqual(controller.status()["prs"][0]["channels"]["cli"], "HELD")
-        with self.assertRaisesRegex(ControllerError, "held"):
+        with self.assertRaisesRegex(ControllerError, "unresolved review evidence"):
             controller.resolve_cli_target()
 
     def test_pull_request_snapshot_number_must_match_requested_pr(self):

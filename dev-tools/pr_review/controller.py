@@ -4971,7 +4971,9 @@ class ReviewController:
                 continue
             view = channel_allocations.get(pr, {})
             if (
-                view.get("status") in {"STOPPED", "CAP_AUDITED_STOP", "CAP_EXHAUSTED_PENDING", "HANDED_OFF"}
+                view.get("status") in {
+                    "STOPPED", "CAP_AUDITED_STOP", "CAP_EXHAUSTED_PENDING", "EXHAUSTED_PENDING", "HANDED_OFF",
+                }
                 or view.get("history_projection_current") is False
                 or (stop_audit_cache is not None and ("clearance", pr, channel.value) in stop_audit_cache)
             ):
@@ -4994,8 +4996,11 @@ class ReviewController:
             else:
                 discovery_closed = discovery_complete and default_minimum_remaining.get(pr, 0) == 0
             source_proof_pending = any(
-                _field(value, "source_resolution_status") is not None
-                and _field(value, "source_resolution_status") != "resolved"
+                (
+                    _field(value, "source_resolution_status") is not None
+                    and _field(value, "source_resolution_status") != "resolved"
+                )
+                or self._accepted_findings_pending(value, live[pr].head)
                 for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
                 for value in histories.get(selected, {}).get(pr, ())
             )
