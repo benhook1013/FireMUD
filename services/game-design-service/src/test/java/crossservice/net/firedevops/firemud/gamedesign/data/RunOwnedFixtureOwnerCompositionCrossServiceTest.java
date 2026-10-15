@@ -3,6 +3,7 @@ package crossservice.net.firedevops.firemud.gamedesign.data;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 
+import io.grpc.Context;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
@@ -13,9 +14,10 @@ import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -23,10 +25,14 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.grpc.ResolvedGrpcTlsMaterial;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
 import net.firedevops.firemud.gamedesign.data.RunOwnedFixtureOwnerReadAuthorization;
 import net.firedevops.firemud.gamedesign.data.TestDataSeederIntegrationSupport;
@@ -34,18 +40,17 @@ import net.firedevops.firemud.gamedesign.service.impl.RunOwnedFixtureAuthoredWor
 import net.firedevops.firemud.gamedesign.service.impl.RunOwnedFixtureAuthoredWorldVersionStateGrpcService;
 import net.firedevops.firemud.gamedesign.v1.AuthoredWorldSourceReadServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.AuthoredWorldVersionStateServiceGrpc;
-import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionFixtureCoordinator;
+import net.firedevops.firemud.gamesession.data.RunOwnedCanonicalLaunchPreparationOwner;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanceLaunchRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.service.impl.GameSessionControlPlaneGrpcService;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidenceProvider;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldFixedPresetResources;
-import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidenceProvider;
-import net.firedevops.firemud.worldmanagement.service.impl.WorldInstanceActivationServiceImpl;
 import net.firedevops.firemud.worldmanagement.service.impl.WorldLifecycleCommandServiceImpl;
-import net.firedevops.firemud.worldmanagement.service.impl.WorldManagementGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -95,8 +100,8 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
-  void actualProducerStartingAndPreparingOwnersComposeOverThreeMutualTlsSockets(
-      @TempDir Path testDirectory) throws Exception {
+  void actualProducerAndCanonicalOwnersComposeOverMutualTlsOwnerReads(@TempDir Path testDirectory)
+      throws Exception {
     assertThat(environment.getRequiredProperty("spring.application.name"))
         .isEqualTo("game-design-service");
     var applicationNameOrigin =
@@ -203,8 +208,8 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
             fixture,
             fixture.worldManagementCertificatePath(),
             fixture.worldManagementCertificatePath().resolveSibling("world-management.key"));
-    var coordinator =
-        new RunOwnedInitialAdmissionFixtureCoordinator(
+    var preparationOwner =
+        new RunOwnedCanonicalLaunchPreparationOwner(
             true,
             fixture.capabilityPath().toString(),
             fixture.receiptPath().toString(),
@@ -213,10 +218,12 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
             gsTls,
             beanFactory.getBeanProvider(GameSessionCanonicalInstanceLaunchRepository.class),
             NAMESPACE);
-    // The production loader verifies real producer files and original mounted pins; no test-only GS
-    // carrier is used.
-    var gsEvidence = coordinator.loadFixedVerifiedEvidence();
-    var starting = launchOwner.createVerifiedFixtureStartingLaunch(gsEvidence);
+    // The explicit production owner verifies real producer files and original mounted pins,
+    // creates the canonical STARTING allocation, and independently reads it back. No test-only GS
+    // carrier or scheduled coordinator path is used.
+    var startingOwnerEvidence = preparationOwner.prepareFixedVerifiedFixtureLaunch();
+    var gsEvidence = startingOwnerEvidence.launchEvidence();
+    var starting = startingOwnerEvidence.launch();
     assertThat(launchOwner.readVerifiedFixtureLaunch(gsEvidence)).isEqualTo(starting);
     assertThat(starting.catalog().association().sourceEvidence())
         .isEqualTo(receipt.creationEvidence());
@@ -230,7 +237,8 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
     assertThat(starting.rowVersion()).isZero();
     var registry = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
     var gsHandler = org.mockito.Mockito.spy(actualGsFixtureReadHandler(registry));
-    gsHandler.configureRunOwnedFixtureLaunchAssociationReadBoundary(coordinator, true, NAMESPACE);
+    gsHandler.configureRunOwnedFixtureLaunchAssociationReadBoundary(
+        preparationOwner, true, NAMESPACE);
     var gdsLeaf =
         issueFixedReadLeaf(
             fixture,
@@ -241,7 +249,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
     var factory = composedChannelFactory(channels);
     var servers = new java.util.ArrayList<Server>();
     net.firedevops.firemud.worldmanagement.client.GameDesignClient remoteDesign = null;
-    RunOwnedWorldLaunchEvidenceProvider provider = null;
+    RunOwnedCanonicalWorldLaunchEvidenceProvider provider = null;
     WorldLifecycleCommandServiceImpl commands = null;
     var fixedOwnerContext = actualFixedReadContext(fixture);
     try {
@@ -282,7 +290,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
               net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer.noop());
       ReflectionTestUtils.invokeMethod(remoteDesign, "init");
       provider =
-          new RunOwnedWorldLaunchEvidenceProvider(
+          new RunOwnedCanonicalWorldLaunchEvidenceProvider(
               true,
               fixture.capabilityPath().toString(),
               fixture.receiptPath().toString(),
@@ -306,65 +314,47 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
               worldTls,
               factory,
               registry);
-      var worldRepository =
-          new net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository(
-              worldDatabase.dsl());
-      var worldHandler = actualWorldFixtureHandler(commands, provider, worldRepository, registry);
-      Server worldServer =
-          fixedProductionServer(
-              fixture,
-              new FixedReadLeaf(
-                  fixture.worldManagementCertificatePath(),
-                  fixture.worldManagementCertificatePath().resolveSibling("world-management.key")),
-              Set.of(
-                  net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc
-                      .getPrepareWorldInstanceMethod()
-                      .getFullMethodName()),
-              worldHandler);
-      servers.add(worldServer);
-      var descriptor = receipt.launchReadEvidence().launchDescriptor();
+      var initialProvider = provider;
+      var initialCommands = commands;
       var bundle = receipt.launchReadEvidence().publishedReleaseBundle();
-      var request =
-          net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest.newBuilder()
-              .setTenantId(Long.toString(starting.catalog().association().gameSessionTenantId()))
-              .setGameInstanceId(Long.toString(starting.gameInstanceId()))
-              .setGameTemplateId(Long.toString(capability.gameTemplateId()))
-              .setControlPlaneRequestId(capability.operationId())
-              .setLaunchDescriptorId(descriptor.getLaunchDescriptorId())
-              .setVersionId(Long.toString(bundle.getVersionId()))
-              .setRuntimeFlagsJson(descriptor.getRuntimeFlagsJson())
-              .setGenerationConfigRevision(bundle.getGenerationConfigRevision())
-              .setReleaseBundleId(Long.toString(bundle.getId()))
-              .setPublishedReleaseBundleRef(bundle.getPublishedReleaseBundleRef())
-              .setVersionStateEpoch(
-                  receipt.launchReadEvidence().versionState().getVersionStateEpoch())
-              .build();
       var originalGdsRows = fixedReadOwnerRows();
       var originalGsRows = allComposedOwnerRows(gsDatabase.dsl());
-      ManagedChannel worldChannel =
-          factory.buildChannel(
-              "127.0.0.1:" + worldServer.getPort(), worldServer.getPort(), gsTls, false);
-      var stub =
-          net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc.newBlockingStub(
-                  worldChannel)
-              .withCallCredentials(
-                  new net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials(
-                      WORLD_MANAGEMENT_URI_SAN))
-              .withInterceptors(
-                  new net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor(
-                      WORLD_MANAGEMENT_URI_SAN))
-              .withDeadlineAfter(30, TimeUnit.SECONDS);
-      var prepared = stub.prepareWorldInstance(request);
-      assertThat(prepared.hasError()).as("actual World prepare response").isFalse();
-      assertThat(prepared.getWorldInstance().getStatus())
-          .isEqualTo(
-              net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus
-                  .WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING);
-      assertThat(prepared.getWorldInstance().getLifecycleEpoch()).isEqualTo(1L);
-      assertThat(prepared.getWorldInstance().getTenantId()).isEqualTo(request.getTenantId());
-      assertThat(prepared.getWorldInstance().getGameInstanceId())
-          .isEqualTo(request.getGameInstanceId());
-      assertThat(prepared.getWorldInstance().getVersionId()).isEqualTo(request.getVersionId());
+      RunOwnedCanonicalWorldLaunchEvidence worldEvidence =
+          withControlledGameSessionPeer(fixture, provider::requireAuthenticatedEvidence);
+      var request = exactPreparedWorldRequest(worldEvidence);
+      var emptyWorldRows = allComposedOwnerRows(worldDatabase.dsl());
+      org.mockito.Mockito.clearInvocations(authoredWorldSourceRepository);
+      var changedSource = changedPreparedSourceEvidence(receipt.sourceEvidence());
+      org.mockito.Mockito.doReturn(java.util.Optional.of(changedSource))
+          .when(authoredWorldSourceRepository)
+          .read(any(UUID.class), any(UUID.class), any(String.class), any(String.class));
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () ->
+                  withControlledGameSessionPeer(
+                      fixture,
+                      () ->
+                          ReflectionTestUtils.invokeMethod(
+                              initialCommands, "prepareRunOwnedFixture", request, worldEvidence)))
+          .isInstanceOf(RuntimeException.class);
+      assertThat(allComposedOwnerRows(worldDatabase.dsl())).isEqualTo(emptyWorldRows);
+      org.mockito.Mockito.verify(authoredWorldSourceRepository)
+          .read(any(UUID.class), any(UUID.class), any(String.class), any(String.class));
+      org.mockito.Mockito.doCallRealMethod()
+          .when(authoredWorldSourceRepository)
+          .read(any(UUID.class), any(UUID.class), any(String.class), any(String.class));
+      var prepared =
+          withControlledGameSessionPeer(
+              fixture,
+              () ->
+                  (net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto)
+                      ReflectionTestUtils.invokeMethod(
+                          initialCommands, "prepareRunOwnedFixture", request, worldEvidence));
+      assertThat(prepared).isNotNull();
+      assertThat(prepared.status()).isEqualTo("PREPARING");
+      assertThat(prepared.lifecycleEpoch()).isEqualTo(1L);
+      assertThat(prepared.tenantId()).isEqualTo(request.tenantId());
+      assertThat(prepared.gameInstanceId()).isEqualTo(request.gameInstanceId());
+      assertThat(prepared.versionId()).isEqualTo(request.versionId());
       var association =
           independentlyReadWorldFixture(worldDatabase.dsl(), starting.gameInstanceUuid());
       var privateKeys = association.worldPrivateKeys();
@@ -460,7 +450,17 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
                   .get("count", Long.class))
           .isOne();
       var worldRows = allComposedOwnerRows(worldDatabase.dsl());
-      assertThat(stub.prepareWorldInstance(request)).isEqualTo(prepared);
+      assertThat(
+              withControlledGameSessionPeer(
+                  fixture,
+                  () ->
+                      (net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto)
+                          ReflectionTestUtils.invokeMethod(
+                              initialCommands,
+                              "prepareRunOwnedFixture",
+                              request,
+                              initialProvider.requireAuthenticatedEvidence())))
+          .isEqualTo(prepared);
       var reread = independentlyReadWorldFixture(worldDatabase.dsl(), starting.gameInstanceUuid());
       assertThat(
               RunOwnedWorldFixedPresetResources.readCommitted(
@@ -473,15 +473,34 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
       assertThat(allComposedOwnerRows(gsDatabase.dsl())).isEqualTo(originalGsRows);
       assertThat(fixedReadOwnerRows()).isEqualTo(originalGdsRows);
       assertThat(Files.readAllBytes(fixture.receiptPath())).containsExactly(originalReceipt);
-      // Selector denial is an actual production response; no remote positive response is
-      // controlled.
-      assertThat(
-              stub.prepareWorldInstance(
-                      request.toBuilder()
-                          .setGameInstanceId(Long.toString(starting.gameInstanceId() + 1))
-                          .build())
-                  .hasError())
-          .isTrue();
+      // A caller-selected GS allocation mismatch is refused by the actual canonical owner before
+      // any additional materialization.
+      var mismatchedRequest =
+          new net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest(
+              request.tenantId(),
+              starting.gameInstanceId() + 1,
+              request.gameTemplateId(),
+              request.controlPlaneRequestId(),
+              request.launchDescriptorId(),
+              request.versionId(),
+              request.scriptPatchVersion(),
+              request.runtimeFlagsJson(),
+              request.generationConfigRevision(),
+              request.releaseBundleId(),
+              request.publishedReleaseBundleRef(),
+              request.versionStateEpoch(),
+              request.remapSetId());
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () ->
+                  withControlledGameSessionPeer(
+                      fixture,
+                      () ->
+                          ReflectionTestUtils.invokeMethod(
+                              initialCommands,
+                              "prepareRunOwnedFixture",
+                              mismatchedRequest,
+                              worldEvidence)))
+          .isInstanceOf(IllegalArgumentException.class);
       assertThat(allComposedOwnerRows(worldDatabase.dsl())).isEqualTo(worldRows);
       org.mockito.Mockito.verifyNoInteractions(entityClient);
       // Reconstruct actual World owners and all remote readers, retaining the original allocation.
@@ -496,7 +515,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
               net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer.noop());
       ReflectionTestUtils.invokeMethod(remoteDesign, "init");
       provider =
-          new RunOwnedWorldLaunchEvidenceProvider(
+          new RunOwnedCanonicalWorldLaunchEvidenceProvider(
               true,
               fixture.capabilityPath().toString(),
               fixture.receiptPath().toString(),
@@ -517,62 +536,42 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
               worldTls,
               factory,
               registry);
-      var restartedHandler =
-          actualWorldFixtureHandler(
-              commands,
-              provider,
-              new net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository(
-                  worldDatabase.dsl()),
-              registry);
-      Server restartedServer =
-          fixedProductionServer(
-              fixture,
-              new FixedReadLeaf(
-                  fixture.worldManagementCertificatePath(),
-                  fixture.worldManagementCertificatePath().resolveSibling("world-management.key")),
-              Set.of(
-                  net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc
-                      .getPrepareWorldInstanceMethod()
-                      .getFullMethodName()),
-              restartedHandler);
-      servers.add(restartedServer);
-      ManagedChannel restartedChannel =
-          factory.buildChannel(
-              "127.0.0.1:" + restartedServer.getPort(), restartedServer.getPort(), gsTls, false);
-      assertThat(actualWorldPrepareStub(restartedChannel).prepareWorldInstance(request))
+      var replayProvider = provider;
+      var replayCommands = commands;
+      var replayEvidence =
+          withControlledGameSessionPeer(fixture, provider::requireAuthenticatedEvidence);
+      assertThat(
+              withControlledGameSessionPeer(
+                  fixture,
+                  () ->
+                      (net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto)
+                          ReflectionTestUtils.invokeMethod(
+                              replayCommands, "prepareRunOwnedFixture", request, replayEvidence)))
           .isEqualTo(prepared);
       assertThat(allComposedOwnerRows(worldDatabase.dsl())).isEqualTo(worldRows);
       var reads =
           org.mockito.ArgumentCaptor.forClass(
               net.firedevops.firemud.gamesession.v1.GetRunOwnedFixtureLaunchAssociationRequest
                   .class);
-      org.mockito.Mockito.verify(gsHandler, org.mockito.Mockito.atLeast(3))
+      org.mockito.Mockito.verify(gsHandler, org.mockito.Mockito.atLeast(2))
           .getRunOwnedFixtureLaunchAssociation(reads.capture(), any());
       assertThat(reads.getAllValues())
           .extracting(value -> value.getReadRequestId())
           .doesNotHaveDuplicates();
+      // This is a controlled caller-context check, not a registered World RPC. A different leaf
+      // claiming the Game Session identity is rejected before any upstream owner read.
       org.mockito.Mockito.clearInvocations(
           gsHandler, launchDescriptorService, fixtureReadback, fixturePolicy);
       var otherGsLeaf =
           issueFixedReadLeaf(fixture, "different-game-session-client", SESSION_URI_SAN, false);
-      for (var wrongLeaf :
-          java.util.List.of(
-              otherGsLeaf,
-              new FixedReadLeaf(
-                  fixture.worldManagementCertificatePath(),
-                  fixture
-                      .worldManagementCertificatePath()
-                      .resolveSibling("world-management.key")))) {
-        var wrongTls = fixedReadTls(fixture, wrongLeaf.certificate(), wrongLeaf.privateKey());
-        var wrongChannel =
-            factory.buildChannel(
-                "127.0.0.1:" + restartedServer.getPort(),
-                restartedServer.getPort(),
-                wrongTls,
-                false);
-        assertThat(actualWorldPrepareStub(wrongChannel).prepareWorldInstance(request).hasError())
-            .isTrue();
-      }
+      var wrongSessionCertificate = readCertificate(otherGsLeaf.certificate());
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () ->
+                  withControlledPeer(
+                      wrongSessionCertificate, replayProvider::requireAuthenticatedEvidence))
+          .isInstanceOf(
+              RunOwnedCanonicalWorldLaunchEvidenceProvider
+                  .InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class);
       org.mockito.Mockito.verifyNoInteractions(
           gsHandler, launchDescriptorService, fixtureReadback, fixturePolicy, entityClient);
       assertThat(allComposedOwnerRows(worldDatabase.dsl())).isEqualTo(worldRows);
@@ -668,50 +667,95 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
     }
   }
 
-  private WorldManagementGrpcService actualWorldFixtureHandler(
-      WorldLifecycleCommandServiceImpl commands,
-      RunOwnedWorldLaunchEvidenceProvider provider,
-      net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository repository,
-      io.micrometer.core.instrument.MeterRegistry registry) {
-    var activation =
-        new WorldInstanceActivationServiceImpl(commands, Optional.empty(), provider, repository);
-    return new WorldManagementGrpcService(
-        org.mockito.Mockito.mock(net.firedevops.firemud.worldmanagement.service.PingService.class),
-        org.mockito.Mockito.mock(net.firedevops.firemud.worldmanagement.service.RoomService.class),
-        activation,
-        org.mockito.Mockito.mock(
-            net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService.class),
-        org.mockito.Mockito.mock(
-            net.firedevops.firemud.worldmanagement.service.WorldDesignMutationService.class),
-        org.mockito.Mockito.mock(
-            net.firedevops.firemud.worldmanagement.service.WorldUpgradeValidationService.class),
-        org.mockito.Mockito.mock(
-            net.firedevops.firemud.common.security.GameplaySessionAttestationService.class),
-        registry,
-        objectMapper,
-        NAMESPACE);
-  }
-
-  private net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc
-          .WorldManagementServiceBlockingStub
-      actualWorldPrepareStub(ManagedChannel channel) {
-    return net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc.newBlockingStub(
-            channel)
-        .withCallCredentials(
-            new net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials(
-                WORLD_MANAGEMENT_URI_SAN))
-        .withInterceptors(
-            new net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor(
-                WORLD_MANAGEMENT_URI_SAN))
-        .withDeadlineAfter(30, TimeUnit.SECONDS);
-  }
-
   private CommonGrpcClientProperties fixedReadTls(Fixture fixture, Path certificate, Path key) {
     var tls = new CommonGrpcClientProperties();
     tls.setCertChain(certificate.toString());
     tls.setPrivateKey(key.toString());
     tls.setCaCert(fixture.caCertificatePath().toString());
     return tls;
+  }
+
+  private <T> T withControlledGameSessionPeer(
+      Fixture fixture, java.util.concurrent.Callable<T> work) throws Exception {
+    return withControlledPeer(readCertificate(fixture.gameSessionCertificatePath()), work);
+  }
+
+  private <T> T withControlledPeer(
+      X509Certificate certificate, java.util.concurrent.Callable<T> work) throws Exception {
+    var peer = GrpcPeerIdentity.fromCertificate(certificate).orElseThrow();
+    var peerCertificate = GrpcPeerCertificateEvidence.fromCertificate(certificate).orElseThrow();
+    return Context.current()
+        .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+        .withValue(GrpcPeerCertificateEvidence.CONTEXT_KEY, peerCertificate)
+        .call(work);
+  }
+
+  private X509Certificate readCertificate(Path path) throws Exception {
+    try (var input = Files.newInputStream(path)) {
+      return (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+    }
+  }
+
+  private net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest
+      exactPreparedWorldRequest(RunOwnedCanonicalWorldLaunchEvidence evidence) {
+    var descriptor = evidence.launchDescriptor();
+    var association = evidence.gameSessionAssociation();
+    return new net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest(
+        association.gameSessionTenantId(),
+        association.gameInstanceId(),
+        descriptor.gameTemplateId(),
+        evidence.capability().operationId(),
+        descriptor.launchDescriptorId(),
+        descriptor.versionId(),
+        descriptor.scriptPatchVersionPresent() ? descriptor.scriptPatchVersion() : null,
+        descriptor.runtimeFlagsJson(),
+        descriptor.generationConfigRevision(),
+        descriptor.releaseBundleId(),
+        descriptor.publishedReleaseBundleRef(),
+        descriptor.versionStateEpoch(),
+        descriptor.remapSetIdPresent() ? descriptor.remapSetId() : null);
+  }
+
+  private AuthoredWorldSourceEvidence changedPreparedSourceEvidence(
+      AuthoredWorldSourceEvidence original) {
+    String changedDisplayName = original.worldDisplayName() + " changed";
+    long changedSourceRowId =
+        original.sourceGameRowId() == Long.MAX_VALUE ? 1L : original.sourceGameRowId() + 1L;
+    String requestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            original.targetNamespace(),
+            original.registrationRequestId(),
+            original.canonicalTenantId(),
+            original.tenantSlug(),
+            original.worldSlug(),
+            changedDisplayName);
+    String evidenceDigest =
+        AuthoredWorldSourceDigest.evidenceDigest(
+            original.targetNamespace(),
+            original.registrationRequestId(),
+            original.operationId(),
+            requestDigest,
+            original.canonicalTenantId(),
+            original.tenantSlug(),
+            original.worldSlug(),
+            changedDisplayName,
+            changedSourceRowId,
+            original.sourceGameTenantKey(),
+            original.provenanceKind());
+    return new AuthoredWorldSourceEvidence(
+        original.schemaVersion(),
+        original.targetNamespace(),
+        original.registrationRequestId(),
+        original.operationId(),
+        requestDigest,
+        original.canonicalTenantId(),
+        original.tenantSlug(),
+        original.worldSlug(),
+        changedDisplayName,
+        changedSourceRowId,
+        original.sourceGameTenantKey(),
+        original.provenanceKind(),
+        evidenceDigest);
   }
 
   private ComposedOwnerDatabase composedOwnerDatabase(
@@ -793,7 +837,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
 
   private WorldLifecycleCommandServiceImpl actualWorldFixtureCommands(
       ComposedOwnerDatabase database,
-      RunOwnedWorldLaunchEvidenceProvider provider,
+      RunOwnedCanonicalWorldLaunchEvidenceProvider provider,
       net.firedevops.firemud.worldmanagement.client.GameDesignClient design,
       net.firedevops.firemud.worldmanagement.client.EntityManagementClient entities,
       ServiceEndpointsProperties endpoints,
@@ -823,6 +867,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
             entities,
             registry,
             database.transactions(),
+            null,
             provider,
             database.dsl(),
             endpoints,

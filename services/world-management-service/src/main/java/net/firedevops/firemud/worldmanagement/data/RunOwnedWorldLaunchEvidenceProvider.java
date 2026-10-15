@@ -1,6 +1,5 @@
 package net.firedevops.firemud.worldmanagement.data;
 
-import jakarta.annotation.PreDestroy;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -18,13 +17,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
-import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
-import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationClient;
-import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
-import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -34,19 +29,15 @@ import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient.LaunchDescriptorReadback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 /**
  * Fixed-server reader and verifier for the run-owned World launch fixture.
  *
  * <p>Request data cannot select paths, principals, or evidence. Every call rereads and revalidates
- * the configured immutable files and reads the exact authenticated Game Design and Game Session
- * owner projections. The Game Session STARTING association is provenance only; it grants no World
- * materialization or activation authority.
+ * the configured immutable files and performs the exact authenticated Game Design owner read.
  */
 @Component
 public final class RunOwnedWorldLaunchEvidenceProvider {
@@ -67,13 +58,7 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
   private final String composeProjectName;
   private final CommonGrpcClientProperties grpcProperties;
   private final GameDesignClient gameDesignClient;
-  private final ServiceEndpointsProperties serviceEndpoints;
-  private final GrpcChannelFactory grpcChannelFactory;
-  private final GameSessionFixtureClientFactory gameSessionFixtureClientFactory;
-  private final String workloadNamespace;
-  private volatile CanonicalGameInstanceLaunchAssociationClient gameSessionFixtureClient;
 
-  @Autowired
   public RunOwnedWorldLaunchEvidenceProvider(
       @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:false}") boolean enabled,
       @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH:}") String capabilityPath,
@@ -81,38 +66,7 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
       @Value("${FIREMUD_SMOKE_RUN_ID:}") String runId,
       @Value("${FIREMUD_SMOKE_COMPOSE_PROJECT_NAME:}") String composeProjectName,
       CommonGrpcClientProperties grpcProperties,
-      GameDesignClient gameDesignClient,
-      ServiceEndpointsProperties serviceEndpoints,
-      GrpcChannelFactory grpcChannelFactory,
-      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
-    this(
-        enabled,
-        capabilityPath,
-        sourceReceiptPath,
-        runId,
-        composeProjectName,
-        grpcProperties,
-        gameDesignClient,
-        serviceEndpoints,
-        grpcChannelFactory,
-        workloadNamespace,
-        (endpoints, properties, factory, namespace) ->
-            new CanonicalGameInstanceLaunchAssociationClient(
-                endpoints, properties, factory, namespace));
-  }
-
-  RunOwnedWorldLaunchEvidenceProvider(
-      boolean enabled,
-      String capabilityPath,
-      String sourceReceiptPath,
-      String runId,
-      String composeProjectName,
-      CommonGrpcClientProperties grpcProperties,
-      GameDesignClient gameDesignClient,
-      ServiceEndpointsProperties serviceEndpoints,
-      GrpcChannelFactory grpcChannelFactory,
-      String workloadNamespace,
-      GameSessionFixtureClientFactory gameSessionFixtureClientFactory) {
+      GameDesignClient gameDesignClient) {
     this.enabled = enabled;
     this.capabilityPath = capabilityPath;
     this.sourceReceiptPath = sourceReceiptPath;
@@ -120,11 +74,6 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
     this.composeProjectName = composeProjectName;
     this.grpcProperties = Objects.requireNonNull(grpcProperties, "grpcProperties");
     this.gameDesignClient = Objects.requireNonNull(gameDesignClient, "gameDesignClient");
-    this.serviceEndpoints = serviceEndpoints == null ? null : serviceEndpoints.copy();
-    this.grpcChannelFactory = grpcChannelFactory;
-    this.gameSessionFixtureClientFactory =
-        Objects.requireNonNull(gameSessionFixtureClientFactory, "gameSessionFixtureClientFactory");
-    this.workloadNamespace = workloadNamespace;
   }
 
   /** Whether the server selected the run-owned fixture mode at startup. */
@@ -133,9 +82,8 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
   }
 
   /**
-   * Independently loads the fixed evidence and verifies both authenticated owner readbacks.
-   * Returned Game Session STARTING state is source evidence only and does not authorize World
-   * writes or activation.
+   * Independently loads all fixed evidence and verifies the actual authenticated request context.
+   * This is invoked on every prepare, activate, and exact retry.
    */
   public RunOwnedWorldLaunchEvidence requireAuthenticatedEvidence() {
     VerificationStage stage = VerificationStage.ENABLED;
@@ -201,18 +149,6 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
           throw invalidEvidence();
         }
 
-        stage = VerificationStage.GAME_SESSION_FIXTURE_READ;
-        var fixtureReadRequest =
-            new CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureRequest(
-                freshFixtureReadRequestId(UUID.fromString(capability.operationId())),
-                receipt.sourceEvidence().targetNamespace(),
-                UUID.fromString(capability.operationId()),
-                receipt.fixturePolicySeal().evidenceDigest());
-        CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult gameSessionAssociation =
-            gameSessionFixtureClient()
-                .readFixture(fixtureReadRequest, capability.gameSessionLeafSha256());
-        stage = VerificationStage.GAME_SESSION_FIXTURE_COMPARE;
-
         return new RunOwnedWorldLaunchEvidence(
             capability,
             receipt,
@@ -222,8 +158,7 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
             capability.gameSessionLeafSha256(),
             worldPins.uriSan(),
             worldPins.leafSha256(),
-            worldPins.caSha256(),
-            gameSessionAssociation);
+            worldPins.caSha256());
       } catch (RuntimeException exception) {
         if (exception instanceof InvalidRunOwnedWorldLaunchEvidenceException invalid) {
           throw invalid;
@@ -233,53 +168,6 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
     } catch (RuntimeException exception) {
       logger.warn("Run-owned World launch evidence verification rejected; stage={}", stage);
       throw exception;
-    }
-  }
-
-  private static UUID freshFixtureReadRequestId(UUID fixtureOperationId) {
-    UUID readRequestId;
-    do {
-      readRequestId = UUID.randomUUID();
-    } while (readRequestId.equals(fixtureOperationId));
-    return readRequestId;
-  }
-
-  private synchronized CanonicalGameInstanceLaunchAssociationClient gameSessionFixtureClient() {
-    if (gameSessionFixtureClient != null) {
-      return gameSessionFixtureClient;
-    }
-    if (serviceEndpoints == null
-        || grpcChannelFactory == null
-        || !StringUtils.hasText(workloadNamespace)) {
-      throw invalidEvidence();
-    }
-    CanonicalGameInstanceLaunchAssociationClient created =
-        gameSessionFixtureClientFactory.create(
-            serviceEndpoints, grpcProperties, grpcChannelFactory, workloadNamespace);
-    try {
-      created.init();
-      gameSessionFixtureClient = created;
-      return created;
-    } catch (IOException | RuntimeException failure) {
-      try {
-        created.close();
-      } catch (IOException ignored) {
-        // Keep the fixed content-free rejection; certificate paths never enter logs.
-      }
-      throw invalidEvidence();
-    }
-  }
-
-  @PreDestroy
-  public synchronized void closeGameSessionFixtureClient() {
-    CanonicalGameInstanceLaunchAssociationClient current = gameSessionFixtureClient;
-    gameSessionFixtureClient = null;
-    if (current != null) {
-      try {
-        current.close();
-      } catch (IOException failure) {
-        logger.warn("Run-owned World Game Session owner client did not close cleanly");
-      }
     }
   }
 
@@ -445,15 +333,6 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
 
   private record CertificatePins(String leafSha256, String uriSan, String caSha256) {}
 
-  @FunctionalInterface
-  interface GameSessionFixtureClientFactory {
-    CanonicalGameInstanceLaunchAssociationClient create(
-        ServiceEndpointsProperties endpoints,
-        CommonGrpcClientProperties tlsProperties,
-        GrpcChannelFactory channelFactory,
-        String workloadNamespace);
-  }
-
   private enum VerificationStage {
     ENABLED,
     RUN_BINDING,
@@ -464,9 +343,7 @@ public final class RunOwnedWorldLaunchEvidenceProvider {
     GAME_SESSION_PEER,
     DESCRIPTOR_PARSE,
     OWNER_DESCRIPTOR_READ,
-    OWNER_DESCRIPTOR_COMPARE,
-    GAME_SESSION_FIXTURE_READ,
-    GAME_SESSION_FIXTURE_COMPARE
+    OWNER_DESCRIPTOR_COMPARE
   }
 
   /** Content-free failure so malformed or secret-bearing fixture bytes never reach logs. */
