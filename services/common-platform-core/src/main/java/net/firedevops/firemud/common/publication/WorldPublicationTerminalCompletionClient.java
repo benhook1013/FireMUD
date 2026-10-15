@@ -25,8 +25,6 @@ public final class WorldPublicationTerminalCompletionClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public WorldPublicationTerminalCompletionClient(
       ServiceEndpointsProperties endpoints,
@@ -44,16 +42,10 @@ public final class WorldPublicationTerminalCompletionClient
     this.workloadNamespace = workloadNamespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException("World publication completion client is closed");
-    }
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("World publication completion stub unavailable");
-    }
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "World publication completion client is closed",
+        "World publication completion stub unavailable");
   }
 
   /** Returns only the exact fully validated terminal retained by the World owner. */
@@ -69,7 +61,8 @@ public final class WorldPublicationTerminalCompletionClient
           "World publication completion must use the configured workload namespace");
     }
     var response =
-        requireStub()
+        requireInitializedStub(
+                "World publication completion client is not initialized and available")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .completeVersionPublication(
                 WorldPublicationTerminalCompletionGrpcCodec.toRequest(request));
@@ -102,25 +95,5 @@ public final class WorldPublicationTerminalCompletionClient
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip")
         .withMaxInboundMessageSize(WorldPublicationTerminalCompletionGrpcCodec.MAX_MESSAGE_BYTES);
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private WorldPublicationTerminalCompletionServiceGrpc
-          .WorldPublicationTerminalCompletionServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "World publication completion client is not initialized and available");
-    }
-    return currentStub;
   }
 }
