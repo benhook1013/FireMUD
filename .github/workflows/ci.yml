@@ -1120,6 +1120,8 @@ jobs:
       checks: read # Preserve a prior successful required context on metadata-only edits.
       contents: read # Check out the shared required-gate composite action.
       actions: read # Inspect the matching required-gate job's preservation step.
+      statuses: write # Publish acknowledged supplementary metadata gate barriers.
+      pull-requests: read # Re-read the current PR tuple before status publication.
     needs: [changes, postgres-runtime-upgrade-proof, buf-check, docker-lint, shellcheck, python-script-validation, dev-tool-contract-checks, dev-tools-readme-contract, yaml-lint, metrics-cardinality-check, flyway-migration-sanity-checks, grpc-transport-config-sanity-checks, workflow-lint, helm-lint, helm-render-validation, helm-transaction-proof, docs-check, frontend-checks, build-and-test]
     if: ${{ always() }}
     steps:
@@ -1145,11 +1147,32 @@ jobs:
           workflow-file: ci.yml
           workflow-path: .github/workflows/ci.yml
 
+      - name: Publish pending required gate status
+        id: publish-pending-status
+        if: ${{ github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}
+        uses: ./.github/actions/publish-required-gate-status
+        with:
+          assessment: ${{ steps.preserved_gate.outputs.assessment }}
+          gate-name: Validation Gate
+          workflow-name: CI — Validation
+          workflow-file: ci.yml
+          workflow-path: .github/workflows/ci.yml
+
       - name: Report dependency-deferred required gate
-        if: ${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.action == 'edited' && github.event.changes.base.ref == null }}
+        env:
+          PUBLISHER_OUTCOME: ${{ steps.publish-pending-status.outcome }}
+          ASSESSMENT: ${{ steps.preserved_gate.outputs.assessment }}
+          PUBLICATION: ${{ steps.publish-pending-status.outputs.publication }}
         run: |
-          echo "Original required-gate proof is pending; dependency-deferred failure." >&2
-          exit 1
+          case "$PUBLISHER_OUTCOME/$ASSESSMENT/$PUBLICATION" in
+            success/dependency-deferred/pending-acknowledged|success/success/unchanged|success/success/success-acknowledged|success/success/pending-acknowledged)
+              ;;
+            *)
+              echo "Required-gate assessment or status acknowledgment is unavailable; dependency-deferred failure." >&2
+              exit 1
+              ;;
+          esac
 
       - name: Enforce validation success
         if: ${{ github.event_name != 'pull_request' || github.event.action != 'edited' || github.event.changes.base.ref != null }}
