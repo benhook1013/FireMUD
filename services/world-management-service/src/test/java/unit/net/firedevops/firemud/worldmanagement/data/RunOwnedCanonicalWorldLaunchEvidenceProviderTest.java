@@ -574,12 +574,7 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
     RunOwnedCanonicalWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory = mock();
     RunOwnedCanonicalWorldLaunchEvidenceProvider provider =
         provider(
-            fixture,
-            gameDesignClient,
-            null,
-            fixture.endpoints(),
-            fixture.tlsProperties(),
-            factory);
+            fixture, gameDesignClient, null, fixture.endpoints(), fixture.tlsProperties(), factory);
 
     provider.closeGameSessionFixtureClient();
 

@@ -743,10 +743,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     var version = ownerTransaction().execute(status -> versionOwner.acceptFresh(intake, state));
     var fixtureAssociations =
         new WorldCanonicalInstanceAssociationRepository(
-            dsl,
-            new WorldCompleteLaunchBindingRepository(dsl),
-            sourceOwner,
-            versionOwner);
+            dsl, new WorldCompleteLaunchBindingRepository(dsl), sourceOwner, versionOwner);
     var fixtureFence = new WorldDesignPublicationFenceRepository(dsl, sourceOwner);
     var fixtureRequest = RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence);
     var allocatedFixture =
@@ -782,8 +779,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                               "SELECT p.xmin::text FROM world_canonical_instance_preparation p "
                                   + "WHERE p.world_instance_id = ?",
                               allocatedFixture.worldInstanceId()))
-                      .isNotEqualTo(
-                          scalarText("SELECT (txid_current() % 4294967296)::text"));
+                      .isNotEqualTo(scalarText("SELECT (txid_current() % 4294967296)::text"));
                   return result;
                 });
     assertThat(materialized).isNotNull();
@@ -1296,12 +1292,12 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .get(0, String.class))
           .isNull();
       assertThat(
-              connection
-                  .fetchSingle(
-                      "SELECT attempt_created_full_xid::text, attempt_inserted_full_xid::text "
-                          + "FROM world_design_publication_fence_attempt WHERE publication_fence = ?",
-                      preservedForgedPublicationFence))
-          .as("the pre-1042.9 caller-forged stamp is retained while the new server stamp stays NULL")
+              connection.fetchSingle(
+                  "SELECT attempt_created_full_xid::text, attempt_inserted_full_xid::text "
+                      + "FROM world_design_publication_fence_attempt WHERE publication_fence = ?",
+                  preservedForgedPublicationFence))
+          .as(
+              "the pre-1042.9 caller-forged stamp is retained while the new server stamp stays NULL")
           .satisfies(
               row -> {
                 assertThat(row.get(0, String.class)).isEqualTo("9223372036854775807");
@@ -1486,7 +1482,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       assertThat(allRows(connection).get("world_instance"))
           .as(
               "fixture row remains byte-for-byte and xmin stable after denied lifecycle metadata writes")
-          .isEqualTo(retainedRowsAtV1042.get("world_instance"));
+          .isEqualTo(retainedRowsAt10428.get("world_instance"));
       assertThat(sourceOwner.read("dev", intakeRequest)).contains(intake);
       assertThat(
               versionOwner.readByCanonicalVersion(

@@ -128,7 +128,8 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
 
                   UUID accountOperationId = UUID.randomUUID();
                   UUID accountFenceId = UUID.randomUUID();
-                  byte[] accountBytes = "controlled account binding".getBytes(StandardCharsets.UTF_8);
+                  byte[] accountBytes =
+                      "controlled account binding".getBytes(StandardCharsets.UTF_8);
                   dsl.execute(
                       "INSERT INTO world_design_publication_account_binding "
                           + "(publication_fence, account_operation_id, account_fence_id, "
@@ -139,7 +140,8 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
                       accountBytes,
                       "sha256:" + sha256(accountBytes));
 
-                  byte[] inventoryBytes = "controlled selected inventory".getBytes(StandardCharsets.UTF_8);
+                  byte[] inventoryBytes =
+                      "controlled selected inventory".getBytes(StandardCharsets.UTF_8);
                   dsl.execute(
                       "INSERT INTO world_selected_publication_artifact_inventory "
                           + "(publication_fence, target_namespace, canonical_tenant_id, canonical_version_id, "
@@ -353,8 +355,7 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
             "NEW_GAME_ROW",
             evidenceDigest);
     return ownerTransaction()
-        .execute(
-            status -> intakeRepository.acceptFresh(NAMESPACE, UUID.randomUUID(), source));
+        .execute(status -> intakeRepository.acceptFresh(NAMESPACE, UUID.randomUUID(), source));
   }
 
   private WorldAuthoredVersionIdentityReceipt identity(
@@ -379,8 +380,7 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
             1L);
     return ownerTransaction()
         .execute(
-            status ->
-                new WorldAuthoredVersionIdentityRepository(dsl).acceptFresh(receipt, state));
+            status -> new WorldAuthoredVersionIdentityRepository(dsl).acceptFresh(receipt, state));
   }
 
   private static WorldDesignPublicationFenceEvidence evidence(
@@ -419,9 +419,7 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
   }
 
   private static void assertSqlState(
-      org.assertj.core.api.ThrowableAssert.ThrowingCallable action,
-      String state,
-      String message) {
+      org.assertj.core.api.ThrowableAssert.ThrowingCallable action, String state, String message) {
     assertThatThrownBy(action)
         .satisfies(
             failure -> {
