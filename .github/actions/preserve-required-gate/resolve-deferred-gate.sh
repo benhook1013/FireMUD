@@ -128,7 +128,7 @@ if [[ "${resolution_phase}" == reconcile ]]; then
   }
   barrier="$(latest_barrier)" || fail_closed "Supplementary status inventory is unavailable or ambiguous."
   if [[ "${barrier}" == null ]]; then exit 0; fi
-  if ! jq -e '.state == "pending" and .creator.id == 41898282 and
+  if ! jq -e '(.state == "pending" or .state == "failure" or .state == "error") and .creator.id == 41898282 and
       .creator.login == "github-actions[bot]" and .creator.type == "Bot" and
       (.id | type == "number" and . > 0 and . == floor)' <<<"${barrier}" >/dev/null; then
     exit 0 # Foreign or already terminal statuses are not ours to modify.
@@ -141,12 +141,16 @@ if [[ "${resolution_phase}" == reconcile ]]; then
   bridge_run_id="${BASH_REMATCH[1]}"
   bridge_attempt="${BASH_REMATCH[2]}"
   bridge_native() {
-    local target jobs check check_id
-    target="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${bridge_run_id}")" || return 1
+    local target jobs check check_id historical_title
+    target="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${bridge_run_id}/attempts/${bridge_attempt}")" || return 1
+    historical_title="$(jq -er --arg name "${workflow_name}" --arg pr "${pr_number}" --arg head "${head_sha}" '
+      .display_title as $value | $value
+      | capture("^(?<name>.*) pr-(?<pr>[1-9][0-9]*) base-(?<base>[0-9A-Fa-f]{40}) head-(?<head>[0-9A-Fa-f]{40})$")
+      | select(.name == $name and .pr == $pr and .head == $head) | $value' <<<"${target}")" || return 1
     jq -e --argjson id "${bridge_run_id}" --argjson attempt "${bridge_attempt}" \
       --argjson workflow "${workflow_id}" --arg repo "${GITHUB_REPOSITORY}" \
       --arg head_repo "${head_repository}" --arg head "${head_sha}" --arg branch "${head_branch}" \
-      --arg title "${source_title}" --arg name "${workflow_name}" --arg path "${workflow_file}" --argjson pr "${pr_number}" '
+      --arg title "${historical_title}" --arg name "${workflow_name}" --arg path "${workflow_file}" --argjson pr "${pr_number}" '
       .id == $id and .run_attempt == $attempt and .workflow_id == $workflow and
       .repository.full_name == $repo and .head_repository.full_name == $head_repo and
       .head_sha == $head and .head_branch == $branch and .display_title == $title and
@@ -186,41 +190,80 @@ if [[ "${resolution_phase}" == reconcile ]]; then
       '{run: $run, job: $job, check: $check}'
   }
   native="$(bridge_native)" || fail_closed "Supplementary barrier lacks bound native metadata evidence."
-  if jq -e '.run.status != "completed" or .job.status != "completed"' <<<"${native}" >/dev/null; then
-    echo "Bound metadata gate is still running; leave its supplementary barrier pending."
-    exit 0
-  fi
-  # Running identity is enough to wait; terminal settlement additionally needs
-  # both native producer/preservation steps to have completed successfully.
-  jq -e '
-    ([.job.steps[]? | select(.name == "Publish pending required gate status" and
-      .status == "completed" and .conclusion == "success")] | length == 1) and
-    ([.job.steps[]? | select(.name == "Preserve successful required gate on metadata-only edit" and
-      .status == "completed" and .conclusion == "success")] | length == 1)' <<<"${native}" >/dev/null ||
-    fail_closed "Terminal supplementary barrier lacks successful producer/preservation steps."
+  # Historical metadata proves ownership, including an acknowledged publication
+  # followed by cancellation/failure. It never supplies current-base proof.
+  jq -e '[.job.steps[]? | select(.name == "Publish pending required gate status" and
+    ((.status == "in_progress" and .conclusion == null) or
+     (.status == "completed" and (.conclusion == "success" or .conclusion == "failure" or
+       .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required"))))]
+    | length == 1' <<<"${native}" >/dev/null ||
+    fail_closed "Supplementary barrier lacks attributable publication ownership."
   assessment_output="$(mktemp)"
   trap 'rm -f "$assessment_output"' EXIT
   terminal_state=failure
+  selected_native=''
+  # Exclude the historical metadata barrier, not the completion callback's
+  # original run. The selector still applies its exact CURRENT base/head tuple.
   if GITHUB_EVENT_NAME=pull_request GITHUB_RUN_ID="${bridge_run_id}" \
     BASE_SHA="${base_sha}" HEAD_SHA="${head_sha}" PR_NUMBER="${pr_number}" \
     REQUIRED_GATE_NAME="${gate_name}" EXPECTED_WORKFLOW_NAME="${workflow_name}" \
     EXPECTED_WORKFLOW_FILE="${workflow_filename}" EXPECTED_WORKFLOW_PATH="${workflow_file}" \
-    GITHUB_OUTPUT="${assessment_output}" \
+    REQUIRED_GATE_INCLUDE_SOURCE=true GITHUB_OUTPUT="${assessment_output}" \
     bash "$(dirname "${BASH_SOURCE[0]}")/assess-required-gate.sh"; then
-    case "$(<"${assessment_output}")" in
-      assessment=dependency-deferred)
-        if jq -e '.run.conclusion == "success" and .job.conclusion == "success" and
-            .check.conclusion == "success"' <<<"${native}" >/dev/null; then exit 0; fi ;;
-      assessment=success)
-        if jq -e '.run.conclusion == "success" and .job.conclusion == "success" and
-            .check.conclusion == "success"' <<<"${native}" >/dev/null; then terminal_state=success; fi ;;
-      *) fail_closed "Unexpected supplementary proof assessment." ;;
-    esac
+    if [[ "$(<"${assessment_output}")" == assessment=dependency-deferred ]]; then exit 0; fi
+    selected="$(jq -Rsc '
+      split("\n") | map(select(length > 0) | split("="))
+      | if length != 5 or any(.[]; length != 2) or (map(.[0]) | unique | length) != 5
+        then error("ambiguous source provenance") else map({key: .[0], value: .[1]}) | from_entries end
+      | select(.assessment == "success")
+      | select((keys | sort) == (["assessment", "source_run_id", "source_job_id", "source_check_run_id", "source_run_attempt"] | sort))
+      | select([.source_run_id, .source_job_id, .source_check_run_id, .source_run_attempt]
+          | all(.[]; test("^[1-9][0-9]*$")))' "${assessment_output}")" ||
+      fail_closed "Selected source provenance is unavailable."
+    [[ -n "${selected}" ]] || fail_closed "Selected source provenance is malformed."
+    selected_run="$(jq -r .source_run_id <<<"${selected}")"
+    selected_job="$(jq -r .source_job_id <<<"${selected}")"
+    selected_check="$(jq -r .source_check_run_id <<<"${selected}")"
+    selected_attempt="$(jq -r .source_run_attempt <<<"${selected}")"
+    selected_source_native() {
+      local run job check
+      run="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${selected_run}/attempts/${selected_attempt}")" || return 1
+      jq -e --argjson id "${selected_run}" --argjson attempt "${selected_attempt}" --argjson workflow "${workflow_id}" \
+        --arg repo "${GITHUB_REPOSITORY}" --arg head_repo "${head_repository}" --arg head "${head_sha}" \
+        --arg branch "${head_branch}" --arg title "${source_title}" --arg name "${workflow_name}" \
+        --arg path "${workflow_file}" --argjson pr "${pr_number}" '
+        .id == $id and .run_attempt == $attempt and .workflow_id == $workflow and
+        .repository.full_name == $repo and .head_repository.full_name == $head_repo and
+        .head_sha == $head and .head_branch == $branch and .display_title == $title and
+        (.name == $name or .name == $title) and
+        (.path == $path or (.path | startswith($path + "@") and length > ($path | length) + 1)) and
+        .event == "pull_request" and .status == "completed" and (.pull_requests | type == "array") and
+        ((.pull_requests | length) == 0 or any(.pull_requests[]; .number == $pr))' <<<"${run}" >/dev/null || return 1
+      job="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/jobs/${selected_job}")" || return 1
+      jq -e --argjson id "${selected_job}" --argjson run "${selected_run}" --argjson attempt "${selected_attempt}" \
+        --arg name "${gate_name}" --arg head "${head_sha}" \
+        --arg url "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs/${selected_check}" '
+        .id == $id and .run_id == $run and .run_attempt == $attempt and .head_sha == $head and
+        .name == $name and .status == "completed" and .conclusion == "success" and .check_run_url == $url and
+        ([.steps[]? | select(.name == "Preserve successful required gate on metadata-only edit" and
+          .conclusion == "skipped")] | length == 1)' <<<"${job}" >/dev/null || return 1
+      check="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/check-runs/${selected_check}")" || return 1
+      jq -e --argjson id "${selected_check}" --arg head "${head_sha}" --arg name "${gate_name}" '
+        .id == $id and .app.id == 15368 and .app.slug == "github-actions" and .head_sha == $head and
+        .name == $name and .status == "completed" and .conclusion == "success"' <<<"${check}" >/dev/null || return 1
+      jq -cn --argjson run "${run}" --argjson job "${job}" --argjson check "${check}" '{run: $run, job: $job, check: $check}'
+    }
+    selected_native="$(selected_source_native)" || fail_closed "Selected current-base source lacks independent native proof."
+    terminal_state=success
   fi
   pr_json="$(current_pr)"
   pr_is_current "${pr_json}" || exit 0
   fresh_native="$(bridge_native)" || fail_closed "Native supplementary evidence changed or became unavailable."
   [[ "${fresh_native}" == "${native}" ]] || exit 0
+  if [[ "${terminal_state}" == success ]]; then
+    fresh_selected="$(selected_source_native)" || fail_closed "Selected current-base native proof became unavailable."
+    [[ "${fresh_selected}" == "${selected_native}" ]] || exit 0
+  fi
   fresh_barrier="$(latest_barrier)" || fail_closed "Latest supplementary status became unavailable."
   [[ "${fresh_barrier}" == "${barrier}" ]] || exit 0
   # Commit Status writes have no conditional-update primitive. Do not replay an

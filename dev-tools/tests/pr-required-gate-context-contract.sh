@@ -837,29 +837,29 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
       multiple-metadata:103) preserve_conclusion=cancelled ;;
       *) preserve_conclusion=success ;;
     esac
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"%s","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"%s"}]}\n' "$job_id" "$run_id" "$job_workflow_name" "$job_id" "$preserve_conclusion"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"%s","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"%s"}]}\n' "$job_id" "$run_id" "$job_workflow_name" "$job_id" "$preserve_conclusion"
   elif [[ "${GH_SCENARIO:-}" == "unverified-pending-gate" && "${job_id}" == "100" ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "pending-preservation-step-not-concluded" &&
     "${job_id}" == "100" && "$(<"$count_file")" -le 3 ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "pending-gate-discovery-throttle" &&
     "${job_id}" == "100" && "$(<"$count_file")" -le 5 ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "pending-missing-step-with-failed-substantive" &&
     "${job_id}" == "101" ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "completed-preservation-step-lag" &&
     "${job_id}" == "100" && "$(<"$count_file")" -eq 1 ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "completed-preservation-step-persistent-lag" &&
     "${job_id}" == "100" ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" =~ ^completed-(cancelled|skipped|stale)-missing-step$ &&
     "${job_id}" == "100" ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   else
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"%s","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"skipped"}]}\n' "$job_id" "$run_id" "$job_workflow_name" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"%s","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"skipped"}]}\n' "$job_id" "$run_id" "$job_workflow_name" "$job_id"
   fi
   exit 0
 fi
@@ -1032,6 +1032,9 @@ JSON
     else
       printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     fi
+    ;;
+  retry-success)
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","completed_at":"2026-07-30T03:00:00Z","conclusion":"success","started_at":"2026-07-30T02:00:00Z"}]}]\n'
     ;;
   no-local-workflow-file)
     printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
@@ -1449,7 +1452,7 @@ state.setdefault("calls", []).append(f"{method} {endpoint}")
 def run(run_id):
     return {"id": run_id, "workflow_id": 42, "name": "CI — Validation", "path": ".github/workflows/ci.yml",
             "created_at": "2026-07-30T01:00:00Z" if run_id == 100 else "2026-07-30T02:00:00Z",
-            "display_title": title, "head_sha": head, "head_branch": "proof-branch",
+            "display_title": title.replace(base, "c" * 40) if scenario.startswith("bridge-cross-") and run_id == 200 else title, "head_sha": head, "head_branch": "proof-branch",
             "repository": {"full_name": "example/firemud"}, "head_repository": {"full_name": repository},
             "event": "pull_request", "status": "completed", "conclusion": "failure" if run_id in {target_id, 200, 201} else "success",
             "run_attempt": state.get("attempt", 1), "pull_requests": [] if scenario == "fork-empty" else [{"number": 123}]}
@@ -1494,19 +1497,21 @@ def resolver_run(run_id):
 
 if scenario.startswith("bridge-") and method == "POST":
     assert endpoint == f"/repos/example/firemud/statuses/{head}", endpoint
-    state.setdefault("status_posts", []).append(dict(arg.split("=", 1) for arg in args if "=" in arg))
+    fields = dict(arg.split("=", 1) for arg in args if "=" in arg)
+    state.setdefault("status_posts", []).append(fields)
+    state["barrier_state"] = fields["state"]
     if scenario == "bridge-write-denied":
         exit_status = 1
 elif scenario.startswith("bridge-") and endpoint.endswith(f"/commits/{head}/status"):
     state["status_reads"] = state.get("status_reads", 0) + 1
-    barrier = {"id": 500, "context": "Validation Gate", "state": "pending",
+    barrier = {"id": 500, "context": "Validation Gate", "state": state.get("barrier_state", "pending"),
                "target_url": "https://github.com/example/firemud/actions/runs/200/attempts/1",
                "creator": {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}}
-    if scenario == "bridge-foreign":
+    if scenario in {"bridge-foreign", "bridge-cross-foreign"}:
         barrier["creator"]["id"] = 99
     elif scenario == "bridge-wrong-url":
         barrier["target_url"] = "https://github.com/foreign/repo/actions/runs/200/attempts/1"
-    elif scenario == "bridge-replaced" and state["status_reads"] > 1:
+    elif scenario in {"bridge-replaced", "bridge-cross-replaced"} and state["status_reads"] > 1:
         barrier["id"] = 501
     elif scenario == "bridge-terminal":
         barrier["state"] = "success"
@@ -1514,13 +1519,36 @@ elif scenario.startswith("bridge-") and endpoint.endswith(f"/commits/{head}/stat
                "statuses": [] if scenario == "bridge-absent" else [barrier]}]
     if scenario == "bridge-incomplete-status":
         result[0]["total_count"] = 2
+elif scenario.startswith("bridge-") and any(endpoint.endswith(f"/actions/runs/{identity}/attempts/1") for identity in (99, 100, 101)):
+    identity = int(endpoint.split("/")[-3])
+    result = run(identity)
+    result["conclusion"] = "success"
+    if scenario == "bridge-cross-source-wrong-title":
+        result["display_title"] = title.replace(base, "c" * 40)
+elif scenario.startswith("bridge-") and any(endpoint.endswith(f"/actions/jobs/{identity}") for identity in (99, 100, 101)):
+    identity = int(endpoint.rsplit("/", 1)[1])
+    result = {"id": identity, "run_id": identity, "run_attempt": 1, "head_sha": head, "name": "Validation Gate",
+              "status": "completed", "conclusion": "success",
+              "check_run_url": f"https://api.github.com/repos/example/firemud/check-runs/{identity}",
+              "steps": [{"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "skipped"}]}
+    if scenario == "bridge-cross-source-metadata":
+        result["steps"][0]["conclusion"] = "success"
+elif scenario.startswith("bridge-") and any(endpoint.endswith(f"/check-runs/{identity}") for identity in (99, 100, 101)):
+    identity = int(endpoint.rsplit("/", 1)[1])
+    state["selected_check_reads"] = state.get("selected_check_reads", 0) + 1
+    result = {"id": identity, "head_sha": head, "name": "Validation Gate", "status": "completed", "conclusion": "success",
+              "app": {"id": 99 if scenario == "bridge-cross-source-wrong-app" else 15368, "slug": "github-actions"}}
+    if scenario == "bridge-cross-source-changed" and state["selected_check_reads"] > 1:
+        result["conclusion"] = "failure"
+elif scenario == "bridge-retry" and endpoint.endswith("/actions/runs/101"):
+    result = run(101)
 elif scenario.startswith("bridge-") and endpoint.endswith("/actions/runs/200/attempts/1/jobs"):
     job = {"id": 2000, "run_id": 200, "head_sha": head, "name": "Validation Gate", "status": "completed",
            "conclusion": "cancelled" if scenario == "bridge-cancelled" else "success",
            "check_run_url": "https://api.github.com/repos/example/firemud/check-runs/3000",
            "steps": [{"name": name, "status": "completed", "conclusion": "success"} for name in
                      ("Preserve successful required gate on metadata-only edit", "Publish pending required gate status")]}
-    if scenario in {"bridge-running", "bridge-running-wrong-app"} and not state.get("metadata_completed"):
+    if scenario in {"bridge-running", "bridge-running-wrong-app", "bridge-cross-running"} and not state.get("metadata_completed"):
         job.update(status="in_progress", conclusion=None)
         # The acknowledged POST is visible before publication completes; the
         # preservation step has not yet appeared in this native snapshot.
@@ -1536,19 +1564,19 @@ elif scenario.startswith("bridge-") and endpoint.endswith("/check-runs/3000"):
     result = {"id": 3000, "head_sha": head, "name": "Validation Gate", "status": "completed",
               "conclusion": "cancelled" if scenario == "bridge-cancelled" else "success",
               "app": {"id": 99 if scenario in {"bridge-wrong-app", "bridge-running-wrong-app"} else 15368, "slug": "github-actions"}}
-    if scenario in {"bridge-running", "bridge-running-wrong-app"} and not state.get("metadata_completed"):
+    if scenario in {"bridge-running", "bridge-running-wrong-app", "bridge-cross-running"} and not state.get("metadata_completed"):
         result.update(status="in_progress", conclusion=None)
-elif scenario.startswith("bridge-") and endpoint.endswith("/actions/runs/200"):
+elif scenario.startswith("bridge-") and (endpoint.endswith("/actions/runs/200") or endpoint.endswith("/actions/runs/200/attempts/1")):
     result = run(200)
     result["conclusion"] = "cancelled" if scenario == "bridge-cancelled" else "success"
-    if scenario in {"bridge-running", "bridge-running-wrong-app"} and not state.get("metadata_completed"):
+    if scenario in {"bridge-running", "bridge-running-wrong-app", "bridge-cross-running"} and not state.get("metadata_completed"):
         result.update(status="in_progress", conclusion=None)
-    if scenario == "bridge-wrong-attempt":
+    if scenario == "bridge-wrong-attempt" or (scenario == "bridge-cross-earlier-attempt" and endpoint.endswith("/actions/runs/200")):
         result["run_attempt"] = 2
     if scenario == "bridge-empty-association":
         result["pull_requests"] = []
     if scenario == "bridge-wrong-title":
-        result["display_title"] = title.replace(base, "f" * 40)
+        result["display_title"] = title.replace("pr-123", "pr-456")
 elif method == "POST":
     job_id = int(endpoint.split("/")[-2])
     assert job_id in {2000, 2001} and endpoint.endswith(f"/actions/jobs/{job_id}/rerun"), endpoint
@@ -1727,6 +1755,8 @@ elif endpoint.endswith("/pulls/123"):
     state["pr_reads"] = state.get("pr_reads", 0) + 1
     result = {"number": 123, "state": "open", "base": {"sha": base, "ref": "develop", "repo": {"full_name": "example/firemud"}},
               "head": {"sha": "c" * 40 if scenario == "stale-pr" or (scenario == "bridge-pr-changed" and state["pr_reads"] > 1) else head, "ref": "proof-branch", "repo": {"full_name": repository}}}
+    if scenario == "bridge-cross-obsolete":
+        result["base"]["sha"] = "c" * 40
     if state["pr_reads"] >= 2 and scenario == "fresh-base-branch":
         result["base"]["ref"] = "main"
     elif state["pr_reads"] >= 2 and scenario == "fresh-head-repository":
@@ -1875,7 +1905,7 @@ PY
 }
 # Source completion can arrive after publication but before metadata completes.
 printf '{"scenario":"bridge-running"}\n' >"$tmp_dir/resolver-state-bridge-running"
-run_resolver bridge-running 100 no-local-workflow-file reconcile
+run_resolver bridge-running 100 pending-predecessor reconcile
 python3 - "$tmp_dir/resolver-state-bridge-running" <<'PY_BRIDGE'
 import json
 from pathlib import Path
@@ -1896,7 +1926,7 @@ assert len(state.get("status_posts", [])) == 1 and state["status_posts"][0]["sta
 PY_BRIDGE
 
 # Support is dormant until a producer publishes the exact recognizable barrier.
-for scenario in bridge-success bridge-empty-association bridge-fork bridge-pending bridge-failed bridge-cancelled bridge-replaced bridge-pr-changed bridge-foreign bridge-wrong-url bridge-terminal bridge-absent; do
+for scenario in bridge-success bridge-failed-producer bridge-failed-preservation bridge-empty-association bridge-fork bridge-pending bridge-failed bridge-cancelled bridge-replaced bridge-pr-changed bridge-foreign bridge-wrong-url bridge-terminal bridge-absent; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
   original=no-local-workflow-file
   [[ "$scenario" != bridge-pending ]] || original=pending-predecessor
@@ -1912,14 +1942,14 @@ import sys
 state = json.loads(Path(sys.argv[1]).read_text())
 scenario = sys.argv[2]
 posts = state.get("status_posts", [])
-expected = "success" if scenario in {"bridge-success", "bridge-empty-association", "bridge-fork"} else "failure" if scenario in {"bridge-failed", "bridge-cancelled"} else None
+expected = "success" if scenario in {"bridge-success", "bridge-failed-producer", "bridge-failed-preservation", "bridge-empty-association", "bridge-fork", "bridge-cancelled"} else "failure" if scenario in {"bridge-failed"} else None
 assert len(posts) == (1 if expected else 0), state
 if expected:
     assert posts[0]["state"] == expected, state
 assert not state.get("posts"), "bridge entered legacy rerun admission"
 PY_BRIDGE
 done
-for scenario in bridge-failed-producer bridge-failed-preservation bridge-running-wrong-app bridge-no-producer bridge-incomplete-status bridge-incomplete-jobs bridge-wrong-app bridge-wrong-attempt bridge-wrong-title bridge-write-denied; do
+for scenario in bridge-running-wrong-app bridge-no-producer bridge-incomplete-status bridge-incomplete-jobs bridge-wrong-app bridge-wrong-attempt bridge-wrong-title bridge-write-denied; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
   if run_resolver "$scenario" 100 no-local-workflow-file reconcile; then
     echo "unproved bridge settlement succeeded: $scenario" >&2; exit 1
@@ -1932,6 +1962,62 @@ state = json.loads(Path(sys.argv[1]).read_text())
 assert len(state.get("status_posts", [])) == (1 if sys.argv[2] == "bridge-write-denied" else 0), state
 PY_BRIDGE
 done
+
+# Same-head base advancement uses historical ownership and CURRENT proof.
+for scenario in bridge-cross-success bridge-cross-running bridge-cross-earlier-attempt bridge-cross-no-proof bridge-cross-failure bridge-cross-foreign bridge-cross-replaced bridge-cross-obsolete bridge-cross-cancelled-selection; do
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  original=no-local-workflow-file
+  [[ "$scenario" != bridge-cross-no-proof ]] || original=no-prior
+  [[ "$scenario" != bridge-cross-failure ]] || original=failed-predecessor
+  [[ "$scenario" != bridge-cross-cancelled-selection ]] || original=completed-cancelled-missing-step
+  if ! run_resolver "$scenario" 100 "$original" reconcile; then
+    cat "$tmp_dir/resolver-log-$scenario" >&2; exit 1
+  fi
+  # A later old-base metadata completion cannot reclaim current-base authority.
+  if [[ "$scenario" != bridge-cross-obsolete ]]; then
+    jq '.metadata_completed = true' "$tmp_dir/resolver-state-$scenario" >"$tmp_dir/recovery-state-update"
+    mv "$tmp_dir/recovery-state-update" "$tmp_dir/resolver-state-$scenario"
+    run_resolver "$scenario" 200 no-local-workflow-file reconcile
+  fi
+  python3 - "$tmp_dir/resolver-state-$scenario" "$scenario" <<'PY_RECOVERY'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+expected = "success" if sys.argv[2] in {"bridge-cross-success", "bridge-cross-running", "bridge-cross-earlier-attempt", "bridge-cross-cancelled-selection"} else "failure" if sys.argv[2] == "bridge-cross-failure" else None
+posts = state.get("status_posts", [])
+assert len(posts) == (1 if expected else 0), state
+if expected:
+    assert posts[0]["state"] == expected, state
+    assert posts[0]["target_url"].endswith("/200/attempts/1"), state
+PY_RECOVERY
+done
+for scenario in bridge-cross-source-wrong-app bridge-cross-source-wrong-title bridge-cross-source-metadata bridge-cross-source-changed; do
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  if run_resolver "$scenario" 100 no-local-workflow-file reconcile; then
+    echo "invalid independent current-base source accepted: $scenario" >&2; exit 1
+  fi
+  [[ "$(jq '.status_posts // [] | length' "$tmp_dir/resolver-state-$scenario")" == 0 ]] || exit 1
+done
+printf '{"scenario":"bridge-retry"}\n' >"$tmp_dir/resolver-state-bridge-retry"
+run_resolver bridge-retry 100 failed-predecessor reconcile
+run_resolver bridge-retry 101 retry-success reconcile
+python3 - "$tmp_dir/resolver-state-bridge-retry" <<'PY_RECOVERY'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+assert [post["state"] for post in state["status_posts"]] == ["failure", "success"], state
+PY_RECOVERY
+printf '{"scenario":"bridge-retry","barrier_state":"error"}\n' >"$tmp_dir/resolver-state-bridge-retry"
+run_resolver bridge-retry 101 retry-success reconcile
+python3 - "$tmp_dir/resolver-state-bridge-retry" <<'PY_RECOVERY'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+assert [post["state"] for post in state["status_posts"]] == ["success"], state
+PY_RECOVERY
 
 resolver_posts() {
   jq -r '.posts // 0' "$tmp_dir/resolver-state-$1"
