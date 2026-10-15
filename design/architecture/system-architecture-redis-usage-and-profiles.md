@@ -344,6 +344,12 @@ These wiring rules are enforced for ops scripts and maintenance tooling via **Co
 
 ---
 
+### Initial LOGIN context acknowledgement policy
+
+The [initial-context family](./system-architecture-redis.md#initial-login-context-aggregate) uses a dedicated protected Game Session Coordination binding and `gamesession_coord_app`, never an ambient or Cache client. The protected profile supplies the exact binding identity, local and replica AOF acknowledgement requirements and a positive bounded acknowledgement timeout. The local AOF minimum is exactly one. A zero replica minimum is permitted only for an independently qualified single-node/no-failover profile; replicated profiles require an explicit positive replica minimum. There are no inherited Account thresholds or automatic policy defaults.
+
+The owner pins a connection without transparent reconnect, verifies the live principal and exact registered script, performs mutation and `WAITAOF` on that connection, and independently reads the exact non-expiring postimage. Missing policy, lost acknowledgement, ambiguous readback or unavailable qualification remains held. AOF acknowledgement cannot establish restore or promotion continuity: the existing external recovery/maintenance authority must hold exact current global-family scope, fence and protected binding exclusion through the Account retirement dispatch. No production qualification provider or protected initial-context client binding is currently registered; controlled fixture execution does not supply them. Environment delivery requirements are listed in the [catalog](./infrastructure/environment-and-secrets-catalog.md#initial-login-context-coordination-policy).
+
 ## Related Documentation
 
 - `system-architecture-redis.md` – conceptual hub for Redis roles, invariants, and key naming.
@@ -352,9 +358,3 @@ These wiring rules are enforced for ops scripts and maintenance tooling via **Co
 - `system-architecture-redis-ops-access.md` – ACLs, allowed commands, and CI checks for ops tooling.
 - `system-architecture-redis-design-checklist.md` – concrete design checklist for Redis changes.
 - `system-architecture-testing.md` – test strategy, including Redis usage in integration and cross‑service tests.
-
-### Initial LOGIN context acknowledgement policy
-
-The [initial-context family](./system-architecture-redis.md#initial-login-context-aggregate) uses a dedicated protected Game Session Coordination binding and `gamesession_coord_app`, never an ambient or Cache client. The protected profile supplies the exact binding identity, local and replica AOF acknowledgement requirements and a positive bounded acknowledgement timeout. The local AOF minimum is exactly one. A zero replica minimum is permitted only for an independently qualified single-node/no-failover profile; replicated profiles require an explicit positive replica minimum. There are no inherited Account thresholds or automatic policy defaults.
-
-The owner pins a connection without transparent reconnect, verifies the live principal and exact registered script, performs mutation and `WAITAOF` on that connection, and independently reads the exact non-expiring postimage. Missing policy, lost acknowledgement, ambiguous readback or unavailable qualification remains held. AOF acknowledgement cannot establish restore or promotion continuity: the existing external recovery/maintenance authority must hold exact current global-family scope, fence and protected binding exclusion through the Account retirement dispatch. No production qualification provider or protected initial-context client binding is currently registered; controlled fixture execution does not supply them. Environment delivery requirements are listed in the [catalog](./infrastructure/environment-and-secrets-catalog.md#initial-login-context-coordination-policy).
