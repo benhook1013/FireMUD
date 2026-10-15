@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamedesign.draft;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -943,10 +944,16 @@ class TemplateConfigSourcePostgresIntegrationTest {
             List.of(rule, create),
             Map.of(GameplayRuleSource.SCOPE, "0", TemplateConfigSource.SCOPE, "0"));
     apply(f, initial);
+    var worldSeed =
+        IsolatedPublicationOperationFixtures.fresh(f.target, initial.commitId().toString());
+    var selectedCommit = worldSeed.account().input().selection().selectedCommit();
+    applyIsolatedWorldSuccessor(f, selectedCommit, worldSeed.world());
+    assertThat(selectedCommit.commitId()).isNotEqualTo(initial.commitId());
 
     // These isolated upstream bytes exercise this owner only; they do not prove authenticated
     // Account or World producer authority.
-    var inputs = selectedPublicationInputs(f, initial, "selected inherited template association");
+    var inputs =
+        selectedPublicationInputs(f, selectedCommit, "selected inherited template association");
     var operation =
         Objects.requireNonNull(
                 f.tx.execute(
@@ -1071,10 +1078,16 @@ class TemplateConfigSourcePostgresIntegrationTest {
             TemplateConfigSource.SCOPE,
             "0");
     apply(f, initial);
+    var worldSeed =
+        IsolatedPublicationOperationFixtures.fresh(f.target, initial.commitId().toString());
+    var selectedCommit = worldSeed.account().input().selection().selectedCommit();
+    applyIsolatedWorldSuccessor(f, selectedCommit, worldSeed.world());
+    assertThat(selectedCommit.commitId()).isNotEqualTo(initial.commitId());
 
     // The caller names the exact synchronized Draft; concurrent owner calls race only over the
     // first durable selection/association transaction. Upstream evidence remains stipulated.
-    var inputs = selectedPublicationInputs(f, initial, "concurrent selected template association");
+    var inputs =
+        selectedPublicationInputs(f, selectedCommit, "concurrent selected template association");
     var selection = inputs.selection();
     var operation = inputs.operation();
     var firstRead = inputs.firstRead();
@@ -1306,6 +1319,51 @@ class TemplateConfigSourcePostgresIntegrationTest {
               binding,
               new DraftCommitCoordinatorRepository.CoordinatorProof(
                   binding, List.of(applied.ownerOutcome())));
+          sources.captureSynchronized(binding);
+          coordinator.releaseApplicationSlot(binding);
+        });
+  }
+
+  /** Retains controlled World owner/source inputs without reserving the publication under test. */
+  private void applyIsolatedWorldSuccessor(
+      Fixture f,
+      DraftCommitBinding binding,
+      WorldPublishedStartLocationEvidence worldEvidence) {
+    f.tx.executeWithoutResult(
+        ignored -> {
+          var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
+          var reviewed = new GameDesignReviewedBaseRepository(f.dsl);
+          var sources = new GameDesignSourceRepository(f.dsl);
+          sources.claimReviewed(
+              binding,
+              reviewed.resolve(f.target, DraftBaseReference.parse(binding.baseCommitId())));
+          coordinator.claimApplicationSlot(binding);
+          coordinator.markOwnerInProgress(binding, DraftCommitBinding.Owner.WORLD_MANAGEMENT);
+          var appliedEpochs =
+              binding.affectedUnits(DraftCommitBinding.Owner.WORLD_MANAGEMENT).stream()
+                  .map(
+                      unit ->
+                          new DraftCommitCoordinatorRepository.AppliedEpoch(
+                              unit.aggregateType(),
+                              unit.aggregateId(),
+                              unit.scopeType(),
+                              unit.scopeId(),
+                              unit.expectedEpoch(),
+                              new BigInteger(unit.expectedEpoch()).add(BigInteger.ONE).toString()))
+                  .toList();
+          var outcome =
+              new DraftCommitCoordinatorRepository.OwnerOutcome(
+                  DraftCommitBinding.Owner.WORLD_MANAGEMENT,
+                  DraftCommitCoordinatorRepository.OwnerStatus.APPLIED,
+                  binding.commitId(),
+                  binding.digest(),
+                  "ISOLATED-world-applied",
+                  worldEvidence.appliedResultBytes(),
+                  appliedEpochs);
+          coordinator.recordOwnerOutcome(binding, outcome);
+          coordinator.advanceSourceVisibilityFence(
+              binding,
+              new DraftCommitCoordinatorRepository.CoordinatorProof(binding, List.of(outcome)));
           sources.captureSynchronized(binding);
           coordinator.releaseApplicationSlot(binding);
         });
