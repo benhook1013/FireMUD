@@ -38,7 +38,6 @@ import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializer
 import net.firedevops.firemud.accountservice.config.AccountJwtSignerMaterializerTrustBinding.Binding;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
-import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
@@ -75,6 +74,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountControlUiReg
 import net.firedevops.firemud.accountservice.service.session.AccountJwtJwksTrustedSource;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.AccountAsymmetricJwtVerifier;
 import net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot;
@@ -907,7 +907,25 @@ class AccountControlUiCurrentActorVerifierTest {
     DemoTenantEntitlementEventV1Codec.Event billingEvent =
         DemoTenantEntitlementEventV1Codec.seal(request, source, 1L, 1L, 1L, 7L);
     TenantAuthorityEventV1Codec.Event authorityEvent =
-        TenantAuthorityEventV1Codec.seal(request, source, 1L, 1L, 11L, billingEvent);
+        TenantAuthorityEventV1Codec.seal(
+            new TenantAuthorityEventV1Codec.AuthorityRequest(
+                request.requestId(),
+                request.requestDigest(),
+                request.canonicalTenantId(),
+                request.tenantCreationRequestId(),
+                request.tenantCreationRequestDigest()),
+            source,
+            1L,
+            1L,
+            11L,
+            new TenantAuthorityEventV1Codec.BillingReceipt(
+                billingEvent.canonicalTenantId(),
+                billingEvent.requestId(),
+                billingEvent.requestDigest(),
+                billingEvent.outboxStreamKey(),
+                billingEvent.tenantBillingSequence(),
+                billingEvent.eventId(),
+                billingEvent.eventDigest()));
     return TenantAuthorityEventV1Codec.verify(authorityEvent.payload());
   }
 

@@ -47,8 +47,12 @@ jobs:
         uses: ./.github/actions/setup-trivy
 
       - name: 🛡️ Trivy container and dependency scan
+        # Share DB origins while preserving image scans' unfixed findings and full directory scope.
         run: >-
           trivy image
+          --config config/security/trivy.yaml
+          --ignore-unfixed=false
+          --skip-dirs ""
           --format json
           --output trivy-report.json
           --exit-code 1

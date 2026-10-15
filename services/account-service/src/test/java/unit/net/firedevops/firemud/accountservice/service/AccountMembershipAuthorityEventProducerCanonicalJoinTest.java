@@ -27,7 +27,6 @@ import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
-import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
@@ -63,6 +62,7 @@ import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityE
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec.AccountSecurityCutoff;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.junit.jupiter.api.AfterEach;
@@ -750,12 +750,24 @@ class AccountMembershipAuthorityEventProducerCanonicalJoinTest {
             tenantSourceVersion,
             billingSequence);
     return TenantAuthorityEventV1Codec.seal(
-        request,
+        new TenantAuthorityEventV1Codec.AuthorityRequest(
+            request.requestId(),
+            request.requestDigest(),
+            request.canonicalTenantId(),
+            request.tenantCreationRequestId(),
+            request.tenantCreationRequestDigest()),
         source,
         tenantGeneration,
         tenantSourceVersion,
         authorityOutboxSequence,
-        billingEvent);
+        new TenantAuthorityEventV1Codec.BillingReceipt(
+            billingEvent.canonicalTenantId(),
+            billingEvent.requestId(),
+            billingEvent.requestDigest(),
+            billingEvent.outboxStreamKey(),
+            billingEvent.tenantBillingSequence(),
+            billingEvent.eventId(),
+            billingEvent.eventDigest()));
   }
 
   private static FreshTenantCreationEvidence freshTenantEvidence(

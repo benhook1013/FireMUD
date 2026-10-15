@@ -19,10 +19,11 @@ import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV
  *
  * <p>This does not authenticate the source or authorize gameplay admission. The membership event is
  * immutable historical evidence; a caller supplies the separate current tuple, fence and
- * checkpoints. Private-realm grant and tenant-billing tuple evidence are not supported by this
- * candidate and are rejected until their source contracts are available. An empty result for a
- * missing membership is only a local statement about the supplied snapshot, not proof that the
- * account has never joined.
+ * checkpoints. Tenant generations are opaque and must match exactly. A tenant-billing cutoff is
+ * accepted only when it exactly matches the current tenant source and checkpoint; its billing
+ * receipt remains provenance and grants no entitlement authority. Private-realm grant evidence is
+ * unsupported. An empty result for a missing membership is only a local statement about the
+ * supplied snapshot, not proof that the account has never joined.
  */
 public final class RuntimeMembershipAuthorityEvidenceValidator {
   private static final String EVENT_STREAM_PREFIX =
@@ -83,14 +84,21 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
             checkpoints.get(accountStream),
             evidence.accountId(),
             currentTuple.accountAuthorityGeneration());
-    verifyTenantSource(
-        sources.get(tenantStream),
-        checkpoints.get(tenantStream),
-        evidence.tenantId(),
-        currentTuple.tenantAuthorityGeneration().get(evidence.tenantId()));
+    TenantAuthorityEventV1Codec.Event tenantSource =
+        verifyTenantSource(
+            sources.get(tenantStream),
+            checkpoints.get(tenantStream),
+            evidence.tenantId(),
+            currentTuple.tenantAuthorityGeneration().get(evidence.tenantId()));
 
     validateCurrentAccountCutoff(
         currentTuple, accountSource, checkpoints.get(accountStream), accountStream);
+    validateCurrentTenantCutoff(
+        currentTuple,
+        tenantSource,
+        checkpoints.get(tenantStream),
+        tenantStream,
+        evidence.tenantId());
 
     Checkpoint membershipCheckpoint = checkpoints.get(membershipStream);
     if (membershipCheckpoint.outboxSequence().equals("0")) {
@@ -192,17 +200,36 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
     requireEquals(currentGeneration, event.issuerAuthGeneration(), "current issuer generation");
   }
 
-  private static void verifyTenantSource(
+  private static TenantAuthorityEventV1Codec.Event verifyTenantSource(
       SourceEvidence supplied,
       Checkpoint checkpoint,
       String expectedTenantId,
       String currentGeneration) {
     if (checkpoint.outboxSequence().equals("0")) {
       requireEquals("1", currentGeneration, "authorityTuple.tenantAuthorityGeneration baseline");
-      return;
+      return null;
     }
-    throw invalid(
-        "tenant source", "advanced tenant authority requires its supported owner source contract");
+    var event =
+        TenantAuthorityEventV1Codec.verify(
+            supplied.canonicalEventJson().getBytes(StandardCharsets.UTF_8));
+    requireSourceIdentity(
+        supplied,
+        checkpoint,
+        event.eventId().toString(),
+        event.eventDigest(),
+        new String(event.payload(), StandardCharsets.UTF_8),
+        Long.toString(event.outboxSequence()),
+        event.outboxStreamKey());
+    requireEquals(expectedTenantId, event.tenantId().toString(), "tenant source tenantId");
+    requireEquals(
+        currentGeneration,
+        Long.toString(event.tenantAuthorityGeneration()),
+        "current tenant authority generation");
+    requireEquals(
+        currentGeneration,
+        Long.toString(event.tenantAuthoritySourceVersion()),
+        "current tenant authority source version");
+    return event;
   }
 
   private static AccountSource verifyAccountSource(
@@ -395,6 +422,50 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
         "current account cutoff source sequence");
   }
 
+  private static void validateCurrentTenantCutoff(
+      AuthorityTuple tuple,
+      TenantAuthorityEventV1Codec.Event source,
+      Checkpoint checkpoint,
+      String expectedTenantStream,
+      String expectedTenantId) {
+    Optional<Map<String, MembershipAuthorityEventV1Codec.TenantBillingCutoff>> cutoffs =
+        tuple.tenantBillingCutoff();
+    if (checkpoint.outboxSequence().equals("0")) {
+      if (source != null || cutoffs.isPresent()) {
+        throw invalid(
+            "authorityTuple.tenantBillingCutoff", "must be absent at the tenant baseline");
+      }
+      return;
+    }
+    if (source == null || cutoffs.isEmpty()) {
+      throw invalid(
+          "authorityTuple.tenantBillingCutoff",
+          "must bind the current tenant source event and checkpoint");
+    }
+    requireEquals(expectedTenantStream, source.outboxStreamKey(), "current tenant source stream");
+    requireEquals(
+        checkpoint.outboxSequence(),
+        Long.toString(source.outboxSequence()),
+        "current tenant source checkpoint sequence");
+    MembershipAuthorityEventV1Codec.TenantBillingCutoff cutoff =
+        exactTenantCutoff(
+            cutoffs.orElseThrow(), expectedTenantId, "authorityTuple.tenantBillingCutoff");
+    requireEquals(
+        tuple.tenantAuthorityGeneration().get(expectedTenantId),
+        cutoff.tenantAuthorityGeneration(),
+        "current tenant cutoff generation");
+    requireEquals(
+        Long.toString(source.tenantBillingSequence()),
+        cutoff.tenantBillingSequence(),
+        "current tenant cutoff billing sequence");
+    requireEquals(
+        source.outboxStreamKey(), cutoff.outboxStreamKey(), "current tenant cutoff stream key");
+    requireEquals(
+        Long.toString(source.outboxSequence()),
+        cutoff.outboxSequence(),
+        "current tenant cutoff outbox sequence");
+  }
+
   private static void validateMissingMembership(Snapshot evidence) {
     if (evidence.membershipExists()
         || !"MISSING".equals(evidence.membershipLifecycleState())
@@ -444,7 +515,7 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
         "current membership authority generation");
 
     AuthorityTuple eventTuple = event.authorityTuple();
-    requireSupportedTupleExtensions(eventTuple, "membership source authorityTuple");
+    requireSupportedPrivateRealmGrantVersions(eventTuple, "membership source authorityTuple");
     requireAtMost(
         eventTuple.issuerAuthGeneration(),
         currentTuple.issuerAuthGeneration(),
@@ -453,13 +524,38 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
         eventTuple.accountAuthorityGeneration(),
         currentTuple.accountAuthorityGeneration(),
         "membership source accountAuthorityGeneration");
-    requireAtMost(
+    requireEquals(
         eventTuple.tenantAuthorityGeneration().get(evidence.tenantId()),
         currentTuple.tenantAuthorityGeneration().get(evidence.tenantId()),
-        "membership source tenantAuthorityGeneration");
+        "membership source tenantAuthorityGeneration current equality");
     requireAtMost(
         event.issuanceFence(), evidence.issuanceFence(), "membership source issuanceFence");
     validateHistoricalAccountCutoff(eventTuple, currentTuple, currentAccountSource);
+    validateHistoricalTenantCutoff(eventTuple, currentTuple, evidence.tenantId());
+  }
+
+  private static void validateHistoricalTenantCutoff(
+      AuthorityTuple eventTuple, AuthorityTuple currentTuple, String tenantId) {
+    Optional<Map<String, MembershipAuthorityEventV1Codec.TenantBillingCutoff>> historical =
+        eventTuple.tenantBillingCutoff();
+    Optional<Map<String, MembershipAuthorityEventV1Codec.TenantBillingCutoff>> current =
+        currentTuple.tenantBillingCutoff();
+    if (historical.isPresent() != current.isPresent()) {
+      throw invalid(
+          "membership source tenantBillingCutoff",
+          "must match current cutoff presence at the exact tenant generation");
+    }
+    if (historical.isPresent()) {
+      MembershipAuthorityEventV1Codec.TenantBillingCutoff historicalCutoff =
+          exactTenantCutoff(
+              historical.orElseThrow(), tenantId, "membership source tenantBillingCutoff");
+      MembershipAuthorityEventV1Codec.TenantBillingCutoff currentCutoff =
+          exactTenantCutoff(current.orElseThrow(), tenantId, "current tenantBillingCutoff");
+      requireEquals(
+          currentCutoff,
+          historicalCutoff,
+          "membership source tenantBillingCutoff current exact equality");
+    }
   }
 
   private static void validateHistoricalAccountCutoff(
@@ -527,7 +623,26 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
         membershipGeneration,
         tuple.membershipAuthorityGeneration().get(tenantId),
         path + ".membershipAuthorityGeneration");
-    requireSupportedTupleExtensions(tuple, path);
+    requireSupportedPrivateRealmGrantVersions(tuple, path);
+    tuple
+        .tenantBillingCutoff()
+        .ifPresent(
+            cutoffs -> {
+              MembershipAuthorityEventV1Codec.TenantBillingCutoff cutoff =
+                  exactTenantCutoff(cutoffs, tenantId, path + ".tenantBillingCutoff");
+              requirePositiveDecimal(
+                  cutoff.tenantAuthorityGeneration(),
+                  path + ".tenantBillingCutoff.tenantAuthorityGeneration");
+              requirePositiveDecimal(
+                  cutoff.tenantBillingSequence(),
+                  path + ".tenantBillingCutoff.tenantBillingSequence");
+              requireEquals(
+                  EVENT_STREAM_PREFIX + "tenant/" + tenantId,
+                  cutoff.outboxStreamKey(),
+                  path + ".tenantBillingCutoff.outboxStreamKey");
+              requirePositiveDecimal(
+                  cutoff.outboxSequence(), path + ".tenantBillingCutoff.outboxSequence");
+            });
     tuple
         .accountSecurityCutoff()
         .ifPresent(
@@ -548,12 +663,19 @@ public final class RuntimeMembershipAuthorityEvidenceValidator {
             });
   }
 
-  private static void requireSupportedTupleExtensions(AuthorityTuple tuple, String path) {
+  private static MembershipAuthorityEventV1Codec.TenantBillingCutoff exactTenantCutoff(
+      Map<String, MembershipAuthorityEventV1Codec.TenantBillingCutoff> cutoffs,
+      String tenantId,
+      String path) {
+    if (cutoffs.size() != 1 || !cutoffs.containsKey(tenantId)) {
+      throw invalid(path, "must contain exactly the current tenantId key");
+    }
+    return Objects.requireNonNull(cutoffs.get(tenantId), path + " entry must not be null");
+  }
+
+  private static void requireSupportedPrivateRealmGrantVersions(AuthorityTuple tuple, String path) {
     if (!tuple.privateRealmGrantVersions().isEmpty()) {
       throw invalid(path + ".privateRealmGrantVersions", "is not supported by this candidate");
-    }
-    if (tuple.tenantBillingCutoff().isPresent()) {
-      throw invalid(path + ".tenantBillingCutoff", "is not supported by this candidate");
     }
   }
 

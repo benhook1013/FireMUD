@@ -15,7 +15,6 @@ import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest.EntitlementAvailabilityV2;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementSnapshot;
-import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -48,6 +47,7 @@ import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
 import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator;
 import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Snapshot;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
