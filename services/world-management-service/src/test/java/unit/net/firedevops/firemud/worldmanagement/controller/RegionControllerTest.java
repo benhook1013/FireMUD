@@ -1,9 +1,13 @@
 package net.firedevops.firemud.worldmanagement.controller;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -12,6 +16,7 @@ import java.util.Map;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.dto.RegionDto;
 import net.firedevops.firemud.worldmanagement.service.RegionService;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,6 +61,27 @@ class RegionControllerTest {
     mockMvc
         .perform(post("/regions/4/move").param("tenantId", "1").param("shardId", "3"))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void moveMapsPublicationOwnerConflictToSafeConflictResponse() throws Exception {
+    when(regionService.moveRegion(1L, 4L, 3))
+        .thenThrow(
+            new WorldDesignPublicationFenceRepository.ConflictException(
+                "private owner details must not be returned"));
+
+    mockMvc
+        .perform(post("/regions/4/move").param("tenantId", "1").param("shardId", "3"))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.data").doesNotExist())
+        .andExpect(jsonPath("$.error.code").value("CONFLICT"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value("World design publication state conflicts with the request"))
+        .andExpect(content().string(not(containsString("private owner details"))));
+
+    verify(regionService).moveRegion(1L, 4L, 3);
   }
 
   @Test
