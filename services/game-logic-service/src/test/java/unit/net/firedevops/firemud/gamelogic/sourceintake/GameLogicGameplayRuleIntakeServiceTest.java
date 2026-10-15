@@ -18,8 +18,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderCredentials;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeAuthorizationCredentials;
 import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeOperation;
 import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTerminal;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationBinding;
@@ -30,7 +32,6 @@ import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadClient;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderCredentials;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -267,7 +268,7 @@ class GameLogicGameplayRuleIntakeServiceTest {
   }
 
   @Test
-  void creatorPublicationCredentialCannotBeMixedWithTheServicePeer() {
+  void creatorIntakeCredentialCannotBeMixedWithTheServicePeer() {
     var fixture = new Fixture();
     var authorization = authorization();
     var peer =
@@ -277,9 +278,40 @@ class GameLogicGameplayRuleIntakeServiceTest {
         Context.current()
             .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
             .withValue(
-                AccountSelectedPublicationOrderCredentials.CONTEXT_KEY,
-                AccountSelectedPublicationOrderCredentials.Credential.of(
+                AccountGameLogicIntakeAuthorizationCredentials.CONTEXT_KEY,
+                AccountGameLogicIntakeAuthorizationCredentials.Credential.of(
                     "creator-order-credential"));
+    Context previous = request.attach();
+    try {
+      assertThatThrownBy(() -> fixture.service.retain(authorization))
+          .isInstanceOf(RuntimeException.class)
+          .satisfies(
+              error ->
+                  assertThat(Status.fromThrowable(error).getCode())
+                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+    } finally {
+      Context.current().detach(previous);
+    }
+    verify(fixture.repository, never()).findTerminal(any(UUID.class));
+    verify(fixture.accountReader, never())
+        .read(any(GameLogicIntakeAuthorizationReadEvidence.Request.class));
+    verify(fixture.gameDesignReader, never())
+        .read(any(GameplayRuleSourceReadEvidence.Request.class));
+  }
+
+  @Test
+  void originalDraftCredentialCannotBeMixedWithTheServicePeer() {
+    var fixture = new Fixture();
+    var authorization = authorization();
+    var peer =
+        new GrpcPeerIdentity(
+            "spiffe://firemud/ns/test/sa/game-design-service", NAMESPACE, "game-design-service");
+    Context request =
+        Context.current()
+            .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer)
+            .withValue(
+                AccountOriginalDraftOrderCredentials.CONTEXT_KEY,
+                AccountOriginalDraftOrderCredentials.Credential.of("creator-order-credential"));
     Context previous = request.attach();
     try {
       assertThatThrownBy(() -> fixture.service.retain(authorization))

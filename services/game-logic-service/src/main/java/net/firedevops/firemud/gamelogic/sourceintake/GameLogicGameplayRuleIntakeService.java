@@ -5,6 +5,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
+import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderCredentials;
+import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeAuthorizationCredentials;
 import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeOperation;
 import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTerminal;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadClient;
@@ -12,7 +14,6 @@ import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadE
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadClient;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderCredentials;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -163,9 +164,10 @@ public final class GameLogicGameplayRuleIntakeService {
           .withDescription("Exact same-namespace Game Design workload required")
           .asRuntimeException();
     }
-    if (AccountSelectedPublicationOrderCredentials.CONTEXT_KEY.get() != null) {
+    if (AccountOriginalDraftOrderCredentials.CONTEXT_KEY.get() != null
+        || AccountGameLogicIntakeAuthorizationCredentials.CONTEXT_KEY.get() != null) {
       throw Status.PERMISSION_DENIED
-          .withDescription("Creator publication credentials cannot accompany GL source intake")
+          .withDescription("Creator credentials cannot accompany GL source intake")
           .asRuntimeException();
     }
     if (authorization == null) {

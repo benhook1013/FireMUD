@@ -4,7 +4,7 @@ This document defines the Game Logic Service runtime model, dependency ownership
 
 ## Implementation Status
 
-The prepared selected gameplay-rule intake repository, terminal owner and publication source reader are standalone and unregistered. Their forward V2 storage does not enable runtime rule consumption or replace the existing legacy digest handler. [The implementation tracker](../../../project-management/implementation-tracking/gameplay-rules-entities-and-effects.md#selected-gameplay-rule-retention-and-receipt-composition) owns qualification and composition limits.
+The prepared selected gameplay-rule intake repository, terminal owner and publication source reader are standalone and unregistered. Their forward V1003 storage does not enable runtime rule consumption or replace the existing legacy digest handler. [The implementation tracker](../../../project-management/implementation-tracking/gameplay-rules-entities-and-effects.md#selected-gameplay-rule-retention-and-receipt-composition) owns qualification and composition limits.
 
 The sections below define the target-state runtime contract. Current implementation and proof status is:
 
@@ -27,7 +27,7 @@ The sections below define the target-state runtime contract. Current implementat
 - The target runtime contract is that every player-delegated gameplay RPC carries the complete validated typed `PlayerExecutionContext`, including `tenantId`, `playableStateNamespaceId`, server-derived `playableStateScope`, active `gameInstanceId`, and applicable region/epoch or executor fences. The live per-RPC schemas, including `SendCommunication` and its legacy `session_attestation`, remain an implementation gap; see the [PlayerExecutionContext contract](../../system-architecture-authentication.md#gameplay-player-execution-context-contract-normative).
 - Gameplay gRPC requests do not include JWTs. Game Session provides player identity from Redis via `SessionContext`, may refresh a JWT from Account Service if roles change, and does not validate tokens for gameplay. Service-to-service traffic still uses mutual TLS as described in the [Security Architecture](../../system-architecture-security.md).
 - Utilizes the [Shared Libraries](../../system-architecture-shared-libraries.md) for DTO definitions, logging interceptors, and Micrometer metrics.
-- Flyway V1 is the existing empty baseline; the prepared V2 adds immutable selected gameplay-rule intake storage. Its qualification and inactive runtime consequences are recorded in the implementation tracker above.
+- Flyway V1 is the existing empty baseline; the prepared V1003 follows the retained Saga V1000–V1002 history and adds immutable selected gameplay-rule intake storage. Its qualification and inactive runtime consequences are recorded in the implementation tracker above.
 - NPC morale and aggression-state evaluation remain part of this service's runtime behavior. When gameplay rules consume faction or reputation signals sourced from Social & Groups, the local morale logic is still owned here, including transitions such as `FLEEING` and `SURRENDERED`; cross-service reputation data informs the decision, but Game Logic owns the gameplay-state consequence.
 
 ## Workflow Participation

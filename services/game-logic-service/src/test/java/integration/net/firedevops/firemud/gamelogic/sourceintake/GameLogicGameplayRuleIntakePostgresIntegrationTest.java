@@ -12,8 +12,11 @@ import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -38,6 +41,7 @@ import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -54,6 +58,134 @@ class GameLogicGameplayRuleIntakePostgresIntegrationTest {
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void upgradesActualV1AndSagaParentWithoutChangingHistoryOrRetainedSagaData(
+      @TempDir Path temporary) throws Exception {
+    String schema = "gl_" + UUID.randomUUID().toString().replace("-", "");
+    String historyTable = "flyway_schema_history_" + schema;
+    var dataSource = new DriverManagerDataSource();
+    dataSource.setUrl(POSTGRES.getJdbcUrl());
+    dataSource.setUsername(POSTGRES.getUsername());
+    dataSource.setPassword(POSTGRES.getPassword());
+    dataSource.setSchema(schema);
+    Path parentMigrationDirectory = Files.createDirectory(temporary.resolve("installed-parent"));
+    var v1Resource =
+        Objects.requireNonNull(
+            getClass().getClassLoader().getResourceAsStream("db/migration/V1__init.sql"));
+    try (v1Resource) {
+      Files.copy(v1Resource, parentMigrationDirectory.resolve("V1__init.sql"));
+    }
+
+    org.flywaydb.core.Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .table(historyTable)
+        .locations("filesystem:" + parentMigrationDirectory, "classpath:db/migration/saga")
+        .load()
+        .migrate();
+
+    var dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    var installedParents = migrationHistory(dsl, historyTable);
+    assertThat(installedParents)
+        .extracting(MigrationHistory::version)
+        .containsExactly("1", "1000", "1001", "1002");
+    assertThat(installedParents)
+        .extracting(MigrationHistory::script)
+        .containsExactly(
+            "V1__init.sql",
+            "V1000__create_saga_schema.sql",
+            "V1001__saga_instance_table.sql",
+            "V1002__saga_step_table.sql");
+    assertThat(installedParents)
+        .allSatisfy(
+            row -> {
+              assertThat(row.checksum()).isNotNull();
+              assertThat(row.success()).isTrue();
+            });
+    long intakeTablesBeforeUpgrade =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT count(*) FROM information_schema.tables "
+                        + "WHERE table_schema = ? AND table_name = 'game_logic_gameplay_rule_intake_terminal'",
+                    schema))
+            .get(0, Long.class);
+    assertThat(intakeTablesBeforeUpgrade).isZero();
+    // V1 is empty; retain an actual shared Saga row to detect changes to the installed parent.
+    var insertedSaga =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "INSERT INTO "
+                    + schema
+                    + ".saga_instance (saga_name, state) VALUES (?, ?) RETURNING id",
+                "retained-parent-saga",
+                "RUNNING"));
+    long sagaId = insertedSaga.get("id", Long.class);
+    var retainedSagaBefore = sagaSnapshot(dsl, schema, sagaId);
+
+    org.flywaydb.core.Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .table(historyTable)
+        .locations("classpath:db/migration", "classpath:db/migration/saga")
+        .load()
+        .migrate();
+
+    var upgradedHistory = migrationHistory(dsl, historyTable);
+    assertThat(upgradedHistory)
+        .extracting(MigrationHistory::version)
+        .containsExactly("1", "1000", "1001", "1002", "1003");
+    assertThat(upgradedHistory.subList(0, installedParents.size()))
+        .containsExactlyElementsOf(installedParents);
+    var installedIntake = upgradedHistory.getLast();
+    assertThat(installedIntake.script())
+        .isEqualTo("V1003__immutable_gameplay_rule_source_intake.sql");
+    assertThat(installedIntake.installedRank())
+        .isGreaterThan(installedParents.getLast().installedRank());
+    assertThat(installedIntake.checksum()).isNotNull();
+    assertThat(installedIntake.success()).isTrue();
+    assertThat(sagaSnapshot(dsl, schema, sagaId)).isEqualTo(retainedSagaBefore);
+    long intakeTablesAfterUpgrade =
+        Objects.requireNonNull(
+                dsl.fetchOne(
+                    "SELECT count(*) FROM information_schema.tables "
+                        + "WHERE table_schema = ? AND table_name = 'game_logic_gameplay_rule_intake_terminal'",
+                    schema))
+            .get(0, Long.class);
+    assertThat(intakeTablesAfterUpgrade).isEqualTo(1L);
+    assertThat(dsl.fetchCount(DSL.table("game_logic_gameplay_rule_intake_terminal"))).isZero();
+  }
+
+  private static List<MigrationHistory> migrationHistory(DSLContext dsl, String historyTable) {
+    return dsl.fetch(
+            "SELECT installed_rank, version, script, checksum, success FROM "
+                + historyTable
+                + " WHERE version IS NOT NULL ORDER BY installed_rank")
+        .map(
+            row ->
+                new MigrationHistory(
+                    row.get("installed_rank", Integer.class),
+                    row.get("version", String.class),
+                    row.get("script", String.class),
+                    row.get("checksum", Integer.class),
+                    row.get("success", Boolean.class)));
+  }
+
+  private static SagaRowSnapshot sagaSnapshot(DSLContext dsl, String schema, long sagaId) {
+    var row =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT encode(convert_to(to_jsonb(saga_instance)::text, 'UTF8'), 'hex') AS row_bytes, "
+                    + "xmin::text AS xmin FROM "
+                    + schema
+                    + ".saga_instance WHERE id = ?",
+                sagaId));
+    return new SagaRowSnapshot(row.get("row_bytes", String.class), row.get("xmin", String.class));
+  }
 
   @Test
   void exactConcurrentRetriesRetainOneImmutableOriginalTerminalAndReadItWithoutOwnerReads()
@@ -438,6 +570,11 @@ class GameLogicGameplayRuleIntakePostgresIntegrationTest {
         .satisfies(
             failure -> assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(expected));
   }
+
+  private record MigrationHistory(
+      Integer installedRank, String version, String script, Integer checksum, Boolean success) {}
+
+  private record SagaRowSnapshot(String rowBytes, String xmin) {}
 
   private record Fixture(
       DSLContext dsl,
