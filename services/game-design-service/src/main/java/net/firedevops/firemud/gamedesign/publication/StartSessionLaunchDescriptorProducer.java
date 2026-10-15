@@ -559,7 +559,7 @@ public final class StartSessionLaunchDescriptorProducer {
         || !Objects.equals(release.canonicalTenantId(), exact.association().canonicalTenantId())
         || !Objects.equals(release.canonicalVersionId(), exact.association().canonicalVersionId())
         || !Objects.equals(release.publishWorkflowId(), exact.association().publishWorkflowId())
-        || !"v2".equals(release.attestationSchemaVersion())
+        || !isSelectedReleaseBundleSchema(release.attestationSchemaVersion())
         || !Objects.equals(
             release.worldPublishedStartLocationEvidence(),
             exact.worldPublishedStartLocationEvidence())
@@ -582,6 +582,10 @@ public final class StartSessionLaunchDescriptorProducer {
       throw conflict(
           "Current release content differs from the original published terminal evidence");
     }
+  }
+
+  static boolean isSelectedReleaseBundleSchema(String schemaVersion) {
+    return "v2".equals(schemaVersion) || "v4".equals(schemaVersion);
   }
 
   private void lockAndReloadSelectedVersion(

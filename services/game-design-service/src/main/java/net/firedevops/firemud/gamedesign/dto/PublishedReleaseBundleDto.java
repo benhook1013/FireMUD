@@ -37,9 +37,11 @@ public record PublishedReleaseBundleDto(
           "Manifest schema and artifact proof must be present together");
     }
     artifactDigests = artifactDigests == null ? null : List.copyOf(artifactDigests);
-    if ("v2".equals(attestationSchemaVersion) != (worldPublishedStartLocationEvidence != null)) {
+    boolean selectedRelease =
+        "v2".equals(attestationSchemaVersion) || "v4".equals(attestationSchemaVersion);
+    if (selectedRelease != (worldPublishedStartLocationEvidence != null)) {
       throw new IllegalArgumentException(
-          "Selector evidence requires bundle v2 and is mandatory for v2");
+          "Selector evidence requires bundle v2 or v4 and is mandatory for both");
     }
   }
 
