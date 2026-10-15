@@ -23,11 +23,17 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadClient;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
 import net.firedevops.firemud.common.gamedesign.GrpcSelectedOwnerIntakeSourceClient;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
+import net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient;
+import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderClient;
+import net.firedevops.firemud.common.publication.AccountSelectedPublicationSettlementClient;
+import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient;
 import net.firedevops.firemud.common.publication.WorldSelectedOwnerInventoryGrpcClient;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -178,7 +184,13 @@ class SelectedOwnerIntakeClientLifecycleTest {
     SOURCE_READ,
     AUTOMATION_TERMINAL,
     GAME_DESIGN_SOURCE,
-    WORLD_INVENTORY;
+    WORLD_INVENTORY,
+    GAME_DESIGN_PUBLICATION_TERMINAL,
+    ACCOUNT_PUBLICATION_SETTLEMENT,
+    ACCOUNT_PUBLICATION_HELD_READ,
+    ACCOUNT_PUBLICATION_ORDER,
+    GAME_DESIGN_PUBLICATION_SELECTION,
+    WORLD_PUBLICATION_TERMINAL;
 
     ClientHandle create(
         ServiceEndpointsProperties endpoints,
@@ -212,6 +224,32 @@ class SelectedOwnerIntakeClientLifecycleTest {
         }
         case WORLD_INVENTORY -> {
           var client = new WorldSelectedOwnerInventoryGrpcClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GAME_DESIGN_PUBLICATION_TERMINAL -> {
+          var client = new GameDesignPublicationTerminalClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case ACCOUNT_PUBLICATION_SETTLEMENT -> {
+          var client =
+              new AccountSelectedPublicationSettlementClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case ACCOUNT_PUBLICATION_HELD_READ -> {
+          var client =
+              new AccountPublicationAuthorizationReadClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case ACCOUNT_PUBLICATION_ORDER -> {
+          var client = new AccountSelectedPublicationOrderClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GAME_DESIGN_PUBLICATION_SELECTION -> {
+          var client = new AuthoredDraftPublishSelectionReadClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case WORLD_PUBLICATION_TERMINAL -> {
+          var client = new WorldPublicationTerminalReadClient(endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
         }
       };

@@ -1343,6 +1343,59 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
   }
 
   @Test
+  void fullTupleDoesNotBypassIndependentActivationIssuanceOperationBinding() throws Exception {
+    Fixture fixture = fixture();
+    CurrentnessCase current = currentnessCase(fixture, Instant.now().plusSeconds(60));
+    Map<String, Object> request = readJson(current.requestBytes());
+    byte[] tuple =
+        Base64.getDecoder()
+            .decode((String) request.get("originalPostAuthorizationTupleBytesBase64"));
+    byte[] projection =
+        Base64.getDecoder().decode((String) request.get("accountRedemptionProjectionBytesBase64"));
+    assertThat(projection).containsExactly(tuple);
+    String requestId = (String) readJson(tuple).get("controlPlaneRequestId");
+
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status ->
+                fixture
+                    .dsl()
+                    .execute(
+                        "SELECT account_ss_activation_assert_current(?, ?, ?, FALSE)",
+                        current.requestBytes(),
+                        current.operationIdentityBytes(),
+                        current.operationIdentityDigest()));
+    // Stipulate one contradictory retained owner row to isolate the independent SQL conjunct.
+    // Current activation/acquisition guards stay enabled; this is not authenticated producer proof.
+    fixture
+        .transaction()
+        .executeWithoutResult(
+            status -> {
+              fixture.dsl().execute("SET LOCAL session_replication_role = replica");
+              assertThat(
+                      fixture
+                          .dsl()
+                          .execute(
+                              "UPDATE account_start_session_operator_authorizations SET issuance_operation_id = ? "
+                                  + "WHERE control_plane_request_id = ?",
+                              UUID.randomUUID(),
+                              requestId))
+                  .isEqualTo(1);
+              fixture.dsl().execute("SET LOCAL session_replication_role = origin");
+            });
+    assertThatThrownBy(() -> acquireProtection(fixture, current))
+        .hasMessageContaining(
+            "Activation protection differs from original Account redemption or capture");
+    for (String table :
+        List.of(
+            "account_start_session_activation_protections",
+            "account_start_session_activation_protection_sources")) {
+      assertThat(fixture.dsl().fetchCount(DSL.table(table))).as(table).isZero();
+    }
+  }
+
+  @Test
   void abortedSettlementPreservesTerminalCodeFenceWithoutRequiringActiveLifecycle()
       throws Exception {
     Fixture fixture = fixture();
