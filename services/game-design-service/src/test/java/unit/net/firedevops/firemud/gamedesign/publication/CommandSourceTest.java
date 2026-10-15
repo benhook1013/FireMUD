@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamedesign.publication.CommandSource;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
+import net.firedevops.firemud.gamedesign.publication.TemplateConfigSource;
 import org.junit.jupiter.api.Test;
 
 class CommandSourceTest {
@@ -280,6 +281,30 @@ class CommandSourceTest {
     assertThat(net.firedevops.firemud.common.gamedesign.GameplayRuleSource.mutations(input))
         .hasSize(1);
     assertThat(RealmPolicySource.isPolicyRevision(input.revisions().getFirst())).isFalse();
+  }
+
+  @Test
+  void templateConfigPayloadRemainsASeparateTypedSibling() {
+    var input =
+        binding(
+            UUID.randomUUID(),
+            List.of(
+                revision(
+                    "0",
+                    UUID.randomUUID(),
+                    "{\"schemaVersion\":1,\"revisionKind\":\"TEMPLATE_CONFIG\","
+                        + "\"operation\":\"DELETE\",\"templateId\":\"7\"}")),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    TemplateConfigSource.SCOPE,
+                    TARGET.canonicalVersionId().toString(),
+                    TemplateConfigSource.SCOPE,
+                    TemplateConfigSource.SCOPE_ID,
+                    "0")));
+
+    assertThat(CommandSource.mutations(input)).isEmpty();
+    assertThat(CommandSource.hasRealmPolicyRevision(input)).isFalse();
   }
 
   private static CommandSource.Definition definition(
