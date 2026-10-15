@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.worldmanagement.v1.WorldOriginalDraftGraphApplyServiceGrpc;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Opt-in file-backed mTLS client for exact original World graph apply/recovery. */
 public final class WorldOriginalDraftGraphApplyClient
@@ -51,6 +52,11 @@ public final class WorldOriginalDraftGraphApplyClient
    */
   public WorldOriginalDraftGraphApplyEvidence.Result apply(
       WorldOriginalDraftGraphApplyEvidence.Request request) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "World original graph apply must run outside an active transaction or synchronization");
+    }
     Objects.requireNonNull(request, "request");
     if (!workloadNamespace.equals(request.targetNamespace())) {
       throw new IllegalArgumentException(
