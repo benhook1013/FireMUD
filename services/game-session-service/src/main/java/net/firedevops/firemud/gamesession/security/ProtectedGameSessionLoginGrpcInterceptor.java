@@ -20,7 +20,7 @@ public final class ProtectedGameSessionLoginGrpcInterceptor implements ServerInt
           "game_session.v1.GameSessionControlPlaneService/GetCanonicalGameplayAdmissionDecision",
           "game_session.v1.GameSessionControlPlaneService/GetCanonicalGameInstanceLaunchAssociation",
           "game_session.v1.GameSessionControlPlaneService/GetRuntimeRegionInitializationCheckpoint",
-          "game_session.v1.GameSessionControlPlaneService/GetCanonicalInitialAdmissionOwnerProof",
+          "game_session.v1.CanonicalInitialAdmissionOwnerProofReadService/GetCanonicalInitialAdmissionOwnerProof",
           "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetCanonicalGameplayRosterOwnerRead",
           "game_session.v1.CanonicalGameplayRosterOwnerReadService/GetPreseededActorAssignmentOwnerRead");
 

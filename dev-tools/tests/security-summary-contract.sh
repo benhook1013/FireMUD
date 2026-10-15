@@ -202,7 +202,13 @@ upload = next(step for step in steps if step.get("name") == "📤 Upload Trivy R
 if scanner.get("shell") != "bash" or upload.get("if") != "always()":
     raise SystemExit("Trivy must use explicit pipefail Bash and retain always-uploaded reports")
 settings = yaml.safe_load(Path(sys.argv[2]).read_text())
-if settings.get("exit-code") != 1 or settings.get("severity") != ["CRITICAL", "HIGH"] or settings.get("ignore-unfixed") is not True:
+scan = settings.get("scan", {})
+vulnerability = settings.get("vulnerability", {})
+if settings.get("exit-code") != 1 or settings.get("severity") != ["CRITICAL", "HIGH"]:
+    raise SystemExit("Trivy failure policy and severity filter must remain intact")
+if vulnerability.get("ignore-unfixed") is not True:
+    raise SystemExit("Filesystem Trivy scan must ignore unfixed vulnerabilities")
+if scan.get("skip-dirs") != ["node_modules", "build", "dist", ".gradle", ".git"]:
     raise SystemExit("Trivy failure policy and filters must remain intact")
 database = settings.get("db", {})
 for key, artifact, schema in (("repository", "trivy-db", 2), ("java-repository", "trivy-java-db", 1)):

@@ -25,8 +25,8 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec.ReadRequest;
-import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
-import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidenceTestFixtures;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidenceTestFixtures;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -59,7 +59,8 @@ class WorldAuthoredSourceIntakeServiceTest {
 
   @Test
   void fixtureIntakeRevalidatesPeerAndCallerBeforeAnyOwnerReadOrTransaction() {
-    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     WorldAuthoredSourceIntakeService fixtureService = fixtureService();
     assertThatThrownBy(() -> withoutPeer(() -> fixtureService.intakeRunOwnedFixture(evidence)))
         .isInstanceOf(SecurityException.class);
@@ -93,7 +94,8 @@ class WorldAuthoredSourceIntakeServiceTest {
 
   @Test
   void fixtureIntakeReadsControlledSourceBeforeSqlAndIndependentlyReadsExactReceiptAndRetry() {
-    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     AuthoredWorldSourceEvidence source = evidence.sourceReceipt().sourceEvidence();
     AtomicInteger reads = new AtomicInteger();
     AtomicReference<WorldAuthoredSourceIntakeReceipt> committed = new AtomicReference<>();
@@ -162,7 +164,8 @@ class WorldAuthoredSourceIntakeServiceTest {
 
   @Test
   void fixtureIntakeDeniesChangedRemoteSourceBeforeSql() {
-    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     when(repository.read(eq("dev"), any(UUID.class))).thenReturn(Optional.empty());
     when(client.read(any(ReadRequest.class)))
         .thenReturn(source("other", TENANT, SOURCE_OPERATION, WORLD));
@@ -180,7 +183,8 @@ class WorldAuthoredSourceIntakeServiceTest {
 
   @Test
   void fixtureIntakeDeniesNullOwnerReceiptBeforeIndependentReadback() {
-    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     AuthoredWorldSourceEvidence source = evidence.sourceReceipt().sourceEvidence();
     when(repository.read(eq("dev"), any(UUID.class))).thenReturn(Optional.empty());
     when(client.read(any(ReadRequest.class))).thenReturn(source);
@@ -204,7 +208,8 @@ class WorldAuthoredSourceIntakeServiceTest {
 
   @Test
   void fixtureIntakeDeniesMissingIndependentReceiptAfterOwnerTransaction() {
-    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     var source = evidence.sourceReceipt().sourceEvidence();
     when(repository.read(eq("dev"), any(UUID.class))).thenReturn(Optional.empty());
     when(client.read(any(ReadRequest.class))).thenReturn(source);
@@ -225,7 +230,8 @@ class WorldAuthoredSourceIntakeServiceTest {
 
   @Test
   void fixtureIntakeDeniesChangedIndependentReceiptAfterOwnerTransaction() {
-    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     var source = evidence.sourceReceipt().sourceEvidence();
     AtomicInteger reads = new AtomicInteger();
     when(repository.read(eq("dev"), any(UUID.class)))
@@ -251,7 +257,8 @@ class WorldAuthoredSourceIntakeServiceTest {
 
   @Test
   void fixtureIntakeDeniesAmbientTransactionBeforeOwnerAccess() {
-    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     TransactionSynchronizationManager.setActualTransactionActive(true);
     assertThatThrownBy(
             () ->
