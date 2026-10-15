@@ -134,7 +134,11 @@ final class AccountControlUiOwnerSourcesFixture {
       UUID tenant,
       String migrationTarget)
       throws Exception {
-    if (migrationTarget != null && !"160.1".equals(migrationTarget) && !"1006".equals(migrationTarget) && !"1007".equals(migrationTarget) && !"1009".equals(migrationTarget)) {
+    if (migrationTarget != null
+        && !"160.1".equals(migrationTarget)
+        && !"1006".equals(migrationTarget)
+        && !"1007".equals(migrationTarget)
+        && !"1009".equals(migrationTarget)) {
       throw new IllegalArgumentException(
           "Only the preserved 160.1 source-retention, 1006 parent, 1007 preliminary source-read, or 1009 selected-owner predecessor is supported");
     }
