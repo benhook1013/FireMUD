@@ -7,9 +7,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
-import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
-import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import org.junit.jupiter.api.Test;
 
@@ -145,58 +143,22 @@ class SelectedDraftControlPlaneDigestTest {
   }
 
   private static DraftCommitBinding selectedBinding() throws Exception {
-    var selected = operation().account().input().selection().selectedCommit();
-    var policyRevisions =
-        selected.revisions().stream()
-            .filter(
-                revision -> revision.owner() == DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE)
-            .filter(RealmPolicySource::isPolicyRevision)
-            .toList();
-    if (policyRevisions.size() != 1) {
-      throw new IllegalStateException("Expected exactly one selected policy revision");
-    }
-    var policyRevision = policyRevisions.getFirst();
-    var fixedRevisionId = UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
-    var oldRevisionId = policyRevision.revisionId().toString();
-    var revisions = new java.util.ArrayList<RevisionPayload>();
-    for (var revision : selected.revisions()) {
-      var payload =
-          new String(
-              Rfc8785CanonicalJson.canonicalizeUtf8(revision.payload()),
-              java.nio.charset.StandardCharsets.UTF_8);
-      var revisionId = revision.revisionId();
-      if (revision == policyRevision) {
-        if (payload.indexOf(oldRevisionId) < 0
-            || payload.indexOf(oldRevisionId) != payload.lastIndexOf(oldRevisionId)) {
-          throw new IllegalStateException(
-              "Expected policy revision identity exactly once in payload");
-        }
-        payload = payload.replace(oldRevisionId, fixedRevisionId.toString());
-        revisionId = fixedRevisionId;
-      }
-      revisions.add(
-          new RevisionPayload(revision.revisionOrder(), revisionId, revision.owner(), payload));
-    }
-    return DraftCommitBinding.create(
-        selected.target(),
-        selected.requestId(),
-        selected.commitId(),
-        selected.baseCommitId(),
-        revisions,
-        selected.affectedUnits());
+    return operation().account().input().selection().selectedCommit();
   }
 
   private static GameDesignSourceRepository.SynchronizedSources sources(
       DraftCommitBinding binding) {
     var command = new CommandSnapshot(binding, "0", null, "sha256:" + "a".repeat(64), List.of());
-    var policies =
-        binding.revisions().stream()
-            .filter(
-                revision -> revision.owner() == DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE)
-            .filter(RealmPolicySource::isPolicyRevision)
-            .map(revision -> RealmPolicySource.revision(binding, revision))
-            .toList();
-    var policy = new RealmPolicySnapshot(binding, "1", policies);
+    // Controlled inherited policy provenance; this World-only commit need not mutate policy.
+    var policy = new RealmPolicySnapshot(binding, "1", List.of(
+        new RealmPolicySource.Policy(
+            UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), "inherited-policy",
+            net.firedevops.firemud.common.publication.RealmEntryPolicy.parse(
+                "{\"schemaVersion\":1,\"worldSlug\":\"world\",\"worldDisplayName\":\"World\","
+                    + "\"realmSlug\":\"realm\",\"realmDisplayName\":\"Realm\",\"visible\":true,"
+                    + "\"publicProduction\":false,\"stateScope\":\"SHARED\",\"entryPolicy\":\"PRESEEDED_ONLY\"}",
+                new tools.jackson.databind.ObjectMapper()))));
     var asset =
         new AssetSnapshot(
             binding, "0", null, UUID.fromString("33333333-3333-4333-8333-333333333333"), List.of());

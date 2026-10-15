@@ -103,9 +103,8 @@ class PublishedReleaseBundleServiceImplTest {
                     evidence))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("IDEMPOTENCY_CONFLICT");
-    assertThatThrownBy(() -> PublishedReleaseBundleContract.requireSupportedSchemaForLaunch(first))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("SCHEMA_VERSION_UNSUPPORTED");
+    PublishedReleaseBundleContract.requireSelectedFullBinding(first);
+    PublishedReleaseBundleContract.requireSupportedSchemaForLaunch(first);
     PublishedReleaseBundleContract.requireExactRepairMatch(first, emptyManifest());
     assertThatThrownBy(
             () -> PublishedReleaseBundleContract.requireExactRepairMatch(first, logoManifest()))
@@ -118,7 +117,7 @@ class PublishedReleaseBundleServiceImplTest {
     var evidence = selectorEvidence(3);
     var participants =
         PublishedWorldSelectorFixtures.participants(
-            7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+            7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
     var retained = new PublishedReleaseBundle();
     retained.setId(11L);
     retained.setPublishedReleaseBundleRef("retained-v2-release");

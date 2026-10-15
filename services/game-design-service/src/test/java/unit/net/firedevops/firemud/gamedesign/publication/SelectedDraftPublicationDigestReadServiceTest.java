@@ -326,14 +326,16 @@ class SelectedDraftPublicationDigestReadServiceTest {
   private static GameDesignSourceRepository.SynchronizedSources sources(
       DraftCommitBinding binding) {
     var command = new CommandSnapshot(binding, "0", null, "sha256:" + "a".repeat(64), List.of());
-    var policies =
-        binding.revisions().stream()
-            .filter(
-                revision -> revision.owner() == DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE)
-            .filter(RealmPolicySource::isPolicyRevision)
-            .map(revision -> RealmPolicySource.revision(binding, revision))
-            .toList();
-    var policy = new RealmPolicySnapshot(binding, "1", policies);
+    // Controlled inherited policy provenance; this World-only commit need not mutate policy.
+    var policy = new RealmPolicySnapshot(binding, "1", List.of(
+        new RealmPolicySource.Policy(
+            UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+            UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), "inherited-policy",
+            net.firedevops.firemud.common.publication.RealmEntryPolicy.parse(
+                "{\"schemaVersion\":1,\"worldSlug\":\"world\",\"worldDisplayName\":\"World\","
+                    + "\"realmSlug\":\"realm\",\"realmDisplayName\":\"Realm\",\"visible\":true,"
+                    + "\"publicProduction\":false,\"stateScope\":\"SHARED\",\"entryPolicy\":\"PRESEEDED_ONLY\"}",
+                new tools.jackson.databind.ObjectMapper()))));
     var asset =
         new AssetSnapshot(
             binding, "0", null, UUID.fromString("33333333-3333-4333-8333-333333333333"), List.of());

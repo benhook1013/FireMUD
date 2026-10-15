@@ -86,6 +86,7 @@ import net.firedevops.firemud.gamedesign.service.ExportedAssetManifest;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.impl.PublishGateServiceImpl;
 import net.firedevops.firemud.gamedesign.service.impl.PublishedReleaseBundleServiceImpl;
+import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.gamelogic.service.impl.GameLogicDraftDesignDigestServiceImpl;
 import net.firedevops.firemud.gamelogic.service.impl.GameLogicGrpcService;
 import net.firedevops.firemud.gamelogic.sourceintake.GameLogicGameplayRuleIntakeRepository;
@@ -96,7 +97,6 @@ import net.firedevops.firemud.worldmanagement.v1.RegionDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.RoomDesignMutation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
-import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration;
 import net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphFamilyCount;
@@ -226,7 +226,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         selectedOwnerAuthorization(gds, selection, Owner.ENTITY_MANAGEMENT, sourceScopeActor);
     var entityWorldRead =
         SelectedOwnerWorldInventoryReadEvidence.create(
-                NAMESPACE, entityAuthorization, worldOwners.freezeEvidence());
+            NAMESPACE, entityAuthorization, worldOwners.freezeEvidence());
     var entityInputs =
         new SelectedOwnerEmptySourceInputs(
             entityAuthorization,
@@ -257,7 +257,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         selectedOwnerAuthorization(gds, selection, Owner.AUTOMATION_SCRIPTING, sourceScopeActor);
     var automationWorldRead =
         SelectedOwnerWorldInventoryReadEvidence.create(
-                NAMESPACE, automationAuthorization, worldOwners.freezeEvidence());
+            NAMESPACE, automationAuthorization, worldOwners.freezeEvidence());
     var automationInputs =
         new SelectedOwnerEmptySourceInputs(
             automationAuthorization,
@@ -865,8 +865,9 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             actor,
             selection.selectedCommit());
     var export = new GameDesignSourceRepository(gds.dsl()).requireSelectedOwnerIntakeSource(scope);
-    var content = net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent.fromStored(
-        export.canonicalBytes(), scope, export.digest());
+    var content =
+        net.firedevops.firemud.common.gamedesign.SelectedOwnerIntakeSourceContent.fromStored(
+            export.canonicalBytes(), scope, export.digest());
     return new SelectedOwnerIntakeAuthorizationBinding(
         content, controlledAccountSources(actor, selection.target().canonicalTenantId()));
   }

@@ -429,7 +429,7 @@ class VersionPublishCommandServiceImplTest {
                 .PUBLISHED);
     verify(publishAttemptRepository).requirePublishedOperation(fixture.attempt());
     verify(publishGateService)
-        .assertGatePassed(
+        .assertSelectedGatePassed(
             any(VersionDto.class), org.mockito.ArgumentMatchers.eq(fixture.participantDigests()));
     verify(recordedParticipantDigestService)
         .assertMatchesRecordedDigests(
@@ -510,7 +510,7 @@ class VersionPublishCommandServiceImplTest {
     org.mockito.Mockito.doThrow(
             new IllegalStateException("ISOLATED retained publication gate mismatch"))
         .when(publishGateService)
-        .assertGatePassed(
+        .assertSelectedGatePassed(
             any(VersionDto.class), org.mockito.ArgumentMatchers.eq(fixture.participantDigests()));
 
     assertThrows(
@@ -518,7 +518,7 @@ class VersionPublishCommandServiceImplTest {
         () -> service.reconcileFullVersionPublish(fixture.request()));
 
     verify(publishGateService)
-        .assertGatePassed(
+        .assertSelectedGatePassed(
             any(VersionDto.class), org.mockito.ArgumentMatchers.eq(fixture.participantDigests()));
     assertNoPublicationWrites();
   }
@@ -2380,7 +2380,7 @@ class VersionPublishCommandServiceImplTest {
 
     assertEquals("SUCCEEDED", snapshot.status());
     verify(publishGateService)
-        .assertGatePassed(
+        .assertSelectedGatePassed(
             any(VersionDto.class), org.mockito.ArgumentMatchers.eq(participantDigests));
     verify(recordedParticipantDigestService)
         .assertMatchesRecordedDigests("tenant-1", PublishType.FULL_VERSION, participantDigests);
