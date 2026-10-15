@@ -557,6 +557,7 @@ run_resolver 'services/game-logic-service/src/main/Foo.kt' "$runtime_image_tag"
 run_resolver 'gradlew' "$runtime_image_tag"
 run_resolver 'gradlew.bat' "$runtime_image_tag"
 run_resolver 'dev-tools/validation/run-locked-gradle.sh' "$runtime_image_tag"
+run_resolver 'dev-tools/validation/run-gradle-with-dependency-recovery.sh' "$runtime_image_tag"
 run_resolver 'dev-tools/validation/gradle-run-supervisor.py' "$runtime_image_tag"
 # A rename from a runtime-relevant path must keep the PR image selected even
 # when the current filename is no longer runtime-relevant.
