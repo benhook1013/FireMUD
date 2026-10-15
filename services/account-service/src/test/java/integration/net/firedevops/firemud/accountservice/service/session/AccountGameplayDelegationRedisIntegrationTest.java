@@ -944,7 +944,9 @@ class AccountGameplayDelegationRedisIntegrationTest {
                 database, () -> disposalRepository.begin(disposalRequest, CALLER_WORKLOAD));
         // Required durability failure after a real physical mutation keeps SQL PENDING.
         var unavailableRedis = redisClient(provider, new AcknowledgementRequirements(1, 2, 250));
-        assertThatThrownBy(() -> unavailableRedis.disposeInitialLogin(intent));
+        assertThatThrownBy(() -> unavailableRedis.disposeInitialLogin(intent))
+            .isInstanceOf(
+                AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
         assertThat(
                 dsl.fetchSingle(
                         "SELECT state FROM account_initial_gameplay_login_disposals WHERE request_id = ?",
@@ -960,21 +962,31 @@ class AccountGameplayDelegationRedisIntegrationTest {
                     .Disposition.RETIRED);
         assertThat(admin.get(ascii(tokenKey))).containsExactly(intent.tombstoneBytes());
         assertThatThrownBy(
-            () ->
-                redis.registerPending(
-                    candidate.tokenHash(),
-                    candidate.canonicalRecordBytes(),
-                    Math.addExact(
-                        Math.multiplyExact(candidate.expiresAtEpochSecond(), 1000L), 30_000L)));
+                () ->
+                    redis.registerPending(
+                        candidate.tokenHash(),
+                        candidate.canonicalRecordBytes(),
+                        Math.addExact(
+                            Math.multiplyExact(candidate.expiresAtEpochSecond(), 1000L), 30_000L)))
+            .isInstanceOf(
+                AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+        assertThat(admin.get(ascii(tokenKey))).containsExactly(intent.tombstoneBytes());
       } else {
         assertThat(disposal.retire(disposalRequest, CALLER_WORKLOAD).disposition())
             .isEqualTo(
                 net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalResult
                     .Disposition.PENDING);
       }
-      assertThatThrownBy(() -> signer.preparePendingCandidate(request));
+      assertThatThrownBy(() -> signer.preparePendingCandidate(request))
+          .satisfies(
+              failure ->
+                  assertThat(failure.getClass().getName())
+                      .isEqualTo(
+                          "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner$SigningUnavailableException"));
       assertThatThrownBy(
-          () -> inTransaction(database, () -> issuance.readCurrentGameplayLoginReplay(request)));
+              () -> inTransaction(database, () -> issuance.readCurrentGameplayLoginReplay(request)))
+          .isInstanceOf(
+              AccountGameplayDelegationIssuanceRepository.IdempotencyConflictException.class);
       assertThatThrownBy(
               () ->
                   disposal.retire(
@@ -1058,7 +1070,12 @@ class AccountGameplayDelegationRedisIntegrationTest {
               new AccountGameplayDelegationResponseEnvelopeService(response),
               pausedManager,
               Clock.systemUTC());
-      assertThatThrownBy(() -> signer.preparePendingCandidate(request));
+      assertThatThrownBy(() -> signer.preparePendingCandidate(request))
+          .satisfies(
+              failure ->
+                  assertThat(failure.getClass().getName())
+                      .isEqualTo(
+                          "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner$SigningUnavailableException"));
       assertThat(
               dsl.fetchSingle(
                       "SELECT token_hash FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
@@ -1086,38 +1103,48 @@ class AccountGameplayDelegationRedisIntegrationTest {
         .isEqualTo(first);
     for (UUID resolvedAccount : List.of(account, otherAccount)) {
       assertThatThrownBy(
-          () ->
-              inTransaction(
-                  database,
-                  () ->
-                      issuance.beginPendingForAccount(
-                          request,
-                          resolvedAccount,
-                          CALLER_WORKLOAD,
-                          context,
-                          net.firedevops.firemud.accountservice.repository
-                              .AccountGameplayCredentialRequestBindingFixture.binding())));
+              () ->
+                  inTransaction(
+                      database,
+                      () ->
+                          issuance.beginPendingForAccount(
+                              request,
+                              resolvedAccount,
+                              CALLER_WORKLOAD,
+                              context,
+                              net.firedevops.firemud.accountservice.repository
+                                  .AccountGameplayCredentialRequestBindingFixture.binding())))
+          .isInstanceOf(
+              AccountGameplayDelegationIssuanceRepository.IdempotencyConflictException.class);
     }
     assertThatThrownBy(
-        () ->
-            owner.retire(
-                new net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalRequest(
-                    request, UUID.randomUUID(), null),
-                CALLER_WORKLOAD));
+            () ->
+                owner.retire(
+                    new net.firedevops.firemud.accountservice.dto
+                        .InitialGameplayLoginDisposalRequest(request, UUID.randomUUID(), null),
+                    CALLER_WORKLOAD))
+        .isInstanceOf(
+            net.firedevops.firemud.accountservice.repository
+                .AccountInitialGameplayLoginDisposalRepository.DisposalConflictException.class);
     assertThatThrownBy(
-        () -> owner.retire(identity, "spiffe://firemud/ns/other/sa/game-session-service"));
+            () -> owner.retire(identity, "spiffe://firemud/ns/other/sa/game-session-service"))
+        .isInstanceOf(
+            net.firedevops.firemud.accountservice.repository
+                .AccountInitialGameplayLoginDisposalRepository.DisposalConflictException.class);
     // A syntactically complete requested terminal proof cannot invent intact binding history.
     assertThatThrownBy(
-        () ->
-            inTransaction(
-                database,
-                () ->
-                    dsl.execute(
-                        "UPDATE account_initial_gameplay_login_disposals SET state = 'NO_TOKEN', owner_proof_kind = 'NO_ISSUANCE_BINDING',"
-                            + " owner_proof_canonical_bytes = ?, owner_proof_sha256 = ? WHERE request_id = ?",
-                        "{}".getBytes(StandardCharsets.UTF_8),
-                        "a".repeat(64),
-                        request)));
+            () ->
+                inTransaction(
+                    database,
+                    () ->
+                        dsl.execute(
+                            "UPDATE account_initial_gameplay_login_disposals SET state = 'NO_TOKEN', owner_proof_kind = 'NO_ISSUANCE_BINDING',"
+                                + " owner_proof_canonical_bytes = ?, owner_proof_sha256 = ? WHERE request_id = ?",
+                            "{}".getBytes(StandardCharsets.UTF_8),
+                            "a".repeat(64),
+                            request)))
+        .isInstanceOf(AssertionError.class)
+        .hasMessageContaining("exceptionClass=PSQLException; sqlState=23514");
     org.mockito.Mockito.verifyNoInteractions(registry);
 
     UUID rolledBackRequest = UUID.randomUUID();
@@ -1194,7 +1221,12 @@ class AccountGameplayDelegationRedisIntegrationTest {
               new AccountGameplayDelegationResponseEnvelopeService(response),
               manager,
               Clock.systemUTC());
-      assertThatThrownBy(() -> signer.preparePendingCandidate(request));
+      assertThatThrownBy(() -> signer.preparePendingCandidate(request))
+          .satisfies(
+              failure ->
+                  assertThat(failure.getClass().getName())
+                      .isEqualTo(
+                          "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner$SigningUnavailableException"));
       var original =
           dsl.fetchOne(
               "SELECT * FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
@@ -1250,7 +1282,12 @@ class AccountGameplayDelegationRedisIntegrationTest {
                     .Disposition.PENDING);
         assertThat(provider.openedConnections()).isZero();
       }
-      assertThatThrownBy(() -> signer.preparePendingCandidate(request));
+      assertThatThrownBy(() -> signer.preparePendingCandidate(request))
+          .satisfies(
+              failure ->
+                  assertThat(failure.getClass().getName())
+                      .isEqualTo(
+                          "net.firedevops.firemud.accountservice.service.session.AccountGameplayDelegationSigner$SigningUnavailableException"));
       assertThat(
               dsl.fetchOne(
                   "SELECT * FROM account_gameplay_delegation_issuance_operations WHERE request_id = ?",
@@ -2245,15 +2282,23 @@ class AccountGameplayDelegationRedisIntegrationTest {
       assertThatThrownBy(() -> login.authenticate(request, CALLER_WORKLOAD, verifier))
           .isInstanceOf(
               AccountGameplayDelegationIssuanceRepository.IdempotencyConflictException.class);
-      assertThatThrownBy(() -> committedOwner.activateCommittedIssuance(requestId));
+      assertThatThrownBy(() -> committedOwner.activateCommittedIssuance(requestId))
+          .isInstanceOf(
+              AccountGameplayDelegationCommittedIssuanceOwner.OwnerUnavailableException.class);
       assertThatThrownBy(
-          () ->
-              recoveryOwner.recoverInitialLoginResponse(
-                  requestId, accountId, new CallerIdentity(CALLER_WORKLOAD, context.contextId())));
+              () ->
+                  recoveryOwner.recoverInitialLoginResponse(
+                      requestId,
+                      accountId,
+                      new CallerIdentity(CALLER_WORKLOAD, context.contextId())))
+          .isInstanceOf(
+              AccountGameplayDelegationResponseRecoveryOwner.OwnerUnavailableException.class);
       // Unknown physical state must preserve PENDING and never delete somebody else's bytes.
       byte[] poison = "conflicting-physical-registry".getBytes(StandardCharsets.US_ASCII);
       admin.set(ascii(tokenKey), poison);
-      assertThatThrownBy(() -> disposalOwner.retire(disposalRequest, CALLER_WORKLOAD));
+      assertThatThrownBy(() -> disposalOwner.retire(disposalRequest, CALLER_WORKLOAD))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
       assertThat(admin.get(ascii(tokenKey))).containsExactly(poison);
       assertThat(
               dsl.fetchSingle(
@@ -2291,9 +2336,12 @@ class AccountGameplayDelegationRedisIntegrationTest {
           .isEqualTo(storedEnvelope);
       // A captured pre-disposal physical registration cannot resurrect, even after SQL completion.
       assertThatThrownBy(
-          () ->
-              redis.registerPending(
-                  committed.tokenSha256(), intent.pendingBytes(), originalDeadline));
+              () ->
+                  redis.registerPending(
+                      committed.tokenSha256(), intent.pendingBytes(), originalDeadline))
+          .isInstanceOf(
+              AccountGameplayDelegationRedisClient.AccountCoordinationRedisException.class);
+      assertThat(admin.get(ascii(tokenKey))).containsExactly(intent.tombstoneBytes());
       byte[] activationScript;
       try (var stream =
           getClass()
