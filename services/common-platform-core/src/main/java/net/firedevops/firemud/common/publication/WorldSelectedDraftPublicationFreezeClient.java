@@ -25,8 +25,6 @@ public final class WorldSelectedDraftPublicationFreezeClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public WorldSelectedDraftPublicationFreezeClient(
       ServiceEndpointsProperties endpoints,
@@ -44,16 +42,10 @@ public final class WorldSelectedDraftPublicationFreezeClient
     this.workloadNamespace = workloadNamespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException("World selected-publication freeze client is closed");
-    }
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("World selected-publication freeze stub unavailable");
-    }
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "World selected-publication freeze client is closed",
+        "World selected-publication freeze stub unavailable");
   }
 
   /** Returns evidence only after exact World server identity and complete echo verification. */
@@ -69,7 +61,8 @@ public final class WorldSelectedDraftPublicationFreezeClient
           "World selected-publication freeze must use the configured workload namespace");
     }
     var response =
-        requireStub()
+        requireInitializedStub(
+                "World selected-publication freeze client is not initialized and available")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .beginVersionPublicationFreeze(
                 WorldSelectedDraftPublicationFreezeGrpcCodec.toRequest(request));
@@ -101,25 +94,5 @@ public final class WorldSelectedDraftPublicationFreezeClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private WorldSelectedDraftPublicationFreezeServiceGrpc
-          .WorldSelectedDraftPublicationFreezeServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "World selected-publication freeze client is not initialized and available");
-    }
-    return currentStub;
   }
 }
