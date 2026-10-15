@@ -754,8 +754,18 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
     } else {
       if (fixtureModeEnabled()) throw fixtureIdentityConflict();
+      if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {
+        Long currentLifecycleEpoch = worldInstance.getLifecycleEpoch();
+        if (expectedLifecycleEpoch <= 0L
+            || currentLifecycleEpoch == null
+            || currentLifecycleEpoch <= 0L
+            || (expectedLifecycleEpoch != currentLifecycleEpoch
+                && currentLifecycleEpoch - 1L != expectedLifecycleEpoch)) {
+          throw lifecycleEpochMismatch();
+        }
+        return snapshot(worldInstance);
+      }
       requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
-      if (STATUS_ACTIVE.equals(worldInstance.getStatus())) return snapshot(worldInstance);
     }
     if (!STATUS_PREPARING.equals(worldInstance.getStatus())) {
       throw new IllegalArgumentException(
