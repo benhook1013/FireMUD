@@ -349,6 +349,7 @@ class WorldAuthoredVersionIdentityServiceTest {
           .isInstanceOf(
               WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException.class);
     }
+    verify(versionStateClient, times(4)).read(any());
     verify(repository, never()).acceptFresh(any(), any());
     assertThat(transactionManager.startedWith).isNull();
   }
