@@ -3,11 +3,11 @@ package net.firedevops.firemud.accountservice.service.session;
 import io.grpc.Status;
 import java.util.Arrays;
 import java.util.Objects;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
-import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
-import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadEvidence;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -58,7 +58,8 @@ public final class AccountSelectedDraftPublicationSettlementService {
       throw new IllegalArgumentException("Exact original publication operation namespace required");
     }
     var gameDesignRequest =
-        GameDesignPublicationTerminalReadEvidence.ReadRequest.create(workloadNamespace, operation.canonicalBytes());
+        GameDesignPublicationTerminalReadEvidence.ReadRequest.create(
+            workloadNamespace, operation.canonicalBytes());
     var gameDesign = gameDesignClient.read(gameDesignRequest);
     var terminal = gameDesign == null ? null : gameDesign.terminalEvidence().orElse(null);
     if (gameDesign == null || !gameDesignRequest.equals(gameDesign.request()) || terminal == null) {

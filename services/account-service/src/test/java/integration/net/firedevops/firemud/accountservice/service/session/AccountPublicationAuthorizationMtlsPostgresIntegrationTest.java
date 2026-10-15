@@ -25,7 +25,9 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadGrpcCodec;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -38,8 +40,6 @@ import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrder
 import net.firedevops.firemud.common.publication.AccountSelectedPublicationOrderGrpcCodec;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadGrpcCodec;
-import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
-import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadGrpcCodec;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadGrpcCodec;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -65,7 +65,8 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
   private static final Network NETWORK = Network.newNetwork();
 
   @Container
-  static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestContainerImages.postgres());
+  static final PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static final GenericContainer<?> redis =
@@ -392,50 +393,76 @@ class AccountPublicationAuthorizationMtlsPostgresIntegrationTest {
                 .GameDesignPublicationTerminalReadServiceImplBase() {
               @Override
               public void readGameDesignPublicationTerminal(
-                  net.firedevops.firemud.gamedesign.v1.ReadGameDesignPublicationTerminalRequest wire,
+                  net.firedevops.firemud.gamedesign.v1.ReadGameDesignPublicationTerminalRequest
+                      wire,
                   io.grpc.stub.StreamObserver<
-                          net.firedevops.firemud.gamedesign.v1.ReadGameDesignPublicationTerminalResponse>
+                          net.firedevops.firemud.gamedesign.v1
+                              .ReadGameDesignPublicationTerminalResponse>
                       observer) {
                 try {
                   requireAccountClient();
                   var request = GameDesignPublicationTerminalReadGrpcCodec.fromRequest(wire);
                   gdReads.add(request.readRequestId().toString());
                   if (mode.get().equals("gd-missing")) throw Status.NOT_FOUND.asRuntimeException();
-                  if (mode.get().equals("gd-unavailable")) throw Status.UNAVAILABLE.asRuntimeException();
-                  var result = new net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.ReadResult(
-                      request,
-                      net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.Status.valueOf(terminal.outcome().name()),
-                      java.util.Optional.of(terminal));
-                  var response = GameDesignPublicationTerminalReadGrpcCodec.toResponse(request, result).toBuilder();
-                  if (mode.get().startsWith("gd-") && !mode.get().equals("gd-missing") && !mode.get().equals("gd-unavailable")) {
+                  if (mode.get().equals("gd-unavailable"))
+                    throw Status.UNAVAILABLE.asRuntimeException();
+                  var result =
+                      new net.firedevops.firemud.common.gamedesign
+                          .GameDesignPublicationTerminalReadEvidence.ReadResult(
+                          request,
+                          net.firedevops.firemud.common.gamedesign
+                              .GameDesignPublicationTerminalReadEvidence.Status.valueOf(
+                              terminal.outcome().name()),
+                          java.util.Optional.of(terminal));
+                  var response =
+                      GameDesignPublicationTerminalReadGrpcCodec.toResponse(request, result)
+                          .toBuilder();
+                  if (mode.get().startsWith("gd-")
+                      && !mode.get().equals("gd-missing")
+                      && !mode.get().equals("gd-unavailable")) {
                     byte[] echoedRequest = request.canonicalBytes();
                     byte[] terminalBytes = terminal.canonicalBytes();
                     if (mode.get().equals("gd-correlation")) {
-                      echoedRequest = new net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.ReadRequest(
-                          1, request.targetNamespace(), UUID.randomUUID(), request.operationBytes()).canonicalBytes();
+                      echoedRequest =
+                          new net.firedevops.firemud.common.gamedesign
+                                  .GameDesignPublicationTerminalReadEvidence.ReadRequest(
+                                  1,
+                                  request.targetNamespace(),
+                                  UUID.randomUUID(),
+                                  request.operationBytes())
+                              .canonicalBytes();
                     } else if (mode.get().equals("gd-operation")) {
                       var invalidRequest = new java.io.ByteArrayOutputStream();
-                      DraftAuthorizationFenceBinding.frame(invalidRequest,
-                          net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.ReadRequest.SCHEMA);
+                      DraftAuthorizationFenceBinding.frame(
+                          invalidRequest,
+                          net.firedevops.firemud.common.gamedesign
+                              .GameDesignPublicationTerminalReadEvidence.ReadRequest.SCHEMA);
                       DraftAuthorizationFenceBinding.frame(invalidRequest, "1");
-                      DraftAuthorizationFenceBinding.frame(invalidRequest, request.targetNamespace());
-                      DraftAuthorizationFenceBinding.frame(invalidRequest, request.readRequestId().toString());
+                      DraftAuthorizationFenceBinding.frame(
+                          invalidRequest, request.targetNamespace());
+                      DraftAuthorizationFenceBinding.frame(
+                          invalidRequest, request.readRequestId().toString());
                       DraftAuthorizationFenceBinding.frame(invalidRequest, new byte[0]);
                       echoedRequest = invalidRequest.toByteArray();
                     } else if (mode.get().equals("gd-unknown")) {
                       var invalid = new java.io.ByteArrayOutputStream();
-                      DraftAuthorizationFenceBinding.frame(invalid, GameDesignPublicationTerminalEvidence.SCHEMA);
+                      DraftAuthorizationFenceBinding.frame(
+                          invalid, GameDesignPublicationTerminalEvidence.SCHEMA);
                       DraftAuthorizationFenceBinding.frame(invalid, operation.canonicalBytes());
                       DraftAuthorizationFenceBinding.frame(invalid, "UNKNOWN");
                       terminalBytes = invalid.toByteArray();
                     }
                     var invalidResponse = new java.io.ByteArrayOutputStream();
-                    DraftAuthorizationFenceBinding.frame(invalidResponse,
-                        net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence.ReadResult.SCHEMA);
+                    DraftAuthorizationFenceBinding.frame(
+                        invalidResponse,
+                        net.firedevops.firemud.common.gamedesign
+                            .GameDesignPublicationTerminalReadEvidence.ReadResult.SCHEMA);
                     DraftAuthorizationFenceBinding.frame(invalidResponse, echoedRequest);
-                    DraftAuthorizationFenceBinding.frame(invalidResponse, terminal.outcome().name());
+                    DraftAuthorizationFenceBinding.frame(
+                        invalidResponse, terminal.outcome().name());
                     DraftAuthorizationFenceBinding.frame(invalidResponse, terminalBytes);
-                    response.setCanonicalResponseBytes(com.google.protobuf.ByteString.copyFrom(invalidResponse.toByteArray()));
+                    response.setCanonicalResponseBytes(
+                        com.google.protobuf.ByteString.copyFrom(invalidResponse.toByteArray()));
                   }
                   observer.onNext(response.build());
                   observer.onCompleted();

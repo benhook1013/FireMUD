@@ -18,11 +18,11 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding;
-import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient;
-import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
@@ -92,7 +92,8 @@ class AccountSelectedDraftPublicationSettlementServiceTest {
                 call -> {
                   assertNoSql();
                   var request =
-                      call.getArgument(0, GameDesignPublicationTerminalReadEvidence.ReadRequest.class);
+                      call.getArgument(
+                          0, GameDesignPublicationTerminalReadEvidence.ReadRequest.class);
                   gameDesignReads.add(request.readRequestId());
                   return gameDesignEvidence(request, fixture.terminal);
                 })
@@ -156,7 +157,8 @@ class AccountSelectedDraftPublicationSettlementServiceTest {
       doAnswer(
               call -> {
                 var request =
-                    call.getArgument(0, GameDesignPublicationTerminalReadEvidence.ReadRequest.class);
+                    call.getArgument(
+                        0, GameDesignPublicationTerminalReadEvidence.ReadRequest.class);
                 return gameDesignEvidence(
                     new GameDesignPublicationTerminalReadEvidence.ReadRequest(
                         1, "test", UUID.randomUUID(), request.operationBytes()),
@@ -321,6 +323,19 @@ class AccountSelectedDraftPublicationSettlementServiceTest {
 
     CodecOutputs(GameDesignPublicationTerminalEvidence.Outcome outcome) {
       var world = mock(WorldPublishedStartLocationEvidence.class);
+      // Stipulated codec outputs include identities required by the current read correlation.
+      var account = mock(net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding.class);
+      var input = mock(net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding.PreallocationInput.class);
+      var selection = mock(net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.class);
+      var intent = mock(net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.PublishIntent.class);
+      when(operation.account()).thenReturn(account);
+      when(account.operationId()).thenReturn(UUID.randomUUID());
+      when(account.fenceId()).thenReturn(UUID.randomUUID());
+      when(account.input()).thenReturn(input);
+      when(input.selection()).thenReturn(selection);
+      when(selection.intent()).thenReturn(intent);
+      when(intent.selectedCommitRequestId()).thenReturn(UUID.randomUUID());
+      when(intent.selectedCommitId()).thenReturn(UUID.randomUUID());
       when(operation.canonicalBytes()).thenReturn(operationBytes);
       when(operation.world()).thenReturn(world);
       when(world.request()).thenReturn(worldRequest);
