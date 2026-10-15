@@ -27,11 +27,14 @@ class RealmPolicySourceTest {
             "2",
             UUID.randomUUID(),
             AssetSource.upsertPayload("41", "map", AssetSource.Requiredness.REQUIRED));
-    var unknown = policyRevision("3", UUID.randomUUID(), "{\"revisionKind\":\"UNSUPPORTED\"}");
+    var template =
+        policyRevision("3", UUID.randomUUID(), TemplateConfigSource.deletePayload("7"));
+    var unknown = policyRevision("4", UUID.randomUUID(), "{\"revisionKind\":\"UNSUPPORTED\"}");
 
     assertThat(RealmPolicySource.isPolicyRevision(policy)).isTrue();
     assertThat(RealmPolicySource.isPolicyRevision(command)).isFalse();
     assertThat(RealmPolicySource.isPolicyRevision(asset)).isFalse();
+    assertThat(RealmPolicySource.isPolicyRevision(template)).isFalse();
     assertThatThrownBy(() -> RealmPolicySource.isPolicyRevision(unknown))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Unsupported Game Design owner revision kind");
