@@ -30,6 +30,7 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
+import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationOwner;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftTemplateWorldSourceAssociation;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftTemplateWorldSourceAssociationRepository;
@@ -941,8 +942,14 @@ class TemplateConfigSourcePostgresIntegrationTest {
     var initial =
         binding(
             f,
-            List.of(rule, create),
-            Map.of(GameplayRuleSource.SCOPE, "0", TemplateConfigSource.SCOPE, "0"));
+            List.of(rule, create, policyRevision("2")),
+            Map.of(
+                GameplayRuleSource.SCOPE,
+                "0",
+                RealmPolicySource.SCOPE,
+                "0",
+                TemplateConfigSource.SCOPE,
+                "0"));
     apply(f, initial);
     var worldSeed =
         IsolatedPublicationOperationFixtures.fresh(f.target, initial.commitId().toString());
@@ -1071,12 +1078,17 @@ class TemplateConfigSourcePostgresIntegrationTest {
   @Test
   void concurrentExactFirstReservationsKeepTheWinningReadCorrelation() throws Exception {
     var f = fixture();
+    var template =
+        new DraftCommitBinding.RevisionPayload(
+            "0",
+            UUID.randomUUID(),
+            DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+            TemplateConfigSource.createPayload("Starter", config(f, "[]")));
     var initial =
         binding(
             f,
-            TemplateConfigSource.createPayload("Starter", config(f, "[]")),
-            TemplateConfigSource.SCOPE,
-            "0");
+            List.of(template, policyRevision("1")),
+            Map.of(RealmPolicySource.SCOPE, "0", TemplateConfigSource.SCOPE, "0"));
     apply(f, initial);
     var worldSeed =
         IsolatedPublicationOperationFixtures.fresh(f.target, initial.commitId().toString());
@@ -1383,6 +1395,20 @@ class TemplateConfigSourcePostgresIntegrationTest {
             + "\",\"world\":{\"regions\":[],\"rooms\":[]},\"entity\":{\"items\":[],\"npcs\":[]},\"gameLogic\":{\"inputs\":"
             + inputs
             + "},\"automation\":{\"scripts\":[],\"scriptPatch\":{\"presence\":\"ABSENT\"}},\"supportedSettings\":[]}");
+  }
+
+  private static DraftCommitBinding.RevisionPayload policyRevision(String revisionOrder) {
+    return new DraftCommitBinding.RevisionPayload(
+        revisionOrder,
+        UUID.randomUUID(),
+        DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
+        "{\"revisionKind\":\"REALM_ENTRY_POLICY\","
+            + "\"logicalRevisionId\":\"isolated-finalizer-main\","
+            + "\"policy\":{\"schemaVersion\":1,\"worldSlug\":\"world\","
+            + "\"worldDisplayName\":\"World\",\"realmSlug\":\"main\","
+            + "\"realmDisplayName\":\"Main\",\"visible\":true,"
+            + "\"publicProduction\":true,\"stateScope\":\"SHARED\","
+            + "\"entryPolicy\":\"PRESEEDED_ONLY\"}}");
   }
 
   private static String commandUpsertPayload() {
