@@ -1449,6 +1449,39 @@ result = None
 exit_status = 0
 state.setdefault("calls", []).append(f"{method} {endpoint}")
 
+def rich_history_case(scenario, barrier, page):
+    # Native GET /statuses/<head> is a newest-first array with creator; the
+    # combined projection above has the same IDs but deliberately no creator.
+    case = scenario.removeprefix("bridge-").removeprefix("history-")
+    older = {**barrier, "id": 499, "created_at": "2026-10-14T00:00:00Z",
+             "creator": {"id": 99, "login": "foreign", "type": "User"}}
+    unrelated = [{**barrier, "id": 1000 + (page - 1) * 100 + index, "context": f"other-{page}-{index}",
+                  "created_at": "2026-10-15T01:00:00Z"} for index in range(100)]
+    if case == "latest-owned": return [barrier, older]
+    if case == "latest-foreign": return [{**barrier, "creator": older["creator"]}, {**older, "creator": barrier["creator"]}]
+    if case == "null-actor": return [{**barrier, "creator": None}]
+    if case == "missing-actor": return [{key: value for key, value in barrier.items() if key != "creator"}]
+    if case == "unknown-state": return [{**barrier, "state": "unknown"}]
+    if case == "page-two-owned": return unrelated if page == 1 else [barrier, older]
+    if case == "page-two-absent": return unrelated if page == 1 else []
+    if case == "budget": return unrelated
+    if case == "unavailable-page":
+        if page == 1: return unrelated
+        raise RuntimeError("status page unavailable")
+    if case == "duplicate-page": return unrelated if page == 1 else [{**unrelated[0], "id": 1000}]
+    if case == "wrong-head-url": return [{**barrier, "url": barrier["url"].replace("a" * 40, "b" * 40)}]
+    if case == "same-second": return [barrier, {**older, "created_at": barrier["created_at"]}]
+    if case == "foreign-same-second": return [{**barrier, "creator": older["creator"]}, {**older, "creator": barrier["creator"], "created_at": barrier["created_at"]}]
+    if case == "first-page-stop":
+        if page != 1: raise RuntimeError("older pages must not be read")
+        return [barrier] + unrelated[:99]
+    if case == "ignore-old-malformed": return [barrier, "bad"]
+    if case == "overfull": return unrelated + [barrier]
+    if case == "scalar": return "bad"
+    if case == "malformed-row": return ["bad"]
+    raise AssertionError(case)
+
+
 def run(run_id):
     return {"id": run_id, "workflow_id": 42, "name": "CI — Validation", "path": ".github/workflows/ci.yml",
             "created_at": "2026-07-30T01:00:00Z" if run_id == 100 else "2026-07-30T02:00:00Z",
@@ -1502,9 +1535,10 @@ if scenario.startswith("bridge-") and method == "POST":
     state["barrier_state"] = fields["state"]
     if scenario == "bridge-write-denied":
         exit_status = 1
-elif scenario.startswith("bridge-") and endpoint.endswith(f"/commits/{head}/status"):
+elif scenario.startswith("bridge-") and (endpoint.endswith(f"/commits/{head}/status") or endpoint.endswith(f"/statuses/{head}")):
     state["status_reads"] = state.get("status_reads", 0) + 1
-    barrier = {"id": 500, "context": "Validation Gate", "state": state.get("barrier_state", "pending"),
+    barrier = {"id": 500, "url": f"https://api.github.com/repos/example/firemud/statuses/{head}",
+               "created_at": "2026-10-15T00:00:00Z", "context": "Validation Gate", "state": state.get("barrier_state", "pending"),
                "target_url": "https://github.com/example/firemud/actions/runs/200/attempts/1",
                "creator": {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}}
     if scenario in {"bridge-foreign", "bridge-cross-foreign"}:
@@ -1515,10 +1549,25 @@ elif scenario.startswith("bridge-") and endpoint.endswith(f"/commits/{head}/stat
         barrier["id"] = 501
     elif scenario == "bridge-terminal":
         barrier["state"] = "success"
-    result = [{"sha": head, "total_count": 0 if scenario == "bridge-absent" else 1,
-               "statuses": [] if scenario == "bridge-absent" else [barrier]}]
-    if scenario == "bridge-incomplete-status":
-        result[0]["total_count"] = 2
+    rich = [] if scenario == "bridge-absent" else [barrier]
+    combined = {"sha": head, "total_count": len(rich), "statuses": [{key: value for key, value in row.items() if key != "creator"} for row in rich]}
+    assert all("creator" not in row for row in combined["statuses"])
+    if endpoint.endswith("/status"):
+        result = [combined] # Actual combined projection deliberately omits creator.
+    else:
+        fields = dict(arg.split("=", 1) for arg in args if "=" in arg)
+        assert fields["per_page"] == "100" and "--paginate" not in args
+        page = int(fields["page"])
+        state.setdefault("status_pages", []).append(page)
+        result = rich
+        if scenario.startswith("bridge-history-"):
+            try:
+                result = rich_history_case(scenario, barrier, page)
+            except RuntimeError:
+                result = None
+                exit_status = 1
+        if scenario == "bridge-incomplete-status":
+            result = combined # Wrong endpoint shape must never qualify.
 elif scenario.startswith("bridge-") and any(endpoint.endswith(f"/actions/runs/{identity}/attempts/1") for identity in (99, 100, 101)):
     identity = int(endpoint.split("/")[-3])
     result = run(identity)
@@ -1963,6 +2012,34 @@ assert len(state.get("status_posts", [])) == (1 if sys.argv[2] == "bridge-write-
 PY_BRIDGE
 done
 
+# Mirrors the observed Security ordering: metadata38678293269/1 published
+# pending56392930570 before original38678278927 completed successfully; callback
+#38678584212 executed reconciliation. Normalized identities below must now recover
+# using rich creator evidence, while combined records omit that evidence.
+for history_case in latest-owned latest-foreign null-actor missing-actor unknown-state page-two-owned page-two-absent budget unavailable-page duplicate-page wrong-head-url same-second foreign-same-second first-page-stop ignore-old-malformed overfull scalar malformed-row; do
+  scenario="bridge-history-$history_case"
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  case "$history_case" in
+    budget|unavailable-page|duplicate-page|wrong-head-url|overfull|scalar|malformed-row)
+      if run_resolver "$scenario" 100 no-local-workflow-file reconcile; then
+        echo "invalid rich resolver history qualified: $history_case" >&2; exit 1
+      fi ;;
+    *) run_resolver "$scenario" 100 no-local-workflow-file reconcile ;;
+  esac
+  python3 - "$tmp_dir/resolver-state-$scenario" "$history_case" <<'PY_HISTORY'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+case = sys.argv[2]
+assert len(state.get("status_posts", [])) == (1 if case in {"latest-owned", "page-two-owned", "same-second", "first-page-stop", "ignore-old-malformed"} else 0), state
+assert not any("/commits/" in call and call.endswith("/status") for call in state["calls"]), state
+if case.startswith("page-two-"): assert 2 in state["status_pages"], state
+if case == "first-page-stop": assert all(page == 1 for page in state["status_pages"]), state
+if case == "budget": assert state["status_pages"] == list(range(1, 11)), state
+PY_HISTORY
+done
+
 # Same-head base advancement uses historical ownership and CURRENT proof.
 for scenario in bridge-cross-success bridge-cross-running bridge-cross-earlier-attempt bridge-cross-no-proof bridge-cross-failure bridge-cross-foreign bridge-cross-replaced bridge-cross-obsolete bridge-cross-cancelled-selection; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
@@ -2349,6 +2426,39 @@ api_url = f"https://api.github.com/repos/{repo}/statuses/{head}"
 run_url = f"https://github.com/{repo}/actions/runs/"
 creator = {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}
 state.setdefault("calls", []).append(f"{method} {endpoint}")
+
+def rich_history_case(scenario, barrier, page):
+    # Native GET /statuses/<head> is a newest-first array with creator; the
+    # combined projection above has the same IDs but deliberately no creator.
+    case = scenario.removeprefix("bridge-").removeprefix("history-")
+    older = {**barrier, "id": 499, "created_at": "2026-10-14T00:00:00Z",
+             "creator": {"id": 99, "login": "foreign", "type": "User"}}
+    unrelated = [{**barrier, "id": 1000 + (page - 1) * 100 + index, "context": f"other-{page}-{index}",
+                  "created_at": "2026-10-15T01:00:00Z"} for index in range(100)]
+    if case == "latest-owned": return [barrier, older]
+    if case == "latest-foreign": return [{**barrier, "creator": older["creator"]}, {**older, "creator": barrier["creator"]}]
+    if case == "null-actor": return [{**barrier, "creator": None}]
+    if case == "missing-actor": return [{key: value for key, value in barrier.items() if key != "creator"}]
+    if case == "unknown-state": return [{**barrier, "state": "unknown"}]
+    if case == "page-two-owned": return unrelated if page == 1 else [barrier, older]
+    if case == "page-two-absent": return unrelated if page == 1 else []
+    if case == "budget": return unrelated
+    if case == "unavailable-page":
+        if page == 1: return unrelated
+        raise RuntimeError("status page unavailable")
+    if case == "duplicate-page": return unrelated if page == 1 else [{**unrelated[0], "id": 1000}]
+    if case == "wrong-head-url": return [{**barrier, "url": barrier["url"].replace("a" * 40, "b" * 40)}]
+    if case == "same-second": return [barrier, {**older, "created_at": barrier["created_at"]}]
+    if case == "foreign-same-second": return [{**barrier, "creator": older["creator"]}, {**older, "creator": barrier["creator"], "created_at": barrier["created_at"]}]
+    if case == "first-page-stop":
+        if page != 1: raise RuntimeError("older pages must not be read")
+        return [barrier] + unrelated[:99]
+    if case == "ignore-old-malformed": return [barrier, "bad"]
+    if case == "overfull": return unrelated + [barrier]
+    if case == "scalar": return "bad"
+    if case == "malformed-row": return ["bad"]
+    raise AssertionError(case)
+
 result = None
 exit_status = 0
 if method == "POST":
@@ -2379,7 +2489,7 @@ elif endpoint.endswith("/pulls/123"):
               "head": {"sha": head, "ref": "proof-branch", "repo": {"full_name": head_repo}}}
     if scenario == "tuple-replaced" and state["pr_reads"] > 1:
         result["base"]["sha"] = old_base
-elif endpoint.endswith(f"/commits/{head}/status"):
+elif endpoint.endswith(f"/commits/{head}/status") or endpoint.endswith(f"/statuses/{head}"):
     state["status_reads"] = state.get("status_reads", 0) + 1
     barrier_state = "pending"
     if scenario in {"deferred-owned-failure", "success-owned-failure"}:
@@ -2388,16 +2498,32 @@ elif endpoint.endswith(f"/commits/{head}/status"):
         barrier_state = "error"
     elif scenario in {"deferred-owned-success", "success-owned-success"}:
         barrier_state = "success"
-    barrier = {"id": 500, "url": api_url, "context": "Validation Gate", "state": barrier_state,
+    barrier = {"id": 500, "url": api_url, "created_at": "2026-10-15T00:00:00Z", "context": "Validation Gate", "state": barrier_state,
                "target_url": f"{run_url}{300 if current_attempt == 2 else 200}/attempts/1", "creator": creator}
     if scenario.endswith("foreign"):
         barrier["creator"] = {"id": 99, "login": "foreign", "type": "User"}
     if scenario == "status-replaced" and state["status_reads"] > 1:
         barrier["id"] = 999
     absent = scenario in {"deferred-absent", "deferred-fork", "success-absent"} or scenario.startswith("ack-") or scenario.startswith("current-")
-    result = {"sha": head, "total_count": 0 if absent else 1, "statuses": [] if absent else [barrier]}
-    if scenario == "incomplete-status":
-        result["total_count"] = 2
+    rich = [] if absent else [barrier]
+    combined = {"sha": head, "total_count": len(rich), "statuses": [{key: value for key, value in row.items() if key != "creator"} for row in rich]}
+    assert all("creator" not in row for row in combined["statuses"])
+    if endpoint.endswith("/status"):
+        result = combined # Actual combined projection deliberately omits creator.
+    else:
+        fields = dict(arg.split("=", 1) for arg in args if "=" in arg)
+        assert fields["per_page"] == "100" and "--paginate" not in args
+        page = int(fields["page"])
+        state.setdefault("status_pages", []).append(page)
+        result = rich
+        if scenario.startswith("history-"):
+            try:
+                result = rich_history_case(scenario, barrier, page)
+            except RuntimeError:
+                result = None
+                exit_status = 1
+        if scenario == "incomplete-status":
+            result = combined # Wrong endpoint shape must never qualify.
 elif "/actions/runs/" in endpoint and not endpoint.endswith("/jobs"):
     historical = "/attempts/" in endpoint
     run_id = int(endpoint.split("/")[-3] if historical else endpoint.rsplit("/", 1)[1])
@@ -2503,6 +2629,31 @@ if not unchanged:
     assert state["posts"][0]["state"] == expected.split("-")[0], state
 PY_PUBLISH
 done
+for history_case in latest-owned latest-foreign null-actor missing-actor unknown-state page-two-owned page-two-absent budget unavailable-page duplicate-page wrong-head-url same-second foreign-same-second first-page-stop ignore-old-malformed overfull scalar malformed-row; do
+  scenario="history-$history_case"
+  case "$history_case" in
+    budget|unavailable-page|duplicate-page|wrong-head-url|overfull|scalar|malformed-row)
+      if run_producer "$scenario" success; then
+        echo "invalid rich producer history qualified: $history_case" >&2; exit 1
+      fi ;;
+    *) run_producer "$scenario" success ;;
+  esac
+  python3 - "$tmp_dir/producer-state-$scenario" "$tmp_dir/producer-output-$scenario" "$history_case" <<'PY_HISTORY'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+case = sys.argv[3]
+expected = "success-acknowledged" if case in {"latest-owned", "page-two-owned", "same-second", "first-page-stop", "ignore-old-malformed"} else "unchanged" if case in {"latest-foreign", "foreign-same-second", "null-actor", "missing-actor", "unknown-state", "page-two-absent"} else None
+assert Path(sys.argv[2]).read_text().strip() == (f"publication={expected}" if expected else ""), state
+assert len(state.get("posts", [])) == (1 if expected == "success-acknowledged" else 0), state
+assert not any("/commits/" in call and call.endswith("/status") for call in state["calls"]), state
+if case.startswith("page-two-"): assert 2 in state["status_pages"], state
+if case == "first-page-stop": assert all(page == 1 for page in state["status_pages"]), state
+if case == "budget": assert state["status_pages"] == list(range(1, 11)), state
+PY_HISTORY
+done
+
 for scenario in success-assessment-failed incomplete-status current-wrong-app current-wrong-tuple current-incomplete-jobs ack-denied ack-ambiguous ack-wrong-url ack-missing-creator ack-missing-id ack-bad-timestamp ack-wrong-state ack-multiple; do
   assessment=dependency-deferred
   original=no-local-workflow-file
