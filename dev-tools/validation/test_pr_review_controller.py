@@ -4595,6 +4595,78 @@ class ControllerTests(unittest.TestCase):
                 controller._ensure_runnable(target, force=True)
                 self.assertIn(target.status, (ReviewStatus.READY, ReviewStatus.PARENT_MOVED, ReviewStatus.UNRECONCILED))
 
+    def test_reopened_allocation_minimum_requires_peer_source_authority_after_taper(self):
+        for channel, peer in (("hosted", "cli"), ("cli", "hosted")):
+            for after_dry in (False, True):
+                for proof in ("pending", "unavailable", "finding_pending"):
+                    with self.subTest(channel=channel, after_dry=after_dry, proof=proof):
+                        dry_count = 1 if channel == "hosted" else 3
+                        histories = {(1, channel): [
+                            self.allocation_evidence(checkpoint=f"dry-{index}", channel=channel)
+                            for index in range(dry_count)
+                        ]}
+                        checkpoint = histories[(1, channel)][-1]["checkpoint"]
+                        histories[(1, channel)].append(self.scope_timeline_evidence(channel=channel))
+                        controller = self.make({1: pr(1, HEAD_1)}, histories, heads={"feature-1": HEAD_1})
+                        controller.set_stack([1])
+                        bounds = (
+                            {"min_additional_completed": 2, "max_additional_completed": 3}
+                            if after_dry else {"exact_additional_completed": 1}
+                        )
+                        controller.decide_allocation(
+                            action="grant", pr=1, channel=channel, head=HEAD_1, checkpoint=checkpoint,
+                            reason="explicit additional discovery after historical taper", **bounds,
+                        )
+                        if after_dry:
+                            histories[(1, channel)].append(self.allocation_evidence(
+                                checkpoint="additional-dry", channel=channel,
+                            ))
+                        histories[(1, peer)] = [self.allocation_evidence(
+                            checkpoint="peer-source", channel=peer, accepted=1, raw=1,
+                            source_resolution_status=proof,
+                        )]
+                        saved = controller._state()
+                        target = controller._target(channel, expected_pr=1)
+                        self.assertEqual(target.status, ReviewStatus.READY if proof == "finding_pending" else ReviewStatus.HELD)
+                        if proof != "finding_pending":
+                            with self.assertRaises(ControllerError):
+                                controller._ensure_runnable(target, force=True)
+                        self.assertEqual(controller._state(), saved)
+
+    def test_preparation_movement_cannot_hide_unanchored_peer_fix(self):
+        for channel, peer in (("hosted", "cli"), ("cli", "hosted")):
+            for anchored in (False, True):
+                with self.subTest(channel=channel, anchored=anchored):
+                    histories = {
+                        (1, channel): [self.allocation_evidence(
+                            checkpoint="own-fixed", channel=channel, accepted=1, raw=1,
+                            source_resolution_status="resolved",
+                        )],
+                        (1, peer): [self.allocation_evidence(
+                            checkpoint="peer-source", channel=peer, accepted=1, raw=1, anchored=anchored,
+                            source_resolution_status="finding_pending",
+                        )],
+                    }
+                    evidence = AuditedEvidence(histories, audit={
+                        "complete": True, "active_reservations": [], "unmatched_responses": [],
+                        "ambiguous_responses": [], "unresolved_findings": [],
+                        "finding_only_findings": [], "unknown_review_evidence": [],
+                        "request_preparation_only": True,
+                    })
+                    controller = self.make({1: dataclasses.replace(pr(1, HEAD_1), base_tip="9" * 40)}, evidence,
+                                           heads={"feature-1": HEAD_1})
+                    controller.set_stack([1])
+                    saved = controller._state()
+                    target = controller._target(channel, expected_pr=1)
+                    if anchored:
+                        controller._ensure_runnable(target, force=True)
+                        self.assertIn(target.status, (ReviewStatus.READY, ReviewStatus.PARENT_MOVED, ReviewStatus.UNRECONCILED))
+                    else:
+                        self.assertEqual(target.status, ReviewStatus.HELD)
+                        with self.assertRaises(ControllerError):
+                            controller._ensure_runnable(target, force=True)
+                    self.assertEqual(controller._state(), saved)
+
     def test_final_audit_own_source_fix_holds_open_but_releases_closed_discovery(self):
         for closed in (False, True):
             with self.subTest(closed=closed):

@@ -3649,10 +3649,9 @@ class ReviewController:
             finding_reasons.append(self._accepted_findings_pending_reason(latest))
         # Positive classifications are valid only after every canonical safety,
         # history and latest-checkpoint check above has completed.
-        own_findings_pending = admission_channel is not None and any(
-            self._accepted_findings_pending(value, current.child_head) for value in histories[admission_channel]
-        )
-        if audit.get("request_preparation_only") is True and not (finding_reasons and own_findings_pending):
+        if finding_reasons and admission_channel is not None:
+            raise _FindingOnlyStopEvidence(finding_reasons[0])
+        if audit.get("request_preparation_only") is True:
             raise _RequestPreparationError("known pull-request preparation identity moved after complete safety audit")
         if finding_reasons:
             raise _FindingOnlyStopEvidence(finding_reasons[0])
@@ -4983,7 +4982,17 @@ class ReviewController:
                 policy.fresh_taper_history(state, channel, values),
                 policy.required_taper(state, channel, values),
             )
-            discovery_closed = discovery_complete and default_minimum_remaining.get(pr, 0) == 0
+            if f"{pr}:{channel.value}" in state.allocations:
+                # An allocation can reopen a historically tapered channel.
+                # Its own current minimum and taper decide discovery closure.
+                discovery_closed = (
+                    view.get("taper_complete") is True
+                    and type(view.get("completed_count")) is int
+                    and type(view.get("min_additional_completed")) is int
+                    and view["completed_count"] >= view["min_additional_completed"]
+                )
+            else:
+                discovery_closed = discovery_complete and default_minimum_remaining.get(pr, 0) == 0
             source_proof_pending = any(
                 _field(value, "source_resolution_status") is not None
                 and _field(value, "source_resolution_status") != "resolved"
