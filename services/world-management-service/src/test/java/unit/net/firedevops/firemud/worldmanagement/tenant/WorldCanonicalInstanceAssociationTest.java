@@ -6,8 +6,8 @@ import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadGrpcCodec;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
-import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
-import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidenceTestFixtures;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidenceTestFixtures;
 import org.junit.jupiter.api.Test;
 
 class WorldCanonicalInstanceAssociationTest {
@@ -53,7 +53,8 @@ class WorldCanonicalInstanceAssociationTest {
   }
 
   private static FixtureCase validFixtureCase() {
-    RunOwnedWorldLaunchEvidence evidence = RunOwnedWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     var source = evidence.sourceReceipt().sourceEvidence();
     UUID intakeRequestId = UUID.fromString("11111111-1111-4111-8111-111111111111");
     UUID intakeOperationId = UUID.fromString("22222222-2222-4222-8222-222222222222");

@@ -2319,6 +2319,27 @@ class ReviewController:
             return True
 
     @staticmethod
+    def _verified_source_fix_preparation(value: Any, pr: int) -> bool:
+        """Recognize durable, attributable fix work without relaxing safety flags."""
+        return (
+            _field(value, "pr") == pr
+            and _field(value, "source_resolution_status") == "finding_pending"
+            and _field(value, "completed") is True
+            and _field(value, "attributable") is True
+            and _field(value, "anchored") is True
+            and type(_field(value, "accepted")) is int
+            and _field(value, "accepted") >= 0
+            and not any(
+                _field(value, flag) is True
+                for flag in (
+                    "provisional", "correction", "non_counting", "held", "unstable",
+                    "unreconciled", "parent_moved", "over_ceiling", "rate_limited",
+                    "active_review", "active_reservation", "actionable",
+                )
+            )
+        )
+
+    @staticmethod
     def _accepted_findings_pending_reason(value: Any) -> str:
         status = _field(value, "source_resolution_status")
         if status == "unavailable" or status == "error":
@@ -3127,6 +3148,18 @@ class ReviewController:
             classified_unknown = [value for value in unknown_review_evidence if value not in ignored_over_ceiling]
             if sorted(classified_unresolved) != sorted([*finding_only_findings, *classified_unknown]):
                 raise ControllerError("review-stop audit has inconsistent finding classification")
+        admission_findings = audit.get("admission_finding_only_findings")
+        if admission_findings is not None and (
+            not isinstance(admission_findings, Mapping)
+            or set(admission_findings) != {"hosted", "cli"}
+            or any(
+                not isinstance(values, list)
+                or any(not isinstance(value, str) for value in values)
+                or any(values.count(value) > finding_only_findings.count(value) for value in values)
+                for values in admission_findings.values()
+            )
+        ):
+            raise ControllerError("review-stop audit has malformed admission finding classification")
         return normalized_audit
 
     def _stop_ambiguity_pins(
@@ -3193,7 +3226,10 @@ class ReviewController:
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
         audit_override: Mapping[str, Any] | None = None,
+        admission_channel: policy.Channel | None = None,
     ) -> tuple[Any, tuple[tuple[str, ...], str] | None, dict[policy.Channel, list[Any]]]:
+        if admission_channel is not None and admission_channel != channel:
+            raise ControllerError("admission finding channel does not match the requested channel")
         allow_exact_hosted_overlap = allow_cli_hosted_overlap and channel == policy.Channel.CLI
         allow_exact_cli_overlap = allow_hosted_cli_overlap and channel == policy.Channel.HOSTED
         histories = {
@@ -3290,7 +3326,9 @@ class ReviewController:
                 stop_audit_cache[("snapshot", cache_key)] = snapshot
                 stop_audit_cache[("latest", pr)] = snapshot
         if stop_audit_cache is not None:
-            stop_audit_cache[("clearance", pr, channel.value)] = snapshot
+            stop_audit_cache[("clearance", pr, channel.value)] = {
+                **snapshot, "admission_channel": admission_channel,
+            }
         # Authorization consumes the history snapshot refreshed by the audit,
         # rather than lists captured before the provider invalidated its caches.
         refreshed = audit.get("channel_histories")
@@ -3333,7 +3371,12 @@ class ReviewController:
         }
         consumed_active_hosted_reservations: set[tuple[int, int]] = set()
         consumed_active_cli_overlap = False
-        finding_reasons = list(audit.get("finding_only_findings", ()))
+        finding_reasons = list(
+            audit.get("admission_finding_only_findings", {}).get(
+                admission_channel.value, audit.get("finding_only_findings", ())
+            )
+            if admission_channel is not None else audit.get("finding_only_findings", ())
+        )
         audited_head = (
             _sha(audit.get("head"), "audited public head")
             if audit.get("request_preparation_only") is True
@@ -3356,6 +3399,14 @@ class ReviewController:
                 parsed_history[last_valid_review_index].head if last_valid_review_index >= 0 else None
             )
             for index, (value, evidence_value) in enumerate(zip(history, parsed_history, strict=True)):
+                if (
+                    admission_channel is not None
+                    and _field(value, "source_resolution_status") is not None
+                    and _field(value, "source_resolution_status") != "resolved"
+                    and (evidence_value.completed is not True or evidence_value.attributable is not True)
+                    and not evidence_value.correction and not evidence_value.non_counting
+                ):
+                    raise ControllerError(f"{selected.value} accepted-finding source proof is unattributable")
                 trigger_id = _field(value, "trigger_id")
                 rate_limit_proof = non_blocking_rate_limits.get(trigger_id)
                 audited_terminal_rate_limit = (
@@ -3393,7 +3444,11 @@ class ReviewController:
                                     f"{self._accepted_findings_pending_reason(value)}; "
                                     "accepted-finding source linkage or resolution proof is uncertain"
                                 )
-                            if self._accepted_findings_pending(value, current.child_head):
+                            if self._accepted_findings_pending(value, current.child_head) and not (
+                                admission_channel is not None
+                                and selected != admission_channel
+                                and self._verified_source_fix_preparation(value, pr)
+                            ):
                                 finding_reasons.append(self._accepted_findings_pending_reason(value))
                         else:
                             reviewed_head = _field(value, "head", "reviewed_head")
@@ -3554,9 +3609,14 @@ class ReviewController:
                         continue
                     raise ControllerError(f"{selected.value} channel has pending or ambiguous review evidence")
         history = histories[channel]
-        latest, index = self._latest_stop_checkpoint(pr, channel, history, checkpoint_pin)
+        try:
+            latest, index = self._latest_stop_checkpoint(pr, channel, history, checkpoint_pin)
+        except ControllerError:
+            if admission_channel is None or checkpoint_pin is not None or _latest_review(history) is not None:
+                raise
+            latest, index = None, -1
         reviewed_head = _field(latest, "head", "reviewed_head")
-        if require_checkpoint_ancestry:
+        if require_checkpoint_ancestry and latest is not None:
             try:
                 is_ancestor = self.git.is_ancestor(reviewed_head, current.child_head)
             except (OSError, subprocess.SubprocessError, ValueError) as exc:
@@ -3576,18 +3636,21 @@ class ReviewController:
             if not is_ancestor and not equivalent_retain:
                 raise ControllerError("latest reviewed head is not an ancestor of the live stop head")
         accepted = _field(latest, "accepted")
-        if type(accepted) is not int or accepted < 0:
+        if latest is not None and (type(accepted) is not int or accepted < 0):
             raise ControllerError("latest attributable checkpoint has a malformed accepted count")
         reviewed_head = _field(latest, "head", "reviewed_head")
         has_source_resolution = _field(latest, "source_resolution_status") is not None
         if (
-            (accepted > 0 or has_source_resolution)
+            latest is not None
+            and (accepted > 0 or has_source_resolution)
             and reviewed_head.casefold() == current.child_head.casefold()
             and (not has_source_resolution or self._accepted_findings_pending(latest, current.child_head))
         ):
             finding_reasons.append(self._accepted_findings_pending_reason(latest))
         # Positive classifications are valid only after every canonical safety,
         # history and latest-checkpoint check above has completed.
+        if finding_reasons and admission_channel is not None:
+            raise _FindingOnlyStopEvidence(finding_reasons[0])
         if audit.get("request_preparation_only") is True:
             raise _RequestPreparationError("known pull-request preparation identity moved after complete safety audit")
         if finding_reasons:
@@ -4299,6 +4362,7 @@ class ReviewController:
                     current,
                     reconciliation_result,
                     checkpoint_pin=latest["checkpoint"],
+                    admission_channel=policy.Channel(allocation.channel),
                     require_checkpoint_ancestry=False,
                     allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                     allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
@@ -4348,6 +4412,7 @@ class ReviewController:
                         current,
                         reconciliation_result,
                         checkpoint_pin=stopping_checkpoint,
+                        admission_channel=policy.Channel(allocation.channel),
                         require_checkpoint_ancestry=False,
                         allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                         allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
@@ -4388,6 +4453,7 @@ class ReviewController:
                     current,
                     reconciliation_result,
                     checkpoint_pin=checkpoint_pin,
+                    admission_channel=policy.Channel(allocation.channel),
                     require_checkpoint_ancestry=False,
                     allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                     allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
@@ -4429,6 +4495,7 @@ class ReviewController:
                     current,
                     reconciliation_result,
                     checkpoint_pin=stopping_checkpoint,
+                    admission_channel=policy.Channel(allocation.channel),
                     require_checkpoint_ancestry=False,
                     allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                     allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
@@ -4897,25 +4964,56 @@ class ReviewController:
             default_minimum_remaining[pr] = progress["minimum_remaining"]
             if progress["budget_exhausted"] and not progress["taper_complete"]:
                 default_budget_exhausted_prs.add(pr)
-        # Unallocated discovery-complete candidates with typed finding holds
-        # or pending accepted-source proof need the same canonical audit.
-        # Source uncertainty may exist even after every public thread resolves.
+        # Discovery admission keeps both channel histories authoritative, but
+        # verified peer fix preparation is not a requested-channel obligation.
         for pr in candidate_prs:
-            values = histories[channel].get(pr, ())
+            if live[pr].merged:
+                continue
+            view = channel_allocations.get(pr, {})
             if (
-                live[pr].merged
-                or f"{pr}:{channel.value}" in state.allocations
-                or not any(
+                view.get("status") in {
+                    "STOPPED", "CAP_AUDITED_STOP", "CAP_EXHAUSTED_PENDING", "EXHAUSTED_PENDING", "HANDED_OFF",
+                }
+                or view.get("history_projection_current") is False
+                or (stop_audit_cache is not None and ("clearance", pr, channel.value) in stop_audit_cache)
+            ):
+                continue
+            values = histories[channel].get(pr, ())
+            discovery_complete = policy.taper_satisfied(
+                channel,
+                policy.fresh_taper_history(state, channel, values),
+                policy.required_taper(state, channel, values),
+            )
+            if f"{pr}:{channel.value}" in state.allocations:
+                # An allocation can reopen a historically tapered channel.
+                # Its own current minimum and taper decide discovery closure.
+                discovery_closed = (
+                    view.get("taper_complete") is True
+                    and type(view.get("completed_count")) is int
+                    and type(view.get("min_additional_completed")) is int
+                    and view["completed_count"] >= view["min_additional_completed"]
+                )
+            else:
+                discovery_closed = discovery_complete and default_minimum_remaining.get(pr, 0) == 0
+            source_proof_pending = any(
+                (
+                    _field(value, "source_resolution_status") is not None
+                    and _field(value, "source_resolution_status") != "resolved"
+                )
+                or self._accepted_findings_pending(value, live[pr].head)
+                for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
+                for value in histories.get(selected, {}).get(pr, ())
+            )
+            ordinary_finding_release = (
+                f"{pr}:{channel.value}" not in state.allocations
+                and discovery_complete
+                and any(
                     policy._is_finding_only_hold(policy.Evidence.from_value(value))
                     or self._accepted_findings_pending(value, live[pr].head)
                     for value in values
                 )
-                or not policy.taper_satisfied(
-                    channel,
-                    policy.fresh_taper_history(state, channel, values),
-                    policy.required_taper(state, channel, values),
-                )
-            ):
+            )
+            if not ((source_proof_pending and not discovery_closed) or ordinary_finding_release):
                 continue
             credit_projection = self._review_credit_projection(values)
             refreshed_history_cache = history_cache if history_cache is not None else {}
@@ -4928,11 +5026,16 @@ class ReviewController:
                     current,
                     reconciliation,
                     checkpoint_pin=None,
+                    admission_channel=channel,
                     require_checkpoint_ancestry=False,
                     stop_audit_cache=stop_audit_cache,
                     history_cache=refreshed_history_cache,
                 )
-            except (_FindingOnlyStopEvidence, _RequestPreparationError):
+            except _FindingOnlyStopEvidence as error:
+                if not discovery_closed:
+                    allocation_holds[pr] = str(error)
+                    continue
+            except _RequestPreparationError:
                 pass
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
                 allocation_holds[pr] = str(error)
@@ -4948,7 +5051,7 @@ class ReviewController:
                 allocation_holds[pr] = (
                     "review count or taper evidence changed during audit; refresh status before release"
                 )
-            else:
+            elif discovery_complete:
                 finding_clearance_prs.add(pr)
         for pr, view in channel_allocations.items():
             allocation = state.allocations.get(f"{pr}:{channel.value}")
@@ -5140,6 +5243,7 @@ class ReviewController:
                 current,
                 reconciliation,
                 checkpoint_pin=None,
+                admission_channel=policy.Channel.HOSTED,
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
             )
@@ -5426,9 +5530,15 @@ class ReviewController:
                             require_checkpoint_ancestry=False,
                             history_cache=history_cache,
                             audit_override=final_audit,
+                            admission_channel=consumed.get("admission_channel"),
                             **consumed.get("overlap", {}),
                         )
-                    except (_FindingOnlyStopEvidence, _RequestPreparationError):
+                    except _FindingOnlyStopEvidence as error:
+                        # A finding may release completed discovery, but cannot
+                        # authorize another request on this still-selected PR.
+                        if result[channel.value].get("pr") == pr:
+                            clearance_error = str(error)
+                    except _RequestPreparationError:
                         pass
                     except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
                         clearance_error = str(error)

@@ -929,6 +929,11 @@ class LiveEvidence:
                     finding_only_findings.append(label)
                 else:
                     unknown_review_evidence.append(label)
+        # Keep the aggregate audit intact. Admission can omit only a positively
+        # established peer source fix, never an unknown response or thread.
+        admission_finding_only = {
+            channel: list(finding_only_findings) for channel in ("hosted", "cli")
+        }
         for channel, history in channel_history.items():
             for item in history:
                 source_status = item.get("source_resolution_status")
@@ -948,6 +953,9 @@ class LiveEvidence:
                 unresolved_findings.append(label)
                 if source_status == "finding_pending":
                     finding_only_findings.append(label)
+                    for requested, requested_findings in admission_finding_only.items():
+                        if requested == channel or not ReviewController._verified_source_fix_preparation(item, pr):
+                            requested_findings.append(label)
                 else:
                     unknown_review_evidence.append(label)
         checkpoints = [
@@ -982,6 +990,7 @@ class LiveEvidence:
             "ambiguous_responses": ambiguous_responses,
             "unresolved_findings": unresolved_findings,
             "finding_only_findings": finding_only_findings,
+            "admission_finding_only_findings": admission_finding_only,
             "unknown_review_evidence": unknown_review_evidence,
             "checkpoints": checkpoints,
             "channel_histories": channel_history,

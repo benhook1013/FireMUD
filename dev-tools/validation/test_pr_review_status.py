@@ -1587,6 +1587,51 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(validation["wrong_app_results"], [])
         self.assertEqual(report["ci"]["required"]["status"], "pending")
 
+    def test_same_name_commit_status_withholds_but_never_supplies_native_app_proof(self) -> None:
+        for state, expected in (("PENDING", "pending"), ("FAILURE", "failed"), ("SUCCESS", "success"), ("UNKNOWN", "unknown")):
+            for native in ("success", "wrong_app", "missing"):
+                with self.subTest(state=state, native=native):
+                    payload = github_payload()
+                    pr = payload["data"]["repository"]["pullRequest"]
+                    pr["reviewThreads"] = {"nodes": []}
+                    if native == "wrong_app":
+                        pr["statusCheckRollup"][0]["app"]["id"] = 99
+                    elif native == "missing":
+                        pr["statusCheckRollup"].pop(0)
+                    pr["statusCheckRollup"].append({
+                        "__typename": "StatusContext", "context": "Validation Gate",
+                        "state": state, "head_sha": HEAD,
+                        "creator": {"id": 41898282, "login": "github-actions[bot]"},
+                    })
+                    report = self._ready_report(payload)
+                    validation = report["ci"]["required"]["contexts"][0]
+                    self.assertEqual(validation["status"], expected if native == "success" else "wrong_app" if native == "wrong_app" else "unknown")
+                    self.assertEqual(len(validation["status_barriers"]), 1)
+                    self.assertIsNone(validation["status_barriers"][0]["app"])
+                    if native == "success":
+                        self.assertEqual(validation["result"]["kind"], "CheckRun")
+                        self.assertEqual(validation["result"]["app"]["id"], 42)
+
+    def test_foreign_or_stale_commit_status_can_only_withhold_exact_head_context(self) -> None:
+        for head, context, expected in ((HEAD, "Validation Gate", "pending"), (BASE, "Validation Gate", "success"), (HEAD, "unrelated", "success")):
+            payload = github_payload()
+            pr = payload["data"]["repository"]["pullRequest"]
+            pr["reviewThreads"] = {"nodes": []}
+            pr["statusCheckRollup"].append({
+                "__typename": "StatusContext", "context": context, "state": "PENDING", "head_sha": head,
+                "creator": {"id": 99, "login": "foreign"},
+            })
+            validation = self._ready_report(payload)["ci"]["required"]["contexts"][0]
+            self.assertEqual(validation["status"], expected)
+
+    def test_status_with_explicit_app_still_cannot_supply_native_check(self) -> None:
+        payload = github_payload()
+        pr = payload["data"]["repository"]["pullRequest"]
+        pr["reviewThreads"] = {"nodes": []}
+        pr["statusCheckRollup"][0].update({"__typename": "StatusContext"})
+        validation = self._ready_report(payload)["ci"]["required"]["contexts"][0]
+        self.assertEqual(validation["status"], "unknown")
+
     def test_matching_check_run_app_identity_satisfies_required_context(self) -> None:
         payload = github_payload()
         pr = payload["data"]["repository"]["pullRequest"]
