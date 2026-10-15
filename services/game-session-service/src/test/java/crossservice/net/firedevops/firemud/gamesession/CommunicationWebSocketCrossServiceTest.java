@@ -290,8 +290,7 @@ class CommunicationWebSocketCrossServiceTest {
     ensureTestServicesStarted();
     prepareGameInstance();
     JdbcTemplate jdbc = STACK.jdbc();
-    Map<BaselineTruncateGuard, String> originalStates =
-        new EnumMap<>(BaselineTruncateGuard.class);
+    Map<BaselineTruncateGuard, String> originalStates = new EnumMap<>(BaselineTruncateGuard.class);
     for (BaselineTruncateGuard guard : BaselineTruncateGuard.values()) {
       String originalState = truncateGuardState(jdbc, guard);
       assertThat(originalState).isIn("O", "A");
@@ -696,21 +695,15 @@ class CommunicationWebSocketCrossServiceTest {
           default -> throw new IllegalArgumentException("Unsupported enabled trigger state");
         };
     jdbc.execute(
-        "ALTER TABLE "
-            + guard.tableName
-            + " "
-            + enableMode
-            + " TRIGGER "
-            + guard.triggerName);
+        "ALTER TABLE " + guard.tableName + " " + enableMode + " TRIGGER " + guard.triggerName);
   }
 
   private static void assertOrdinaryTruncateIsRejected(
       JdbcTemplate jdbc, BaselineTruncateGuard guard) {
-    Throwable failure =
-        catchThrowable(() -> jdbc.execute("TRUNCATE TABLE " + guard.tableName));
+    Throwable failure = catchThrowable(() -> jdbc.execute("TRUNCATE TABLE " + guard.tableName));
     assertThat(failure).isNotNull();
     SQLException sqlException = mostSpecificSqlException(failure);
-    assertThat(sqlException).isNotNull();
+    assertThat((Throwable) sqlException).isNotNull();
     assertThat(sqlException.getSQLState()).isEqualTo("23514");
   }
 
