@@ -820,8 +820,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                                   ? worldOutcome
                                   : gameDesignApplied.ownerOutcome())
                       .toList();
-              coordinator.advanceSourceVisibilityFence(
-                  binding, new DraftCommitCoordinatorRepository.CoordinatorProof(binding, outcomes));
+              net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
+                  .advanceIsolatedSourceVisibility(gds.dsl(), binding, outcomes);
               coordinator.releaseApplicationSlot(binding);
               return null;
             });
