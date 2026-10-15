@@ -343,6 +343,85 @@ assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2
 assert_output_contains "Configuration cache state could not be cached: field \`classpath\` of \`org.gradle.process.internal.DefaultJavaExecSpec_Decorated\`"
 assert_output_contains "refreshed-captured-jooq-resolution"
 
+# PR 3252 retained a protoc connect timeout under a disabled MavenRepo and
+# the existing pre-execution jOOQ configuration-cache wrapper.
+write_jooq_protoc_timeout_cause() {
+  cat > "$CASE_DIR/jooq-cause.log" <<'LOG'
+8 problems were found storing the configuration cache, 4 of which seem unique.
+- Task `:automation-scripting-service:generateIntegrationTestProto` of type `com.google.protobuf.gradle.GenerateProtoTask`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultLegacyConfiguration'
+FAILURE: Build failed with an exception.
+* What went wrong:
+Configuration cache state could not be cached: field `classpath` of `org.gradle.process.internal.DefaultJavaExecSpec_Decorated` bean found in field `javaExecSpec` of task `:automation-scripting-service:generateJooq` of type `org.gradle.api.tasks.JavaExec`: error writing value of type 'org.gradle.api.internal.file.collections.DefaultConfigurableFileCollection'
+> Could not resolve all files for configuration ':automation-scripting-service:jooqCodegen'.
+   > Could not resolve org.jooq:jooq-codegen:3.21.9.
+     Required by:
+         project ':automation-scripting-service'
+      > Repository MavenRepo is disabled due to earlier error below:
+         > Could not resolve com.google.protobuf:protoc:4.36.2.
+            > Could not get resource 'https://repo.maven.apache.org/maven2/com/google/protobuf/protoc/4.36.2/protoc-4.36.2.pom'.
+               > Could not GET 'https://repo.maven.apache.org/maven2/com/google/protobuf/protoc/4.36.2/protoc-4.36.2.pom'.
+                  > Connect to repo.maven.apache.org:443 [repo.maven.apache.org/104.18.19.12] failed: Connect timed out
+* Try:
+> Run with --stacktrace option for details.
+BUILD FAILED in 2m 2s
+LOG
+}
+
+new_case captured-jooq-protoc-timeout
+write_jooq_protoc_timeout_cause
+write_jooq_wrapper ''
+run_case automation-scripting-service 0
+assert_call_count 2
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :automation-scripting-service:check -PfullCheck"
+[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "protoc connect timeout did not use one short delay"
+assert_output_contains "Connect timed out"
+assert_output_contains "refreshed-captured-jooq-resolution"
+
+for mutation in repository configuration pin url host cache-family mixed unknown; do
+  new_case "protoc-timeout-invalid-$mutation"
+  write_jooq_protoc_timeout_cause
+  case "$mutation" in
+    repository) sed -i 's/Repository MavenRepo/Repository OtherRepo/' "$CASE_DIR/jooq-cause.log" ;;
+    configuration) sed -i 's/:jooqCodegen/:runtimeClasspath/' "$CASE_DIR/jooq-cause.log" ;;
+    pin) sed -i 's/:protoc:4.36.2\./:protoc:4.+./' "$CASE_DIR/jooq-cause.log" ;;
+    url) sed -i 's@protoc/4.36.2/protoc-4.36.2.pom@protoc/4.36.3/protoc-4.36.3.pom@g' "$CASE_DIR/jooq-cause.log" ;;
+    host) sed -i 's@repo.maven.apache.org@other.example.org@g' "$CASE_DIR/jooq-cause.log" ;;
+    cache-family) sed -i 's/DefaultJavaExecSpec_Decorated/OtherJavaExecSpec/' "$CASE_DIR/jooq-cause.log" ;;
+    mixed) sed -i '/^[*] Try:/i > Received status code 403 from server: Forbidden' "$CASE_DIR/jooq-cause.log" ;;
+    unknown) sed -i '/^[*] Try:/i > Unknown repository policy failure' "$CASE_DIR/jooq-cause.log" ;;
+  esac
+  write_jooq_wrapper ''
+  run_case automation-scripting-service 1
+  assert_no_retry
+done
+
+for status in 401 403 409; do
+  new_case "protoc-http-$status"
+  write_jooq_protoc_timeout_cause
+  sed -i "s/> Connect to .*failed: Connect timed out/> Received status code $status from server: Rejected/" "$CASE_DIR/jooq-cause.log"
+  write_jooq_wrapper ''
+  run_case automation-scripting-service 1
+  assert_no_retry
+done
+
+for progress in '> Task :automation-scripting-service:generateJooq' '> Task :automation-scripting-service:compileJava' '> Task :automation-scripting-service:test' 'Compilation failed'; do
+  new_case "protoc-timeout-progress-${progress//[^[:alnum:]]/}"
+  write_jooq_protoc_timeout_cause
+  write_jooq_wrapper "$progress"
+  run_case automation-scripting-service 1
+  assert_no_retry
+done
+
+new_case protoc-timeout-refresh-failure
+write_jooq_protoc_timeout_cause
+# shellcheck disable=SC2016
+write_wrapper 'cat "$CASE_DIR/jooq-cause.log"
+if [[ "$call_count" -eq 1 ]]; then exit 1; fi
+exit 23'
+run_case automation-scripting-service 23
+assert_call_count 2
+[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "protoc refresh failure exceeded retry delay count"
+
 # This retained runtime-image failure is a different narrow boundary: Gradle
 # marks generateJooq failed because its jooqCodegen classpath is unresolved,
 # before the JavaExec generator process can run.
@@ -512,6 +591,112 @@ echo "refreshed-http-429-resolved"; exit 0'
 run_case common-web-support 0
 assert_call_count 2
 [[ "$(cat "$CASE_DIR/sleeps")" == 5 ]] || fail "HTTP 429 did not observe Retry-After"
+
+# Retain the PR 3220 buildSrc configuration failure, including the plugin
+# repository disabling itself and a parent POM failing after a redirect.
+write_buildsrc_429_cause() {
+  cat > "$CASE_DIR/buildsrc-cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+* What went wrong:
+A problem occurred configuring project ':buildSrc'.
+> Could not resolve all artifacts for configuration 'classpath'.
+   > Could not resolve org.jetbrains.kotlin:kotlin-stdlib:2.4.10.
+     Required by:
+         buildscript of project ':buildSrc'
+         buildscript of project ':buildSrc' > org.gradle.kotlin.kotlin-dsl:org.gradle.kotlin.kotlin-dsl.gradle.plugin:6.7.6 > org.gradle.kotlin:gradle-kotlin-dsl-plugins:6.7.6
+      > Repository Gradle Central Plugin Repository is disabled due to earlier error below:
+         > Could not resolve org.jetbrains.kotlin:kotlin-gradle-plugin-api:2.4.10.
+            > Could not get resource 'https://plugins.gradle.org/m2/org/jetbrains/kotlin/kotlin-gradle-plugin-api/2.4.10/kotlin-gradle-plugin-api-2.4.10.pom'.
+               > Could not GET 'https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin-api/2.4.10/kotlin-gradle-plugin-api-2.4.10.pom'.
+                  > Received status code 429 from server: Too Many Requests
+   > Could not resolve org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10.
+     Required by:
+         buildscript of project ':buildSrc' > org.gradle.kotlin.kotlin-dsl:org.gradle.kotlin.kotlin-dsl.gradle.plugin:6.7.6 > org.gradle.kotlin:gradle-kotlin-dsl-plugins:6.7.6
+      > Could not resolve org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10.
+         > Could not parse POM https://plugins.gradle.org/m2/org/jetbrains/kotlin/kotlin-gradle-plugin/2.4.10/kotlin-gradle-plugin-2.4.10.pom
+            > Could not resolve org.jetbrains.kotlin:kotlin-gradle-plugins-bom:2.4.10.
+               > Could not resolve org.jetbrains.kotlin:kotlin-gradle-plugins-bom:2.4.10.
+                  > Could not get resource 'https://plugins.gradle.org/m2/org/jetbrains/kotlin/kotlin-gradle-plugins-bom/2.4.10/kotlin-gradle-plugins-bom-2.4.10.pom'.
+                     > Could not GET 'https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugins-bom/2.4.10/kotlin-gradle-plugins-bom-2.4.10.pom'.
+                        > Received status code 429 from server: Too Many Requests
+> There are 3 more failures with identical causes.
+* Try:
+> Run with --stacktrace option for details.
+BUILD FAILED in 42s
+LOG
+}
+
+write_buildsrc_wrapper() {
+  # shellcheck disable=SC2016
+  write_wrapper 'if [[ "$call_count" -eq 1 ]]; then
+  cat "$CASE_DIR/buildsrc-cause.log"
+  exit 1
+fi
+echo buildsrc-refresh-result
+exit "${BUILDSRC_REFRESH_EXIT:-0}"'
+}
+
+new_case captured-buildsrc-429
+write_buildsrc_429_cause
+write_buildsrc_wrapper
+run_case logging-admin-service 0
+assert_call_count 2
+assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck"
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck"
+[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "buildSrc HTTP 429 did not use one short delay"
+assert_output_contains "buildsrc-refresh-result"
+
+# Auth, policy and conflict responses remain final, including mixed failures
+# where the other dependency really did encounter a retryable HTTP 429.
+for status in 401 403 409; do
+  for status_scope in all mixed; do
+    new_case "buildsrc-http-$status-$status_scope"
+    write_buildsrc_429_cause
+    if [[ "$status_scope" == all ]]; then
+      sed -i "s/status code 429/status code $status/g" "$CASE_DIR/buildsrc-cause.log"
+    else
+      sed -i "0,/status code 429/s//status code $status/" "$CASE_DIR/buildsrc-cause.log"
+    fi
+    write_buildsrc_wrapper
+    run_case logging-admin-service 1
+    assert_no_retry
+  done
+done
+
+for cause in 'Compilation failed' '> Access denied by repository policy' '> Unknown configuration failure'; do
+  new_case "buildsrc-extra-${cause//[^[:alnum:]]/}"
+  write_buildsrc_429_cause
+  sed -i "/^[*] Try:/i $cause" "$CASE_DIR/buildsrc-cause.log"
+  write_buildsrc_wrapper
+  run_case logging-admin-service 1
+  assert_no_retry
+done
+
+# Wrapper context cannot turn another project, configuration or unpinned
+# dependency into an eligible buildSrc retry.
+for boundary in project classpath pin; do
+  new_case "buildsrc-invalid-$boundary"
+  write_buildsrc_429_cause
+  case "$boundary" in
+    project) sed -i 's/:buildSrc/:otherProject/g' "$CASE_DIR/buildsrc-cause.log" ;;
+    classpath) sed -i 's/configuration '\''classpath'\''/configuration '\''runtimeClasspath'\''/' "$CASE_DIR/buildsrc-cause.log" ;;
+    pin) sed -i 's/:2.4.10\./:2.+./g' "$CASE_DIR/buildsrc-cause.log" ;;
+  esac
+  write_buildsrc_wrapper
+  run_case logging-admin-service 1
+  assert_no_retry
+done
+
+new_case buildsrc-refresh-failure
+write_buildsrc_429_cause
+write_buildsrc_wrapper
+export BUILDSRC_REFRESH_EXIT=23
+run_case logging-admin-service 23
+unset BUILDSRC_REFRESH_EXIT
+assert_call_count 2
+[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "failed buildSrc refresh changed retry limit"
+assert_output_contains "Received status code 429"
+assert_output_contains "buildsrc-refresh-result"
 
 # A Retry-After beyond the short retry budget fails closed without waiting.
 new_case long-retry-after
