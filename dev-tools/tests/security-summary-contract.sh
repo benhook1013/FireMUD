@@ -189,6 +189,7 @@ NODE
 python3 - "$workflow" "$repo_root/config/security/trivy.yaml" <<'PYTHON'
 from pathlib import Path
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -203,6 +204,23 @@ if scanner.get("shell") != "bash" or upload.get("if") != "always()":
 settings = yaml.safe_load(Path(sys.argv[2]).read_text())
 if settings.get("exit-code") != 1 or settings.get("severity") != ["CRITICAL", "HIGH"] or settings.get("ignore-unfixed") is not True:
     raise SystemExit("Trivy failure policy and filters must remain intact")
+database = settings.get("db", {})
+for key, artifact, schema in (("repository", "trivy-db", 2), ("java-repository", "trivy-java-db", 1)):
+    expected = [f"ghcr.io/aquasecurity/{artifact}:{schema}", f"mirror.gcr.io/aquasec/{artifact}:{schema}"]
+    if database.get(key) != expected:
+        raise SystemExit(f"Trivy {key} must prefer the published GHCR origin with its native mirror fallback")
+if database.get("skip-update", False) or database.get("java-skip-update", False):
+    raise SystemExit("Trivy database updates must remain enabled")
+weekly = yaml.load((Path(sys.argv[1]).parent / "weekly-security-scan.yml").read_text(), Loader=yaml.BaseLoader)
+weekly_scanner = next(step for step in weekly["jobs"]["trivy-scan"]["steps"] if step.get("name") == "🛡️ Trivy container and dependency scan")
+weekly_args = shlex.split(weekly_scanner["run"])
+if weekly_args[:2] != ["trivy", "image"]:
+    raise SystemExit("Weekly security scan must retain Trivy image scanning")
+for option, value in (("--config", "config/security/trivy.yaml"), ("--skip-dirs", ""), ("--format", "json"), ("--output", "trivy-report.json"), ("--exit-code", "1"), ("--severity", "HIGH,CRITICAL")):
+    if weekly_args.count(option) != 1 or weekly_args[weekly_args.index(option) + 1:weekly_args.index(option) + 2] != [value]:
+        raise SystemExit(f"Weekly Trivy scan must retain {option} {value}")
+if weekly_args.count("--ignore-unfixed=false") != 1:
+    raise SystemExit("Weekly Trivy image scans must retain unfixed findings")
 with tempfile.TemporaryDirectory(prefix="firemud-trivy-pipeline-") as directory:
     root = Path(directory)
     scanner_path = root / "trivy"
