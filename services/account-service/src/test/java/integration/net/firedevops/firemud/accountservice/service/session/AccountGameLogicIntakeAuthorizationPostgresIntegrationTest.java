@@ -55,7 +55,8 @@ class AccountGameLogicIntakeAuthorizationPostgresIntegrationTest {
   private static final Network NETWORK = Network.newNetwork();
 
   @Container
-  static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestContainerImages.postgres());
+  static final PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static final GenericContainer<?> redis =
