@@ -43,7 +43,7 @@ class SelectedOwnerIntakeSourceExportTest {
     frameFamily(expected, "COMMAND", sources.command().canonicalBytes());
     frameFamily(expected, "REALM_POLICY", sources.policy().canonicalBytes());
     frameFamily(expected, "ASSET", sources.asset().canonicalBytes());
-    frameFamily(expected, "GAMEPLAY_RULE", sources.gameplay().canonicalBytes());
+    frameFamily(expected, "GAMEPLAY_RULE", sources.gameplayEvidence().orElseThrow().canonicalBytes());
     frameFamily(expected, "BRANDING", sources.branding().orElseThrow().canonicalBytes());
     frameFamily(
         expected, "TEMPLATE_CONFIG", sources.templateConfig().orElseThrow().canonicalBytes());
@@ -75,7 +75,7 @@ class SelectedOwnerIntakeSourceExportTest {
           .isEqualTo(sources.policy().canonicalBytes());
       assertThat(content.snapshotBytes("ASSET")).isEqualTo(sources.asset().canonicalBytes());
       assertThat(content.snapshotBytes("GAMEPLAY_RULE"))
-          .isEqualTo(sources.gameplay().canonicalBytes());
+          .isEqualTo(sources.gameplayEvidence().orElseThrow().canonicalBytes());
       assertThat(content.snapshotBytes("BRANDING"))
           .isEqualTo(sources.branding().orElseThrow().canonicalBytes());
       assertThat(content.snapshotBytes("TEMPLATE_CONFIG"))
@@ -134,16 +134,16 @@ class SelectedOwnerIntakeSourceExportTest {
         new GameDesignSourceRepository.SynchronizedSources(
             complete.command(),
             complete.policy(),
-            complete.asset(),
-            complete.gameplay(),
+            complete.assetEvidence(),
+            complete.gameplayEvidence(),
             Optional.empty(),
             complete.templateConfig());
     var missingTemplate =
         new GameDesignSourceRepository.SynchronizedSources(
             complete.command(),
             complete.policy(),
-            complete.asset(),
-            complete.gameplay(),
+            complete.assetEvidence(),
+            complete.gameplayEvidence(),
             complete.branding(),
             Optional.empty());
 
@@ -183,7 +183,12 @@ class SelectedOwnerIntakeSourceExportTest {
     var branding = new BrandingSourceSnapshot(binding, "0", null, GENESIS, List.of());
     var template = new TemplateConfigSourceSnapshot(binding, "0", null, GENESIS, List.of());
     return new GameDesignSourceRepository.SynchronizedSources(
-        command, policy, asset, gameplay, Optional.of(branding), Optional.of(template));
+        command,
+        policy,
+        Optional.of(asset),
+        Optional.of(gameplay),
+        Optional.of(branding),
+        Optional.of(template));
   }
 
   static SelectedOwnerIntakeSourceReadScope scope(Owner owner, DraftCommitBinding selected) {

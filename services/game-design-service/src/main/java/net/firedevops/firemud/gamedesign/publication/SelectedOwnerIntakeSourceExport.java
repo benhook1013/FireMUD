@@ -42,8 +42,11 @@ public final class SelectedOwnerIntakeSourceExport {
     requireSelected(selected, sources.command().binding(), "COMMAND");
     requireSelected(selected, sources.policy().binding(), "REALM_POLICY");
     requireSelected(selected, sources.asset().binding(), "ASSET");
-    var gameplay = sources.gameplayEvidence().orElseThrow(
-        () -> new IllegalStateException("Selected gameplay-rule source is incomplete"));
+    var gameplay =
+        sources
+            .gameplayEvidence()
+            .orElseThrow(
+                () -> new IllegalStateException("Selected gameplay-rule source is incomplete"));
     requireSelected(selected, gameplay.binding(), "GAMEPLAY_RULE");
     var branding =
         sources

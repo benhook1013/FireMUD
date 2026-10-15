@@ -28,13 +28,10 @@ class RealmPolicySourceTest {
             "2",
             UUID.randomUUID(),
             AssetSource.upsertPayload("41", "map", AssetSource.Requiredness.REQUIRED));
-    var template =
-        policyRevision("3", UUID.randomUUID(), TemplateConfigSource.deletePayload("7"));
+    var template = policyRevision("3", UUID.randomUUID(), TemplateConfigSource.deletePayload("7"));
     var branding =
         policyRevision(
-            "4",
-            UUID.randomUUID(),
-            "{\"revisionKind\":\"" + BrandingSource.REVISION_KIND + "\"}");
+            "4", UUID.randomUUID(), "{\"revisionKind\":\"" + BrandingSource.REVISION_KIND + "\"}");
     var unknown = policyRevision("5", UUID.randomUUID(), "{\"revisionKind\":\"UNSUPPORTED\"}");
 
     assertThat(RealmPolicySource.isPolicyRevision(policy)).isTrue();

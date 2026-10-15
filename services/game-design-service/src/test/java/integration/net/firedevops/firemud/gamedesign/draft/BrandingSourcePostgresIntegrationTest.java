@@ -95,7 +95,7 @@ class BrandingSourcePostgresIntegrationTest {
         .containsEntry("THEME", "EMPTY");
     assertThat(
             synchronizedSources
-                .gameplay()
+                .gameplayEvidence().orElseThrow()
                 .manifest()
                 .families()
                 .get(GameplayRuleManifest.Family.ADMISSION_TAGS))
@@ -145,8 +145,7 @@ class BrandingSourcePostgresIntegrationTest {
   @Test
   void retainedVersionCannotAcquireMissingBrandingGenesis() {
     var f = fixture("58");
-    var original =
-        binding(f, "0", CommandSource.SCOPE, commandUpsert("BRANDING_HISTORICAL"));
+    var original = binding(f, "0", CommandSource.SCOPE, commandUpsert("BRANDING_HISTORICAL"));
     f.tx.executeWithoutResult(
         ignored -> {
           var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
@@ -224,7 +223,7 @@ class BrandingSourcePostgresIntegrationTest {
                 historical.command().canonicalJson(),
                 historical.policy().canonicalJson(),
                 historical.asset().canonicalJson(),
-                historical.gameplay().canonicalJson()))
+                historical.gameplayEvidence().orElseThrow().canonicalJson()))
         .isEqualTo(sourceJson);
     assertThat(
             f.dsl

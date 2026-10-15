@@ -30,11 +30,11 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import org.junit.jupiter.api.Timeout;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.parallel.Resources;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 /** Lifecycle proof with real file watchers and a mocked channel factory, not a TLS handshake. */
 class SelectedOwnerIntakeClientLifecycleTest {
@@ -45,8 +45,7 @@ class SelectedOwnerIntakeClientLifecycleTest {
   @Timeout(15)
   @ResourceLock(Resources.SYSTEM_PROPERTIES)
   void closeReleasesClientMonitorBeforeDrainingCertificateCallback(
-      ClientKind kind, @TempDir Path directory)
-      throws Exception {
+      ClientKind kind, @TempDir Path directory) throws Exception {
     String previousReloadPolicy = System.getProperty(TLS_RELOAD_PROPERTY);
     System.setProperty(TLS_RELOAD_PROPERTY, "true");
     CountDownLatch releaseClientMonitor = new CountDownLatch(1);
@@ -170,7 +169,8 @@ class SelectedOwnerIntakeClientLifecycleTest {
     void run() throws Exception;
   }
 
-  private record ClientHandle(AbstractReloadingBlockingGrpcClient<?> client, Initialize initialize) {}
+  private record ClientHandle(
+      AbstractReloadingBlockingGrpcClient<?> client, Initialize initialize) {}
 
   private enum ClientKind {
     AUTHORIZATION,
@@ -193,102 +193,3 @@ class SelectedOwnerIntakeClientLifecycleTest {
           var client = new AccountSelectedOwnerIntakeWorldClosureAuthorizationGrpcClient(endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
         }
-        case SOURCE_READ -> {
-          var client = new GrpcSelectedOwnerIntakeSourceReadClient(endpoints, tls, factory, "test");
-          yield new ClientHandle(client, client::init);
-        }
-        case AUTOMATION_TERMINAL -> {
-          var client = new AutomationSelectedSourceIntakeTerminalReadClient(endpoints, tls, factory, "test");
-          yield new ClientHandle(client, client::init);
-        }
-        case GAME_DESIGN_SOURCE -> {
-          var client = new GrpcSelectedOwnerIntakeSourceClient(endpoints, tls, factory, "test");
-          yield new ClientHandle(client, client::init);
-        }
-        case WORLD_INVENTORY -> {
-          var client = new WorldSelectedOwnerInventoryGrpcClient(endpoints, tls, factory, "test");
-          yield new ClientHandle(client, client::init);
-        }
-      };
-    }
-  }
-
-  private static Thread awaitBlockedReloadCallback(Set<Thread> activeCallbacks)
-      throws InterruptedException {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-    while (System.nanoTime() < deadline) {
-      for (Thread callback : activeCallbacks) {
-        if (callback.getState() == Thread.State.BLOCKED
-            && hasFrame(callback, "AbstractReloadingBlockingGrpcClient", "reloadChannel")) {
-          return callback;
-        }
-      }
-      Thread.sleep(10);
-    }
-    return null;
-  }
-
-  private static boolean hasFrame(Thread thread, String className, String methodName) {
-    for (StackTraceElement frame : thread.getStackTrace()) {
-      if (frame.getClassName().endsWith(className) && frame.getMethodName().equals(methodName)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private static void awaitCondition(BooleanSupplier condition) throws InterruptedException {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-    while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
-      Thread.sleep(10);
-    }
-    assertThat(condition.getAsBoolean()).isTrue();
-  }
-
-  private static void awaitLatch(CountDownLatch latch) {
-    try {
-      latch.await();
-    } catch (InterruptedException interrupted) {
-      Thread.currentThread().interrupt();
-    }
-  }
-
-  private static TlsCertificateWatcher watcher(AbstractReloadingBlockingGrpcClient<?> client)
-      throws ReflectiveOperationException {
-    Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("watcher");
-    field.setAccessible(true);
-    return (TlsCertificateWatcher) field.get(client);
-  }
-
-  private static void setWatcher(
-      AbstractReloadingBlockingGrpcClient<?> client, TlsCertificateWatcher watcher)
-      throws ReflectiveOperationException {
-    Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("watcher");
-    field.setAccessible(true);
-    field.set(client, watcher);
-  }
-
-  @SuppressWarnings("unchecked")
-  private static Set<Thread> activeCallbacks(TlsCertificateWatcher watcher)
-      throws ReflectiveOperationException {
-    Field field = TlsCertificateWatcher.class.getDeclaredField("activeCallbacks");
-    field.setAccessible(true);
-    return (Set<Thread>) field.get(watcher);
-  }
-
-  private static CommonGrpcClientProperties tls(Path directory) throws Exception {
-    CommonGrpcClientProperties tls = new CommonGrpcClientProperties();
-    tls.setCertChain(Files.writeString(directory.resolve("client.crt"), "certificate").toString());
-    tls.setPrivateKey(Files.writeString(directory.resolve("client.key"), "private key").toString());
-    tls.setCaCert(Files.writeString(directory.resolve("ca.crt"), "CA certificate").toString());
-    return tls;
-  }
-
-  private static void restoreReloadPolicy(String previousValue) {
-    if (previousValue == null) {
-      System.clearProperty(TLS_RELOAD_PROPERTY);
-    } else {
-      System.setProperty(TLS_RELOAD_PROPERTY, previousValue);
-    }
-  }
-}

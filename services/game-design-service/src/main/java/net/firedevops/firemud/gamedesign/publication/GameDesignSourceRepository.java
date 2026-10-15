@@ -358,8 +358,7 @@ public final class GameDesignSourceRepository {
         && policy.isEmpty()
         && asset.isEmpty()
         && brand.isEmpty()
-        && templateConfig.isEmpty())
-      return Optional.empty();
+        && templateConfig.isEmpty()) return Optional.empty();
     if (historical) {
       new GameDesignReviewedBaseRepository(dsl)
           .requireRetained(operation.account().input().selection().selectedCommit());
@@ -399,8 +398,7 @@ public final class GameDesignSourceRepository {
       throw new IllegalStateException("GAME_DESIGN_SYNCHRONIZED_SOURCE_INCOMPLETE");
     }
     boolean brandGenesisRetained = branding.readGenesis(target).isPresent();
-    if (brand.isEmpty()
-        && (brandGenesisRetained || !BrandingSource.mutations(binding).isEmpty())) {
+    if (brand.isEmpty() && (brandGenesisRetained || !BrandingSource.mutations(binding).isEmpty())) {
       throw new IllegalStateException("GAME_DESIGN_SYNCHRONIZED_SOURCE_INCOMPLETE");
     }
     if (rules.isEmpty()
@@ -417,8 +415,8 @@ public final class GameDesignSourceRepository {
   }
 
   /**
-   * Read and export the exact synchronized source retained for an original selected Draft.
-   * Missing or partial owner history remains unavailable; it is never interpreted as empty.
+   * Read and export the exact synchronized source retained for an original selected Draft. Missing
+   * or partial owner history remains unavailable; it is never interpreted as empty.
    */
   public SelectedOwnerIntakeSourceExport requireSelectedOwnerIntakeSource(
       SelectedOwnerIntakeSourceReadScope scope) {
@@ -480,12 +478,7 @@ public final class GameDesignSourceRepository {
       boolean hasBranding,
       boolean hasGameplay,
       boolean hasTemplateConfig) {
-    if (!hasCommand
-        && !hasPolicy
-        && !hasAsset
-        && !hasBranding
-        && !hasGameplay
-        && !hasTemplateConfig
+    if (!hasCommand && !hasPolicy && !hasAsset && !hasBranding && !hasGameplay && !hasTemplateConfig
         || !binding.requiredOwners().contains(Owner.GAME_DESIGN_CONTROL_PLANE)) {
       throw new IllegalArgumentException("Game Design owner requires typed source revisions");
     }
@@ -507,8 +500,7 @@ public final class GameDesignSourceRepository {
                         && "effective".equals(unit.scopeId()))
             .toList();
     List<AffectedUnit> assets = units.stream().filter(AssetSourceRepository::isScope).toList();
-    List<AffectedUnit> branding =
-        units.stream().filter(BrandingSourceRepository::isScope).toList();
+    List<AffectedUnit> branding = units.stream().filter(BrandingSourceRepository::isScope).toList();
     var rules = units.stream().filter(GameplayRuleSource::isScope).toList();
     var templateConfigs = units.stream().filter(TemplateConfigSource::isScope).toList();
     if (commands.size() != (hasCommand ? 1 : 0)
@@ -598,13 +590,7 @@ public final class GameDesignSourceRepository {
         Optional<AssetSnapshot.Genesis> assetEvidence,
         Optional<GameplayRuleSnapshot.Genesis> gameplayEvidence,
         Optional<TemplateConfigSourceSnapshot.Genesis> templateConfig) {
-      this(
-          policy,
-          command,
-          assetEvidence,
-          gameplayEvidence,
-          Optional.empty(),
-          templateConfig);
+      this(policy, command, assetEvidence, gameplayEvidence, Optional.empty(), templateConfig);
     }
 
     public Genesis(
@@ -623,13 +609,7 @@ public final class GameDesignSourceRepository {
     }
 
     public Genesis(RealmPolicyGenesis policy, CommandSource.NewDraftGenesisReceipt command) {
-      this(
-          policy,
-          command,
-          Optional.empty(),
-          Optional.empty(),
-          Optional.empty(),
-          Optional.empty());
+      this(policy, command, Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     public AssetSnapshot.Genesis asset() {
@@ -667,8 +647,7 @@ public final class GameDesignSourceRepository {
           || asset.isPresent() && !binding.equals(asset.orElseThrow().binding())
           || gameplay.isPresent() && !binding.equals(gameplay.orElseThrow().binding())
           || branding.isPresent() && !binding.equals(branding.orElseThrow().binding())
-          || templateConfig.isPresent()
-              && !binding.equals(templateConfig.orElseThrow().binding())
+          || templateConfig.isPresent() && !binding.equals(templateConfig.orElseThrow().binding())
           || ownerOutcome.owner() != Owner.GAME_DESIGN_CONTROL_PLANE
           || ownerOutcome.status() != OwnerStatus.APPLIED
           || !binding.commitId().equals(ownerOutcome.commitId())
@@ -752,8 +731,7 @@ public final class GameDesignSourceRepository {
       if (templateConfig.isPresent()
           && !command.binding().equals(templateConfig.orElseThrow().binding()))
         throw new IllegalStateException("TEMPLATE_CONFIG_SOURCE_SNAPSHOT_BINDING_CONFLICT");
-      if (branding.isPresent()
-          && !command.binding().equals(branding.orElseThrow().binding()))
+      if (branding.isPresent() && !command.binding().equals(branding.orElseThrow().binding()))
         throw new IllegalStateException("BRANDING_SOURCE_SNAPSHOT_BINDING_CONFLICT");
       if (!command.binding().equals(policy.binding())
           || assetEvidence.isPresent()
@@ -766,13 +744,7 @@ public final class GameDesignSourceRepository {
         CommandSnapshot command,
         RealmPolicySnapshot policy,
         Optional<AssetSnapshot> assetEvidence) {
-      this(
-          command,
-          policy,
-          assetEvidence,
-          Optional.empty(),
-          Optional.empty(),
-          Optional.empty());
+      this(command, policy, assetEvidence, Optional.empty(), Optional.empty(), Optional.empty());
     }
 
     public SynchronizedSources(
@@ -780,13 +752,7 @@ public final class GameDesignSourceRepository {
         RealmPolicySnapshot policy,
         Optional<AssetSnapshot> assetEvidence,
         Optional<GameplayRuleSnapshot> gameplayEvidence) {
-      this(
-          command,
-          policy,
-          assetEvidence,
-          gameplayEvidence,
-          Optional.empty(),
-          Optional.empty());
+      this(command, policy, assetEvidence, gameplayEvidence, Optional.empty(), Optional.empty());
     }
 
     public SynchronizedSources(
@@ -795,13 +761,7 @@ public final class GameDesignSourceRepository {
         Optional<AssetSnapshot> assetEvidence,
         Optional<GameplayRuleSnapshot> gameplayEvidence,
         Optional<TemplateConfigSourceSnapshot> templateConfig) {
-      this(
-          command,
-          policy,
-          assetEvidence,
-          gameplayEvidence,
-          Optional.empty(),
-          templateConfig);
+      this(command, policy, assetEvidence, gameplayEvidence, Optional.empty(), templateConfig);
     }
 
     public AssetSnapshot asset() {

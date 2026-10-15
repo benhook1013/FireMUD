@@ -239,7 +239,12 @@ class GameDesignSelectedOwnerIntakeSourceReadServiceTest {
     var branding = new BrandingSourceSnapshot(binding, "0", null, GENESIS, List.of());
     var template = new TemplateConfigSourceSnapshot(binding, "0", null, GENESIS, List.of());
     return new GameDesignSourceRepository.SynchronizedSources(
-        command, policy, asset, gameplay, Optional.of(branding), Optional.of(template));
+        command,
+        policy,
+        Optional.of(asset),
+        Optional.of(gameplay),
+        Optional.of(branding),
+        Optional.of(template));
   }
 
   private static SelectedOwnerIntakeSourceReadScope scope(
