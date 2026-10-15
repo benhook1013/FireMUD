@@ -1878,6 +1878,10 @@ public class AccountServiceImpl implements AccountService {
     return gameplayDecoyPasswordVerifier;
   }
 
+  @SuppressFBWarnings(
+      value = "AT_NONATOMIC_OPERATIONS_ON_SHARED_VARIABLE",
+      justification =
+          "Each instance is confined to one synchronous credential-verification call; this counter is not shared")
   private final class GameplayCredentialVerificationWork {
     private final String secret;
     private final String decoyVerifier;
