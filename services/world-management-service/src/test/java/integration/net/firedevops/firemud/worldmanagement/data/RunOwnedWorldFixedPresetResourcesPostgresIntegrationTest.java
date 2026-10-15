@@ -1597,6 +1597,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertThat(allRows(dsl))
         .as("no row or byte changes after standalone readback")
         .isEqualTo(readbackRowsBefore);
+    assertRoomReadbackRequiresBothRooms(plan, worldId, privateKey, readbackRowsBefore);
     assertNoPendingManifests(worldId);
     assertThat(
             scalarLong(
@@ -1937,6 +1938,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1042.2");
     versions.add("1042.3");
     versions.add("1042.4");
+    versions.add("1042.5");
     return List.copyOf(versions);
   }
 
@@ -2066,6 +2068,153 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     }
     assertThat(allRows(dsl)).as("no row or byte changes after " + mode).isEqualTo(rowsBefore);
     assertNoPendingManifests(worldId);
+  }
+
+  private void assertRoomReadbackRequiresBothRooms(
+      RunOwnedWorldFixedPresetResources.FixedPresetPlan plan,
+      long worldId,
+      long privateGameInstanceKey,
+      Map<String, List<String>> rowsBefore) {
+    String schema = dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+    String originalRoutine =
+        DSL.name(schema, "world_read_run_owned_fixed_preset") + "(text,text,bigint,bigint)";
+    String installedDefinition =
+        dsl.fetchSingle("SELECT pg_get_functiondef(?::regprocedure)", originalRoutine)
+            .get(0, String.class);
+    var originalReadback =
+        RunOwnedWorldFixedPresetResources.readCommitted(dsl, plan, worldId, privateGameInstanceKey);
+    String roomCountStart =
+        "OR (SELECT count(*)\n"
+            + "        FROM \""
+            + schema
+            + "\".world_authored_topology_identity m\n"
+            + "        JOIN \""
+            + schema
+            + "\".room r ON r.id = m.private_row_key";
+    String anyRoomStart =
+        "OR NOT EXISTS (\n"
+            + "        SELECT 1\n"
+            + "        FROM \""
+            + schema
+            + "\".world_authored_topology_identity m\n"
+            + "        JOIN \""
+            + schema
+            + "\".room r ON r.id = m.private_row_key";
+    String roomCountEnd =
+        "AND ri.zone_instance_id = zi.runtime_row_id)) <> 2\n"
+            + "        OR (SELECT count(*) FROM \""
+            + schema
+            + "\".world_authored_topology_identity m\n"
+            + "            JOIN \""
+            + schema
+            + "\".room_exit e";
+    String anyRoomEnd =
+        "AND ri.zone_instance_id = zi.runtime_row_id))\n"
+            + "        OR (SELECT count(*) FROM \""
+            + schema
+            + "\".world_authored_topology_identity m\n"
+            + "            JOIN \""
+            + schema
+            + "\".room_exit e";
+    String callArguments = "(?, ?, ?, ?)";
+    for (var roomMismatch :
+        List.of(
+            Map.entry("Candle-lit Antechamber", "Candle-lit Antechamber (test-only mismatch)"),
+            Map.entry("Smith''s Annex", "Smith''s Annex (test-only mismatch)"))) {
+      String expectedRoomName = "r.name = '" + roomMismatch.getKey() + "'";
+      String substitutedRoomName = "r.name = '" + roomMismatch.getValue() + "'";
+      String changedRoomDefinition =
+          replaceExactlyOnce(
+              installedDefinition,
+              expectedRoomName,
+              substitutedRoomName,
+              "fixed room expectation " + roomMismatch.getKey());
+
+      String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+      String oldName = "world_test_old_room_readback_" + suffix;
+      String currentName = "world_test_current_room_readback_" + suffix;
+      String oldQualifiedName = DSL.name(schema, oldName).toString();
+      String currentQualifiedName = DSL.name(schema, currentName).toString();
+      String nameAnchor = "world_read_run_owned_fixed_preset(";
+      String oldDefinition =
+          replaceExactlyOnce(
+              changedRoomDefinition,
+              nameAnchor,
+              oldName + "(",
+              "old test function name for " + roomMismatch.getKey());
+      String currentDefinition =
+          replaceExactlyOnce(
+              changedRoomDefinition,
+              nameAnchor,
+              currentName + "(",
+              "current test function name for " + roomMismatch.getKey());
+      oldDefinition =
+          replaceExactlyOnce(
+              oldDefinition,
+              roomCountStart,
+              anyRoomStart,
+              "old room predicate start for " + roomMismatch.getKey());
+      oldDefinition =
+          replaceExactlyOnce(
+              oldDefinition,
+              roomCountEnd,
+              anyRoomEnd,
+              "old room predicate end for " + roomMismatch.getKey());
+
+      try {
+        dsl.execute(oldDefinition);
+        dsl.execute(currentDefinition);
+        assertThat(
+                dsl.fetchOne(
+                    "SELECT * FROM " + oldQualifiedName + callArguments,
+                    plan.planJson(),
+                    plan.expectedContentDigest(),
+                    worldId,
+                    privateGameInstanceKey))
+            .as(
+                "the former any-matching-room check accepts a mismatch for "
+                    + roomMismatch.getKey())
+            .isNotNull();
+        assertSqlState(
+            () ->
+                dsl.fetchOne(
+                    "SELECT * FROM " + currentQualifiedName + callArguments,
+                    plan.planJson(),
+                    plan.expectedContentDigest(),
+                    worldId,
+                    privateGameInstanceKey),
+            "23514",
+            "RUN_OWNED_WORLD_FIXED_PRESET_TOPOLOGY_MISMATCH");
+        assertThat(allRows(dsl))
+            .as("test-local read copies preserve rows and xmin for " + roomMismatch.getKey())
+            .isEqualTo(rowsBefore);
+      } finally {
+        dsl.execute(
+            "DROP FUNCTION IF EXISTS "
+                + oldQualifiedName
+                + "(text,text,bigint,bigint), "
+                + currentQualifiedName
+                + "(text,text,bigint,bigint)");
+      }
+    }
+    assertThat(
+            RunOwnedWorldFixedPresetResources.readCommitted(
+                dsl, plan, worldId, privateGameInstanceKey))
+        .as("the installed committed read remains unchanged after the controlled copies")
+        .isEqualTo(originalReadback);
+    assertThat(allRows(dsl))
+        .as("the installed read and test-local copies preserve every stored row and xmin")
+        .isEqualTo(rowsBefore);
+  }
+
+  private static String replaceExactlyOnce(
+      String source, String anchor, String replacement, String description) {
+    int offset = source.indexOf(anchor);
+    assertThat(offset).as(description + " anchor exists").isGreaterThanOrEqualTo(0);
+    assertThat(source.indexOf(anchor, offset + anchor.length()))
+        .as(description + " anchor is unique")
+        .isEqualTo(-1);
+    return source.substring(0, offset) + replacement + source.substring(offset + anchor.length());
   }
 
   private RunOwnedWorldFixedPresetResources.MaterializedFixedPreset readPresetInCurrentTransaction(
