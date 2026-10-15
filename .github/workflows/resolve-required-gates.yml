@@ -25,6 +25,7 @@ jobs:
       contents: read
       checks: read
       pull-requests: read
+      statuses: write # Settle only an attributable supplementary status barrier.
       actions: write # Only rerun an attributable completed deferred gate job.
     steps:
       - name: Harden runner
@@ -59,3 +60,9 @@ jobs:
         # Native first-attempt step identity preserves acknowledged IDs even
         # while the target run still exposes a stale attempt-one snapshot.
         run: ':'
+
+      - name: Reconcile supplementary required gate status
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/actions/preserve-required-gate/resolve-deferred-gate.sh reconcile
