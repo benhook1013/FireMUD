@@ -5,9 +5,9 @@ import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
-import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
-import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec.Event;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec.Event;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -188,12 +188,24 @@ public class AccountTenantAuthorityEventRepository {
             sequence ->
                 evidence(
                     TenantAuthorityEventV1Codec.seal(
-                        request,
+                        new TenantAuthorityEventV1Codec.AuthorityRequest(
+                            request.requestId(),
+                            request.requestDigest(),
+                            request.canonicalTenantId(),
+                            request.tenantCreationRequestId(),
+                            request.tenantCreationRequestDigest()),
                         source,
                         nextAuthority.generation(),
                         nextAuthority.sourceVersion(),
                         sequence,
-                        billingEvent)));
+                        new TenantAuthorityEventV1Codec.BillingReceipt(
+                            billingEvent.canonicalTenantId(),
+                            billingEvent.requestId(),
+                            billingEvent.requestDigest(),
+                            billingEvent.outboxStreamKey(),
+                            billingEvent.tenantBillingSequence(),
+                            billingEvent.eventId(),
+                            billingEvent.eventDigest()))));
     TenantAuthorityEventV1Codec.Event typed =
         TenantAuthorityEventV1Codec.verify(committed.payload());
     if (!committed.outboxStreamKey().equals(streamKey)
