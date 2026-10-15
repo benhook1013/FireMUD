@@ -41,6 +41,9 @@ public final class DraftCommitOrderReadEvidence {
       if (originalAccountBinding == null || originalAccountBinding.length == 0) {
         throw new IllegalArgumentException("Complete original Account binding is required");
       }
+      if (originalAccountBinding.length > WorldOriginalDraftGraphApplyEvidence.MAX_BINDING_BYTES) {
+        throw new IllegalArgumentException("Complete original Account binding exceeds size limit");
+      }
       originalAccountBinding = originalAccountBinding.clone();
       DraftAuthorizationFenceBinding binding =
           DraftAuthorizationFenceBinding.fromStored(originalAccountBinding);
@@ -57,6 +60,12 @@ public final class DraftCommitOrderReadEvidence {
     }
 
     public static Request create(String targetNamespace, byte[] originalAccountBinding) {
+      if (originalAccountBinding == null || originalAccountBinding.length == 0) {
+        throw new IllegalArgumentException("Complete original Account binding is required");
+      }
+      if (originalAccountBinding.length > WorldOriginalDraftGraphApplyEvidence.MAX_BINDING_BYTES) {
+        throw new IllegalArgumentException("Complete original Account binding exceeds size limit");
+      }
       DraftAuthorizationFenceBinding binding =
           DraftAuthorizationFenceBinding.fromStored(originalAccountBinding);
       UUID readRequestId;
