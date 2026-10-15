@@ -20,10 +20,15 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameplayLoginResult;
 import net.firedevops.firemud.gamesession.dto.InitialGameplayLoginAttemptCoordinates;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Unregistered owner-only initial-context mutations; no production qualifier or admission. */
 public final class InitialGameplayLoginContextRedisClient {
+  private static final Logger LOG =
+      LoggerFactory.getLogger(InitialGameplayLoginContextRedisClient.class);
+
   private final InitialGameplayLoginRedisBinding binding;
   private final RedisScriptCatalog catalog;
   private final InitialGameplayLoginCoordinationQualification qualification;
@@ -55,6 +60,7 @@ public final class InitialGameplayLoginContextRedisClient {
     try (HeldQualification held = acquired.orElseThrow()) {
       return mutate(coordinates, desired, "INSTALL", held);
     } catch (RuntimeException unavailable) {
+      warn("INSTALL", "QUALIFICATION_RELEASE_FAILED");
       return Optional.empty();
     }
   }
@@ -74,31 +80,40 @@ public final class InitialGameplayLoginContextRedisClient {
     try (HeldQualification held = acquired.orElseThrow()) {
       return mutate(coordinates, desired, "CREATE_PENDING", held);
     } catch (RuntimeException unavailable) {
+      warn("CREATE_PENDING", "QUALIFICATION_RELEASE_FAILED");
       return Optional.empty();
     }
   }
 
   Optional<HeldQualification> acquireQualification() {
-    if (binding == null
-        || catalog == null
-        || qualification == null
-        || TransactionSynchronizationManager.isActualTransactionActive()) return Optional.empty();
+    if (binding == null || catalog == null || qualification == null) {
+      warn("QUALIFICATION", "CONFIGURATION_UNAVAILABLE");
+      return Optional.empty();
+    }
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      warn("QUALIFICATION", "TRANSACTION_ACTIVE");
+      return Optional.empty();
+    }
     InitialGameplayLoginCoordinationQualification.Lease lease = null;
     try {
       Optional<InitialGameplayLoginCoordinationQualification.Lease> acquired =
           qualification.acquire(
               InitialGameplayLoginContextRedisKeys.FAMILY_SCOPE, binding.protectedBindingId());
-      if (acquired == null || acquired.isEmpty()) return Optional.empty();
+      if (acquired == null || acquired.isEmpty()) {
+        warn("QUALIFICATION", "NOT_GRANTED");
+        return Optional.empty();
+      }
       lease = acquired.orElseThrow();
       var held = new HeldQualification(lease, binding.protectedBindingId());
       held.requireCurrent();
       return Optional.of(held);
     } catch (RuntimeException unavailable) {
+      warn("QUALIFICATION", "ACQUISITION_FAILED");
       if (lease != null) {
         try {
           lease.close();
         } catch (RuntimeException ignored) {
-          /* Remains held. */
+          warn("QUALIFICATION", "RELEASE_FAILED");
         }
       }
       return Optional.empty();
@@ -115,7 +130,10 @@ public final class InitialGameplayLoginContextRedisClient {
       InitialGameplayLoginContextState desired,
       String operation,
       HeldQualification held) {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) return Optional.empty();
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      warn(operation, "TRANSACTION_ACTIVE");
+      return Optional.empty();
+    }
     try {
       held.requireCurrent();
       var descriptor = requireDescriptor();
@@ -127,18 +145,24 @@ public final class InitialGameplayLoginContextRedisClient {
       try (StatefulRedisConnection<byte[], byte[]> connection = binding.openPinnedConnection()) {
         RedisCommands<byte[], byte[]> commands = requirePinned(connection);
         requirePrincipal(commands);
-        byte[] priorBytes = "CREATE_PENDING".equals(operation) ? new byte[0] : commands.get(key);
+        byte[] priorBytes;
         if ("CREATE_PENDING".equals(operation)) {
+          priorBytes = new byte[0];
           if (desired.state() != InitialGameplayLoginContextState.State.PENDING) {
+            warn(operation, "INVALID_DESIRED_STATE");
             return Optional.empty();
           }
         } else {
+          priorBytes = commands.get(key);
           var prior = InitialGameplayLoginContextState.decode(priorBytes);
           if (!prior.coordinates().equals(coordinates)
               || "INSTALL".equals(operation)
                   && prior.state() != InitialGameplayLoginContextState.State.PENDING
                   && !(prior.state() == InitialGameplayLoginContextState.State.INSTALLED
-                      && Arrays.equals(priorBytes, desiredBytes))) return Optional.empty();
+                      && Arrays.equals(priorBytes, desiredBytes))) {
+            warn(operation, "STALE_CONTEXT");
+            return Optional.empty();
+          }
         }
         held.requireCurrent();
         String loaded = commands.scriptLoad(source);
@@ -151,7 +175,10 @@ public final class InitialGameplayLoginContextRedisClient {
                 operation.getBytes(StandardCharsets.US_ASCII),
                 priorBytes,
                 desiredBytes);
-        if (!Long.valueOf(1).equals(result)) return Optional.empty();
+        if (!Long.valueOf(1).equals(result)) {
+          warn(operation, "SCRIPT_REJECTED");
+          return Optional.empty();
+        }
         acknowledge(commands);
         held.requireCurrent();
         // A separately opened physical connection reads the actual postimage, not the Lua result.
@@ -170,8 +197,13 @@ public final class InitialGameplayLoginContextRedisClient {
       held.requireCurrent();
       return Optional.of(desired);
     } catch (RuntimeException failure) {
+      warn(operation, "MUTATION_FAILED");
       return Optional.empty();
     }
+  }
+
+  private static void warn(String operation, String reason) {
+    LOG.warn("Initial LOGIN context operation={} reason={}", operation, reason);
   }
 
   private RedisScriptDescriptor requireDescriptor() {
