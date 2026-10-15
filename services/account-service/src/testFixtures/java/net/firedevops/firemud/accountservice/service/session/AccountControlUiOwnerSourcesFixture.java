@@ -550,9 +550,10 @@ final class AccountControlUiOwnerSourcesFixture {
         .placeholders(Map.of("serviceSchema", migrationSchema))
         .locations(
             "filesystem:" + accountMigrations(),
-            "filesystem:" + accountMigrations()
-                .resolve("../../../../../../common-saga/src/main/resources/db/migration/saga")
-                .normalize());
+            "filesystem:"
+                + accountMigrations()
+                    .resolve("../../../../../../common-saga/src/main/resources/db/migration/saga")
+                    .normalize());
   }
 
   private static Path accountMigrations() {

@@ -366,10 +366,13 @@ public final class DraftAuthorizationFenceRepository {
       List<SourceEvidence> sources, DraftCommitBinding selected) {
     requirePublicationAdmission(sources);
     Objects.requireNonNull(selected, "selected Draft binding is required");
-    Record originalRow = dsl.fetchOne(
-        "SELECT * FROM " + FENCES + " WHERE request_id = ? AND commit_id = ? FOR UPDATE",
-        selected.requestId(), selected.commitId());
-    if (originalRow == null) throw new IllegalStateException("Selected author operation is unavailable");
+    Record originalRow =
+        dsl.fetchOne(
+            "SELECT * FROM " + FENCES + " WHERE request_id = ? AND commit_id = ? FOR UPDATE",
+            selected.requestId(),
+            selected.commitId());
+    if (originalRow == null)
+      throw new IllegalStateException("Selected author operation is unavailable");
     DraftAuthorizationFenceBinding original = originalBinding(originalRow);
     if (!Arrays.equals(original.gameDesignBinding(), selected.canonicalBytes())
         || !Ordering.COMMIT_ORDER.name().equals(originalRow.get("ordering", String.class))
@@ -382,10 +385,11 @@ public final class DraftAuthorizationFenceRepository {
   private void requireNoPendingSelectedOwnerIntakeSourceRead(List<SourceEvidence> sources) {
     for (SourceEvidence source : sources) {
       if (!dsl.fetch(
-          "SELECT source.operation_id FROM account_selected_owner_intake_source_read_sources source "
-              + "WHERE source.source_key = ? "
-              + "AND account_selected_owner_intake_source_read_is_pending(source.operation_id)",
-          source.key()).isEmpty()) {
+              "SELECT source.operation_id FROM account_selected_owner_intake_source_read_sources source "
+                  + "WHERE source.source_key = ? "
+                  + "AND account_selected_owner_intake_source_read_is_pending(source.operation_id)",
+              source.key())
+          .isEmpty()) {
         throw new IllegalStateException("Selected owner intake source read remains pending");
       }
     }
