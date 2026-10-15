@@ -702,6 +702,125 @@ cat >"$tmp_dir/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 count_file="${GH_RETRY_COUNT_FILE:?}"
+if [[ "${GH_SCENARIO:-}" == cancellation-* ]]; then
+  python3 - "$GH_SCENARIO" "$@" <<'CANCELLATION_FIXTURE'
+import copy
+import json
+import os
+import sys
+scenario = sys.argv[1]
+endpoint = next(argument for argument in sys.argv[2:] if argument.startswith("/repos/"))
+head, base = os.environ["HEAD_SHA"], os.environ["BASE_SHA"]
+repo = os.environ["GITHUB_REPOSITORY"]
+title = f"CI — Validation pr-{os.environ['PR_NUMBER']} base-{base} head-{head}"
+names = ["Detect CI-Relevant Changes", "GitHub Workflow Lint", "Buf Generation", "Dev Tools README Contract",
+         "Build and Test ($" + "{{ matrix.module }})", "Metrics Cardinality Policy Check", "Flyway Migration Sanity Checks",
+         "gRPC Transport Configuration Sanity Checks", "PostgreSQL Runtime Upgrade Proof", "Validate Documentation",
+         "YAML Lint", "Dockerfile Lint", "Helm Render Validation", "Helm Chart Lint", "Python Script Validation",
+         "ShellCheck", "Frontend Checks", "Dev Tool Contract Checks", "Helm Transaction Proof", "Validation Gate"]
+def step(name, conclusion):
+    return {"name": name, "status": "completed", "conclusion": conclusion}
+# Captured incident shape: 19 jobs never reached any step, while the always()
+# aggregate ran and failed only its enforcement step after upstream cancellation.
+jobs = [{"id": 200 + index, "run_id": 100, "run_attempt": 1, "head_sha": head,
+         "name": name, "workflow_name": "CI — Validation", "status": "completed",
+         "conclusion": "cancelled", "steps": [],
+         "html_url": f"https://github.com/{repo}/actions/runs/100/job/{200 + index}",
+         "check_run_url": f"https://api.github.com/repos/{repo}/check-runs/{300 + index}"}
+        for index, name in enumerate(names)]
+gate = jobs[-1]
+gate["conclusion"] = "failure"
+gate["steps"] = [step("Set up job", "success"), step("Pre Harden runner", "success"),
+                 step("Harden runner", "success"), step("Check out required-gate action", "skipped"),
+                 step("Preserve successful required gate on metadata-only edit", "skipped"),
+                 step("Publish pending required gate status", "skipped"),
+                 step("Report dependency-deferred required gate", "skipped"),
+                 step("Enforce validation success", "failure"), step("Post Harden runner", "success"),
+                 step("Complete job", "success")]
+if scenario == "cancellation-real-failure":
+    jobs[1]["conclusion"] = "failure"
+    jobs[1]["steps"] = [step("Run lint", "failure")]
+if scenario == "cancellation-hidden-step-failure":
+    jobs[1]["steps"] = [step("Assert", "failure")]
+if scenario == "cancellation-executed-check":
+    jobs[1]["steps"] = [step("Assert", "success")]
+if scenario == "cancellation-gate-other-failure":
+    gate["steps"][2]["conclusion"] = "failure"
+if scenario == "cancellation-unknown-assertion":
+    jobs[1]["steps"] = [step("Assert", "unknown")]
+if scenario == "cancellation-timed-out":
+    jobs[1]["conclusion"] = "timed_out"
+if scenario == "cancellation-action-required":
+    jobs[1]["conclusion"] = "action_required"
+if scenario == "cancellation-metadata":
+    gate["steps"][4]["conclusion"] = "failure"
+run = {"id": 100, "workflow_id": 42, "run_attempt": 1, "name": "CI — Validation",
+       "path": ".github/workflows/ci.yml", "head_sha": head, "display_title": title,
+       "repository": {"full_name": repo}, "event": "pull_request", "pull_requests": [],
+       "status": "completed", "conclusion": "cancelled"}
+def check(job):
+    return {"id": int(job["check_run_url"].rsplit("/", 1)[1]), "app": {"slug": "github-actions", "id": 15368},
+            "name": job["name"], "head_sha": head, "details_url": job["html_url"],
+            "status": job["status"], "conclusion": job["conclusion"],
+            "started_at": "2026-07-30T01:00:00Z", "completed_at": "2026-07-30T02:00:00Z"}
+if endpoint.endswith("/actions/workflows/ci.yml"):
+    output = {"id": 42, "name": "CI — Validation", "path": ".github/workflows/ci.yml"}
+elif endpoint.endswith("/commits/" + head + "/check-runs"):
+    with open(os.environ["GH_RETRY_COUNT_FILE"], "w") as stream:
+        stream.write("1")
+    checks = [check(gate)]
+    if scenario in ("cancellation-pending", "cancellation-recovery", "cancellation-older-success"):
+        replacement = check(gate)
+        replacement.update(id=420, details_url=f"https://github.com/{repo}/actions/runs/101/job/220",
+                           status="queued", conclusion=None, started_at=None, completed_at=None)
+        if os.environ.get("GH_CANCELLATION_RECOVERED") == "true" or scenario == "cancellation-older-success":
+            replacement.update(status="completed", conclusion="success", started_at="2026-07-30T03:00:00Z",
+                               completed_at="2026-07-30T04:00:00Z" if scenario != "cancellation-older-success" else "2026-07-30T00:30:00Z")
+        checks.append(replacement)
+    output = [{"total_count": len(checks), "check_runs": checks}]
+elif endpoint.endswith("/actions/jobs/219"):
+    output = gate
+elif endpoint.endswith("/actions/jobs/220"):
+    output = copy.deepcopy(gate)
+    output.update(id=220, run_id=101, check_run_url=f"https://api.github.com/repos/{repo}/check-runs/420")
+    output["steps"][4]["conclusion"] = "skipped"
+elif "/attempts/1/jobs" in endpoint:
+    snapshot = copy.deepcopy(jobs)
+    if scenario == "cancellation-partial":
+        snapshot.pop(0)
+    if scenario == "cancellation-wrong-attempt":
+        snapshot[0]["run_attempt"] = 2
+    if scenario == "cancellation-wrong-head":
+        snapshot[0]["head_sha"] = "c" * 40
+    if scenario == "cancellation-duplicate":
+        snapshot[0] = snapshot[1]
+    if scenario == "cancellation-missing-steps":
+        del snapshot[0]["steps"]
+    output = [{"total_count": 20, "jobs": snapshot}]
+elif "/check-runs/" in endpoint:
+    output = check(next(job for job in jobs if job["check_run_url"].endswith("/" + endpoint.rsplit("/", 1)[1])))
+    if scenario == "cancellation-wrong-app":
+        output["app"]["id"] = 1
+    if scenario == "cancellation-check-conflict":
+        output["conclusion"] = "success"
+elif "/actions/runs/" in endpoint:
+    output = copy.deepcopy(run)
+    if endpoint.endswith("/101"):
+        output.update(id=101, conclusion=None, status="queued")
+    if scenario == "cancellation-run-conflict" and "/attempts/" in endpoint:
+        output["display_title"] = "unbound"
+    if scenario in ("cancellation-later-attempt", "cancellation-later-attempt-failed-source"):
+        # Latest run is attempt 2; candidate gate belongs to retained attempt 1.
+        if "/attempts/" not in endpoint:
+            output.update(run_attempt=2, conclusion="success")
+        elif scenario == "cancellation-later-attempt-failed-source":
+            output["conclusion"] = "failure"
+else:
+    raise AssertionError(endpoint)
+print(json.dumps(output))
+CANCELLATION_FIXTURE
+  exit 0
+fi
 if [[ -n "${GH_CALL_COUNT_DIR:-}" ]]; then
   mkdir -p "$GH_CALL_COUNT_DIR"
 fi
@@ -1345,6 +1464,33 @@ for scenario in job-failure-retry completed-preservation-step-lag completed-pres
     echo "invalid evidence was retried or deferred: $scenario" >&2; exit 1;
   }
 done
+# Cancellation cannot become success: only the exact pre-execution shape is
+# removed from authoritative failures, leaving existing missing/pending proof.
+for scenario in cancellation-only cancellation-pending cancellation-metadata cancellation-later-attempt; do
+  output_file="$tmp_dir/$scenario-output"
+  run_action "$tmp_dir/$scenario-count" none "$scenario" "" "$output_file"
+  [[ "$(<"$output_file")" == assessment=dependency-deferred ]] || {
+    echo "cancellation lost missing-proof behavior: $scenario" >&2; exit 1;
+  }
+done
+for scenario in cancellation-later-attempt-failed-source cancellation-real-failure cancellation-hidden-step-failure cancellation-executed-check cancellation-gate-other-failure cancellation-unknown-assertion cancellation-timed-out cancellation-action-required cancellation-partial cancellation-wrong-attempt cancellation-wrong-head cancellation-duplicate cancellation-missing-steps cancellation-wrong-app cancellation-check-conflict cancellation-run-conflict; do
+  output_file="$tmp_dir/$scenario-output"
+  if run_action "$tmp_dir/$scenario-count" none "$scenario" "" "$output_file" >"$tmp_dir/$scenario-log" 2>&1; then
+    echo "cancellation suppressed failed or incomplete proof: $scenario" >&2; exit 1
+  fi
+  [[ ! -s "$output_file" ]] || { echo "invalid cancellation emitted proof: $scenario" >&2; exit 1; }
+done
+run_action "$tmp_dir/cancellation-older-count" none cancellation-older-success
+[[ "$(<"$tmp_dir/cancellation-older-count-output")" == assessment=success ]] || {
+  echo "cancellation changed older valid original policy" >&2; exit 1;
+}
+run_action "$tmp_dir/cancellation-recovery-count" none cancellation-recovery
+[[ "$(<"$tmp_dir/cancellation-recovery-count-output")" == assessment=dependency-deferred ]] || exit 1
+GH_CANCELLATION_RECOVERED=true run_action "$tmp_dir/cancellation-recovered-count" none cancellation-recovery
+[[ "$(<"$tmp_dir/cancellation-recovered-count-output")" == assessment=success ]] || {
+  echo "replacement completion did not recover canonical assessment" >&2; exit 1;
+}
+
 if run_action "$tmp_dir/initial-identity-count" none workflow-identity-mismatch >"$tmp_dir/initial-identity-log" 2>&1; then
   echo "assessment accepted an initial workflow identity mismatch" >&2; exit 1
 fi
@@ -1981,6 +2127,16 @@ import sys
 state = json.loads(Path(sys.argv[1]).read_text())
 assert len(state.get("status_posts", [])) == 1 and state["status_posts"][0]["state"] == "success", state
 PY_BRIDGE
+
+# A cancellation-only original leaves the owned barrier pending; the existing
+# independently verified successful replacement callback can later settle it.
+printf '{"scenario":"bridge-retry"}\n' >"$tmp_dir/resolver-state-bridge-retry"
+run_resolver bridge-retry 100 cancellation-pending reconcile
+[[ "$(jq '.status_posts // [] | length' "$tmp_dir/resolver-state-bridge-retry")" == 0 ]] || exit 1
+run_resolver bridge-retry 101 retry-success reconcile
+[[ "$(jq -c '[.status_posts[].state]' "$tmp_dir/resolver-state-bridge-retry")" == '["success"]' ]] || {
+  echo "cancelled original did not recover through existing callback" >&2; exit 1;
+}
 
 # Support is dormant until a producer publishes the exact recognizable barrier.
 for scenario in bridge-success bridge-failed-producer bridge-failed-preservation bridge-empty-association bridge-fork bridge-pending bridge-failed bridge-cancelled bridge-replaced bridge-pr-changed bridge-foreign bridge-wrong-url bridge-terminal bridge-absent; do
@@ -2691,6 +2847,12 @@ if not unchanged:
     assert state["posts"][0]["state"] == expected.split("-")[0], state
 PY_PUBLISH
 done
+# Refreshed cancellation-only proof must acknowledge a pending status, even
+# when the caller originally assessed success. It never acknowledges success.
+run_producer success-assessment-pending success cancellation-pending
+[[ "$(<"$tmp_dir/producer-output-success-assessment-pending")" == publication=pending-acknowledged ]] || exit 1
+[[ "$(jq -r '.posts[0].state' "$tmp_dir/producer-state-success-assessment-pending")" == pending ]] || exit 1
+
 for history_case in latest-owned latest-foreign null-actor missing-actor unknown-state page-two-owned page-two-absent budget unavailable-page duplicate-page wrong-head-url same-second foreign-same-second first-page-stop ignore-old-malformed overfull scalar malformed-row; do
   scenario="history-$history_case"
   case "$history_case" in
