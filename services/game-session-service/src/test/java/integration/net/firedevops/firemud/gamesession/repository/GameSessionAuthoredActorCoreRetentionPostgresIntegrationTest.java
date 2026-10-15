@@ -290,10 +290,11 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
 
       var associationReadRepository =
           new CanonicalGameInstanceLaunchAssociationRepository(fixture.dsl(), NAMESPACE);
-      var exactSelector =
-          originalSelector(launch.association(), tuple, launch.claim());
+      var exactSelector = originalSelector(launch.association(), tuple, launch.claim());
       OriginalStartSessionAssociation exactRead =
-          associationReadRepository.readOriginalStartSessionAssociation(exactSelector).orElseThrow();
+          associationReadRepository
+              .readOriginalStartSessionAssociation(exactSelector)
+              .orElseThrow();
       assertThat(exactRead.association()).isEqualTo(launch.association());
       assertThat(exactRead.postAuthorizationExecutionTuple().canonicalBytes())
           .containsExactly(tuple.canonicalBytes());
@@ -320,19 +321,36 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
                   .StaleStartSessionOperatorAttemptClaimException.class)
           .hasMessage("Historical owner read does not match the original owner attempt and fence");
 
+      UUID wrongTenantId = UUID.randomUUID();
+      assertThatThrownBy(
+              () ->
+                  new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+                      UUID.randomUUID(),
+                      exactSelector.targetNamespace(),
+                      wrongTenantId,
+                      exactSelector.worldSlug(),
+                      exactSelector.gameInstanceUuid(),
+                      exactSelector.controlPlaneRequestId(),
+                      exactSelector.launchDescriptorId(),
+                      exactSelector.expectedDescriptorRequestDigest(),
+                      exactSelector.expectedDescriptorResultDigest(),
+                      exactSelector.expectedReleaseAttestationEvidenceDigest(),
+                      exactSelector.originalOperation()))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Original operation differs from the exact independent launch selector");
+
       var wrongTenantSelector =
           new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
               UUID.randomUUID(),
               exactSelector.targetNamespace(),
-              UUID.randomUUID(),
+              wrongTenantId,
               exactSelector.worldSlug(),
               exactSelector.gameInstanceUuid(),
               exactSelector.controlPlaneRequestId(),
               exactSelector.launchDescriptorId(),
               exactSelector.expectedDescriptorRequestDigest(),
               exactSelector.expectedDescriptorResultDigest(),
-              exactSelector.expectedReleaseAttestationEvidenceDigest(),
-              exactSelector.originalOperation());
+              exactSelector.expectedReleaseAttestationEvidenceDigest());
       assertThat(associationReadRepository.readOriginalStartSessionAssociation(wrongTenantSelector))
           .isEmpty();
 
@@ -420,7 +438,11 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
               "Canonical launch association differs from its exact original StartSession selector");
 
       String where =
-          " WHERE target_namespace = '" + NAMESPACE + "' AND control_plane_request_id = '" + operationId + "'";
+          " WHERE target_namespace = '"
+              + NAMESPACE
+              + "' AND control_plane_request_id = '"
+              + operationId
+              + "'";
       assertThatThrownBy(
               () ->
                   fixture
@@ -454,7 +476,8 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
                   fixture
                       .dsl()
                       .execute(
-                          "DELETE FROM game_session_start_session_template_association_pin" + where))
+                          "DELETE FROM game_session_start_session_template_association_pin"
+                              + where))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
           .hasStackTraceContaining("StartSession template association pins are immutable");
       assertThatThrownBy(

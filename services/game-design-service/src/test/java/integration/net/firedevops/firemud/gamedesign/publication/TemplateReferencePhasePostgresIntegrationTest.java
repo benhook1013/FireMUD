@@ -223,7 +223,8 @@ class TemplateReferencePhasePostgresIntegrationTest {
     return createTemplate(fixture, name, false);
   }
 
-  private DraftCommitBinding createTemplate(Fixture fixture, String name, boolean sourceAwareVisibility) {
+  private DraftCommitBinding createTemplate(
+      Fixture fixture, String name, boolean sourceAwareVisibility) {
     var config =
         new TemplateConfigSource.Config(
             "{\"schemaVersion\":1,\"baseVersionId\":\""
