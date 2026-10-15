@@ -2682,6 +2682,7 @@ routes:
   - service: account-service
     route: RetireInitialGameplayLogin
     scope: account
+    route_status: target_not_currently_routable
     classification: internal_workload
     auth_path: exact_mtls_workload
     issued_token_state: none
