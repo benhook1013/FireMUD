@@ -65,8 +65,8 @@ class RunOwnedWorldFixedPresetResourcesTest {
 
   private static void assertOverrideRejected(
       boolean scriptPatchVersionPresent, boolean remapSetIdPresent) {
-    RunOwnedWorldLaunchEvidence evidence =
-        RunOwnedWorldLaunchEvidenceTestFixtures.createWithDescriptorOverrides(
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.createWithDescriptorOverrides(
             scriptPatchVersionPresent, remapSetIdPresent);
     evidence.launchDescriptor().requireValid();
     assertThat(evidence.launchDescriptor().scriptPatchVersionPresent())
@@ -91,7 +91,7 @@ class RunOwnedWorldFixedPresetResourcesTest {
   }
 
   private static WorldAuthoredSourceIntakeReceipt sourceReceipt(
-      RunOwnedWorldLaunchEvidence evidence) {
+      RunOwnedCanonicalWorldLaunchEvidence evidence) {
     var source = evidence.sourceReceipt().sourceEvidence();
     UUID intakeRequestId = UUID.fromString("11111111-1111-4111-8111-111111111111");
     UUID operationId = UUID.fromString("22222222-2222-4222-8222-222222222222");
@@ -116,7 +116,7 @@ class RunOwnedWorldFixedPresetResourcesTest {
   }
 
   private static WorldAuthoredVersionIdentityReceipt versionReceipt(
-      RunOwnedWorldLaunchEvidence evidence, WorldAuthoredSourceIntakeReceipt sourceReceipt) {
+      RunOwnedCanonicalWorldLaunchEvidence evidence, WorldAuthoredSourceIntakeReceipt sourceReceipt) {
     var source = sourceReceipt.source();
     var snapshot = evidence.sourceReceipt().launchReadEvidence().versionState();
     var request =
@@ -144,7 +144,7 @@ class RunOwnedWorldFixedPresetResourcesTest {
         stateEvidence);
   }
 
-  private static <T> T withFixturePeer(RunOwnedWorldLaunchEvidence evidence, Supplier<T> action) {
+  private static <T> T withFixturePeer(RunOwnedCanonicalWorldLaunchEvidence evidence, Supplier<T> action) {
     GrpcPeerIdentity peer =
         new GrpcPeerIdentity(
             "spiffe://firemud/ns/dev/sa/game-session-service", "dev", "game-session-service");

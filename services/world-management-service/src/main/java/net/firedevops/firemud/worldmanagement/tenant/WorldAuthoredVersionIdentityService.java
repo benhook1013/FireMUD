@@ -11,7 +11,7 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
-import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -91,7 +91,7 @@ public final class WorldAuthoredVersionIdentityService {
    * bypass the ordinary authenticated Game Design entry point.
    */
   public WorldAuthoredVersionIdentityReceipt associateRunOwnedFixture(
-      RunOwnedWorldLaunchEvidence fixtureEvidence, WorldAuthoredSourceIntakeReceipt sourceReceipt) {
+      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence, WorldAuthoredSourceIntakeReceipt sourceReceipt) {
     Objects.requireNonNull(fixtureEvidence, "fixtureEvidence");
     fixtureEvidence.requireFixedGameSessionPeer();
     Objects.requireNonNull(sourceReceipt, "sourceReceipt");
@@ -153,7 +153,7 @@ public final class WorldAuthoredVersionIdentityService {
       long gameDesignVersionId,
       UUID readRequestId,
       WorldAuthoredSourceIntakeReceipt expectedSourceReceipt,
-      RunOwnedWorldLaunchEvidence expectedFixtureEvidence) {
+      RunOwnedCanonicalWorldLaunchEvidence expectedFixtureEvidence) {
     requireNoAmbientTransaction();
     validateRequest(
         targetNamespace,
@@ -295,7 +295,7 @@ public final class WorldAuthoredVersionIdentityService {
   }
 
   private static void requireFixtureVersionStateMatches(
-      RunOwnedWorldLaunchEvidence fixtureEvidence, AuthoredWorldVersionStateEvidence current) {
+      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence, AuthoredWorldVersionStateEvidence current) {
     if (current == null) {
       throw new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
           "Game Design returned no current Version state for the sealed run-owned fixture");
@@ -323,7 +323,7 @@ public final class WorldAuthoredVersionIdentityService {
       WorldAuthoredSourceIntakeReceipt sourceReceipt,
       UUID expectedCanonicalVersionId,
       long gameDesignVersionId,
-      RunOwnedWorldLaunchEvidence expectedFixtureEvidence) {
+      RunOwnedCanonicalWorldLaunchEvidence expectedFixtureEvidence) {
     if (!receipt.targetNamespace().equals(workloadNamespace)
         || !receipt.sourceIntakeReceipt().equals(sourceReceipt)
         || !receipt.canonicalTenantId().equals(sourceReceipt.canonicalTenantId())

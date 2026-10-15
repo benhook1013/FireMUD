@@ -7,8 +7,8 @@ import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldFixtureEvidenceTestFixtures;
-import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
-import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidenceProvider;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidenceProvider;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
 import net.firedevops.firemud.worldmanagement.repository.RegionInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
@@ -38,7 +38,7 @@ public final class RunOwnedWorldFixtureLifecycleTestFactory {
   public static WorldLifecycleCommandServiceImpl create(
       DSLContext dsl,
       PlatformTransactionManager transactions,
-      RunOwnedWorldLaunchEvidenceProvider provider,
+      RunOwnedCanonicalWorldLaunchEvidenceProvider provider,
       AuthoredWorldSourceClient sourceClient,
       AuthoredWorldVersionStateClient versionClient,
       GameDesignClient gameDesign,
@@ -89,7 +89,7 @@ public final class RunOwnedWorldFixtureLifecycleTestFactory {
 
   /** Owner-local preparation; callers must supply their real or explicitly controlled GS peer. */
   public static WorldInstanceLifecycleSnapshotDto prepare(
-      WorldLifecycleCommandServiceImpl service, RunOwnedWorldLaunchEvidence evidence) {
+      WorldLifecycleCommandServiceImpl service, RunOwnedCanonicalWorldLaunchEvidence evidence) {
     return service.prepareRunOwnedFixture(
         RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence), evidence);
   }
