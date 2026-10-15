@@ -143,6 +143,14 @@ class RunOwnedFixtureAuthoredWorldOwnerReadGrpcServiceTest {
           .isEqualTo(failure.expectedCode());
       assertThat(Status.fromThrowable(sourceFailure.get()).getDescription())
           .doesNotContain("connection lost", "duplicate key", "storage unavailable");
+      if (failure.expectedCode() == Status.Code.UNAVAILABLE
+          || failure.expectedCode() == Status.Code.INTERNAL) {
+        assertThat(Status.fromThrowable(versionFailure.get()).getDescription())
+            .isEqualTo(
+                failure.expectedCode() == Status.Code.UNAVAILABLE
+                    ? "Game Design Version state is temporarily unavailable"
+                    : "Game Design Version state could not be read");
+      }
       verifyNoInteractions(repository, transactions);
     }
   }
