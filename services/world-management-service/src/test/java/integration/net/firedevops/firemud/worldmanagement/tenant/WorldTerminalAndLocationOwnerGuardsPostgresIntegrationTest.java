@@ -14,6 +14,7 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Savepoint;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -32,8 +33,8 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Exercises V1042.6's two forward owner-guard repairs against native PostgreSQL. The malformed
- * terminal tuples and APPLIED location operations run only through test-local predicate probes;
+ * Exercises the V1042.6 and V1042.8 forward owner-guard repairs against native PostgreSQL.
+ * Malformed terminal inputs run through test-local probes built from the installed function body;
  * they do not create production owner rows or claim Account-authorized admission.
  */
 @Testcontainers(disabledWithoutDocker = true)
@@ -43,14 +44,15 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
   private static final String LOCATION_FUNCTION = "world_require_initial_location_operation_result";
   private static final String LOCATION_TRIGGER =
       "trg_world_require_initial_location_operation_result";
+  private static final String TERMINAL_FUNCTION = "world_draft_terminal_outcome_guard";
+  private static final String TERMINAL_TRIGGER = "trg_world_draft_terminal_outcome_guard";
 
   @Container
   static PostgreSQLContainer<?> postgres =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
-  void defaultInstallAndForwardUpgradeEnforceCompleteBindingAndSameOperationPlacement()
-      throws Exception {
+  void defaultInstallAndForwardUpgradeEnforceTerminalUnitsAndOwnerGuards() throws Exception {
     Path root = repositoryRoot();
     String worldLocation = worldMigrations(root);
     String sagaLocation = sagaMigrations(root);
@@ -90,10 +92,15 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       List<String> productionRowsBefore = productionLocationRows(upgradeDsl, upgradeSchema);
       assertThat(productionRowsBefore).isEmpty();
 
-      // Targetless migrate is the normal forward path from the installed V1042.5 frontier.
-      Flyway current = flyway(upgradeSource, upgradeSchema, null, worldLocation, sagaLocation);
-      current.migrate();
-      current.validate();
+      Flyway through10426 =
+          flyway(
+              upgradeSource,
+              upgradeSchema,
+              MigrationVersion.fromVersion("1042.6"),
+              worldLocation,
+              sagaLocation);
+      through10426.migrate();
+      through10426.validate();
       assertThat(latestVersion(upgradeDsl)).isEqualTo("1042.6");
       assertThat(migrationHistory(upgradeDsl, "1010")).isEqualTo(oldTerminalHistory);
       assertThat(migrationHistory(upgradeDsl, "1019")).isEqualTo(oldLocationHistory);
@@ -117,16 +124,60 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           upgradeSource, upgradeSchema, after.functionSource(), false, false);
       assertThat(productionLocationRows(upgradeDsl, upgradeSchema)).isEqualTo(productionRowsBefore);
 
+      String repairedTerminalHistory = migrationHistory(upgradeDsl, "1042.6");
+      Flyway through10427 =
+          flyway(
+              upgradeSource,
+              upgradeSchema,
+              MigrationVersion.fromVersion("1042.7"),
+              worldLocation,
+              sagaLocation);
+      through10427.migrate();
+      through10427.validate();
+      assertThat(latestVersion(upgradeDsl)).isEqualTo("1042.7");
+      String predecessorHistory = migrationHistory(upgradeDsl, "1042.7");
+      TerminalFunctionMetadata terminalBefore = terminalFunctionMetadata(upgradeDsl, upgradeSchema);
+      assertThat(terminalBefore.publicExecuteGrant()).isFalse();
+      assertThat(terminalBefore.securityDefiner()).isTrue();
+      List<String> terminalRowsBefore = productionTerminalRows(upgradeDsl, upgradeSchema);
+      assertThat(terminalRowsBefore).isEmpty();
+
+      Flyway current = flyway(upgradeSource, upgradeSchema, null, worldLocation, sagaLocation);
+      current.migrate();
+      current.validate();
+      assertThat(current.info().pending()).isEmpty();
+      assertThat(migrationHistory(upgradeDsl, "1042.6")).isEqualTo(repairedTerminalHistory);
+      assertThat(migrationHistory(upgradeDsl, "1042.7")).isEqualTo(predecessorHistory);
+      assertThat(migrationHistory(upgradeDsl, "1010")).isEqualTo(oldTerminalHistory);
+      assertThat(migrationHistory(upgradeDsl, "1019")).isEqualTo(oldLocationHistory);
+      assertThat(constraintDefinition(upgradeDsl, upgradeSchema))
+          .isEqualTo(currentTerminalConstraint);
+      LocationFunctionMetadata atCurrentFrontier =
+          locationFunctionMetadata(upgradeDsl, upgradeSchema);
+      assertFunctionMetadataPreserved(after, atCurrentFrontier);
+      TerminalFunctionMetadata terminalAfter = terminalFunctionMetadata(upgradeDsl, upgradeSchema);
+      assertTerminalFunctionMetadataPreserved(terminalBefore, terminalAfter);
+      List<String> terminalRowsAfter = productionTerminalRows(upgradeDsl, upgradeSchema);
+      assertThat(terminalRowsAfter).isEqualTo(terminalRowsBefore);
+      exerciseTerminalAffectedUnitProbe(
+          upgradeSource, upgradeSchema, terminalAfter.functionSource());
+
       // A clean default installation must also land on the same repaired frontier.
       Flyway fresh = flyway(freshSource, freshSchema, null, worldLocation, sagaLocation);
       fresh.migrate();
       fresh.validate();
-      assertThat(latestVersion(freshDsl)).isEqualTo("1042.6");
+      assertThat(fresh.info().pending()).isEmpty();
       assertThat(constraintDefinition(freshDsl, freshSchema)).contains("IS TRUE");
       assertThat(
               normalizeFunctionSource(
                   locationFunctionMetadata(freshDsl, freshSchema).functionSource(), freshSchema))
           .isEqualTo(normalizeFunctionSource(after.functionSource(), upgradeSchema));
+      TerminalFunctionMetadata freshTerminal = terminalFunctionMetadata(freshDsl, freshSchema);
+      assertThat(freshTerminal.publicExecuteGrant()).isFalse();
+      assertThat(freshTerminal.securityDefiner()).isTrue();
+      assertThat(normalizeSchemaQualifier(freshTerminal.functionSource(), freshSchema))
+          .isEqualTo(normalizeSchemaQualifier(terminalAfter.functionSource(), upgradeSchema));
+      assertThat(productionTerminalRows(freshDsl, freshSchema)).isEmpty();
       assertThat(productionLocationRows(freshDsl, freshSchema)).isEmpty();
     } finally {
       dropSchema(upgradeSource, upgradeSchema);
@@ -193,6 +244,486 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       connection.rollback(savepoint);
       if (!strict) throw failure;
       assertThat(failure.getSQLState()).isEqualTo("23514");
+    }
+  }
+
+  private static void exerciseTerminalAffectedUnitProbe(
+      DriverManagerDataSource source, String schema, String functionSource) throws SQLException {
+    UUID tenantId = UUID.randomUUID();
+    UUID versionId = UUID.randomUUID();
+    UUID requestId = UUID.randomUUID();
+    UUID commitId = UUID.randomUUID();
+    UUID aggregateId = UUID.randomUUID();
+    UUID maxAggregateId = UUID.randomUUID();
+    UUID scopeId = UUID.randomUUID();
+    String targetNamespace = "terminal-guard-probe";
+    long localTenantKey = 71_001L;
+    long localVersionKey = 81_001L;
+    long aggregateKey = 91_001L;
+    long maxAggregateKey = 91_002L;
+
+    try (Connection connection = source.getConnection();
+        Statement statement = connection.createStatement()) {
+      connection.setAutoCommit(false);
+      statement.execute(
+          "CREATE TEMP TABLE world_design_publication_fence_owner ("
+              + "target_namespace TEXT, canonical_tenant_id UUID, local_tenant_key BIGINT, "
+              + "version_id BIGINT, owner_freeze_phase TEXT, current_publication_fence UUID) "
+              + "ON COMMIT DROP");
+      statement.execute(
+          "CREATE TEMP TABLE world_region_draft_commit (request_id UUID, commit_id UUID) "
+              + "ON COMMIT DROP");
+      statement.execute(
+          "CREATE TEMP TABLE world_topology_draft_commit (request_id UUID, commit_id UUID) "
+              + "ON COMMIT DROP");
+      statement.execute(
+          "CREATE TEMP TABLE world_authored_topology_identity ("
+              + "target_namespace TEXT, canonical_tenant_id UUID, canonical_version_id UUID, "
+              + "request_id UUID, commit_id UUID, private_row_key BIGINT, family TEXT, "
+              + "template_id UUID) ON COMMIT DROP");
+      statement.execute(
+          "CREATE TEMP TABLE world_design_revision_ledger ("
+              + "tenant_id BIGINT, version_id BIGINT, commit_id TEXT) ON COMMIT DROP");
+      statement.execute(
+          "CREATE TEMP TABLE world_design_aggregate_epoch ("
+              + "tenant_id BIGINT, version_id BIGINT, aggregate_type TEXT, aggregate_id BIGINT, "
+              + "draft_revision_epoch BIGINT) ON COMMIT DROP");
+      statement.execute(
+          "CREATE TEMP TABLE world_design_scope_epoch ("
+              + "tenant_id BIGINT, version_id BIGINT, scope_type TEXT, scope_id TEXT, "
+              + "draft_scope_revision_epoch BIGINT) ON COMMIT DROP");
+      statement.execute(
+          "CREATE TEMP TABLE world_draft_terminal_outcome_probe ("
+              + "target_namespace TEXT, canonical_tenant_id UUID, canonical_version_id UUID, "
+              + "local_tenant_key BIGINT, "
+              + "local_version_key BIGINT, request_id UUID, commit_id UUID, "
+              + "affected_units_json JSONB NOT NULL) ON COMMIT DROP");
+
+      try (PreparedStatement owner =
+          connection.prepareStatement(
+              "INSERT INTO pg_temp.world_design_publication_fence_owner VALUES (?, ?, ?, ?, 'OPEN', NULL)")) {
+        owner.setString(1, targetNamespace);
+        owner.setObject(2, tenantId);
+        owner.setLong(3, localTenantKey);
+        owner.setLong(4, localVersionKey);
+        owner.executeUpdate();
+      }
+      insertTerminalProbeIdentity(
+          connection, targetNamespace, tenantId, versionId, aggregateId, aggregateKey, 4L);
+      insertTerminalProbeIdentity(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          maxAggregateId,
+          maxAggregateKey,
+          Long.MAX_VALUE);
+      try (PreparedStatement scope =
+          connection.prepareStatement(
+              "INSERT INTO pg_temp.world_design_scope_epoch VALUES (?, ?, 'REGION_SUBTREE', ?, 7)")) {
+        scope.setLong(1, localTenantKey);
+        scope.setLong(2, localVersionKey);
+        scope.setString(3, scopeId.toString());
+        scope.executeUpdate();
+      }
+
+      String schemaQualifier = "\"" + schema + "\".";
+      assertThat(functionSource).contains(schemaQualifier + "world_design_publication_fence_owner");
+      String probeBody = functionSource.replace(schemaQualifier, "pg_temp.");
+      statement.execute(
+          "CREATE FUNCTION pg_temp.world_draft_terminal_outcome_guard_probe() RETURNS TRIGGER "
+              + "LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $probe$\n"
+              + probeBody
+              + "\n$probe$");
+      statement.execute(
+          "CREATE TRIGGER terminal_outcome_probe_guard BEFORE INSERT "
+              + "ON pg_temp.world_draft_terminal_outcome_probe FOR EACH ROW "
+              + "EXECUTE FUNCTION pg_temp.world_draft_terminal_outcome_guard_probe()");
+
+      String validAggregate =
+          terminalUnitJson(
+              aggregateId,
+              aggregateId,
+              true,
+              "\"WORLD_MANAGEMENT\"",
+              true,
+              "\"AGGREGATE\"",
+              true,
+              "4");
+      // Existing World writers use JSON integer epochs and DraftCommitBinding uses canonical
+      // decimal strings, so the installed guard must retain both representations.
+      String validScope =
+          terminalUnitJson(
+              aggregateId,
+              scopeId,
+              true,
+              "\"WORLD_MANAGEMENT\"",
+              true,
+              "\"REGION_SUBTREE\"",
+              true,
+              "\"7\"");
+      String validMaximum =
+          terminalUnitJson(
+              maxAggregateId,
+              maxAggregateId,
+              true,
+              "\"WORLD_MANAGEMENT\"",
+              true,
+              "\"AGGREGATE\"",
+              true,
+              "\"9223372036854775807\"");
+      insertTerminalAffectedUnitProbe(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          "[" + validAggregate + "," + validScope + "," + validMaximum + "]");
+
+      assertTerminalAffectedUnitRejected(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          "missing owner",
+          "["
+              + terminalUnitJson(
+                  aggregateId, aggregateId, false, "", true, "\"AGGREGATE\"", true, "4")
+              + "]");
+      assertTerminalAffectedUnitRejected(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          "null owner",
+          "["
+              + terminalUnitJson(
+                  aggregateId, aggregateId, true, "null", true, "\"AGGREGATE\"", true, "4")
+              + "]");
+      assertTerminalAffectedUnitRejected(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          "foreign owner",
+          "["
+              + terminalUnitJson(
+                  aggregateId,
+                  aggregateId,
+                  true,
+                  "\"ENTITY_MANAGEMENT\"",
+                  true,
+                  "\"AGGREGATE\"",
+                  true,
+                  "4")
+              + "]");
+      assertTerminalAffectedUnitRejected(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          "missing scope type",
+          "["
+              + terminalUnitJson(
+                  aggregateId, scopeId, true, "\"WORLD_MANAGEMENT\"", false, "", true, "0")
+              + "]");
+      assertTerminalAffectedUnitRejected(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          "null scope type",
+          "["
+              + terminalUnitJson(
+                  aggregateId, scopeId, true, "\"WORLD_MANAGEMENT\"", true, "null", true, "0")
+              + "]");
+      assertTerminalAffectedUnitRejected(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          "unknown scope type",
+          "["
+              + terminalUnitJson(
+                  aggregateId,
+                  scopeId,
+                  true,
+                  "\"WORLD_MANAGEMENT\"",
+                  true,
+                  "\"UNKNOWN\"",
+                  true,
+                  "0")
+              + "]");
+
+      assertInvalidTerminalEpoch(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          aggregateId,
+          "missing epoch",
+          false,
+          "");
+      assertInvalidTerminalEpoch(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          aggregateId,
+          "null epoch",
+          true,
+          "null");
+      assertInvalidTerminalEpoch(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          aggregateId,
+          "malformed string epoch",
+          true,
+          "\"not-a-counter\"");
+      assertInvalidTerminalEpoch(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          aggregateId,
+          "fractional epoch",
+          true,
+          "4.4");
+      assertInvalidTerminalEpoch(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          aggregateId,
+          "negative epoch",
+          true,
+          "-1");
+      assertInvalidTerminalEpoch(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          aggregateId,
+          "out-of-range epoch",
+          true,
+          "9223372036854775808");
+      assertInvalidTerminalEpoch(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          aggregateId,
+          "noncanonical decimal string epoch",
+          true,
+          "\"04\"");
+      connection.commit();
+    }
+  }
+
+  private static void insertTerminalProbeIdentity(
+      Connection connection,
+      String targetNamespace,
+      UUID tenantId,
+      UUID versionId,
+      UUID templateId,
+      long aggregateKey,
+      long epoch)
+      throws SQLException {
+    try (PreparedStatement identity =
+            connection.prepareStatement(
+                "INSERT INTO pg_temp.world_authored_topology_identity "
+                    + "(target_namespace,canonical_tenant_id,canonical_version_id,request_id,commit_id,"
+                    + "private_row_key,family,template_id) VALUES (?, ?, ?, ?, ?, ?, 'REGION', ?)");
+        PreparedStatement aggregate =
+            connection.prepareStatement(
+                "INSERT INTO pg_temp.world_design_aggregate_epoch "
+                    + "VALUES (?, ?, 'REGION', ?, ?)")) {
+      identity.setString(1, targetNamespace);
+      identity.setObject(2, tenantId);
+      identity.setObject(3, versionId);
+      identity.setObject(4, UUID.randomUUID());
+      identity.setObject(5, UUID.randomUUID());
+      identity.setLong(6, aggregateKey);
+      identity.setObject(7, templateId);
+      identity.executeUpdate();
+      aggregate.setLong(1, 71_001L);
+      aggregate.setLong(2, 81_001L);
+      aggregate.setLong(3, aggregateKey);
+      aggregate.setLong(4, epoch);
+      aggregate.executeUpdate();
+    }
+  }
+
+  private static void assertInvalidTerminalEpoch(
+      Connection connection,
+      String targetNamespace,
+      UUID tenantId,
+      UUID versionId,
+      long localTenantKey,
+      long localVersionKey,
+      UUID requestId,
+      UUID commitId,
+      UUID aggregateId,
+      String label,
+      boolean includeEpoch,
+      String epochJson)
+      throws SQLException {
+    String unit =
+        terminalUnitJson(
+            aggregateId,
+            aggregateId,
+            true,
+            "\"WORLD_MANAGEMENT\"",
+            true,
+            "\"AGGREGATE\"",
+            includeEpoch,
+            epochJson);
+    assertTerminalAffectedUnitRejected(
+        connection,
+        targetNamespace,
+        tenantId,
+        versionId,
+        localTenantKey,
+        localVersionKey,
+        requestId,
+        commitId,
+        label,
+        "[" + unit + "]");
+  }
+
+  private static String terminalUnitJson(
+      UUID aggregateId,
+      UUID scopeId,
+      boolean includeOwner,
+      String ownerJson,
+      boolean includeScopeType,
+      String scopeTypeJson,
+      boolean includeExpectedEpoch,
+      String expectedEpochJson) {
+    List<String> fields = new ArrayList<>();
+    fields.add("\"aggregateType\":\"REGION\"");
+    fields.add("\"aggregateId\":\"" + aggregateId + "\"");
+    if (includeOwner) fields.add("\"owner\":" + ownerJson);
+    if (includeScopeType) fields.add("\"scopeType\":" + scopeTypeJson);
+    fields.add("\"scopeId\":\"" + scopeId + "\"");
+    if (includeExpectedEpoch) fields.add("\"expectedEpoch\":" + expectedEpochJson);
+    return "{" + String.join(",", fields) + "}";
+  }
+
+  private static void assertTerminalAffectedUnitRejected(
+      Connection connection,
+      String targetNamespace,
+      UUID tenantId,
+      UUID versionId,
+      long localTenantKey,
+      long localVersionKey,
+      UUID requestId,
+      UUID commitId,
+      String label,
+      String affectedUnitsJson)
+      throws SQLException {
+    Savepoint savepoint = connection.setSavepoint();
+    try {
+      insertTerminalAffectedUnitProbe(
+          connection,
+          targetNamespace,
+          tenantId,
+          versionId,
+          localTenantKey,
+          localVersionKey,
+          requestId,
+          commitId,
+          affectedUnitsJson);
+      throw new AssertionError("Installed terminal guard accepted " + label);
+    } catch (SQLException failure) {
+      connection.rollback(savepoint);
+      assertThat(failure.getSQLState()).as(label).isEqualTo("23514");
+    }
+  }
+
+  private static void insertTerminalAffectedUnitProbe(
+      Connection connection,
+      String targetNamespace,
+      UUID tenantId,
+      UUID versionId,
+      long localTenantKey,
+      long localVersionKey,
+      UUID requestId,
+      UUID commitId,
+      String affectedUnitsJson)
+      throws SQLException {
+    try (PreparedStatement insert =
+        connection.prepareStatement(
+            "INSERT INTO pg_temp.world_draft_terminal_outcome_probe "
+                + "(target_namespace, canonical_tenant_id, canonical_version_id, local_tenant_key, "
+                + "local_version_key, request_id, commit_id, affected_units_json) "
+                + "VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb)")) {
+      insert.setString(1, targetNamespace);
+      insert.setObject(2, tenantId);
+      insert.setObject(3, versionId);
+      insert.setLong(4, localTenantKey);
+      insert.setLong(5, localVersionKey);
+      insert.setObject(6, requestId);
+      insert.setObject(7, commitId);
+      insert.setString(8, affectedUnitsJson);
+      insert.executeUpdate();
     }
   }
 
@@ -382,6 +913,42 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
         row.get("public_execute_grants", Long.class) > 0);
   }
 
+  private static TerminalFunctionMetadata terminalFunctionMetadata(DSLContext dsl, String schema) {
+    var row =
+        dsl.fetchSingle(
+            "SELECT p.oid::bigint AS function_oid,p.proowner::regrole::text AS function_owner,"
+                + "p.proacl::text AS function_acl,p.prosecdef AS security_definer,"
+                + "p.proconfig::text AS function_config,p.prosrc AS function_source,l.lanname AS language,"
+                + "t.oid::bigint AS trigger_oid,t.tgfoid::bigint AS trigger_function_oid,"
+                + "t.tgdeferrable AS trigger_deferrable,t.tginitdeferred AS trigger_initially_deferred,"
+                + "t.tgenabled::text AS trigger_enabled,pg_get_triggerdef(t.oid) AS trigger_definition,"
+                + "(SELECT count(*) FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a "
+                + "WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_execute_grants "
+                + "FROM pg_proc p JOIN pg_namespace pn ON pn.oid=p.pronamespace "
+                + "JOIN pg_language l ON l.oid=p.prolang JOIN pg_trigger t ON t.tgfoid=p.oid "
+                + "JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace tn ON tn.oid=c.relnamespace "
+                + "WHERE pn.nspname=? AND tn.nspname=? AND p.proname=? AND t.tgname=?",
+            schema,
+            schema,
+            TERMINAL_FUNCTION,
+            TERMINAL_TRIGGER);
+    return new TerminalFunctionMetadata(
+        row.get("function_oid", Long.class),
+        row.get("function_owner", String.class),
+        row.get("function_acl", String.class),
+        row.get("security_definer", Boolean.class),
+        row.get("function_config", String.class),
+        row.get("function_source", String.class),
+        row.get("language", String.class),
+        row.get("trigger_oid", Long.class),
+        row.get("trigger_function_oid", Long.class),
+        row.get("trigger_deferrable", Boolean.class),
+        row.get("trigger_initially_deferred", Boolean.class),
+        row.get("trigger_enabled", String.class),
+        row.get("trigger_definition", String.class),
+        row.get("public_execute_grants", Long.class) > 0);
+  }
+
   private static void assertFunctionMetadataPreserved(
       LocationFunctionMetadata before, LocationFunctionMetadata after) {
     assertThat(after.functionOid()).isEqualTo(before.functionOid());
@@ -396,6 +963,26 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
     assertThat(after.triggerInitiallyDeferred())
         .isEqualTo(before.triggerInitiallyDeferred())
         .isTrue();
+    assertThat(after.triggerEnabled()).isEqualTo(before.triggerEnabled()).isEqualTo("O");
+    assertThat(after.triggerDefinition()).isEqualTo(before.triggerDefinition());
+    assertThat(after.publicExecuteGrant()).isEqualTo(before.publicExecuteGrant()).isFalse();
+    assertThat(after.functionConfig()).contains("search_path=pg_catalog");
+  }
+
+  private static void assertTerminalFunctionMetadataPreserved(
+      TerminalFunctionMetadata before, TerminalFunctionMetadata after) {
+    assertThat(after.functionOid()).isEqualTo(before.functionOid());
+    assertThat(after.functionOwner()).isEqualTo(before.functionOwner());
+    assertThat(after.functionAcl()).isEqualTo(before.functionAcl());
+    assertThat(after.securityDefiner()).isEqualTo(before.securityDefiner()).isTrue();
+    assertThat(after.functionConfig()).isEqualTo(before.functionConfig());
+    assertThat(after.language()).isEqualTo(before.language()).isEqualTo("plpgsql");
+    assertThat(after.triggerOid()).isEqualTo(before.triggerOid());
+    assertThat(after.triggerFunctionOid()).isEqualTo(before.triggerFunctionOid());
+    assertThat(after.triggerDeferrable()).isEqualTo(before.triggerDeferrable()).isFalse();
+    assertThat(after.triggerInitiallyDeferred())
+        .isEqualTo(before.triggerInitiallyDeferred())
+        .isFalse();
     assertThat(after.triggerEnabled()).isEqualTo(before.triggerEnabled()).isEqualTo("O");
     assertThat(after.triggerDefinition()).isEqualTo(before.triggerDefinition());
     assertThat(after.publicExecuteGrant()).isEqualTo(before.publicExecuteGrant()).isFalse();
@@ -427,6 +1014,14 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
                 + "UNION ALL SELECT 'location:' || xmin::text || ':' || to_jsonb(l)::text FROM \""
                 + schema
                 + "\".character_location l ORDER BY 1")
+        .getValues(0, String.class);
+  }
+
+  private static List<String> productionTerminalRows(DSLContext dsl, String schema) {
+    return dsl.fetch(
+            "SELECT jsonb_build_object('xmin',t.xmin::text,'row',to_jsonb(t))::text FROM \""
+                + schema
+                + "\".world_draft_terminal_outcome t ORDER BY t.operation_id")
         .getValues(0, String.class);
   }
 
@@ -490,6 +1085,10 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
         source.replace(
             "FROM \"" + schema + "\".character_location l",
             "FROM <service-schema>.character_location l"));
+  }
+
+  private static String normalizeSchemaQualifier(String source, String schema) {
+    return normalizeSql(source.replace("\"" + schema + "\".", "<service-schema>."));
   }
 
   private static int occurrences(String value, String fragment) {
@@ -670,6 +1269,22 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
   }
 
   private record LocationFunctionMetadata(
+      long functionOid,
+      String functionOwner,
+      String functionAcl,
+      boolean securityDefiner,
+      String functionConfig,
+      String functionSource,
+      String language,
+      long triggerOid,
+      long triggerFunctionOid,
+      boolean triggerDeferrable,
+      boolean triggerInitiallyDeferred,
+      String triggerEnabled,
+      String triggerDefinition,
+      boolean publicExecuteGrant) {}
+
+  private record TerminalFunctionMetadata(
       long functionOid,
       String functionOwner,
       String functionAcl,
