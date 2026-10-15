@@ -365,23 +365,11 @@ public final class WorldCanonicalInstanceActivationRepository {
                         + "AND canonical_game_instance_id=? AND canonical_realm_id=? AND catalog_revision=? "
                         + "AND status='PREPARING' AND lifecycle_epoch=? AND row_version=?",
                     request.canonicalGameInstanceId(),
-                    firstProtection
-                        .request()
-                        .launchAssociation()
-                        .canonicalRealmId(),
-                    firstProtection
-                        .request()
-                        .launchAssociation()
-                        .catalogRevision(),
+                    firstProtection.request().launchAssociation().canonicalRealmId(),
+                    firstProtection.request().launchAssociation().catalogRevision(),
                     request.canonicalGameInstanceId(),
-                    firstProtection
-                        .request()
-                        .launchAssociation()
-                        .canonicalRealmId(),
-                    firstProtection
-                        .request()
-                        .launchAssociation()
-                        .catalogRevision(),
+                    firstProtection.request().launchAssociation().canonicalRealmId(),
+                    firstProtection.request().launchAssociation().catalogRevision(),
                     request.expectedLifecycleEpoch(),
                     request.expectedRowVersion());
             if (updated != 1) {

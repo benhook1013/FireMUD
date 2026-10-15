@@ -45,8 +45,7 @@ public final class AccountStartSessionActivationProtectionSettlementGrpcService
     if (SessionContext.hasAuthenticatedCallerContext()
         || !workloadNamespace.equals(peer.namespace())
         || !peer.uri()
-            .equals(
-                "spiffe://firemud/ns/" + workloadNamespace + "/sa/world-management-service")) {
+            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/world-management-service")) {
       observer.onError(Status.PERMISSION_DENIED.asRuntimeException());
       return;
     }
@@ -59,7 +58,8 @@ public final class AccountStartSessionActivationProtectionSettlementGrpcService
         || request.getTargetNamespaceCount() != 1
         || !workloadNamespace.equals(request.getTargetNamespace(0))) {
       observer.onError(
-          request != null && request.getTargetNamespaceCount() == 1
+          request != null
+                  && request.getTargetNamespaceCount() == 1
                   && !workloadNamespace.equals(request.getTargetNamespace(0))
               ? Status.PERMISSION_DENIED.asRuntimeException()
               : Status.INVALID_ARGUMENT.asRuntimeException());
@@ -68,7 +68,9 @@ public final class AccountStartSessionActivationProtectionSettlementGrpcService
 
     final AccountStartSessionActivationProtectionSettlementInput input;
     try {
-      input = AccountStartSessionActivationProtectionSettlementGrpcCodec.fromRequest(request, workloadNamespace);
+      input =
+          AccountStartSessionActivationProtectionSettlementGrpcCodec.fromRequest(
+              request, workloadNamespace);
     } catch (RuntimeException malformed) {
       observer.onError(Status.INVALID_ARGUMENT.withCause(malformed).asRuntimeException());
       return;

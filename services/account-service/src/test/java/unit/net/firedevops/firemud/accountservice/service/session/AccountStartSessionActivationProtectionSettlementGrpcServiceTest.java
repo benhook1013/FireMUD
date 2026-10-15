@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.v1.SettleOriginalStartSessionActivationProtectionRequest;
 import net.firedevops.firemud.account.v1.SettleOriginalStartSessionActivationProtectionResponse;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementService;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -32,7 +33,8 @@ class AccountStartSessionActivationProtectionSettlementGrpcServiceTest {
   @Test
   void authenticatesWorldBeforeCoordinatesOrTargetAreRead() {
     var owner = mock(AccountStartSessionActivationProtectionSettlementService.class);
-    var service = new AccountStartSessionActivationProtectionSettlementGrpcService(owner, NAMESPACE);
+    var service =
+        new AccountStartSessionActivationProtectionSettlementGrpcService(owner, NAMESPACE);
     var malformed = SettleOriginalStartSessionActivationProtectionRequest.getDefaultInstance();
 
     assertCode(Status.Code.UNAUTHENTICATED, invoke(service, null, malformed).error());
@@ -52,7 +54,8 @@ class AccountStartSessionActivationProtectionSettlementGrpcServiceTest {
   @Test
   void rejectsMissingDuplicateAndMismatchedTargetFieldsBeforeOwner() {
     var owner = mock(AccountStartSessionActivationProtectionSettlementService.class);
-    var service = new AccountStartSessionActivationProtectionSettlementGrpcService(owner, NAMESPACE);
+    var service =
+        new AccountStartSessionActivationProtectionSettlementGrpcService(owner, NAMESPACE);
     var absent = SettleOriginalStartSessionActivationProtectionRequest.getDefaultInstance();
     var wrong =
         SettleOriginalStartSessionActivationProtectionRequest.newBuilder()
@@ -68,8 +71,12 @@ class AccountStartSessionActivationProtectionSettlementGrpcServiceTest {
             .addTargetNamespace(NAMESPACE)
             .build();
 
-    assertCode(Status.Code.INVALID_ARGUMENT, invoke(service, identity("world-management-service"), absent).error());
-    assertCode(Status.Code.PERMISSION_DENIED, invoke(service, identity("world-management-service"), wrong).error());
+    assertCode(
+        Status.Code.INVALID_ARGUMENT,
+        invoke(service, identity("world-management-service"), absent).error());
+    assertCode(
+        Status.Code.PERMISSION_DENIED,
+        invoke(service, identity("world-management-service"), wrong).error());
     assertCode(
         Status.Code.INVALID_ARGUMENT,
         invoke(service, identity("world-management-service"), duplicate).error());
@@ -82,7 +89,8 @@ class AccountStartSessionActivationProtectionSettlementGrpcServiceTest {
   @Test
   void rejectsAmbientTransactionBeforeRequestParsing() {
     var owner = mock(AccountStartSessionActivationProtectionSettlementService.class);
-    var service = new AccountStartSessionActivationProtectionSettlementGrpcService(owner, NAMESPACE);
+    var service =
+        new AccountStartSessionActivationProtectionSettlementGrpcService(owner, NAMESPACE);
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
     assertCode(
@@ -136,8 +144,7 @@ class AccountStartSessionActivationProtectionSettlementGrpcServiceTest {
   }
 
   private static GrpcPeerIdentity identity(String service, String namespace) {
-    return GrpcPeerIdentity.parseUri(
-            "spiffe://firemud/ns/" + namespace + "/sa/" + service)
+    return GrpcPeerIdentity.parseUri("spiffe://firemud/ns/" + namespace + "/sa/" + service)
         .orElseThrow();
   }
 

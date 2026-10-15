@@ -35,7 +35,8 @@ public final class AccountStartSessionActivationProtectionSettlementService {
       WorldOriginalStartSessionActivationTerminalReadClient worldClient,
       PlatformTransactionManager transactionManager,
       String workloadNamespace) {
-    this.repository = Objects.requireNonNull(repository, "activation protection repository is required");
+    this.repository =
+        Objects.requireNonNull(repository, "activation protection repository is required");
     this.worldClient = Objects.requireNonNull(worldClient, "World terminal reader is required");
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
       throw new IllegalArgumentException("Canonical Account workload namespace required");
@@ -64,7 +65,8 @@ public final class AccountStartSessionActivationProtectionSettlementService {
                 ignored -> {
                   StoredProtection protection =
                       repository
-                          .findHistoricalExact(input.accountProtectionId(), input.accountProtectionFence())
+                          .findHistoricalExact(
+                              input.accountProtectionId(), input.accountProtectionFence())
                           .orElseThrow(
                               () ->
                                   failedPrecondition(
@@ -72,7 +74,8 @@ public final class AccountStartSessionActivationProtectionSettlementService {
                   requireTargetBinding(protection, input.targetNamespace());
                   StoredSettlement settled =
                       repository
-                          .findSettlementExact(input.accountProtectionId(), input.accountProtectionFence())
+                          .findSettlementExact(
+                              input.accountProtectionId(), input.accountProtectionFence())
                           .orElse(null);
                   return new Lookup(protection, settled);
                 }),
@@ -87,13 +90,19 @@ public final class AccountStartSessionActivationProtectionSettlementService {
             freshReadId(
                 input.settlementRequestId(),
                 input.accountProtectionId(),
-                lookup.protection().evidence().request().worldActivationRequest().activationRequestId()),
+                lookup
+                    .protection()
+                    .evidence()
+                    .request()
+                    .worldActivationRequest()
+                    .activationRequestId()),
             lookup.protection().evidence());
     requireNoAmbientTransaction();
     WorldOriginalStartSessionActivationTerminalEvidence terminal = worldClient.read(readInput);
     requireNoAmbientTransaction();
     if (terminal == null) {
-      throw failedPrecondition("World activation remains unresolved without an exact terminal receipt");
+      throw failedPrecondition(
+          "World activation remains unresolved without an exact terminal receipt");
     }
     if (!Arrays.equals(
         lookup.protection().evidence().canonicalBytes(),
@@ -113,7 +122,8 @@ public final class AccountStartSessionActivationProtectionSettlementService {
             readbackTransaction.execute(
                 ignored ->
                     repository
-                        .findSettlementExact(input.accountProtectionId(), input.accountProtectionFence())
+                        .findSettlementExact(
+                            input.accountProtectionId(), input.accountProtectionFence())
                         .orElseThrow(
                             () ->
                                 failedPrecondition(

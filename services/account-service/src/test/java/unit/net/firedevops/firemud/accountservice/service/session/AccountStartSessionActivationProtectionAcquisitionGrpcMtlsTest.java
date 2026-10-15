@@ -33,8 +33,9 @@ import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.firedevops.firemud.account.v1.AcquireOriginalStartSessionActivationProtectionRequest;
 import net.firedevops.firemud.account.v1.AccountStartSessionActivationProtectionAcquisitionServiceGrpc;
+import net.firedevops.firemud.account.v1.AcquireOriginalStartSessionActivationProtectionRequest;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionAcquisitionGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionAcquisitionService;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
@@ -53,23 +54,29 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcMtlsTest {
     var pki = ActivationProtectionGrpcMtlsTestSupport.TestPki.create(temporaryDirectory);
     var owner = mock(AccountStartSessionActivationProtectionAcquisitionService.class);
     var handlers = new AtomicInteger();
-    try (var server = ActivationProtectionGrpcMtlsTestSupport.startServer(
-            pki,
-            new AccountStartSessionActivationProtectionAcquisitionGrpcService(owner, NAMESPACE),
-            handlers);
-        var world = ActivationProtectionGrpcMtlsTestSupport.client(
-            pki, temporaryDirectory, server.getPort(), pki.worldClient());
-        var wrongWorkload = ActivationProtectionGrpcMtlsTestSupport.client(
-            pki, temporaryDirectory, server.getPort(), pki.wrongWorkloadClient());
-        var wrongNamespace = ActivationProtectionGrpcMtlsTestSupport.client(
-            pki, temporaryDirectory, server.getPort(), pki.otherNamespaceClient())) {
+    try (var server =
+            ActivationProtectionGrpcMtlsTestSupport.startServer(
+                pki,
+                new AccountStartSessionActivationProtectionAcquisitionGrpcService(owner, NAMESPACE),
+                handlers);
+        var world =
+            ActivationProtectionGrpcMtlsTestSupport.client(
+                pki, temporaryDirectory, server.getPort(), pki.worldClient());
+        var wrongWorkload =
+            ActivationProtectionGrpcMtlsTestSupport.client(
+                pki, temporaryDirectory, server.getPort(), pki.wrongWorkloadClient());
+        var wrongNamespace =
+            ActivationProtectionGrpcMtlsTestSupport.client(
+                pki, temporaryDirectory, server.getPort(), pki.otherNamespaceClient())) {
       var malformed =
           AcquireOriginalStartSessionActivationProtectionRequest.newBuilder()
               .addTargetNamespace(NAMESPACE)
               .build();
       assertStatus(Status.Code.INVALID_ARGUMENT, () -> acquire(world.channel(), malformed));
-      assertStatus(Status.Code.PERMISSION_DENIED, () -> acquire(wrongWorkload.channel(), malformed));
-      assertStatus(Status.Code.PERMISSION_DENIED, () -> acquire(wrongNamespace.channel(), malformed));
+      assertStatus(
+          Status.Code.PERMISSION_DENIED, () -> acquire(wrongWorkload.channel(), malformed));
+      assertStatus(
+          Status.Code.PERMISSION_DENIED, () -> acquire(wrongNamespace.channel(), malformed));
       assertThat(handlers).hasValue(3);
       verifyNoInteractions(owner);
     }
@@ -80,29 +87,30 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcMtlsTest {
     var pki = ActivationProtectionGrpcMtlsTestSupport.TestPki.create(temporaryDirectory);
     var owner = mock(AccountStartSessionActivationProtectionAcquisitionService.class);
     var handlers = new AtomicInteger();
-    try (var server = ActivationProtectionGrpcMtlsTestSupport.startServer(
-            pki,
-            new AccountStartSessionActivationProtectionAcquisitionGrpcService(owner, NAMESPACE),
-            handlers);
-        var client = ActivationProtectionGrpcMtlsTestSupport.clientWithoutIdentity(
-            pki, temporaryDirectory, server.getPort())) {
+    try (var server =
+            ActivationProtectionGrpcMtlsTestSupport.startServer(
+                pki,
+                new AccountStartSessionActivationProtectionAcquisitionGrpcService(owner, NAMESPACE),
+                handlers);
+        var client =
+            ActivationProtectionGrpcMtlsTestSupport.clientWithoutIdentity(
+                pki, temporaryDirectory, server.getPort())) {
       assertThatThrownBy(
               () ->
                   acquire(
                       client.channel(),
-                      AcquireOriginalStartSessionActivationProtectionRequest
-                          .getDefaultInstance()))
+                      AcquireOriginalStartSessionActivationProtectionRequest.getDefaultInstance()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(failure -> assertThat(TlsTestSupport.isTlsHandshakeRejection(failure)).isTrue());
+          .satisfies(
+              failure -> assertThat(TlsTestSupport.isTlsHandshakeRejection(failure)).isTrue());
       assertThat(handlers).hasValue(0);
       verifyNoInteractions(owner);
     }
   }
 
   private static void acquire(
-      ManagedChannel channel,
-      AcquireOriginalStartSessionActivationProtectionRequest request) {
-    AccountStartSessionActivationProtectionServiceGrpc.newBlockingStub(channel)
+      ManagedChannel channel, AcquireOriginalStartSessionActivationProtectionRequest request) {
+    AccountStartSessionActivationProtectionAcquisitionServiceGrpc.newBlockingStub(channel)
         .withDeadlineAfter(3, TimeUnit.SECONDS)
         .acquireOriginalStartSessionActivationProtection(request);
   }
@@ -129,25 +137,24 @@ final class ActivationProtectionGrpcMtlsTestSupport {
         new ServerInterceptor() {
           @Override
           public <ReqT, RespT> io.grpc.ServerCall.Listener<ReqT> interceptCall(
-              ServerCall<ReqT, RespT> call,
-              Metadata headers,
-              ServerCallHandler<ReqT, RespT> next) {
+              ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
             handlers.incrementAndGet();
             return next.startCall(call, headers);
           }
         };
     Server server =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
-        .sslContext(
-            GrpcSslContexts.configure(
-                    SslContextBuilder.forServer(
-                        pki.server().privateKey(), pki.server().certificate()))
-                .trustManager(pki.caCertificate())
-                .clientAuth(ClientAuth.REQUIRE)
-                .build())
-        .addService(ServerInterceptors.intercept(service, count, new GrpcPeerIdentityInterceptor()))
-        .build()
-        .start();
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(
+                            pki.server().privateKey(), pki.server().certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(
+                ServerInterceptors.intercept(service, count, new GrpcPeerIdentityInterceptor()))
+            .build()
+            .start();
     return new ServerResource(server, handlers);
   }
 
@@ -163,7 +170,12 @@ final class ActivationProtectionGrpcMtlsTestSupport {
       throws Exception {
     CommonGrpcClientProperties tls = new CommonGrpcClientProperties();
     tls.setPlaintext(false);
-    tls.setCaCert(writePem(directory.resolve("trust-only-ca.crt"), "CERTIFICATE", pki.caCertificate().getEncoded()).toString());
+    tls.setCaCert(
+        writePem(
+                directory.resolve("trust-only-ca.crt"),
+                "CERTIFICATE",
+                pki.caCertificate().getEncoded())
+            .toString());
     return new ClientResource(
         new GrpcChannelFactory().buildChannel("127.0.0.1:" + port, 6565, tls, false));
   }
@@ -191,35 +203,111 @@ final class ActivationProtectionGrpcMtlsTestSupport {
     static TestPki create(Path directory) throws Exception {
       Path caStore = directory.resolve("activation-test-ca.p12");
       runKeytool(
-          "-genkeypair", "-alias", "activation-test-ca", "-keyalg", "RSA", "-keysize", "2048",
-          "-dname", "CN=FireMUD controlled activation test CA", "-validity", "30",
-          "-ext", "BC=ca:true", "-ext", "KU=keyCertSign,cRLSign", "-storetype", "PKCS12",
-          "-keystore", caStore.toString(), "-storepass", PASSWORD, "-keypass", PASSWORD);
+          "-genkeypair",
+          "-alias",
+          "activation-test-ca",
+          "-keyalg",
+          "RSA",
+          "-keysize",
+          "2048",
+          "-dname",
+          "CN=FireMUD controlled activation test CA",
+          "-validity",
+          "30",
+          "-ext",
+          "BC=ca:true",
+          "-ext",
+          "KU=keyCertSign,cRLSign",
+          "-storetype",
+          "PKCS12",
+          "-keystore",
+          caStore.toString(),
+          "-storepass",
+          PASSWORD,
+          "-keypass",
+          PASSWORD);
       Path caFile = directory.resolve("activation-test-ca.crt");
       runKeytool(
-          "-exportcert", "-alias", "activation-test-ca", "-keystore", caStore.toString(),
-          "-storetype", "PKCS12", "-storepass", PASSWORD, "-file", caFile.toString(), "-rfc");
+          "-exportcert",
+          "-alias",
+          "activation-test-ca",
+          "-keystore",
+          caStore.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          PASSWORD,
+          "-file",
+          caFile.toString(),
+          "-rfc");
       var ca = readCertificate(caFile);
       return new TestPki(
           ca,
-          issue(directory, caStore, caFile, "activation-server", "spiffe://firemud/ns/world-runtime/sa/account-service", true),
+          issue(
+              directory,
+              caStore,
+              caFile,
+              "activation-server",
+              "spiffe://firemud/ns/world-runtime/sa/account-service",
+              true),
           issue(directory, caStore, caFile, "world-client", WORLD_URI, false),
-          issue(directory, caStore, caFile, "wrong-client", "spiffe://firemud/ns/world-runtime/sa/game-session-service", false),
-          issue(directory, caStore, caFile, "other-namespace-client", "spiffe://firemud/ns/other-runtime/sa/world-management-service", false));
+          issue(
+              directory,
+              caStore,
+              caFile,
+              "wrong-client",
+              "spiffe://firemud/ns/world-runtime/sa/game-session-service",
+              false),
+          issue(
+              directory,
+              caStore,
+              caFile,
+              "other-namespace-client",
+              "spiffe://firemud/ns/other-runtime/sa/world-management-service",
+              false));
     }
 
-    X509Certificate caCertificate() { return caCertificate; }
-    Identity server() { return server; }
-    Identity worldClient() { return worldClient; }
-    Identity wrongWorkloadClient() { return wrongWorkloadClient; }
-    Identity otherNamespaceClient() { return otherNamespaceClient; }
+    X509Certificate caCertificate() {
+      return caCertificate;
+    }
+
+    Identity server() {
+      return server;
+    }
+
+    Identity worldClient() {
+      return worldClient;
+    }
+
+    Identity wrongWorkloadClient() {
+      return wrongWorkloadClient;
+    }
+
+    Identity otherNamespaceClient() {
+      return otherNamespaceClient;
+    }
 
     CommonGrpcClientProperties clientProperties(Path directory, Identity identity)
         throws Exception {
       CommonGrpcClientProperties tls = new CommonGrpcClientProperties();
-      tls.setCertChain(writePem(directory.resolve(identity.alias() + ".crt"), "CERTIFICATE", identity.certificate().getEncoded()).toString());
-      tls.setPrivateKey(writePem(directory.resolve(identity.alias() + ".key"), "PRIVATE KEY", identity.privateKey().getEncoded()).toString());
-      tls.setCaCert(writePem(directory.resolve("activation-client-trust.crt"), "CERTIFICATE", caCertificate.getEncoded()).toString());
+      tls.setCertChain(
+          writePem(
+                  directory.resolve(identity.alias() + ".crt"),
+                  "CERTIFICATE",
+                  identity.certificate().getEncoded())
+              .toString());
+      tls.setPrivateKey(
+          writePem(
+                  directory.resolve(identity.alias() + ".key"),
+                  "PRIVATE KEY",
+                  identity.privateKey().getEncoded())
+              .toString());
+      tls.setCaCert(
+          writePem(
+                  directory.resolve("activation-client-trust.crt"),
+                  "CERTIFICATE",
+                  caCertificate.getEncoded())
+              .toString());
       tls.setPlaintext(false);
       return tls;
     }
@@ -233,24 +321,96 @@ final class ActivationProtectionGrpcMtlsTestSupport {
       String san = server ? "URI:" + uri + ",DNS:localhost,IP:127.0.0.1" : "URI:" + uri;
       String usage = server ? "serverAuth" : "clientAuth";
       runKeytool(
-          "-genkeypair", "-alias", alias, "-keyalg", "RSA", "-keysize", "2048", "-dname", "CN=" + alias,
-          "-validity", "30", "-ext", "KU=digitalSignature,keyEncipherment", "-ext", "EKU=" + usage,
-          "-ext", "SAN=" + san, "-storetype", "PKCS12", "-keystore", store.toString(),
-          "-storepass", PASSWORD, "-keypass", PASSWORD);
+          "-genkeypair",
+          "-alias",
+          alias,
+          "-keyalg",
+          "RSA",
+          "-keysize",
+          "2048",
+          "-dname",
+          "CN=" + alias,
+          "-validity",
+          "30",
+          "-ext",
+          "KU=digitalSignature,keyEncipherment",
+          "-ext",
+          "EKU=" + usage,
+          "-ext",
+          "SAN=" + san,
+          "-storetype",
+          "PKCS12",
+          "-keystore",
+          store.toString(),
+          "-storepass",
+          PASSWORD,
+          "-keypass",
+          PASSWORD);
       runKeytool(
-          "-certreq", "-alias", alias, "-keystore", store.toString(), "-storetype", "PKCS12",
-          "-storepass", PASSWORD, "-file", csr.toString(), "-ext", "SAN=" + san);
+          "-certreq",
+          "-alias",
+          alias,
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          PASSWORD,
+          "-file",
+          csr.toString(),
+          "-ext",
+          "SAN=" + san);
       runKeytool(
-          "-gencert", "-alias", "activation-test-ca", "-keystore", caStore.toString(), "-storetype", "PKCS12",
-          "-storepass", PASSWORD, "-infile", csr.toString(), "-outfile", cert.toString(), "-validity", "30",
-          "-rfc", "-ext", "BC=ca:false", "-ext", "KU=digitalSignature,keyEncipherment", "-ext", "EKU=" + usage,
-          "-ext", "SAN=" + san);
+          "-gencert",
+          "-alias",
+          "activation-test-ca",
+          "-keystore",
+          caStore.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          PASSWORD,
+          "-infile",
+          csr.toString(),
+          "-outfile",
+          cert.toString(),
+          "-validity",
+          "30",
+          "-rfc",
+          "-ext",
+          "BC=ca:false",
+          "-ext",
+          "KU=digitalSignature,keyEncipherment",
+          "-ext",
+          "EKU=" + usage,
+          "-ext",
+          "SAN=" + san);
       runKeytool(
-          "-importcert", "-alias", "activation-test-ca", "-keystore", store.toString(), "-storetype", "PKCS12",
-          "-storepass", PASSWORD, "-file", caFile.toString(), "-noprompt");
+          "-importcert",
+          "-alias",
+          "activation-test-ca",
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          PASSWORD,
+          "-file",
+          caFile.toString(),
+          "-noprompt");
       runKeytool(
-          "-importcert", "-alias", alias, "-keystore", store.toString(), "-storetype", "PKCS12",
-          "-storepass", PASSWORD, "-file", cert.toString(), "-noprompt");
+          "-importcert",
+          "-alias",
+          alias,
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          PASSWORD,
+          "-file",
+          cert.toString(),
+          "-noprompt");
       KeyStore keyStore = KeyStore.getInstance("PKCS12");
       try (var input = Files.newInputStream(store)) {
         keyStore.load(input, PASSWORD.toCharArray());
@@ -266,7 +426,9 @@ final class ActivationProtectionGrpcMtlsTestSupport {
           Path.of(
               System.getProperty("java.home"),
               "bin",
-              System.getProperty("os.name").toLowerCase().contains("windows") ? "keytool.exe" : "keytool");
+              System.getProperty("os.name").toLowerCase().contains("windows")
+                  ? "keytool.exe"
+                  : "keytool");
       ArrayList<String> command = new ArrayList<>();
       command.add(keytool.toString());
       command.addAll(List.of(args));
@@ -306,6 +468,10 @@ final class ActivationProtectionGrpcMtlsTestSupport {
 
   record ClientResource(ManagedChannel channel) implements AutoCloseable {
     @Override
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+        value = "RV_RETURN_VALUE_IGNORED_NO_SIDE_EFFECT",
+        justification =
+            "ManagedChannel.shutdownNow performs channel shutdown; termination is checked below.")
     public void close() throws InterruptedException {
       channel.shutdownNow();
       if (!channel.awaitTermination(2, TimeUnit.SECONDS)) {

@@ -15,9 +15,10 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository.StoredProtection;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository.StoredSettlement;
-import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionSettlementInput;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementService;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionRequest;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionSettlementInput;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
@@ -47,15 +48,16 @@ class AccountStartSessionActivationProtectionSettlementServiceTest {
   void requiresExactWorldPeerAndNoEndUserBeforeInspectingCoordinates() {
     var repository = mock(AccountStartSessionActivationProtectionRepository.class);
     var world = mock(WorldOriginalStartSessionActivationTerminalReadClient.class);
-    var service = new AccountStartSessionActivationProtectionSettlementService(
-        repository, world, new OwnerTransactions(), NAMESPACE);
+    var service =
+        new AccountStartSessionActivationProtectionSettlementService(
+            repository, world, new OwnerTransactions(), NAMESPACE);
 
     assertCode(Status.Code.UNAUTHENTICATED, () -> service.settle(null));
-    withPeer("game-session-service", () ->
-        assertCode(Status.Code.PERMISSION_DENIED, () -> service.settle(null)));
+    withPeer(
+        "game-session-service",
+        () -> assertCode(Status.Code.PERMISSION_DENIED, () -> service.settle(null)));
     SessionContext.setContext("123", java.util.List.of(), java.util.Map.of());
-    withWorldPeer(() ->
-        assertCode(Status.Code.PERMISSION_DENIED, () -> service.settle(null)));
+    withWorldPeer(() -> assertCode(Status.Code.PERMISSION_DENIED, () -> service.settle(null)));
 
     verifyNoInteractions(repository, world);
   }
@@ -65,29 +67,32 @@ class AccountStartSessionActivationProtectionSettlementServiceTest {
     var repository = mock(AccountStartSessionActivationProtectionRepository.class);
     var world = mock(WorldOriginalStartSessionActivationTerminalReadClient.class);
     var transactions = new OwnerTransactions();
-    var service = new AccountStartSessionActivationProtectionSettlementService(
-        repository, world, transactions, NAMESPACE);
+    var service =
+        new AccountStartSessionActivationProtectionSettlementService(
+            repository, world, transactions, NAMESPACE);
     var input =
         new AccountStartSessionActivationProtectionSettlementInput(
             NAMESPACE,
             UUID.fromString("11111111-1111-4111-8111-111111111111"),
             UUID.fromString("22222222-2222-4222-8222-222222222222"),
             7L);
-    when(repository.findHistoricalExact(input.accountProtectionId(), input.accountProtectionFence()))
+    when(repository.findHistoricalExact(
+            input.accountProtectionId(), input.accountProtectionFence()))
         .thenAnswer(
             ignored -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
-              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isFalse();
+              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                  .isFalse();
               return Optional.empty();
             });
 
-    withWorldPeer(
-        () -> assertCode(Status.Code.FAILED_PRECONDITION, () -> service.settle(input)));
+    withWorldPeer(() -> assertCode(Status.Code.FAILED_PRECONDITION, () -> service.settle(input)));
 
     assertThat(transactions.begins).isEqualTo(1);
     assertThat(transactions.commits).isZero();
     assertThat(transactions.rollbacks).isEqualTo(1);
-    verify(repository).findHistoricalExact(input.accountProtectionId(), input.accountProtectionFence());
+    verify(repository)
+        .findHistoricalExact(input.accountProtectionId(), input.accountProtectionFence());
     verifyNoInteractions(world);
   }
 
@@ -95,15 +100,15 @@ class AccountStartSessionActivationProtectionSettlementServiceTest {
   void rejectsAmbientTransactionBeforeOwnerLookup() {
     var repository = mock(AccountStartSessionActivationProtectionRepository.class);
     var world = mock(WorldOriginalStartSessionActivationTerminalReadClient.class);
-    var service = new AccountStartSessionActivationProtectionSettlementService(
-        repository, world, new OwnerTransactions(), NAMESPACE);
+    var service =
+        new AccountStartSessionActivationProtectionSettlementService(
+            repository, world, new OwnerTransactions(), NAMESPACE);
     var input =
         new AccountStartSessionActivationProtectionSettlementInput(
             NAMESPACE, UUID.randomUUID(), UUID.randomUUID(), 1L);
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
-    withWorldPeer(
-        () -> assertCode(Status.Code.FAILED_PRECONDITION, () -> service.settle(input)));
+    withWorldPeer(() -> assertCode(Status.Code.FAILED_PRECONDITION, () -> service.settle(input)));
 
     verifyNoInteractions(repository, world);
   }
@@ -113,8 +118,9 @@ class AccountStartSessionActivationProtectionSettlementServiceTest {
     var repository = mock(AccountStartSessionActivationProtectionRepository.class);
     var world = mock(WorldOriginalStartSessionActivationTerminalReadClient.class);
     var transactions = new OwnerTransactions();
-    var service = new AccountStartSessionActivationProtectionSettlementService(
-        repository, world, transactions, NAMESPACE);
+    var service =
+        new AccountStartSessionActivationProtectionSettlementService(
+            repository, world, transactions, NAMESPACE);
     UUID protectionId = UUID.fromString("33333333-3333-4333-8333-333333333333");
     UUID retryRequestId = UUID.fromString("44444444-4444-4444-8444-444444444444");
     var input =
@@ -138,7 +144,8 @@ class AccountStartSessionActivationProtectionSettlementServiceTest {
     when(terminal.outcome()).thenReturn(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
     var protection = new StoredProtection(protectionEvidence, 23L);
     var settledAt = java.time.Instant.parse("2026-10-15T01:02:03.123456Z");
-    var settlement = new StoredSettlement(terminal, settledAt, new byte[] {1}, "sha256:" + "a".repeat(64));
+    var settlement =
+        new StoredSettlement(terminal, settledAt, new byte[] {1}, "sha256:" + "a".repeat(64));
     when(repository.findHistoricalExact(protectionId, 19L)).thenReturn(Optional.of(protection));
     when(repository.findSettlementExact(protectionId, 19L)).thenReturn(Optional.of(settlement));
 
@@ -167,8 +174,7 @@ class AccountStartSessionActivationProtectionSettlementServiceTest {
 
   private static <T> T withWorldPeerResult(java.util.function.Supplier<T> work) {
     var identity =
-        GrpcPeerIdentity.parseUri(
-                "spiffe://firemud/ns/world-runtime/sa/world-management-service")
+        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/world-runtime/sa/world-management-service")
             .orElseThrow();
     var next = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, identity);
     var prior = next.attach();

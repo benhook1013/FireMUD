@@ -171,16 +171,25 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest {
   void exactAccountOperationReturnsTheActualCurrentOwnerSnapshot() {
     var fixture = fixture();
     var request = accountRequest(fixture, UUID.randomUUID(), OWNER_ATTEMPT, 8L);
-    when(repository.readOriginalStartSessionAssociation(request)).thenReturn(Optional.of(fixture.original()));
+    when(repository.readOriginalStartSessionAssociation(request))
+        .thenReturn(Optional.of(fixture.original()));
 
-    var observer = invoke(NAMESPACE, "account-service", CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toRequest(request));
+    var observer =
+        invoke(
+            NAMESPACE,
+            "account-service",
+            CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toRequest(request));
 
     assertThat(observer.error()).isNull();
     assertThat(observer.completed()).isTrue();
-    var result = CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(request, observer.response());
-    assertThat(result.launchBindingEvidence()).isEqualTo(fixture.original().association().launchBindingEvidence());
+    var result =
+        CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(
+            request, observer.response());
+    assertThat(result.launchBindingEvidence())
+        .isEqualTo(fixture.original().association().launchBindingEvidence());
     assertThat(result.currentGameInstanceStatus()).isEqualTo(CurrentGameInstanceStatus.STARTING);
-    assertThat(result.currentRowVersion()).isEqualTo(fixture.original().association().currentRowVersion());
+    assertThat(result.currentRowVersion())
+        .isEqualTo(fixture.original().association().currentRowVersion());
     assertThat(result.request().originalOperation()).isEqualTo(request.originalOperation());
     verify(repository).readOriginalStartSessionAssociation(request);
     verifyNoMoreInteractions(repository);
@@ -189,12 +198,17 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest {
   @Test
   void accountCallerRequiresCompleteOperationAndCannotBorrowWorldOrHumanContext() {
     var fixture = fixture();
-    assertDenied(invoke(NAMESPACE, "account-service", fixture.wireRequest()), Status.Code.PERMISSION_DENIED);
+    assertDenied(
+        invoke(NAMESPACE, "account-service", fixture.wireRequest()), Status.Code.PERMISSION_DENIED);
     var request = accountRequest(fixture, UUID.randomUUID(), OWNER_ATTEMPT, 8L);
     var wire = CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toRequest(request);
-    assertDenied(invoke(NAMESPACE, "world-management-service", wire), Status.Code.PERMISSION_DENIED);
+    assertDenied(
+        invoke(NAMESPACE, "world-management-service", wire), Status.Code.PERMISSION_DENIED);
     assertDenied(invoke("other-runtime", "account-service", wire), Status.Code.PERMISSION_DENIED);
-    assertDenied(invoke(NAMESPACE, "account-service", wire.toBuilder().clearExpectedOwnerMutationId().build()), Status.Code.INVALID_ARGUMENT);
+    assertDenied(
+        invoke(
+            NAMESPACE, "account-service", wire.toBuilder().clearExpectedOwnerMutationId().build()),
+        Status.Code.INVALID_ARGUMENT);
     SessionContext.setContext("123", List.of(), Map.of());
     assertDenied(invoke(NAMESPACE, "account-service", wire), Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(repository);
@@ -217,18 +231,50 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest {
   void accountOperationCannotAcceptAnotherAttemptOrNonStartingOwnerResult() {
     var fixture = fixture();
     var wrong = accountRequest(fixture, UUID.randomUUID(), UUID.randomUUID(), 8L);
-    when(repository.readOriginalStartSessionAssociation(wrong)).thenReturn(Optional.of(fixture.original()));
-    assertDenied(invoke(NAMESPACE, "account-service", CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toRequest(wrong)), Status.Code.FAILED_PRECONDITION);
-    var stopped = fixture(810L, 810L, CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.STOPPED, INSTANCE);
+    when(repository.readOriginalStartSessionAssociation(wrong))
+        .thenReturn(Optional.of(fixture.original()));
+    assertDenied(
+        invoke(
+            NAMESPACE,
+            "account-service",
+            CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toRequest(wrong)),
+        Status.Code.FAILED_PRECONDITION);
+    var stopped =
+        fixture(
+            810L,
+            810L,
+            CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.STOPPED,
+            INSTANCE);
     var request = accountRequest(stopped, UUID.randomUUID(), OWNER_ATTEMPT, 8L);
-    when(repository.readOriginalStartSessionAssociation(request)).thenReturn(Optional.of(stopped.original()));
-    assertDenied(invoke(NAMESPACE, "account-service", CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toRequest(request)), Status.Code.FAILED_PRECONDITION);
+    when(repository.readOriginalStartSessionAssociation(request))
+        .thenReturn(Optional.of(stopped.original()));
+    assertDenied(
+        invoke(
+            NAMESPACE,
+            "account-service",
+            CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toRequest(request)),
+        Status.Code.FAILED_PRECONDITION);
   }
 
-  private static CanonicalGameInstanceLaunchAssociationReadEvidence.Request accountRequest(Fixture fixture, UUID mutation, UUID attempt, long fence) {
+  private static CanonicalGameInstanceLaunchAssociationReadEvidence.Request accountRequest(
+      Fixture fixture, UUID mutation, UUID attempt, long fence) {
     var request = fixture.request();
-    return new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(request.readRequestId(), request.targetNamespace(), request.canonicalTenantId(), request.worldSlug(), request.gameInstanceUuid(), request.controlPlaneRequestId(), request.launchDescriptorId(), request.expectedDescriptorRequestDigest(), request.expectedDescriptorResultDigest(), request.expectedReleaseAttestationEvidenceDigest(),
-        new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(fixture.original().postAuthorizationExecutionTuple().canonicalBytes(), mutation, attempt, fence));
+    return new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+        request.readRequestId(),
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.worldSlug(),
+        request.gameInstanceUuid(),
+        request.controlPlaneRequestId(),
+        request.launchDescriptorId(),
+        request.expectedDescriptorRequestDigest(),
+        request.expectedDescriptorResultDigest(),
+        request.expectedReleaseAttestationEvidenceDigest(),
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(
+            fixture.original().postAuthorizationExecutionTuple().canonicalBytes(),
+            mutation,
+            attempt,
+            fence));
   }
 
   @Test

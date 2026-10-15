@@ -81,9 +81,11 @@ class WorldCanonicalInstanceActivationRepositoryTest {
     var input = mock(AccountStartSessionActivationProtectionAcquisitionInput.class);
     TransactionSynchronizationManager.initSynchronization();
     assertThatThrownBy(() -> repository.readProtectedActivationByAcquisitionInput(input))
-        .isInstanceOf(IllegalStateException.class).hasMessageContaining("ambient transaction");
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ambient transaction");
     assertThatThrownBy(() -> repository.readResult(request()))
-        .isInstanceOf(IllegalStateException.class).hasMessageContaining("ambient transaction");
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ambient transaction");
     verifyNoInteractions(dsl, manager, lifecycle);
   }
 

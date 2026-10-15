@@ -128,21 +128,27 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
 
   public static GetCanonicalGameInstanceLaunchAssociationRequest toRequest(Request request) {
     Objects.requireNonNull(request, "request");
-    var builder = GetCanonicalGameInstanceLaunchAssociationRequest.newBuilder()
-        .setReadRequestId(request.readRequestId().toString())
-        .setTargetNamespace(request.targetNamespace())
-        .setCanonicalTenantId(request.canonicalTenantId().toString())
-        .setWorldSlug(request.worldSlug())
-        .setGameInstanceUuid(request.gameInstanceUuid().toString())
-        .setControlPlaneRequestId(request.controlPlaneRequestId())
-        .setLaunchDescriptorId(request.launchDescriptorId())
-        .setExpectedDescriptorRequestDigest(request.expectedDescriptorRequestDigest())
-        .setExpectedDescriptorResultDigest(request.expectedDescriptorResultDigest())
-        .setExpectedReleaseAttestationEvidenceDigest(
-            request.expectedReleaseAttestationEvidenceDigest());
+    var builder =
+        GetCanonicalGameInstanceLaunchAssociationRequest.newBuilder()
+            .setReadRequestId(request.readRequestId().toString())
+            .setTargetNamespace(request.targetNamespace())
+            .setCanonicalTenantId(request.canonicalTenantId().toString())
+            .setWorldSlug(request.worldSlug())
+            .setGameInstanceUuid(request.gameInstanceUuid().toString())
+            .setControlPlaneRequestId(request.controlPlaneRequestId())
+            .setLaunchDescriptorId(request.launchDescriptorId())
+            .setExpectedDescriptorRequestDigest(request.expectedDescriptorRequestDigest())
+            .setExpectedDescriptorResultDigest(request.expectedDescriptorResultDigest())
+            .setExpectedReleaseAttestationEvidenceDigest(
+                request.expectedReleaseAttestationEvidenceDigest());
     var original = request.originalOperation();
-    if (original != null) builder.setOriginalPostAuthorizationTuple(com.google.protobuf.ByteString.copyFrom(original.originalPostAuthorizationTuple()))
-        .setExpectedOwnerMutationId(original.ownerMutationId().toString()).setExpectedOwnerAttemptId(original.ownerAttemptId().toString()).setExpectedOwnerFence(original.ownerFence());
+    if (original != null)
+      builder
+          .setOriginalPostAuthorizationTuple(
+              com.google.protobuf.ByteString.copyFrom(original.originalPostAuthorizationTuple()))
+          .setExpectedOwnerMutationId(original.ownerMutationId().toString())
+          .setExpectedOwnerAttemptId(original.ownerAttemptId().toString())
+          .setExpectedOwnerFence(original.ownerFence());
     return builder.build();
   }
 
@@ -163,7 +169,11 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
               request.getExpectedDescriptorRequestDigest(),
               request.getExpectedDescriptorResultDigest(),
               request.getExpectedReleaseAttestationEvidenceDigest(),
-              originalOperation(request.getOriginalPostAuthorizationTuple().toByteArray(), request.getExpectedOwnerMutationId(), request.getExpectedOwnerAttemptId(), request.getExpectedOwnerFence()));
+              originalOperation(
+                  request.getOriginalPostAuthorizationTuple().toByteArray(),
+                  request.getExpectedOwnerMutationId(),
+                  request.getExpectedOwnerAttemptId(),
+                  request.getExpectedOwnerFence()));
       requireIndependentReadIdentity(decoded);
       if (!toRequest(decoded).equals(request)) {
         throw new IllegalArgumentException("Canonical launch association request is not canonical");
@@ -209,8 +219,13 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
             .setReleaseAttestation(completeResponse.getReleaseAttestation())
             .setPublicProduction(result.publicProduction());
     var original = request.originalOperation();
-    if (original != null) builder.setOriginalPostAuthorizationTuple(com.google.protobuf.ByteString.copyFrom(original.originalPostAuthorizationTuple()))
-        .setExpectedOwnerMutationId(original.ownerMutationId().toString()).setExpectedOwnerAttemptId(original.ownerAttemptId().toString()).setExpectedOwnerFence(original.ownerFence());
+    if (original != null)
+      builder
+          .setOriginalPostAuthorizationTuple(
+              com.google.protobuf.ByteString.copyFrom(original.originalPostAuthorizationTuple()))
+          .setExpectedOwnerMutationId(original.ownerMutationId().toString())
+          .setExpectedOwnerAttemptId(original.ownerAttemptId().toString())
+          .setExpectedOwnerFence(original.ownerFence());
     var response = builder.build();
     if (!result.equals(fromResponse(request, response))) {
       throw new IllegalArgumentException(
@@ -219,7 +234,10 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
     return response;
   }
 
-  /** Validates the complete selector and optional original-operation echoes with unchanged launch evidence. */
+  /**
+   * Validates the complete selector and optional original-operation echoes with unchanged launch
+   * evidence.
+   */
   public static Result fromResponse(
       Request expectedRequest, GetCanonicalGameInstanceLaunchAssociationResponse response) {
     Objects.requireNonNull(expectedRequest, "expectedRequest");
@@ -266,12 +284,20 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
         response.getReleaseAttestationEvidenceDigest(),
         "releaseAttestationEvidenceDigest");
 
-    var echoedOperation = originalOperation(response.getOriginalPostAuthorizationTuple().toByteArray(), response.getExpectedOwnerMutationId(), response.getExpectedOwnerAttemptId(), response.getExpectedOwnerFence());
+    var echoedOperation =
+        originalOperation(
+            response.getOriginalPostAuthorizationTuple().toByteArray(),
+            response.getExpectedOwnerMutationId(),
+            response.getExpectedOwnerAttemptId(),
+            response.getExpectedOwnerFence());
     if (!Objects.equals(expectedRequest.originalOperation(), echoedOperation)) {
       throw new IllegalArgumentException("Game Session original operation echo changed");
     }
-    if (echoedOperation != null && (!echoedOperation.ownerAttemptId().toString().equals(response.getOwnerAttemptId()) || echoedOperation.ownerFence() != response.getOwnerFence())) {
-      throw new IllegalArgumentException("Game Session original operation differs from the actual owner response");
+    if (echoedOperation != null
+        && (!echoedOperation.ownerAttemptId().toString().equals(response.getOwnerAttemptId())
+            || echoedOperation.ownerFence() != response.getOwnerFence())) {
+      throw new IllegalArgumentException(
+          "Game Session original operation differs from the actual owner response");
     }
 
     if (!response.hasLaunchDescriptor() || !response.hasReleaseAttestation()) {
@@ -348,9 +374,14 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
         .build();
   }
 
-  private static CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation originalOperation(byte[] tuple, String mutation, String attempt, long fence) {
+  private static CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation
+      originalOperation(byte[] tuple, String mutation, String attempt, long fence) {
     if (tuple.length == 0 && mutation.isEmpty() && attempt.isEmpty() && fence == 0L) return null;
-    return new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(tuple, parseCanonicalNonNilUuid(mutation, "expectedOwnerMutationId"), parseCanonicalNonNilUuid(attempt, "expectedOwnerAttemptId"), fence);
+    return new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(
+        tuple,
+        parseCanonicalNonNilUuid(mutation, "expectedOwnerMutationId"),
+        parseCanonicalNonNilUuid(attempt, "expectedOwnerAttemptId"),
+        fence);
   }
 
   private static void requireIndependentReadIdentity(Request request) {

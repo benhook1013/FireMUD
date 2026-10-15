@@ -25,7 +25,6 @@ import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAtte
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation;
 import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
@@ -61,16 +60,22 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
       OriginalStartSessionCurrentAttemptClient currentAttemptClient,
       PlatformTransactionManager transactionManager,
       String workloadNamespace) {
-    this.issuer = Objects.requireNonNull(issuer, "current Account StartSession authority is required");
+    this.issuer =
+        Objects.requireNonNull(issuer, "current Account StartSession authority is required");
     this.participationRepository =
-        Objects.requireNonNull(participationRepository, "World participation repository is required");
+        Objects.requireNonNull(
+            participationRepository, "World participation repository is required");
     this.attemptRepository =
-        Objects.requireNonNull(attemptRepository, "original-attempt evidence repository is required");
+        Objects.requireNonNull(
+            attemptRepository, "original-attempt evidence repository is required");
     this.protectionRepository =
-        Objects.requireNonNull(protectionRepository, "activation protection repository is required");
-    this.launchClient = Objects.requireNonNull(launchClient, "Game Session launch reader is required");
+        Objects.requireNonNull(
+            protectionRepository, "activation protection repository is required");
+    this.launchClient =
+        Objects.requireNonNull(launchClient, "Game Session launch reader is required");
     this.currentAttemptClient =
-        Objects.requireNonNull(currentAttemptClient, "Game Session current-attempt reader is required");
+        Objects.requireNonNull(
+            currentAttemptClient, "Game Session current-attempt reader is required");
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
       throw new IllegalArgumentException("Canonical Account workload namespace required");
     }
@@ -96,8 +101,7 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
     OriginalStartSessionCurrentAttemptEvidence.Request attemptRequest =
         new OriginalStartSessionCurrentAttemptEvidence.Request(
             freshReadId(
-                initiallyRetained.participationId(),
-                initiallyRetained.gameSessionOwnerAttemptId()),
+                initiallyRetained.participationId(), initiallyRetained.gameSessionOwnerAttemptId()),
             workloadNamespace,
             tupleBytes,
             input.gameSessionOwnerAttemptId(),
@@ -120,7 +124,8 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
               currentAttempt,
               input.worldActivationRequest());
     } catch (IllegalArgumentException invalid) {
-      throw failedPrecondition("Game Session owner observations differ from the original World request", invalid);
+      throw failedPrecondition(
+          "Game Session owner observations differ from the original World request", invalid);
     }
 
     StoredProtection committed =
@@ -139,8 +144,7 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
               requireSameParticipation(initiallyRetained, exactParticipation);
               requireCommittedParticipation(exactParticipation);
               requireExactRetainedAttempt(exactParticipation, attemptRequest, currentAttempt);
-              return protectionRepository.acquireOrReadExact(
-                  request, capture, exactParticipation);
+              return protectionRepository.acquireOrReadExact(request, capture, exactParticipation);
             });
 
     requireNoAmbientTransaction();
@@ -228,9 +232,11 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
         throw failedPrecondition("Retained original Game Session response bytes differ");
       }
     } catch (com.google.protobuf.InvalidProtocolBufferException malformed) {
-      throw failedPrecondition("Retained original Game Session response bytes are malformed", malformed);
+      throw failedPrecondition(
+          "Retained original Game Session response bytes are malformed", malformed);
     } catch (IllegalArgumentException malformed) {
-      throw failedPrecondition("Retained original Game Session response is not canonical", malformed);
+      throw failedPrecondition(
+          "Retained original Game Session response is not canonical", malformed);
     }
   }
 
@@ -245,17 +251,20 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
     }
     try {
       var response = OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(observed);
-      var exact = OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(request, response);
+      var exact =
+          OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.fromResponse(request, response);
       if (!sameAttemptRequest(request, exact.request())
           || !OriginalStartSessionCurrentAttemptEvidence.PENDING_PHASE.equals(exact.phaseState())
           || !MessageDigest.isEqual(
               StartSessionAccountRedemptionProjection.fromOriginalTuple(tuple),
               exact.accountRedemptionProjection())) {
-        throw failedPrecondition("Current original Game Session attempt differs from the original tuple");
+        throw failedPrecondition(
+            "Current original Game Session attempt differs from the original tuple");
       }
       return exact;
     } catch (IllegalArgumentException malformed) {
-      throw failedPrecondition("Current original Game Session attempt evidence is malformed", malformed);
+      throw failedPrecondition(
+          "Current original Game Session attempt evidence is malformed", malformed);
     }
   }
 
@@ -273,8 +282,12 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
         || input.gameSessionOwnerFence() != result.ownerFence()
         || !preparing.request().canonicalGameInstanceId().equals(request.gameInstanceUuid())
         || !preparing.launchBinding().equals(result.launchBindingEvidence())
-        || !preparing.request().playableStateNamespaceId().equals(result.playableStateNamespaceId())) {
-      throw failedPrecondition("Current Game Session launch association differs from exact World PREPARING evidence");
+        || !preparing
+            .request()
+            .playableStateNamespaceId()
+            .equals(result.playableStateNamespaceId())) {
+      throw failedPrecondition(
+          "Current Game Session launch association differs from exact World PREPARING evidence");
     }
     return result;
   }
@@ -285,7 +298,8 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
     var descriptor = preparing.launchBinding().descriptor();
     var release = preparing.launchBinding().releaseAttestation();
     return new Request(
-        freshReadId(input.worldActivationRequest().activationRequestId(), world.canonicalGameInstanceId()),
+        freshReadId(
+            input.worldActivationRequest().activationRequestId(), world.canonicalGameInstanceId()),
         workloadNamespace,
         world.canonicalTenantId(),
         world.worldSlug(),
@@ -295,7 +309,11 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
         descriptor.requestDigest(),
         descriptor.resultDigest(),
         release.evidenceDigest(),
-        new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(input.originalPostAuthorizationTuple(), input.gameSessionOwnerMutationId(), input.gameSessionOwnerAttemptId(), input.gameSessionOwnerFence()));
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(
+            input.originalPostAuthorizationTuple(),
+            input.gameSessionOwnerMutationId(),
+            input.gameSessionOwnerAttemptId(),
+            input.gameSessionOwnerFence()));
   }
 
   private void requireTupleAndWorldBinding(
@@ -309,16 +327,18 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
         || !participation.controlPlaneRequestId().equals(tuple.controlPlaneRequestId())
         || !participation.gameSessionOwnerAttemptId().equals(input.gameSessionOwnerAttemptId())
         || participation.gameSessionOwnerFence() != input.gameSessionOwnerFence()
-        || !participation.canonicalGameInstanceId().equals(preparing.request().canonicalGameInstanceId())
+        || !participation
+            .canonicalGameInstanceId()
+            .equals(preparing.request().canonicalGameInstanceId())
         || !participation.canonicalTenantId().equals(preparing.request().canonicalTenantId())
         || !tuple.controlPlaneRequestId().equals(preparing.request().controlPlaneRequestId())
         || !workloadNamespace.equals(preparing.request().targetNamespace())) {
-      throw failedPrecondition("Original Account participation differs from the complete World activation identity");
+      throw failedPrecondition(
+          "Original Account participation differs from the complete World activation identity");
     }
   }
 
-  private void requireSameParticipation(
-      StoredParticipation expected, StoredParticipation actual) {
+  private void requireSameParticipation(StoredParticipation expected, StoredParticipation actual) {
     if (!expected.participationId().equals(actual.participationId())
         || expected.participationFence() != actual.participationFence()
         || !expected.controlPlaneRequestId().equals(actual.controlPlaneRequestId())
@@ -330,7 +350,8 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
         || expected.gameSessionOwnerFence() != actual.gameSessionOwnerFence()
         || !expected.targetNamespace().equals(actual.targetNamespace())
         || !expected.sourceVector().equals(actual.sourceVector())) {
-      throw failedPrecondition("Committed original Account participation changed during acquisition");
+      throw failedPrecondition(
+          "Committed original Account participation changed during acquisition");
     }
   }
 
@@ -376,8 +397,7 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
       OriginalStartSessionCurrentAttemptEvidence.Result right) {
     return sameAttemptRequest(left.request(), right.request())
         && left.originalLeaseExpiresAt().equals(right.originalLeaseExpiresAt())
-        && Arrays.equals(
-            left.accountRedemptionProjection(), right.accountRedemptionProjection());
+        && Arrays.equals(left.accountRedemptionProjection(), right.accountRedemptionProjection());
   }
 
   private static UUID freshReadId(UUID... reserved) {
@@ -401,6 +421,9 @@ public final class AccountStartSessionActivationProtectionAcquisitionService {
   }
 
   private static RuntimeException failedPrecondition(String message, Throwable cause) {
-    return Status.FAILED_PRECONDITION.withDescription(message).withCause(cause).asRuntimeException();
+    return Status.FAILED_PRECONDITION
+        .withDescription(message)
+        .withCause(cause)
+        .asRuntimeException();
   }
 }

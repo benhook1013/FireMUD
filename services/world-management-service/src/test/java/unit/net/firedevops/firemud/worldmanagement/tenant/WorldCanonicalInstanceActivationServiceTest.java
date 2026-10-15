@@ -36,7 +36,8 @@ class WorldCanonicalInstanceActivationServiceTest {
     var service = new WorldCanonicalInstanceActivationService(repository);
     TransactionSynchronizationManager.initSynchronization();
     assertThatThrownBy(() -> service.activate(request()))
-        .isInstanceOf(IllegalStateException.class).hasMessageContaining("ambient transaction");
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ambient transaction");
     org.mockito.Mockito.verifyNoInteractions(repository);
   }
 

@@ -13,8 +13,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
-import net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCapture;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.StoredParticipation;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionAuthorityCapture;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionRequest;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
@@ -31,7 +31,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class AccountStartSessionActivationProtectionRepository {
   private static final String PROTECTIONS = "account_start_session_activation_protections";
   private static final String SOURCES = "account_start_session_activation_protection_sources";
-  private static final String SETTLEMENTS = "account_start_session_activation_protection_settlements";
+  private static final String SETTLEMENTS =
+      "account_start_session_activation_protection_settlements";
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private static final Set<String> PROTECTION_COLUMNS =
@@ -192,14 +193,16 @@ public class AccountStartSessionActivationProtectionRepository {
     Optional<StoredProtection> protection = findHistoricalExact(protectionId, protectionFence);
     if (protection.isEmpty()) return Optional.empty();
     Record row =
-        dsl.fetchOne("SELECT * FROM " + SETTLEMENTS + " WHERE activation_protection_id = ?", protectionId);
+        dsl.fetchOne(
+            "SELECT * FROM " + SETTLEMENTS + " WHERE activation_protection_id = ?", protectionId);
     if (row == null) return Optional.empty();
     return Optional.of(decodeSettlement(row, protection.orElseThrow()));
   }
 
   /** Appends the exact authenticated World receipt or reads its immutable winner on retry. */
   @Transactional(propagation = Propagation.MANDATORY)
-  public StoredSettlement settleExact(WorldOriginalStartSessionActivationTerminalEvidence terminal) {
+  public StoredSettlement settleExact(
+      WorldOriginalStartSessionActivationTerminalEvidence terminal) {
     requireWritableReadCommittedTransaction();
     Objects.requireNonNull(terminal, "authenticated World activation terminal is required");
     var accountEvidence = terminal.accountProtectionEvidence();
@@ -231,18 +234,20 @@ public class AccountStartSessionActivationProtectionRepository {
             accountEvidence.accountProtectionId());
     if (row == null) throw unavailable();
     StoredSettlement stored = decodeSettlement(row, protection);
-    if (!Arrays.equals(stored.evidence().terminal().canonicalBytes(), terminal.canonicalBytes())) {
+    if (!Arrays.equals(stored.terminal().canonicalBytes(), terminal.canonicalBytes())) {
       throw conflict();
     }
     return stored;
   }
 
   private Record selectProtectionByRequestId(String requestId) {
-    return dsl.fetchOne("SELECT * FROM " + PROTECTIONS + " WHERE control_plane_request_id = ?", requestId);
+    return dsl.fetchOne(
+        "SELECT * FROM " + PROTECTIONS + " WHERE control_plane_request_id = ?", requestId);
   }
 
   private Record selectProtectionById(UUID protectionId) {
-    return dsl.fetchOne("SELECT * FROM " + PROTECTIONS + " WHERE activation_protection_id = ?", protectionId);
+    return dsl.fetchOne(
+        "SELECT * FROM " + PROTECTIONS + " WHERE activation_protection_id = ?", protectionId);
   }
 
   private List<SourceEvidence> readSources(UUID protectionId) {
@@ -267,7 +272,8 @@ public class AccountStartSessionActivationProtectionRepository {
   private static StoredProtection decodeProtection(Record row, List<SourceEvidence> sources) {
     requireColumns(row, PROTECTION_COLUMNS, "activation protection");
     UUID id = uuid(row, "activation_protection_id");
-    long fence = positive(number(row, "activation_protection_fence"), "activation_protection_fence");
+    long fence =
+        positive(number(row, "activation_protection_fence"), "activation_protection_fence");
     byte[] requestBytes = bytes(row, "request_binding_bytes");
     AccountStartSessionActivationProtectionRequest request =
         AccountStartSessionActivationProtectionRequest.decode(requestBytes);
@@ -322,7 +328,10 @@ public class AccountStartSessionActivationProtectionRepository {
       AccountStartSessionActivationProtectionRequest request,
       AccountStartSessionAuthorityCapture capture,
       StoredParticipation participation) {
-    if (!request.originalTuple().controlPlaneRequestId().equals(participation.controlPlaneRequestId())
+    if (!request
+            .originalTuple()
+            .controlPlaneRequestId()
+            .equals(participation.controlPlaneRequestId())
         || !Arrays.equals(
             request.originalPostAuthorizationTupleBytes(),
             participation.originalPostAuthorizationTuple())
@@ -342,7 +351,8 @@ public class AccountStartSessionActivationProtectionRepository {
       StoredProtection stored) {
     requireRequestBinding(request, capture, participation);
     AccountStartSessionActivationProtectionEvidence evidence = stored.evidence();
-    if (!Arrays.equals(request.operationIdentityBytes(), evidence.request().operationIdentityBytes())
+    if (!Arrays.equals(
+            request.operationIdentityBytes(), evidence.request().operationIdentityBytes())
         || !Arrays.equals(capture.canonicalBytes(), evidence.originalSourceCaptureReferenceBytes())
         || !capture.canonicalSha256().equals(evidence.originalSourceCaptureReferenceSha256())
         || !sameSources(participation.sourceVector(), evidence.sourceEvidenceVector())) {
@@ -355,20 +365,32 @@ public class AccountStartSessionActivationProtectionRepository {
     var originalTuple = request.originalTuple();
     var activation = request.worldActivationRequest();
     if (!text(row, "control_plane_request_id").equals(originalTuple.controlPlaneRequestId())
-        || !uuid(row, "account_world_participation_id").equals(request.accountWorldParticipationId())
-        || number(row, "account_world_participation_fence") != request.accountWorldParticipationFence()
-        || !Arrays.equals(bytes(row, "original_post_authorization_tuple"), request.originalPostAuthorizationTupleBytes())
-        || !Arrays.equals(bytes(row, "account_redemption_projection"), request.accountRedemptionProjectionBytes())
+        || !uuid(row, "account_world_participation_id")
+            .equals(request.accountWorldParticipationId())
+        || number(row, "account_world_participation_fence")
+            != request.accountWorldParticipationFence()
+        || !Arrays.equals(
+            bytes(row, "original_post_authorization_tuple"),
+            request.originalPostAuthorizationTupleBytes())
+        || !Arrays.equals(
+            bytes(row, "account_redemption_projection"), request.accountRedemptionProjectionBytes())
         || !uuid(row, "game_session_owner_mutation_id").equals(request.gameSessionOwnerMutationId())
         || !uuid(row, "game_session_owner_attempt_id").equals(request.gameSessionOwnerAttemptId())
         || number(row, "game_session_owner_fence") != request.gameSessionOwnerFence()
-        || !timestamp(row, "original_lease_expires_at").toInstant().equals(request.originalLeaseExpiresAt())
-        || !text(row, "target_namespace").equals(originalTuple.preAuthorizationTuple().action().scope().targetNamespace())
-        || !uuid(row, "canonical_tenant_id").equals(originalTuple.preAuthorizationTuple().action().scope().tenantId())
+        || !timestamp(row, "original_lease_expires_at")
+            .toInstant()
+            .equals(request.originalLeaseExpiresAt())
+        || !text(row, "target_namespace")
+            .equals(originalTuple.preAuthorizationTuple().action().scope().targetNamespace())
+        || !uuid(row, "canonical_tenant_id")
+            .equals(originalTuple.preAuthorizationTuple().action().scope().tenantId())
         || !uuid(row, "canonical_game_instance_id").equals(activation.canonicalGameInstanceId())
         || !uuid(row, "world_activation_request_id").equals(activation.activationRequestId())
-        || !Arrays.equals(bytes(row, "game_session_launch_read_evidence"), request.gameSessionLaunchReadEvidenceBytes())
-        || !Arrays.equals(bytes(row, "world_preparing_evidence"), activation.preparingEvidenceBytes())) {
+        || !Arrays.equals(
+            bytes(row, "game_session_launch_read_evidence"),
+            request.gameSessionLaunchReadEvidenceBytes())
+        || !Arrays.equals(
+            bytes(row, "world_preparing_evidence"), activation.preparingEvidenceBytes())) {
       throw unavailable();
     }
   }
@@ -445,7 +467,8 @@ public class AccountStartSessionActivationProtectionRepository {
   }
 
   private static void requireNonnil(UUID value, String field) {
-    if (value == null || value.equals(NIL_UUID)) throw new IllegalArgumentException(field + " must be nonnil");
+    if (value == null || value.equals(NIL_UUID))
+      throw new IllegalArgumentException(field + " must be nonnil");
   }
 
   private static void requirePositive(long value, String field) {
@@ -458,7 +481,8 @@ public class AccountStartSessionActivationProtectionRepository {
 
   private static String digestBare(byte[] bytes) {
     try {
-      return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+      return java.util.HexFormat.of()
+          .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
     } catch (java.security.NoSuchAlgorithmException impossible) {
       throw new IllegalStateException("SHA-256 is unavailable", impossible);
     }
@@ -489,14 +513,16 @@ public class AccountStartSessionActivationProtectionRepository {
   }
 
   private static IllegalStateException unavailable() {
-    return new IllegalStateException("Exact original StartSession activation protection unavailable");
+    return new IllegalStateException(
+        "Exact original StartSession activation protection unavailable");
   }
 
   public record StoredProtection(
       AccountStartSessionActivationProtectionEvidence evidence, long producerTransactionId) {
     public StoredProtection {
       Objects.requireNonNull(evidence);
-      if (producerTransactionId <= 0L) throw new IllegalArgumentException("producer XID must be positive");
+      if (producerTransactionId <= 0L)
+        throw new IllegalArgumentException("producer XID must be positive");
     }
   }
 

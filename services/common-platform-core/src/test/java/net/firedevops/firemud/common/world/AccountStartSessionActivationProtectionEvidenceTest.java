@@ -49,8 +49,7 @@ class AccountStartSessionActivationProtectionEvidenceTest {
   private static final Instant ORIGINAL_LEASE_EXPIRY = Instant.parse("2026-10-09T10:20:30.456789Z");
   private static final Instant ACQUIRED_AT = Instant.parse("2026-10-09T10:11:12.123Z");
   private static final UUID GS_READ_ID = uuid("90909090-9090-4090-8090-909090909090");
-  private static final UUID CURRENT_ATTEMPT_READ_ID =
-      uuid("f6f6f6f6-f6f6-46f6-86f6-f6f6f6f6f6f6");
+  private static final UUID CURRENT_ATTEMPT_READ_ID = uuid("f6f6f6f6-f6f6-46f6-86f6-f6f6f6f6f6f6");
   private static final UUID WORLD_READ_ID = uuid("a1a1a1a1-a1a1-41a1-81a1-a1a1a1a1a1a1");
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
@@ -193,12 +192,12 @@ class AccountStartSessionActivationProtectionEvidenceTest {
     assertThat(decodedRequest.launchAssociation().request().readRequestId()).isEqualTo(GS_READ_ID);
     assertThat(request.originalAttemptResponseBytes())
         .containsExactly(
-            OriginalStartSessionCurrentAttemptEvidenceGrpcCodec
-                .toResponse(request.originalCurrentAttempt())
+            OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(
+                    request.originalCurrentAttempt())
                 .toByteArray());
     assertThat(
-            OriginalStartSessionCurrentAttemptEvidenceGrpcCodec
-                .toResponse(request.originalCurrentAttempt())
+            OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(
+                    request.originalCurrentAttempt())
                 .getRequest()
                 .getReadRequestId())
         .isEqualTo(CURRENT_ATTEMPT_READ_ID.toString());
@@ -206,8 +205,8 @@ class AccountStartSessionActivationProtectionEvidenceTest {
     escapedCurrentAttemptBytes[0] ^= 1;
     assertThat(request.originalAttemptResponseBytes())
         .containsExactly(
-            OriginalStartSessionCurrentAttemptEvidenceGrpcCodec
-                .toResponse(request.originalCurrentAttempt())
+            OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(
+                    request.originalCurrentAttempt())
                 .toByteArray());
     assertThatThrownBy(decodedRequest::originalAttemptResponseBytes)
         .isInstanceOf(IllegalStateException.class)
@@ -490,15 +489,6 @@ class AccountStartSessionActivationProtectionEvidenceTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("tuple differs");
 
-    var valid =
-        request(
-            fixture,
-            tuple,
-            GS_READ_ID,
-            WORLD_READ_ID,
-            ACTIVATION_ID,
-            7L,
-            CurrentGameInstanceStatus.STARTING);
     Map<String, Object> extra = readObject(valid.canonicalBytes());
     extra.put("unsupportedAuthority", "must not be retained");
     assertThatThrownBy(
@@ -606,23 +596,79 @@ class AccountStartSessionActivationProtectionEvidenceTest {
   void retainedLaunchOperationEchoIsExactAndCannotOmitOwnerBinding() throws Exception {
     var fixture = fixture();
     var tuple = originalTuple(fixture);
-    var first = request(fixture, tuple, GS_READ_ID, WORLD_READ_ID, ACTIVATION_ID, 7L, CurrentGameInstanceStatus.STARTING);
+    var first =
+        request(
+            fixture,
+            tuple,
+            GS_READ_ID,
+            WORLD_READ_ID,
+            ACTIVATION_ID,
+            7L,
+            CurrentGameInstanceStatus.STARTING);
     var old = first.launchAssociation();
     var selector = old.request();
-    var operation = new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(tuple.canonicalBytes(), GAME_SESSION_MUTATION, GAME_SESSION_ATTEMPT, Long.MAX_VALUE);
-    var boundSelector = new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(selector.readRequestId(), selector.targetNamespace(), selector.canonicalTenantId(), selector.worldSlug(), selector.gameInstanceUuid(), selector.controlPlaneRequestId(), selector.launchDescriptorId(), selector.expectedDescriptorRequestDigest(), selector.expectedDescriptorResultDigest(), selector.expectedReleaseAttestationEvidenceDigest(), operation);
-    var bound = new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(boundSelector, old.playableStateNamespaceId(), old.playableStateScope(), old.publicProduction(), old.currentGameInstanceStatus(), old.currentRowVersion(), old.ownerAttemptId(), old.ownerFence(), old.canonicalRealmId(), old.catalogRevision(), old.launchBindingEvidence());
-    var valid = AccountStartSessionActivationProtectionRequest.create(ACCOUNT_PARTICIPATION, Long.MAX_VALUE, bound, first.originalCurrentAttempt(), first.worldActivationRequest());
+    var operation =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(
+            tuple.canonicalBytes(), GAME_SESSION_MUTATION, GAME_SESSION_ATTEMPT, Long.MAX_VALUE);
+    var boundSelector =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+            selector.readRequestId(),
+            selector.targetNamespace(),
+            selector.canonicalTenantId(),
+            selector.worldSlug(),
+            selector.gameInstanceUuid(),
+            selector.controlPlaneRequestId(),
+            selector.launchDescriptorId(),
+            selector.expectedDescriptorRequestDigest(),
+            selector.expectedDescriptorResultDigest(),
+            selector.expectedReleaseAttestationEvidenceDigest(),
+            operation);
+    var bound =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
+            boundSelector,
+            old.playableStateNamespaceId(),
+            old.playableStateScope(),
+            old.publicProduction(),
+            old.currentGameInstanceStatus(),
+            old.currentRowVersion(),
+            old.ownerAttemptId(),
+            old.ownerFence(),
+            old.canonicalRealmId(),
+            old.catalogRevision(),
+            old.launchBindingEvidence());
+    var valid =
+        AccountStartSessionActivationProtectionRequest.create(
+            ACCOUNT_PARTICIPATION,
+            Long.MAX_VALUE,
+            bound,
+            first.originalCurrentAttempt(),
+            first.worldActivationRequest());
     var decoded = AccountStartSessionActivationProtectionRequest.decode(valid.canonicalBytes());
-    assertThat(decoded.launchAssociation().request().originalOperation()).isEqualTo(valid.launchAssociation().request().originalOperation());
-    var wire = net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toResponse(valid.launchAssociation());
+    assertThat(decoded.launchAssociation().request().originalOperation())
+        .isEqualTo(valid.launchAssociation().request().originalOperation());
+    var wire =
+        net.firedevops.firemud.common.gamesession
+            .CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toResponse(
+            valid.launchAssociation());
     var tree = readObject(valid.canonicalBytes());
-    tree.put("gameSessionLaunchReadEvidenceBytesBase64", java.util.Base64.getEncoder().encodeToString(wire.toBuilder().clearExpectedOwnerMutationId().build().toByteArray()));
+    tree.put(
+        "gameSessionLaunchReadEvidenceBytesBase64",
+        java.util.Base64.getEncoder()
+            .encodeToString(wire.toBuilder().clearExpectedOwnerMutationId().build().toByteArray()));
     byte[] incomplete = canonical(tree);
-    assertThatThrownBy(() -> AccountStartSessionActivationProtectionRequest.decode(incomplete)).isInstanceOf(IllegalArgumentException.class);
-    tree.put("gameSessionLaunchReadEvidenceBytesBase64", java.util.Base64.getEncoder().encodeToString(wire.toBuilder().setExpectedOwnerMutationId(UUID.randomUUID().toString()).build().toByteArray()));
+    assertThatThrownBy(() -> AccountStartSessionActivationProtectionRequest.decode(incomplete))
+        .isInstanceOf(IllegalArgumentException.class);
+    tree.put(
+        "gameSessionLaunchReadEvidenceBytesBase64",
+        java.util.Base64.getEncoder()
+            .encodeToString(
+                wire.toBuilder()
+                    .setExpectedOwnerMutationId(UUID.randomUUID().toString())
+                    .build()
+                    .toByteArray()));
     byte[] substituted = canonical(tree);
-    assertThatThrownBy(() -> AccountStartSessionActivationProtectionRequest.decode(substituted)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> AccountStartSessionActivationProtectionRequest.decode(substituted))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   private static AccountStartSessionActivationProtectionEvidence evidence(
@@ -721,11 +767,7 @@ class AccountStartSessionActivationProtectionEvidenceTest {
     var activation = new WorldCanonicalInstanceActivation.Request(activationId, preparing);
 
     return AccountStartSessionActivationProtectionRequest.create(
-        ACCOUNT_PARTICIPATION,
-        Long.MAX_VALUE,
-        gsResult,
-        currentAttempt,
-        activation);
+        ACCOUNT_PARTICIPATION, Long.MAX_VALUE, gsResult, currentAttempt, activation);
   }
 
   private static OriginalStartSessionCurrentAttemptEvidence.Result currentAttempt(

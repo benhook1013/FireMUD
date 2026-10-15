@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.Objects;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionAcquisitionInput;
@@ -68,6 +69,12 @@ public final class WorldOriginalStartSessionProtectedActivationGrpcService
         | WorldCanonicalInstanceActivationRepository.ActivationConflictException
         | WorldCanonicalInstanceActivationService.ActivationDeniedException denied) {
       fail(observer, Status.FAILED_PRECONDITION, "World protected activation is not admissible");
+      return;
+    } catch (StatusRuntimeException denied) {
+      fail(
+          observer,
+          denied.getStatus(),
+          "World protected activation owner request denied or unavailable");
       return;
     } catch (IllegalArgumentException invalid) {
       fail(observer, Status.INVALID_ARGUMENT, "World protected activation input is invalid");

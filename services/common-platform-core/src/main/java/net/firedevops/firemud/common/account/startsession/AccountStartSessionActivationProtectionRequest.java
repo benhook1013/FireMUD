@@ -41,7 +41,8 @@ import tools.jackson.databind.json.JsonMapper;
  * Session lease, the canonical direct launch-association response, and the exact World PREPARING
  * activation request. The separate CurrentAttempt response bytes remain available for Account's
  * existing V160 child storage without changing V1003's closed witness. This carrier authenticates
- * neither owner, establishes no current source state, and grants no activation or gameplay admission.
+ * neither owner, establishes no current source state, and grants no activation or gameplay
+ * admission.
  */
 public final class AccountStartSessionActivationProtectionRequest {
   public static final String SCHEMA = "account-start-session-activation-protection-request/v1";
@@ -225,20 +226,17 @@ public final class AccountStartSessionActivationProtectionRequest {
     if (originalCurrentAttempt != null) {
       if (!Arrays.equals(
               originalAttemptResponseBytes,
-              OriginalStartSessionCurrentAttemptEvidenceGrpcCodec
-                  .toResponse(originalCurrentAttempt)
+              OriginalStartSessionCurrentAttemptEvidenceGrpcCodec.toResponse(originalCurrentAttempt)
                   .toByteArray())
           || !Arrays.equals(
-              tupleBytes,
-              originalCurrentAttempt.request().canonicalPostAuthorizationTuple())
+              tupleBytes, originalCurrentAttempt.request().canonicalPostAuthorizationTuple())
           || !MessageDigest.isEqual(
               projectionBytes, originalCurrentAttempt.accountRedemptionProjection())
           || !gameSessionOwnerMutationId.equals(
               originalCurrentAttempt.request().expectedOwnerMutationId())
           || !gameSessionOwnerAttemptId.equals(
               originalCurrentAttempt.request().expectedOwnerAttemptId())
-          || gameSessionOwnerFence
-              != originalCurrentAttempt.request().expectedOwnerFence()
+          || gameSessionOwnerFence != originalCurrentAttempt.request().expectedOwnerFence()
           || !originalLeaseExpiresAt.equals(originalCurrentAttempt.originalLeaseExpiresAt())) {
         throw invalid("Current-attempt observation differs from the exact original request");
       }
@@ -430,7 +428,9 @@ public final class AccountStartSessionActivationProtectionRequest {
     return originalCurrentAttempt;
   }
 
-  /** Exact canonical current-attempt response bytes for the existing separate V160 storage field. */
+  /**
+   * Exact canonical current-attempt response bytes for the existing separate V160 storage field.
+   */
   public byte[] originalAttemptResponseBytes() {
     if (originalAttemptResponseBytes == null) {
       throw new IllegalStateException(
@@ -502,20 +502,21 @@ public final class AccountStartSessionActivationProtectionRequest {
       throw invalid("Original StartSession tuple differs from the exact launch scope");
     }
     var operation = selector.originalOperation();
-    if (operation != null && (!Arrays.equals(tupleBytes, operation.originalPostAuthorizationTuple())
-        || !ownerAttemptId.equals(operation.ownerAttemptId()) || ownerFence != operation.ownerFence()
-        || !ownerMutationId.equals(operation.ownerMutationId()))) {
+    if (operation != null
+        && (!Arrays.equals(tupleBytes, operation.originalPostAuthorizationTuple())
+            || !ownerAttemptId.equals(operation.ownerAttemptId())
+            || ownerFence != operation.ownerFence()
+            || !ownerMutationId.equals(operation.ownerMutationId()))) {
       throw invalid("Launch read original operation differs from the complete protection tuple");
     }
     if (originalCurrentAttempt != null
         && (!Arrays.equals(
-                tupleBytes,
-                originalCurrentAttempt.request().canonicalPostAuthorizationTuple())
-            || !ownerAttemptId.equals(
-                originalCurrentAttempt.request().expectedOwnerAttemptId())
+                tupleBytes, originalCurrentAttempt.request().canonicalPostAuthorizationTuple())
+            || !ownerAttemptId.equals(originalCurrentAttempt.request().expectedOwnerAttemptId())
             || ownerFence != originalCurrentAttempt.request().expectedOwnerFence()
-            || !scope.targetNamespace().equals(
-                originalCurrentAttempt.request().targetNamespace()))) {
+            || !scope
+                .targetNamespace()
+                .equals(originalCurrentAttempt.request().targetNamespace()))) {
       throw invalid("Current-attempt observation differs from the exact original tuple owner");
     }
     if (launch.currentGameInstanceStatus()
@@ -572,8 +573,17 @@ public final class AccountStartSessionActivationProtectionRequest {
               response.getDescriptorRequestDigest(),
               response.getDescriptorResultDigest(),
               response.getReleaseAttestationEvidenceDigest(),
-              response.getOriginalPostAuthorizationTuple().isEmpty() && response.getExpectedOwnerMutationId().isEmpty() && response.getExpectedOwnerAttemptId().isEmpty() && response.getExpectedOwnerFence() == 0L
-                  ? null : new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(response.getOriginalPostAuthorizationTuple().toByteArray(), canonicalUuid(response.getExpectedOwnerMutationId(), "expectedOwnerMutationId"), canonicalUuid(response.getExpectedOwnerAttemptId(), "expectedOwnerAttemptId"), response.getExpectedOwnerFence()));
+              response.getOriginalPostAuthorizationTuple().isEmpty()
+                      && response.getExpectedOwnerMutationId().isEmpty()
+                      && response.getExpectedOwnerAttemptId().isEmpty()
+                      && response.getExpectedOwnerFence() == 0L
+                  ? null
+                  : new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(
+                      response.getOriginalPostAuthorizationTuple().toByteArray(),
+                      canonicalUuid(
+                          response.getExpectedOwnerMutationId(), "expectedOwnerMutationId"),
+                      canonicalUuid(response.getExpectedOwnerAttemptId(), "expectedOwnerAttemptId"),
+                      response.getExpectedOwnerFence()));
       CanonicalGameInstanceLaunchAssociationReadEvidence.Result result =
           CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(request, response);
       if (!Arrays.equals(

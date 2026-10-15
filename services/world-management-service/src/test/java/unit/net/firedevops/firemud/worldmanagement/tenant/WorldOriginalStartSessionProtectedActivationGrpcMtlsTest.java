@@ -203,7 +203,9 @@ class WorldOriginalStartSessionProtectedActivationGrpcMtlsTest {
   }
 }
 
-/** Controlled canonical carriers shared by these activation socket tests; no owner/SQL authority. */
+/**
+ * Controlled canonical carriers shared by these activation socket tests; no owner/SQL authority.
+ */
 final class WorldOriginalStartSessionActivationTransportTestSupport {
   static final String NAMESPACE = "test";
   private static final java.util.concurrent.atomic.AtomicLong CERTIFICATE_SERIAL =
@@ -217,7 +219,8 @@ final class WorldOriginalStartSessionActivationTransportTestSupport {
    * Canonical synthetic wire fixture only; it establishes no real Account authority or owner state.
    */
   static Fixture fixture() throws Exception {
-    var active = net.firedevops.firemud.common.testing.AuthoringFixtures.lifecycleEvidence("ACTIVE", 3L);
+    var active =
+        net.firedevops.firemud.common.testing.AuthoringFixtures.lifecycleEvidence("ACTIVE", 3L);
     var lifecycleRequest = active.request();
     var binding = active.launchBinding();
     var descriptor = binding.descriptor();
@@ -275,17 +278,30 @@ final class WorldOriginalStartSessionActivationTransportTestSupport {
             java.util.UUID.fromString("22222222-2222-4222-8222-222222222222"),
             21L,
             activation);
-    var attemptRequest = new net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Request(
-        java.util.UUID.fromString("b0b0b0b0-b0b0-40b0-80b0-b0b0b0b0b0b0"), NAMESPACE,
-        tuple.canonicalBytes(), input.gameSessionOwnerAttemptId(), input.gameSessionOwnerMutationId(),
-        input.gameSessionOwnerFence());
-    var originalAttempt = new net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result(
-        attemptRequest, java.time.Instant.parse("2099-01-01T00:05:00Z"),
-        net.firedevops.firemud.common.account.startsession.StartSessionAccountRedemptionProjection.fromOriginalTuple(tuple));
+    var attemptRequest =
+        new net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence
+            .Request(
+            java.util.UUID.fromString("b0b0b0b0-b0b0-40b0-80b0-b0b0b0b0b0b0"),
+            NAMESPACE,
+            tuple.canonicalBytes(),
+            input.gameSessionOwnerAttemptId(),
+            input.gameSessionOwnerMutationId(),
+            input.gameSessionOwnerFence());
+    var originalAttempt =
+        new net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence
+            .Result(
+            attemptRequest,
+            java.time.Instant.parse("2099-01-01T00:05:00Z"),
+            net.firedevops.firemud.common.account.startsession
+                .StartSessionAccountRedemptionProjection.fromOriginalTuple(tuple));
     var request =
-        net.firedevops.firemud.common.account.startsession.AccountStartSessionActivationProtectionRequest.create(
-            java.util.UUID.fromString("33333333-3333-4333-8333-333333333333"), 22L,
-            launchResult, originalAttempt, activation);
+        net.firedevops.firemud.common.account.startsession
+            .AccountStartSessionActivationProtectionRequest.create(
+            java.util.UUID.fromString("33333333-3333-4333-8333-333333333333"),
+            22L,
+            launchResult,
+            originalAttempt,
+            activation);
     byte[] capture = captureReference(tuple);
     var protection =
         net.firedevops.firemud.common.account.startsession

@@ -35,8 +35,7 @@ import tools.jackson.databind.json.JsonMapper;
 class WorldOriginalStartSessionActivationTerminalEvidenceTest {
   private static final UUID ACCOUNT_PROTECTION = uuid("78787878-7878-4878-8878-787878787878");
   private static final UUID ACTIVATION_ID = uuid("89898989-8989-4898-8898-898989898989");
-  private static final UUID CURRENT_ATTEMPT_READ_ID =
-      uuid("f6f6f6f6-f6f6-46f6-86f6-f6f6f6f6f6f6");
+  private static final UUID CURRENT_ATTEMPT_READ_ID = uuid("f6f6f6f6-f6f6-46f6-86f6-f6f6f6f6f6f6");
   private static final long ACCOUNT_FENCE = 19L;
   private static final long WORLD_FENCE = 23L;
   private static final Instant LEASE = Instant.parse("2026-10-09T10:20:30.456789Z");
@@ -359,11 +358,7 @@ class WorldOriginalStartSessionActivationTerminalEvidenceTest {
             descriptor.requestDigest(),
             descriptor.resultDigest(),
             release.evidenceDigest());
-    return new Fixture(
-        preparing,
-        binding,
-        gsRequest,
-        uuid("23232323-2323-4232-8232-232323232323"));
+    return new Fixture(preparing, binding, gsRequest, uuid("23232323-2323-4232-8232-232323232323"));
   }
 
   private static StartSessionPostAuthorizationExecutionTuple originalTuple(Fixture fixture) {

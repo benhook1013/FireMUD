@@ -819,9 +819,15 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
         selector.controlPlaneRequestId(),
         selector.canonicalTenantId(),
         selector.gameInstanceUuid(),
-        selector.originalOperation() == null ? null : selector.originalOperation().originalPostAuthorizationTuple(),
-        selector.originalOperation() == null ? null : selector.originalOperation().originalPostAuthorizationTuple(),
-        selector.originalOperation() == null ? null : selector.originalOperation().ownerMutationId(),
+        selector.originalOperation() == null
+            ? null
+            : selector.originalOperation().originalPostAuthorizationTuple(),
+        selector.originalOperation() == null
+            ? null
+            : selector.originalOperation().originalPostAuthorizationTuple(),
+        selector.originalOperation() == null
+            ? null
+            : selector.originalOperation().ownerMutationId(),
         selector.originalOperation() == null ? null : selector.originalOperation().ownerAttemptId(),
         selector.originalOperation() == null ? null : selector.originalOperation().ownerFence());
   }

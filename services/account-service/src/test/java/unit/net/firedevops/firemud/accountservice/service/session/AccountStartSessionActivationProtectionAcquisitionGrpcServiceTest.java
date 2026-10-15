@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.v1.AcquireOriginalStartSessionActivationProtectionRequest;
 import net.firedevops.firemud.account.v1.AcquireOriginalStartSessionActivationProtectionResponse;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionAcquisitionGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionAcquisitionService;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -34,7 +35,8 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcServiceTest {
   @Test
   void authenticatesWorldBeforeTargetOrEvidenceDecoding() {
     var owner = mock(AccountStartSessionActivationProtectionAcquisitionService.class);
-    var service = new AccountStartSessionActivationProtectionAcquisitionGrpcService(owner, NAMESPACE);
+    var service =
+        new AccountStartSessionActivationProtectionAcquisitionGrpcService(owner, NAMESPACE);
     var malformed = AcquireOriginalStartSessionActivationProtectionRequest.getDefaultInstance();
 
     assertCode(Status.Code.UNAUTHENTICATED, invoke(service, null, malformed).error());
@@ -46,14 +48,17 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcServiceTest {
         invoke(service, identity("world-management-service", "other-runtime"), malformed).error());
 
     SessionContext.setContext("caller", List.of(), Map.of());
-    assertCode(Status.Code.PERMISSION_DENIED, invoke(service, identity("world-management-service"), malformed).error());
+    assertCode(
+        Status.Code.PERMISSION_DENIED,
+        invoke(service, identity("world-management-service"), malformed).error());
     verifyNoInteractions(owner);
   }
 
   @Test
   void requiresSingleExactTargetAndClosedCanonicalRequestBeforeOwner() {
     var owner = mock(AccountStartSessionActivationProtectionAcquisitionService.class);
-    var service = new AccountStartSessionActivationProtectionAcquisitionGrpcService(owner, NAMESPACE);
+    var service =
+        new AccountStartSessionActivationProtectionAcquisitionGrpcService(owner, NAMESPACE);
     var absent = AcquireOriginalStartSessionActivationProtectionRequest.getDefaultInstance();
     var wrongNamespace =
         AcquireOriginalStartSessionActivationProtectionRequest.newBuilder()
@@ -64,8 +69,12 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcServiceTest {
             .addTargetNamespace(NAMESPACE)
             .build();
 
-    assertCode(Status.Code.INVALID_ARGUMENT, invoke(service, identity("world-management-service"), absent).error());
-    assertCode(Status.Code.PERMISSION_DENIED, invoke(service, identity("world-management-service"), wrongNamespace).error());
+    assertCode(
+        Status.Code.INVALID_ARGUMENT,
+        invoke(service, identity("world-management-service"), absent).error());
+    assertCode(
+        Status.Code.PERMISSION_DENIED,
+        invoke(service, identity("world-management-service"), wrongNamespace).error());
     assertCode(
         Status.Code.INVALID_ARGUMENT,
         invoke(service, identity("world-management-service"), missingBinding).error());
@@ -76,7 +85,8 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcServiceTest {
   @Test
   void rejectsAmbientTransactionBeforeRequestParsing() {
     var owner = mock(AccountStartSessionActivationProtectionAcquisitionService.class);
-    var service = new AccountStartSessionActivationProtectionAcquisitionGrpcService(owner, NAMESPACE);
+    var service =
+        new AccountStartSessionActivationProtectionAcquisitionGrpcService(owner, NAMESPACE);
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
     assertCode(
@@ -131,8 +141,7 @@ class AccountStartSessionActivationProtectionAcquisitionGrpcServiceTest {
   }
 
   private static GrpcPeerIdentity identity(String service, String namespace) {
-    return GrpcPeerIdentity.parseUri(
-            "spiffe://firemud/ns/" + namespace + "/sa/" + service)
+    return GrpcPeerIdentity.parseUri("spiffe://firemud/ns/" + namespace + "/sa/" + service)
         .orElseThrow();
   }
 

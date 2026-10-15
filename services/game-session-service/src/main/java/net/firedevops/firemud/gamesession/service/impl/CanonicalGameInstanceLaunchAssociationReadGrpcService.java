@@ -23,8 +23,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p>The repository performs the exact pending-attempt, immutable-pin, and current-STARTING read.
  * World retains its complete association selector. The exact same-namespace Account workload must
  * additionally bind the complete original tuple and actual mutation, attempt and fence; an Account
- * peer identity alone cannot select an owner row. Neither path accepts end-user context.
- * This observation returns no mutation, continuation, activation, or admission authority.
+ * peer identity alone cannot select an owner row. Neither path accepts end-user context. This
+ * observation returns no mutation, continuation, activation, or admission authority.
  */
 public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
     extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
@@ -77,7 +77,10 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
 
     if ((accountCaller && decoded.originalOperation() == null)
         || (worldCaller && decoded.originalOperation() != null)) {
-      observer.onError(Status.PERMISSION_DENIED.withDescription("Exact caller-specific original operation selector required").asRuntimeException());
+      observer.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Exact caller-specific original operation selector required")
+              .asRuntimeException());
       return;
     }
 
@@ -162,7 +165,9 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
 
   private boolean hasExactAccountWorkloadPeer() {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    return peer != null && "account-service".equals(peer.service()) && workloadNamespace.equals(peer.namespace())
+    return peer != null
+        && "account-service".equals(peer.service())
+        && workloadNamespace.equals(peer.namespace())
         && ("spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service").equals(peer.uri())
         && !SessionContext.hasAuthenticatedCallerContext();
   }
@@ -179,9 +184,13 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
     var target = tuple.preAuthorizationTuple().action().target();
 
     var operation = selector.originalOperation();
-    if (operation != null && (!java.util.Arrays.equals(operation.originalPostAuthorizationTuple(), tuple.canonicalBytes())
-        || !operation.ownerAttemptId().equals(original.ownerAttemptId()) || operation.ownerFence() != original.ownerFence())) {
-      throw new IllegalStateException("Account original operation differs from its actual owner association");
+    if (operation != null
+        && (!java.util.Arrays.equals(
+                operation.originalPostAuthorizationTuple(), tuple.canonicalBytes())
+            || !operation.ownerAttemptId().equals(original.ownerAttemptId())
+            || operation.ownerFence() != original.ownerFence())) {
+      throw new IllegalStateException(
+          "Account original operation differs from its actual owner association");
     }
     if (!selector.targetNamespace().equals(association.targetNamespace())
         || !selector.canonicalTenantId().equals(association.canonicalTenantId())

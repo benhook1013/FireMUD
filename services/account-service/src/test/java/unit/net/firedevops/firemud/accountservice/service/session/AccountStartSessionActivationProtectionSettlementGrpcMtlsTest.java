@@ -11,8 +11,9 @@ import io.grpc.StatusRuntimeException;
 import java.nio.file.Path;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.firedevops.firemud.account.v1.SettleOriginalStartSessionActivationProtectionRequest;
 import net.firedevops.firemud.account.v1.AccountStartSessionActivationProtectionSettlementServiceGrpc;
+import net.firedevops.firemud.account.v1.SettleOriginalStartSessionActivationProtectionRequest;
+import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionActivationProtectionSettlementService;
 import net.firedevops.firemud.test.TlsTestSupport;
 import org.junit.jupiter.api.Test;
@@ -29,23 +30,28 @@ class AccountStartSessionActivationProtectionSettlementGrpcMtlsTest {
     var pki = ActivationProtectionGrpcMtlsTestSupport.TestPki.create(temporaryDirectory);
     var owner = mock(AccountStartSessionActivationProtectionSettlementService.class);
     var handlers = new AtomicInteger();
-    try (var server = ActivationProtectionGrpcMtlsTestSupport.startServer(
-            pki,
-            new AccountStartSessionActivationProtectionSettlementGrpcService(owner, NAMESPACE),
-            handlers);
-        var world = ActivationProtectionGrpcMtlsTestSupport.client(
-            pki, temporaryDirectory, server.getPort(), pki.worldClient());
-        var wrongWorkload = ActivationProtectionGrpcMtlsTestSupport.client(
-            pki, temporaryDirectory, server.getPort(), pki.wrongWorkloadClient());
-        var wrongNamespace = ActivationProtectionGrpcMtlsTestSupport.client(
-            pki, temporaryDirectory, server.getPort(), pki.otherNamespaceClient())) {
+    try (var server =
+            ActivationProtectionGrpcMtlsTestSupport.startServer(
+                pki,
+                new AccountStartSessionActivationProtectionSettlementGrpcService(owner, NAMESPACE),
+                handlers);
+        var world =
+            ActivationProtectionGrpcMtlsTestSupport.client(
+                pki, temporaryDirectory, server.getPort(), pki.worldClient());
+        var wrongWorkload =
+            ActivationProtectionGrpcMtlsTestSupport.client(
+                pki, temporaryDirectory, server.getPort(), pki.wrongWorkloadClient());
+        var wrongNamespace =
+            ActivationProtectionGrpcMtlsTestSupport.client(
+                pki, temporaryDirectory, server.getPort(), pki.otherNamespaceClient())) {
       var malformed =
           SettleOriginalStartSessionActivationProtectionRequest.newBuilder()
               .addTargetNamespace(NAMESPACE)
               .build();
       assertStatus(Status.Code.INVALID_ARGUMENT, () -> settle(world.channel(), malformed));
       assertStatus(Status.Code.PERMISSION_DENIED, () -> settle(wrongWorkload.channel(), malformed));
-      assertStatus(Status.Code.PERMISSION_DENIED, () -> settle(wrongNamespace.channel(), malformed));
+      assertStatus(
+          Status.Code.PERMISSION_DENIED, () -> settle(wrongNamespace.channel(), malformed));
       assertThat(handlers).hasValue(3);
       verifyNoInteractions(owner);
     }
@@ -56,27 +62,29 @@ class AccountStartSessionActivationProtectionSettlementGrpcMtlsTest {
     var pki = ActivationProtectionGrpcMtlsTestSupport.TestPki.create(temporaryDirectory);
     var owner = mock(AccountStartSessionActivationProtectionSettlementService.class);
     var handlers = new AtomicInteger();
-    try (var server = ActivationProtectionGrpcMtlsTestSupport.startServer(
-            pki,
-            new AccountStartSessionActivationProtectionSettlementGrpcService(owner, NAMESPACE),
-            handlers);
-        var client = ActivationProtectionGrpcMtlsTestSupport.clientWithoutIdentity(
-            pki, temporaryDirectory, server.getPort())) {
+    try (var server =
+            ActivationProtectionGrpcMtlsTestSupport.startServer(
+                pki,
+                new AccountStartSessionActivationProtectionSettlementGrpcService(owner, NAMESPACE),
+                handlers);
+        var client =
+            ActivationProtectionGrpcMtlsTestSupport.clientWithoutIdentity(
+                pki, temporaryDirectory, server.getPort())) {
       assertThatThrownBy(
               () ->
                   settle(
                       client.channel(),
                       SettleOriginalStartSessionActivationProtectionRequest.getDefaultInstance()))
           .isInstanceOf(StatusRuntimeException.class)
-          .satisfies(failure -> assertThat(TlsTestSupport.isTlsHandshakeRejection(failure)).isTrue());
+          .satisfies(
+              failure -> assertThat(TlsTestSupport.isTlsHandshakeRejection(failure)).isTrue());
       assertThat(handlers).hasValue(0);
       verifyNoInteractions(owner);
     }
   }
 
   private static void settle(
-      ManagedChannel channel,
-      SettleOriginalStartSessionActivationProtectionRequest request) {
+      ManagedChannel channel, SettleOriginalStartSessionActivationProtectionRequest request) {
     AccountStartSessionActivationProtectionSettlementServiceGrpc.newBlockingStub(channel)
         .withDeadlineAfter(3, TimeUnit.SECONDS)
         .settleOriginalStartSessionActivationProtection(request);
