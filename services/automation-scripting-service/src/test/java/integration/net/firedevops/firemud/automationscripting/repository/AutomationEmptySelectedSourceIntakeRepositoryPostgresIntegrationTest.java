@@ -255,7 +255,8 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
 
     byte[] corruptBytes = first.canonicalBytes();
     corruptBytes[0] ^= 1;
-    // The isolated test owner bypasses only V1003's immutable receipt-row trigger to model corruption.
+    // The isolated test owner bypasses only V1003's immutable receipt-row trigger to model
+    // corruption.
     dsl.execute(
         "ALTER TABLE automation_empty_selected_source_receipt "
             + "DISABLE TRIGGER trg_automation_empty_source_receipt_immutable");
@@ -364,8 +365,7 @@ class AutomationEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
                 receipt.targetNamespace(),
                 receipt.intakeRequestId())
             .get(0, String.class);
-    assertThat(rowAfterMismatchedPublicationRead)
-        .isEqualTo(rowBeforeMismatchedPublicationRead);
+    assertThat(rowAfterMismatchedPublicationRead).isEqualTo(rowBeforeMismatchedPublicationRead);
   }
 
   @Test

@@ -43,8 +43,9 @@ class PublishedReleaseBundleServiceImplTest {
   private PublishedReleaseBundleServiceImpl service;
 
   @Test
-  void selectedFullV4PersistsActualOriginalBytesAndRetryReturnsStoredEvidenceWithoutResolvingDefaults()
-      throws Exception {
+  void
+      selectedFullV4PersistsActualOriginalBytesAndRetryReturnsStoredEvidenceWithoutResolvingDefaults()
+          throws Exception {
     var evidence = selectorEvidence();
     var participants =
         PublishedWorldSelectorFixtures.participants(
@@ -138,8 +139,7 @@ class PublishedReleaseBundleServiceImplTest {
         new ObjectMapper().writeValueAsString(List.of(validCommandDefinition())));
     retained.setWorldPublishedStartLocationEvidenceJson(
         new String(evidence.canonicalBytes(), StandardCharsets.UTF_8));
-    when(repository.findByTenantIdAndVersionId("tenant-1", 7L))
-        .thenReturn(Optional.of(retained));
+    when(repository.findByTenantIdAndVersionId("tenant-1", 7L)).thenReturn(Optional.of(retained));
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
         .thenReturn(List.of(validCommandDefinition()));
 
@@ -228,7 +228,9 @@ class PublishedReleaseBundleServiceImplTest {
                     emptyManifest(),
                     "genrev-1",
                     PublishedWorldSelectorFixtures.participants(
-                        7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
+                        7L,
+                        evidence,
+                        AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION),
                     evidence))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Selected-full");
@@ -301,14 +303,14 @@ class PublishedReleaseBundleServiceImplTest {
       throws Exception {
     var base =
         PublishedWorldSelectorFixtures.evidence(
-        new TargetProof(
-            sourceIdentity().getCanonicalTenantId(),
-            sourceIdentity().getCanonicalVersionId(),
-            7L,
-            "tenant-1",
-            42L,
-            "tenant-1",
-            "NEW_GAME_ROW"));
+            new TargetProof(
+                sourceIdentity().getCanonicalTenantId(),
+                sourceIdentity().getCanonicalVersionId(),
+                7L,
+                "tenant-1",
+                42L,
+                "tenant-1",
+                "NEW_GAME_ROW"));
     var original = base.request();
     var request =
         new WorldPublishedStartLocationEvidence.Request(
@@ -617,7 +619,9 @@ class PublishedReleaseBundleServiceImplTest {
                 emptyManifest(),
                 "genrev-1",
                 PublishedWorldSelectorFixtures.participants(
-                    7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION),
+                    7L,
+                    evidence,
+                    AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION),
                 evidence));
     org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
   }

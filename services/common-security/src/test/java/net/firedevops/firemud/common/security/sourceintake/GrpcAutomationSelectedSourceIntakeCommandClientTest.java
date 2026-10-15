@@ -10,12 +10,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
-import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
-import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationProducerCredentials;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderCredentials;
+import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeAuthorizationCredentials;
+import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
+import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -108,13 +108,23 @@ class GrpcAutomationSelectedSourceIntakeCommandClientTest {
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("workload-only context");
       SessionContext.clear();
-      for (var producerContext : List.of(
-          Context.current().withValue(AccountOriginalDraftOrderCredentials.CONTEXT_KEY,
-              AccountOriginalDraftOrderCredentials.Credential.of("controlled-original-author")),
-          Context.current().withValue(AccountGameLogicIntakeAuthorizationCredentials.CONTEXT_KEY,
-              AccountGameLogicIntakeAuthorizationCredentials.Credential.of("controlled-game-logic-author")),
-          Context.current().withValue(SelectedOwnerIntakeAuthorizationProducerCredentials.CONTEXT_KEY,
-              SelectedOwnerIntakeAuthorizationProducerCredentials.Credential.of("controlled-selected-intake-author")))) {
+      for (var producerContext :
+          List.of(
+              Context.current()
+                  .withValue(
+                      AccountOriginalDraftOrderCredentials.CONTEXT_KEY,
+                      AccountOriginalDraftOrderCredentials.Credential.of(
+                          "controlled-original-author")),
+              Context.current()
+                  .withValue(
+                      AccountGameLogicIntakeAuthorizationCredentials.CONTEXT_KEY,
+                      AccountGameLogicIntakeAuthorizationCredentials.Credential.of(
+                          "controlled-game-logic-author")),
+              Context.current()
+                  .withValue(
+                      SelectedOwnerIntakeAuthorizationProducerCredentials.CONTEXT_KEY,
+                      SelectedOwnerIntakeAuthorizationProducerCredentials.Credential.of(
+                          "controlled-selected-intake-author")))) {
         var previous = producerContext.attach();
         try {
           assertThatThrownBy(() -> client.retain(null))

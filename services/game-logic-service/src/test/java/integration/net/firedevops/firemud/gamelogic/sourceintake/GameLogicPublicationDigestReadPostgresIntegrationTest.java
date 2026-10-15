@@ -1,6 +1,11 @@
 package net.firedevops.firemud.gamelogic.sourceintake;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
 import io.grpc.stub.StreamObserver;
@@ -13,6 +18,8 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadEvidence;
+import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadClient;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadClient;
 import net.firedevops.firemud.common.gamelogic.GameLogicPublicationSourceReadBinding;
 import net.firedevops.firemud.common.gamelogic.GameLogicPublicationSourceReadGrpcCodec;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
@@ -66,17 +73,23 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
       throws Exception {
     var f = fixture();
     var authorization = authorization();
-    var intake = new GameLogicGameplayRuleIntakeService(f.repository(), f.manager(),
-        request -> {
-          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-          return new GameLogicIntakeAuthorizationReadEvidence(request);
-        },
-        request -> {
-          assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-          assertThat(request.proof()).isInstanceOf(GameplayRuleSourceReadEvidence.Finalized.class);
-          assertThat(request.proof().canonicalBytes()).isEqualTo(authorization.canonicalBytes());
-          return new GameplayRuleSourceReadEvidence(request, authorization.source());
-        }, NAMESPACE);
+    var accountReader = mock(GameLogicIntakeAuthorizationReadClient.class);
+    when(accountReader.read(any())).thenAnswer(invocation -> {
+      GameLogicIntakeAuthorizationReadEvidence.Request request = invocation.getArgument(0);
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThat(request.binding().canonicalBytes()).isEqualTo(authorization.canonicalBytes());
+      return new GameLogicIntakeAuthorizationReadEvidence(request);
+    });
+    var sourceReader = mock(GameplayRuleSourceReadClient.class);
+    when(sourceReader.read(any())).thenAnswer(invocation -> {
+      GameplayRuleSourceReadEvidence.Request request = invocation.getArgument(0);
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThat(request.proof()).isInstanceOf(GameplayRuleSourceReadEvidence.Finalized.class);
+      assertThat(request.proof().canonicalBytes()).isEqualTo(authorization.canonicalBytes());
+      return new GameplayRuleSourceReadEvidence(request, authorization.source());
+    });
+    var intake = new GameLogicGameplayRuleIntakeService(
+        f.repository(), f.manager(), accountReader, sourceReader, NAMESPACE);
     var terminal = asGameDesign(() -> intake.retain(authorization));
     var reader = new GameLogicPublicationSourceReadService(f.repository(), NAMESPACE);
     var digest = new GameLogicDraftDesignDigestServiceImpl(reader);
@@ -115,10 +128,20 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
     assertThat(row(f, authorization.operationId())).isEqualTo(retained);
 
     var abortedAuthorization = authorization();
-    var abortOwner = new GameLogicGameplayRuleIntakeService(f.repository(), f.manager(),
-        ignored -> { throw new AssertionError("Abort must not read Account"); },
-        ignored -> { throw new AssertionError("Abort must not read GD source"); }, NAMESPACE);
+    var abortAccountReader = mock(GameLogicIntakeAuthorizationReadClient.class);
+    when(abortAccountReader.read(any())).thenAnswer(invocation -> {
+      GameLogicIntakeAuthorizationReadEvidence.Request heldRequest = invocation.getArgument(0);
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+      assertThat(heldRequest.binding().canonicalBytes())
+          .isEqualTo(abortedAuthorization.canonicalBytes());
+      return new GameLogicIntakeAuthorizationReadEvidence(heldRequest);
+    });
+    var unusedAbortSourceReader = mock(GameplayRuleSourceReadClient.class);
+    var abortOwner = new GameLogicGameplayRuleIntakeService(
+        f.repository(), f.manager(), abortAccountReader, unusedAbortSourceReader, NAMESPACE);
     asGameDesign(() -> abortOwner.abort(abortedAuthorization));
+    verify(abortAccountReader).read(any());
+    verify(unusedAbortSourceReader, never()).read(any());
     String aborted = row(f, abortedAuthorization.operationId());
     assertError(receiver, GameLogicPublicationSourceReadGrpcCodec.toRequest(publicationBinding(abortedAuthorization)), "FAILED_PRECONDITION");
     assertThat(row(f, abortedAuthorization.operationId())).isEqualTo(aborted);

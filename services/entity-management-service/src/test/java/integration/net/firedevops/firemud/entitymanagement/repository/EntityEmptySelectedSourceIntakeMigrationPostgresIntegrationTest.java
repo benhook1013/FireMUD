@@ -65,13 +65,23 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
             + "source_holder_kind, destination_holder_kind) "
             + "VALUES (61001, 99001, 1, 'MOVE', 'legacy-audit', 'UNKNOWN', 'UNKNOWN')");
 
-    legacyDsl.execute("INSERT INTO entity_tenant_identities (canonical_tenant_uuid) VALUES (?)", UUID.randomUUID());
-    legacyDsl.execute("INSERT INTO saga_instance (saga_name, state) VALUES ('retained-entity-source', 'PENDING')");
-    legacyDsl.execute("INSERT INTO saga_step (instance_id, name, status) SELECT id, 'retained-step', 'PENDING' FROM saga_instance WHERE saga_name = 'retained-entity-source'");
+    legacyDsl.execute(
+        "INSERT INTO entity_tenant_identities (canonical_tenant_uuid) VALUES (?)",
+        UUID.randomUUID());
+    legacyDsl.execute(
+        "INSERT INTO saga_instance (saga_name, state) VALUES ('retained-entity-source', 'PENDING')");
+    legacyDsl.execute(
+        "INSERT INTO saga_step (instance_id, name, status) SELECT id, 'retained-step', 'PENDING' FROM saga_instance WHERE saga_name = 'retained-entity-source'");
     var parentRows = retainedParentRows(legacyDsl);
     var parentHistory = history(legacyDsl);
-    assertThat(legacyDsl.fetch("SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank")
-        .getValues(0, String.class)).containsExactly("1", "1000", "1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008", "1009", "1010");
+    assertThat(
+            legacyDsl
+                .fetch(
+                    "SELECT version FROM flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank")
+                .getValues(0, String.class))
+        .containsExactly(
+            "1", "1000", "1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008", "1009",
+            "1010");
 
     var flywayConfiguration =
         Flyway.configure()
@@ -86,9 +96,13 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
     flywayConfiguration.load().migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     assertThat(retainedParentRows(dsl)).isEqualTo(parentRows);
-    assertThat(history(dsl).subList(0, parentHistory.size())).containsExactlyElementsOf(parentHistory);
-    assertThat(dsl.fetchSingle("SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1").get(0, String.class)).isEqualTo("1011");
-
+    assertThat(history(dsl).subList(0, parentHistory.size()))
+        .containsExactlyElementsOf(parentHistory);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1")
+                .get(0, String.class))
+        .isEqualTo("1011");
   }
 
   @AfterEach
@@ -175,18 +189,34 @@ class EntityEmptySelectedSourceIntakeMigrationPostgresIntegrationTest {
   /** Storage retention only; synthetic parent rows establish no authenticated owner authority. */
   private static Map<String, List<String>> retainedParentRows(DSLContext source) {
     Map<String, List<String>> rows = new java.util.LinkedHashMap<>();
-    for (String table : List.of("characters", "items", "item_transfer_audits",
-        "entity_tenant_identities", "entity_playable_state_namespace_scopes",
-        "entity_preseeded_actor_assignment_operations", "entity_canonical_gameplay_roster_snapshots",
-        "entity_canonical_gameplay_roster_snapshot_actors", "saga_instance", "saga_step")) {
-      rows.put(table, source.fetch("SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
-          + table + " t ORDER BY to_jsonb(t)::TEXT").getValues(0, String.class));
+    for (String table :
+        List.of(
+            "characters",
+            "items",
+            "item_transfer_audits",
+            "entity_tenant_identities",
+            "entity_playable_state_namespace_scopes",
+            "entity_preseeded_actor_assignment_operations",
+            "entity_canonical_gameplay_roster_snapshots",
+            "entity_canonical_gameplay_roster_snapshot_actors",
+            "saga_instance",
+            "saga_step")) {
+      rows.put(
+          table,
+          source
+              .fetch(
+                  "SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
+                      + table
+                      + " t ORDER BY to_jsonb(t)::TEXT")
+              .getValues(0, String.class));
     }
     return rows;
   }
 
   private static List<String> history(DSLContext source) {
-    return source.fetch("SELECT to_jsonb(t)::TEXT || ':' || t.xmin::TEXT FROM flyway_schema_history t ORDER BY installed_rank")
+    return source
+        .fetch(
+            "SELECT to_jsonb(t)::TEXT || ':' || t.xmin::TEXT FROM flyway_schema_history t ORDER BY installed_rank")
         .getValues(0, String.class);
   }
 

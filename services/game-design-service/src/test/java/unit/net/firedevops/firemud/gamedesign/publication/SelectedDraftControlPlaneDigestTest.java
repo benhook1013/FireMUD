@@ -66,8 +66,8 @@ class SelectedDraftControlPlaneDigestTest {
         new GameDesignSourceRepository.SynchronizedSources(
             originalSources.command(),
             originalSources.policy(),
-            changedAsset,
-            originalSources.gameplay(),
+            Optional.of(changedAsset),
+            originalSources.gameplayEvidence(),
             originalSources.branding(),
             originalSources.templateConfig());
     assertThat(SelectedDraftControlPlaneDigest.compute(selected, changedSnapshot).contentDigest())
@@ -94,16 +94,16 @@ class SelectedDraftControlPlaneDigestTest {
         new GameDesignSourceRepository.SynchronizedSources(
             complete.command(),
             complete.policy(),
-            complete.asset(),
-            complete.gameplay(),
+            complete.assetEvidence(),
+            complete.gameplayEvidence(),
             Optional.empty(),
             complete.templateConfig());
     var missingTemplate =
         new GameDesignSourceRepository.SynchronizedSources(
             complete.command(),
             complete.policy(),
-            complete.asset(),
-            complete.gameplay(),
+            complete.assetEvidence(),
+            complete.gameplayEvidence(),
             complete.branding(),
             Optional.empty());
 
@@ -211,6 +211,6 @@ class SelectedDraftControlPlaneDigestTest {
         new TemplateConfigSourceSnapshot(
             binding, "0", null, UUID.fromString("66666666-6666-4666-8666-666666666666"), List.of());
     return new GameDesignSourceRepository.SynchronizedSources(
-        command, policy, asset, gameplay, Optional.of(branding), Optional.of(template));
+        command, policy, Optional.of(asset), Optional.of(gameplay), Optional.of(branding), Optional.of(template));
   }
 }

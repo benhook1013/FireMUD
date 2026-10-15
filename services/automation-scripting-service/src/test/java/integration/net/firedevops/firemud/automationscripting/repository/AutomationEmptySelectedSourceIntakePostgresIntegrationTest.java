@@ -8,9 +8,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.UUID;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -67,12 +67,19 @@ class AutomationEmptySelectedSourceIntakePostgresIntegrationTest {
         "INSERT INTO script_patch_base_bindings (tenant_id, script_patch_version, base_version_id) "
             + "VALUES ('103', 'legacy-patch', 203)");
 
-    upgradeDsl.execute("INSERT INTO script_work_items (tenant_id, game_instance_id, region_id, region_epoch, entity_id, script_id, event_type, event_schema_version, script_patch_version, script_event_id, source_service, trigger_mode, failure_generation, next_eligible_at) VALUES ('retained-tenant', 'retained-instance', 'region', 1, 'entity', 'script', 'event', 'v1', 'retained-patch', 'retained-event', 'test-only', 'EXTERNAL', 7, NULL)");
-    upgradeDsl.execute("INSERT INTO saga_instance (saga_name, state) VALUES ('retained-automation-source', 'PENDING')");
-    upgradeDsl.execute("INSERT INTO saga_step (instance_id, name, status) SELECT id, 'retained-step', 'PENDING' FROM saga_instance WHERE saga_name = 'retained-automation-source'");
+    upgradeDsl.execute(
+        "INSERT INTO script_work_items (tenant_id, game_instance_id, region_id, region_epoch, entity_id, script_id, event_type, event_schema_version, script_patch_version, script_event_id, source_service, trigger_mode, failure_generation, next_eligible_at) VALUES ('retained-tenant', 'retained-instance', 'region', 1, 'entity', 'script', 'event', 'v1', 'retained-patch', 'retained-event', 'test-only', 'EXTERNAL', 7, NULL)");
+    upgradeDsl.execute(
+        "INSERT INTO saga_instance (saga_name, state) VALUES ('retained-automation-source', 'PENDING')");
+    upgradeDsl.execute(
+        "INSERT INTO saga_step (instance_id, name, status) SELECT id, 'retained-step', 'PENDING' FROM saga_instance WHERE saga_name = 'retained-automation-source'");
     var parentRows = retainedParentRows(upgradeDsl);
     var parentHistory = migrationHistory(upgradeDsl);
-    assertThat(upgradeDsl.fetch("SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank").getValues(0, String.class))
+    assertThat(
+            upgradeDsl
+                .fetch(
+                    "SELECT version FROM flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank")
+                .getValues(0, String.class))
         .containsExactly("1", "2", "3", "3.1", "3.2", "4", "1000", "1001", "1002");
 
     Flyway.configure()
@@ -85,22 +92,43 @@ class AutomationEmptySelectedSourceIntakePostgresIntegrationTest {
         .migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     assertThat(retainedParentRows(dsl)).isEqualTo(parentRows);
-    assertThat(migrationHistory(dsl).subList(0, parentHistory.size())).containsExactlyElementsOf(parentHistory);
-    assertThat(dsl.fetchSingle("SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1").get(0, String.class)).isEqualTo("1003");
-
+    assertThat(migrationHistory(dsl).subList(0, parentHistory.size()))
+        .containsExactlyElementsOf(parentHistory);
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT version FROM flyway_schema_history ORDER BY installed_rank DESC LIMIT 1")
+                .get(0, String.class))
+        .isEqualTo("1003");
   }
 
   /** Synthetic retained SQL state only; no genuine script or runtime admission authority. */
   private static Map<String, List<String>> retainedParentRows(DSLContext source) {
     Map<String, List<String>> rows = new java.util.LinkedHashMap<>();
-    for (String table : List.of("scripts", "script_event_bindings", "script_patch_base_bindings", "script_work_items", "saga_instance", "saga_step")) {
-      rows.put(table, source.fetch("SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM " + table + " t ORDER BY to_jsonb(t)::TEXT").getValues(0, String.class));
+    for (String table :
+        List.of(
+            "scripts",
+            "script_event_bindings",
+            "script_patch_base_bindings",
+            "script_work_items",
+            "saga_instance",
+            "saga_step")) {
+      rows.put(
+          table,
+          source
+              .fetch(
+                  "SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
+                      + table
+                      + " t ORDER BY to_jsonb(t)::TEXT")
+              .getValues(0, String.class));
     }
     return rows;
   }
 
   private static List<String> migrationHistory(DSLContext source) {
-    return source.fetch("SELECT to_jsonb(t)::TEXT || ':' || t.xmin::TEXT FROM flyway_schema_history t ORDER BY installed_rank").getValues(0, String.class);
+    return source
+        .fetch(
+            "SELECT to_jsonb(t)::TEXT || ':' || t.xmin::TEXT FROM flyway_schema_history t ORDER BY installed_rank")
+        .getValues(0, String.class);
   }
 
   @AfterAll

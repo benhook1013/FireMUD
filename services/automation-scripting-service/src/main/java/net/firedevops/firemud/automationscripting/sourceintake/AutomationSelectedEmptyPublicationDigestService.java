@@ -112,7 +112,8 @@ public final class AutomationSelectedEmptyPublicationDigestService {
         || !requested.tenantId().equals(retainedPublicationRequest.tenantId())
         || !requested.versionId().equals(retainedPublicationRequest.versionId())
         || !requested.publishRequestId().equals(retainedPublicationRequest.publishRequestId())
-        || !requested.derivedWorkflowIdentity()
+        || !requested
+            .derivedWorkflowIdentity()
             .equals(retainedPublicationRequest.derivedWorkflowIdentity())
         || !requested.requestDigest().equals(retainedPublicationRequest.requestDigest())) {
       throw new IllegalStateException(

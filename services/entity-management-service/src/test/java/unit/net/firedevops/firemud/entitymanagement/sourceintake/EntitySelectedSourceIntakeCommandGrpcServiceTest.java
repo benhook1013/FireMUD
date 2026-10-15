@@ -15,12 +15,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationProducerCredentials;
+import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderCredentials;
 import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeCommandEvidence;
 import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeCommandGrpcCodec;
-import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderCredentials;
-import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationProducerCredentials;
 import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeAuthorizationCredentials;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -152,13 +152,23 @@ class EntitySelectedSourceIntakeCommandGrpcServiceTest {
       assertCode(endUser.failure(), Status.Code.PERMISSION_DENIED);
       SessionContext.clear();
 
-      for (Context credentialContext : List.of(
-          Context.current().withValue(AccountOriginalDraftOrderCredentials.CONTEXT_KEY,
-              AccountOriginalDraftOrderCredentials.Credential.of("synthetic-original-order")),
-          Context.current().withValue(SelectedOwnerIntakeAuthorizationProducerCredentials.CONTEXT_KEY,
-              SelectedOwnerIntakeAuthorizationProducerCredentials.Credential.of("synthetic-owner-intake")),
-          Context.current().withValue(AccountGameLogicIntakeAuthorizationCredentials.CONTEXT_KEY,
-              AccountGameLogicIntakeAuthorizationCredentials.Credential.of("synthetic-logic-intake")))) {
+      for (Context credentialContext :
+          List.of(
+              Context.current()
+                  .withValue(
+                      AccountOriginalDraftOrderCredentials.CONTEXT_KEY,
+                      AccountOriginalDraftOrderCredentials.Credential.of(
+                          "synthetic-original-order")),
+              Context.current()
+                  .withValue(
+                      SelectedOwnerIntakeAuthorizationProducerCredentials.CONTEXT_KEY,
+                      SelectedOwnerIntakeAuthorizationProducerCredentials.Credential.of(
+                          "synthetic-owner-intake")),
+              Context.current()
+                  .withValue(
+                      AccountGameLogicIntakeAuthorizationCredentials.CONTEXT_KEY,
+                      AccountGameLogicIntakeAuthorizationCredentials.Credential.of(
+                          "synthetic-logic-intake")))) {
         var credentialPrevious = credentialContext.attach();
         try {
           var denied = new CapturingObserver(new AtomicReference<>());

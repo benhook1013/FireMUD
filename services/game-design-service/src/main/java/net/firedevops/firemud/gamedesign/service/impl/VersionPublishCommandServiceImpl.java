@@ -660,7 +660,8 @@ public class VersionPublishCommandServiceImpl {
     PublishedReleaseBundleContract.requireSupportedSchemaForPublicationRead(readback.bundle());
     assertSelectedCommit(request, readback.bundle().participantDigests());
     if (isSelectedReleaseBundle(readback.bundle())) {
-      publishGateService.assertSelectedGatePassed(versionDto, readback.bundle().participantDigests());
+      publishGateService.assertSelectedGatePassed(
+          versionDto, readback.bundle().participantDigests());
     } else {
       publishGateService.assertGatePassed(versionDto, readback.bundle().participantDigests());
     }

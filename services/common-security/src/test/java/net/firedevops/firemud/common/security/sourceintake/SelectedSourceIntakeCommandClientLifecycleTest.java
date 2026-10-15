@@ -27,11 +27,11 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import org.junit.jupiter.api.Timeout;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.parallel.Resources;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 /**
  * Actual file-watcher lifecycle proof with readable placeholder certificate files and mocked
@@ -45,8 +45,7 @@ class SelectedSourceIntakeCommandClientLifecycleTest {
   @Timeout(15)
   @ResourceLock(Resources.SYSTEM_PROPERTIES)
   void closeReleasesClientMonitorBeforeDrainingCertificateCallback(
-      ClientKind kind, @TempDir Path directory)
-      throws Exception {
+      ClientKind kind, @TempDir Path directory) throws Exception {
     String previousReloadPolicy = System.getProperty(TLS_RELOAD_PROPERTY);
     System.setProperty(TLS_RELOAD_PROPERTY, "true");
     CountDownLatch releaseClientMonitor = new CountDownLatch(1);
@@ -170,7 +169,8 @@ class SelectedSourceIntakeCommandClientLifecycleTest {
     void run() throws Exception;
   }
 
-  private record ClientHandle(AbstractReloadingBlockingGrpcClient<?> client, Initialize initialize) {}
+  private record ClientHandle(
+      AbstractReloadingBlockingGrpcClient<?> client, Initialize initialize) {}
 
   private enum ClientKind {
     ENTITY,
@@ -182,11 +182,13 @@ class SelectedSourceIntakeCommandClientLifecycleTest {
         GrpcChannelFactory factory) {
       return switch (this) {
         case ENTITY -> {
-          var client = new GrpcEntitySelectedSourceIntakeCommandClient(endpoints, tls, factory, "test");
+          var client =
+              new GrpcEntitySelectedSourceIntakeCommandClient(endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
         }
         case AUTOMATION -> {
-          var client = new GrpcAutomationSelectedSourceIntakeCommandClient(endpoints, tls, factory, "test");
+          var client =
+              new GrpcAutomationSelectedSourceIntakeCommandClient(endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
         }
       };

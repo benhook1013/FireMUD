@@ -36,16 +36,16 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationProducerCredentials;
+import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderCredentials;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeCommandEvidence;
 import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeCommandGrpcCodec;
+import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeAuthorizationCredentials;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
-import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationProducerCredentials;
-import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderCredentials;
-import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeAuthorizationCredentials;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.entitymanagement.v1.EntitySelectedSourceIntakeCommandServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.RetainSelectedEntitySourceRequest;
@@ -176,13 +176,23 @@ class GrpcEntitySelectedSourceIntakeCommandClientMtlsTest {
           .hasMessageContaining("workload-only context");
       SessionContext.clear();
 
-      for (var producerContext : List.of(
-          Context.current().withValue(AccountOriginalDraftOrderCredentials.CONTEXT_KEY,
-              AccountOriginalDraftOrderCredentials.Credential.of("controlled-original-author")),
-          Context.current().withValue(AccountGameLogicIntakeAuthorizationCredentials.CONTEXT_KEY,
-              AccountGameLogicIntakeAuthorizationCredentials.Credential.of("controlled-game-logic-author")),
-          Context.current().withValue(SelectedOwnerIntakeAuthorizationProducerCredentials.CONTEXT_KEY,
-              SelectedOwnerIntakeAuthorizationProducerCredentials.Credential.of("controlled-selected-intake-author")))) {
+      for (var producerContext :
+          List.of(
+              Context.current()
+                  .withValue(
+                      AccountOriginalDraftOrderCredentials.CONTEXT_KEY,
+                      AccountOriginalDraftOrderCredentials.Credential.of(
+                          "controlled-original-author")),
+              Context.current()
+                  .withValue(
+                      AccountGameLogicIntakeAuthorizationCredentials.CONTEXT_KEY,
+                      AccountGameLogicIntakeAuthorizationCredentials.Credential.of(
+                          "controlled-game-logic-author")),
+              Context.current()
+                  .withValue(
+                      SelectedOwnerIntakeAuthorizationProducerCredentials.CONTEXT_KEY,
+                      SelectedOwnerIntakeAuthorizationProducerCredentials.Credential.of(
+                          "controlled-selected-intake-author")))) {
         var previous = producerContext.attach();
         try {
           assertThatThrownBy(() -> client.retain(null))

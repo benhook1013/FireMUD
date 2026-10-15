@@ -20,12 +20,12 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
-import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.PublishIntent;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.VisibilityFence;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadEvidence;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadGrpcCodec;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamedesign.v1.ReadSelectedDraftPublicationRequest;
 import net.firedevops.firemud.gamedesign.v1.ReadSelectedDraftPublicationResponse;
 import net.firedevops.firemud.gamedesign.v1.SelectedDraftPublicationStatus;
@@ -89,11 +89,16 @@ class GameDesignSelectedDraftPublicationReadGrpcServiceTest {
       for (String caller : List.of("account-service", "world-management-service")) {
         for (var roles : List.of(List.<String>of(), List.of("ROLE_ADMIN"))) {
           SessionContext.setContext("controlled-authenticated-user", roles, java.util.Map.of());
-          assertFailure(invokeAs(service, wireRequest(), peer(caller, NAMESPACE)),
+          assertFailure(
+              invokeAs(service, wireRequest(), peer(caller, NAMESPACE)),
               Status.Code.PERMISSION_DENIED);
           // Malformed bytes cannot reach decoding through an otherwise admitted workload peer.
-          assertFailure(invokeAs(service, ReadSelectedDraftPublicationRequest.getDefaultInstance(),
-              peer(caller, NAMESPACE)), Status.Code.PERMISSION_DENIED);
+          assertFailure(
+              invokeAs(
+                  service,
+                  ReadSelectedDraftPublicationRequest.getDefaultInstance(),
+                  peer(caller, NAMESPACE)),
+              Status.Code.PERMISSION_DENIED);
         }
       }
       verifyNoInteractions(repository);

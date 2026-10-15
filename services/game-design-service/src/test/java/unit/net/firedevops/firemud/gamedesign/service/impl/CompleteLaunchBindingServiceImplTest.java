@@ -78,9 +78,11 @@ class CompleteLaunchBindingServiceImplTest {
     assertEquals(
         AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION,
         result.releaseAttestation().schemaVersion());
-    assertEquals(List.of(4, 3, 1, 6, 2), result.releaseAttestation().participantDigests().stream()
-        .map(AuthoredWorldReleaseAttestationEvidence.Participant::digestSchemaVersion)
-        .toList());
+    assertEquals(
+        List.of(4, 3, 1, 6, 2),
+        result.releaseAttestation().participantDigests().stream()
+            .map(AuthoredWorldReleaseAttestationEvidence.Participant::digestSchemaVersion)
+            .toList());
     assertEquals(selector, result.releaseAttestation().worldStartLocationEvidence());
     result.releaseAttestation().requireValid(descriptor);
     verifyReadOnlyCallsOnly();

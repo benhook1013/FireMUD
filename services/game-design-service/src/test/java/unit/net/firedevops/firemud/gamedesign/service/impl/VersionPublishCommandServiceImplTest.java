@@ -65,8 +65,8 @@ import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.InOrder;
 import org.mockito.Mock;
@@ -248,8 +248,9 @@ class VersionPublishCommandServiceImplTest {
     assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
     verify(publishAttemptRepository, never()).save(any(PublishAttempt.class));
     verify(authoredSelections, never()).reserve(any(PublishIntent.class));
-    verify(publishGateService, never()).collectSelectedFullVersionParticipantDigests(
-        any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class));
+    verify(publishGateService, never())
+        .collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class));
     verify(publishGateService, never())
         .collectFullVersionParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class));
@@ -1798,8 +1799,9 @@ class VersionPublishCommandServiceImplTest {
     verify(publishAttemptService, never()).executeFullVersionTransaction(any());
     verify(publishAttemptService, never())
         .createFullVersionAttempt(any(VersionDto.class), any(String.class), any(String.class));
-    verify(publishGateService, never()).collectSelectedFullVersionParticipantDigests(
-        any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class));
+    verify(publishGateService, never())
+        .collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class));
     verify(publishGateService, never())
         .collectFullVersionParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class));
@@ -1918,20 +1920,26 @@ class VersionPublishCommandServiceImplTest {
         reflectiveUnitHarnessReconcileSelectedPublicationMechanics(request);
 
     assertEquals("SUCCEEDED", snapshot.status());
-    var selectedBinding = org.mockito.ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
-    verify(publishGateService).collectSelectedFullVersionParticipantDigests(
-        any(VersionDto.class), selectedBinding.capture(),
-        org.mockito.ArgumentMatchers.eq(request.publishWorkflowId()));
-    var expectedBinding = PublicationDigestRequestBinding.full(
-        fixture.reservation().selection().intent().canonicalTenantId().toString(),
-        version.getId().toString(), request.publishRequestId());
+    var selectedBinding =
+        org.mockito.ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
+    verify(publishGateService)
+        .collectSelectedFullVersionParticipantDigests(
+            any(VersionDto.class),
+            selectedBinding.capture(),
+            org.mockito.ArgumentMatchers.eq(request.publishWorkflowId()));
+    var expectedBinding =
+        PublicationDigestRequestBinding.full(
+            fixture.reservation().selection().intent().canonicalTenantId().toString(),
+            version.getId().toString(),
+            request.publishRequestId());
     assertEquals(expectedBinding.tenantId(), selectedBinding.getValue().tenantId());
     assertEquals(expectedBinding.versionId(), selectedBinding.getValue().versionId());
     assertEquals(expectedBinding.scopeKind(), selectedBinding.getValue().scopeKind());
     assertEquals(expectedBinding.requestDigest(), selectedBinding.getValue().requestDigest());
     assertEquals(request.publishWorkflowId(), selectedBinding.getValue().derivedWorkflowIdentity());
-    verify(publishGateService, never()).collectFullVersionParticipantDigests(
-        any(VersionDto.class), any(String.class), any(String.class));
+    verify(publishGateService, never())
+        .collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class));
     verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
 
     assertEquals(10L, snapshot.versionId());
@@ -2111,7 +2119,8 @@ class VersionPublishCommandServiceImplTest {
         reflectiveUnitHarnessReconcileSelectedPublicationMechanics(fixture.request());
 
     assertEquals("FAILED", snapshot.status());
-    verify(publishGateService, never()).assertSelectedGatePassed(any(VersionDto.class), any(List.class));
+    verify(publishGateService, never())
+        .assertSelectedGatePassed(any(VersionDto.class), any(List.class));
     verify(versionAssetArtifactService, never())
         .stageExport(any(String.class), any(Long.class), any(Integer.class), any(String.class));
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
@@ -2121,25 +2130,35 @@ class VersionPublishCommandServiceImplTest {
   @ValueSource(ints = {0, 1, 2, 3, 4})
   void freshSelectedPublishRefusesEachNoncanonicalParticipantSchemaBeforeEffects(int index)
       throws Exception {
-    // These unit carriers are controlled; the actual contract validator must reject every downgrade.
+    // These unit carriers are controlled; the actual contract validator must reject every
+    // downgrade.
     SelectedPublishFixture fixture = selectedPublishFixture(1);
     var vector = new java.util.ArrayList<>(participantDigests());
     var original = vector.get(index);
-    vector.set(index, new PublishParticipantDigestDto(
-        original.participantKey(), original.scopeValue(), original.baseVersionId(),
-        original.appliedCommitId(), original.contentDigest(), original.digestSchemaVersion() + 1,
-        original.abilitySchemaDigest(), original.errorCode(), original.errorMessage()));
+    vector.set(
+        index,
+        new PublishParticipantDigestDto(
+            original.participantKey(),
+            original.scopeValue(),
+            original.baseVersionId(),
+            original.appliedCommitId(),
+            original.contentDigest(),
+            original.digestSchemaVersion() + 1,
+            original.abilitySchemaDigest(),
+            original.errorCode(),
+            original.errorMessage()));
     when(publishGateService.collectSelectedFullVersionParticipantDigests(
-        any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
+            any(VersionDto.class), any(PublicationDigestRequestBinding.class), any(String.class)))
         .thenReturn(vector);
 
     var result = reflectiveUnitHarnessReconcileSelectedPublicationMechanics(fixture.request());
 
     assertEquals("FAILED", result.status());
-    verify(publishGateService, never()).assertSelectedGatePassed(any(VersionDto.class), any(List.class));
+    verify(publishGateService, never())
+        .assertSelectedGatePassed(any(VersionDto.class), any(List.class));
     verify(publishGateService, never()).assertGatePassed(any(VersionDto.class), any(List.class));
-    verify(versionAssetArtifactService, never()).stageExport(
-        any(String.class), any(Long.class), any(Integer.class), any(String.class));
+    verify(versionAssetArtifactService, never())
+        .stageExport(any(String.class), any(Long.class), any(Integer.class), any(String.class));
     verify(assetExportService, never()).exportAssets(any(String.class), any(Integer.class));
   }
 
@@ -2952,7 +2971,15 @@ class VersionPublishCommandServiceImplTest {
             null,
             null),
         new PublishParticipantDigestDto(
-            "AUTOMATION_SCRIPTING", "10", null, appliedCommitId, "e".repeat(64), 6, null, null, null),
+            "AUTOMATION_SCRIPTING",
+            "10",
+            null,
+            appliedCommitId,
+            "e".repeat(64),
+            6,
+            null,
+            null,
+            null),
         new PublishParticipantDigestDto(
             "GAME_DESIGN_CONTROL_PLANE",
             "10",

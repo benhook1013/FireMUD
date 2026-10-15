@@ -196,8 +196,8 @@ class SelectedDraftPublicationDigestReadServiceTest {
         new GameDesignSourceRepository.SynchronizedSources(
             fixture.sources().command(),
             fixture.sources().policy(),
-            fixture.sources().asset(),
-            fixture.sources().gameplay(),
+            fixture.sources().assetEvidence(),
+            fixture.sources().gameplayEvidence(),
             Optional.empty(),
             fixture.sources().templateConfig());
     when(owner.readSynchronized(fixture.binding().target(), fixture.binding().commitId()))
@@ -223,8 +223,8 @@ class SelectedDraftPublicationDigestReadServiceTest {
         new GameDesignSourceRepository.SynchronizedSources(
             fixture.sources().command(),
             fixture.sources().policy(),
-            changedAsset,
-            fixture.sources().gameplay(),
+            Optional.of(changedAsset),
+            fixture.sources().gameplayEvidence(),
             fixture.sources().branding(),
             fixture.sources().templateConfig());
     when(owner.readSynchronized(fixture.binding().target(), fixture.binding().commitId()))
@@ -249,6 +249,30 @@ class SelectedDraftPublicationDigestReadServiceTest {
     when(owner.readSynchronized(fixture.binding().target(), fixture.binding().commitId()))
         .thenReturn(Optional.of(sources(anotherCommit)));
     assertCode(Status.Code.FAILED_PRECONDITION, () -> service.read(NAMESPACE, request));
+  }
+
+  @Test
+  void absentFrozenFamilyDeniesBeforeSynchronizedSourceRead() throws Exception {
+    var fixture = fixture();
+    var request = request(fixture.operation());
+    when(transactions.getTransaction(any())).thenReturn(transactionStatus);
+    when(owner.read(request.derivedWorkflowIdentity()))
+        .thenReturn(Optional.of(new GameDesignPublicationOperationRepository.Readback(
+            fixture.operation(), "PENDING", new byte[] {1})));
+    var complete = fixture.capture();
+    var missingFamilies = List.of(
+        new GameDesignSourceRepository.Capture(complete.command(), complete.policy(),
+            Optional.empty(), complete.branding(), complete.templateConfig()),
+        new GameDesignSourceRepository.Capture(complete.command(), complete.policy(),
+            complete.asset(), Optional.empty(), complete.templateConfig()),
+        new GameDesignSourceRepository.Capture(complete.command(), complete.policy(),
+            complete.asset(), complete.branding(), Optional.empty()));
+    var service = new SelectedDraftPublicationDigestReadService(owner, transactions, NAMESPACE);
+    for (var missing : missingFamilies) {
+      when(owner.readSourceCapture(fixture.operation())).thenReturn(Optional.of(missing));
+      assertCode(Status.Code.FAILED_PRECONDITION, () -> service.read(NAMESPACE, request));
+    }
+    verify(owner, never()).readSynchronized(any(), any());
   }
 
   private static PublicationDigestRequestBinding request(GameDesignPublicationOperation operation) {
@@ -276,10 +300,10 @@ class SelectedDraftPublicationDigestReadServiceTest {
         new GameDesignSourceRepository.Capture(
             new CommandSnapshot.Capture(operation, sources.command()),
             new RealmPolicySnapshot.Capture(operation, sources.policy()),
-            new AssetSnapshot.Capture(operation, sources.asset()),
-            new BrandingSourceSnapshot.Capture(operation, sources.branding().orElseThrow()),
-            new TemplateConfigSourceSnapshot.Capture(
-                operation, sources.templateConfig().orElseThrow()));
+            Optional.of(new AssetSnapshot.Capture(operation, sources.asset())),
+            Optional.of(new BrandingSourceSnapshot.Capture(operation, sources.branding().orElseThrow())),
+            Optional.of(new TemplateConfigSourceSnapshot.Capture(
+                operation, sources.templateConfig().orElseThrow())));
     return new Fixture(operation, binding, sources, capture);
   }
 
@@ -307,7 +331,7 @@ class SelectedDraftPublicationDigestReadServiceTest {
         new TemplateConfigSourceSnapshot(
             binding, "0", null, UUID.fromString("66666666-6666-4666-8666-666666666666"), List.of());
     return new GameDesignSourceRepository.SynchronizedSources(
-        command, policy, asset, gameplay, Optional.of(branding), Optional.of(template));
+        command, policy, Optional.of(asset), Optional.of(gameplay), Optional.of(branding), Optional.of(template));
   }
 
   private static void assertCode(Status.Code expected, Runnable action) {

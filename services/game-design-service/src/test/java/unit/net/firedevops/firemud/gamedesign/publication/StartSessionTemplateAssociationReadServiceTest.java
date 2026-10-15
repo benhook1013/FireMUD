@@ -46,21 +46,11 @@ class StartSessionTemplateAssociationReadServiceTest {
 
   @Test
   void configuredReleaseSelectionRetainsV2AndAcceptsOnlyFullV4() {
-    assertThat(
-            StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v2"))
-        .isTrue();
-    assertThat(
-            StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v4"))
-        .isTrue();
-    assertThat(
-            StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v1"))
-        .isFalse();
-    assertThat(
-            StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v3"))
-        .isFalse();
-    assertThat(
-            StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema(null))
-        .isFalse();
+    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v2")).isTrue();
+    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v4")).isTrue();
+    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v1")).isFalse();
+    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v3")).isFalse();
+    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema(null)).isFalse();
   }
 
   @Test

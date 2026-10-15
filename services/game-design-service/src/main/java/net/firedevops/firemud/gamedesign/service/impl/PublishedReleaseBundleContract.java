@@ -161,8 +161,7 @@ final class PublishedReleaseBundleContract {
       WorldPublishedStartLocationEvidence evidence) {
     if (SELECTOR_ATTESTATION_SCHEMA_VERSION.equals(stored.attestationSchemaVersion())) {
       requireSelectorBinding(stored);
-    } else if (SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(
-        stored.attestationSchemaVersion())) {
+    } else if (SELECTED_FULL_ATTESTATION_SCHEMA_VERSION.equals(stored.attestationSchemaVersion())) {
       requireSelectedFullBinding(stored);
     } else {
       throw new IllegalStateException(

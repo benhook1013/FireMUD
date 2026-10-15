@@ -191,9 +191,9 @@ public final class SelectedDraftPublicationDigestReadService {
         new byte[][] {
           capture.command().operation().canonicalBytes(),
           capture.policy().operation().canonicalBytes(),
-          capture.asset().operation().canonicalBytes(),
-          capture.branding().operation().canonicalBytes(),
-          capture.templateConfig().operation().canonicalBytes()
+          capture.asset().orElseThrow(() -> new IllegalStateException("Complete frozen asset source capture unavailable")).operation().canonicalBytes(),
+          capture.branding().orElseThrow(() -> new IllegalStateException("Complete frozen branding source capture unavailable")).operation().canonicalBytes(),
+          capture.templateConfig().orElseThrow(() -> new IllegalStateException("Complete frozen templateConfig source capture unavailable")).operation().canonicalBytes()
         }) {
       if (!Arrays.equals(operationBytes, retainedOperation)) {
         throw new IllegalStateException("Frozen source capture differs from exact operation");
@@ -220,7 +220,12 @@ public final class SelectedDraftPublicationDigestReadService {
     if (!selected.equals(synchronizedSources.command().binding())
         || !selected.equals(synchronizedSources.policy().binding())
         || !selected.equals(synchronizedSources.asset().binding())
-        || !selected.equals(synchronizedSources.gameplayEvidence().orElseThrow(() -> new IllegalStateException("Selected gameplay source unavailable")).binding())
+        || !selected.equals(
+            synchronizedSources
+                .gameplayEvidence()
+                .orElseThrow(
+                    () -> new IllegalStateException("Selected gameplay source unavailable"))
+                .binding())
         || !selected.equals(branding.binding())
         || !selected.equals(templateConfig.binding())
         || !Arrays.equals(
@@ -230,11 +235,11 @@ public final class SelectedDraftPublicationDigestReadService {
             frozen.policy().snapshot().canonicalBytes(),
             synchronizedSources.policy().canonicalBytes())
         || !Arrays.equals(
-            frozen.asset().snapshot().canonicalBytes(),
+            frozen.asset().orElseThrow(() -> new IllegalStateException("Complete frozen asset source capture unavailable")).snapshot().canonicalBytes(),
             synchronizedSources.asset().canonicalBytes())
-        || !Arrays.equals(frozen.branding().snapshot().canonicalBytes(), branding.canonicalBytes())
+        || !Arrays.equals(frozen.branding().orElseThrow(() -> new IllegalStateException("Complete frozen branding source capture unavailable")).snapshot().canonicalBytes(), branding.canonicalBytes())
         || !Arrays.equals(
-            frozen.templateConfig().snapshot().canonicalBytes(), templateConfig.canonicalBytes())) {
+            frozen.templateConfig().orElseThrow(() -> new IllegalStateException("Complete frozen templateConfig source capture unavailable")).snapshot().canonicalBytes(), templateConfig.canonicalBytes())) {
       throw new IllegalStateException(
           "Frozen and synchronized source snapshots differ from the complete selected commit");
     }

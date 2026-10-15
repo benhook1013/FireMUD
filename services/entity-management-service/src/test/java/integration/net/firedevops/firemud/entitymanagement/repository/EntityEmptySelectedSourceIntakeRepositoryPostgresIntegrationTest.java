@@ -304,8 +304,7 @@ class EntityEmptySelectedSourceIntakeRepositoryPostgresIntegrationTest {
                 receipt.targetNamespace(),
                 receipt.intakeRequestId())
             .get(0, String.class);
-    assertThat(rowAfterMismatchedPublicationRead)
-        .isEqualTo(rowBeforeMismatchedPublicationRead);
+    assertThat(rowAfterMismatchedPublicationRead).isEqualTo(rowBeforeMismatchedPublicationRead);
   }
 
   @Test

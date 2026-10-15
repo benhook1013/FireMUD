@@ -57,7 +57,6 @@ import net.firedevops.firemud.common.publication.AccountPublicationAuthorization
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.publication.SelectedOwnerWorldInventoryReadEvidence;
-import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntityEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.entitymanagement.sourceintake.EntitySelectedEmptyPublicationDigestGrpcReceiver;
@@ -266,14 +265,13 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             automationAuthorization,
             new SelectedOwnerWorldInventoryReadEvidence(
                 automationWorldRead, worldOwners.inventoryEvidence()));
-    var automationRepository =
-        new AutomationEmptySelectedSourceIntakeRepository(automation.dsl());
+    var automationRepository = new AutomationEmptySelectedSourceIntakeRepository(automation.dsl());
     var automationReceipt =
         automationRepository.retainFresh(
             automationInputs,
             net.firedevops.firemud.common.automation.sourceintake
                 .AutomationEmptySelectedSourceIntakeReceipt.requestDigest(
-                    NAMESPACE, automationAuthorization, worldOwners.freezeEvidence()));
+                NAMESPACE, automationAuthorization, worldOwners.freezeEvidence()));
     assertThat(
             automationRepository
                 .read(automationReceipt.targetNamespace(), automationReceipt.intakeRequestId())
@@ -286,7 +284,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                     automationInputs,
                     net.firedevops.firemud.common.automation.sourceintake
                         .AutomationEmptySelectedSourceIntakeReceipt.requestDigest(
-                            NAMESPACE, automationAuthorization, worldOwners.freezeEvidence()))
+                        NAMESPACE, automationAuthorization, worldOwners.freezeEvidence()))
                 .canonicalBytes())
         .containsExactly(automationReceipt.canonicalBytes());
 
@@ -599,8 +597,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
   private static AuthoredWorldSourceEvidence registerControlledWorldSource(
       Store gds, TargetProof target) {
     var repository = new GameAuthoredWorldSourceRepository(gds.dsl());
-    return gds
-        .write()
+    return gds.write()
         .execute(
             ignored ->
                 repository.register(
@@ -649,7 +646,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK,
             WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE,
             WorldInboundSourceFamily.WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING)) {
-      inbound.addFamilyCounts(WorldInboundSourceFamilyCount.newBuilder().setFamily(family).setCount(0));
+      inbound.addFamilyCounts(
+          WorldInboundSourceFamilyCount.newBuilder().setFamily(family).setCount(0));
     }
     var declaration =
         WorldFreshGraphDeclaration.newBuilder()
@@ -665,17 +663,32 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             .build();
     var mutations =
         List.of(
-            mutation(commitId, roomId, regionId, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM)
+            mutation(
+                    commitId,
+                    roomId,
+                    regionId,
+                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM)
                 .setRoom(
                     RoomDesignMutation.newBuilder()
                         .setName("Controlled starting room")
                         .setZoneId(zoneId.toString())
                         .setDescription("Controlled World owner input"))
                 .build(),
-            mutation(commitId, zoneId, regionId, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE)
-                .setZone(ZoneDesignMutation.newBuilder().setName("Controlled zone").setRegionId(regionId.toString()))
+            mutation(
+                    commitId,
+                    zoneId,
+                    regionId,
+                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE)
+                .setZone(
+                    ZoneDesignMutation.newBuilder()
+                        .setName("Controlled zone")
+                        .setRegionId(regionId.toString()))
                 .build(),
-            mutation(commitId, regionId, regionId, WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
+            mutation(
+                    commitId,
+                    regionId,
+                    regionId,
+                    WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION)
                 .setRegion(
                     RegionDesignMutation.newBuilder()
                         .setName("Controlled region")
@@ -694,7 +707,10 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             + "\"effects\":[]}";
     revisions.add(
         new RevisionPayload(
-            "0", UUID.randomUUID(), Owner.GAME_DESIGN_CONTROL_PLANE, CommandSource.upsertPayload(commandJson)));
+            "0",
+            UUID.randomUUID(),
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            CommandSource.upsertPayload(commandJson)));
     units.add(
         new AffectedUnit(
             Owner.GAME_DESIGN_CONTROL_PLANE,
@@ -725,7 +741,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
               UUID.fromString(mutation.getLogicalRevisionId()),
               Owner.WORLD_MANAGEMENT,
               JsonFormat.printer().omittingInsignificantWhitespace().print(mutation)));
-      String family = mutation.getAggregateType().name().replace("WORLD_DESIGN_AGGREGATE_TYPE_", "");
+      String family =
+          mutation.getAggregateType().name().replace("WORLD_DESIGN_AGGREGATE_TYPE_", "");
       units.add(
           new AffectedUnit(
               Owner.WORLD_MANAGEMENT,
@@ -775,7 +792,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                       .resolve(binding.target(), DraftBaseReference.parse(binding.baseCommitId()));
               sources.claimReviewed(binding, reviewed);
               coordinator.claimApplicationSlot(binding);
-              for (Owner owner : binding.requiredOwners()) coordinator.markOwnerInProgress(binding, owner);
+              for (Owner owner : binding.requiredOwners())
+                coordinator.markOwnerInProgress(binding, owner);
               return null;
             });
   }
@@ -786,8 +804,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       net.firedevops.firemud.worldmanagement.tenant.WorldDraftGraphAppliedResult worldApplied) {
     var coordinator = new DraftCommitCoordinatorRepository(gds.dsl());
     var sources = new GameDesignSourceRepository(gds.dsl());
-    var gameDesignApplied =
-        gds.write().execute(ignored -> sources.apply(binding));
+    var gameDesignApplied = gds.write().execute(ignored -> sources.apply(binding));
     var worldOutcome =
         new DraftCommitCoordinatorRepository.OwnerOutcome(
             Owner.WORLD_MANAGEMENT,
@@ -839,10 +856,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
   }
 
   private static SelectedOwnerIntakeAuthorizationBinding selectedOwnerAuthorization(
-      Store gds,
-      AuthoredDraftPublishSelection selection,
-      Owner recipient,
-      UUID actor) {
+      Store gds, AuthoredDraftPublishSelection selection, Owner recipient, UUID actor) {
     var scope =
         new SelectedOwnerIntakeSourceReadScope(
             recipient,
@@ -852,15 +866,15 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             UUID.randomUUID(),
             actor,
             selection.selectedCommit());
-    var content =
-        new GameDesignSourceRepository(gds.dsl()).requireSelectedOwnerIntakeSource(scope);
+    var content = new GameDesignSourceRepository(gds.dsl()).requireSelectedOwnerIntakeSource(scope);
     return new SelectedOwnerIntakeAuthorizationBinding(
         content, controlledAccountSources(actor, selection.target().canonicalTenantId()));
   }
 
   private static List<DraftAuthorizationFenceBinding.SourceEvidence> controlledAccountSources(
       UUID actor, UUID tenant) {
-    byte[] evidence = "TEST_ONLY controlled upstream Account source input".getBytes(StandardCharsets.UTF_8);
+    byte[] evidence =
+        "TEST_ONLY controlled upstream Account source input".getBytes(StandardCharsets.UTF_8);
     return List.of(
         new DraftAuthorizationFenceBinding.SourceEvidence(
             DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
@@ -913,7 +927,10 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
 
   private static ExportedAssetManifest controlledEmptyManifest() throws Exception {
     String hash =
-        HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest("[]".getBytes(StandardCharsets.UTF_8)));
+        HexFormat.of()
+            .formatHex(
+                java.security.MessageDigest.getInstance("SHA-256")
+                    .digest("[]".getBytes(StandardCharsets.UTF_8)));
     return new ExportedAssetManifest("sha256:" + hash, 1, List.of(), List.of());
   }
 
@@ -935,8 +952,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     var identity = pki.server(service);
     return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
         .sslContext(
-            GrpcSslContexts.forServer(
-                    identity.certificate().toFile(), identity.key().toFile())
+            GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
                 .trustManager(pki.ca().toFile())
                 .clientAuth(ClientAuth.REQUIRE)
                 .build())
@@ -955,7 +971,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       String service, String schemaPrefix, PostgreSQLContainer<?> postgres, boolean saga) {
     String schema = schemaPrefix + "_" + UUID.randomUUID().toString().replace("-", "");
     var dataSource =
-        new DriverManagerDataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
     dataSource.setSchema(schema);
     String history = "flyway_schema_history_" + service.replace('-', '_');
     var flyway =
@@ -975,7 +992,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
           .setTransactionalLock(false);
     }
     flyway.load().migrate();
-    DSLContext dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     var manager = new DataSourceTransactionManager(dataSource);
     return new Store(schema, dsl, manager);
   }
@@ -1004,7 +1022,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       if (Files.isDirectory(current.resolve("services/game-design-service"))) return current;
       current = current.getParent();
     }
-    throw new IllegalStateException("Repository root is unavailable for current-default migrations");
+    throw new IllegalStateException(
+        "Repository root is unavailable for current-default migrations");
   }
 
   private record Draft(Version version, TargetProof target) {}
@@ -1112,11 +1131,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     }
 
     private static Identity issue(
-        Path root,
-        String service,
-        boolean server,
-        KeyPair caKeys,
-        X509Certificate caCertificate)
+        Path root, String service, boolean server, KeyPair caKeys, X509Certificate caCertificate)
         throws Exception {
       KeyPair pair = keys();
       var now = java.time.Instant.now();
@@ -1136,7 +1151,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       builder.addExtension(
           Extension.extendedKeyUsage,
           false,
-          new ExtendedKeyUsage(server ? KeyPurposeId.id_kp_serverAuth : KeyPurposeId.id_kp_clientAuth));
+          new ExtendedKeyUsage(
+              server ? KeyPurposeId.id_kp_serverAuth : KeyPurposeId.id_kp_clientAuth));
       builder.addExtension(
           Extension.subjectAlternativeName,
           false,

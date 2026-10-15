@@ -19,4 +19,5 @@ dependencies {
 
     testImplementation(libs.spring.boot.starter.test)
     testImplementation(testFixtures(project(":common-platform-core")))
+    testImplementation(testFixtures(project(":common-test-support")))
 }

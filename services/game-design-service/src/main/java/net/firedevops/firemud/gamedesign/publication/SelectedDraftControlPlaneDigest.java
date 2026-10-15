@@ -58,8 +58,16 @@ public record SelectedDraftControlPlaneDigest(
             new Snapshot("ASSET", sources.asset().binding(), sources.asset().canonicalBytes()),
             new Snapshot(
                 "GAMEPLAY_SOURCE",
-                sources.gameplayEvidence().orElseThrow(() -> new IllegalStateException("Selected gameplay source unavailable")).binding(),
-                sources.gameplayEvidence().orElseThrow(() -> new IllegalStateException("Selected gameplay source unavailable")).canonicalBytes()),
+                sources
+                    .gameplayEvidence()
+                    .orElseThrow(
+                        () -> new IllegalStateException("Selected gameplay source unavailable"))
+                    .binding(),
+                sources
+                    .gameplayEvidence()
+                    .orElseThrow(
+                        () -> new IllegalStateException("Selected gameplay source unavailable"))
+                    .canonicalBytes()),
             new Snapshot("BRANDING", branding.binding(), branding.canonicalBytes()),
             new Snapshot(
                 "TEMPLATE_CONFIG", templateConfig.binding(), templateConfig.canonicalBytes()));
