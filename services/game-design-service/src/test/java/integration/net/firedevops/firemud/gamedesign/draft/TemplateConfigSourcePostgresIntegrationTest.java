@@ -1276,7 +1276,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
             sourceOperationId,
             sourceEvidenceDigest,
             WorldAuthoredSourceIntakeGrpcCodec.requestDigest(binding),
-            "a".repeat(64),
+            "sha256:" + "a".repeat(64),
             source);
     return new SelectedDraftTemplateWorldSourceAssociation.SourceRead(
         new WorldAuthoredSourceIntakeGrpcCodec.ByIdReadRequest(
@@ -1326,9 +1326,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
 
   /** Retains controlled World owner/source inputs without reserving the publication under test. */
   private void applyIsolatedWorldSuccessor(
-      Fixture f,
-      DraftCommitBinding binding,
-      WorldPublishedStartLocationEvidence worldEvidence) {
+      Fixture f, DraftCommitBinding binding, WorldPublishedStartLocationEvidence worldEvidence) {
     f.tx.executeWithoutResult(
         ignored -> {
           var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
