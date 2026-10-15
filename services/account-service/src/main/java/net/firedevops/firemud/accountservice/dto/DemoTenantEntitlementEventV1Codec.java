@@ -1,7 +1,6 @@
 package net.firedevops.firemud.accountservice.dto;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -11,6 +10,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import tools.jackson.core.StreamReadFeature;
@@ -226,8 +226,7 @@ public final class DemoTenantEntitlementEventV1Codec {
     if (requestId == null || NIL_UUID.equals(requestId)) {
       throw new IllegalArgumentException("Demo entitlement request ID is required");
     }
-    return UUID.nameUUIDFromBytes(
-        (SCHEMA_VERSION + ":" + requestId).getBytes(StandardCharsets.UTF_8));
+    return TenantAuthorityEventV1Codec.tenantBillingEventId(requestId);
   }
 
   private static Map<String, Object> eventFields(

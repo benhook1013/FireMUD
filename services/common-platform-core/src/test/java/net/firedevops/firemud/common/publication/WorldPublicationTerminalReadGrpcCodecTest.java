@@ -113,6 +113,32 @@ class WorldPublicationTerminalReadGrpcCodecTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void rejectsOversizedWireMessagesBeforeDecodingTheirByteFields() throws Exception {
+    int oversized = WorldPublicationTerminalCompletionGrpcCodec.MAX_MESSAGE_BYTES;
+    var oversizedRequest =
+        ReadPublicationTerminalRequest.newBuilder()
+            .setOriginalOperation(ByteString.copyFrom(new byte[oversized]))
+            .build();
+    assertThatThrownBy(() -> WorldPublicationTerminalReadGrpcCodec.fromRequest(oversizedRequest))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("World publication terminal read exceeds the 32 MiB wire budget");
+
+    var oversizedResponse =
+        net.firedevops.firemud.worldmanagement.v1.ReadPublicationTerminalResponse.newBuilder()
+            .setWorldTerminalEvidence(ByteString.copyFrom(new byte[oversized]))
+            .build();
+    var operation = WorldPublicationTerminalTestFixtures.operation();
+    var terminal = WorldPublicationTerminalTestFixtures.terminal(operation, Outcome.NO_PUBLICATION);
+    var request =
+        WorldPublicationTerminalReadEvidence.Request.create(
+            "test", operation.canonicalBytes(), terminal.canonicalBytes());
+    assertThatThrownBy(
+            () -> WorldPublicationTerminalReadGrpcCodec.fromResponse(request, oversizedResponse))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("World publication terminal read exceeds the 32 MiB wire budget");
+  }
+
   private static UnknownFieldSet unknown() {
     return UnknownFieldSet.newBuilder()
         .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
