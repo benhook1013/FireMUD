@@ -92,6 +92,37 @@ class WorldCompleteLaunchBindingServiceTest {
   }
 
   @Test
+  void sharedGameSessionBindingComparatorRequiresTheExactSelectorAndCompletePair() {
+    CommittedLaunchFixture fixture = committedLaunchFixture();
+    assertThat(
+            WorldCompleteLaunchBindingService.hasExactGameSessionBinding(
+                fixture.request(), fixture.associationResult(), fixture.evidence()))
+        .isTrue();
+
+    var changedRequest =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+            UUID.randomUUID(),
+            fixture.request().targetNamespace(),
+            fixture.request().canonicalTenantId(),
+            fixture.request().worldSlug(),
+            fixture.request().gameInstanceUuid(),
+            fixture.request().controlPlaneRequestId(),
+            fixture.request().launchDescriptorId(),
+            fixture.request().expectedDescriptorRequestDigest(),
+            fixture.request().expectedDescriptorResultDigest(),
+            fixture.request().expectedReleaseAttestationEvidenceDigest());
+
+    assertThat(
+            WorldCompleteLaunchBindingService.hasExactGameSessionBinding(
+                changedRequest, fixture.associationResult(), fixture.evidence()))
+        .isFalse();
+    assertThat(
+            WorldCompleteLaunchBindingService.hasExactGameSessionBinding(
+                fixture.request(), null, fixture.evidence()))
+        .isFalse();
+  }
+
+  @Test
   void committedLaunchRequiresSameNamespaceGameSessionWithoutEndUserContextBeforeAccess() {
     CommittedLaunchFixture fixture = committedLaunchFixture();
     WorldCompleteLaunchBindingService committedService = committedLaunchService();
@@ -995,6 +1026,8 @@ class WorldCompleteLaunchBindingServiceTest {
             7L,
             UUID.fromString("cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"),
             1L,
+            UUID.fromString("dededede-dede-4ded-8ded-dededededede"),
+            3L,
             pair);
     WorldCompleteLaunchBindingReceipt receipt = mock(WorldCompleteLaunchBindingReceipt.class);
     when(receipt.targetNamespace()).thenReturn(NAMESPACE);

@@ -678,18 +678,25 @@ public final class WorldCompleteLaunchBindingService {
       CanonicalGameInstanceLaunchAssociationReadEvidence.Request request,
       CanonicalGameInstanceLaunchAssociationReadEvidence.Result result,
       CompleteLaunchBindingEvidence expected) {
-    if (result == null
-        || !request.equals(result.request())
-        || result.playableStateScope()
-            != net.firedevops.firemud.common.publication.RealmEntryPolicy.StateScope.SHARED
-        || !result.publicProduction()
-        || !expected.equals(result.launchBindingEvidence())
-        || !expected.descriptor().equals(result.launchBindingEvidence().descriptor())
-        || !expected
-            .releaseAttestation()
-            .equals(result.launchBindingEvidence().releaseAttestation())) {
+    if (!hasExactGameSessionBinding(request, result, expected)) {
       throw new WorldCompleteLaunchBindingRepository.RegistrationConflictException(
           "Game Session association differs from the exact World selector or release pair");
     }
+  }
+
+  static boolean hasExactGameSessionBinding(
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Request request,
+      CanonicalGameInstanceLaunchAssociationReadEvidence.Result result,
+      CompleteLaunchBindingEvidence expected) {
+    return result != null
+        && request.equals(result.request())
+        && result.playableStateScope()
+            == net.firedevops.firemud.common.publication.RealmEntryPolicy.StateScope.SHARED
+        && result.publicProduction()
+        && expected.equals(result.launchBindingEvidence())
+        && expected.descriptor().equals(result.launchBindingEvidence().descriptor())
+        && expected
+            .releaseAttestation()
+            .equals(result.launchBindingEvidence().releaseAttestation());
   }
 }
