@@ -22,8 +22,6 @@ public final class WorldOriginalDraftGraphApplyClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public WorldOriginalDraftGraphApplyClient(
       ServiceEndpointsProperties endpoints,
@@ -42,18 +40,10 @@ public final class WorldOriginalDraftGraphApplyClient
   }
 
   /** Initializes only when the owning Game Design service explicitly starts this opt-in client. */
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException("World original graph apply client is closed");
-    }
-    if (initialized) {
-      return;
-    }
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("World original graph apply client has no gRPC stub");
-    }
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "World original graph apply client is closed",
+        "World original graph apply client has no gRPC stub");
   }
 
   /**
@@ -67,7 +57,7 @@ public final class WorldOriginalDraftGraphApplyClient
           "World original graph apply request must use the configured workload namespace");
     }
     var response =
-        requireStub()
+        requireInitializedStub("World original graph apply client is not initialized and available")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .applyOriginalDraftGraph(WorldOriginalDraftGraphApplyGrpcCodec.toRequest(request));
     try {
@@ -100,26 +90,7 @@ public final class WorldOriginalDraftGraphApplyClient
         .withCompression("gzip");
   }
 
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
   public String workloadNamespace() {
     return workloadNamespace;
-  }
-
-  private WorldOriginalDraftGraphApplyServiceGrpc.WorldOriginalDraftGraphApplyServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "World original graph apply client is not initialized and available");
-    }
-    return currentStub;
   }
 }
