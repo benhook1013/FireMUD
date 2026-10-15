@@ -830,6 +830,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       ProofPki pki,
       net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation operation)
       throws Exception {
+    requireAccountClosureInventoryRefusals(accountDsl, operation);
     var gdsOwner =
         new net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationService(
             new net.firedevops.firemud.gamedesign.publication
@@ -962,6 +963,92 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       stop(worldTerminalServer);
       stop(gdsTerminalServer);
     }
+  }
+
+  private static void requireAccountClosureInventoryRefusals(
+      org.jooq.DSLContext dsl,
+      net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation operation)
+      throws Exception {
+    dsl.fetch(
+        "SELECT require_selected_inventory_operation_v2(?::bytea)", operation.canonicalBytes());
+    var mapper = new ObjectMapper();
+    java.util.List<java.util.function.Consumer<tools.jackson.databind.node.ObjectNode>> changes =
+        java.util.List.of(
+            tree ->
+                ((tools.jackson.databind.node.ObjectNode) tree.get("sourceModel"))
+                    .remove("inboundSourceClosure"),
+            tree ->
+                ((tools.jackson.databind.node.ObjectNode)
+                        tree.at("/sourceModel/inboundSourceClosure/familyCounts/0"))
+                    .put("count", 1),
+            tree ->
+                ((tools.jackson.databind.node.ArrayNode)
+                        tree.at("/sourceModel/inboundSourceClosure/familyCounts"))
+                    .remove(6),
+            tree -> {
+              var families =
+                  (tools.jackson.databind.node.ArrayNode)
+                      tree.at("/sourceModel/inboundSourceClosure/familyCounts");
+              families.add(families.remove(0));
+            },
+            tree ->
+                ((tools.jackson.databind.node.ObjectNode)
+                        tree.at("/sourceModel/inboundSourceClosure"))
+                    .put("unknown", 1),
+            tree ->
+                ((tools.jackson.databind.node.ObjectNode) tree.get("sourceModel"))
+                    .put("unknown", 1),
+            tree ->
+                ((tools.jackson.databind.node.ObjectNode) tree.get("sourceModel"))
+                    .put("graphSchemaVersion", 2),
+            tree -> tree.put("schemaVersion", 1),
+            tree ->
+                ((tools.jackson.databind.node.ObjectNode) tree.get("checkpoint"))
+                    .put("digestSchemaVersion", 3));
+    var before =
+        dsl.fetch(
+                "SELECT to_jsonb(r)::text || ':' || r.xmin::text FROM account_selected_publication_authorizations r ORDER BY 1")
+            .getValues(0, String.class);
+    for (var change : changes) {
+      var tree =
+          (tools.jackson.databind.node.ObjectNode)
+              mapper.readTree(operation.inventory().canonicalBytes());
+      change.accept(tree);
+      byte[] inventory = mapper.writeValueAsBytes(tree);
+      var raw = new java.io.ByteArrayOutputStream();
+      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+          raw,
+          net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding.SCHEMA);
+      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+          raw, operation.account().canonicalBytes());
+      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+          raw, operation.world().canonicalBytes());
+      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(raw, inventory);
+      net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+          raw,
+          "sha256:"
+              + java.util.HexFormat.of()
+                  .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(inventory)));
+      assertThatThrownBy(
+              () ->
+                  dsl.fetch(
+                      "SELECT require_selected_inventory_operation_v2(?::bytea)",
+                      raw.toByteArray()))
+          .isInstanceOf(org.jooq.exception.DataAccessException.class)
+          .satisfies(
+              failure -> {
+                var cause = failure;
+                while (cause != null && !(cause instanceof java.sql.SQLException))
+                  cause = cause.getCause();
+                assertThat(cause).isInstanceOf(java.sql.SQLException.class);
+                assertThat(((java.sql.SQLException) cause).getSQLState()).isEqualTo("23514");
+              });
+    }
+    assertThat(
+            dsl.fetch(
+                    "SELECT to_jsonb(r)::text || ':' || r.xmin::text FROM account_selected_publication_authorizations r ORDER BY 1")
+                .getValues(0, String.class))
+        .isEqualTo(before);
   }
 
   private static Draft createDraft(Store gds) {

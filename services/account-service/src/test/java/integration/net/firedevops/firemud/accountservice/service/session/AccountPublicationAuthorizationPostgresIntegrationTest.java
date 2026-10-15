@@ -1008,6 +1008,74 @@ class AccountPublicationAuthorizationPostgresIntegrationTest {
     }
   }
 
+  @Test
+  void closureInventoryUpgradePreservesOriginalLegacySettlementsAndExactReplay() throws Exception {
+    for (var outcome : GameDesignPublicationTerminalEvidence.Outcome.values()) {
+      try (var fixture =
+          new AccountControlUiOriginalOrderFixture(
+              postgres.getJdbcUrl(),
+              postgres.getUsername(),
+              postgres.getPassword(),
+              redis.getHost(),
+              redis.getMappedPort(6379),
+              temporary,
+              UUID.randomUUID(),
+              java.time.Clock.systemUTC(),
+              "1010")) {
+        var issued = fixture.issueCreator();
+        var f = issued.sources();
+        var proof = proof(f, issued.environment());
+        var repository = new AccountPublicationAuthorizationRepository(f.dsl);
+        var order =
+            new AccountPublicationAuthorizationService(issued.actors(), f.fences, repository)
+                .authorize(issued.compact(), proof.selection(), issued.environment());
+        var operation = operation(order, proof.world());
+        var terminal = terminal(operation, outcome);
+        String phase =
+            outcome == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
+                ? "PUBLISHED"
+                : "ABORTED";
+        byte[] receipt =
+            f.tx(() -> repository.settle(operation, terminal, phase, terminal.canonicalBytes()));
+        var before = publicationRetentionRows(f.dsl);
+        f.upgradeToCurrent();
+        assertThat(publicationRetentionRows(f.dsl)).isEqualTo(before);
+        f.dsl.fetch(
+            "SELECT require_selected_inventory_operation_v2(?::bytea)", operation.canonicalBytes());
+        assertThat(
+                f.tx(
+                    () -> repository.settle(operation, terminal, phase, terminal.canonicalBytes())))
+            .containsExactly(receipt);
+        assertThat(publicationRetentionRows(f.dsl)).isEqualTo(before);
+      }
+    }
+  }
+
+  private static java.util.Map<String, java.util.List<String>> publicationRetentionRows(
+      org.jooq.DSLContext dsl) {
+    var result = new java.util.LinkedHashMap<String, java.util.List<String>>();
+    for (String table :
+        java.util.List.of(
+            "account_selected_publication_authorizations",
+            "account_selected_publication_sources",
+            "account_selected_publication_settlements",
+            "account_control_ui_issuance_operations",
+            "flyway_schema_history")) {
+      String filter =
+          table.equals("flyway_schema_history") ? " WHERE version IS DISTINCT FROM '1011'" : "";
+      result.put(
+          table,
+          dsl.fetch(
+                  "SELECT to_jsonb(r)::text || ':' || r.xmin::text FROM "
+                      + table
+                      + " r"
+                      + filter
+                      + " ORDER BY 1")
+              .getValues(0, String.class));
+    }
+    return result;
+  }
+
   private AccountControlUiOriginalOrderFixture fixture() throws Exception {
     return new AccountControlUiOriginalOrderFixture(
         postgres.getJdbcUrl(),
