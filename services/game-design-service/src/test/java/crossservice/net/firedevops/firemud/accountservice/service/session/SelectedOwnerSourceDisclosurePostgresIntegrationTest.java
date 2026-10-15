@@ -33,6 +33,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.gamedesign.draft.DraftCommitCoordinatorRepository;
 import net.firedevops.firemud.gamedesign.draft.GameDesignReviewedBaseRepository;
+import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
@@ -62,126 +63,317 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Actual Account V1007 preliminary permission and independent GD six-family disclosure owners.
- * Creator, environment, PKI, selected author admission/readbacks and authored inputs are controlled;
- * no final intake authorization, recipient retention, genuine provenance or registration is proved.
+ * Creator, environment, PKI, selected author admission/readbacks and authored inputs are
+ * controlled; no final intake authorization, recipient retention, genuine provenance or
+ * registration is proved.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
   private static final String NAMESPACE = "firemud";
   private static final Network NETWORK = Network.newNetwork();
-  @Container static final PostgreSQLContainer<?> GDS = new PostgreSQLContainer<>(TestContainerImages.postgres());
-  @Container static final PostgreSQLContainer<?> ACCOUNT = new PostgreSQLContainer<>(TestContainerImages.postgres());
-  @Container static final GenericContainer<?> REDIS = new GenericContainer<>(TestContainerImages.redis())
-      .withNetwork(NETWORK).withNetworkAliases("selected-disclosure-primary")
-      .withExposedPorts(6379)
-      .withCommand("redis-server", "--bind", "0.0.0.0", "--protected-mode", "no", "--appendonly", "yes", "--appendfsync", "always");
-  @Container static final GenericContainer<?> REPLICA = new GenericContainer<>(TestContainerImages.redis())
-      .withNetwork(NETWORK).dependsOn(REDIS)
-      .withCommand("redis-server", "--bind", "0.0.0.0", "--protected-mode", "no", "--appendonly", "yes", "--appendfsync", "always", "--replicaof", "selected-disclosure-primary", "6379");
+
+  @Container
+  static final PostgreSQLContainer<?> GDS =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static final PostgreSQLContainer<?> ACCOUNT =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static final GenericContainer<?> REDIS =
+      new GenericContainer<>(TestContainerImages.redis())
+          .withNetwork(NETWORK)
+          .withNetworkAliases("selected-disclosure-primary")
+          .withExposedPorts(6379)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always");
+
+  @Container
+  static final GenericContainer<?> REPLICA =
+      new GenericContainer<>(TestContainerImages.redis())
+          .withNetwork(NETWORK)
+          .dependsOn(REDIS)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always",
+              "--replicaof",
+              "selected-disclosure-primary",
+              "6379");
+
   @TempDir Path temporary;
 
   @Test
-  void actualPreliminaryPermissionDisclosesExactSixFamiliesAndAbortPermanentlyRefuses() throws Exception {
+  void actualPreliminaryPermissionDisclosesExactSixFamiliesAndAbortPermanentlyRefuses()
+      throws Exception {
     var local = sourceStore();
-    try (var fixture = new AccountControlUiOriginalOrderFixture(
-        ACCOUNT.getJdbcUrl(), ACCOUNT.getUsername(), ACCOUNT.getPassword(), REDIS.getHost(),
-        REDIS.getMappedPort(6379), temporary.resolve("account"), local.binding().target().canonicalTenantId(),
-        Clock.systemUTC(), "1007")) {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            ACCOUNT.getJdbcUrl(),
+            ACCOUNT.getUsername(),
+            ACCOUNT.getPassword(),
+            REDIS.getHost(),
+            REDIS.getMappedPort(6379),
+            temporary.resolve("account"),
+            local.binding().target().canonicalTenantId(),
+            Clock.systemUTC(),
+            "1007")) {
       var issued = fixture.preparedOriginalCreator();
       var f = issued.sources();
-      assertThat(f.dsl.fetchSingle("SELECT count(*) FROM flyway_schema_history WHERE version IN ('1008','1009','1010')").get(0, Integer.class)).isZero();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT count(*) FROM flyway_schema_history WHERE version IN ('1008','1009','1010')")
+                  .get(0, Integer.class))
+          .isZero();
       retainControlledSelectedAuthorAdmission(issued, local.binding());
-      var reservations = new AccountSelectedOwnerIntakeSourceReservationService(
-          issued.actors(), f.fences, new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl), f.manager, NAMESPACE);
+      var reservations =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(),
+              f.fences,
+              new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl),
+              f.manager,
+              NAMESPACE);
       var pki = new GenuineWorldSourceProofPki(temporary.resolve("pki"));
       var endpoints = new ServiceEndpointsProperties();
       Server accountServer = null;
       Server sourceServer = null;
       try {
-        accountServer = server(pki, "account-service", new AccountSelectedOwnerIntakeSourceReadGrpcService(
-            fixture.selectedOwnerIntakeSourceReadService(NAMESPACE), NAMESPACE));
+        accountServer =
+            server(
+                pki,
+                "account-service",
+                new AccountSelectedOwnerIntakeSourceReadGrpcService(
+                    fixture.selectedOwnerIntakeSourceReadService(NAMESPACE), NAMESPACE));
         endpoints.setAccountService("127.0.0.1:" + accountServer.getPort());
-        try (var permissions = new GrpcSelectedOwnerIntakeSourceReadClient(endpoints,
-            pki.client("game-design-service"), new GrpcChannelFactory(), NAMESPACE)) {
+        try (var permissions =
+            new GrpcSelectedOwnerIntakeSourceReadClient(
+                endpoints,
+                pki.client("game-design-service"),
+                new GrpcChannelFactory(),
+                NAMESPACE)) {
           permissions.init();
           var permissionCalls = new AtomicInteger();
-          var sourceOwner = new GameDesignSelectedOwnerIntakeSourceReadService(
-              new GameDesignSourceRepository(local.dsl()), local.manager(), request -> {
-                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-                assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isFalse();
-                permissionCalls.incrementAndGet();
-                return permissions.read(request);
-              }, NAMESPACE);
-          sourceServer = server(pki, "game-design-service", new GameDesignSelectedOwnerIntakeSourceGrpcService(sourceOwner, NAMESPACE));
+          var sourceOwner =
+              new GameDesignSelectedOwnerIntakeSourceReadService(
+                  new GameDesignSourceRepository(local.dsl()),
+                  local.manager(),
+                  request -> {
+                    assertThat(TransactionSynchronizationManager.isActualTransactionActive())
+                        .isFalse();
+                    assertThat(TransactionSynchronizationManager.isSynchronizationActive())
+                        .isFalse();
+                    permissionCalls.incrementAndGet();
+                    return permissions.read(request);
+                  },
+                  NAMESPACE);
+          sourceServer =
+              server(
+                  pki,
+                  "game-design-service",
+                  new GameDesignSelectedOwnerIntakeSourceGrpcService(sourceOwner, NAMESPACE));
           endpoints.setGameDesignService("127.0.0.1:" + sourceServer.getPort());
-          try (var sources = new GrpcSelectedOwnerIntakeSourceClient(endpoints,
-              pki.client("account-service"), new GrpcChannelFactory(), NAMESPACE);
-              var wrongCaller = new GrpcSelectedOwnerIntakeSourceClient(endpoints,
-                  pki.client("game-design-service"), new GrpcChannelFactory(), NAMESPACE)) {
+          try (var sources =
+                  new GrpcSelectedOwnerIntakeSourceClient(
+                      endpoints,
+                      pki.client("account-service"),
+                      new GrpcChannelFactory(),
+                      NAMESPACE);
+              var wrongCaller =
+                  new GrpcSelectedOwnerIntakeSourceClient(
+                      endpoints,
+                      pki.client("game-design-service"),
+                      new GrpcChannelFactory(),
+                      NAMESPACE)) {
             sources.init();
             wrongCaller.init();
             for (var owner : List.of(Owner.ENTITY_MANAGEMENT, Owner.AUTOMATION_SCRIPTING)) {
               UUID requestId = UUID.randomUUID();
-              var scope = asGameDesign(() -> reservations.reserveSourceRead(issued.compact(), requestId, owner, local.binding(), issued.environment()));
+              var scope =
+                  asGameDesign(
+                      () ->
+                          reservations.reserveSourceRead(
+                              issued.compact(),
+                              requestId,
+                              owner,
+                              local.binding(),
+                              issued.environment()));
               var retained = retainedReservation(f, scope);
               var request = SelectedOwnerIntakeSourceReadEvidence.Request.create(NAMESPACE, scope);
               var content = sources.read(request);
-              var expected = local.tx().execute(ignored -> new GameDesignSourceRepository(local.dsl()).requireSelectedOwnerIntakeSource(scope));
+              var expected =
+                  local
+                      .tx()
+                      .execute(
+                          ignored ->
+                              new GameDesignSourceRepository(local.dsl())
+                                  .requireSelectedOwnerIntakeSource(scope));
               assertThat(content.canonicalBytes()).isEqualTo(expected.canonicalBytes());
               assertThat(content.digest()).isEqualTo(expected.digest());
-              for (String family : List.of("COMMAND", "REALM_POLICY", "ASSET", "GAMEPLAY_RULE", "BRANDING", "TEMPLATE_CONFIG"))
-                assertThat(content.snapshotBytes(family)).isNotEmpty();
-              assertThat(sources.read(SelectedOwnerIntakeSourceReadEvidence.Request.create(NAMESPACE, scope)).canonicalBytes()).isEqualTo(content.canonicalBytes());
-              assertThat(asGameDesign(() -> reservations.reserveSourceRead(issued.compact(), requestId, owner, local.binding(), issued.environment())).canonicalBytes()).isEqualTo(scope.canonicalBytes());
+              for (String family :
+                  List.of(
+                      "COMMAND",
+                      "REALM_POLICY",
+                      "ASSET",
+                      "GAMEPLAY_RULE",
+                      "BRANDING",
+                      "TEMPLATE_CONFIG")) assertThat(content.snapshotBytes(family)).isNotEmpty();
+              assertThat(
+                      sources
+                          .read(
+                              SelectedOwnerIntakeSourceReadEvidence.Request.create(
+                                  NAMESPACE, scope))
+                          .canonicalBytes())
+                  .isEqualTo(content.canonicalBytes());
+              assertThat(
+                      asGameDesign(
+                              () ->
+                                  reservations.reserveSourceRead(
+                                      issued.compact(),
+                                      requestId,
+                                      owner,
+                                      local.binding(),
+                                      issued.environment()))
+                          .canonicalBytes())
+                  .isEqualTo(scope.canonicalBytes());
               assertThat(retainedReservation(f, scope)).isEqualTo(retained);
               int beforeWrongPeer = permissionCalls.get();
-              assertThatThrownBy(() -> wrongCaller.read(request)).isInstanceOf(io.grpc.StatusRuntimeException.class);
+              assertThatThrownBy(() -> wrongCaller.read(request))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class);
               assertThat(permissionCalls).hasValue(beforeWrongPeer);
-              var substituted = new SelectedOwnerIntakeSourceReadScope(owner, NAMESPACE, UUID.randomUUID(), scope.fenceId(), scope.intakeRequestId(), scope.actorAccountId(), scope.selected());
-              assertThatThrownBy(() -> sources.read(SelectedOwnerIntakeSourceReadEvidence.Request.create(NAMESPACE, substituted))).isInstanceOf(io.grpc.StatusRuntimeException.class);
+              var substituted =
+                  new SelectedOwnerIntakeSourceReadScope(
+                      owner,
+                      NAMESPACE,
+                      UUID.randomUUID(),
+                      scope.fenceId(),
+                      scope.intakeRequestId(),
+                      scope.actorAccountId(),
+                      scope.selected());
+              assertThatThrownBy(
+                      () ->
+                          sources.read(
+                              SelectedOwnerIntakeSourceReadEvidence.Request.create(
+                                  NAMESPACE, substituted)))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class);
               assertThat(retainedReservation(f, scope)).isEqualTo(retained);
-              assertThat(asGameDesign(() -> reservations.abortSourceRead(scope)).state().name()).isEqualTo("ABORTED");
+              assertThat(asGameDesign(() -> reservations.abortSourceRead(scope)).state().name())
+                  .isEqualTo("ABORTED");
               var aborted = retainedReservation(f, scope);
-              assertThatThrownBy(() -> sources.read(request)).isInstanceOf(io.grpc.StatusRuntimeException.class);
-              assertThatThrownBy(() -> asGameDesign(() -> reservations.reserveSourceRead(issued.compact(), requestId, owner, local.binding(), issued.environment()))).isInstanceOf(io.grpc.StatusRuntimeException.class);
+              assertThatThrownBy(() -> sources.read(request))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class);
+              assertThatThrownBy(
+                      () ->
+                          asGameDesign(
+                              () ->
+                                  reservations.reserveSourceRead(
+                                      issued.compact(),
+                                      requestId,
+                                      owner,
+                                      local.binding(),
+                                      issued.environment())))
+                  .isInstanceOf(io.grpc.StatusRuntimeException.class);
               asGameDesign(() -> reservations.abortSourceRead(scope));
               assertThat(retainedReservation(f, scope)).isEqualTo(aborted);
-              assertThat(local.tx().execute(ignored -> new GameDesignSourceRepository(local.dsl()).requireSelectedOwnerIntakeSource(scope)).canonicalBytes()).isEqualTo(content.canonicalBytes());
+              assertThat(
+                      local
+                          .tx()
+                          .execute(
+                              ignored ->
+                                  new GameDesignSourceRepository(local.dsl())
+                                      .requireSelectedOwnerIntakeSource(scope))
+                          .canonicalBytes())
+                  .isEqualTo(content.canonicalBytes());
             }
           }
         }
       } finally {
-        for (var server : new Server[] {sourceServer, accountServer}) if (server != null) server.shutdownNow();
-        for (var server : new Server[] {sourceServer, accountServer}) if (server != null) assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        for (var server : new Server[] {sourceServer, accountServer})
+          if (server != null) server.shutdownNow();
+        for (var server : new Server[] {sourceServer, accountServer})
+          if (server != null) assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
       }
     }
   }
 
-  private static String retainedReservation(AccountControlUiOwnerSourcesFixture f, SelectedOwnerIntakeSourceReadScope scope) {
-    return f.dsl.fetchSingle("SELECT row_to_json(r)::TEXT || ':' || xmin::TEXT FROM account_selected_owner_intake_source_read_reservations r WHERE operation_id = ?", scope.operationId()).get(0, String.class);
+  private static String retainedReservation(
+      AccountControlUiOwnerSourcesFixture f, SelectedOwnerIntakeSourceReadScope scope) {
+    return f.dsl
+        .fetchSingle(
+            "SELECT row_to_json(r)::TEXT || ':' || xmin::TEXT FROM account_selected_owner_intake_source_read_reservations r WHERE operation_id = ?",
+            scope.operationId())
+        .get(0, String.class);
   }
 
   /** Controlled upstream terminal readbacks; the preliminary permission itself is never mocked. */
-  private static void retainControlledSelectedAuthorAdmission(AccountControlUiOriginalOrderFixture.IssuedCreator issued, DraftCommitBinding selected) {
+  private static void retainControlledSelectedAuthorAdmission(
+      AccountControlUiOriginalOrderFixture.IssuedCreator issued, DraftCommitBinding selected) {
     var f = issued.sources();
     var captured = f.tx(() -> f.authority.captureInitial(f.tenant, issued.environment()));
-    var original = new DraftAuthorizationFenceBinding(UUID.randomUUID(), selected.requestId(), selected.commitId(), UUID.randomUUID(), f.account.getAccountUuid(), f.tenant, selected.target().canonicalVersionId(), selected.baseCommitId(), "0", selected.canonicalBytes(), selected.canonicalBytes(), selected.digest(), captured.sources()).withRequiredOwners();
+    var original =
+        new DraftAuthorizationFenceBinding(
+                UUID.randomUUID(),
+                selected.requestId(),
+                selected.commitId(),
+                UUID.randomUUID(),
+                f.account.getAccountUuid(),
+                f.tenant,
+                selected.target().canonicalVersionId(),
+                selected.baseCommitId(),
+                "0",
+                selected.canonicalBytes(),
+                selected.canonicalBytes(),
+                selected.digest(),
+                captured.sources())
+            .withRequiredOwners();
     issued.actors().claimOriginalDraft(issued.compact(), original, issued.environment());
-    f.tx(() -> {
-      for (var owner : original.requiredOwners()) f.fences.recordOwnerReadback(original,
-          new DraftAuthorizationFenceBinding.OwnerReadback(owner, DraftAuthorizationFenceBinding.Outcome.COMMITTED, original.operationId(), original.commitId(), original.fenceId(), original.inputDigest(), original.canonicalBytes(), new byte[] {1}));
-      return null;
-    });
+    f.tx(
+        () -> {
+          for (var owner : original.requiredOwners())
+            f.fences.recordOwnerReadback(
+                original,
+                new DraftAuthorizationFenceBinding.OwnerReadback(
+                    owner,
+                    DraftAuthorizationFenceBinding.Outcome.COMMITTED,
+                    original.operationId(),
+                    original.commitId(),
+                    original.fenceId(),
+                    original.inputDigest(),
+                    original.canonicalBytes(),
+                    new byte[] {1}));
+          return null;
+        });
   }
 
   private static Local sourceStore() {
     String schema = "selected_disclosure_" + UUID.randomUUID().toString().replace("-", "");
     var data = new DriverManagerDataSource(GDS.getJdbcUrl(), GDS.getUsername(), GDS.getPassword());
     data.setSchema(schema);
-    Flyway.configure().dataSource(data).schemas(schema).defaultSchema(schema)
-        .table("flyway_schema_history_game_design_service").placeholders(Map.of("serviceSchema", schema))
-        .locations("classpath:db/migration").load().migrate();
+    Flyway.configure()
+        .dataSource(data)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .table("flyway_schema_history_game_design_service")
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
     var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
     var manager = new DataSourceTransactionManager(data);
     var tx = new TransactionTemplate(manager);
@@ -196,36 +388,78 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
     version.setVersionState(VersionLifecycleState.DRAFT);
     version.setVersionStateEpoch(1L);
     var saved = tx.execute(ignored -> new VersionRepository(dsl).save(version));
-    var target = new DraftCommitBinding.TargetProof(saved.getCanonicalTenantId(), saved.getCanonicalVersionId(), saved.getId(), saved.getTenantId(), saved.getIdentitySourceGameRowId(), saved.getIdentitySourceGameTenantKey(), saved.getIdentitySourceProvenanceKind());
-    var binding = DraftCommitBinding.create(target, UUID.randomUUID(), UUID.randomUUID(), "base-commit-0",
-        List.of(new DraftCommitBinding.RevisionPayload("0", UUID.randomUUID(), Owner.GAME_DESIGN_CONTROL_PLANE,
-            CommandSource.upsertPayload("{\"schemaVersion\":1,\"commandId\":\"DISCLOSURE\",\"semanticOwner\":\"WORLD\",\"executionDiscipline\":\"DURABLE_GAMEPLAY\",\"stageRequirement\":\"GAMEPLAY\",\"promptPolicy\":\"NEVER\",\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,\"aliases\":[],\"actionTags\":[\"WORLD_BROWSE\"],\"effects\":[]}"))),
-        List.of(new DraftCommitBinding.AffectedUnit(Owner.GAME_DESIGN_CONTROL_PLANE, CommandSource.SCOPE, target.canonicalVersionId().toString(), CommandSource.SCOPE, "effective", "0")));
-    tx.executeWithoutResult(ignored -> {
-      var source = new GameDesignSourceRepository(dsl);
-      var reviewed = new GameDesignReviewedBaseRepository(dsl).resolve(target, DraftBaseReference.parse(binding.baseCommitId()));
-      source.claimReviewed(binding, reviewed);
-      var coordinator = new DraftCommitCoordinatorRepository(dsl);
-      coordinator.claimApplicationSlot(binding);
-      coordinator.markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
-      var applied = source.apply(binding);
-      coordinator.advanceSourceVisibilityFence(binding, new DraftCommitCoordinatorRepository.CoordinatorProof(binding, List.of(applied.ownerOutcome())));
-      source.captureSynchronized(binding);
-      coordinator.releaseApplicationSlot(binding);
-    });
+    var target =
+        new DraftCommitBinding.TargetProof(
+            saved.getCanonicalTenantId(),
+            saved.getCanonicalVersionId(),
+            saved.getId(),
+            saved.getTenantId(),
+            saved.getIdentitySourceGameRowId(),
+            saved.getIdentitySourceGameTenantKey(),
+            saved.getIdentitySourceProvenanceKind());
+    var binding =
+        DraftCommitBinding.create(
+            target,
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            "base-commit-0",
+            List.of(
+                new DraftCommitBinding.RevisionPayload(
+                    "0",
+                    UUID.randomUUID(),
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    CommandSource.upsertPayload(
+                        "{\"schemaVersion\":1,\"commandId\":\"DISCLOSURE\",\"semanticOwner\":\"WORLD\",\"executionDiscipline\":\"DURABLE_GAMEPLAY\",\"stageRequirement\":\"GAMEPLAY\",\"promptPolicy\":\"NEVER\",\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,\"aliases\":[],\"actionTags\":[\"WORLD_BROWSE\"],\"effects\":[]}"))),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    CommandSource.SCOPE,
+                    target.canonicalVersionId().toString(),
+                    CommandSource.SCOPE,
+                    "effective",
+                    "0")));
+    tx.executeWithoutResult(
+        ignored -> {
+          var source = new GameDesignSourceRepository(dsl);
+          var reviewed =
+              new GameDesignReviewedBaseRepository(dsl)
+                  .resolve(target, DraftBaseReference.parse(binding.baseCommitId()));
+          source.claimReviewed(binding, reviewed);
+          var coordinator = new DraftCommitCoordinatorRepository(dsl);
+          coordinator.claimApplicationSlot(binding);
+          coordinator.markOwnerInProgress(binding, Owner.GAME_DESIGN_CONTROL_PLANE);
+          var applied = source.apply(binding);
+          IsolatedPublicationOwnerSetup.advanceIsolatedSourceVisibility(
+              dsl, binding, List.of(applied.ownerOutcome()));
+          source.captureSynchronized(binding);
+          coordinator.releaseApplicationSlot(binding);
+        });
     return new Local(dsl, manager, tx, binding);
   }
 
-  private static Server server(GenuineWorldSourceProofPki pki, String service, io.grpc.BindableService handler) throws Exception {
+  private static Server server(
+      GenuineWorldSourceProofPki pki, String service, io.grpc.BindableService handler)
+      throws Exception {
     var identity = pki.server(service);
     return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
-        .sslContext(GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile()).trustManager(pki.ca().toFile()).clientAuth(ClientAuth.REQUIRE).build())
-        .addService(ServerInterceptors.intercept(handler, new GrpcPeerIdentityInterceptor())).build().start();
+        .sslContext(
+            GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
+                .trustManager(pki.ca().toFile())
+                .clientAuth(ClientAuth.REQUIRE)
+                .build())
+        .addService(ServerInterceptors.intercept(handler, new GrpcPeerIdentityInterceptor()))
+        .build()
+        .start();
   }
 
   private static <T> T asGameDesign(Supplier<T> action) {
-    var context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY,
-        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/" + NAMESPACE + "/sa/game-design-service").orElseThrow());
+    var context =
+        Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY,
+                GrpcPeerIdentity.parseUri(
+                        "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-design-service")
+                    .orElseThrow());
     var previous = context.attach();
     try {
       return action.get();
@@ -234,5 +468,9 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
     }
   }
 
-  private record Local(DSLContext dsl, DataSourceTransactionManager manager, TransactionTemplate tx, DraftCommitBinding binding) {}
+  private record Local(
+      DSLContext dsl,
+      DataSourceTransactionManager manager,
+      TransactionTemplate tx,
+      DraftCommitBinding binding) {}
 }

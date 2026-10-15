@@ -28,11 +28,11 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import org.junit.jupiter.api.Timeout;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.parallel.Resources;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 /** Lifecycle proof with real file watchers and a mocked channel factory, not a TLS handshake. */
 class SelectedOwnerIntakeClientLifecycleTest {
@@ -43,8 +43,7 @@ class SelectedOwnerIntakeClientLifecycleTest {
   @Timeout(15)
   @ResourceLock(Resources.SYSTEM_PROPERTIES)
   void closeReleasesClientMonitorBeforeDrainingCertificateCallback(
-      ClientKind kind, @TempDir Path directory)
-      throws Exception {
+      ClientKind kind, @TempDir Path directory) throws Exception {
     String previousReloadPolicy = System.getProperty(TLS_RELOAD_PROPERTY);
     System.setProperty(TLS_RELOAD_PROPERTY, "true");
     CountDownLatch releaseClientMonitor = new CountDownLatch(1);
@@ -168,7 +167,8 @@ class SelectedOwnerIntakeClientLifecycleTest {
     void run() throws Exception;
   }
 
-  private record ClientHandle(AbstractReloadingBlockingGrpcClient<?> client, Initialize initialize) {}
+  private record ClientHandle(
+      AbstractReloadingBlockingGrpcClient<?> client, Initialize initialize) {}
 
   private enum ClientKind {
     SOURCE_READ,
@@ -179,8 +179,6 @@ class SelectedOwnerIntakeClientLifecycleTest {
         CommonGrpcClientProperties tls,
         GrpcChannelFactory factory) {
       return switch (this) {
-
-
         case SOURCE_READ -> {
           var client = new GrpcSelectedOwnerIntakeSourceReadClient(endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
@@ -190,7 +188,6 @@ class SelectedOwnerIntakeClientLifecycleTest {
           var client = new GrpcSelectedOwnerIntakeSourceClient(endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
         }
-
       };
     }
   }
