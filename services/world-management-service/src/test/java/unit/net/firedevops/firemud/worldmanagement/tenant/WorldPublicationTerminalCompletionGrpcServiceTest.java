@@ -103,7 +103,8 @@ class WorldPublicationTerminalCompletionGrpcServiceTest {
     Metadata trailers = new Metadata();
     trailers.put(secretKey, "secret-upstream-trailer");
     StatusRuntimeException upstream =
-        Status.UNAVAILABLE.withDescription("secret upstream failure detail")
+        Status.UNAVAILABLE
+            .withDescription("secret upstream failure detail")
             .asRuntimeException(trailers);
     when(owner.complete(any(), any())).thenThrow(upstream);
 
