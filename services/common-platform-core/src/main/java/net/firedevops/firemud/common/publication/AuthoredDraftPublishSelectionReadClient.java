@@ -2,8 +2,6 @@ package net.firedevops.firemud.common.publication;
 
 import io.grpc.ManagedChannel;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
@@ -35,7 +33,7 @@ public final class AuthoredDraftPublishSelectionReadClient
       String workloadNamespace) {
     super(
         endpoints,
-        requireFileBackedMtls(tlsProperties),
+        FileBackedMtls.require(tlsProperties, "Game Design selected Draft publication read"),
         channelFactory,
         AuthoredDraftPublishSelectionReadClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
@@ -124,43 +122,5 @@ public final class AuthoredDraftPublishSelectionReadClient
           "Game Design selected Draft publication read client is not initialized and available");
     }
     return currentStub;
-  }
-
-  private static CommonGrpcClientProperties requireFileBackedMtls(
-      CommonGrpcClientProperties tlsProperties) {
-    if (tlsProperties == null || tlsProperties.isPlaintext()) {
-      throw new IllegalArgumentException(
-          "Game Design selected Draft publication read requires workload mTLS");
-    }
-    requireReadableFile(tlsProperties.getCertChain(), "certificate chain");
-    requireReadableFile(tlsProperties.getPrivateKey(), "private key");
-    requireReadableFile(tlsProperties.getCaCert(), "CA certificate");
-    return tlsProperties;
-  }
-
-  private static void requireReadableFile(String configuredPath, String label) {
-    if (configuredPath == null || configuredPath.isBlank()) {
-      throw new IllegalArgumentException(
-          "Game Design selected Draft publication read requires file-backed certificate, key, and CA material");
-    }
-    String pathText = configuredPath.trim();
-    if (pathText.startsWith("classpath:")) {
-      throw new IllegalArgumentException(
-          "Game Design selected Draft publication read requires file-backed certificate, key, and CA material");
-    }
-    Path path;
-    try {
-      path = Path.of(pathText);
-    } catch (RuntimeException invalid) {
-      throw new IllegalArgumentException(
-          "Game Design selected Draft publication read " + label + " must be a file-backed path",
-          invalid);
-    }
-    if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
-      throw new IllegalArgumentException(
-          "Game Design selected Draft publication read "
-              + label
-              + " must be an existing readable file");
-    }
   }
 }

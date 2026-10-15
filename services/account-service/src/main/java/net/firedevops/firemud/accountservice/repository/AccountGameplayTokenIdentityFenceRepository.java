@@ -108,7 +108,7 @@ public class AccountGameplayTokenIdentityFenceRepository {
       throw new IllegalArgumentException("Exact Account revocation digest required");
     }
     lockAccountForUpdate(identity.accountId());
-    AccountGameplayTokenIdentityFence before = requireExact(identity, true);
+    AccountGameplayTokenIdentityFence before = requireExactStoredIdentity(identity, true);
     if (before.state() != State.ACTIVE) {
       if (!requestId.equals(before.revocationRequestId())
           || !digest.equals(before.revocationDigest())) {
@@ -116,6 +116,9 @@ public class AccountGameplayTokenIdentityFenceRepository {
       }
       return before;
     }
+    // Only an exact already-stored intent may replay after original LOGIN disposal. Starting
+    // a new intent still requires the ordinary active-token disposal guard.
+    requireExact(identity, true);
     int changed =
         dsl.execute(
             "UPDATE "
@@ -175,6 +178,12 @@ public class AccountGameplayTokenIdentityFenceRepository {
             "SELECT request_id FROM account_initial_gameplay_login_disposals WHERE request_id = ?",
             identity.issuanceRequestId())
         != null) throw new TokenRevokedException();
+    return requireExactStoredIdentity(identity, lock);
+  }
+
+  /** Validates retained identity/source metadata without granting active-token authority. */
+  private AccountGameplayTokenIdentityFence requireExactStoredIdentity(
+      TokenIdentity identity, boolean lock) {
     Record row =
         dsl.fetchOne(
             "SELECT "
