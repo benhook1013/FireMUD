@@ -1,11 +1,10 @@
 package net.firedevops.firemud.gamedesign.publication;
 
-import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 
 /** Complete effective command set captured at one actual synchronized Draft commit. */
 public record CommandSnapshot(
@@ -15,16 +14,10 @@ public record CommandSnapshot(
     String genesisReceiptDigest,
     List<CommandSource.Definition> definitions) {
   public CommandSnapshot {
-    Objects.requireNonNull(binding, "binding");
-    requireCounter(sourceEpoch, "sourceEpoch");
-    if (inheritedCommitId != null && new UUID(0, 0).equals(inheritedCommitId)) {
-      throw new IllegalArgumentException("inheritedCommitId must be non-nil when present");
-    }
-    if (genesisReceiptDigest == null || !genesisReceiptDigest.matches("sha256:[0-9a-f]{64}")) {
-      throw new IllegalArgumentException("Exact command source genesis receipt digest required");
-    }
-    definitions = List.copyOf(Objects.requireNonNull(definitions, "definitions"));
-    CommandSource.requireCanonicalDefinitions(definitions);
+    var value =
+        new net.firedevops.firemud.common.gamedesign.CommandSnapshot(
+            binding, sourceEpoch, inheritedCommitId, genesisReceiptDigest, definitions);
+    definitions = value.definitions();
   }
 
   @Override
@@ -33,70 +26,34 @@ public record CommandSnapshot(
   }
 
   public String canonicalJson() {
-    return CommandSource.canonical(
-        Map.of(
-            "schema",
-            CommandSource.SNAPSHOT_SCHEMA,
-            "bindingJson",
-            binding.canonicalJson(),
-            "bindingDigest",
-            binding.digest(),
-            "sourceEpoch",
-            sourceEpoch,
-            "inheritedCommitId",
-            inheritedCommitId == null ? "" : inheritedCommitId.toString(),
-            "genesisReceiptDigest",
-            genesisReceiptDigest,
-            "definitions",
-            CommandSource.tree(CommandSource.definitionsJson(definitions))));
+    return shared().canonicalJson();
   }
 
   public byte[] canonicalBytes() {
-    return canonicalJson().getBytes(StandardCharsets.UTF_8);
+    return shared().canonicalBytes();
   }
 
   public String digest() {
-    return CommandSource.sha256(canonicalBytes());
+    return shared().digest();
   }
 
   public static CommandSnapshot fromStored(String json) {
-    var root = CommandSource.tree(json);
-    CommandSource.requireStoredFields(
-        root,
-        "schema",
-        "bindingJson",
-        "bindingDigest",
-        "sourceEpoch",
-        "inheritedCommitId",
-        "genesisReceiptDigest",
-        "definitions");
-    if (!CommandSource.SNAPSHOT_SCHEMA.equals(CommandSource.requiredStoredText(root, "schema"))) {
-      throw new IllegalArgumentException("Unsupported command source snapshot schema");
-    }
-    var inheritedNode = root.get("inheritedCommitId");
-    if (inheritedNode == null || !inheritedNode.isTextual()) {
-      throw new IllegalArgumentException("Stored command source inheritedCommitId must be text");
-    }
-    String inherited = inheritedNode.textValue();
-    UUID inheritedCommitId = inherited.isEmpty() ? null : UUID.fromString(inherited);
-    if (inheritedCommitId != null && !inheritedCommitId.toString().equals(inherited)) {
-      throw new IllegalArgumentException(
-          "Stored command source inheritedCommitId must be a canonical UUID");
-    }
-    var result =
-        new CommandSnapshot(
-            DraftCommitBinding.fromStored(
-                CommandSource.requiredStoredText(root, "bindingJson"),
-                CommandSource.requiredStoredText(root, "bindingDigest")),
-            CommandSource.requiredStoredText(root, "sourceEpoch"),
-            inheritedCommitId,
-            CommandSource.requiredStoredText(root, "genesisReceiptDigest"),
-            CommandSource.definitionsFromStored(root.get("definitions").toString()));
-    if (!result.canonicalJson().equals(json)) {
-      throw new IllegalArgumentException(
-          "Stored command source snapshot is not exact canonical JSON");
-    }
-    return result;
+    return fromShared(net.firedevops.firemud.common.gamedesign.CommandSnapshot.fromStored(json));
+  }
+
+  public net.firedevops.firemud.common.gamedesign.CommandSnapshot shared() {
+    return new net.firedevops.firemud.common.gamedesign.CommandSnapshot(
+        binding, sourceEpoch, inheritedCommitId, genesisReceiptDigest, definitions);
+  }
+
+  public static CommandSnapshot fromShared(
+      net.firedevops.firemud.common.gamedesign.CommandSnapshot value) {
+    return new CommandSnapshot(
+        value.binding(),
+        value.sourceEpoch(),
+        value.inheritedCommitId(),
+        value.genesisReceiptDigest(),
+        value.definitions());
   }
 
   /** Frozen source paired with the actual operation bytes and selected synchronized snapshot. */
@@ -123,12 +80,6 @@ public record CommandSnapshot(
 
     public String digest() {
       return CommandSource.sha256(canonicalBytes());
-    }
-  }
-
-  private static void requireCounter(String value, String name) {
-    if (value == null || !value.matches("0|[1-9][0-9]*")) {
-      throw new IllegalArgumentException(name + " must be a canonical nonnegative decimal");
     }
   }
 }

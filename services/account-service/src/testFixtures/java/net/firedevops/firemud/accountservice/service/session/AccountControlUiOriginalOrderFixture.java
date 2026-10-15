@@ -222,6 +222,16 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
         namespace);
   }
 
+  /** Actual preliminary permission owner; upstream creator/environment inputs remain controlled. */
+  public AccountSelectedOwnerIntakeSourceReadService selectedOwnerIntakeSourceReadService(
+      String namespace) {
+    return new AccountSelectedOwnerIntakeSourceReadService(
+        new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl),
+        coordination,
+        f.manager,
+        namespace);
+  }
+
   /**
    * Real Account control-UI creator retained for composition with the original StartSession proof.
    */

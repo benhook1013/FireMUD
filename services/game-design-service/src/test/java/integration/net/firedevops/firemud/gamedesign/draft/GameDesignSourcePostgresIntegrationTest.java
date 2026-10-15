@@ -25,7 +25,7 @@ import net.firedevops.firemud.common.gamedesign.BrandingSource;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
-import net.firedevops.firemud.gamedesign.publication.CommandSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.gamedesign.publication.CommandSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
@@ -445,6 +445,10 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThat(genesis.policy().receiptId()).isEqualTo(genesis.command().receiptId());
     assertThat(genesis.asset().receiptId()).isNotEqualTo(genesis.policy().receiptId());
     assertThat(genesis.asset().target()).isEqualTo(fixture.target());
+    assertThat(genesis.brandingEvidence()).isPresent();
+    assertThat(genesis.brandingEvidence().orElseThrow().target()).isEqualTo(fixture.target());
+    assertThat(genesis.brandingEvidence().orElseThrow().creationTransactionId())
+        .isEqualTo(genesis.policy().creationTransactionId());
     assertThat(genesis.asset().creationTransactionId())
         .isEqualTo(genesis.policy().creationTransactionId());
     assertThat(genesis.policy().creationTransactionId())
@@ -768,11 +772,18 @@ class GameDesignSourcePostgresIntegrationTest {
     var read = fixture.sources().readCapture(operation).orElseThrow();
     assertThat(retry.command().canonicalBytes()).containsExactly(first.command().canonicalBytes());
     assertThat(retry.policy().canonicalBytes()).containsExactly(first.policy().canonicalBytes());
+    assertThat(retry.branding()).isPresent();
+    assertThat(retry.branding().orElseThrow().canonicalBytes())
+        .containsExactly(first.branding().orElseThrow().canonicalBytes());
     assertThat(read.command().canonicalBytes()).containsExactly(first.command().canonicalBytes());
     assertThat(read.policy().canonicalBytes()).containsExactly(first.policy().canonicalBytes());
+    assertThat(read.branding().orElseThrow().canonicalBytes())
+        .containsExactly(first.branding().orElseThrow().canonicalBytes());
     assertThat(read.command().snapshot().binding())
         .isEqualTo(operation.account().input().selection().selectedCommit());
     assertThat(read.policy().snapshot().binding())
+        .isEqualTo(operation.account().input().selection().selectedCommit());
+    assertThat(read.branding().orElseThrow().snapshot().binding())
         .isEqualTo(operation.account().input().selection().selectedCommit());
   }
 
@@ -943,8 +954,7 @@ class GameDesignSourcePostgresIntegrationTest {
         + "\"promptPolicy\":\"NEVER\",\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,"
         + "\"aliases\":[\""
         + alias
-        + "\"],\"actionTags\":[\"WORLD_BROWSE\"],\"effects\":[],"
-        + "\"legacyExtension\":{\"kept\":true}}";
+        + "\"],\"actionTags\":[\"WORLD_BROWSE\"],\"effects\":[]}";
   }
 
   private static Fixture fixture() {

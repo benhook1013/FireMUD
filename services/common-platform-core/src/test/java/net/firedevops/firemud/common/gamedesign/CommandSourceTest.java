@@ -38,6 +38,49 @@ class CommandSourceTest {
     }
   }
 
+  @Test
+  void explicitDeleteRequiresAnExistingEffectiveCommandKey() {
+    UUID commit = id("delete-commit");
+    var inherited =
+        List.of(
+            new CommandSource.Definition(
+                "LOOK", commandDefinition("1"), id("prior-commit"), id("prior-revision"), "0"));
+    var delete =
+        new CommandSource.Mutation(
+            "0", id("delete-revision"), commit, CommandSource.OperationKind.DELETE, "look", null);
+
+    assertThat(CommandSource.replay(inherited, List.of(delete))).isEmpty();
+    assertThatThrownBy(
+            () ->
+                CommandSource.replay(
+                    inherited,
+                    List.of(
+                        delete,
+                        new CommandSource.Mutation(
+                            "1",
+                            id("second-delete-revision"),
+                            commit,
+                            CommandSource.OperationKind.DELETE,
+                            "LOOK",
+                            null))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Cannot delete an absent command definition key");
+    assertThatThrownBy(
+            () ->
+                CommandSource.replay(
+                    List.of(),
+                    List.of(
+                        new CommandSource.Mutation(
+                            "0",
+                            id("absent-delete-revision"),
+                            commit,
+                            CommandSource.OperationKind.DELETE,
+                            "absent",
+                            null))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Cannot delete an absent command definition key");
+  }
+
   private static DraftCommitBinding binding(String definitionJson) {
     String payload =
         CommandSource.canonical(

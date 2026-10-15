@@ -134,9 +134,9 @@ final class AccountControlUiOwnerSourcesFixture {
       UUID tenant,
       String migrationTarget)
       throws Exception {
-    if (migrationTarget != null && !"160.1".equals(migrationTarget)) {
+    if (migrationTarget != null && !"160.1".equals(migrationTarget) && !"1006".equals(migrationTarget)) {
       throw new IllegalArgumentException(
-          "Only the preserved 160.1 source-retention predecessor is supported");
+          "Only the preserved 160.1 source-retention or 1006 source-disclosure frontier is supported");
     }
     this.tenant = Objects.requireNonNull(tenant);
     String schema = "control_ui_owner_" + UUID.randomUUID().toString().replace("-", "");
@@ -548,7 +548,11 @@ final class AccountControlUiOwnerSourcesFixture {
         .schemas(migrationSchema)
         .defaultSchema(migrationSchema)
         .placeholders(Map.of("serviceSchema", migrationSchema))
-        .locations("filesystem:" + accountMigrations());
+        .locations(
+            "filesystem:" + accountMigrations(),
+            "filesystem:" + accountMigrations()
+                .resolve("../../../../../../common-saga/src/main/resources/db/migration/saga")
+                .normalize());
   }
 
   private static Path accountMigrations() {

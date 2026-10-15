@@ -677,7 +677,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 .isEqualTo(first));
     assertThat(f.dsl.fetchSingle("SELECT count(*) FROM game_templates").get(0, Long.class))
         .isEqualTo(1L);
-    var sibling = binding(f, CommandSource.deletePayload("absent"), CommandSource.SCOPE, "0");
+    var sibling = binding(f, commandUpsert("TEMPLATE_SIBLING"), CommandSource.SCOPE, "0");
     apply(f, sibling);
     assertThat(source(f, sibling).entries()).isEqualTo(first.entries());
     assertThat(source(f, sibling).sourceEpoch()).isEqualTo("1");
@@ -829,7 +829,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 .fetchSingle("SELECT default_version_id FROM game_templates WHERE id = ?", legacy)
                 .get(0, Long.class))
         .isNull();
-    var selected = binding(f, CommandSource.deletePayload("absent"), CommandSource.SCOPE, "0");
+    var selected = binding(f, commandUpsert("TEMPLATE_SELECTED"), CommandSource.SCOPE, "0");
     apply(f, selected);
     assertThat(source(f, selected).entries()).isEmpty();
     assertThatThrownBy(
@@ -847,7 +847,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
   @Test
   void newCaptureCannotIgnorePendingUnqualifiedExplicitTargetRow() {
     var f = fixture();
-    var selected = binding(f, CommandSource.deletePayload("absent"), CommandSource.SCOPE, "0");
+    var selected = binding(f, commandUpsert("TEMPLATE_BLOCKED"), CommandSource.SCOPE, "0");
     assertThatThrownBy(
             () ->
                 f.tx.executeWithoutResult(
@@ -1355,6 +1355,16 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE,
                 payload)),
         Map.of(scope, epoch));
+  }
+
+  private static String commandUpsert(String commandId) {
+    return CommandSource.upsertPayload(
+        "{\"schemaVersion\":1,\"commandId\":\""
+            + commandId
+            + "\",\"semanticOwner\":\"WORLD\",\"executionDiscipline\":\"DURABLE_GAMEPLAY\","
+            + "\"stageRequirement\":\"GAMEPLAY\",\"promptPolicy\":\"NEVER\","
+            + "\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,"
+            + "\"aliases\":[],\"actionTags\":[\"WORLD_BROWSE\"],\"effects\":[]}");
   }
 
   private DraftCommitBinding binding(

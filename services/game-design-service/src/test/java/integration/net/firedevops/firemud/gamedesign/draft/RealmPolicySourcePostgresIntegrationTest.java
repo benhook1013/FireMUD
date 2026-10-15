@@ -21,7 +21,7 @@ import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.common.publication.RealmEntryPolicy;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
-import net.firedevops.firemud.gamedesign.publication.CommandSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicyApplication;
@@ -273,7 +273,7 @@ class RealmPolicySourcePostgresIntegrationTest {
                     + "\"stageRequirement\":\"GAMEPLAY\",\"promptPolicy\":\"NEVER\","
                     + "\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,"
                     + "\"aliases\":[\"isolated\"],\"actionTags\":[\"WORLD_BROWSE\"],"
-                    + "\"effects\":[],\"legacyExtension\":{\"kept\":true}}"));
+                    + "\"effects\":[]}"));
     var commandScope =
         new DraftCommitBinding.AffectedUnit(
             Owner.GAME_DESIGN_CONTROL_PLANE,
@@ -1010,7 +1010,7 @@ class RealmPolicySourcePostgresIntegrationTest {
                         + "\"stageRequirement\":\"GAMEPLAY\",\"promptPolicy\":\"NEVER\","
                         + "\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,"
                         + "\"aliases\":[\"isolated\"],\"actionTags\":[\"WORLD_BROWSE\"],"
-                        + "\"effects\":[],\"legacyExtension\":{\"kept\":true}}"))),
+                        + "\"effects\":[]}"))),
         List.of(
             new DraftCommitBinding.AffectedUnit(
                 Owner.GAME_DESIGN_CONTROL_PLANE,
