@@ -6,6 +6,10 @@ This is a non-normative implementation tracker for world runtime and movement. C
 
 ## Current Status
 
+### Published spawn requirements read preparation
+
+The prepared, unregistered Entity-only read authenticates its exact same-namespace peer and verifies Game Design’s complete immutable launch binding before opening the independent World snapshot. It returns published generation/spawn requirements only from the exact retained frozen graph and APPLIED selector source, preserving complete family counts, source identities and template references. Missing, unsupported or conflicting bindings fail closed; the production Game Design complete-launch producer remains denied. Common wire/client and World owner/receiver proof sources are prepared but unqualified. This read creates no runtime schedule, Entity actor, World location/occupancy row, activation, admission or operational region. Its selected-template prerequisite is tracked by [Game Authoring](./game-authoring-publishing-and-activation.md#selected-template-publication-and-original-launch-reads); all genuine Gameplay handoffs remain open.
+
 ### Shared Draft mutation fence
 
 The combined shared-fence and strict Common/protocol source successor based on qualified #3216 parent `85f8f35f9b19263f1f3a7f34b5822e5e39d0d15b` closes the direct writer gap using the existing V25 owner row. Mutation dispatch, generation-rule save and ordinary seeding require an existing OPEN owner before reads/effects; region movement locates its private version, then acquires V25 before the region row lock and exact scope reread. Existing generation-rule updates must belong to that locked tenant/version and retain their optimistic version; the DTO supplies explicit positive version identity instead of an entity default. Missing, frozen, fenced or mismatched owners refuse without allocating canonical identity. Non-fixture demo seeding is unavailable without its retained owner. Existing canonical manifests and SQL legacy UPDATE fastpaths remain unchanged.
