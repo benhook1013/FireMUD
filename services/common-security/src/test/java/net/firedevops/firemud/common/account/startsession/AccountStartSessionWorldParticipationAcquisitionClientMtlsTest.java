@@ -24,6 +24,7 @@ import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -40,9 +41,13 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import java.util.function.UnaryOperator;
 import net.firedevops.firemud.account.v1.AccountStartSessionWorldParticipationAcquisitionServiceGrpc;
 import net.firedevops.firemud.account.v1.AcquireStartSessionWorldParticipationRequest;
@@ -51,10 +56,12 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Request;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
+import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
 import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values;
@@ -65,13 +72,17 @@ import net.firedevops.firemud.common.security.SessionContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
 /** Socket mTLS client proof with a synthetic mocked Account acquisition backend, not PostgreSQL. */
 class AccountStartSessionWorldParticipationAcquisitionClientMtlsTest {
+  private static final String TLS_RELOAD_PROPERTY = "firemud.grpc.tls-reload.enabled";
   private static final String NAMESPACE = "world-runtime";
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/world-runtime/sa/account-service";
   private static final String WORLD_URI =
@@ -246,6 +257,189 @@ class AccountStartSessionWorldParticipationAcquisitionClientMtlsTest {
         .hasMessageContaining("workload-only");
     assertThat(handlers).hasValue(0);
     verifyNoInteractions(backend);
+  }
+
+  @Test
+  @Timeout(15)
+  @ResourceLock(Resources.SYSTEM_PROPERTIES)
+  void closeReleasesClientMonitorBeforeDrainingCertificateCallback() throws Exception {
+    String previousReloadPolicy = System.getProperty(TLS_RELOAD_PROPERTY);
+    System.setProperty(TLS_RELOAD_PROPERTY, "true");
+    CountDownLatch releaseClientMonitor = new CountDownLatch(1);
+    AtomicReference<Throwable> closeFailure = new AtomicReference<>();
+    Thread monitorHolder = null;
+    Thread closeThread = null;
+    TlsCertificateWatcher originalWatcher = null;
+    try {
+      var backend = mock(WorldParticipationAcquisitionBackend.class);
+      AtomicInteger handlers = startServer(backend, UnaryOperator.identity());
+      var endpoints = new ServiceEndpointsProperties();
+      endpoints.setAccountService("localhost:" + server.getPort());
+      CommonGrpcClientProperties tls = pki.clientProperties(temporaryDirectory, pki.worldClient());
+      client =
+          new AccountStartSessionWorldParticipationAcquisitionClient(
+              endpoints, tls, new GrpcChannelFactory(), NAMESPACE);
+      client.init();
+      AccountStartSessionWorldParticipationAcquisitionClient clientUnderTest = client;
+
+      originalWatcher = watcher(client);
+      Set<Thread> activeCallbacks = activeCallbacks(originalWatcher);
+      TlsCertificateWatcher closeBoundary = mock(TlsCertificateWatcher.class);
+      TlsCertificateWatcher delegatedWatcher = originalWatcher;
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                assertThat(Thread.holdsLock(clientUnderTest))
+                    .as("the client monitor must be released before watcher shutdown")
+                    .isFalse();
+                delegatedWatcher.close();
+                return null;
+              })
+          .when(closeBoundary)
+          .close();
+      setWatcher(clientUnderTest, closeBoundary);
+
+      CountDownLatch clientMonitorHeld = new CountDownLatch(1);
+      monitorHolder =
+          new Thread(
+              () -> {
+                synchronized (clientUnderTest) {
+                  clientMonitorHeld.countDown();
+                  awaitLatch(releaseClientMonitor);
+                }
+              },
+              "account-world-participation-client-monitor-holder");
+      monitorHolder.start();
+      assertThat(clientMonitorHeld.await(5, TimeUnit.SECONDS)).isTrue();
+
+      CountDownLatch closeStarted = new CountDownLatch(1);
+      Thread closeWorker =
+          new Thread(
+              () -> {
+                closeStarted.countDown();
+                try {
+                  clientUnderTest.close();
+                } catch (Throwable failure) {
+                  closeFailure.set(failure);
+                }
+              },
+              "account-world-participation-client-close");
+      closeThread = closeWorker;
+      closeWorker.start();
+      assertThat(closeStarted.await(5, TimeUnit.SECONDS)).isTrue();
+      awaitCondition(() -> closeWorker.getState() == Thread.State.BLOCKED);
+
+      Files.writeString(Path.of(tls.getCertChain()), "certificate-rotated");
+      assertThat(awaitBlockedReloadCallback(activeCallbacks)).isNotNull();
+
+      releaseClientMonitor.countDown();
+      closeWorker.join(TimeUnit.SECONDS.toMillis(4));
+      assertThat(closeWorker.isAlive())
+          .as("close must not hold the client monitor while the watcher drains its callback")
+          .isFalse();
+      assertThat(closeFailure.get()).isNull();
+
+      clientUnderTest.close();
+      assertThatThrownBy(clientUnderTest::init)
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("client is closed");
+      assertThatThrownBy(() -> clientUnderTest.acquire(request(NAMESPACE)))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("not initialized and available");
+      assertThat(handlers).hasValue(0);
+      verifyNoInteractions(backend);
+    } finally {
+      releaseClientMonitor.countDown();
+      if (monitorHolder != null) {
+        monitorHolder.join(TimeUnit.SECONDS.toMillis(5));
+      }
+      if (closeThread != null) {
+        closeThread.join(TimeUnit.SECONDS.toMillis(7));
+      }
+      try {
+        if (originalWatcher != null) {
+          originalWatcher.close();
+        }
+      } finally {
+        try {
+          if (client != null) {
+            if (originalWatcher != null) {
+              setWatcher(client, originalWatcher);
+            }
+            client.close();
+          }
+        } finally {
+          if (previousReloadPolicy == null) {
+            System.clearProperty(TLS_RELOAD_PROPERTY);
+          } else {
+            System.setProperty(TLS_RELOAD_PROPERTY, previousReloadPolicy);
+          }
+        }
+      }
+    }
+  }
+
+  private static Thread awaitBlockedReloadCallback(Set<Thread> activeCallbacks)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (System.nanoTime() < deadline) {
+      for (Thread callback : activeCallbacks) {
+        if (callback.getState() == Thread.State.BLOCKED
+            && hasFrame(callback, "AbstractReloadingBlockingGrpcClient", "reloadChannel")) {
+          return callback;
+        }
+      }
+      Thread.sleep(10);
+    }
+    return null;
+  }
+
+  private static boolean hasFrame(Thread thread, String className, String methodName) {
+    for (StackTraceElement frame : thread.getStackTrace()) {
+      if (frame.getClassName().endsWith(className) && frame.getMethodName().equals(methodName)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static void awaitCondition(BooleanSupplier condition) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
+      Thread.sleep(10);
+    }
+    assertThat(condition.getAsBoolean()).isTrue();
+  }
+
+  private static void awaitLatch(CountDownLatch latch) {
+    try {
+      latch.await();
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
+  private static TlsCertificateWatcher watcher(
+      AccountStartSessionWorldParticipationAcquisitionClient client)
+      throws ReflectiveOperationException {
+    Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("watcher");
+    field.setAccessible(true);
+    return (TlsCertificateWatcher) field.get(client);
+  }
+
+  private static void setWatcher(
+      AccountStartSessionWorldParticipationAcquisitionClient client, TlsCertificateWatcher watcher)
+      throws ReflectiveOperationException {
+    Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("watcher");
+    field.setAccessible(true);
+    field.set(client, watcher);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Set<Thread> activeCallbacks(TlsCertificateWatcher watcher)
+      throws ReflectiveOperationException {
+    Field field = TlsCertificateWatcher.class.getDeclaredField("activeCallbacks");
+    field.setAccessible(true);
+    return (Set<Thread>) field.get(watcher);
   }
 
   private AtomicInteger startServer(

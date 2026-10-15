@@ -20,8 +20,17 @@ import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -44,7 +53,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Loopback mTLS receiver proof with a mocked Account settlement owner. */
+/** Controlled-PKI loopback mTLS proof with a mocked Account settlement owner. */
 class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
   private static final String NAMESPACE = "world-runtime";
   private static final UUID PARTICIPATION_ID =
@@ -52,16 +61,15 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
   private static final long PARTICIPATION_FENCE = 43L;
   private static final UUID SETTLEMENT_REQUEST_ID =
       UUID.fromString("10d5b75a-7c46-4890-834e-4c6547458d94");
+  private static final String STORE_PASSWORD = "test-only-world-participation-pki-password";
 
   @TempDir static Path temporaryDirectory;
 
-  private static AccountStartSessionActivationProtectionAcquisitionGrpcMtlsTest.TestPki pki;
+  private static TestPki pki;
 
   @BeforeAll
   static void generateTrustedWorkloadCertificates() throws Exception {
-    pki =
-        AccountStartSessionActivationProtectionAcquisitionGrpcMtlsTest.TestPki.create(
-            temporaryDirectory);
+    pki = TestPki.create(temporaryDirectory);
   }
 
   @AfterEach
@@ -222,9 +230,7 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
   }
 
   private static GrpcAccountStartSessionWorldParticipationSettlementClient newClient(
-      int port,
-      AccountStartSessionActivationProtectionAcquisitionGrpcMtlsTest.TestIdentity identity)
-      throws Exception {
+      int port, TestIdentity identity) throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("127.0.0.1:" + port);
     return new GrpcAccountStartSessionWorldParticipationSettlementClient(
@@ -237,7 +243,7 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
   private static ClientTransport newClientWithoutIdentity(int port) throws Exception {
     var tls = new CommonGrpcClientProperties();
     tls.setPlaintext(false);
-    tls.setCaCert(pki.caCertificatePem().toString());
+    tls.setCaCert(pki.caCertificatePem(temporaryDirectory).toString());
     ManagedChannel channel =
         new GrpcChannelFactory().buildChannel("127.0.0.1:" + port, 6565, tls, false);
     return new ClientTransport(channel);
@@ -270,6 +276,259 @@ class AccountStartSessionWorldParticipationSettlementGrpcMtlsTest {
       if (!channel.shutdownNow().awaitTermination(2, TimeUnit.SECONDS)) {
         throw new IllegalStateException("Loopback gRPC client did not terminate");
       }
+    }
+  }
+
+  private record TestIdentity(String alias, PrivateKey privateKey, X509Certificate certificate) {}
+
+  /** Controlled local certificates exercise the receiver's SPIFFE mTLS boundary only. */
+  private record TestPki(
+      X509Certificate caCertificate,
+      TestIdentity accountServer,
+      TestIdentity worldClient,
+      TestIdentity wrongServiceClient,
+      TestIdentity otherNamespaceClient) {
+    private static final String WORLD_URI =
+        "spiffe://firemud/ns/world-runtime/sa/world-management-service";
+
+    private static TestPki create(Path directory) throws Exception {
+      Path caStore = directory.resolve("world-participation-settlement-test-ca.p12");
+      runKeytool(
+          "-genkeypair",
+          "-alias",
+          "world-participation-settlement-ca",
+          "-keyalg",
+          "RSA",
+          "-keysize",
+          "2048",
+          "-dname",
+          "CN=FireMUD controlled World participation settlement test CA",
+          "-validity",
+          "30",
+          "-ext",
+          "BC=ca:true",
+          "-ext",
+          "KU=keyCertSign,cRLSign",
+          "-storetype",
+          "PKCS12",
+          "-keystore",
+          caStore.toString(),
+          "-storepass",
+          STORE_PASSWORD,
+          "-keypass",
+          STORE_PASSWORD);
+      Path caFile = directory.resolve("world-participation-settlement-test-ca.crt");
+      runKeytool(
+          "-exportcert",
+          "-alias",
+          "world-participation-settlement-ca",
+          "-keystore",
+          caStore.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          STORE_PASSWORD,
+          "-file",
+          caFile.toString(),
+          "-rfc");
+      X509Certificate ca = readCertificate(caFile);
+      return new TestPki(
+          ca,
+          issueIdentity(
+              directory,
+              caStore,
+              caFile,
+              "account-server",
+              "spiffe://firemud/ns/world-runtime/sa/account-service",
+              true),
+          issueIdentity(directory, caStore, caFile, "world-client", WORLD_URI, false),
+          issueIdentity(
+              directory,
+              caStore,
+              caFile,
+              "wrong-service-client",
+              "spiffe://firemud/ns/world-runtime/sa/game-session-service",
+              false),
+          issueIdentity(
+              directory,
+              caStore,
+              caFile,
+              "other-namespace-client",
+              "spiffe://firemud/ns/other-runtime/sa/world-management-service",
+              false));
+    }
+
+    private CommonGrpcClientProperties clientProperties(Path directory, TestIdentity identity)
+        throws Exception {
+      var properties = new CommonGrpcClientProperties();
+      properties.setPlaintext(false);
+      properties.setCertChain(
+          writePem(
+                  directory.resolve(identity.alias() + ".client.crt"),
+                  "CERTIFICATE",
+                  identity.certificate().getEncoded())
+              .toString());
+      properties.setPrivateKey(
+          writePem(
+                  directory.resolve(identity.alias() + ".client.key"),
+                  "PRIVATE KEY",
+                  identity.privateKey().getEncoded())
+              .toString());
+      properties.setCaCert(caCertificatePem(directory).toString());
+      return properties;
+    }
+
+    private Path caCertificatePem(Path directory) throws Exception {
+      return writePem(
+          directory.resolve("world-participation-settlement-client-ca.crt"),
+          "CERTIFICATE",
+          caCertificate.getEncoded());
+    }
+
+    private static TestIdentity issueIdentity(
+        Path directory, Path caStore, Path caFile, String alias, String workloadUri, boolean server)
+        throws Exception {
+      Path store = directory.resolve(alias + ".p12");
+      Path request = directory.resolve(alias + ".csr");
+      Path certificate = directory.resolve(alias + "-signed.crt");
+      String san = "URI:" + workloadUri + (server ? ",DNS:localhost,IP:127.0.0.1" : "");
+      String usage = server ? "serverAuth" : "clientAuth";
+      runKeytool(
+          "-genkeypair",
+          "-alias",
+          alias,
+          "-keyalg",
+          "RSA",
+          "-keysize",
+          "2048",
+          "-dname",
+          "CN=" + alias,
+          "-validity",
+          "30",
+          "-ext",
+          "KU=digitalSignature,keyEncipherment",
+          "-ext",
+          "EKU=" + usage,
+          "-ext",
+          "SAN=" + san,
+          "-storetype",
+          "PKCS12",
+          "-keystore",
+          store.toString(),
+          "-storepass",
+          STORE_PASSWORD,
+          "-keypass",
+          STORE_PASSWORD);
+      runKeytool(
+          "-certreq",
+          "-alias",
+          alias,
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          STORE_PASSWORD,
+          "-file",
+          request.toString(),
+          "-ext",
+          "SAN=" + san);
+      runKeytool(
+          "-gencert",
+          "-alias",
+          "world-participation-settlement-ca",
+          "-keystore",
+          caStore.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          STORE_PASSWORD,
+          "-infile",
+          request.toString(),
+          "-outfile",
+          certificate.toString(),
+          "-validity",
+          "30",
+          "-rfc",
+          "-ext",
+          "BC=ca:false",
+          "-ext",
+          "KU=digitalSignature,keyEncipherment",
+          "-ext",
+          "EKU=" + usage,
+          "-ext",
+          "SAN=" + san);
+      runKeytool(
+          "-importcert",
+          "-alias",
+          "world-participation-settlement-ca",
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          STORE_PASSWORD,
+          "-file",
+          caFile.toString(),
+          "-noprompt");
+      runKeytool(
+          "-importcert",
+          "-alias",
+          alias,
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          STORE_PASSWORD,
+          "-file",
+          certificate.toString(),
+          "-noprompt");
+      KeyStore keyStore = KeyStore.getInstance("PKCS12");
+      try (var input = Files.newInputStream(store)) {
+        keyStore.load(input, STORE_PASSWORD.toCharArray());
+      }
+      return new TestIdentity(
+          alias,
+          (PrivateKey) keyStore.getKey(alias, STORE_PASSWORD.toCharArray()),
+          (X509Certificate) keyStore.getCertificate(alias));
+    }
+
+    private static void runKeytool(String... arguments) throws Exception {
+      Path keytool =
+          Path.of(
+              System.getProperty("java.home"),
+              "bin",
+              System.getProperty("os.name").toLowerCase().contains("windows")
+                  ? "keytool.exe"
+                  : "keytool");
+      var command = new ArrayList<String>();
+      command.add(keytool.toString());
+      command.addAll(List.of(arguments));
+      Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
+      String output;
+      try (var stream = process.getInputStream()) {
+        output = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+      }
+      if (!process.waitFor(30, TimeUnit.SECONDS) || process.exitValue() != 0) {
+        process.destroyForcibly();
+        throw new IllegalStateException("test keytool failed: " + output);
+      }
+    }
+
+    private static X509Certificate readCertificate(Path path) throws Exception {
+      try (var input = Files.newInputStream(path)) {
+        return (X509Certificate)
+            CertificateFactory.getInstance("X.509").generateCertificate(input);
+      }
+    }
+
+    private static Path writePem(Path path, String label, byte[] bytes) throws IOException {
+      String body = Base64.getMimeEncoder(64, new byte[] {'\n'}).encodeToString(bytes);
+      return Files.writeString(
+          path,
+          "-----BEGIN " + label + "-----\n" + body + "\n-----END " + label + "-----\n",
+          StandardCharsets.US_ASCII);
     }
   }
 }
