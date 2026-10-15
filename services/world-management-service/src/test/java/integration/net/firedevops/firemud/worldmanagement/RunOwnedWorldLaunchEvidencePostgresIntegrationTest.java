@@ -2,17 +2,15 @@ package net.firedevops.firemud.worldmanagement;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.spy;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -29,6 +27,7 @@ import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidenceProvider;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
 import net.firedevops.firemud.worldmanagement.entity.WorldInstance;
 import net.firedevops.firemud.worldmanagement.repository.RegionInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
@@ -40,12 +39,8 @@ import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository
 import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.service.WorldLifecycleCommandService;
-import net.firedevops.firemud.worldmanagement.service.impl.InitialAdmissionBindHoldReconciler;
-import net.firedevops.firemud.worldmanagement.service.impl.InstanceServiceImpl;
-import net.firedevops.firemud.worldmanagement.service.impl.WorldEventServiceImpl;
 import net.firedevops.firemud.worldmanagement.service.impl.WorldLifecycleCommandServiceImpl;
 import org.jooq.DSLContext;
-import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.config.AutowireCapableBeanFactory;
@@ -54,7 +49,6 @@ import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
@@ -63,8 +57,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * PostgreSQL proof of fixture lifecycle denial before effects and passive binding storage.
- * Controlled storage rows do not establish World materialization or activation authority.
+ * Real PostgreSQL proof for fixture binding durability, uniqueness, lock serialization, and CAS.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -91,97 +84,107 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
 
   @Autowired private DSLContext dsl;
   @Autowired private AutowireCapableBeanFactory beanFactory;
-  @MockitoSpyBean private WorldInstanceRepository repository;
+  @Autowired private WorldInstanceRepository repository;
   @Autowired private WorldLifecycleCommandService lifecycleService;
   @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+  // Controlled evidence inputs keep this proof focused on the real PostgreSQL lifecycle/CAS.
   @MockitoBean private RunOwnedWorldLaunchEvidenceProvider fixtureProvider;
   @MockitoBean private RunOwnedWorldLaunchEvidence fixtureEvidence;
   @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private GrpcGameSessionInitialAdmissionBindProofClient bindProofClient;
-  // Keep unrelated scheduled writers inert so whole-schema snapshots measure fixture effects.
-  @MockitoBean private InitialAdmissionBindHoldReconciler initialAdmissionBindHoldReconciler;
-  @MockitoBean private WorldEventServiceImpl worldEventService;
-  @MockitoBean private InstanceServiceImpl instanceService;
 
   @Test
-  void fixturePrepareAndActivationRetryAndRestartDenyBeforeReadsOrPostgresEffects() {
+  void prepareActivationReplayRestartChangedReceiptAndDuplicateOperationUseDurableBinding() {
     long tenantId = 8_810_001L;
     long gameInstanceId = uniqueId();
     PreparedWorldInstanceRequest request = request(tenantId, gameInstanceId, operationId());
-    // This pre-existing controlled storage row supplies no canonical association or authority.
-    repository.save(passiveStorageRow(request, "a".repeat(64)));
-    when(fixtureProvider.isEnabled()).thenReturn(true);
-    clearInvocations(
-        repository,
-        fixtureEvidence,
-        gameDesignClient,
-        gameSessionClient,
-        entityManagementClient,
-        bindProofClient);
-    Map<String, List<String>> before = postgresState();
+    String binding = "a".repeat(64);
+    configureEvidence(binding);
     try {
-      assertFixtureDenied(() -> lifecycleService.prepareWorldInstance(request));
-      assertFixtureDenied(() -> lifecycleService.prepareWorldInstance(request));
-      assertFixtureDenied(
-          () -> lifecycleService.activatePreparedWorldInstance(tenantId, gameInstanceId, 1L));
-      assertFixtureDenied(
-          () -> lifecycleService.activatePreparedWorldInstance(tenantId, gameInstanceId, 1L));
-      assertFixtureDenied(
-          () ->
-              lifecycleService.prepareWorldInstance(
-                  request(tenantId, uniqueId(), request.controlPlaneRequestId())));
+      var prepared = lifecycleService.prepareWorldInstance(request);
+      WorldInstance stored =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(prepared.status()).isEqualTo("PREPARING");
+      assertThat(stored.getLifecycleEpoch()).isEqualTo(1L);
+      assertThat(stored.getRunOwnedFixturePreparingLifecycleEpoch()).isEqualTo(1L);
+      assertThat(stored.getRunOwnedFixtureBindingSha256()).isEqualTo(binding);
+      assertThat(stored.getPublishedReleaseBundleRef()).isEqualTo(RELEASE_REF);
+      assertThat(stored.getRowVersion()).isZero();
+
+      var active = lifecycleService.activatePreparedWorldInstance(tenantId, gameInstanceId, 1L);
+      assertThat(active.status()).isEqualTo("ACTIVE");
+      assertThat(active.lifecycleEpoch()).isEqualTo(2L);
+      WorldInstance activeRow =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(activeRow.getRunOwnedFixtureBindingSha256()).isEqualTo(binding);
+      assertThat(activeRow.getRunOwnedFixturePreparingLifecycleEpoch()).isEqualTo(1L);
+      long activeRowVersion = activeRow.getRowVersion();
 
       RunOwnedWorldLaunchEvidenceProvider restartedProvider =
           mock(RunOwnedWorldLaunchEvidenceProvider.class);
+      RunOwnedWorldLaunchEvidence restartedEvidence = mock(RunOwnedWorldLaunchEvidence.class);
       when(restartedProvider.isEnabled()).thenReturn(true);
-      WorldInstanceRepository restartedRepository = spy(new WorldInstanceRepository(dsl));
+      when(restartedProvider.requireAuthenticatedEvidence()).thenReturn(restartedEvidence);
+      when(restartedEvidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+          .thenReturn(binding);
+      WorldInstanceRepository restartedRepository = new WorldInstanceRepository(dsl);
       WorldLifecycleCommandServiceImpl restartedService =
           restartedLifecycleService(restartedRepository, restartedProvider);
-      assertFixtureDenied(() -> restartedService.prepareWorldInstance(request));
-      assertFixtureDenied(
-          () -> restartedService.activatePreparedWorldInstance(tenantId, gameInstanceId, 1L));
-      assertThat(postgresState()).isEqualTo(before);
-      verifyNoInteractions(repository, restartedRepository);
-      org.mockito.Mockito.verify(restartedProvider, org.mockito.Mockito.never())
-          .requireAuthenticatedEvidence();
-      verifyNoUpstreamReads();
-    } finally {
-      dsl.execute("DELETE FROM world_instance WHERE tenant_id = ?", tenantId);
-    }
-  }
 
-  @Test
-  void controlledPassiveStorageRetainsBindingAndEnforcesConstraintsUniquenessAndCas() {
-    clearInvocations(fixtureProvider, fixtureEvidence);
-    long tenantId = 8_810_004L;
-    long gameInstanceId = uniqueId();
-    PreparedWorldInstanceRequest request = request(tenantId, gameInstanceId, operationId());
-    try {
-      WorldInstance stored = repository.save(passiveStorageRow(request, "a".repeat(64)));
-      assertThat(stored.getStatus()).isEqualTo("PREPARING");
-      assertThat(stored.getLifecycleEpoch()).isEqualTo(1L);
-      assertThat(stored.getRunOwnedFixturePreparingLifecycleEpoch()).isEqualTo(1L);
-      assertThat(stored.getRunOwnedFixtureBindingSha256()).isEqualTo("a".repeat(64));
-      assertThat(stored.getPublishedReleaseBundleRef()).isEqualTo(RELEASE_REF);
-      assertThat(stored.getRowVersion()).isZero();
-      WorldInstanceRepository restartedRepository = new WorldInstanceRepository(dsl);
+      var replay = restartedService.activatePreparedWorldInstance(tenantId, gameInstanceId, 1L);
+      assertThat(replay).isEqualTo(active);
+      verify(restartedProvider).requireAuthenticatedEvidence();
       assertThat(
-              restartedRepository
+              repository
                   .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-                  .orElseThrow())
-          .usingRecursiveComparison()
-          .isEqualTo(stored);
+                  .orElseThrow()
+                  .getRowVersion())
+          .isEqualTo(activeRowVersion);
+      var prepareReplay = restartedService.prepareWorldInstance(request);
+      assertThat(prepareReplay).isEqualTo(active);
       assertThat(
-              restartedRepository
-                  .findRunOwnedFixtureByTenantIdAndControlPlaneRequestId(
-                      tenantId, request.controlPlaneRequestId())
-                  .orElseThrow())
-          .usingRecursiveComparison()
-          .isEqualTo(stored);
+              repository
+                  .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+                  .orElseThrow()
+                  .getRowVersion())
+          .isEqualTo(activeRowVersion);
+      verify(restartedProvider, org.mockito.Mockito.times(2)).requireAuthenticatedEvidence();
+
+      RunOwnedWorldLaunchEvidenceProvider changedProvider =
+          mock(RunOwnedWorldLaunchEvidenceProvider.class);
+      RunOwnedWorldLaunchEvidence changedEvidence = mock(RunOwnedWorldLaunchEvidence.class);
+      when(changedProvider.isEnabled()).thenReturn(true);
+      when(changedProvider.requireAuthenticatedEvidence()).thenReturn(changedEvidence);
+      when(changedEvidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+          .thenReturn("b".repeat(64));
+      assertThatThrownBy(
+              () ->
+                  restartedLifecycleService(new WorldInstanceRepository(dsl), changedProvider)
+                      .activatePreparedWorldInstance(tenantId, gameInstanceId, 1L))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageStartingWith("RUN_OWNED_WORLD_LAUNCH_EVIDENCE_MISMATCH:");
+      assertThat(
+              repository
+                  .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+                  .orElseThrow()
+                  .getRowVersion())
+          .isEqualTo(activeRowVersion);
+
+      PreparedWorldInstanceRequest duplicateOperation =
+          request(tenantId, uniqueId(), request.controlPlaneRequestId());
+      when(fixtureEvidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+          .thenReturn(binding);
+      assertThatThrownBy(() -> lifecycleService.prepareWorldInstance(duplicateOperation))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageStartingWith("RUN_OWNED_WORLD_LAUNCH_IDENTITY_CONFLICT:");
+      verify(gameDesignClient, never()).getPublishedReleaseBundle(anyLong(), anyLong());
+      verify(gameDesignClient, never()).getVersionAssetArtifactState(anyLong(), anyLong());
+      verify(gameDesignClient, never()).getVersionState(anyLong(), anyLong());
+      verify(fixtureProvider, org.mockito.Mockito.atLeast(3)).requireAuthenticatedEvidence();
 
       assertThatThrownBy(
               () ->
@@ -208,13 +211,6 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
                       gameInstanceId))
           .isInstanceOf(RuntimeException.class);
 
-      assertThat(
-              restartedRepository
-                  .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-                  .orElseThrow())
-          .usingRecursiveComparison()
-          .isEqualTo(stored);
-
       WorldInstance staleCopy =
           repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
       WorldInstance winningCopy =
@@ -229,19 +225,27 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
           repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
       assertThat(durableWinner.getFailureReason()).isEqualTo("CAS winner");
       assertThat(durableWinner.getRowVersion()).isEqualTo(savedWinningCopy.getRowVersion());
-      assertThat(durableWinner.getRunOwnedFixtureBindingSha256()).isEqualTo("a".repeat(64));
-      assertThat(durableWinner.getRunOwnedFixturePreparingLifecycleEpoch()).isEqualTo(1L);
-      WorldInstance duplicate =
-          passiveStorageRow(
-              request(tenantId, uniqueId(), request.controlPlaneRequestId()), "c".repeat(64));
+
+      WorldInstance duplicate = new WorldInstance();
+      duplicate.setTenantId(tenantId);
+      duplicate.setGameInstanceId(uniqueId());
+      duplicate.setGameTemplateId(17L);
+      duplicate.setControlPlaneRequestId(request.controlPlaneRequestId());
+      duplicate.setLaunchDescriptorId("launch-descriptor-fixture-11");
+      duplicate.setVersionId(11L);
+      duplicate.setRuntimeFlagsJson("{}");
+      duplicate.setGenerationConfigRevision("genrev-11");
+      duplicate.setReleaseBundleId(77L);
+      duplicate.setPublishedReleaseBundleRef(RELEASE_REF);
+      duplicate.setVersionStateEpoch(77L);
+      duplicate.setLifecycleEpoch(1L);
+      duplicate.setStatus("PREPARING");
+      duplicate.setCreatedAt(Instant.now());
+      duplicate.setUpdatedAt(Instant.now());
+      duplicate.setRowVersion(0L);
+      duplicate.setRunOwnedFixtureBindingSha256("c".repeat(64));
+      duplicate.setRunOwnedFixturePreparingLifecycleEpoch(1L);
       assertThatThrownBy(() -> repository.save(duplicate)).isInstanceOf(RuntimeException.class);
-      assertThat(
-              restartedRepository
-                  .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
-                  .orElseThrow())
-          .usingRecursiveComparison()
-          .isEqualTo(durableWinner);
-      verifyNoInteractions(fixtureProvider, fixtureEvidence);
     } finally {
       dsl.execute("DELETE FROM world_instance WHERE tenant_id = ?", tenantId);
     }
@@ -285,126 +289,51 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
   }
 
   @Test
-  void concurrentFixturePrepareAndActivationRetriesDenyWithoutPostgresOrUpstreamEffects()
-      throws Exception {
+  void concurrentPrepareRetriesCreateOneFixtureBoundWorldInstance() throws Exception {
     long tenantId = 8_810_003L;
     long gameInstanceId = uniqueId();
     PreparedWorldInstanceRequest request = request(tenantId, gameInstanceId, operationId());
-    when(fixtureProvider.isEnabled()).thenReturn(true);
-    clearInvocations(
-        repository,
-        fixtureEvidence,
-        gameDesignClient,
-        gameSessionClient,
-        entityManagementClient,
-        bindProofClient);
-    Map<String, List<String>> before = postgresState();
+    configureEvidence("d".repeat(64));
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
-      Future<?> first =
+      Future<WorldInstanceLifecycleSnapshotDto> first =
           executor.submit(
               () -> {
                 ready.countDown();
                 await(start);
-                assertFixtureDenied(() -> lifecycleService.prepareWorldInstance(request));
-                assertFixtureDenied(
-                    () ->
-                        lifecycleService.activatePreparedWorldInstance(
-                            tenantId, gameInstanceId, 1L));
+                return lifecycleService.prepareWorldInstance(request);
               });
-      Future<?> second =
+      Future<WorldInstanceLifecycleSnapshotDto> second =
           executor.submit(
               () -> {
                 ready.countDown();
                 await(start);
-                assertFixtureDenied(() -> lifecycleService.prepareWorldInstance(request));
-                assertFixtureDenied(
-                    () ->
-                        lifecycleService.activatePreparedWorldInstance(
-                            tenantId, gameInstanceId, 1L));
+                return lifecycleService.prepareWorldInstance(request);
               });
       assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
       start.countDown();
-      first.get(20, TimeUnit.SECONDS);
-      second.get(20, TimeUnit.SECONDS);
-      assertThat(postgresState()).isEqualTo(before);
-      verifyNoInteractions(repository);
-      verifyNoUpstreamReads();
+
+      var firstResult = first.get(20, TimeUnit.SECONDS);
+      var secondResult = second.get(20, TimeUnit.SECONDS);
+      assertThat(firstResult).isEqualTo(secondResult);
+      assertThat(firstResult.status()).isEqualTo("PREPARING");
+      WorldInstance stored =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(stored.getRunOwnedFixtureBindingSha256()).isEqualTo("d".repeat(64));
+      assertThat(stored.getRunOwnedFixturePreparingLifecycleEpoch()).isEqualTo(1L);
+      verify(fixtureProvider, org.mockito.Mockito.atLeast(2)).requireAuthenticatedEvidence();
     } finally {
       start.countDown();
+      dsl.execute("DELETE FROM world_instance WHERE tenant_id = ?", tenantId);
     }
   }
 
-  private static void assertFixtureDenied(
-      org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
-    assertThatThrownBy(call)
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageStartingWith("RUN_OWNED_WORLD_MATERIALIZATION_UNAVAILABLE:");
-  }
-
-  private void verifyNoUpstreamReads() {
-    org.mockito.Mockito.verify(fixtureProvider, org.mockito.Mockito.never())
-        .requireAuthenticatedEvidence();
-    verifyNoInteractions(
-        fixtureEvidence,
-        gameDesignClient,
-        gameSessionClient,
-        entityManagementClient,
-        bindProofClient);
-  }
-
-  private Map<String, List<String>> postgresState() {
-    String schema = dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
-    assertThat(schema).isEqualTo("world_management_service");
-    List<String> tables =
-        dsl.fetch("SELECT tablename FROM pg_tables WHERE schemaname = ? ORDER BY tablename", schema)
-            .getValues(0, String.class);
-    assertThat(tables).isNotEmpty().contains("world_instance");
-    Map<String, List<String>> state = new LinkedHashMap<>();
-    for (String table : tables) {
-      // Entire rows and xmin retain source/resource bytes as well as lifecycle/CAS state.
-      state.put(
-          table,
-          dsl.fetch(
-                  "SELECT to_jsonb(retained)::text || ':xmin=' || retained.xmin::text FROM "
-                      + DSL.name(schema, table)
-                      + " retained ORDER BY 1")
-              .getValues(0, String.class));
-    }
-    List<String> sequences =
-        dsl.fetch(
-                "SELECT to_jsonb(retained)::text FROM (SELECT sequencename, last_value "
-                    + "FROM pg_sequences WHERE schemaname = ? ORDER BY sequencename) retained",
-                schema)
-            .getValues(0, String.class);
-    assertThat(sequences).isNotEmpty();
-    state.put("sequences", sequences);
-    return state;
-  }
-
-  private static WorldInstance passiveStorageRow(
-      PreparedWorldInstanceRequest request, String binding) {
-    WorldInstance row = new WorldInstance();
-    row.setTenantId(request.tenantId());
-    row.setGameInstanceId(request.gameInstanceId());
-    row.setGameTemplateId(request.gameTemplateId());
-    row.setControlPlaneRequestId(request.controlPlaneRequestId());
-    row.setLaunchDescriptorId(request.launchDescriptorId());
-    row.setVersionId(request.versionId());
-    row.setRuntimeFlagsJson(request.runtimeFlagsJson());
-    row.setGenerationConfigRevision(request.generationConfigRevision());
-    row.setReleaseBundleId(request.releaseBundleId());
-    row.setPublishedReleaseBundleRef(request.publishedReleaseBundleRef());
-    row.setVersionStateEpoch(request.versionStateEpoch());
-    row.setLifecycleEpoch(1L);
-    row.setStatus("PREPARING");
-    row.setCreatedAt(Instant.now());
-    row.setUpdatedAt(Instant.now());
-    row.setRowVersion(0L);
-    row.setRunOwnedFixtureBindingSha256(binding);
-    row.setRunOwnedFixturePreparingLifecycleEpoch(1L);
-    return row;
+  private void configureEvidence(String binding) {
+    when(fixtureProvider.isEnabled()).thenReturn(true);
+    when(fixtureProvider.requireAuthenticatedEvidence()).thenReturn(fixtureEvidence);
+    when(fixtureEvidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+        .thenReturn(binding);
   }
 
   private WorldLifecycleCommandServiceImpl restartedLifecycleService(

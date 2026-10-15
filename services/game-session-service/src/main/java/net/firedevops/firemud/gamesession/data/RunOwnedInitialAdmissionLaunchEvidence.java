@@ -69,7 +69,7 @@ public final class RunOwnedInitialAdmissionLaunchEvidence {
   static RunOwnedInitialAdmissionLaunchEvidence fromVerifiedSourceReceipt(
       RunOwnedInitialAdmissionFixtureCapability capability,
       RunOwnedInitialAdmissionFixtureCapability.SourceReceipt receipt) {
-    RunOwnedInitialAdmissionFixtureCoordinator.requireExactSourceReceipt(capability, receipt);
+    RunOwnedCanonicalLaunchPreparationOwner.requireExactSourceReceipt(capability, receipt);
     RunOwnedInitialAdmissionFixtureCapability.LaunchReadEvidence readEvidence =
         receipt.launchReadEvidence();
     return new RunOwnedInitialAdmissionLaunchEvidence(
@@ -128,7 +128,7 @@ public final class RunOwnedInitialAdmissionLaunchEvidence {
     if (!(verification instanceof VerifiedFixture fixture)) {
       throw new IllegalArgumentException("Verified run-owned fixture provenance is required");
     }
-    RunOwnedInitialAdmissionFixtureCoordinator.requireExactSourceReceipt(
+    RunOwnedCanonicalLaunchPreparationOwner.requireExactSourceReceipt(
         fixture.capability(), fixture.receipt());
     String requestDigest =
         RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyRequestDigest(
