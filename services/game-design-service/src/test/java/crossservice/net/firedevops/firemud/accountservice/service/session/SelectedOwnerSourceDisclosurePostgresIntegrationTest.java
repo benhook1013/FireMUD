@@ -273,8 +273,30 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
                                   NAMESPACE, substituted)))
                   .isInstanceOf(io.grpc.StatusRuntimeException.class);
               assertThat(retainedReservation(f, scope)).isEqualTo(retained);
+              var capturedSources =
+                  f.tx(() -> f.authority.captureInitial(f.tenant, issued.environment()));
+              var blockedWriter =
+                  new net.firedevops.firemud.accountservice.authordraft
+                          .DraftAuthorizationFenceRepository.SourceChange(
+                      UUID.randomUUID(), capturedSources.sources(), new byte[] {7});
+              assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(blockedWriter)))
+                  .isFalse();
+              assertThat(f.<Boolean>tx(() -> f.fences.sourceMutationPermitted(blockedWriter)))
+                  .isFalse();
+              assertThat(f.<Boolean>tx(() -> f.fences.sourceAbortPermitted(blockedWriter)))
+                  .isFalse();
               assertThat(asGameDesign(() -> reservations.abortSourceRead(scope)).state().name())
                   .isEqualTo("ABORTED");
+              assertThat(f.<Boolean>tx(() -> f.fences.sourceMutationPermitted(blockedWriter)))
+                  .isTrue();
+              f.tx(
+                  () -> {
+                    f.fences.markSourceAborted(
+                        blockedWriter,
+                        net.firedevops.firemud.accountservice.authordraft
+                            .DraftAuthorizationFenceRepository.SourceChangeAbortReason.DEFINITIVE_ABORT);
+                    return null;
+                  });
               var aborted = retainedReservation(f, scope);
               assertThatThrownBy(() -> sources.read(request))
                   .isInstanceOf(io.grpc.StatusRuntimeException.class);

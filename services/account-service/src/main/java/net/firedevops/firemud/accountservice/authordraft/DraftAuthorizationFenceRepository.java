@@ -383,6 +383,12 @@ public final class DraftAuthorizationFenceRepository {
   }
 
   private void requireNoPendingSelectedOwnerIntakeSourceRead(List<SourceEvidence> sources) {
+    if (hasPendingSelectedOwnerIntakeSourceRead(sources)) {
+      throw new IllegalStateException("Selected owner intake source read remains pending");
+    }
+  }
+
+  private boolean hasPendingSelectedOwnerIntakeSourceRead(List<SourceEvidence> sources) {
     for (SourceEvidence source : sources) {
       if (!dsl.fetch(
               "SELECT source.operation_id FROM account_selected_owner_intake_source_read_sources source "
@@ -390,9 +396,10 @@ public final class DraftAuthorizationFenceRepository {
                   + "AND account_selected_owner_intake_source_read_is_pending(source.operation_id)",
               source.key())
           .isEmpty()) {
-        throw new IllegalStateException("Selected owner intake source read remains pending");
+        return true;
       }
     }
+    return false;
   }
 
   private boolean hasPendingGameLogicIntake(List<SourceEvidence> sources) {
@@ -890,7 +897,8 @@ public final class DraftAuthorizationFenceRepository {
   private boolean allAffectedSettled(List<SourceEvidence> sources) {
     if (hasPendingPublication(sources)
         || hasPendingGameLogicIntake(sources)
-        || hasPendingWorldParticipation(sources)) {
+        || hasPendingWorldParticipation(sources)
+        || hasPendingSelectedOwnerIntakeSourceRead(sources)) {
       return false;
     }
     for (UUID operation : affectedOperations(sources)) {
