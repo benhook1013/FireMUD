@@ -17,7 +17,6 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
-import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -257,16 +256,31 @@ class SelectedDraftPublicationDigestReadServiceTest {
     var request = request(fixture.operation());
     when(transactions.getTransaction(any())).thenReturn(transactionStatus);
     when(owner.read(request.derivedWorkflowIdentity()))
-        .thenReturn(Optional.of(new GameDesignPublicationOperationRepository.Readback(
-            fixture.operation(), "PENDING", new byte[] {1})));
+        .thenReturn(
+            Optional.of(
+                new GameDesignPublicationOperationRepository.Readback(
+                    fixture.operation(), "PENDING", new byte[] {1})));
     var complete = fixture.capture();
-    var missingFamilies = List.of(
-        new GameDesignSourceRepository.Capture(complete.command(), complete.policy(),
-            Optional.empty(), complete.branding(), complete.templateConfig()),
-        new GameDesignSourceRepository.Capture(complete.command(), complete.policy(),
-            complete.asset(), Optional.empty(), complete.templateConfig()),
-        new GameDesignSourceRepository.Capture(complete.command(), complete.policy(),
-            complete.asset(), complete.branding(), Optional.empty()));
+    var missingFamilies =
+        List.of(
+            new GameDesignSourceRepository.Capture(
+                complete.command(),
+                complete.policy(),
+                Optional.empty(),
+                complete.branding(),
+                complete.templateConfig()),
+            new GameDesignSourceRepository.Capture(
+                complete.command(),
+                complete.policy(),
+                complete.asset(),
+                Optional.empty(),
+                complete.templateConfig()),
+            new GameDesignSourceRepository.Capture(
+                complete.command(),
+                complete.policy(),
+                complete.asset(),
+                complete.branding(),
+                Optional.empty()));
     var service = new SelectedDraftPublicationDigestReadService(owner, transactions, NAMESPACE);
     for (var missing : missingFamilies) {
       when(owner.readSourceCapture(fixture.operation())).thenReturn(Optional.of(missing));
@@ -301,9 +315,11 @@ class SelectedDraftPublicationDigestReadServiceTest {
             new CommandSnapshot.Capture(operation, sources.command()),
             new RealmPolicySnapshot.Capture(operation, sources.policy()),
             Optional.of(new AssetSnapshot.Capture(operation, sources.asset())),
-            Optional.of(new BrandingSourceSnapshot.Capture(operation, sources.branding().orElseThrow())),
-            Optional.of(new TemplateConfigSourceSnapshot.Capture(
-                operation, sources.templateConfig().orElseThrow())));
+            Optional.of(
+                new BrandingSourceSnapshot.Capture(operation, sources.branding().orElseThrow())),
+            Optional.of(
+                new TemplateConfigSourceSnapshot.Capture(
+                    operation, sources.templateConfig().orElseThrow())));
     return new Fixture(operation, binding, sources, capture);
   }
 
@@ -331,7 +347,12 @@ class SelectedDraftPublicationDigestReadServiceTest {
         new TemplateConfigSourceSnapshot(
             binding, "0", null, UUID.fromString("66666666-6666-4666-8666-666666666666"), List.of());
     return new GameDesignSourceRepository.SynchronizedSources(
-        command, policy, Optional.of(asset), Optional.of(gameplay), Optional.of(branding), Optional.of(template));
+        command,
+        policy,
+        Optional.of(asset),
+        Optional.of(gameplay),
+        Optional.of(branding),
+        Optional.of(template));
   }
 
   private static void assertCode(Status.Code expected, Runnable action) {

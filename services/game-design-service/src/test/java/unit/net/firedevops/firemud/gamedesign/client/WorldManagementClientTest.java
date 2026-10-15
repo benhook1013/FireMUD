@@ -122,7 +122,10 @@ class WorldManagementClientTest {
   }
 
   private static PublishGateServiceImpl gate() {
-    return new PublishGateServiceImpl(null, null, null, null, null);
+    return new PublishGateServiceImpl(
+        null, null, null, null, null,
+        mock(org.jooq.DSLContext.class),
+        mock(org.springframework.transaction.PlatformTransactionManager.class), "");
   }
 
   private static VersionDto version() {

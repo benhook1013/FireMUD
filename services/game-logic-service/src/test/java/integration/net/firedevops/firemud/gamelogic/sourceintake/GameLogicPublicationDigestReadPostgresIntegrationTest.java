@@ -17,13 +17,13 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationBinding;
-import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadEvidence;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadClient;
-import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadClient;
+import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadEvidence;
 import net.firedevops.firemud.common.gamelogic.GameLogicPublicationSourceReadBinding;
 import net.firedevops.firemud.common.gamelogic.GameLogicPublicationSourceReadGrpcCodec;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadClient;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
@@ -48,16 +48,18 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Actual current-default GL retention, immutable owner read, digest service and receiver.
- * Account authorization and GD source responses are explicitly controlled upstream inputs;
- * direct handler invocation supplies controlled peer context, not authenticated socket/TLS proof.
- * No production composition, genuine upstream authority or registration is established.
+ * Actual current-default GL retention, immutable owner read, digest service and receiver. Account
+ * authorization and GD source responses are explicitly controlled upstream inputs; direct handler
+ * invocation supplies controlled peer context, not authenticated socket/TLS proof. No production
+ * composition, genuine upstream authority or registration is established.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 class GameLogicPublicationDigestReadPostgresIntegrationTest {
   private static final String NAMESPACE = "test";
-  @Container static final PostgreSQLContainer<?> POSTGRES =
+
+  @Container
+  static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @AfterEach
@@ -74,22 +76,30 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
     var f = fixture();
     var authorization = authorization();
     var accountReader = mock(GameLogicIntakeAuthorizationReadClient.class);
-    when(accountReader.read(any())).thenAnswer(invocation -> {
-      GameLogicIntakeAuthorizationReadEvidence.Request request = invocation.getArgument(0);
-      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-      assertThat(request.binding().canonicalBytes()).isEqualTo(authorization.canonicalBytes());
-      return new GameLogicIntakeAuthorizationReadEvidence(request);
-    });
+    when(accountReader.read(any()))
+        .thenAnswer(
+            invocation -> {
+              GameLogicIntakeAuthorizationReadEvidence.Request request = invocation.getArgument(0);
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(request.binding().canonicalBytes())
+                  .isEqualTo(authorization.canonicalBytes());
+              return new GameLogicIntakeAuthorizationReadEvidence(request);
+            });
     var sourceReader = mock(GameplayRuleSourceReadClient.class);
-    when(sourceReader.read(any())).thenAnswer(invocation -> {
-      GameplayRuleSourceReadEvidence.Request request = invocation.getArgument(0);
-      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-      assertThat(request.proof()).isInstanceOf(GameplayRuleSourceReadEvidence.Finalized.class);
-      assertThat(request.proof().canonicalBytes()).isEqualTo(authorization.canonicalBytes());
-      return new GameplayRuleSourceReadEvidence(request, authorization.source());
-    });
-    var intake = new GameLogicGameplayRuleIntakeService(
-        f.repository(), f.manager(), accountReader, sourceReader, NAMESPACE);
+    when(sourceReader.read(any()))
+        .thenAnswer(
+            invocation -> {
+              GameplayRuleSourceReadEvidence.Request request = invocation.getArgument(0);
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(request.proof())
+                  .isInstanceOf(GameplayRuleSourceReadEvidence.Finalized.class);
+              assertThat(request.proof().canonicalBytes())
+                  .isEqualTo(authorization.canonicalBytes());
+              return new GameplayRuleSourceReadEvidence(request, authorization.source());
+            });
+    var intake =
+        new GameLogicGameplayRuleIntakeService(
+            f.repository(), f.manager(), accountReader, sourceReader, NAMESPACE);
     var terminal = asGameDesign(() -> intake.retain(authorization));
     var reader = new GameLogicPublicationSourceReadService(f.repository(), NAMESPACE);
     var digest = new GameLogicDraftDesignDigestServiceImpl(reader);
@@ -100,74 +110,135 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
 
     var response = asGameDesign(() -> invoke(receiver, request));
     assertThat(response.hasError()).isFalse();
-    var evidence = GameLogicPublicationSourceReadGrpcCodec.fromResponse(binding, response, NAMESPACE);
+    var evidence =
+        GameLogicPublicationSourceReadGrpcCodec.fromResponse(binding, response, NAMESPACE);
     assertThat(evidence.terminal().canonicalBytes()).isEqualTo(terminal.canonicalBytes());
-    assertThat(evidence.terminal().selectedSourceBytes()).isEqualTo(authorization.source().canonicalBytes());
+    assertThat(evidence.terminal().selectedSourceBytes())
+        .isEqualTo(authorization.source().canonicalBytes());
     assertThat(evidence.manifestDigest()).isEqualTo(authorization.source().manifest().digest());
-    assertThat(asGameDesign(() -> digest.getDraftDesignDigest(binding)).terminalBytes()).isEqualTo(terminal.canonicalBytes());
+    assertThat(asGameDesign(() -> digest.getDraftDesignDigest(binding)).terminalBytes())
+        .isEqualTo(terminal.canonicalBytes());
     assertThat(asGameDesign(() -> invoke(receiver, request))).isEqualTo(response);
 
-    var missing = copyAuthorization(authorization, UUID.randomUUID(), authorization.fenceId(), authorization.intakeRequestId(), authorization.source());
-    assertError(receiver, GameLogicPublicationSourceReadGrpcCodec.toRequest(publicationBinding(missing)), "FAILED_PRECONDITION");
-    var changed = copyAuthorization(authorization, authorization.operationId(), UUID.randomUUID(), authorization.intakeRequestId(), authorization.source());
-    assertError(receiver, GameLogicPublicationSourceReadGrpcCodec.toRequest(publicationBinding(changed)), "ALREADY_EXISTS");
-    assertError(receiver, request.toBuilder().clearSourceReadBinding().clearSourceReadBindingDigest().build(), "INVALID_ARGUMENT");
-    assertError(receiver(new GameLogicDraftDesignDigestServiceImpl()), request, "UNSUPPORTED_SCOPE");
+    var missing =
+        copyAuthorization(
+            authorization,
+            UUID.randomUUID(),
+            authorization.fenceId(),
+            authorization.intakeRequestId(),
+            authorization.source());
+    assertError(
+        receiver,
+        GameLogicPublicationSourceReadGrpcCodec.toRequest(publicationBinding(missing)),
+        "FAILED_PRECONDITION");
+    var changed =
+        copyAuthorization(
+            authorization,
+            authorization.operationId(),
+            UUID.randomUUID(),
+            authorization.intakeRequestId(),
+            authorization.source());
+    assertError(
+        receiver,
+        GameLogicPublicationSourceReadGrpcCodec.toRequest(publicationBinding(changed)),
+        "ALREADY_EXISTS");
+    assertError(
+        receiver,
+        request.toBuilder().clearSourceReadBinding().clearSourceReadBindingDigest().build(),
+        "INVALID_ARGUMENT");
+    assertError(
+        receiver(new GameLogicDraftDesignDigestServiceImpl()), request, "UNSUPPORTED_SCOPE");
 
-    var wrongPeer = GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/world-management-service").orElseThrow();
+    var wrongPeer =
+        GrpcPeerIdentity.parseUri("spiffe://firemud/ns/test/sa/world-management-service")
+            .orElseThrow();
     var context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, wrongPeer);
     var previous = context.attach();
-    try { assertThat(invoke(receiver, request).getError().getCode()).isEqualTo("PERMISSION_DENIED"); }
-    finally { context.detach(previous); }
+    try {
+      assertThat(invoke(receiver, request).getError().getCode()).isEqualTo("PERMISSION_DENIED");
+    } finally {
+      context.detach(previous);
+    }
     SessionContext.setContext("controlled-user", List.of(), Map.of());
     assertError(receiver, request, "PERMISSION_DENIED");
     SessionContext.clear();
     TransactionSynchronizationManager.setActualTransactionActive(true);
-    try { assertError(receiver, request, "FAILED_PRECONDITION"); }
-    finally { TransactionSynchronizationManager.setActualTransactionActive(false); }
+    try {
+      assertError(receiver, request, "FAILED_PRECONDITION");
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
     assertThat(row(f, authorization.operationId())).isEqualTo(retained);
 
     var abortedAuthorization = authorization();
     var abortAccountReader = mock(GameLogicIntakeAuthorizationReadClient.class);
-    when(abortAccountReader.read(any())).thenAnswer(invocation -> {
-      GameLogicIntakeAuthorizationReadEvidence.Request heldRequest = invocation.getArgument(0);
-      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-      assertThat(heldRequest.binding().canonicalBytes())
-          .isEqualTo(abortedAuthorization.canonicalBytes());
-      return new GameLogicIntakeAuthorizationReadEvidence(heldRequest);
-    });
+    when(abortAccountReader.read(any()))
+        .thenAnswer(
+            invocation -> {
+              GameLogicIntakeAuthorizationReadEvidence.Request heldRequest =
+                  invocation.getArgument(0);
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(heldRequest.binding().canonicalBytes())
+                  .isEqualTo(abortedAuthorization.canonicalBytes());
+              return new GameLogicIntakeAuthorizationReadEvidence(heldRequest);
+            });
     var unusedAbortSourceReader = mock(GameplayRuleSourceReadClient.class);
-    var abortOwner = new GameLogicGameplayRuleIntakeService(
-        f.repository(), f.manager(), abortAccountReader, unusedAbortSourceReader, NAMESPACE);
+    var abortOwner =
+        new GameLogicGameplayRuleIntakeService(
+            f.repository(), f.manager(), abortAccountReader, unusedAbortSourceReader, NAMESPACE);
     asGameDesign(() -> abortOwner.abort(abortedAuthorization));
     verify(abortAccountReader).read(any());
     verify(unusedAbortSourceReader, never()).read(any());
     String aborted = row(f, abortedAuthorization.operationId());
-    assertError(receiver, GameLogicPublicationSourceReadGrpcCodec.toRequest(publicationBinding(abortedAuthorization)), "FAILED_PRECONDITION");
+    assertError(
+        receiver,
+        GameLogicPublicationSourceReadGrpcCodec.toRequest(publicationBinding(abortedAuthorization)),
+        "FAILED_PRECONDITION");
     assertThat(row(f, abortedAuthorization.operationId())).isEqualTo(aborted);
     assertThat(row(f, authorization.operationId())).isEqualTo(retained);
   }
 
   private static GameLogicGrpcService receiver(GameLogicDraftDesignDigestServiceImpl digest) {
     // Unrelated gameplay owners are unused by this focused direct receiver composition.
-    return new GameLogicGrpcService(null, null, null, null, null, null, digest, null,
-        new SimpleMeterRegistry(), new PublicationReadGuard(NAMESPACE));
+    return new GameLogicGrpcService(
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        digest,
+        null,
+        new SimpleMeterRegistry(),
+        new PublicationReadGuard(NAMESPACE));
   }
 
-  private static GetDraftDesignDigestResponse invoke(GameLogicGrpcService receiver,
-      GetDraftDesignDigestRequest request) {
+  private static GetDraftDesignDigestResponse invoke(
+      GameLogicGrpcService receiver, GetDraftDesignDigestRequest request) {
     var result = new AtomicReference<GetDraftDesignDigestResponse>();
-    receiver.getDraftDesignDigest(request, new StreamObserver<>() {
-      @Override public void onNext(GetDraftDesignDigestResponse value) { result.set(value); }
-      @Override public void onError(Throwable failure) { throw new AssertionError(failure); }
-      @Override public void onCompleted() {}
-    });
+    receiver.getDraftDesignDigest(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetDraftDesignDigestResponse value) {
+            result.set(value);
+          }
+
+          @Override
+          public void onError(Throwable failure) {
+            throw new AssertionError(failure);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
     assertThat(result.get()).isNotNull();
     return result.get();
   }
 
-  private static void assertError(GameLogicGrpcService receiver, GetDraftDesignDigestRequest request,
-      String code) throws Exception {
+  private static void assertError(
+      GameLogicGrpcService receiver, GetDraftDesignDigestRequest request, String code)
+      throws Exception {
     var response = asGameDesign(() -> invoke(receiver, request));
     assertThat(response.getError().getCode()).isEqualTo(code);
     assertThat(response.getRetainedIntakeTerminal().isEmpty()).isTrue();
@@ -176,7 +247,11 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
   }
 
   private static String row(Fixture f, UUID operation) {
-    return f.dsl().fetchSingle("SELECT row_to_json(t)::TEXT || ':' || t.xmin::TEXT FROM game_logic_gameplay_rule_intake_terminal t WHERE operation_id = ?", operation).get(0, String.class);
+    return f.dsl()
+        .fetchSingle(
+            "SELECT row_to_json(t)::TEXT || ':' || t.xmin::TEXT FROM game_logic_gameplay_rule_intake_terminal t WHERE operation_id = ?",
+            operation)
+        .get(0, String.class);
   }
 
   private static Fixture fixture() {
@@ -293,6 +368,8 @@ class GameLogicPublicationDigestReadPostgresIntegrationTest {
         authorization);
   }
 
-  private record Fixture(DSLContext dsl, DataSourceTransactionManager manager,
+  private record Fixture(
+      DSLContext dsl,
+      DataSourceTransactionManager manager,
       GameLogicGameplayRuleIntakeRepository repository) {}
 }

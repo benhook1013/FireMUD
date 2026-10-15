@@ -9,7 +9,6 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayload;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
-import net.firedevops.firemud.common.gamedesign.RealmPolicySource;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import org.junit.jupiter.api.Test;
@@ -211,6 +210,11 @@ class SelectedDraftControlPlaneDigestTest {
         new TemplateConfigSourceSnapshot(
             binding, "0", null, UUID.fromString("66666666-6666-4666-8666-666666666666"), List.of());
     return new GameDesignSourceRepository.SynchronizedSources(
-        command, policy, Optional.of(asset), Optional.of(gameplay), Optional.of(branding), Optional.of(template));
+        command,
+        policy,
+        Optional.of(asset),
+        Optional.of(gameplay),
+        Optional.of(branding),
+        Optional.of(template));
   }
 }
