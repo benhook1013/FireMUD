@@ -71,11 +71,7 @@ public final class AccountGameplayDelegationRedisClient {
     if (!"pending".equals(record.state())
         || !intent.requestId().toString().equals(record.requestId())
         || !intent.tokenHash().equals(record.tokenHash())) throw unavailable();
-    String activeText =
-        new String(pending, StandardCharsets.UTF_8)
-            .replace("\"registryVersion\":1", "\"registryVersion\":2")
-            .replace("\"state\":\"pending\"", "\"state\":\"active\"");
-    byte[] active = activeText.getBytes(StandardCharsets.UTF_8);
+    byte[] active = activeRecordBytes(record);
     RedisScriptDescriptor descriptor = scriptCatalog.require(INITIAL_LOGIN_DISPOSAL_SCRIPT_ID);
     if (!INITIAL_LOGIN_DISPOSAL_SCRIPT_ID.equals(descriptor.scriptId())
         || !"account-service".equals(descriptor.owner())
