@@ -106,9 +106,11 @@ public final class WorldSelectedPublicationArtifactInventoryClient
   }
 
   @Override
-  public synchronized void close() throws IOException {
-    closed = true;
-    initialized = false;
+  public void close() throws IOException {
+    synchronized (this) {
+      closed = true;
+      initialized = false;
+    }
     super.close();
   }
 
