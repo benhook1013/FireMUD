@@ -1,5 +1,7 @@
 package net.firedevops.firemud.worldmanagement.data;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import jakarta.annotation.PreDestroy;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -229,12 +231,26 @@ public final class RunOwnedCanonicalWorldLaunchEvidenceProvider {
         if (exception instanceof InvalidRunOwnedCanonicalWorldLaunchEvidenceException invalid) {
           throw invalid;
         }
+        if (isRetryableOwnerReadFailure(stage, exception)) {
+          throw exception;
+        }
         throw invalidEvidence();
       }
     } catch (RuntimeException exception) {
       logger.warn("Run-owned World launch evidence verification rejected; stage={}", stage);
       throw exception;
     }
+  }
+
+  private static boolean isRetryableOwnerReadFailure(
+      VerificationStage stage, RuntimeException exception) {
+    if (!(exception instanceof StatusRuntimeException statusException)
+        || (stage != VerificationStage.OWNER_DESCRIPTOR_READ
+            && stage != VerificationStage.GAME_SESSION_FIXTURE_READ)) {
+      return false;
+    }
+    return statusException.getStatus().getCode() == Status.Code.UNAVAILABLE
+        || statusException.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED;
   }
 
   private static UUID freshFixtureReadRequestId(UUID fixtureOperationId) {
