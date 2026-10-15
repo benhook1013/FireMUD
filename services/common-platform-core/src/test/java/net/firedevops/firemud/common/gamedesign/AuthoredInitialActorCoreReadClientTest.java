@@ -45,8 +45,7 @@ class AuthoredInitialActorCoreReadClientTest {
     assertThatThrownBy(
             () ->
                 client.read(
-                    new ReadRequest(
-                        AuthoredInitialActorCoreReadTestFixture.request("other"))))
+                    new ReadRequest(AuthoredInitialActorCoreReadTestFixture.request("other"))))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("client identity");
 
@@ -70,8 +69,7 @@ class AuthoredInitialActorCoreReadClientTest {
             any(CommonGrpcClientProperties.class),
             eq(true)))
         .thenReturn(channel);
-    var client =
-        new GrpcAuthoredInitialActorCoreReadClient(endpoints, tls, factory, NAMESPACE);
+    var client = new GrpcAuthoredInitialActorCoreReadClient(endpoints, tls, factory, NAMESPACE);
 
     try {
       client.init();
@@ -96,7 +94,8 @@ class AuthoredInitialActorCoreReadClientTest {
     CommonGrpcClientProperties tls = new CommonGrpcClientProperties();
     tls.setCertChain(Files.writeString(directory.resolve("client.crt"), "certificate").toString());
     tls.setPrivateKey(Files.writeString(directory.resolve("client.key"), "private key").toString());
-    tls.setCaCert(Files.writeString(directory.resolve("server-ca.crt"), "CA certificate").toString());
+    tls.setCaCert(
+        Files.writeString(directory.resolve("server-ca.crt"), "CA certificate").toString());
     return tls;
   }
 }

@@ -191,7 +191,8 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
     when(descriptor.targetNamespace()).thenReturn(NAMESPACE);
     when(release.targetNamespace()).thenReturn(NAMESPACE);
     when(release.evidenceDigest()).thenReturn(wire.getExpectedReleaseAttestationDigest());
-    when(release.schemaVersion()).thenReturn(AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION);
+    when(release.schemaVersion())
+        .thenReturn(AuthoredWorldReleaseAttestationEvidence.SCHEMA_VERSION);
     try (var ignored = attach(peer("entity-management-service", NAMESPACE))) {
       assertThatThrownBy(() -> owner().read(wire))
           .isInstanceOf(WorldPublishedSpawnRequirementsReadOwner.ReadRejectedException.class)
@@ -369,8 +370,7 @@ class WorldPublishedSpawnRequirementsReadOwnerTest {
               retainedContent));
       privateKey++;
     }
-    var frozenGraph =
-        new WorldCanonicalAuthoredGraph(TENANT, VERSION, 1L, 1L, frozenRows);
+    var frozenGraph = new WorldCanonicalAuthoredGraph(TENANT, VERSION, 1L, 1L, frozenRows);
     var projection =
         WorldPublishedSpawnRequirementsReadOwner.projectRequirements(graph, frozenGraph);
 

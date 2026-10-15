@@ -23,6 +23,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredInitialActorCoreReadEvid
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
 import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
+import net.firedevops.firemud.common.gamedesign.RealmPolicyPublishedEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence;
 import net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadGrpcCodec;
@@ -35,11 +36,11 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
+import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
+import net.firedevops.firemud.gamesession.dto.CreateCanonicalRealmCatalogRequest;
+import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository.OriginalStartSessionAssociation;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCoreRetentionRepository.Candidate;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCoreRetentionRepository.StoredSource;
-import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalInstanceLaunchProofFixtures.SyntheticLaunchProof;
-import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
-import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository.OriginalStartSessionAssociation;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.StaleStartSessionOperatorAttemptClaimException;
 import net.firedevops.firemud.gamesession.service.impl.GameSessionAuthoredActorCoreRetentionService;
@@ -92,7 +93,8 @@ class GameSessionAuthoredActorCoreRetentionServiceTest {
         .thenReturn(Optional.empty());
     when(inputs
             .launches()
-            .readOriginalStartSessionAssociation(inputs.historical().request().associationSelector()))
+            .readOriginalStartSessionAssociation(
+                inputs.historical().request().associationSelector()))
         .thenReturn(Optional.of(inputs.launch()));
     AttemptSnapshot original = snapshot(inputs, inputs.ownerMutationId());
     AttemptSnapshot changed = snapshot(inputs, UUID.randomUUID());
@@ -119,7 +121,8 @@ class GameSessionAuthoredActorCoreRetentionServiceTest {
         .thenReturn(Optional.empty());
     when(inputs
             .launches()
-            .readOriginalStartSessionAssociation(inputs.historical().request().associationSelector()))
+            .readOriginalStartSessionAssociation(
+                inputs.historical().request().associationSelector()))
         .thenReturn(Optional.of(inputs.launch()));
     AttemptSnapshot original = snapshot(inputs, inputs.ownerMutationId());
     when(inputs.attempts().readCurrentOriginalAttempt(inputs.currentAttemptRequest()))
@@ -146,36 +149,66 @@ class GameSessionAuthoredActorCoreRetentionServiceTest {
       throws Exception {
     for (int substitution = 0; substitution < 4; substitution++) {
       TestInputs inputs = inputs();
-      when(inputs.retention().readByOriginalOperation(NAMESPACE, inputs.tuple().controlPlaneRequestId()))
+      when(inputs
+              .retention()
+              .readByOriginalOperation(NAMESPACE, inputs.tuple().controlPlaneRequestId()))
           .thenReturn(Optional.empty());
       var original = inputs.launch();
       var tuple = inputs.tuple();
       if (substitution == 0) {
         // Structurally valid controlled tuple with a substituted original reservation identity.
-        tuple = net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple.createHuman(
-            tuple.preAuthorizationTuple(), tuple.authenticatedWorkloadIdentity(),
-            tuple.authorizationReferenceFingerprint(), UUID.randomUUID(), tuple.reservationClaimFence(),
-            tuple.authorityEvidenceBundleBytes(), tuple.bundleReference());
+        tuple =
+            net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple
+                .createHuman(
+                    tuple.preAuthorizationTuple(),
+                    tuple.authenticatedWorkloadIdentity(),
+                    tuple.authorizationReferenceFingerprint(),
+                    UUID.randomUUID(),
+                    tuple.reservationClaimFence(),
+                    tuple.authorityEvidenceBundleBytes(),
+                    tuple.bundleReference());
       }
       var association = original.association();
       if (substitution == 3) {
-        association = new CanonicalGameInstanceLaunchAssociation(
-            association.targetNamespace(), association.gameSessionTenantId(),
-            association.tenantAssociationOperationId(), association.canonicalTenantId(),
-            UUID.randomUUID(), association.worldSlug(), association.playableStateNamespaceId(),
-            association.playableStateScope(), association.publicProduction(), association.controlPlaneRequestId(),
-            association.launchDescriptorId(), association.capturedStartingRowVersion(),
-            association.launchBindingEvidence(), association.currentGameInstanceStatus(), association.currentRowVersion());
+        association =
+            new CanonicalGameInstanceLaunchAssociation(
+                association.targetNamespace(),
+                association.gameSessionTenantId(),
+                association.tenantAssociationOperationId(),
+                association.canonicalTenantId(),
+                UUID.randomUUID(),
+                association.worldSlug(),
+                association.playableStateNamespaceId(),
+                association.playableStateScope(),
+                association.publicProduction(),
+                association.controlPlaneRequestId(),
+                association.launchDescriptorId(),
+                association.capturedStartingRowVersion(),
+                association.launchBindingEvidence(),
+                association.currentGameInstanceStatus(),
+                association.currentRowVersion());
       }
-      var changed = new OriginalStartSessionAssociation(
-          association, tuple, substitution == 1 ? UUID.randomUUID() : original.ownerAttemptId(),
-          substitution == 2 ? original.ownerFence() + 1L : original.ownerFence(),
-          original.canonicalRealmId(), original.catalogRevision());
-      when(inputs.launches().readOriginalStartSessionAssociation(inputs.historical().request().associationSelector()))
+      var changed =
+          new OriginalStartSessionAssociation(
+              association,
+              tuple,
+              substitution == 1 ? UUID.randomUUID() : original.ownerAttemptId(),
+              substitution == 2 ? original.ownerFence() + 1L : original.ownerFence(),
+              original.canonicalRealmId(),
+              original.catalogRevision());
+      when(inputs
+              .launches()
+              .readOriginalStartSessionAssociation(
+                  inputs.historical().request().associationSelector()))
           .thenReturn(Optional.of(changed));
-      assertThatThrownBy(() -> inputs.service().retain(inputs.historical(), inputs.currentAttemptRequest()))
-          .isInstanceOf(net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.StartSessionOperatorAttemptConflictException.class);
-      verify(inputs.launches()).readOriginalStartSessionAssociation(inputs.historical().request().associationSelector());
+      assertThatThrownBy(
+              () -> inputs.service().retain(inputs.historical(), inputs.currentAttemptRequest()))
+          .isInstanceOf(
+              net.firedevops.firemud.gamesession.repository
+                  .GameSessionStartSessionOperatorAttemptRepository
+                  .StartSessionOperatorAttemptConflictException.class);
+      verify(inputs.launches())
+          .readOriginalStartSessionAssociation(inputs.historical().request().associationSelector());
       verifyNoInteractions(inputs.attempts(), inputs.gameDesign(), inputs.transactionManager());
       verify(inputs.retention(), never()).retainInOwnerTransaction(any(Candidate.class));
     }
@@ -183,17 +216,14 @@ class GameSessionAuthoredActorCoreRetentionServiceTest {
 
   private static TestInputs inputs() throws Exception {
     UUID tenantId = UUID.randomUUID();
+    String tenantSlug = "retention-fixture-tenant";
     String worldSlug = "retention-fixture-world";
+    String displayName = "Retention Fixture";
     UUID sourceOperationId = UUID.randomUUID();
     UUID registrationRequestId = UUID.randomUUID();
     String sourceRequestDigest =
         AuthoredWorldSourceDigest.requestDigest(
-            NAMESPACE,
-            registrationRequestId,
-            tenantId,
-            "retention-fixture-tenant",
-            worldSlug,
-            "Retention Fixture");
+            NAMESPACE, registrationRequestId, tenantId, tenantSlug, worldSlug, displayName);
     AuthoredWorldSourceEvidence sourceEvidence =
         new AuthoredWorldSourceEvidence(
             1,
@@ -202,9 +232,9 @@ class GameSessionAuthoredActorCoreRetentionServiceTest {
             sourceOperationId,
             sourceRequestDigest,
             tenantId,
-            "retention-fixture-tenant",
+            tenantSlug,
             worldSlug,
-            "Retention Fixture",
+            displayName,
             91L,
             "retention-fixture-key",
             "NEW_GAME_ROW",
@@ -214,29 +244,81 @@ class GameSessionAuthoredActorCoreRetentionServiceTest {
                 sourceOperationId,
                 sourceRequestDigest,
                 tenantId,
-                "retention-fixture-tenant",
+                tenantSlug,
                 worldSlug,
-                "Retention Fixture",
+                displayName,
                 91L,
                 "retention-fixture-key",
                 "NEW_GAME_ROW"));
-    SyntheticLaunchProof fixtureProof =
-        GameSessionCanonicalInstanceLaunchProofFixtures.create(
+
+    var tuple =
+        integration.net.firedevops.firemud.gamesession.repository
+            .CanonicalHumanPublicationOwnerTestFixtures.tuple(
             NAMESPACE,
-            "retained-authored-core-" + UUID.randomUUID(),
+            tenantId,
+            UUID.randomUUID(),
+            91L,
+            "retained-authored-core-" + UUID.randomUUID());
+    var createCatalog =
+        new CreateCanonicalRealmCatalogRequest(
+            UUID.randomUUID(),
+            NAMESPACE,
+            tenantId,
+            sourceOperationId,
+            worldSlug,
+            displayName,
+            true,
+            true,
+            "SHARED",
+            "PRESEEDED_ONLY",
+            null,
+            null);
+    RealmPolicyPublishedEvidence.PublishedSet publishedSet =
+        integration.net.firedevops.firemud.gamesession.repository
+            .CanonicalHumanPublicationOwnerTestFixtures.publishedSet(
+            createCatalog,
+            sourceEvidence,
+            UUID.randomUUID(),
+            19L,
+            "retention-fixture-publication-" + UUID.randomUUID(),
+            "immutable-release-ref",
+            "generation-1",
+            5L);
+    var descriptorRequest =
+        new AuthoredWorldLaunchDescriptorEvidence.Request(
+            NAMESPACE,
+            tuple.controlPlaneRequestId(),
             tenantId,
             worldSlug,
-            sourceEvidence,
+            sourceOperationId,
+            sourceEvidence.evidenceDigest(),
             91L,
-            13L,
-            17L,
-            "retention-descriptor-" + UUID.randomUUID(),
-            "generation-fixture",
-            2L,
-            "fixture-release/" + UUID.randomUUID());
-    SyntheticLaunchProof proof = withUuidCommit(fixtureProof, sourceEvidence);
-    var tuple = proof.originalTuple();
-    var binding = proof.completeLaunchBindingEvidence();
+            false,
+            null,
+            false,
+            null,
+            false,
+            null,
+            true,
+            "{}");
+    var unpinnedDescriptor =
+        AuthoredWorldLaunchDescriptorEvidence.create(
+            descriptorRequest,
+            "unowned-start-session-descriptor",
+            19L,
+            false,
+            null,
+            "{}",
+            "generation-1",
+            publishedSet.publicationVersionStateEpoch(),
+            91L,
+            "immutable-release-ref",
+            false,
+            null);
+    CompleteLaunchBindingEvidence binding =
+        integration.net.firedevops.firemud.gamesession.repository
+            .CanonicalHumanPublicationOwnerTestFixtures.completeBinding(
+            unpinnedDescriptor, publishedSet);
     var descriptor = binding.descriptor();
     var release = binding.releaseAttestation();
     UUID ownerAttemptId = UUID.randomUUID();
@@ -244,7 +326,7 @@ class GameSessionAuthoredActorCoreRetentionServiceTest {
     long ownerFence = 7L;
     UUID gameInstanceUuid = UUID.randomUUID();
     UUID playableNamespaceId = UUID.randomUUID();
-    String associationDigest = "sha256:" + "1".repeat(64);
+    String associationDigest = "sha256:" + "b".repeat(64);
 
     var selector =
         new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
@@ -319,14 +401,27 @@ class GameSessionAuthoredActorCoreRetentionServiceTest {
     when(historical.descriptorPin()).thenReturn(descriptorPin);
     when(historical.launchAssociation()).thenReturn(launchAssociation);
 
-    // Controlled canonical Human owner values; the repository below remains mocked.
-    var association = new CanonicalGameInstanceLaunchAssociation(
-        NAMESPACE, 1L, UUID.randomUUID(), tenantId, gameInstanceUuid, worldSlug,
-        playableNamespaceId, RealmEntryPolicy.StateScope.SHARED, true,
-        tuple.controlPlaneRequestId(), descriptor.launchDescriptorId(), 0L, binding,
-        CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.STARTING, 0L);
-    var launch = new OriginalStartSessionAssociation(
-        association, tuple, ownerAttemptId, ownerFence, UUID.randomUUID(), 17L);
+    // Controlled canonical Human owner readback; repository and transport ordering remain mocked.
+    var association =
+        new CanonicalGameInstanceLaunchAssociation(
+            NAMESPACE,
+            1L,
+            UUID.randomUUID(),
+            tenantId,
+            gameInstanceUuid,
+            worldSlug,
+            playableNamespaceId,
+            RealmEntryPolicy.StateScope.SHARED,
+            true,
+            tuple.controlPlaneRequestId(),
+            descriptor.launchDescriptorId(),
+            0L,
+            binding,
+            CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.STARTING,
+            0L);
+    var launch =
+        new OriginalStartSessionAssociation(
+            association, tuple, ownerAttemptId, ownerFence, UUID.randomUUID(), 1L);
 
     UUID readId = UUID.randomUUID();
     var currentAttemptRequest =
@@ -452,51 +547,6 @@ class GameSessionAuthoredActorCoreRetentionServiceTest {
         requestBytes,
         bytes,
         sha256(bytes));
-  }
-
-  private static SyntheticLaunchProof withUuidCommit(
-      SyntheticLaunchProof stipulation, AuthoredWorldSourceEvidence source) {
-    var descriptor = stipulation.completeLaunchBindingEvidence().descriptor();
-    String commitId = UUID.randomUUID().toString();
-    List<AuthoredWorldReleaseAttestationEvidence.Participant> participants =
-        AuthoredWorldReleaseAttestationEvidence.requiredParticipantOrder().stream()
-            .map(
-                key ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        key,
-                        Long.toString(descriptor.versionId()),
-                        false,
-                        null,
-                        commitId,
-                        "c".repeat(64),
-                        AuthoredWorldReleaseAttestationEvidence.supportedParticipantDigestSchema(
-                            key),
-                        "GAME_LOGIC".equals(key),
-                        "GAME_LOGIC".equals(key) ? "sha256:" + "d".repeat(64) : null))
-            .toList();
-    var release =
-        AuthoredWorldReleaseAttestationEvidence.create(
-            NAMESPACE,
-            descriptor.resultDigest(),
-            descriptor.canonicalTenantId(),
-            UUID.randomUUID(),
-            descriptor.worldSlug(),
-            source.operationId(),
-            source.evidenceDigest(),
-            descriptor.launchDescriptorId(),
-            descriptor.publishedReleaseBundleRef(),
-            descriptor.versionStateEpoch(),
-            "synthetic-publish-workflow",
-            commitId,
-            participants,
-            "sha256:" + "d".repeat(64),
-            1,
-            List.of(),
-            List.of(),
-            List.of(),
-            descriptor.generationConfigRevision());
-    return new SyntheticLaunchProof(
-        stipulation.originalTuple(), new CompleteLaunchBindingEvidence(descriptor, release));
   }
 
   private static PublishedReleaseBundle releaseBundle(CompleteLaunchBindingEvidence binding) {

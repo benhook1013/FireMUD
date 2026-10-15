@@ -14,12 +14,12 @@ import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAtte
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.PublishedArtifactDigest;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
-import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCoreRetentionRepository;
-import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCoreRetentionRepository.Candidate;
-import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCoreRetentionRepository.StoredSource;
 import net.firedevops.firemud.gamesession.dto.CanonicalGameInstanceLaunchAssociation;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.CanonicalGameInstanceLaunchAssociationRepository.OriginalStartSessionAssociation;
+import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCoreRetentionRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCoreRetentionRepository.Candidate;
+import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredActorCoreRetentionRepository.StoredSource;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.AttemptSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionStartSessionOperatorAttemptRepository.StaleStartSessionOperatorAttemptClaimException;
@@ -227,13 +227,18 @@ public final class GameSessionAuthoredActorCoreRetentionService {
       OriginalStartSessionCurrentAttemptEvidence.Request request) {
     var launch = original.association();
     var retained = historical.launchAssociation();
-    if (!Arrays.equals(original.postAuthorizationExecutionTuple().canonicalBytes(), historical.originalTuple().canonicalBytes())
-        || !Arrays.equals(original.postAuthorizationExecutionTuple().canonicalBytes(), request.canonicalPostAuthorizationTuple())
+    if (!Arrays.equals(
+            original.postAuthorizationExecutionTuple().canonicalBytes(),
+            historical.originalTuple().canonicalBytes())
+        || !Arrays.equals(
+            original.postAuthorizationExecutionTuple().canonicalBytes(),
+            request.canonicalPostAuthorizationTuple())
         || !original.ownerAttemptId().equals(historical.ownerAttemptId())
         || !original.ownerAttemptId().equals(request.expectedOwnerAttemptId())
         || original.ownerFence() != historical.ownerFence()
         || original.ownerFence() != request.expectedOwnerFence()
-        || launch.currentGameInstanceStatus() != CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.STARTING) {
+        || launch.currentGameInstanceStatus()
+            != CanonicalGameInstanceLaunchAssociation.CurrentGameInstanceStatus.STARTING) {
       throw new StartSessionOperatorAttemptConflictException(
           "Actual original launch differs from the historical tuple or current owner selector");
     }

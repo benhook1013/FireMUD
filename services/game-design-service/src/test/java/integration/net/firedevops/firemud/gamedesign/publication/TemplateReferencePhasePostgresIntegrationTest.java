@@ -225,7 +225,7 @@ class TemplateReferencePhasePostgresIntegrationTest {
               var applied = sources.apply(binding);
               if (automaticPhase) {
                 net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
-                    .advanceSourceVisibility(
+                    .advanceIsolatedSourceVisibility(
                         fixture.dsl(), binding, List.of(applied.ownerOutcome()));
               } else {
                 // These primitive-level cases deliberately leave promotion to the explicit

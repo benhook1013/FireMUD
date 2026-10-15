@@ -61,7 +61,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Actual Account V1006 preliminary permission and independent GD six-family disclosure owners.
+ * Actual Account V1007 preliminary permission and independent GD six-family disclosure owners.
  * Creator, environment, PKI, selected author admission/readbacks and authored inputs are controlled;
  * no final intake authorization, recipient retention, genuine provenance or registration is proved.
  */
@@ -87,10 +87,10 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
     try (var fixture = new AccountControlUiOriginalOrderFixture(
         ACCOUNT.getJdbcUrl(), ACCOUNT.getUsername(), ACCOUNT.getPassword(), REDIS.getHost(),
         REDIS.getMappedPort(6379), temporary.resolve("account"), local.binding().target().canonicalTenantId(),
-        Clock.systemUTC(), "1006")) {
+        Clock.systemUTC(), "1007")) {
       var issued = fixture.preparedOriginalCreator();
       var f = issued.sources();
-      assertThat(f.dsl.fetchSingle("SELECT count(*) FROM flyway_schema_history WHERE version IN ('1007','1008','1009')").get(0, Integer.class)).isZero();
+      assertThat(f.dsl.fetchSingle("SELECT count(*) FROM flyway_schema_history WHERE version IN ('1008','1009','1010')").get(0, Integer.class)).isZero();
       retainControlledSelectedAuthorAdmission(issued, local.binding());
       var reservations = new AccountSelectedOwnerIntakeSourceReservationService(
           issued.actors(), f.fences, new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl), f.manager, NAMESPACE);
