@@ -27,7 +27,7 @@ import tools.jackson.databind.ObjectMapper;
 public final class RunOwnedWorldFixtureEvidenceTestFixtures {
   private RunOwnedWorldFixtureEvidenceTestFixtures() {}
 
-  public static RunOwnedWorldLaunchEvidence create(ObjectMapper objectMapper) {
+  public static RunOwnedCanonicalWorldLaunchEvidence create(ObjectMapper objectMapper) {
     long gameDesignTenant = 8_810_000L + (positiveLong() % 1_000_000L);
     long gameSessionTenant = 18_810_000L + (positiveLong() % 1_000_000L);
     long sourceGameRow = positiveLong();
@@ -277,7 +277,7 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
     assertThat(
             RunOwnedInitialAdmissionFixtureWireCodec.parseSourceReceipt(receiptBytes, capability))
         .isEqualTo(receipt);
-    return new RunOwnedWorldLaunchEvidence(
+    return new RunOwnedCanonicalWorldLaunchEvidence(
         capability,
         receipt,
         descriptor,
@@ -290,12 +290,13 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
         gs);
   }
 
-  public static RunOwnedWorldLaunchEvidence create() {
+  public static RunOwnedCanonicalWorldLaunchEvidence create() {
     return create(new ObjectMapper());
   }
 
   /** A fresh response correlation with identical allocation and original immutable policy bytes. */
-  public static RunOwnedWorldLaunchEvidence freshObservation(RunOwnedWorldLaunchEvidence original) {
+  public static RunOwnedCanonicalWorldLaunchEvidence freshObservation(
+      RunOwnedCanonicalWorldLaunchEvidence original) {
     var gs = original.gameSessionAssociation();
     var freshRequest =
         new CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureRequest(
@@ -322,8 +323,8 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
   }
 
   /** Valid JSON with changed retained bytes must not replace the original preparation binding. */
-  public static RunOwnedWorldLaunchEvidence changedReceiptBytes(
-      RunOwnedWorldLaunchEvidence original) {
+  public static RunOwnedCanonicalWorldLaunchEvidence changedReceiptBytes(
+      RunOwnedCanonicalWorldLaunchEvidence original) {
     byte[] bytes = original.sourceReceiptBytes();
     byte[] changed = java.util.Arrays.copyOf(bytes, bytes.length + 1);
     changed[bytes.length] = '\n';
@@ -335,7 +336,8 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
   }
 
   /** Controlled contradictory GS owner allocation, for the actual retained-owner conflict guard. */
-  public static RunOwnedWorldLaunchEvidence secondAssignment(RunOwnedWorldLaunchEvidence original) {
+  public static RunOwnedCanonicalWorldLaunchEvidence secondAssignment(
+      RunOwnedCanonicalWorldLaunchEvidence original) {
     var gs = original.gameSessionAssociation();
     long otherInstance = gs.gameInstanceId() == Long.MAX_VALUE ? 1L : gs.gameInstanceId() + 1L;
     var changed =
@@ -356,7 +358,8 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
     return copy(original, original.sourceReceiptBytes(), changed);
   }
 
-  public static PreparedWorldInstanceRequest request(RunOwnedWorldLaunchEvidence evidence) {
+  public static PreparedWorldInstanceRequest request(
+      RunOwnedCanonicalWorldLaunchEvidence evidence) {
     var gs = evidence.gameSessionAssociation();
     var descriptor = evidence.launchDescriptor();
     return new PreparedWorldInstanceRequest(
@@ -375,11 +378,11 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
         null);
   }
 
-  private static RunOwnedWorldLaunchEvidence copy(
-      RunOwnedWorldLaunchEvidence original,
+  private static RunOwnedCanonicalWorldLaunchEvidence copy(
+      RunOwnedCanonicalWorldLaunchEvidence original,
       byte[] receiptBytes,
       CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult gs) {
-    return new RunOwnedWorldLaunchEvidence(
+    return new RunOwnedCanonicalWorldLaunchEvidence(
         original.capability(),
         original.sourceReceipt(),
         original.launchDescriptor(),
