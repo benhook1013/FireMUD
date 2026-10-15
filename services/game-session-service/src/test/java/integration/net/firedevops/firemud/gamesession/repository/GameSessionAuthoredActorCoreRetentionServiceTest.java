@@ -536,7 +536,7 @@ class GameSessionAuthoredActorCoreRetentionServiceTest {
         release.canonicalVersionId(),
         UUID.fromString(release.commitId()),
         release.publishWorkflowId(),
-        "sha256:" + "1".repeat(64),
+        inputs.historical().firstSelection().association().associationDigest(),
         release.authoredWorldSourceOperationId(),
         release.authoredWorldSourceEvidenceDigest(),
         release.worldSlug(),

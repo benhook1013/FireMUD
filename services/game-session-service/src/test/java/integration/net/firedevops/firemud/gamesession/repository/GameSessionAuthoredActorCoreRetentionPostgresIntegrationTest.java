@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import integration.net.firedevops.firemud.gamesession.repository.CanonicalHumanPublicationOwnerTestFixtures;
 import java.io.IOException;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
@@ -60,7 +61,11 @@ import tools.jackson.databind.json.JsonMapper;
 class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
   private static final String NAMESPACE = "test";
   private static final String[] MIGRATION_LOCATIONS = {
-    "classpath:db/migration", "classpath:db/migration/saga"
+    "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+    "filesystem:"
+        + Path.of("../common-saga/src/main/resources/db/migration/saga")
+            .toAbsolutePath()
+            .normalize()
   };
   private static final JsonMapper JSON = JsonMapper.builder().build();
 

@@ -11,6 +11,7 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.common.authoring.DraftBaseReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration;
 import net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration;
@@ -210,8 +211,8 @@ class TemplateConfigSourcePostgresIntegrationTest {
   }
 
   @Test
-  void v67RejectsOwnerDeclarationThenV68RetriesExactBindingWithoutRewritingV67History() {
-    var f = fixture("67");
+  void v1025RejectsOwnerDeclarationThenV1026RetriesExactBindingWithoutRewritingV1025History() {
+    var f = fixture("1025");
     var initialTemplate =
         binding(
             f,
@@ -570,7 +571,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
                           "SET CONSTRAINTS template_config_application_commit_guard IMMEDIATE");
                     }))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
-        .hasStackTraceContaining("branding application requires exact atomic owner result");
+        .hasStackTraceContaining("template config application requires exact atomic owner result");
 
     var entityInventory = EntityAuthoredSourceInventoryDeclaration.parse(entityInventory());
     var changedResult =
@@ -603,7 +604,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
                     }))
         .isInstanceOf(org.jooq.exception.DataAccessException.class)
         .hasStackTraceContaining(
-            "branding owner result must contain exact complete tagged source bytes");
+            "template config owner result must contain exact complete tagged source bytes");
   }
 
   @Test
@@ -1288,11 +1289,14 @@ class TemplateConfigSourcePostgresIntegrationTest {
     f.tx.executeWithoutResult(
         ignored -> {
           var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
-          coordinator.claim(binding);
+          var reviewed = new GameDesignReviewedBaseRepository(f.dsl);
+          var sources = new GameDesignSourceRepository(f.dsl);
+          sources.claimReviewed(
+              binding,
+              reviewed.resolve(f.target, DraftBaseReference.parse(binding.baseCommitId())));
           coordinator.claimApplicationSlot(binding);
           coordinator.markOwnerInProgress(
               binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
-          var sources = new GameDesignSourceRepository(f.dsl);
           var applied = sources.apply(binding);
           coordinator.advanceSourceVisibilityFence(
               binding,
@@ -1381,7 +1385,26 @@ class TemplateConfigSourcePostgresIntegrationTest {
                         e.getValue()))
             .toList();
     return DraftCommitBinding.create(
-        f.target, UUID.randomUUID(), UUID.randomUUID(), "base-commit-0", revisions, units);
+        f.target, UUID.randomUUID(), UUID.randomUUID(), currentBaseReference(f), revisions, units);
+  }
+
+  private static String currentBaseReference(Fixture f) {
+    UUID visibleCommit =
+        f.dsl
+            .fetchSingle(
+                "SELECT visible_commit_id FROM game_design_realm_policy_source "
+                    + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                f.target.canonicalTenantId(),
+                f.target.canonicalVersionId())
+            .get("visible_commit_id", UUID.class);
+    if (visibleCommit != null) return visibleCommit.toString();
+    UUID genesisReceipt =
+        new GameDesignSourceRepository(f.dsl)
+            .readGenesis(f.target)
+            .orElseThrow()
+            .policy()
+            .receiptId();
+    return "genesis:" + genesisReceipt;
   }
 
   private Fixture fixture() {
