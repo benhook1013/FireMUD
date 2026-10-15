@@ -24,6 +24,27 @@ class WorldPublicationTerminalReadEvidenceTest {
   }
 
   @Test
+  void wrapsMalformedOrNullWorldTerminalReadbackAsCanonicalInvalidInput() throws Exception {
+    var operation = WorldPublicationTerminalTestFixtures.operation();
+    var terminal = WorldPublicationTerminalTestFixtures.terminal(operation, Outcome.PUBLISHED);
+    var request =
+        WorldPublicationTerminalReadEvidence.Request.create(
+            "test", operation.canonicalBytes(), terminal.canonicalBytes());
+
+    for (byte[] malformed : new byte[][] {new byte[] {1}, null}) {
+      assertThatThrownBy(
+              () ->
+                  WorldPublicationTerminalReadEvidence.fromOwnerRead(
+                      request,
+                      WorldPublicationTerminalReadEvidence.WorldOutcome.PUBLISHED,
+                      malformed))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Canonical complete publication operation and terminal evidence required")
+          .hasCauseInstanceOf(RuntimeException.class);
+    }
+  }
+
+  @Test
   void retainsExactRequestAndWorldOutcomeForPublishedAndAborted() throws Exception {
     var operation = WorldPublicationTerminalTestFixtures.operation();
     for (Outcome producerOutcome : Outcome.values()) {
