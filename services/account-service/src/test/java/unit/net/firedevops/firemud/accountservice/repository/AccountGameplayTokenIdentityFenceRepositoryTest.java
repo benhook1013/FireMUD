@@ -187,6 +187,75 @@ class AccountGameplayTokenIdentityFenceRepositoryTest {
             any(Object[].class));
   }
 
+  @Test
+  void exactStoredRevocationIntentReplaysAfterOriginalDisposalWithoutMutation() {
+    for (State state : new State[] {State.PENDING, State.COMMITTED}) {
+      DSLContext dsl = mock(DSLContext.class);
+      Record token = tokenRow(state);
+      UUID requestId = UUID.randomUUID();
+      String digest =
+          AccountGameplayTokenIdentityFenceRepository.revocationDigest(IDENTITY, requestId);
+      when(token.get("revocation_request_id", UUID.class)).thenReturn(requestId);
+      when(token.get("revocation_digest", String.class)).thenReturn(digest);
+      stubOwnerRows(dsl, mock(Record.class), token, mock(Record.class));
+      when(dsl.fetchOne(DISPOSAL_GUARD_SELECT, IDENTITY.issuanceRequestId()))
+          .thenReturn(mock(Record.class));
+      transaction();
+
+      var result =
+          new AccountGameplayTokenIdentityFenceRepository(dsl)
+              .beginRevocationIntent(IDENTITY, requestId, digest);
+
+      assertThat(result.state()).isEqualTo(state);
+      assertThat(result.revocationRequestId()).isEqualTo(requestId);
+      assertThat(result.revocationDigest()).isEqualTo(digest);
+      verify(dsl, never())
+          .execute(
+              startsWith("UPDATE account_gameplay_token_identity_fences"), any(Object[].class));
+    }
+  }
+
+  @Test
+  void disposedStoredRevocationIntentStillRejectsAChangedRequest() {
+    DSLContext dsl = mock(DSLContext.class);
+    stubOwnerRows(dsl, mock(Record.class), tokenRow(State.PENDING), mock(Record.class));
+    when(dsl.fetchOne(DISPOSAL_GUARD_SELECT, IDENTITY.issuanceRequestId()))
+        .thenReturn(mock(Record.class));
+    UUID changedRequest = UUID.randomUUID();
+    String digest =
+        AccountGameplayTokenIdentityFenceRepository.revocationDigest(IDENTITY, changedRequest);
+    transaction();
+
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayTokenIdentityFenceRepository(dsl)
+                    .beginRevocationIntent(IDENTITY, changedRequest, digest))
+        .isInstanceOf(
+            AccountGameplayTokenIdentityFenceRepository.RevocationConflictException.class);
+    verify(dsl, never())
+        .execute(startsWith("UPDATE account_gameplay_token_identity_fences"), any(Object[].class));
+  }
+
+  @Test
+  void disposalStillDeniesStartingANewRevocationIntentFromAnActiveFence() {
+    DSLContext dsl = mock(DSLContext.class);
+    stubOwnerRows(dsl, mock(Record.class), tokenRow(State.ACTIVE), mock(Record.class));
+    when(dsl.fetchOne(DISPOSAL_GUARD_SELECT, IDENTITY.issuanceRequestId()))
+        .thenReturn(mock(Record.class));
+    UUID requestId = UUID.randomUUID();
+    String digest =
+        AccountGameplayTokenIdentityFenceRepository.revocationDigest(IDENTITY, requestId);
+    transaction();
+
+    assertThatThrownBy(
+            () ->
+                new AccountGameplayTokenIdentityFenceRepository(dsl)
+                    .beginRevocationIntent(IDENTITY, requestId, digest))
+        .isInstanceOf(TokenRevokedException.class);
+    verify(dsl, never())
+        .execute(startsWith("UPDATE account_gameplay_token_identity_fences"), any(Object[].class));
+  }
+
   private static void stubOwnerRows(DSLContext dsl, Record account, Record token, Record source) {
     when(dsl.fetchOne(
             "SELECT account_uuid FROM accounts WHERE account_uuid = ? FOR UPDATE",
