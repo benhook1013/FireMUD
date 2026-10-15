@@ -513,6 +513,112 @@ run_case common-web-support 0
 assert_call_count 2
 [[ "$(cat "$CASE_DIR/sleeps")" == 5 ]] || fail "HTTP 429 did not observe Retry-After"
 
+# Retain the PR 3220 buildSrc configuration failure, including the plugin
+# repository disabling itself and a parent POM failing after a redirect.
+write_buildsrc_429_cause() {
+  cat > "$CASE_DIR/buildsrc-cause.log" <<'LOG'
+FAILURE: Build failed with an exception.
+* What went wrong:
+A problem occurred configuring project ':buildSrc'.
+> Could not resolve all artifacts for configuration 'classpath'.
+   > Could not resolve org.jetbrains.kotlin:kotlin-stdlib:2.4.10.
+     Required by:
+         buildscript of project ':buildSrc'
+         buildscript of project ':buildSrc' > org.gradle.kotlin.kotlin-dsl:org.gradle.kotlin.kotlin-dsl.gradle.plugin:6.7.6 > org.gradle.kotlin:gradle-kotlin-dsl-plugins:6.7.6
+      > Repository Gradle Central Plugin Repository is disabled due to earlier error below:
+         > Could not resolve org.jetbrains.kotlin:kotlin-gradle-plugin-api:2.4.10.
+            > Could not get resource 'https://plugins.gradle.org/m2/org/jetbrains/kotlin/kotlin-gradle-plugin-api/2.4.10/kotlin-gradle-plugin-api-2.4.10.pom'.
+               > Could not GET 'https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugin-api/2.4.10/kotlin-gradle-plugin-api-2.4.10.pom'.
+                  > Received status code 429 from server: Too Many Requests
+   > Could not resolve org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10.
+     Required by:
+         buildscript of project ':buildSrc' > org.gradle.kotlin.kotlin-dsl:org.gradle.kotlin.kotlin-dsl.gradle.plugin:6.7.6 > org.gradle.kotlin:gradle-kotlin-dsl-plugins:6.7.6
+      > Could not resolve org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10.
+         > Could not parse POM https://plugins.gradle.org/m2/org/jetbrains/kotlin/kotlin-gradle-plugin/2.4.10/kotlin-gradle-plugin-2.4.10.pom
+            > Could not resolve org.jetbrains.kotlin:kotlin-gradle-plugins-bom:2.4.10.
+               > Could not resolve org.jetbrains.kotlin:kotlin-gradle-plugins-bom:2.4.10.
+                  > Could not get resource 'https://plugins.gradle.org/m2/org/jetbrains/kotlin/kotlin-gradle-plugins-bom/2.4.10/kotlin-gradle-plugins-bom-2.4.10.pom'.
+                     > Could not GET 'https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/kotlin-gradle-plugins-bom/2.4.10/kotlin-gradle-plugins-bom-2.4.10.pom'.
+                        > Received status code 429 from server: Too Many Requests
+> There are 3 more failures with identical causes.
+* Try:
+> Run with --stacktrace option for details.
+BUILD FAILED in 42s
+LOG
+}
+
+write_buildsrc_wrapper() {
+  # shellcheck disable=SC2016
+  write_wrapper 'if [[ "$call_count" -eq 1 ]]; then
+  cat "$CASE_DIR/buildsrc-cause.log"
+  exit 1
+fi
+echo buildsrc-refresh-result
+exit "${BUILDSRC_REFRESH_EXIT:-0}"'
+}
+
+new_case captured-buildsrc-429
+write_buildsrc_429_cause
+write_buildsrc_wrapper
+run_case logging-admin-service 0
+assert_call_count 2
+assert_call 1 "--max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck"
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :logging-admin-service:check -PfullCheck"
+[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "buildSrc HTTP 429 did not use one short delay"
+assert_output_contains "buildsrc-refresh-result"
+
+# Auth, policy and conflict responses remain final, including mixed failures
+# where the other dependency really did encounter a retryable HTTP 429.
+for status in 401 403 409; do
+  for status_scope in all mixed; do
+    new_case "buildsrc-http-$status-$status_scope"
+    write_buildsrc_429_cause
+    if [[ "$status_scope" == all ]]; then
+      sed -i "s/status code 429/status code $status/g" "$CASE_DIR/buildsrc-cause.log"
+    else
+      sed -i "0,/status code 429/s//status code $status/" "$CASE_DIR/buildsrc-cause.log"
+    fi
+    write_buildsrc_wrapper
+    run_case logging-admin-service 1
+    assert_no_retry
+  done
+done
+
+for cause in 'Compilation failed' '> Access denied by repository policy' '> Unknown configuration failure'; do
+  new_case "buildsrc-extra-${cause//[^[:alnum:]]/}"
+  write_buildsrc_429_cause
+  sed -i "/^[*] Try:/i $cause" "$CASE_DIR/buildsrc-cause.log"
+  write_buildsrc_wrapper
+  run_case logging-admin-service 1
+  assert_no_retry
+done
+
+# Wrapper context cannot turn another project, configuration or unpinned
+# dependency into an eligible buildSrc retry.
+for boundary in project classpath pin; do
+  new_case "buildsrc-invalid-$boundary"
+  write_buildsrc_429_cause
+  case "$boundary" in
+    project) sed -i 's/:buildSrc/:otherProject/g' "$CASE_DIR/buildsrc-cause.log" ;;
+    classpath) sed -i 's/configuration '\''classpath'\''/configuration '\''runtimeClasspath'\''/' "$CASE_DIR/buildsrc-cause.log" ;;
+    pin) sed -i 's/:2.4.10\./:2.+./g' "$CASE_DIR/buildsrc-cause.log" ;;
+  esac
+  write_buildsrc_wrapper
+  run_case logging-admin-service 1
+  assert_no_retry
+done
+
+new_case buildsrc-refresh-failure
+write_buildsrc_429_cause
+write_buildsrc_wrapper
+export BUILDSRC_REFRESH_EXIT=23
+run_case logging-admin-service 23
+unset BUILDSRC_REFRESH_EXIT
+assert_call_count 2
+[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "failed buildSrc refresh changed retry limit"
+assert_output_contains "Received status code 429"
+assert_output_contains "buildsrc-refresh-result"
+
 # A Retry-After beyond the short retry budget fails closed without waiting.
 new_case long-retry-after
 write_wrapper 'cat <<"LOG"

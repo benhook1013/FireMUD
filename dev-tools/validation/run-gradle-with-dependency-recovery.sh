@@ -151,6 +151,31 @@ classify_failure_body() {
         next
       }
 
+      # buildSrc plugin resolution may wrap a pinned dependency HTTP 429 in
+      # configuration, repository-disablement and parent-POM context. These
+      # lines are admitted only together with that narrow boundary below.
+      if (line == "A problem occurred configuring project \047:buildSrc\047.") {
+        buildsrc_configuration++
+        next
+      }
+      if (line ~ /^buildscript of project \047:buildSrc\047( > [[:alnum:]_.-]+:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*)*$/) {
+        buildsrc_context++
+        next
+      }
+      if (line == "> Repository Gradle Central Plugin Repository is disabled due to earlier error below:") {
+        buildsrc_repository++
+        next
+      }
+      if (line ~ /^> Could not parse POM https:\/\/plugins\.gradle\.org\/m2\/org\/jetbrains\/kotlin\/kotlin-gradle-plugin\/[0-9][[:alnum:]_.-]*\/kotlin-gradle-plugin-[0-9][[:alnum:]_.-]*\.pom$/) {
+        buildsrc_pom++
+        next
+      }
+      if (line == "> Received status code 429 from server: Too Many Requests") {
+        buildsrc_http_429++
+        transient++
+        next
+      }
+
       if (line == "1 problem was found storing the configuration cache.") {
         cache_summary++
         next
@@ -222,6 +247,7 @@ classify_failure_body() {
         if (substr(configuration_name, 1, 1) == quote) {
           configuration_name = substr(configuration_name, 2, length(configuration_name) - 2)
         }
+        if (configuration_name == "classpath") buildsrc_classpath++
         if (configuration_name ~ /^:[[:alnum:]-]+:jooqCodegen$/) {
           jooq_codegen_roots++
           root_module = configuration_name
@@ -279,6 +305,10 @@ classify_failure_body() {
     }
     END {
       if (invalid || resolver_roots == 0 || coordinates == 0 ||
+          ((buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom || buildsrc_http_429) &&
+            (buildsrc_configuration != 1 || buildsrc_context == 0 ||
+             resolver_roots != 1 || buildsrc_classpath != 1 || buildsrc_http_429 == 0 ||
+             cache_cause || compile_task_failure || searched)) ||
           (cache_summary && (cache_cause == 0 || cache_cause > 2)) ||
           (compile_task_failure && compile_classpath_roots == 0) ||
           (jooq_wrapper_causes &&
