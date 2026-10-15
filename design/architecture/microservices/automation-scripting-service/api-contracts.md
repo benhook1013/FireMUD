@@ -12,6 +12,8 @@ For `ListScriptHandoffEvents`, the target command identity is the complete Comma
 
 ## Implementation Status
 
+The prepared empty selected-source command and immutable receipt/digest reads remain standalone, unregistered and unqualified. Forward V1003 retains empty selected source over the current combined Automation/Saga parent; it neither attests arbitrary scripts nor enables evaluation, dispatch or runtime publication. Its publication consumption follows the [canonical Game Design profile](../game-design-service/version-control.md#selected-full-publication-profile); current controlled-input proof limits and pending cross-owner qualification belong to the [selected-full owner tracker](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#selected-full-owner-publication-preparation).
+
 This section records the current implementation boundary only. The API sections below remain normative target contracts; a current implementation note does not relax those contracts, and a target-only surface must not be inferred as shipped.
 
 The unsupported NPC formation REST family has been removed from the runtime and authoritative OpenAPI. Formation operations remain available only through the authenticated internal gRPC control-plane path; no REST caller can supply a tenant or NPC identifier to reach the formation service. The gRPC path retains its existing global admin guard, which is neither tenant-bound `tenantAdmin` authorization nor Entity-owned NPC namespace/ownership proof; formation behavior remains partial until those target checks are implemented and proven.

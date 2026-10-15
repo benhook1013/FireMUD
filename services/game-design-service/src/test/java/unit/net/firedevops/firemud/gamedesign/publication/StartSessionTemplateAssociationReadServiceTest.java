@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.publication;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -42,6 +43,25 @@ class StartSessionTemplateAssociationReadServiceTest {
   private static final JsonMapper JSON = JsonMapper.builder().build();
   private final DSLContext dsl = mock(DSLContext.class);
   private final PublishedReleaseBundleService releases = mock(PublishedReleaseBundleService.class);
+
+  @Test
+  void configuredReleaseSelectionRetainsV2AndAcceptsOnlyFullV4() {
+    assertThat(
+            StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v2"))
+        .isTrue();
+    assertThat(
+            StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v4"))
+        .isTrue();
+    assertThat(
+            StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v1"))
+        .isFalse();
+    assertThat(
+            StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v3"))
+        .isFalse();
+    assertThat(
+            StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema(null))
+        .isFalse();
+  }
 
   @Test
   void independentlyChecksExactAccountAttemptBeforeOpeningAnyLocalSnapshot() {
