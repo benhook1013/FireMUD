@@ -52,8 +52,7 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
-  void defaultInstallAndForwardUpgradeEnforceTerminalUnitsAndOwnerGuards()
-      throws Exception {
+  void defaultInstallAndForwardUpgradeEnforceTerminalUnitsAndOwnerGuards() throws Exception {
     Path root = repositoryRoot();
     String worldLocation = worldMigrations(root);
     String sagaLocation = sagaMigrations(root);
@@ -137,8 +136,7 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       through10427.validate();
       assertThat(latestVersion(upgradeDsl)).isEqualTo("1042.7");
       String predecessorHistory = migrationHistory(upgradeDsl, "1042.7");
-      TerminalFunctionMetadata terminalBefore =
-          terminalFunctionMetadata(upgradeDsl, upgradeSchema);
+      TerminalFunctionMetadata terminalBefore = terminalFunctionMetadata(upgradeDsl, upgradeSchema);
       assertThat(terminalBefore.publicExecuteGrant()).isFalse();
       assertThat(terminalBefore.securityDefiner()).isTrue();
       List<String> terminalRowsBefore = productionTerminalRows(upgradeDsl, upgradeSchema);
@@ -157,12 +155,12 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       LocationFunctionMetadata atCurrentFrontier =
           locationFunctionMetadata(upgradeDsl, upgradeSchema);
       assertFunctionMetadataPreserved(after, atCurrentFrontier);
-      TerminalFunctionMetadata terminalAfter =
-          terminalFunctionMetadata(upgradeDsl, upgradeSchema);
+      TerminalFunctionMetadata terminalAfter = terminalFunctionMetadata(upgradeDsl, upgradeSchema);
       assertTerminalFunctionMetadataPreserved(terminalBefore, terminalAfter);
       List<String> terminalRowsAfter = productionTerminalRows(upgradeDsl, upgradeSchema);
       assertThat(terminalRowsAfter).isEqualTo(terminalRowsBefore);
-      exerciseTerminalAffectedUnitProbe(upgradeSource, upgradeSchema, terminalAfter.functionSource());
+      exerciseTerminalAffectedUnitProbe(
+          upgradeSource, upgradeSchema, terminalAfter.functionSource());
 
       // A clean default installation must also land on the same repaired frontier.
       Flyway fresh = flyway(freshSource, freshSchema, null, worldLocation, sagaLocation);
@@ -311,13 +309,7 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
         owner.executeUpdate();
       }
       insertTerminalProbeIdentity(
-          connection,
-          targetNamespace,
-          tenantId,
-          versionId,
-          aggregateId,
-          aggregateKey,
-          4L);
+          connection, targetNamespace, tenantId, versionId, aggregateId, aggregateKey, 4L);
       insertTerminalProbeIdentity(
           connection,
           targetNamespace,
@@ -451,7 +443,8 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           commitId,
           "missing scope type",
           "["
-              + terminalUnitJson(aggregateId, scopeId, true, "\"WORLD_MANAGEMENT\"", false, "", true, "0")
+              + terminalUnitJson(
+                  aggregateId, scopeId, true, "\"WORLD_MANAGEMENT\"", false, "", true, "0")
               + "]");
       assertTerminalAffectedUnitRejected(
           connection,
@@ -464,7 +457,8 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           commitId,
           "null scope type",
           "["
-              + terminalUnitJson(aggregateId, scopeId, true, "\"WORLD_MANAGEMENT\"", true, "null", true, "0")
+              + terminalUnitJson(
+                  aggregateId, scopeId, true, "\"WORLD_MANAGEMENT\"", true, "null", true, "0")
               + "]");
       assertTerminalAffectedUnitRejected(
           connection,
@@ -477,7 +471,15 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           commitId,
           "unknown scope type",
           "["
-              + terminalUnitJson(aggregateId, scopeId, true, "\"WORLD_MANAGEMENT\"", true, "\"UNKNOWN\"", true, "0")
+              + terminalUnitJson(
+                  aggregateId,
+                  scopeId,
+                  true,
+                  "\"WORLD_MANAGEMENT\"",
+                  true,
+                  "\"UNKNOWN\"",
+                  true,
+                  "0")
               + "]");
 
       assertInvalidTerminalEpoch(
@@ -490,7 +492,6 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           requestId,
           commitId,
           aggregateId,
-          versionId,
           "missing epoch",
           false,
           "");
@@ -504,7 +505,6 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           requestId,
           commitId,
           aggregateId,
-          versionId,
           "null epoch",
           true,
           "null");
@@ -518,7 +518,6 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           requestId,
           commitId,
           aggregateId,
-          versionId,
           "malformed string epoch",
           true,
           "\"not-a-counter\"");
@@ -532,7 +531,6 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           requestId,
           commitId,
           aggregateId,
-          versionId,
           "fractional epoch",
           true,
           "4.4");
@@ -546,7 +544,6 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           requestId,
           commitId,
           aggregateId,
-          versionId,
           "negative epoch",
           true,
           "-1");
@@ -560,7 +557,6 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           requestId,
           commitId,
           aggregateId,
-          versionId,
           "out-of-range epoch",
           true,
           "9223372036854775808");
@@ -574,7 +570,6 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           requestId,
           commitId,
           aggregateId,
-          versionId,
           "noncanonical decimal string epoch",
           true,
           "\"04\"");
