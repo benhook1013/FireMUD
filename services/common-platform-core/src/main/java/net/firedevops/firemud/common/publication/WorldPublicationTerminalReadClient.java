@@ -23,8 +23,6 @@ public final class WorldPublicationTerminalReadClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public WorldPublicationTerminalReadClient(
       ServiceEndpointsProperties endpoints,
@@ -42,16 +40,10 @@ public final class WorldPublicationTerminalReadClient
     this.workloadNamespace = workloadNamespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException("World publication terminal read client is closed");
-    }
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("World publication terminal read stub unavailable");
-    }
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "World publication terminal read client is closed",
+        "World publication terminal read stub unavailable");
   }
 
   /** Returns only the exact original terminal after World server identity and response checks. */
@@ -68,7 +60,8 @@ public final class WorldPublicationTerminalReadClient
           "World publication terminal read must use the configured workload namespace");
     }
     var response =
-        requireStub()
+        requireInitializedStub(
+                "World publication terminal read client is not initialized and available")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .readPublicationTerminal(WorldPublicationTerminalReadGrpcCodec.toRequest(request));
     try {
@@ -99,24 +92,5 @@ public final class WorldPublicationTerminalReadClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private WorldPublicationTerminalReadServiceGrpc.WorldPublicationTerminalReadServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "World publication terminal read client is not initialized and available");
-    }
-    return currentStub;
   }
 }
