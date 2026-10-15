@@ -24,8 +24,6 @@ public final class WorldPublishedStartLocationClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public WorldPublishedStartLocationClient(
       ServiceEndpointsProperties endpoints,
@@ -44,14 +42,8 @@ public final class WorldPublishedStartLocationClient
   }
 
   /** Initializes only when the owning Game Design service explicitly starts this opt-in client. */
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) throw new IllegalStateException("World selector read client is closed");
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("World selector read client has no gRPC stub");
-    }
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce("World selector read client is closed", "World selector read client has no gRPC stub");
   }
 
   /** Reads immutable selector evidence for this complete frozen selection. */
@@ -67,7 +59,7 @@ public final class WorldPublishedStartLocationClient
           "World selector read request must use the configured workload namespace");
     }
     var response =
-        requireStub()
+        requireInitializedStub("World selector read client is not initialized and available")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .readWorldPublishedStartLocation(
                 WorldPublishedStartLocationGrpcCodec.toRequest(request));
@@ -99,25 +91,5 @@ public final class WorldPublishedStartLocationClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private WorldPublishedStartLocationReadServiceGrpc
-          .WorldPublishedStartLocationReadServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "World selector read client is not initialized and available");
-    }
-    return currentStub;
   }
 }
