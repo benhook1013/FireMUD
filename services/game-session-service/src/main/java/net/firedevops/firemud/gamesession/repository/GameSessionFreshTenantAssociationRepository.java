@@ -601,6 +601,11 @@ public class GameSessionFreshTenantAssociationRepository {
 
   private void rejectClaimWithoutAssociation(
       String namespace, UUID canonicalTenantId, UUID requestId) {
+    if (requestId != null
+        && readByCanonicalTenantIdInTransaction(namespace, canonicalTenantId).isPresent()) {
+      throw new FreshTenantAssociationConflictException(
+          "canonical tenant is already bound to a different complete fresh association");
+    }
     Record claim =
         dsl.fetchOne(
             "SELECT target_namespace, canonical_tenant_id, legacy_game_session_tenant_id,"

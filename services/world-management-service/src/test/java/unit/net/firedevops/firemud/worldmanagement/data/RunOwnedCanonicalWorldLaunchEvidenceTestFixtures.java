@@ -21,11 +21,11 @@ import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 /**
  * Complete controlled upstream test values; this factory proves no owner writes or TLS authority.
  */
-public final class RunOwnedWorldLaunchEvidenceTestFixtures {
+public final class RunOwnedCanonicalWorldLaunchEvidenceTestFixtures {
   private static final String CLAIM_DIGEST = controlledClaimDigest();
   private static final String RELEASE_REF = "8ce42642-53ae-4d07-aab8-37c43ce66e0c";
 
-  private RunOwnedWorldLaunchEvidenceTestFixtures() {}
+  private RunOwnedCanonicalWorldLaunchEvidenceTestFixtures() {}
 
   private static String controlledClaimDigest() {
     try {
@@ -39,11 +39,11 @@ public final class RunOwnedWorldLaunchEvidenceTestFixtures {
     }
   }
 
-  public static RunOwnedWorldLaunchEvidence create() {
+  public static RunOwnedCanonicalWorldLaunchEvidence create() {
     return createWithDescriptorOverrides(false, false);
   }
 
-  public static RunOwnedWorldLaunchEvidence createWithDescriptorOverrides(
+  public static RunOwnedCanonicalWorldLaunchEvidence createWithDescriptorOverrides(
       boolean scriptPatchVersionPresent, boolean remapSetIdPresent) {
     return create(
         false,
@@ -56,7 +56,7 @@ public final class RunOwnedWorldLaunchEvidenceTestFixtures {
         remapSetIdPresent);
   }
 
-  static RunOwnedWorldLaunchEvidence create(
+  static RunOwnedCanonicalWorldLaunchEvidence create(
       boolean mismatchedSeal,
       String gameSessionLeafSha256,
       String worldManagementLeafSha256,
@@ -286,7 +286,7 @@ public final class RunOwnedWorldLaunchEvidenceTestFixtures {
             0L,
             policyRequestBytes,
             policySeal);
-    return new RunOwnedWorldLaunchEvidence(
+    return new RunOwnedCanonicalWorldLaunchEvidence(
         capability,
         receipt,
         descriptor,

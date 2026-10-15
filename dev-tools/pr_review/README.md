@@ -2,6 +2,8 @@
 
 ## Controller state and review records
 
+For the supplementary required-gate status rollout, promote the merged controller support before enabling status producers. The consumer retains independent native App authority and exposes same-name exact-head statuses as separate withholding evidence; see [CI/CD: Required Gate Preservation](../../design/architecture/system-architecture-cicd.md#required-gate-preservation). A controller source merge alone is not installed-runtime promotion or producer activation.
+
 Use these operations only after the controller change has merged and its version-matched tooling has been installed wherever the shared controller runs. Select `dev-tools/pr-review` from that trusted post-merge checkout, not from an older stacked worktree, and inspect its promoted version before any shared write:
 
 ```sh
