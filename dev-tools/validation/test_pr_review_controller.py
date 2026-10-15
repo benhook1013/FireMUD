@@ -4456,6 +4456,116 @@ class ControllerTests(unittest.TestCase):
                 with self.assertRaises(ControllerError):
                     controller.resolve_hosted_target()
 
+    def test_discovery_ignores_only_verified_peer_source_fix_preparation(self):
+        for requested, peer in (("hosted", "cli"), ("cli", "hosted")):
+            for bounded in (False, True):
+                for proof, changes, allowed in (
+                    ("finding_pending", {}, True),
+                    ("pending", {}, False),
+                    ("unavailable", {}, False),
+                    ("finding_pending", {"attributable": False}, False),
+                    ("finding_pending", {"anchored": False}, False),
+                    ("finding_pending", {"active_review": True, "held": True}, False),
+                ):
+                    with self.subTest(requested=requested, bounded=bounded, proof=proof, changes=changes):
+                        histories = {
+                            (1, requested): [
+                                self.allocation_evidence(checkpoint="baseline", channel=requested, accepted=1, raw=1,
+                                                         source_resolution_status="resolved"),
+                                self.scope_timeline_evidence(channel=requested),
+                            ],
+                            (1, peer): [],
+                        }
+                        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+                        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1})
+                        controller.set_stack([1])
+                        payload = {"data": {"repository": {"pullRequest": {
+                            "number": 1, "headRefOid": HEAD_1, "baseRefName": "develop", "baseRefOid": BASE,
+                            "comments": {"nodes": []}, "reviews": {"nodes": []}, "reviewThreads": {"nodes": []},
+                        }}}}
+                        empty_audit = {
+                            "complete": True, "active_reservations": [], "unmatched_responses": [],
+                            "historical_unmatched_responses": [], "ambiguous_responses": [], "unresolved_findings": [],
+                        }
+                        with (
+                            patch.object(provider, "history", side_effect=lambda pr, channel, **kw: histories[(pr, channel)]),
+                            patch.object(provider, "_audit_complete_hosted_history", return_value=empty_audit),
+                            patch.object(provider, "_complete_trigger_paths", return_value=[]),
+                            patch.object(provider.live, "pull_request", return_value=SimpleNamespace(
+                                number=1, head_sha=HEAD_1, base_sha=BASE, base_ref_name="develop")),
+                            patch.object(provider.live, "branch_head", return_value=BASE),
+                            patch("pr_review.runtime.github.fetch_pull_request", return_value=payload),
+                        ):
+                            if bounded:
+                                controller.decide_allocation(
+                                    action="grant", pr=1, channel=requested, head=HEAD_1, checkpoint="baseline",
+                                    min_additional_completed=2, max_additional_completed=3, fresh_taper=True,
+                                    reason="explicit remaining discovery allowance",
+                                )
+                            histories[(1, requested)].append(self.allocation_evidence(
+                                checkpoint="requested-fixed", channel=requested, accepted=1, raw=1,
+                                source_resolution_status="resolved",
+                            ))
+                            source = self.allocation_evidence(
+                                checkpoint="peer-fix", channel=peer, accepted=1, raw=1,
+                                source_resolution_status=proof, **changes,
+                            )
+                            histories[(1, peer)] = [source]
+                            saved_source = copy.deepcopy(source)
+                            before = controller._state()
+                            target = controller._target(requested, expected_pr=1)
+                            self.assertEqual(target.status == ReviewStatus.READY, allowed, target.reason)
+                            if allowed:
+                                self.assertEqual(controller._target(peer, expected_pr=1).status, ReviewStatus.HELD)
+                                report = controller.status()
+                                self.assertIn("peer-fix", report["prs"][0]["review_obligations"][peer])
+                                self.assertTrue(controller._accepted_findings_pending(source, HEAD_1))
+                                merge_report = {
+                                    "pull_request": {"headRefOid": HEAD_1, "baseRefName": "develop", "baseRefOid": BASE},
+                                    "ready": True, "verdict": "READY", "reasons": [],
+                                    "mergeability": {"clean": True, "diagnosis": "CLEAN"},
+                                }
+                                with (
+                                    patch.object(cli_module, "_controller", return_value=(controller, None)),
+                                    patch.object(cli_module.status_module, "status", return_value=merge_report),
+                                    patch.object(cli_module, "_read_record_incoming_routes",
+                                                 return_value=([], {"status": "available"})),
+                                ):
+                                    merged_status, exit_code = _dispatch(_parser().parse_args(
+                                        ["status", "--pr", "1", "--full-scan", "--json"]
+                                    ))
+                                self.assertEqual(exit_code, 0)
+                                self.assertFalse(merged_status["ready"])
+                                self.assertIn(f"{peer}: peer-fix", merged_status["reasons"])
+                                # The full audit remains a global finding hold.
+                                anchor = target.anchor.as_stop_audit_dict()
+                                aggregate = provider.review_stop_audit(1, anchor)
+                                self.assertTrue(aggregate["unresolved_findings"])
+                                self.assertTrue(aggregate["finding_only_findings"])
+                                self.assertEqual(aggregate["admission_finding_only_findings"][requested], [])
+                                self.assertTrue(aggregate["admission_finding_only_findings"][peer])
+                                live, reconciliation = controller._reconciliation(controller._state())
+                                # Final snapshot rechecks retain the admission context;
+                                # aggregate merge/source clearance remains global.
+                                controller._check_stop_evidence(
+                                    controller._state(), 1, Channel(requested), target.anchor, reconciliation,
+                                    checkpoint_pin=None, require_checkpoint_ancestry=False,
+                                    admission_channel=Channel(requested), audit_override=aggregate,
+                                )
+                                with self.assertRaises(ControllerError):
+                                    controller._check_stop_evidence(
+                                        controller._state(), 1, Channel(requested), target.anchor, reconciliation,
+                                        checkpoint_pin=None, require_checkpoint_ancestry=False,
+                                        audit_override=aggregate,
+                                    )
+                                # Force still cannot admit this same-channel finding.
+                                with self.assertRaises(ControllerError):
+                                    controller._ensure_runnable(controller._target(peer, expected_pr=1), force=True)
+                            else:
+                                self.assertEqual(target.status, ReviewStatus.HELD)
+                            self.assertEqual(source, saved_source)
+                            self.assertEqual(controller._state(), before)
+
     def test_bounded_allocation_uses_durable_resolution_for_accepted_finding_clearance(self):
         resolved_history = {
             (1, "hosted"): [
@@ -8461,7 +8571,8 @@ class ControllerTests(unittest.TestCase):
 
         report = controller.status_overview()
 
-        self.assertEqual(report["review_targets"]["hosted"]["status"], "PARENT_MOVED")
+        self.assertEqual(report["review_targets"]["hosted"]["status"], "HELD")
+        self.assertIn("source linkage or resolution proof is uncertain", report["review_targets"]["hosted"]["reason"])
         self.assertEqual(report["review_targets"]["hosted"]["pr"], 2)
         self.assertEqual(report["review_fronts"]["hosted"]["pr"], 2)
         self.assertEqual(report["review_fronts"]["cli"]["pr"], 1)
