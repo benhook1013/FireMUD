@@ -33,9 +33,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Exercises V1042.6's two forward owner-guard repairs at the V1042.7 migration frontier against
- * native PostgreSQL. The malformed terminal tuples and APPLIED location operations run only
- * through test-local predicate probes; they do not create production owner rows or claim
- * Account-authorized admission.
+ * native PostgreSQL. The malformed terminal tuples and APPLIED location operations run only through
+ * test-local predicate probes; they do not create production owner rows or claim Account-authorized
+ * admission.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -131,7 +131,8 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       assertThat(migrationHistory(upgradeDsl, "1042.6")).isEqualTo(repairedTerminalHistory);
       assertThat(migrationHistory(upgradeDsl, "1010")).isEqualTo(oldTerminalHistory);
       assertThat(migrationHistory(upgradeDsl, "1019")).isEqualTo(oldLocationHistory);
-      assertThat(constraintDefinition(upgradeDsl, upgradeSchema)).isEqualTo(currentTerminalConstraint);
+      assertThat(constraintDefinition(upgradeDsl, upgradeSchema))
+          .isEqualTo(currentTerminalConstraint);
       LocationFunctionMetadata atCurrentFrontier =
           locationFunctionMetadata(upgradeDsl, upgradeSchema);
       assertFunctionMetadataPreserved(after, atCurrentFrontier);
