@@ -150,6 +150,23 @@ classify_failure_body() {
         cache_summary++
         next
       }
+      if (line ~ /^Configuration cache state could not be cached: field `classpath` of `org\.gradle\.process\.internal\.DefaultJavaExecSpec_Decorated` bean found in field `javaExecSpec` of task `:[^`]+:generateJooq` of type `org\.gradle\.api\.tasks\.JavaExec`: error writing value of type \047org\.gradle\.api\.internal\.file\.collections\.DefaultConfigurableFileCollection\047$/) {
+        if (match(line, /task `:[^`]+:generateJooq`/)) {
+          task_reference = substr(line, RSTART, RLENGTH)
+          sub(/^task `/, "", task_reference)
+          sub(/`$/, "", task_reference)
+          sub(/:generateJooq$/, "", task_reference)
+          if (jooq_module != "" && jooq_module != task_reference) {
+            invalid++
+          }
+          jooq_module = task_reference
+        } else {
+          invalid++
+        }
+        jooq_wrapper_causes++
+        cache_cause++
+        next
+      }
       if (line ~ /^Configuration cache state could not be cached: field `classpath` of task `:[^`]+:compile[A-Za-z0-9]+` of type .*JavaCompile.*: error writing value of type .*DefaultResolvableConfiguration/ ||
           line ~ /^- Task `:[^`]+:compile[A-Za-z0-9]+` of type .*JavaCompile.*: error writing value of type .*DefaultResolvableConfiguration/) {
         if (match(line, /`:[^`]+:compile[A-Za-z0-9]+`/)) {
@@ -179,6 +196,25 @@ classify_failure_body() {
         resolver_roots++
         if (line ~ /(compileClasspath|testCompileClasspath|integrationTestCompileClasspath|crossServiceTestCompileClasspath)/) {
           compile_classpath_roots++
+        }
+        configuration_name = line
+        sub(/^> Could not resolve all (artifacts|files) for configuration /, "", configuration_name)
+        sub(/[.]$/, "", configuration_name)
+        quote = sprintf("%c", 39)
+        if (substr(configuration_name, 1, 1) == quote) {
+          configuration_name = substr(configuration_name, 2, length(configuration_name) - 2)
+        }
+        if (configuration_name ~ /^:[[:alnum:]-]+:jooqCodegen$/) {
+          jooq_codegen_roots++
+          root_module = configuration_name
+          sub(/:jooqCodegen$/, "", root_module)
+          if (jooq_module != "" && jooq_module != root_module) {
+            invalid++
+          }
+          jooq_root_module = root_module
+        }
+        if (jooq_wrapper_causes && configuration_name !~ /^:[[:alnum:]-]+:jooqCodegen$/) {
+          invalid++
         }
         next
       }
@@ -227,6 +263,10 @@ classify_failure_body() {
       if (invalid || resolver_roots == 0 || coordinates == 0 ||
           (cache_summary && (cache_cause == 0 || cache_cause > 2)) ||
           (compile_task_failure && compile_classpath_roots == 0) ||
+          (jooq_wrapper_causes &&
+            (jooq_wrapper_causes != 1 || jooq_codegen_roots != 1 || resolver_roots != 1 ||
+             cache_cause != 1 || jooq_module == "" || jooq_root_module != jooq_module)) ||
+          (!jooq_wrapper_causes && jooq_codegen_roots) ||
           !((transient && repository_requests) || (searched && repository_urls))) {
         exit 1
       }
@@ -246,6 +286,15 @@ is_dependency_resolution_failure() {
     return 1
   fi
   if ! classify_failure_body "$body_path"; then
+    rm -f -- "$body_path"
+    return 1
+  fi
+
+  if grep -Fq 'DefaultJavaExecSpec_Decorated' "$body_path" &&
+      grep -Fq ':generateJooq' "$body_path" &&
+      grep -Eq '^> Task :[[:alnum:]][[:alnum:]-]*:generateJooq([[:space:]]|$)' "$log_path"; then
+    # A generateJooq task entry means Gradle started or reused generator work;
+    # only the classpath/configuration-cache failure before task execution retries.
     rm -f -- "$body_path"
     return 1
   fi
