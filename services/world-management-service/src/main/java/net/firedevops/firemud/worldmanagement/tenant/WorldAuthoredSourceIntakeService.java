@@ -12,7 +12,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec.ReadRequest;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
-import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -161,7 +161,7 @@ public class WorldAuthoredSourceIntakeService {
    * supplied source DTOs cannot invoke the owner path.
    */
   public WorldAuthoredSourceIntakeReceipt intakeRunOwnedFixture(
-      RunOwnedWorldLaunchEvidence fixtureEvidence) {
+      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence) {
     Objects.requireNonNull(fixtureEvidence, "fixtureEvidence");
     fixtureEvidence.requireFixedGameSessionPeer();
     requireNoAmbientTransaction();

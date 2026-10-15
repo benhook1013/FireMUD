@@ -22,21 +22,20 @@ import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.boot.DefaultApplicationArguments;
-import org.springframework.test.util.ReflectionTestUtils;
 
 class TestDataSeederTest {
   @Mock RegionRepository regionRepository;
   @Mock ZoneRepository zoneRepository;
   @Mock RoomRepository roomRepository;
   @Mock RoomExitRepository roomExitRepository;
-  @Mock WorldDesignPublicationFenceRepository publicationFenceRepository;
+  @Mock WorldAuthoredSourceIntakeRepository sourceIntakeRepository;
 
   private TestDataSeeder seeder;
 
@@ -49,7 +48,7 @@ class TestDataSeederTest {
             zoneRepository,
             roomRepository,
             roomExitRepository,
-            publicationFenceRepository);
+            sourceIntakeRepository);
   }
 
   @Test
@@ -83,8 +82,8 @@ class TestDataSeederTest {
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
-    var order = inOrder(publicationFenceRepository, regionRepository);
-    order.verify(publicationFenceRepository).lockExistingOpenByPrivateKeys(1L, 1L);
+    var order = inOrder(sourceIntakeRepository, regionRepository);
+    order.verify(sourceIntakeRepository).claimLegacyDemoTenant();
     order
         .verify(regionRepository)
         .findFirstByTenantIdAndVersionIdAndShardIdAndName(1L, 1L, 0, "Demo Region");
@@ -121,19 +120,6 @@ class TestDataSeederTest {
     assertEquals(2045L, exitCaptor.getAllValues().get(0).getToRoom().getId());
     assertEquals(2045L, exitCaptor.getAllValues().get(1).getFromRoom().getId());
     assertEquals(1021L, exitCaptor.getAllValues().get(1).getToRoom().getId());
-  }
-
-  @Test
-  void fixtureModeSkipsSeedingWithoutPreventingStartupOrAccessingRepositories() {
-    ReflectionTestUtils.setField(seeder, "runOwnedFixtureMode", true);
-
-    seeder.run(new DefaultApplicationArguments(new String[] {}));
-    verifyNoInteractions(
-        regionRepository,
-        zoneRepository,
-        roomRepository,
-        roomExitRepository,
-        publicationFenceRepository);
   }
 
   @Test
@@ -174,8 +160,8 @@ class TestDataSeederTest {
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
-    var order = inOrder(publicationFenceRepository, regionRepository);
-    order.verify(publicationFenceRepository).lockExistingOpenByPrivateKeys(1L, 1L);
+    var order = inOrder(sourceIntakeRepository, regionRepository);
+    order.verify(sourceIntakeRepository).claimLegacyDemoTenant();
     order
         .verify(regionRepository)
         .findFirstByTenantIdAndVersionIdAndShardIdAndName(1L, 1L, 0, "Demo Region");
@@ -228,14 +214,16 @@ class TestDataSeederTest {
   }
 
   @Test
-  void unavailableOwnerDeniesSeedingBeforeTopologyReadOrWrite() {
-    doThrow(new WorldDesignPublicationFenceRepository.ConflictException("Owner unavailable"))
-        .when(publicationFenceRepository)
-        .lockExistingOpenByPrivateKeys(1L, 1L);
+  void unavailableLegacyClaimDeniesSeedingBeforeTopologyReadOrWrite() {
+    doThrow(
+            new WorldAuthoredSourceIntakeRepository.RegistrationConflictException(
+                "Owner unavailable"))
+        .when(sourceIntakeRepository)
+        .claimLegacyDemoTenant();
 
     var exception =
         assertThrows(
-            WorldDesignPublicationFenceRepository.ConflictException.class,
+            IllegalStateException.class,
             () -> seeder.run(new DefaultApplicationArguments(new String[] {})));
     assertTrue(exception.getMessage().startsWith("DEMO_WORLD_SEEDING_UNAVAILABLE:"));
     verifyNoInteractions(regionRepository, zoneRepository, roomRepository, roomExitRepository);

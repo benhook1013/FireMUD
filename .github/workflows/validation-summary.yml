@@ -1,0 +1,321 @@
+name: Validation Summary
+
+on:
+  workflow_run:
+    workflows: ['CI — Validation']
+    types: [completed]
+
+permissions:
+  actions: read
+  pull-requests: write
+
+concurrency:
+  group: validation-summary-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish-summary:
+    name: Validation Summary
+    if: ${{ github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: 💬 Publish Validation Summary Comment
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const source = context.payload.workflow_run;
+            const deadline = Date.now() + 120000;
+            const options = () => {
+              const remaining = deadline - Date.now();
+              if (remaining <= 0) throw new Error("Validation summary API budget exhausted");
+              return { request: { timeout: Math.min(10000, remaining) } };
+            };
+            const positive = value => Number.isSafeInteger(value) && value > 0;
+            const title = /^CI — Validation pr-([1-9][0-9]*) base-([0-9a-f]{40}) head-([0-9a-f]{40})$/.exec(source?.display_title || "");
+            if (!title || !positive(source?.id) || !positive(source?.run_number) || !positive(source?.run_attempt)) {
+              throw new Error("Missing canonical Validation source identity");
+            }
+            const issueNumber = Number(title[1]);
+            const expectedBaseSha = title[2];
+            const expectedHeadSha = title[3];
+            if (!positive(issueNumber)) throw new Error("Invalid source PR number");
+            const associations = source.pull_requests;
+            if (!Array.isArray(associations) || associations.length > 1 ||
+                (associations.length === 1 && (typeof associations[0]?.base?.ref !== "string" || !associations[0].base.ref))) {
+              throw new Error("Source PR associations are unavailable or ambiguous");
+            }
+            // An empty native association array leaves the historical ref unknown.
+            // Pin only the current publication ref at the first exact-SHA PR fence.
+            let expectedBaseRef = associations[0]?.base.ref;
+            const { data: workflow } = await github.rest.actions.getWorkflow({ ...context.repo, workflow_id: "ci.yml", ...options() });
+            if (!positive(workflow?.id) || workflow.name !== "CI — Validation" || workflow.path !== ".github/workflows/ci.yml") {
+              throw new Error("Unexpected Validation workflow identity");
+            }
+            const validSource = run => run?.id === source.id && run.workflow_id === workflow.id &&
+              run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
+              run.event === "pull_request" && run.status === "completed" && run.run_number === source.run_number && run.run_attempt === source.run_attempt &&
+              ["success", "failure", "timed_out", "action_required", "neutral", "skipped"].includes(run.conclusion) &&
+              run.head_sha === expectedHeadSha && run.display_title === source.display_title &&
+              (run.name === "CI — Validation" || run.name === source.display_title) &&
+              (run.path === ".github/workflows/ci.yml" ||
+                (run.path?.startsWith(".github/workflows/ci.yml@") && run.path.length > ".github/workflows/ci.yml@".length)) &&
+              typeof run.actor?.login === "string" && run.actor.login !== "dependabot[bot]" &&
+              Array.isArray(run.pull_requests) && run.pull_requests.length <= 1 &&
+              (run.pull_requests.length === 0 ||
+                (run.pull_requests[0]?.number === issueNumber &&
+                  typeof run.pull_requests[0]?.base?.ref === "string" && run.pull_requests[0].base.ref &&
+                  (expectedBaseRef === undefined || run.pull_requests[0].base.ref === expectedBaseRef) &&
+                  run.pull_requests[0]?.base?.sha === expectedBaseSha && run.pull_requests[0]?.head?.sha === expectedHeadSha));
+            if (!validSource(source)) {
+              core.info("Skipping an ineligible Validation source");
+              return;
+            }
+            const fence = async () => {
+              const { data: run } = await github.rest.actions.getWorkflowRun({ ...context.repo, run_id: source.id, ...options() });
+              const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: issueNumber, ...options() });
+              if (!validSource(run) || pr?.state !== "open" || pr.number !== issueNumber ||
+                  pr.head?.repo?.full_name !== repository || pr.base?.repo?.full_name !== repository ||
+                  pr.head.sha !== expectedHeadSha || pr.base.sha !== expectedBaseSha ||
+                  typeof pr.base.ref !== "string" || !pr.base.ref) return false;
+              if (expectedBaseRef === undefined) expectedBaseRef = pr.base.ref;
+              return pr.base.ref === expectedBaseRef && validSource(run);
+            };
+            if (!await fence()) {
+              core.info("Skipping stale Validation source/base/head");
+              return;
+            }
+
+            // Read a complete, bounded snapshot of precisely the completed source attempt.
+            const jobs = [];
+            let total;
+            for (let page = 1; page <= 2; page++) {
+              const { data } = await github.rest.actions.listJobsForWorkflowRunAttempt({
+                ...context.repo, run_id: source.id, attempt_number: source.run_attempt, per_page: 100, page, ...options(),
+              });
+              if (!Number.isSafeInteger(data?.total_count) || data.total_count < 1 || data.total_count > 200 ||
+                  (total !== undefined && data.total_count !== total) || !Array.isArray(data.jobs)) {
+                throw new Error("Incomplete or oversized source job snapshot");
+              }
+              total = data.total_count;
+              if (data.jobs.length !== Math.min(100, total - (page - 1) * 100)) {
+                throw new Error("Truncated source job page");
+              }
+              jobs.push(...data.jobs);
+              if (jobs.length === total) break;
+            }
+            const terminal = new Set(["success", "failure", "cancelled", "timed_out", "action_required", "skipped"]);
+            if (jobs.length !== total || new Set(jobs.map(job => job.id)).size !== total || jobs.some(job =>
+              !positive(job.id) || job.run_id !== source.id || job.run_attempt !== source.run_attempt ||
+              job.head_sha !== expectedHeadSha || job.status !== "completed" || !terminal.has(job.conclusion))) {
+              throw new Error("Ambiguous or nonterminal source job evidence");
+            }
+            // Old branches retain their inline publisher until their next normal base carry.
+            if (jobs.some(job => ["Validation Summary", "PR Metadata Edit (Validation Summary)"].includes(job.name))) {
+              core.info("Skipping source with its legacy inline Validation Summary owner");
+              return;
+            }
+            const one = name => {
+              const matches = jobs.filter(job => job.name === name);
+              if (matches.length !== 1) throw new Error(`Missing or duplicate source job: ${name}`);
+              return matches[0].conclusion;
+            };
+            const detector = one("Detect CI-Relevant Changes");
+            if (detector === "skipped") {
+              core.info("Skipping metadata-only preservation source");
+              return;
+            }
+            const fixedChecks = [
+              ["Validation gate", "Validation Gate"],
+              ["Buf generation", "Buf Generation"],
+              ["Dockerfile lint", "Dockerfile Lint"],
+              ["ShellCheck", "ShellCheck"],
+              ["Python script validation", "Python Script Validation"],
+              ["Dev tool contract checks", "Dev Tool Contract Checks"],
+              ["Dev Tools README contract", "Dev Tools README Contract"],
+              ["YAML lint", "YAML Lint"],
+              ["Metrics cardinality policy check", "Metrics Cardinality Policy Check"],
+              ["Flyway migration sanity checks", "Flyway Migration Sanity Checks"],
+              ["gRPC transport configuration sanity checks", "gRPC Transport Configuration Sanity Checks"],
+              ["GitHub workflow lint", "GitHub Workflow Lint"],
+              ["Helm chart lint", "Helm Chart Lint"],
+              ["Helm render validation", "Helm Render Validation"],
+              ["Helm transaction proof", "Helm Transaction Proof"],
+              ["Validate Documentation", "Validate Documentation"],
+              ["Frontend checks", "Frontend Checks"],
+            ];
+            const modules = new Set([
+              "common-data-runtime", "common-platform-core", "common-saga", "common-temporal", "common-security",
+              "common-test-support", "common-web-support", "account-service", "automation-scripting-service",
+              "entity-management-service", "game-design-service", "game-logic-service", "game-session-service",
+              "logging-admin-service", "social-groups-service", "spring-cloud-gateway", "tcp-proxy-service",
+              "world-management-service", "hosted-environment-identity-controller", "load-testing",
+            ]);
+            const placeholder = "Build and Test ($" + "{{ matrix.module }})";
+            const fixedNames = new Set([...fixedChecks.map(([, name]) => name), "Detect CI-Relevant Changes", "PostgreSQL Runtime Upgrade Proof"]);
+            const matrix = [];
+            for (const job of jobs) {
+              if (fixedNames.has(job.name)) continue;
+              const module = /^Build and Test \(([a-z0-9-]+)\)$/.exec(job.name || "")?.[1];
+              if (modules.has(module) || (job.name === placeholder && job.conclusion === "skipped")) matrix.push(job);
+              else throw new Error(`Unknown Validation source job: ${job.name}`);
+            }
+            one("PostgreSQL Runtime Upgrade Proof");
+            if (!matrix.length || new Set(matrix.map(job => job.name)).size !== matrix.length ||
+                (matrix.some(job => job.name === placeholder) && matrix.length !== 1)) {
+              throw new Error("Missing or ambiguous module matrix");
+            }
+            const reduceResult = results => {
+              if (results.some(result => ["failure", "timed_out", "action_required"].includes(result))) return "failure";
+              if (results.includes("cancelled")) return "cancelled";
+              if (results.some(result => !["success", "skipped"].includes(result))) throw new Error("Unknown matrix result");
+              return results.includes("success") ? "success" : "skipped";
+            };
+            const validationChecks = fixedChecks.map(([label, name]) => [label, one(name)]);
+            validationChecks.push(["Service build/test matrix", reduceResult(matrix.map(job => job.conclusion))]);
+            if (validationChecks.some(([, result]) => result === "neutral")) throw new Error("Unexpected neutral Validation job");
+
+            const statusIcon = (result) => {
+              if (result === "success") return "✅";
+              if (result === "failure") return "❌";
+              if (result === "cancelled") return "⚪";
+              if (["pending", "in_progress", "queued"].includes(result)) return "⏳";
+              return "⏭️";
+            };
+
+
+            const failedChecks = validationChecks.filter(([, result]) =>
+              ["failure", "cancelled", "timed_out", "action_required"].includes(result)
+            );
+            const pendingChecks = validationChecks.filter(([, result]) =>
+              ["pending", "in_progress", "queued"].includes(result)
+            );
+
+            const headline = failedChecks.length > 0
+              ? "❌ One or more validation checks failed"
+              : pendingChecks.length > 0
+              ? "⏳ Validation checks are still running"
+              : "✅ All validation checks passed";
+
+            const publication = {
+              repository, workflow_id: workflow.id, pr: issueNumber,
+              base_ref: expectedBaseRef, base_sha: expectedBaseSha, head_sha: expectedHeadSha,
+              run_id: source.id, run_number: source.run_number, run_attempt: source.run_attempt,
+            };
+            const body = [
+              "### Validation Summary",
+              "<!-- firemud-validation-summary -->",
+              `<!-- firemud-validation-source ${JSON.stringify(publication).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")} -->`,
+              headline,
+              "",
+              ...validationChecks.map(([name, result]) => `- ${statusIcon(result)} ${name}: \`${result}\``),
+              "",
+              "Coverage reports and failure logs are available in the workflow artifacts."
+            ].join("\n");
+
+            await core.summary
+              .addRaw(headline, true)
+              .addList(validationChecks.map(([name, result]) => `${statusIcon(result)} ${name}: ${result}`))
+              .write();
+
+
+            const comments = [];
+            for (let page = 1; page <= 10; page++) {
+              const response = await github.rest.issues.listComments({
+                ...context.repo, issue_number: issueNumber, per_page: 100, page, ...options(),
+              });
+              if (!Array.isArray(response.data) || response.data.length > 100) throw new Error("Malformed comment page");
+              comments.push(...response.data);
+              if (!/rel="next"/.test(response.headers?.link || "")) break;
+              if (response.data.length !== 100 || page === 10) throw new Error("Incomplete or oversized comment history");
+            }
+            if (comments.some(comment => !positive(comment.id)) || new Set(comments.map(comment => comment.id)).size !== comments.length) {
+              throw new Error("Duplicate or malformed comment evidence");
+            }
+            const summaryComments = comments.filter(comment =>
+              comment.user?.login === "github-actions[bot]" &&
+              (comment.body?.startsWith("### Validation Summary") ||
+                comment.body?.includes("<!-- firemud-validation-summary -->"))
+            );
+            // The existing bot summary owns publication order; no source-run history scan is needed.
+            for (const comment of summaryComments) {
+              if (!comment.body.includes("<!-- firemud-validation-source")) continue;
+              const markers = [...comment.body.matchAll(/<!-- firemud-validation-source ([^\r\n]*?) -->/g)];
+              if (comment.body.split("<!-- firemud-validation-source").length !== 2 ||
+                  markers.length !== 1 || markers[0][1].length > 2048) {
+                throw new Error("Ambiguous Validation publication marker");
+              }
+              let previous;
+              try { previous = JSON.parse(markers[0][1]); }
+              catch { throw new Error("Malformed Validation publication marker"); }
+              if (!previous || typeof previous !== "object" || Array.isArray(previous) ||
+                  Object.keys(previous).length !== Object.keys(publication).length ||
+                  Object.keys(publication).some(key => !Object.hasOwn(previous, key)) ||
+                  typeof previous.repository !== "string" || typeof previous.base_ref !== "string" || !previous.base_ref ||
+                  !/^[0-9a-f]{40}$/.test(previous.base_sha) || !/^[0-9a-f]{40}$/.test(previous.head_sha) ||
+                  ![previous.workflow_id, previous.pr, previous.run_id, previous.run_number, previous.run_attempt].every(positive)) {
+                throw new Error("Invalid Validation publication attribution");
+              }
+              const sameTuple = ["repository", "workflow_id", "pr", "base_ref", "base_sha", "head_sha"]
+                .every(key => previous[key] === publication[key]);
+              if (!sameTuple) continue;
+              if ((previous.run_number === source.run_number) !== (previous.run_id === source.id)) {
+                throw new Error("Incomparable native Validation run identity");
+              }
+              if (previous.run_number > source.run_number ||
+                  (previous.run_number === source.run_number && previous.run_attempt > source.run_attempt)) {
+                core.info("Skipping an older Validation publication, including duplicate cleanup");
+                return;
+              }
+            }
+            const commentTimestamp = (comment) => {
+              const parsed = Date.parse(comment.created_at || "");
+              return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
+            };
+            const existing = summaryComments.reduce((oldest, comment) => {
+              if (!oldest) return comment;
+              const oldestTimestamp = commentTimestamp(oldest);
+              const candidateTimestamp = commentTimestamp(comment);
+              if (candidateTimestamp !== oldestTimestamp) {
+                return candidateTimestamp < oldestTimestamp ? comment : oldest;
+              }
+              return Number(comment.id) < Number(oldest.id) ? comment : oldest;
+            }, null);
+
+            if (existing && existing.body !== body) {
+              if (!await fence()) return;
+              await github.rest.issues.updateComment({
+                ...context.repo,
+                ...options(),
+                comment_id: existing.id,
+                body
+              });
+            } else if (!existing) {
+              if (!await fence()) return;
+              await github.rest.issues.createComment({
+                ...context.repo,
+                ...options(),
+                issue_number: issueNumber,
+                body
+              });
+            }
+
+            for (const comment of summaryComments) {
+              if (comment.id === existing?.id) continue;
+              try {
+                if (!await fence()) return;
+                await github.rest.issues.deleteComment({
+                  ...context.repo,
+                  ...options(),
+                  comment_id: comment.id,
+                });
+              } catch (error) {
+                if (error?.status !== 404) throw error;
+              }
+            }

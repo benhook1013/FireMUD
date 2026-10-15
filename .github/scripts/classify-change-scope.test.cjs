@@ -138,6 +138,7 @@ test("workflow and Gradle wrapper changes force all module validation", () => {
     ".github/scripts/classify-change-scope.cjs",
     "gradlew",
     "gradlew.bat",
+    "dev-tools/validation/run-gradle-with-dependency-recovery.sh",
     "dev-tools/validation/run-locked-gradle.sh",
     "dev-tools/validation/gradle-run-supervisor.py",
   ]) {
