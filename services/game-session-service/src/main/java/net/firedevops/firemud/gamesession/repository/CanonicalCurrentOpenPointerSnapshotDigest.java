@@ -176,6 +176,14 @@ final class CanonicalCurrentOpenPointerSnapshotDigest {
       long auditEventId,
       Instant terminalAt) {
     @SuppressFBWarnings(
+        value = "NP_BOOLEAN_RETURN_NULL",
+        justification =
+            "The canonical OPEN projection requires this selection value to be null, and the digest preserves that nullable encoding.")
+    public Boolean requiresCharacterSelection() {
+      return this.requiresCharacterSelection;
+    }
+
+    @SuppressFBWarnings(
         value = "NP_LOAD_OF_KNOWN_NULL_VALUE",
         justification =
             "Canonical OPEN projection requires absent selection and upgrade fields; the record stores those validated nulls without dereferencing them.")

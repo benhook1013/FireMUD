@@ -14,7 +14,7 @@ import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAsso
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadGrpcCodec;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamesession.v1.GetRunOwnedFixtureLaunchAssociationResponse;
-import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -418,7 +418,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
    * safe.
    */
   public void lockRunOwnedFixtureInOwnerTransaction(
-      RunOwnedWorldLaunchEvidence fixtureEvidence,
+      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence,
       PreparedWorldInstanceRequest gameSessionRequest) {
     Objects.requireNonNull(fixtureEvidence, "fixtureEvidence").requireFixedGameSessionPeer();
     requireWritableReadCommittedOwnerTransaction();
@@ -469,7 +469,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
    * Design private keys as World keys.
    */
   public WorldCanonicalInstanceAssociation allocateRunOwnedFixtureInOwnerTransaction(
-      RunOwnedWorldLaunchEvidence fixtureEvidence,
+      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence,
       PreparedWorldInstanceRequest gameSessionRequest,
       WorldAuthoredSourceIntakeReceipt sourceReceipt,
       WorldAuthoredVersionIdentityReceipt versionIdentity) {
@@ -663,7 +663,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
   private Map<String, Object> runOwnedFixtureWorldInstanceRow(
       long worldInstanceId,
       WorldCanonicalInstanceAssociation.WorldPrivateKeys worldPrivateKeys,
-      RunOwnedWorldLaunchEvidence evidence,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
       WorldCanonicalInstanceAssociation.CanonicalIdentity identity,
       String fixtureBindingSha256,
       String runtimeFlagsJson) {
@@ -720,7 +720,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
       WorldCanonicalInstanceAssociation.CanonicalIdentity identity,
       long worldInstanceId,
       WorldCanonicalInstanceAssociation.WorldPrivateKeys worldPrivateKeys,
-      RunOwnedWorldLaunchEvidence evidence,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
       WorldAuthoredSourceIntakeReceipt sourceReceipt,
       WorldAuthoredVersionIdentityReceipt versionIdentity,
       String preparationInputDigest,
@@ -831,7 +831,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
 
   private static void requireSameRunOwnedFixture(
       WorldCanonicalInstanceAssociation stored,
-      RunOwnedWorldLaunchEvidence evidence,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
       PreparedWorldInstanceRequest request,
       WorldAuthoredSourceIntakeReceipt sourceReceipt,
       WorldAuthoredVersionIdentityReceipt versionIdentity) {
@@ -903,7 +903,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
    * never used as a World key.
    */
   public WorldCanonicalInstanceAssociation readRunOwnedFixtureAssociation(
-      RunOwnedWorldLaunchEvidence evidence,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
       PreparedWorldInstanceRequest originalGameSessionRequest) {
     Objects.requireNonNull(evidence, "evidence").requireFixedGameSessionPeer();
     requireNoActiveTransaction("Run-owned World fixture association read");
@@ -943,7 +943,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
    * Locks and verifies the immutable fixture association inside a writable lifecycle transaction.
    */
   public WorldCanonicalInstanceAssociation readRunOwnedFixtureAssociationInActivationTransaction(
-      RunOwnedWorldLaunchEvidence evidence,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
       PreparedWorldInstanceRequest originalGameSessionRequest) {
     Objects.requireNonNull(evidence, "evidence").requireFixedGameSessionPeer();
     requireWritableActivationTransaction();
@@ -974,7 +974,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
 
   private static void requireFixtureAssociationMatches(
       WorldCanonicalInstanceAssociation stored,
-      RunOwnedWorldLaunchEvidence evidence,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
       PreparedWorldInstanceRequest originalGameSessionRequest) {
     if (!stored.isRunOwnedFixture()) {
       throw new RegistrationConflictException(
@@ -1419,7 +1419,7 @@ public final class WorldCanonicalInstanceAssociationRepository {
       WorldCanonicalInstanceAssociation.CanonicalIdentity identity,
       WorldCanonicalInstanceAssociation.WorldPrivateKeys worldPrivateKeys,
       PreparedWorldInstanceRequest request,
-      RunOwnedWorldLaunchEvidence evidence,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
       String fixtureBindingSha256) {
     evidence.requireMatches(request);
     var gameSession = evidence.gameSessionAssociation();

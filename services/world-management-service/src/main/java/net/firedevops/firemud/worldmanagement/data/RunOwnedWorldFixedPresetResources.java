@@ -93,10 +93,11 @@ public final class RunOwnedWorldFixedPresetResources {
    * accepted.
    */
   public static FixedPresetPlan plan(
-      RunOwnedWorldLaunchEvidence evidence,
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
       WorldAuthoredSourceIntakeReceipt sourceReceipt,
       WorldAuthoredVersionIdentityReceipt versionReceipt) {
-    RunOwnedWorldLaunchEvidence typedEvidence = Objects.requireNonNull(evidence, "evidence");
+    RunOwnedCanonicalWorldLaunchEvidence typedEvidence =
+        Objects.requireNonNull(evidence, "evidence");
     typedEvidence.requireFixedGameSessionPeer();
     var descriptor = typedEvidence.launchDescriptor();
     if (descriptor.scriptPatchVersionPresent() || descriptor.remapSetIdPresent()) {
@@ -411,7 +412,7 @@ public final class RunOwnedWorldFixedPresetResources {
    */
   public static MaterializedFixedPreset materialize(
       DSLContext dsl,
-      RunOwnedWorldLaunchEvidence fixtureEvidence,
+      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence,
       FixedPresetPlan plan,
       long worldInstanceId,
       long privateGameInstanceKey) {
@@ -482,7 +483,7 @@ public final class RunOwnedWorldFixedPresetResources {
 
   /** The retained seal survives retries; only the independent GS read correlation may change. */
   private static void requireCurrentFixtureMatchesRetainedPlan(
-      RunOwnedWorldLaunchEvidence evidence, FixedPresetPlan plan) {
+      RunOwnedCanonicalWorldLaunchEvidence evidence, FixedPresetPlan plan) {
     var capability = evidence.capability();
     var receipt = evidence.sourceReceipt();
     var source = receipt.sourceEvidence();

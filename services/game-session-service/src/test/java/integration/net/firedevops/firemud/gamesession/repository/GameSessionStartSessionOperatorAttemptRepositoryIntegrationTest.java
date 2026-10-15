@@ -4,14 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -455,7 +451,7 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
   private static String v34_3CatalogRequestDigest(
       CreateCanonicalRealmCatalogRequest request, IntakeReceipt sourceReceipt) {
     AuthoredWorldSourceEvidence source = sourceReceipt.source();
-    return v34_3Digest(
+    return CanonicalHumanPublicationOwnerTestFixtures.historicalDigest(
         "game-session-canonical-realm-catalog-request/v1",
         "1",
         request.requestId().toString(),
@@ -494,7 +490,7 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
       UUID namespaceId,
       long revision,
       String requestDigest) {
-    return v34_3Digest(
+    return CanonicalHumanPublicationOwnerTestFixtures.historicalDigest(
         "game-session-canonical-realm-catalog-receipt/v1",
         "1",
         request.targetNamespace(),
@@ -506,21 +502,6 @@ class GameSessionStartSessionOperatorAttemptRepositoryIntegrationTest {
         Long.toString(revision),
         sourceReceipt.operationId().toString(),
         sourceReceipt.receiptDigest());
-  }
-
-  private static String v34_3Digest(String... values) {
-    try {
-      MessageDigest hash = MessageDigest.getInstance("SHA-256");
-      for (String value : values) {
-        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-        hash.update(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
-        hash.update((byte) ':');
-        hash.update(bytes);
-      }
-      return "sha256:" + HexFormat.of().formatHex(hash.digest());
-    } catch (NoSuchAlgorithmException exception) {
-      throw new IllegalStateException("SHA-256 is unavailable", exception);
-    }
   }
 
   private static void seedV34_3TenantAssociation(DSLContext tx, PriorRuntime target) {

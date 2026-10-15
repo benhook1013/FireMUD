@@ -336,6 +336,98 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
   }
 
   @Test
+  void differentCreationRequestForBoundCanonicalTenantConflictsWithoutOwnerMutation() {
+    HumanRetryFixture humanFixture = fixtureWithRepeatableReadDefault();
+    Fixture fixture = humanFixture.fixture();
+    IntakeReceipt source = fixture.registerFreshSource();
+    FreshTenantCreationEvidence originalEvidence = creationEvidence(source.source());
+    FreshGameSessionTenantAssociation original =
+        fixture.associate(uuid(630), NAMESPACE, source, originalEvidence);
+    FreshTenantCreationEvidence competingEvidence = creationEvidence(source.source(), uuid(631));
+    assertThat(competingEvidence.creationRequestId())
+        .isNotEqualTo(originalEvidence.creationRequestId());
+    when(humanFixture
+            .gameDesignClient()
+            .resolveCreation(
+                competingEvidence.creationRequestId(), competingEvidence.requestDigest()))
+        .thenReturn(competingEvidence);
+
+    var associationBefore =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT xmin::text AS xmin, association_operation_id, association_request_id, "
+                    + "legacy_game_session_tenant_id FROM game_session_fresh_tenant_association "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                NAMESPACE,
+                TENANT),
+            "expected complete original fresh association");
+    var claimBefore =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT xmin::text AS xmin, association_operation_id, association_request_id, "
+                    + "legacy_game_session_tenant_id FROM game_session_tenant_canonical_claim "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                NAMESPACE,
+                TENANT),
+            "expected complete original canonical tenant claim");
+    var reservationBefore =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT xmin::text AS xmin, game_session_tenant_id, reservation_kind "
+                    + "FROM game_session_tenant_scope_reservation "
+                    + "WHERE game_session_tenant_id = ?",
+                original.legacyGameSessionTenantId()),
+            "expected original source-bound tenant reservation");
+
+    assertThatThrownBy(
+            () ->
+                fixture.associationRepository.associateFreshTenant(
+                    competingEvidence.creationRequestId(), competingEvidence.requestDigest()))
+        .isExactlyInstanceOf(FreshTenantAssociationConflictException.class)
+        .hasMessageContaining("canonical tenant");
+    verify(humanFixture.gameDesignClient())
+        .resolveCreation(competingEvidence.creationRequestId(), competingEvidence.requestDigest());
+
+    var associationAfter =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT xmin::text AS xmin, association_operation_id, association_request_id, "
+                    + "legacy_game_session_tenant_id FROM game_session_fresh_tenant_association "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                NAMESPACE,
+                TENANT),
+            "original complete fresh association remains present");
+    var claimAfter =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT xmin::text AS xmin, association_operation_id, association_request_id, "
+                    + "legacy_game_session_tenant_id FROM game_session_tenant_canonical_claim "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                NAMESPACE,
+                TENANT),
+            "original complete canonical tenant claim remains present");
+    var reservationAfter =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT xmin::text AS xmin, game_session_tenant_id, reservation_kind "
+                    + "FROM game_session_tenant_scope_reservation "
+                    + "WHERE game_session_tenant_id = ?",
+                original.legacyGameSessionTenantId()),
+            "original source-bound tenant reservation remains present");
+    assertThat(associationAfter.intoMap()).isEqualTo(associationBefore.intoMap());
+    assertThat(claimAfter.intoMap()).isEqualTo(claimBefore.intoMap());
+    assertThat(reservationAfter.intoMap()).isEqualTo(reservationBefore.intoMap());
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_tenant_scope_reservation"))))
+        .isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_tenant_canonical_claim"))))
+        .isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_fresh_tenant_association"))))
+        .isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances")))).isZero();
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
+  }
+
+  @Test
   void oneConcurrentContenderOwnsTheCanonicalTenantMapping() throws Exception {
     Fixture fixture = fixture();
     IntakeReceipt source = fixture.registerFreshSource();
@@ -479,6 +571,19 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
         UUID.nameUUIDFromBytes(
             ("creation-operation/" + source.canonicalTenantId())
                 .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    return creationEvidence(source, provenanceKind, request, operation);
+  }
+
+  private static FreshTenantCreationEvidence creationEvidence(
+      AuthoredWorldSourceEvidence source, UUID request) {
+    UUID operation =
+        UUID.nameUUIDFromBytes(
+            ("creation-operation/" + request).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    return creationEvidence(source, source.provenanceKind(), request, operation);
+  }
+
+  private static FreshTenantCreationEvidence creationEvidence(
+      AuthoredWorldSourceEvidence source, String provenanceKind, UUID request, UUID operation) {
     String requestDigest =
         GameTenantCreationDigest.requestDigest(
             source.targetNamespace(),
