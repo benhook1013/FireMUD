@@ -19,9 +19,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/**
- * World-owned authored-source retention and tenant-selector claim repository.
- */
+/** World-owned authored-source retention and tenant-selector claim repository. */
 @Repository
 public class WorldAuthoredSourceIntakeRepository {
   private static final int SCHEMA_VERSION = 1;
@@ -191,8 +189,8 @@ public class WorldAuthoredSourceIntakeRepository {
   }
 
   /**
-   * Establishes or verifies the immutable legacy-numeric claim used by the opt-in local demo
-   * seeder before it reads or writes topology.
+   * Establishes or verifies the immutable legacy-numeric claim used by the opt-in local demo seeder
+   * before it reads or writes topology.
    *
    * <p>The caller must hold a writable READ COMMITTED owner transaction through the seeding
    * operation. This shares the source allocator lock so a canonical tenant cannot be allocated
@@ -217,8 +215,7 @@ public class WorldAuthoredSourceIntakeRepository {
 
     Record reservation = findTenantKeyReservation(LEGACY_DEMO_TENANT_KEY);
     if (reservation == null
-        || !Objects.equals(
-            reservation.get(RESERVATION_CLAIM_KIND, String.class), "LEGACY_NUMERIC")
+        || !Objects.equals(reservation.get(RESERVATION_CLAIM_KIND, String.class), "LEGACY_NUMERIC")
         || reservation.get(RESERVATION_NAMESPACE, String.class) != null
         || reservation.get(RESERVATION_CANONICAL_TENANT_ID, UUID.class) != null) {
       throw new RegistrationConflictException(
@@ -663,9 +660,7 @@ public class WorldAuthoredSourceIntakeRepository {
   }
 
   private Record findTenantAssociationByLocalKey(long localTenantKey) {
-    return dsl.selectFrom(TENANT_ASSOCIATION)
-        .where(LOCAL_TENANT_KEY.eq(localTenantKey))
-        .fetchOne();
+    return dsl.selectFrom(TENANT_ASSOCIATION).where(LOCAL_TENANT_KEY.eq(localTenantKey)).fetchOne();
   }
 
   private Record findTenantSlugAssociation(String namespace, String tenantSlug) {

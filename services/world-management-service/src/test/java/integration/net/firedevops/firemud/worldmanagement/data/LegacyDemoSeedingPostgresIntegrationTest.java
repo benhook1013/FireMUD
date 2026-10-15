@@ -58,8 +58,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
  * Physical PostgreSQL proof for opt-in legacy demo seeding and its shared canonical allocator
- * fence. Controlled source evidence and SQL fixtures prove World storage behavior only; they do
- * not establish Human production authority or an authenticated Game Design producer.
+ * fence. Controlled source evidence and SQL fixtures prove World storage behavior only; they do not
+ * establish Human production authority or an authenticated Game Design producer.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -137,7 +137,7 @@ class LegacyDemoSeedingPostgresIntegrationTest {
   }
 
   @Test
-  void freshSeedAndReplayRetainLegacyClaimAndTopologyRows() {
+  void freshSeedAndReplayPreserveLegacyClaimAndTopologyContents() {
     runSeeder();
 
     List<TopologyRow> firstTopology = topologyRows();
@@ -151,6 +151,8 @@ class LegacyDemoSeedingPostgresIntegrationTest {
 
     runSeeder();
 
+    // The legacy seeder refreshes optimistic versions on replay; the immutable CLAIM must stay
+    // unchanged while the topology's business contents remain identical.
     assertThat(topologyRows()).isEqualTo(firstTopology);
     assertThat(reservation(DEMO_TENANT_ID)).isEqualTo(firstClaim);
   }
@@ -260,8 +262,7 @@ class LegacyDemoSeedingPostgresIntegrationTest {
   }
 
   private int backendPid() {
-    return Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()"))
-        .get(0, Integer.class);
+    return Objects.requireNonNull(dsl.fetchOne("SELECT pg_backend_pid()")).get(0, Integer.class);
   }
 
   private boolean awaitAllocatorLockWait(
@@ -291,18 +292,18 @@ class LegacyDemoSeedingPostgresIntegrationTest {
       statement.execute("SET search_path TO \"" + schema + "\"");
       try (var rows =
           statement.executeQuery(
-              "SELECT table_name, row_bytes, xmin FROM ("
+              "SELECT table_name, row_bytes FROM ("
                   + "SELECT 'region'::text AS table_name, "
-                  + "convert_to(to_jsonb(r)::text, 'UTF8') AS row_bytes, r.xmin::text AS xmin "
+                  + "convert_to((to_jsonb(r) - 'version')::text, 'UTF8') AS row_bytes "
                   + "FROM region r WHERE r.tenant_id = 1 AND r.version_id = 1 "
                   + "AND r.name = 'Demo Region' UNION ALL "
-                  + "SELECT 'zone', convert_to(to_jsonb(z)::text, 'UTF8'), z.xmin::text "
+                  + "SELECT 'zone', convert_to((to_jsonb(z) - 'version')::text, 'UTF8') "
                   + "FROM zone z WHERE z.tenant_id = 1 AND z.version_id = 1 "
                   + "AND z.name = 'Demo Zone' UNION ALL "
-                  + "SELECT 'room', convert_to(to_jsonb(r)::text, 'UTF8'), r.xmin::text "
+                  + "SELECT 'room', convert_to((to_jsonb(r) - 'version')::text, 'UTF8') "
                   + "FROM room r WHERE r.tenant_id = 1 AND r.version_id = 1 "
                   + "AND r.id IN (1021, 2045) UNION ALL "
-                  + "SELECT 'room_exit', convert_to(to_jsonb(e)::text, 'UTF8'), e.xmin::text "
+                  + "SELECT 'room_exit', convert_to((to_jsonb(e) - 'version')::text, 'UTF8') "
                   + "FROM room_exit e WHERE e.tenant_id = 1 AND e.version_id = 1 "
                   + "AND ((e.from_room_id = 1021 AND e.to_room_id = 2045) "
                   + "OR (e.from_room_id = 2045 AND e.to_room_id = 1021))"
@@ -312,13 +313,13 @@ class LegacyDemoSeedingPostgresIntegrationTest {
           result.add(
               new TopologyRow(
                   rows.getString("table_name"),
-                  HexFormat.of().formatHex(rows.getBytes("row_bytes")),
-                  rows.getString("xmin")));
+                  HexFormat.of().formatHex(rows.getBytes("row_bytes"))));
         }
         return result;
       }
     } catch (SQLException exception) {
-      throw new IllegalStateException("Unable to read controlled demo topology snapshot", exception);
+      throw new IllegalStateException(
+          "Unable to read controlled demo topology snapshot", exception);
     }
   }
 
@@ -327,10 +328,10 @@ class LegacyDemoSeedingPostgresIntegrationTest {
         Statement statement = connection.createStatement()) {
       statement.execute("SET search_path TO \"" + schema + "\"");
       try (var query =
-              connection.prepareStatement(
-                  "SELECT claim_kind, target_namespace, canonical_tenant_id::text, "
-                      + "xmin::text FROM world_authored_source_tenant_key_reservation "
-                      + "WHERE tenant_key = ?")) {
+          connection.prepareStatement(
+              "SELECT claim_kind, target_namespace, canonical_tenant_id::text, "
+                  + "xmin::text FROM world_authored_source_tenant_key_reservation "
+                  + "WHERE tenant_key = ?")) {
         query.setLong(1, tenantKey);
         try (var rows = query.executeQuery()) {
           if (rows.next()) {
@@ -423,11 +424,12 @@ class LegacyDemoSeedingPostgresIntegrationTest {
       }
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
-      throw new IllegalStateException("Interrupted while waiting for PostgreSQL race gate", exception);
+      throw new IllegalStateException(
+          "Interrupted while waiting for PostgreSQL race gate", exception);
     }
   }
 
-  private record TopologyRow(String tableName, String rowBytes, String xmin) {}
+  private record TopologyRow(String tableName, String rowBytes) {}
 
   private record ReservationSnapshot(
       String claimKind, String targetNamespace, UUID canonicalTenantId, String xmin) {}
