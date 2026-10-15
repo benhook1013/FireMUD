@@ -119,32 +119,71 @@ class TemplateReferencePhasePostgresIntegrationTest {
   }
 
   @Test
-  void normalSourceSynchronizationAutomaticallyEnforcesFreshCompleteInventory() {
+  void currentSourceSynchronizationStaysBackfillingUntilExplicitFullInventoryValidation() {
     Fixture fixture = fixture();
-    DraftCommitBinding binding = createTemplate(fixture, "Automatic", true);
+    DraftCommitBinding binding = createTemplate(fixture, "Starter", true);
     var references = new TemplateReferenceRepository(fixture.dsl());
-    var phase = references.readPhase(fixture.target().canonicalTenantId()).orElseThrow();
-    assertThat(phase.phase()).isEqualTo(TemplateReferenceRepository.Phase.ENFORCED);
-    assertThat(phase.phaseEpoch()).isEqualTo(3L);
-    assertThat(phase.inventoryTemplateCount()).isEqualTo(1L);
-    var configuredTemplateRow =
-        Objects.requireNonNull(
-            fixture
-                .dsl()
-                .fetchOne(
-                    "SELECT id FROM game_templates WHERE tenant_id = ?",
-                    fixture.creation().sourceGameTenantKey()),
-            "Automatically synchronized template row is missing");
-    Long configuredTemplateId =
-        Objects.requireNonNull(
-            configuredTemplateRow.get("id", Long.class),
-            "Automatically synchronized template row has no id");
+    var before = references.readPhase(fixture.target().canonicalTenantId()).orElseThrow();
+    assertThat(before.phase()).isEqualTo(TemplateReferenceRepository.Phase.BACKFILLING);
+    assertThat(before.phaseEpoch()).isEqualTo(1L);
+    assertThat(before.creationOperationId()).isEqualTo(fixture.creation().operationId());
+    assertThat(before.creationRequestId()).isEqualTo(fixture.creation().creationRequestId());
+    assertThat(before.sourceGameRowId()).isEqualTo(fixture.creation().sourceGameRowId());
+    assertThat(before.sourceGameTenantKey()).isEqualTo(fixture.creation().sourceGameTenantKey());
+
+    var visibleSources =
+        new GameDesignSourceRepository(fixture.dsl())
+            .readSynchronized(fixture.target(), binding.commitId())
+            .orElseThrow();
+    assertThat(visibleSources.command().binding()).isEqualTo(binding);
+    assertThat(visibleSources.policy().binding()).isEqualTo(binding);
+    var visibleTemplateConfig = visibleSources.templateConfig().orElseThrow();
+    assertThat(visibleTemplateConfig.binding()).isEqualTo(binding);
+    assertThat(visibleTemplateConfig.entries()).hasSize(1);
+    assertThat(visibleTemplateConfig.entries().getFirst().sourceBinding()).isEqualTo(binding);
+    assertThat(visibleTemplateConfig.entries().getFirst().revisionId())
+        .isEqualTo(binding.revisions().getFirst().revisionId());
+
+    var currentReference =
+        fixture
+            .dsl()
+            .fetchOne(
+                "SELECT template_id, canonical_version_id, source_commit_id, source_revision_id "
+                    + "FROM game_template_version_ref WHERE canonical_tenant_id = ?",
+                fixture.target().canonicalTenantId());
+    assertThat(currentReference).isNotNull();
+    assertThat(currentReference.get("canonical_version_id", UUID.class))
+        .isEqualTo(fixture.target().canonicalVersionId());
+    assertThat(currentReference.get("source_commit_id", UUID.class)).isEqualTo(binding.commitId());
+    assertThat(currentReference.get("source_revision_id", UUID.class))
+        .isEqualTo(binding.revisions().getFirst().revisionId());
     assertThat(
             references
-                .readExactBaseReference(fixture.target().canonicalTenantId(), configuredTemplateId)
+                .readExactBaseReference(
+                    fixture.target().canonicalTenantId(),
+                    Objects.requireNonNull(currentReference.get("template_id", Long.class)))
                 .orElseThrow()
                 .sourceCommitId())
         .isEqualTo(binding.commitId());
+    assertThat(references.readPhase(fixture.target().canonicalTenantId()).orElseThrow())
+        .isEqualTo(before);
+
+    var enforced =
+        fixture
+            .tx()
+            .execute(
+                ignored -> references.validateAndEnforce(fixture.target().canonicalTenantId()));
+    assertThat(enforced).isNotNull();
+    assertThat(enforced.phase()).isEqualTo(TemplateReferenceRepository.Phase.ENFORCED);
+    assertThat(enforced.phaseEpoch()).isEqualTo(3L);
+    assertThat(enforced.inventoryTemplateCount()).isEqualTo(1L);
+    assertThat(enforced.inventoryDigest()).isNotBlank().startsWith("sha256:");
+    assertThat(enforced.creationOperationId()).isEqualTo(before.creationOperationId());
+    assertThat(enforced.creationRequestId()).isEqualTo(before.creationRequestId());
+    assertThat(enforced.sourceGameRowId()).isEqualTo(before.sourceGameRowId());
+    assertThat(enforced.sourceGameTenantKey()).isEqualTo(before.sourceGameTenantKey());
+    assertThat(enforced.creationEvidenceDigest()).isEqualTo(before.creationEvidenceDigest());
+    assertThat(enforced.provenanceKind()).isEqualTo(before.provenanceKind());
   }
 
   @Test
@@ -184,7 +223,7 @@ class TemplateReferencePhasePostgresIntegrationTest {
     return createTemplate(fixture, name, false);
   }
 
-  private DraftCommitBinding createTemplate(Fixture fixture, String name, boolean automaticPhase) {
+  private DraftCommitBinding createTemplate(Fixture fixture, String name, boolean sourceAwareVisibility) {
     var config =
         new TemplateConfigSource.Config(
             "{\"schemaVersion\":1,\"baseVersionId\":\""
@@ -231,7 +270,7 @@ class TemplateReferencePhasePostgresIntegrationTest {
               coordinator.markOwnerInProgress(
                   binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
               var applied = sources.apply(binding);
-              if (automaticPhase) {
+              if (sourceAwareVisibility) {
                 net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup
                     .advanceIsolatedSourceVisibility(
                         fixture.dsl(), binding, List.of(applied.ownerOutcome()));

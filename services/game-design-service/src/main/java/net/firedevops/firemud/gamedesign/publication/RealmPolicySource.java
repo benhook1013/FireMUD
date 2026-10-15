@@ -77,8 +77,7 @@ public final class RealmPolicySource {
         || AssetSource.REVISION_KIND.equals(kind)
         || BrandingSource.REVISION_KIND.equals(kind)
         || net.firedevops.firemud.common.gamedesign.GameplayRuleSource.REVISION_KIND.equals(kind)
-        || TemplateConfigSource.REVISION_KIND.equals(kind))
-      return false;
+        || TemplateConfigSource.REVISION_KIND.equals(kind)) return false;
     throw new IllegalArgumentException("Unsupported Game Design owner revision kind");
   }
 

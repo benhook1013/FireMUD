@@ -134,17 +134,19 @@ class TemplateConfigSourcePostgresIntegrationTest {
             ignored -> {
               try {
                 return IsolatedPublicationOwnerSetup.retainSourceBacked(
-                    f.dsl, f.target, 1L, "Automation inventory declaration source freeze");
+                    f.dsl,
+                    f.target,
+                    1L,
+                    "Automation inventory declaration source freeze",
+                    actualTemplate.commitId().toString());
               } catch (Exception e) {
                 throw new IllegalStateException("Unable to retain source-backed publication", e);
               }
             });
     var capture =
-        new GameDesignSourceRepository(f.dsl)
-            .readCapture(operation)
-            .orElseThrow()
-            .templateConfig()
-            .orElseThrow()
+        Objects.requireNonNull(
+                f.tx.execute(
+                    ignored -> new TemplateConfigSourceRepository(f.dsl).freeze(operation)))
             .snapshot();
     assertThat(capture.ownerSourceInventoryDeclarations())
         .containsExactly(first.ownerSourceInventoryDeclarations().getFirst());
@@ -211,7 +213,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
   }
 
   @Test
-  void v1025RejectsOwnerDeclarationThenV1026RetriesExactBindingWithoutRewritingV1025History() {
+  void v1025RetainsV1AndV2SourceHistoryAcrossLatestUpgradeAndExactBindingRetry() {
     var f = fixture("1025");
     var initialTemplate =
         binding(
@@ -244,6 +246,15 @@ class TemplateConfigSourcePostgresIntegrationTest {
             .orElseThrow();
     assertThat(originalV1Snapshot.canonicalJson()).isEqualTo(v1SnapshotJson);
     assertThat(originalV1Snapshot.digest()).isEqualTo(v1SnapshotDigest);
+    String originalV1SnapshotXmin =
+        f.dsl
+            .fetchSingle(
+                "SELECT xmin::text AS row_xmin FROM game_design_template_config_source_snapshot "
+                    + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                f.target.canonicalTenantId(),
+                f.target.canonicalVersionId(),
+                initialTemplate.commitId())
+            .get("row_xmin", String.class);
 
     var automationInventory =
         AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory());
@@ -251,68 +262,6 @@ class TemplateConfigSourcePostgresIntegrationTest {
         TemplateConfigSource.ownerInventoryPayload(
             DraftCommitBinding.Owner.AUTOMATION_SCRIPTING, automationInventory);
     var automation = binding(f, automationPayload, TemplateConfigSource.SCOPE, "1");
-    var priorHead =
-        f.dsl.fetchSingle(
-            "SELECT source_epoch, applied_commit_id, visible_commit_id "
-                + "FROM game_design_template_config_source_head "
-                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
-            f.target.canonicalTenantId(),
-            f.target.canonicalVersionId());
-    assertThatThrownBy(() -> apply(f, automation))
-        .isInstanceOf(org.springframework.transaction.TransactionSystemException.class)
-        .hasStackTraceContaining("branding application requires exact atomic owner result");
-    var unchangedHead =
-        f.dsl.fetchSingle(
-            "SELECT source_epoch, applied_commit_id, visible_commit_id "
-                + "FROM game_design_template_config_source_head "
-                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
-            f.target.canonicalTenantId(),
-            f.target.canonicalVersionId());
-    assertThat(unchangedHead.get("source_epoch", String.class))
-        .isEqualTo(priorHead.get("source_epoch", String.class));
-    assertThat(unchangedHead.get("applied_commit_id", UUID.class))
-        .isEqualTo(priorHead.get("applied_commit_id", UUID.class));
-    assertThat(unchangedHead.get("visible_commit_id", UUID.class))
-        .isEqualTo(priorHead.get("visible_commit_id", UUID.class));
-    assertThat(unchangedHead.get("source_epoch", String.class)).isEqualTo("1");
-    assertThat(unchangedHead.get("applied_commit_id", UUID.class))
-        .isEqualTo(initialTemplate.commitId());
-    assertThat(unchangedHead.get("visible_commit_id", UUID.class))
-        .isEqualTo(initialTemplate.commitId());
-    assertThat(
-            f.dsl
-                .fetchSingle(
-                    "SELECT count(*) FROM game_design_template_config_owner_source_inventory_declaration "
-                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
-                    f.target.canonicalTenantId(),
-                    f.target.canonicalVersionId(),
-                    automation.commitId())
-                .get(0, Long.class))
-        .isZero();
-    assertThat(
-            f.dsl
-                .fetchSingle(
-                    "SELECT count(*) FROM game_design_template_config_source_application "
-                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
-                    f.target.canonicalTenantId(),
-                    f.target.canonicalVersionId(),
-                    automation.commitId())
-                .get(0, Long.class))
-        .isZero();
-    assertThat(
-            f.dsl
-                .fetchSingle(
-                    "SELECT count(*) FROM game_design_draft_commit "
-                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
-                        + "AND request_id = ? AND commit_id = ?",
-                    f.target.canonicalTenantId(),
-                    f.target.canonicalVersionId(),
-                    automation.requestId(),
-                    automation.commitId())
-                .get(0, Long.class))
-        .isZero();
-
-    migrateToLatest(f);
     apply(f, automation);
     var automationSource = source(f, automation);
     assertThat(automationSource.ownerSourceInventoryDeclarations()).hasSize(1);
@@ -321,21 +270,22 @@ class TemplateConfigSourcePostgresIntegrationTest {
 
     var retainedDeclaration =
         f.dsl.fetchSingle(
-            "SELECT request_id, commit_id, revision_order, owner, inventory_json, payload_json FROM "
-                + "game_design_template_config_owner_source_inventory_declaration "
+            "SELECT request_id, commit_id, revision_order, owner, inventory_json, payload_json, "
+                + "xmin::text AS row_xmin FROM game_design_template_config_owner_source_inventory_declaration "
                 + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND revision_id = ?",
             f.target.canonicalTenantId(),
             f.target.canonicalVersionId(),
             automation.revisions().getFirst().revisionId());
     String originalInventoryJson = retainedDeclaration.get("inventory_json", String.class);
     String originalPayloadJson = retainedDeclaration.get("payload_json", String.class);
+    String originalDeclarationXmin = retainedDeclaration.get("row_xmin", String.class);
     assertThat(retainedDeclaration.get("request_id", UUID.class)).isEqualTo(automation.requestId());
     assertThat(retainedDeclaration.get("commit_id", UUID.class)).isEqualTo(automation.commitId());
     assertThat(retainedDeclaration.get("revision_order", Integer.class)).isZero();
     assertThat(retainedDeclaration.get("owner", String.class)).isEqualTo("AUTOMATION_SCRIPTING");
     var originalCommit =
         f.dsl.fetchSingle(
-            "SELECT binding_json, input_digest FROM game_design_draft_commit "
+            "SELECT binding_json, input_digest, xmin::text AS row_xmin FROM game_design_draft_commit "
                 + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
                 + "AND request_id = ? AND commit_id = ?",
             f.target.canonicalTenantId(),
@@ -344,9 +294,10 @@ class TemplateConfigSourcePostgresIntegrationTest {
             automation.commitId());
     String originalBindingJson = originalCommit.get("binding_json", String.class);
     String originalBindingDigest = originalCommit.get("input_digest", String.class);
+    String originalCommitXmin = originalCommit.get("row_xmin", String.class);
     var originalAutomationApplication =
         f.dsl.fetchSingle(
-            "SELECT snapshot_json, result_bytes FROM game_design_template_config_source_application "
+            "SELECT snapshot_json, result_bytes, xmin::text AS row_xmin FROM game_design_template_config_source_application "
                 + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
             f.target.canonicalTenantId(),
             f.target.canonicalVersionId(),
@@ -354,6 +305,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
     String v2SnapshotJson = originalAutomationApplication.get("snapshot_json", String.class);
     byte[] originalApplicationBytes =
         originalAutomationApplication.get("result_bytes", byte[].class);
+    String originalApplicationXmin = originalAutomationApplication.get("row_xmin", String.class);
     String v2SnapshotDigest =
         f.dsl
             .fetchSingle(
@@ -363,11 +315,37 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 f.target.canonicalVersionId(),
                 automation.commitId())
             .get("snapshot_digest", String.class);
+    String originalV2SnapshotXmin =
+        f.dsl
+            .fetchSingle(
+                "SELECT xmin::text AS row_xmin FROM game_design_template_config_source_snapshot "
+                    + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                f.target.canonicalTenantId(),
+                f.target.canonicalVersionId(),
+                automation.commitId())
+            .get("row_xmin", String.class);
     assertThat(v2SnapshotJson)
         .contains("AUTOMATION_SCRIPTING")
         .contains(automation.requestId().toString())
         .contains(automation.commitId().toString());
+    var v1025MigrationHistory =
+        f.dsl
+            .fetch(
+                "SELECT version || ':' || script || ':' || checksum || ':' || success AS history_entry "
+                    + "FROM flyway_schema_history_game_design_service "
+                    + "WHERE version IS NOT NULL ORDER BY installed_rank")
+            .getValues("history_entry", String.class);
 
+    migrateToLatest(f);
+    assertThat(
+            f.dsl
+                .fetch(
+                    "SELECT version || ':' || script || ':' || checksum || ':' || success AS history_entry "
+                        + "FROM flyway_schema_history_game_design_service "
+                        + "WHERE version IS NOT NULL ORDER BY installed_rank LIMIT ?",
+                    v1025MigrationHistory.size())
+                .getValues("history_entry", String.class))
+        .containsExactlyElementsOf(v1025MigrationHistory);
     f.tx.executeWithoutResult(
         ignored ->
             assertThat(new TemplateConfigSourceRepository(f.dsl).apply(automation).orElseThrow())
@@ -377,8 +355,8 @@ class TemplateConfigSourcePostgresIntegrationTest {
 
     var migratedDeclaration =
         f.dsl.fetchSingle(
-            "SELECT request_id, commit_id, revision_order, owner, inventory_json, payload_json FROM "
-                + "game_design_template_config_owner_source_inventory_declaration "
+            "SELECT request_id, commit_id, revision_order, owner, inventory_json, payload_json, "
+                + "xmin::text AS row_xmin FROM game_design_template_config_owner_source_inventory_declaration "
                 + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND revision_id = ?",
             f.target.canonicalTenantId(),
             f.target.canonicalVersionId(),
@@ -395,9 +373,11 @@ class TemplateConfigSourcePostgresIntegrationTest {
         .isEqualTo(originalInventoryJson);
     assertThat(migratedDeclaration.get("payload_json", String.class))
         .isEqualTo(originalPayloadJson);
+    assertThat(migratedDeclaration.get("row_xmin", String.class))
+        .isEqualTo(originalDeclarationXmin);
     var migratedCommit =
         f.dsl.fetchSingle(
-            "SELECT binding_json, input_digest FROM game_design_draft_commit "
+            "SELECT binding_json, input_digest, xmin::text AS row_xmin FROM game_design_draft_commit "
                 + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? "
                 + "AND request_id = ? AND commit_id = ?",
             f.target.canonicalTenantId(),
@@ -406,9 +386,10 @@ class TemplateConfigSourcePostgresIntegrationTest {
             automation.commitId());
     assertThat(migratedCommit.get("binding_json", String.class)).isEqualTo(originalBindingJson);
     assertThat(migratedCommit.get("input_digest", String.class)).isEqualTo(originalBindingDigest);
+    assertThat(migratedCommit.get("row_xmin", String.class)).isEqualTo(originalCommitXmin);
     var migratedApplication =
         f.dsl.fetchSingle(
-            "SELECT snapshot_json, result_bytes FROM game_design_template_config_source_application "
+            "SELECT snapshot_json, result_bytes, xmin::text AS row_xmin FROM game_design_template_config_source_application "
                 + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
             f.target.canonicalTenantId(),
             f.target.canonicalVersionId(),
@@ -416,6 +397,8 @@ class TemplateConfigSourcePostgresIntegrationTest {
     assertThat(migratedApplication.get("snapshot_json", String.class)).isEqualTo(v2SnapshotJson);
     assertThat(migratedApplication.get("result_bytes", byte[].class))
         .isEqualTo(originalApplicationBytes);
+    assertThat(migratedApplication.get("row_xmin", String.class))
+        .isEqualTo(originalApplicationXmin);
     assertThat(
             f.dsl
                 .fetchSingle(
@@ -426,6 +409,16 @@ class TemplateConfigSourcePostgresIntegrationTest {
                     automation.commitId())
                 .get("snapshot_digest", String.class))
         .isEqualTo(v2SnapshotDigest);
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT xmin::text AS row_xmin FROM game_design_template_config_source_snapshot "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                    f.target.canonicalTenantId(),
+                    f.target.canonicalVersionId(),
+                    automation.commitId())
+                .get("row_xmin", String.class))
+        .isEqualTo(originalV2SnapshotXmin);
     assertThat(
             f.dsl
                 .fetchSingle(
@@ -446,6 +439,16 @@ class TemplateConfigSourcePostgresIntegrationTest {
                     initialTemplate.commitId())
                 .get("snapshot_digest", String.class))
         .isEqualTo(v1SnapshotDigest);
+    assertThat(
+            f.dsl
+                .fetchSingle(
+                    "SELECT xmin::text AS row_xmin FROM game_design_template_config_source_snapshot "
+                        + "WHERE canonical_tenant_id = ? AND canonical_version_id = ? AND commit_id = ?",
+                    f.target.canonicalTenantId(),
+                    f.target.canonicalVersionId(),
+                    initialTemplate.commitId())
+                .get("row_xmin", String.class))
+        .isEqualTo(originalV1SnapshotXmin);
     var upgradedTemplateSources = new TemplateConfigSourceRepository(f.dsl);
     assertThat(
             upgradedTemplateSources
@@ -1160,10 +1163,11 @@ class TemplateConfigSourcePostgresIntegrationTest {
                 ignored -> {
                   String versionEpoch =
                       Objects.requireNonNull(
-                              f.dsl.fetchValue(
-                                  "SELECT version_state_epoch FROM version WHERE id = ?",
-                                  Long.class,
-                                  f.target.gameDesignVersionRowId()))
+                              f.dsl
+                                  .fetchSingle(
+                                      "SELECT version_state_epoch FROM version WHERE id = ?",
+                                      f.target.gameDesignVersionRowId())
+                                  .get(0, Long.class))
                           .toString();
                   var intent =
                       new AuthoredDraftPublishSelection.PublishIntent(
