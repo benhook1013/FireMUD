@@ -294,6 +294,7 @@ class RunOwnedCanonicalLaunchPreparationOwnerTest {
         assertThatThrownBy(fixture.coordinator::loadFixedVerifiedEvidenceForWorldPeer)
             .isInstanceOf(AdminAuthorizationException.class);
 
+        when(certificate.leafSha256()).thenReturn(fixture.capability.worldManagementLeafSha256());
         Context wrongWorldContext =
             Context.current()
                 .withValue(
