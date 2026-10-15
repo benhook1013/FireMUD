@@ -127,8 +127,14 @@ public final class AccountGameplayAuthenticateReceiver
       var result = disposalOwner.retire(canonical, peer.uri());
       if (result == null
           || !canonical.requestId().equals(result.requestId())
-          || !canonical.callerContextId().equals(result.callerContextId()))
-        throw new IllegalStateException();
+          || !canonical.callerContextId().equals(result.callerContextId())) {
+        fail(
+            observer,
+            Status.INTERNAL,
+            "INTERNAL",
+            "Initial LOGIN disposal owner returned an invalid result");
+        return;
+      }
       var disposition =
           switch (result.disposition()) {
             case PENDING ->
