@@ -52,6 +52,7 @@ import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
@@ -799,6 +800,14 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                               worldOwners.startLocationEvidence()));
           assertThat(replay).isEqualTo(written);
           assertThat(bundleOwnerRow(gds, draft.version())).isEqualTo(committedBundleRow);
+          completeActualWorldAndAccountTerminals(
+              gds,
+              world,
+              accountSources.dsl,
+              accountSources.manager,
+              pki,
+              selectedOwnerReservation.operation());
+          assertThat(bundleOwnerRow(gds, draft.version())).isEqualTo(committedBundleRow);
         }
       } finally {
         stop(accountServer);
@@ -807,6 +816,151 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         stop(automationServer);
         stop(gameLogicServer);
       }
+    }
+  }
+
+  /**
+   * Actual immutable owner terminals; the local Account caller context is explicitly controlled.
+   */
+  private static void completeActualWorldAndAccountTerminals(
+      Store gds,
+      Store world,
+      org.jooq.DSLContext accountDsl,
+      org.springframework.transaction.PlatformTransactionManager accountTransactions,
+      ProofPki pki,
+      net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation operation)
+      throws Exception {
+    var gdsOwner =
+        new net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationService(
+            new net.firedevops.firemud.gamedesign.publication
+                .GameDesignPublicationOperationRepository(gds.dsl()),
+            gds.transactions());
+    Server gdsTerminalServer =
+        ownerServer(
+            pki,
+            "game-design-service",
+            new net.firedevops.firemud.gamedesign.publication
+                .GameDesignPublicationTerminalReadGrpcService(gdsOwner, NAMESPACE));
+    Server worldTerminalServer = null;
+    var endpoints = new ServiceEndpointsProperties();
+    endpoints.setGameDesignService(loopback(gdsTerminalServer));
+    var channels = new GrpcChannelFactory();
+    try (var worldGdsRead =
+        new net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient(
+            endpoints, pki.client("world-management-service"), channels, NAMESPACE)) {
+      worldGdsRead.init();
+      var worldRepository =
+          new net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalRepository(
+              world.dsl(), world.transactions());
+      var worldOwner =
+          net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalService
+              .authenticated(worldRepository, worldGdsRead, NAMESPACE);
+      worldTerminalServer =
+          ownerServer(
+              pki,
+              "world-management-service",
+              new net.firedevops.firemud.worldmanagement.tenant
+                  .WorldPublicationTerminalCompletionGrpcService(worldOwner, NAMESPACE),
+              new net.firedevops.firemud.worldmanagement.tenant
+                  .WorldPublicationTerminalReadGrpcService(
+                  new net.firedevops.firemud.worldmanagement.tenant
+                      .WorldPublicationTerminalReadService(worldRepository, NAMESPACE),
+                  NAMESPACE));
+      endpoints.setWorldManagementService(loopback(worldTerminalServer));
+      try (var accountGdsRead =
+              new net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient(
+                  endpoints, pki.client("account-service"), channels, NAMESPACE);
+          var accountWorldRead =
+              new net.firedevops.firemud.common.publication.WorldPublicationTerminalReadClient(
+                  endpoints, pki.client("account-service"), channels, NAMESPACE);
+          var producer =
+              net.firedevops.firemud.gamedesign.publication
+                  .GameDesignWorldPublicationTerminalProducer.usingFileBackedMtls(
+                  gdsOwner, endpoints, pki.client("game-design-service"), channels, NAMESPACE)) {
+        accountGdsRead.init();
+        accountWorldRead.init();
+        var accountOwner =
+            new AccountSelectedDraftPublicationSettlementService(
+                new AccountPublicationAuthorizationRepository(accountDsl),
+                accountGdsRead,
+                accountWorldRead,
+                accountTransactions,
+                NAMESPACE);
+        var binding =
+            net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding
+                .fromStored(operation.canonicalBytes());
+        var caller =
+            io.grpc.Context.current()
+                .withValue(
+                    GrpcPeerIdentity.CONTEXT_KEY,
+                    GrpcPeerIdentity.parseUri(
+                            "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-design-service")
+                        .orElseThrow());
+        // No caller transport is asserted here: this is the actual Account owner plus its two mTLS
+        // reads.
+        assertThatThrownBy(() -> caller.call(() -> accountOwner.settle(operation.canonicalBytes())))
+            .isInstanceOf(RuntimeException.class);
+        assertThat(
+                accountDsl
+                    .fetchSingle(
+                        "SELECT count(*) FROM account_selected_publication_settlements WHERE operation_id = ?",
+                        binding.account().operationId())
+                    .get(0, Long.class))
+            .isZero();
+        var published =
+            producer.reconcile(
+                operation.tenantKey(),
+                operation.workflowId(),
+                operation.versionId(),
+                operation.selectionDigest(),
+                net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence
+                    .Outcome.PUBLISHED);
+        assertThat(published.operationBytes()).containsExactly(operation.canonicalBytes());
+        assertThat(
+                producer
+                    .reconcile(
+                        operation.tenantKey(),
+                        operation.workflowId(),
+                        operation.versionId(),
+                        operation.selectionDigest(),
+                        published.outcome())
+                    .canonicalBytes())
+            .containsExactly(published.canonicalBytes());
+        byte[] receipt = caller.call(() -> accountOwner.settle(operation.canonicalBytes()));
+        assertThat(receipt).isNotEmpty();
+        String retained =
+            accountDsl
+                .fetchSingle(
+                    "SELECT to_jsonb(s)::text || ':' || xmin::text FROM account_selected_publication_settlements s WHERE operation_id = ?",
+                    binding.account().operationId())
+                .get(0, String.class);
+        assertThat(caller.call(() -> accountOwner.settle(operation.canonicalBytes())))
+            .containsExactly(receipt);
+        assertThat(
+                accountDsl
+                    .fetchSingle(
+                        "SELECT to_jsonb(s)::text || ':' || xmin::text FROM account_selected_publication_settlements s WHERE operation_id = ?",
+                        binding.account().operationId())
+                    .get(0, String.class))
+            .isEqualTo(retained);
+        assertThat(
+                accountDsl
+                    .fetchSingle(
+                        "SELECT game_design_terminal FROM account_selected_publication_settlements WHERE operation_id = ?",
+                        binding.account().operationId())
+                    .get(0, byte[].class))
+            .containsExactly(published.canonicalBytes());
+        assertThat(
+                accountDsl
+                    .fetchSingle(
+                        "SELECT world_terminal FROM account_selected_publication_settlements WHERE operation_id = ?",
+                        binding.account().operationId())
+                    .get(0, byte[].class))
+            .containsExactly(published.canonicalBytes());
+      }
+    } finally {
+      stop(worldTerminalServer);
+      stop(gdsTerminalServer);
     }
   }
 
