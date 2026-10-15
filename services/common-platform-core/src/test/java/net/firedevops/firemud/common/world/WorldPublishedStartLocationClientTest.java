@@ -24,6 +24,7 @@ import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.worldmanagement.v1.WorldPublishedStartLocationReadServiceGrpc;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class WorldPublishedStartLocationClientTest {
   @Test
@@ -89,6 +90,25 @@ class WorldPublishedStartLocationClientTest {
       setStub(client, stub);
       var response = WorldPublishedStartLocationGrpcCodec.toResponse(evidence.request(), evidence);
       when(stub.readWorldPublishedStartLocation(any())).thenReturn(response);
+
+      TransactionSynchronizationManager.setActualTransactionActive(true);
+      try {
+        assertThatThrownBy(() -> client.read(evidence.request()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("World selector read requires no owner transaction");
+      } finally {
+        TransactionSynchronizationManager.setActualTransactionActive(false);
+      }
+      TransactionSynchronizationManager.initSynchronization();
+      try {
+        assertThatThrownBy(() -> client.read(evidence.request()))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("World selector read requires no owner transaction");
+      } finally {
+        TransactionSynchronizationManager.clearSynchronization();
+      }
+      verifyNoInteractions(stub);
+
       assertThat(client.read(evidence.request()).canonicalBytes())
           .containsExactly(evidence.canonicalBytes());
 

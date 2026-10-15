@@ -124,6 +124,8 @@ class WorldPublicationTerminalReadClientTest {
     try {
       client.init();
       var initialized = initializedStub(client);
+      assertThat(initialized.getCallOptions().getMaxInboundMessageSize())
+          .isEqualTo(WorldPublicationTerminalCompletionGrpcCodec.MAX_MESSAGE_BYTES);
       assertThat(initialized.getCallOptions().getCredentials())
           .isInstanceOf(GrpcServerPeerIdentityCallCredentials.class);
       assertThat(readField(initialized.getCallOptions().getCredentials(), "expectedPeerUri"))
