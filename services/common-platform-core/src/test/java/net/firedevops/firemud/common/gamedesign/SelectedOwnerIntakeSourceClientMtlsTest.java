@@ -77,9 +77,9 @@ class SelectedOwnerIntakeSourceClientMtlsTest {
   private final AtomicInteger calls = new AtomicInteger();
   private final AtomicInteger responseBytes = new AtomicInteger();
   private Server server;
-  private boolean stall;
-  private boolean substituteEcho;
-  private boolean largeResponse;
+  private volatile boolean stall;
+  private volatile boolean substituteEcho;
+  private volatile boolean largeResponse;
 
   @BeforeAll
   static void certificates() throws Exception {

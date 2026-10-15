@@ -55,8 +55,8 @@ class SelectedOwnerIntakeSourceReadClientMtlsTest {
   private static TestPki pki;
   private final AtomicInteger calls = new AtomicInteger();
   private Server server;
-  private boolean stall;
-  private boolean substitute;
+  private volatile boolean stall;
+  private volatile boolean substitute;
 
   @BeforeAll
   static void certificates() throws Exception {
