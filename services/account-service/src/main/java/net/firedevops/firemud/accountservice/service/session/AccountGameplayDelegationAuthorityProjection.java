@@ -14,7 +14,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
-import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthoritySourceEvidenceRepository;
@@ -25,6 +24,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipR
 import net.firedevops.firemud.accountservice.service.AccountGenerationProjection;
 import net.firedevops.firemud.accountservice.service.IssuerGenerationProjection;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -575,7 +575,7 @@ public final class AccountGameplayDelegationAuthorityProjection {
         AccountAuthorityGenerationRepository.CompositeSnapshot authority,
         AccountMembershipPairAuthorityRepository.PairAuthority pair,
         MembershipAuthorityEventV1Codec.MembershipEvent membership,
-        net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec.Event tenant) {
+        net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec.Event tenant) {
       if (!snapshot.source().equals(source)
           || !snapshot.composite().equals(authority)
           || !snapshot.pair().equals(pair)

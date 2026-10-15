@@ -812,11 +812,24 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
             + "AND association.control_plane_request_id = ? "
             + "AND association.canonical_tenant_id = ? "
             + "AND association.game_instance_uuid = ? "
-            + "AND current.status = 'STARTING'",
+            + "AND current.status = 'STARTING' "
+            + "AND (CAST(? AS BYTEA) IS NULL OR (attempt.post_authorization_execution_tuple = ? "
+            + "AND attempt.owner_mutation_id = ? AND attempt.owner_attempt_id = ? AND attempt.owner_fence = ?))",
         workloadNamespace,
         selector.controlPlaneRequestId(),
         selector.canonicalTenantId(),
-        selector.gameInstanceUuid());
+        selector.gameInstanceUuid(),
+        selector.originalOperation() == null
+            ? null
+            : selector.originalOperation().originalPostAuthorizationTuple(),
+        selector.originalOperation() == null
+            ? null
+            : selector.originalOperation().originalPostAuthorizationTuple(),
+        selector.originalOperation() == null
+            ? null
+            : selector.originalOperation().ownerMutationId(),
+        selector.originalOperation() == null ? null : selector.originalOperation().ownerAttemptId(),
+        selector.originalOperation() == null ? null : selector.originalOperation().ownerFence());
   }
 
   private OriginalStartSessionAssociation decodeOriginalStartSessionAssociation(Record row) {
