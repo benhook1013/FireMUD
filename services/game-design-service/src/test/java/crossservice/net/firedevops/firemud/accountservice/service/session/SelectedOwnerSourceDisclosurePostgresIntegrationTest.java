@@ -133,7 +133,7 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
             temporary.resolve("account"),
             local.binding().target().canonicalTenantId(),
             Clock.systemUTC(),
-            "1007")) {
+            null)) {
       var issued = fixture.preparedOriginalCreator();
       var f = issued.sources();
       assertThat(
@@ -141,7 +141,7 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
                   .fetchSingle(
                       "SELECT count(*) FROM flyway_schema_history WHERE version IN ('1008','1009','1010')")
                   .get(0, Integer.class))
-          .isZero();
+          .isEqualTo(3);
       retainControlledSelectedAuthorAdmission(issued, local.binding());
       var reservations =
           new AccountSelectedOwnerIntakeSourceReservationService(
@@ -277,7 +277,7 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
                   f.tx(() -> f.authority.captureInitial(f.tenant, issued.environment()));
               var blockedWriter =
                   new net.firedevops.firemud.accountservice.authordraft
-                          .DraftAuthorizationFenceRepository.SourceChange(
+                      .DraftAuthorizationFenceRepository.SourceChange(
                       UUID.randomUUID(), capturedSources.sources(), new byte[] {7});
               assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(blockedWriter)))
                   .isFalse();
@@ -294,7 +294,8 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
                     f.fences.markSourceAborted(
                         blockedWriter,
                         net.firedevops.firemud.accountservice.authordraft
-                            .DraftAuthorizationFenceRepository.SourceChangeAbortReason.DEFINITIVE_ABORT);
+                            .DraftAuthorizationFenceRepository.SourceChangeAbortReason
+                            .DEFINITIVE_ABORT);
                     return null;
                   });
               var aborted = retainedReservation(f, scope);
