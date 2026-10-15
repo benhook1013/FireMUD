@@ -13,6 +13,7 @@ import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
+import java.util.function.BiFunction;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -78,35 +79,13 @@ public final class CanonicalGameplayLoginAccountClient
       AuthenticateRequest originalRequest, BooleanSupplier originalCustodyCurrent) {
     CanonicalGameplayLoginResult.requireOriginalRequest(originalRequest);
     Objects.requireNonNull(originalCustodyCurrent, "Original custody guard required");
-    Deadline overall = Deadline.after(invocationBudgetNanos, TimeUnit.NANOSECONDS);
-    if (Context.current().getDeadline() != null)
-      overall = overall.minimum(Context.current().getDeadline());
-    for (int attempt = 0; attempt < 2; attempt++) {
-      if (overall.isExpired()) throw failure(Status.Code.DEADLINE_EXCEEDED);
-      if (Context.current().isCancelled() || !custodyCurrent(originalCustodyCurrent))
-        throw failure(Status.Code.CANCELLED);
-      var currentStub = stub();
-      if (currentStub == null) throw failure(Status.Code.UNAVAILABLE);
-      try {
-        var response = currentStub.withDeadline(overall).authenticate(originalRequest);
-        return CanonicalGameplayLoginResult.fromAuthenticatedResponse(
-            response, originalRequest, verifier, clock);
-      } catch (StatusRuntimeException transport) {
-        Status.Code code = transport.getStatus().getCode();
-        if (attempt != 0
-            || (code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED))
-          throw boundedTransportFailure(transport);
-        if (overall.isExpired()) throw failure(Status.Code.DEADLINE_EXCEEDED);
-        if (Context.current().isCancelled() || !custodyCurrent(originalCustodyCurrent))
-          throw failure(Status.Code.CANCELLED);
-        try {
-          reloadChannel();
-        } catch (SSLException reloadFailure) {
-          throw failure(Status.Code.UNAVAILABLE);
-        }
-      }
-    }
-    throw failure(Status.Code.UNAVAILABLE);
+    return invokeWithBoundedRetry(
+        (currentStub, overall) -> {
+          var response = currentStub.withDeadline(overall).authenticate(originalRequest);
+          return CanonicalGameplayLoginResult.fromAuthenticatedResponse(
+              response, originalRequest, verifier, clock);
+        },
+        () -> custodyCurrent(originalCustodyCurrent));
   }
 
   private static boolean custodyCurrent(BooleanSupplier originalCustodyCurrent) {
@@ -121,26 +100,39 @@ public final class CanonicalGameplayLoginAccountClient
   public InitialGameplayLoginDisposalResult retireInitialGameplayLogin(
       RetireInitialGameplayLoginRequest originalRequest) {
     InitialGameplayLoginDisposalResult.requireOriginalRequest(originalRequest);
+    return invokeWithBoundedRetry(
+        (currentStub, overall) -> {
+          var response =
+              currentStub.withDeadline(overall).retireInitialGameplayLogin(originalRequest);
+          return InitialGameplayLoginDisposalResult.fromAuthenticatedResponse(
+              response, originalRequest);
+        },
+        () -> true);
+  }
+
+  private <T> T invokeWithBoundedRetry(
+      BiFunction<AccountServiceGrpc.AccountServiceBlockingStub, Deadline, T> call,
+      BooleanSupplier operationCurrent) {
+    Objects.requireNonNull(operationCurrent, "Operation currentness guard required");
     Deadline overall = Deadline.after(invocationBudgetNanos, TimeUnit.NANOSECONDS);
     if (Context.current().getDeadline() != null)
       overall = overall.minimum(Context.current().getDeadline());
     for (int attempt = 0; attempt < 2; attempt++) {
       if (overall.isExpired()) throw failure(Status.Code.DEADLINE_EXCEEDED);
-      if (Context.current().isCancelled()) throw failure(Status.Code.CANCELLED);
+      if (Context.current().isCancelled() || !custodyCurrent(operationCurrent))
+        throw failure(Status.Code.CANCELLED);
       var currentStub = stub();
       if (currentStub == null) throw failure(Status.Code.UNAVAILABLE);
       try {
-        var response =
-            currentStub.withDeadline(overall).retireInitialGameplayLogin(originalRequest);
-        return InitialGameplayLoginDisposalResult.fromAuthenticatedResponse(
-            response, originalRequest);
+        return call.apply(currentStub, overall);
       } catch (StatusRuntimeException transport) {
         Status.Code code = transport.getStatus().getCode();
         if (attempt != 0
             || (code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED))
           throw boundedTransportFailure(transport);
         if (overall.isExpired()) throw failure(Status.Code.DEADLINE_EXCEEDED);
-        if (Context.current().isCancelled()) throw failure(Status.Code.CANCELLED);
+        if (Context.current().isCancelled() || !custodyCurrent(operationCurrent))
+          throw failure(Status.Code.CANCELLED);
         try {
           reloadChannel();
         } catch (SSLException reloadFailure) {
