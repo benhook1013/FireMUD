@@ -43,7 +43,7 @@ class SelectedDraftControlPlaneDigestTest {
         .isEqualTo(Long.toString(selected.target().gameDesignVersionRowId()));
     assertThat(first.appliedCommitId()).isEqualTo(selected.commitId().toString());
     assertThat(first.contentDigest())
-        .isEqualTo("08584ce89ee924b5d8b5b613ee60ccc0780716ba43cc7671fd5735b4b5e8015b");
+        .isEqualTo("414e333c7a695aa81cfe86d39eda7adb13cd3e16b78d2e2bed5df67b08181a5a");
   }
 
   @Test
@@ -150,15 +150,20 @@ class SelectedDraftControlPlaneDigestTest {
       DraftCommitBinding binding) {
     var command = new CommandSnapshot(binding, "0", null, "sha256:" + "a".repeat(64), List.of());
     // Controlled inherited policy provenance; this World-only commit need not mutate policy.
-    var policy = new RealmPolicySnapshot(binding, "1", List.of(
-        new RealmPolicySource.Policy(
-            UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
-            UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"), "inherited-policy",
-            net.firedevops.firemud.common.publication.RealmEntryPolicy.parse(
-                "{\"schemaVersion\":1,\"worldSlug\":\"world\",\"worldDisplayName\":\"World\","
-                    + "\"realmSlug\":\"realm\",\"realmDisplayName\":\"Realm\",\"visible\":true,"
-                    + "\"publicProduction\":false,\"stateScope\":\"SHARED\",\"entryPolicy\":\"PRESEEDED_ONLY\"}",
-                new tools.jackson.databind.ObjectMapper()))));
+    var policy =
+        new RealmPolicySnapshot(
+            binding,
+            "1",
+            List.of(
+                new RealmPolicySource.Policy(
+                    UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+                    UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+                    "inherited-policy",
+                    net.firedevops.firemud.common.publication.RealmEntryPolicy.parse(
+                        "{\"schemaVersion\":1,\"worldSlug\":\"world\",\"worldDisplayName\":\"World\","
+                            + "\"realmSlug\":\"realm\",\"realmDisplayName\":\"Realm\",\"visible\":true,"
+                            + "\"publicProduction\":false,\"stateScope\":\"SHARED\",\"entryPolicy\":\"PRESEEDED_ONLY\"}",
+                        new tools.jackson.databind.ObjectMapper()))));
     var asset =
         new AssetSnapshot(
             binding, "0", null, UUID.fromString("33333333-3333-4333-8333-333333333333"), List.of());

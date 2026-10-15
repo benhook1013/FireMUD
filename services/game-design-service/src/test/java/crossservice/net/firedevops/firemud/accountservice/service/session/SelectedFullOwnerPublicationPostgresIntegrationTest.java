@@ -732,6 +732,22 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             GameplayRuleSource.SCOPE,
             "effective",
             "0"));
+    // Authored declarations are content only; each real owner independently proves emptiness.
+    revisions.add(new RevisionPayload(Integer.toString(revisions.size()), UUID.randomUUID(),
+        Owner.GAME_DESIGN_CONTROL_PLANE,
+        net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.ownerInventoryPayload(
+            Owner.ENTITY_MANAGEMENT,
+            net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration.parse(entityInventory()))));
+    revisions.add(new RevisionPayload(Integer.toString(revisions.size()), UUID.randomUUID(),
+        Owner.GAME_DESIGN_CONTROL_PLANE,
+        net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.ownerInventoryPayload(
+            Owner.AUTOMATION_SCRIPTING,
+            net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory()))));
+    units.add(new AffectedUnit(Owner.GAME_DESIGN_CONTROL_PLANE,
+        net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.SCOPE,
+        target.canonicalVersionId().toString(),
+        net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.SCOPE,
+        net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.SCOPE_ID, "0"));
     for (var mutation : mutations) {
       revisions.add(
           new RevisionPayload(
@@ -1190,5 +1206,28 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     }
 
     record Identity(Path certificate, Path key) {}
+  }
+
+  private static String automationInventory() {
+    return "{\"schema\":\"automation-authored-source-inventory/v1\","
+        + "\"families\":{\"SCRIPT_DEFINITIONS\":[],\"EVENT_BINDINGS\":[],"
+        + "\"SCRIPT_PATCH_SOURCES\":[]}}";
+  }
+
+  private static String entityInventory() {
+    return "{\"schema\":\"entity-authored-source-inventory/v1\","
+        + "\"equipmentApplicability\":\"NOT_APPLICABLE\",\"families\":{"
+        + "\"ACTOR_BODY_LAYOUT_ASSIGNMENTS\":[],\"ARCHETYPE_ASSIGNMENTS\":[],"
+        + "\"ARCHETYPE_CONSTRAINTS\":[],\"ARCHETYPE_ROOTS\":[],"
+        + "\"BALANCE_CURVE_ATTACHMENTS\":[],\"BALANCE_CURVE_ROOTS\":[],"
+        + "\"BODY_LAYOUT_MEMBERSHIPS\":[],\"BODY_LAYOUT_ROOTS\":[],"
+        + "\"CRAFTING_INGREDIENT_BINDINGS\":[],\"CRAFTING_RECIPE_RESULT_BINDINGS\":[],"
+        + "\"CRAFTING_RECIPE_ROOTS\":[],\"EQUIPMENT_ATTACHMENT_RULES\":[],"
+        + "\"EQUIPMENT_CAPABILITIES\":[],\"EQUIPMENT_COMPATIBILITY_RULES\":[],"
+        + "\"EQUIPMENT_OCCUPANCY_RULES\":[],\"EQUIPMENT_SLOT_GROUPS\":[],"
+        + "\"EQUIPMENT_SLOT_ROOTS\":[],\"INBOUND_LOOT_BINDINGS\":[],"
+        + "\"ITEM_TEMPLATE_ROOTS\":[],\"LOOT_ITEM_MAPPINGS\":[],"
+        + "\"LOOT_TABLE_ROOTS\":[],\"NPC_TEMPLATE_ROOTS\":[],"
+        + "\"OTHER_ACTOR_TEMPLATE_ROOTS\":[]}}";
   }
 }

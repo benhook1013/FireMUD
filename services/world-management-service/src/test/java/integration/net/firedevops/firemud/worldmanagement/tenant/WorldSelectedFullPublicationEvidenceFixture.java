@@ -201,32 +201,32 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
     var frozenAttempt =
         Objects.requireNonNull(
             freezeTransaction.execute(
-                    status -> {
-                      createdCheckpointInTransaction.set(false);
-                      var attempt =
-                          fence.claimFreeze(
-                              freeze,
-                              () -> {
-                                var captured = checkpointRepository.captureWithSource(freeze, plan);
-                                capturedCheckpoint.set(captured);
-                                createdCheckpointInTransaction.set(true);
-                                return captured.checkpoint();
-                              });
-                      var retainedAccount =
-                          authorizationRepository.retainOrRequireExact(
-                              attempt, accountBinding, createdCheckpointInTransaction.get());
-                      if (!java.util.Arrays.equals(
-                          retainedAccount.canonicalBytes(), accountBinding.canonicalBytes())) {
-                        throw new IllegalStateException(
-                            "World did not retain the exact original Account publication binding");
-                      }
-                      inventoryRepository.retainOrRequireExact(
-                          attempt,
-                          retainedAccount,
-                          createdCheckpointInTransaction.get(),
-                          capturedCheckpoint.get());
-                      return attempt;
-                    }));
+                status -> {
+                  createdCheckpointInTransaction.set(false);
+                  var attempt =
+                      fence.claimFreeze(
+                          freeze,
+                          () -> {
+                            var captured = checkpointRepository.captureWithSource(freeze, plan);
+                            capturedCheckpoint.set(captured);
+                            createdCheckpointInTransaction.set(true);
+                            return captured.checkpoint();
+                          });
+                  var retainedAccount =
+                      authorizationRepository.retainOrRequireExact(
+                          attempt, accountBinding, createdCheckpointInTransaction.get());
+                  if (!java.util.Arrays.equals(
+                      retainedAccount.canonicalBytes(), accountBinding.canonicalBytes())) {
+                    throw new IllegalStateException(
+                        "World did not retain the exact original Account publication binding");
+                  }
+                  inventoryRepository.retainOrRequireExact(
+                      attempt,
+                      retainedAccount,
+                      createdCheckpointInTransaction.get(),
+                      capturedCheckpoint.get());
+                  return attempt;
+                }));
 
     var retainedAccount = authorizationRepository.readCommitted(frozenAttempt).orElseThrow();
     if (!java.util.Arrays.equals(
