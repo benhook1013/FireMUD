@@ -2220,3 +2220,218 @@ PY_WINDOW
 done
 
 echo "PR required-gate context contract checks passed"
+
+# The new producer is inert: none of the five callers activates it in support.
+PUBLISH_SCRIPT="$ROOT_DIR/.github/actions/publish-required-gate-status/publish-required-gate-status.sh"
+python3 - "$ROOT_DIR" <<'PY_PUBLISH'
+from pathlib import Path
+import sys
+import yaml
+root = Path(sys.argv[1])
+action = yaml.load((root / ".github/actions/publish-required-gate-status/action.yml").read_text(), Loader=yaml.BaseLoader)
+assert set(action["inputs"]) == {"assessment", "gate-name", "workflow-name", "workflow-file", "workflow-path"}
+assert all(value["required"] == "true" for value in action["inputs"].values())
+assert action["outputs"]["publication"]["value"] == "${{ steps.publish.outputs.publication }}"
+for filename in ("ci.yml", "security.yml", "codeql.yml", "license-scan.yml", "smoke.yml"):
+    text = (root / ".github/workflows" / filename).read_text()
+    assert "publish-required-gate-status" not in text
+    assert "Report dependency-deferred required gate" in text
+PY_PUBLISH
+mkdir "$tmp_dir/producer-bin"
+cat >"$tmp_dir/producer-bin/gh" <<'EOF_PRODUCER_GH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${GITHUB_OUTPUT}" != "${PRODUCER_OUTPUT_PATH}" ]]; then
+  exec "${MOCK_ORIGINAL_GH}" "$@"
+fi
+python3 - "$@" <<'PY_PRODUCER_GH'
+import json
+import os
+from pathlib import Path
+import sys
+args = sys.argv[1:]
+state_path = Path(os.environ["PRODUCER_STATE"])
+state = json.loads(state_path.read_text())
+scenario = state["scenario"]
+method = args[args.index("--method") + 1]
+endpoint = next(arg for arg in args if arg.startswith("/repos/"))
+head, base, old_base = "a" * 40, "b" * 40, "c" * 40
+repo = "example/firemud"
+head_repo = "fork-owner/firemud" if scenario == "deferred-fork" else repo
+current_attempt = 2 if scenario == "deferred-owned-earlier-attempt" else 1
+api_url = f"https://api.github.com/repos/{repo}/statuses/{head}"
+run_url = f"https://github.com/{repo}/actions/runs/"
+creator = {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}
+state.setdefault("calls", []).append(f"{method} {endpoint}")
+result = None
+exit_status = 0
+if method == "POST":
+    assert endpoint == f"/repos/{repo}/statuses/{head}", endpoint
+    fields = dict(arg.split("=", 1) for arg in args if "=" in arg)
+    state.setdefault("posts", []).append(fields)
+    result = {"id": 501, "url": api_url, "creator": creator,
+              "state": fields["state"], "context": fields["context"], "target_url": fields["target_url"],
+              "created_at": "2026-10-15T00:00:00Z", "updated_at": "2026-10-15T00:00:00Z"}
+    # Deliberately no sha/app_id: those fields do not exist in native statuses.
+    if scenario in {"ack-denied", "ack-ambiguous"}:
+        exit_status = 1
+    elif scenario == "ack-wrong-url":
+        result["url"] = api_url.replace(head, base)
+    elif scenario == "ack-missing-creator":
+        result.pop("creator")
+    elif scenario == "ack-missing-id":
+        result.pop("id")
+    elif scenario == "ack-bad-timestamp":
+        result["created_at"] = "unknown"
+    elif scenario == "ack-wrong-state":
+        result["state"] = "success"
+elif endpoint.endswith("/actions/workflows/ci.yml"):
+    result = {"id": 42, "name": "CI — Validation", "path": ".github/workflows/ci.yml"}
+elif endpoint.endswith("/pulls/123"):
+    state["pr_reads"] = state.get("pr_reads", 0) + 1
+    result = {"number": 123, "state": "open", "base": {"sha": base, "ref": "develop", "repo": {"full_name": repo}},
+              "head": {"sha": head, "ref": "proof-branch", "repo": {"full_name": head_repo}}}
+    if scenario == "tuple-replaced" and state["pr_reads"] > 1:
+        result["base"]["sha"] = old_base
+elif endpoint.endswith(f"/commits/{head}/status"):
+    state["status_reads"] = state.get("status_reads", 0) + 1
+    barrier_state = "pending"
+    if scenario in {"deferred-owned-failure", "success-owned-failure"}:
+        barrier_state = "failure"
+    elif scenario in {"deferred-owned-error", "success-owned-error"}:
+        barrier_state = "error"
+    elif scenario in {"deferred-owned-success", "success-owned-success"}:
+        barrier_state = "success"
+    barrier = {"id": 500, "url": api_url, "context": "Validation Gate", "state": barrier_state,
+               "target_url": f"{run_url}{300 if current_attempt == 2 else 200}/attempts/1", "creator": creator}
+    if scenario.endswith("foreign"):
+        barrier["creator"] = {"id": 99, "login": "foreign", "type": "User"}
+    if scenario == "status-replaced" and state["status_reads"] > 1:
+        barrier["id"] = 999
+    absent = scenario in {"deferred-absent", "deferred-fork", "success-absent"} or scenario.startswith("ack-") or scenario.startswith("current-")
+    result = {"sha": head, "total_count": 0 if absent else 1, "statuses": [] if absent else [barrier]}
+    if scenario == "incomplete-status":
+        result["total_count"] = 2
+elif "/actions/runs/" in endpoint and not endpoint.endswith("/jobs"):
+    historical = "/attempts/" in endpoint
+    run_id = int(endpoint.split("/")[-3] if historical else endpoint.rsplit("/", 1)[1])
+    assert run_id in {200, 300}, endpoint
+    old = historical
+    attempt = int(endpoint.rsplit("/", 1)[1]) if historical else current_attempt
+    running = not old or scenario == "deferred-owned-running"
+    run_base = old_base if run_id == 200 else base
+    result = {"id": run_id, "run_attempt": attempt, "run_number": 2 if run_id == 200 else 3, "workflow_id": 42, "event": "pull_request",
+              "repository": {"full_name": repo}, "head_repository": {"full_name": head_repo},
+              "head_sha": head, "head_branch": "proof-branch", "name": "CI — Validation",
+              "path": ".github/workflows/ci.yml", "pull_requests": [],
+              "display_title": f"CI — Validation pr-123 base-{run_base} head-{head}",
+              "status": "in_progress" if running else "completed",
+              "conclusion": None if running else "cancelled" if scenario == "deferred-owned-cancelled" else "failure" if scenario == "deferred-owned-step-failed" else "success"}
+    if old and scenario == "deferred-owned-newer":
+        result["run_number"] = 4
+    if old and scenario == "deferred-old-equal-number":
+        result["run_number"] = 3
+    if old and scenario == "deferred-old-missing-number":
+        result.pop("run_number")
+    if old and scenario == "deferred-old-wrong-title":
+        result["display_title"] = result["display_title"].replace("pr-123", "pr-456")
+    if not old and scenario == "current-wrong-tuple":
+        result["head_sha"] = old_base
+elif endpoint.endswith("/jobs"):
+    run_id = int(endpoint.split("/")[-4])
+    attempt = int(endpoint.split("/")[-2])
+    old = run_id == 200 or (current_attempt == 2 and attempt == 1)
+    running = not old or scenario == "deferred-owned-running"
+    native_id = run_id * 10 + attempt if current_attempt == 2 else run_id * 10
+    publisher = {"name": "Publish pending required gate status", "status": "in_progress" if running else "completed",
+                 "conclusion": None if running else "cancelled" if scenario == "deferred-owned-cancelled" else "failure" if scenario == "deferred-owned-step-failed" else "skipped" if scenario == "deferred-old-skipped" else "success"}
+    steps = [{"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "success"}, publisher]
+    if old and running:
+        steps = [publisher]
+    job = {"id": native_id, "run_id": run_id, "name": "Validation Gate", "head_sha": head,
+           "status": "in_progress" if running else "completed",
+           "conclusion": None if running else "cancelled" if scenario == "deferred-owned-cancelled" else "failure" if scenario == "deferred-owned-step-failed" else "success",
+           "check_run_url": f"https://api.github.com/repos/{repo}/check-runs/{native_id}", "steps": steps}
+    result = {"total_count": 1, "jobs": [job]}
+    if scenario == "current-incomplete-jobs" and not old:
+        result["total_count"] = 2
+elif "/check-runs/" in endpoint:
+    check_id = int(endpoint.rsplit("/", 1)[1])
+    old = check_id == 2000 or (current_attempt == 2 and check_id == 3001)
+    running = not old or scenario == "deferred-owned-running"
+    result = {"id": check_id, "name": "Validation Gate", "head_sha": head,
+              "status": "in_progress" if running else "completed",
+              "conclusion": None if running else "cancelled" if scenario == "deferred-owned-cancelled" else "failure" if scenario == "deferred-owned-step-failed" else "success",
+              "app": {"id": 99 if scenario == "deferred-old-wrong-app" or (not old and scenario == "current-wrong-app") else 15368, "slug": "github-actions"}}
+else:
+    raise AssertionError(endpoint)
+state_path.write_text(json.dumps(state))
+if result is not None:
+    print(json.dumps(result))
+    if scenario == "ack-multiple" and method == "POST":
+        print(json.dumps(result))
+sys.exit(exit_status)
+PY_PRODUCER_GH
+EOF_PRODUCER_GH
+chmod +x "$tmp_dir/producer-bin/gh"
+run_producer() {
+  local scenario="$1" assessment="$2" original="${3:-no-local-workflow-file}"
+  local event_file="$tmp_dir/producer-event-$scenario" head_repository=example/firemud current_attempt=1
+  [[ "$scenario" != deferred-owned-earlier-attempt ]] || current_attempt=2
+  [[ "$scenario" != deferred-fork ]] || head_repository=fork-owner/firemud
+  jq -n --arg head_repo "$head_repository" '{action: "edited", number: 123, repository: {full_name: "example/firemud"}, changes: {title: {from: "old"}},
+    pull_request: {number: 123, base: {sha: ("b" * 40), ref: "develop", repo: {full_name: "example/firemud"}},
+      head: {sha: ("a" * 40), ref: "proof-branch", repo: {full_name: $head_repo}}}}' >"$event_file"
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/producer-state-$scenario"
+  : >"$tmp_dir/producer-output-$scenario"
+  PATH="$tmp_dir/producer-bin:$PATH" GH_TOKEN=test-token GITHUB_REPOSITORY=example/firemud \
+    GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$event_file" GITHUB_RUN_ID=300 GITHUB_RUN_ATTEMPT="$current_attempt" \
+    GITHUB_OUTPUT="$tmp_dir/producer-output-$scenario" PRODUCER_OUTPUT_PATH="$tmp_dir/producer-output-$scenario" \
+    PRODUCER_STATE="$tmp_dir/producer-state-$scenario" MOCK_ORIGINAL_GH="$tmp_dir/gh" \
+    GH_SCENARIO="$original" GH_FAILURE_MODE=none GH_RETRY_COUNT_FILE="$tmp_dir/producer-proof-count-$scenario" \
+    BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    PR_NUMBER=123 ASSESSMENT="$assessment" REQUIRED_GATE_NAME='Validation Gate' EXPECTED_WORKFLOW_NAME='CI — Validation' \
+    EXPECTED_WORKFLOW_FILE=ci.yml EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
+    bash "$PUBLISH_SCRIPT" >"$tmp_dir/producer-log-$scenario" 2>&1
+}
+for scenario in deferred-absent deferred-fork deferred-owned-pending deferred-owned-earlier-attempt deferred-owned-newer deferred-old-equal-number deferred-old-missing-number deferred-owned-failure deferred-owned-error deferred-owned-success deferred-owned-running deferred-owned-cancelled deferred-owned-step-failed success-owned-pending success-owned-failure success-owned-error success-assessment-pending status-replaced tuple-replaced deferred-foreign deferred-old-wrong-app deferred-old-wrong-title deferred-old-skipped success-absent success-owned-success success-foreign; do
+  assessment=dependency-deferred
+  [[ "$scenario" != success-* ]] || assessment=success
+  original=no-local-workflow-file
+  [[ "$scenario" != success-assessment-pending ]] || original=pending-predecessor
+  if ! run_producer "$scenario" "$assessment" "$original"; then
+    cat "$tmp_dir/producer-log-$scenario" >&2; exit 1
+  fi
+  python3 - "$tmp_dir/producer-state-$scenario" "$tmp_dir/producer-output-$scenario" "$scenario" <<'PY_PUBLISH'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+scenario = sys.argv[3]
+unchanged = scenario in {"status-replaced", "tuple-replaced", "deferred-owned-newer", "deferred-old-equal-number", "deferred-old-missing-number", "deferred-foreign", "deferred-old-wrong-app", "deferred-old-wrong-title", "deferred-old-skipped", "success-absent", "success-owned-success", "success-foreign"}
+expected = "unchanged" if unchanged else "success-acknowledged" if scenario in {"success-owned-pending", "success-owned-failure", "success-owned-error"} else "pending-acknowledged"
+assert Path(sys.argv[2]).read_text().strip() == f"publication={expected}", (scenario, state)
+assert len(state.get("posts", [])) == (0 if unchanged else 1), state
+if not unchanged:
+    assert state["posts"][0]["target_url"] == f"https://github.com/example/firemud/actions/runs/300/attempts/{2 if scenario == 'deferred-owned-earlier-attempt' else 1}", state
+    assert state["posts"][0]["state"] == expected.split("-")[0], state
+PY_PUBLISH
+done
+for scenario in success-assessment-failed incomplete-status current-wrong-app current-wrong-tuple current-incomplete-jobs ack-denied ack-ambiguous ack-wrong-url ack-missing-creator ack-missing-id ack-bad-timestamp ack-wrong-state ack-multiple; do
+  assessment=dependency-deferred
+  original=no-local-workflow-file
+  if [[ "$scenario" == success-assessment-failed ]]; then assessment=success; original=failed-predecessor; fi
+  if run_producer "$scenario" "$assessment" "$original"; then
+    echo "invalid publication succeeded: $scenario" >&2; exit 1
+  fi
+  [[ ! -s "$tmp_dir/producer-output-$scenario" ]] || { echo "failed publication emitted native-success allowance" >&2; exit 1; }
+  python3 - "$tmp_dir/producer-state-$scenario" "$scenario" <<'PY_PUBLISH'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+assert len(state.get("posts", [])) == (1 if sys.argv[2].startswith("ack-") else 0), state
+PY_PUBLISH
+done
+
+echo "Inert required-gate status producer contract checks passed"
