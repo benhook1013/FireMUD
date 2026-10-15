@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement.controller;
 
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.common.ApiResponse;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -22,7 +23,8 @@ public class GenerationRuleController {
   private final GenerationRuleService generationRuleService;
 
   @PostMapping
-  public ResponseEntity<ApiResponse<GenerationRuleDto>> save(@RequestBody GenerationRuleDto dto) {
+  public ResponseEntity<ApiResponse<GenerationRuleDto>> save(
+      @Valid @RequestBody GenerationRuleDto dto) {
     SessionContext.requireTenantAccess(dto.tenantId());
     GenerationRuleDto result = generationRuleService.saveRule(dto);
     return ResponseEntity.ok(ApiResponse.success(result));
