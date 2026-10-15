@@ -46,7 +46,6 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -168,16 +167,21 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
   void actualReceivingParentIncludingSagaUpgradePreservesHistoryAndAppliesStorageTail(
       @TempDir Path parentMigrations) throws Exception {
     var fixture = fixture(true);
-    var resources =
-        new PathMatchingResourcePatternResolver().getResources("classpath*:db/migration/**/*.sql");
     int copied = 0;
-    for (var resource : resources) {
-      String filename = java.util.Objects.requireNonNull(resource.getFilename());
-      if (!PARENT_MIGRATION_SCRIPTS.contains(filename)) continue;
-      try (var input = resource.getInputStream()) {
-        Files.copy(input, parentMigrations.resolve(filename));
+    for (Path directory :
+        List.of(
+            Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+            Path.of("../common-saga/src/main/resources/db/migration/saga")
+                .toAbsolutePath()
+                .normalize())) {
+      try (var migrations = Files.list(directory)) {
+        for (Path migration : migrations.filter(Files::isRegularFile).sorted().toList()) {
+          String filename = java.util.Objects.requireNonNull(migration.getFileName()).toString();
+          if (!PARENT_MIGRATION_SCRIPTS.contains(filename)) continue;
+          Files.copy(migration, parentMigrations.resolve(filename));
+          copied++;
+        }
       }
-      copied++;
     }
     assertThat(copied).isEqualTo(62);
     flyway(fixture.source(), fixture.schema(), null, "filesystem:" + parentMigrations).migrate();
@@ -944,7 +948,15 @@ class SelectedPublicationStorageUpgradePostgresIntegrationTest {
   }
 
   private Flyway flyway(DriverManagerDataSource source, String schema, String target) {
-    return flyway(source, schema, target, "classpath:db/migration", "classpath:db/migration/saga");
+    return flyway(
+        source,
+        schema,
+        target,
+        "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize(),
+        "filesystem:"
+            + Path.of("../common-saga/src/main/resources/db/migration/saga")
+                .toAbsolutePath()
+                .normalize());
   }
 
   private Flyway flyway(

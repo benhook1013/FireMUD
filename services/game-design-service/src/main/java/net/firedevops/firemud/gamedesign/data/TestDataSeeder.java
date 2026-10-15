@@ -526,6 +526,27 @@ public class TestDataSeeder implements ApplicationRunner {
   }
 
   private FixtureCapability loadFixtureCapability() {
+    return verifyFixtureConfiguration(
+        workloadNamespace,
+        fixtureRunId,
+        fixtureComposeProjectName,
+        fixtureCapabilityPath,
+        fixtureReceiptPath,
+        gameSessionLeafCertPath,
+        worldManagementLeafCertPath,
+        caCertPath);
+  }
+
+  /** The producer and fixed read adapters share the exact immutable configuration verifier. */
+  static FixtureCapability verifyFixtureConfiguration(
+      String workloadNamespace,
+      String fixtureRunId,
+      String fixtureComposeProjectName,
+      String fixtureCapabilityPath,
+      String fixtureReceiptPath,
+      String gameSessionLeafCertPath,
+      String worldManagementLeafCertPath,
+      String caCertPath) {
     if (!FIXTURE_NAMESPACE.equals(workloadNamespace)
         || !safeFixtureId(fixtureRunId)
         || !safeFixtureId(fixtureComposeProjectName)
@@ -735,7 +756,7 @@ public class TestDataSeeder implements ApplicationRunner {
     }
   }
 
-  private byte[] readBoundedImmutableFile(Path path, String fileDescription) {
+  private static byte[] readBoundedImmutableFile(Path path, String fileDescription) {
     return RunOwnedFixtureImmutableFileReader.readBoundedImmutableFile(
         path,
         MAX_FIXTURE_FILE_BYTES,
@@ -743,7 +764,7 @@ public class TestDataSeeder implements ApplicationRunner {
             new IllegalStateException("Run-owned fixture " + fileDescription + " file is invalid"));
   }
 
-  private X509Certificate readCertificate(Path path) {
+  private static X509Certificate readCertificate(Path path) {
     try {
       byte[] bytes = readBoundedImmutableFile(path, "TLS certificate");
       return (X509Certificate)
@@ -755,7 +776,7 @@ public class TestDataSeeder implements ApplicationRunner {
     }
   }
 
-  private void requireCertificatePins(
+  private static void requireCertificatePins(
       X509Certificate gameSessionCertificate,
       X509Certificate worldManagementCertificate,
       X509Certificate caCertificate,
@@ -778,7 +799,7 @@ public class TestDataSeeder implements ApplicationRunner {
         "World Management");
   }
 
-  private void requireRecipientCertificatePins(
+  private static void requireRecipientCertificatePins(
       X509Certificate recipientCertificate,
       X509Certificate caCertificate,
       String expectedLeafDigest,
@@ -814,19 +835,19 @@ public class TestDataSeeder implements ApplicationRunner {
     }
   }
 
-  private String sha256(byte[] bytes) throws Exception {
+  private static String sha256(byte[] bytes) throws Exception {
     return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
   }
 
-  private boolean safeFixtureId(String value) {
+  private static boolean safeFixtureId(String value) {
     return value != null && value.matches("[a-z0-9][a-z0-9-]{0,127}");
   }
 
-  private boolean absolutePath(String value) {
+  private static boolean absolutePath(String value) {
     return value != null && !value.isBlank() && Path.of(value).isAbsolute();
   }
 
-  private boolean validCapabilityPath(String value) {
+  private static boolean validCapabilityPath(String value) {
     if (!absolutePath(value)) {
       return false;
     }
@@ -835,7 +856,7 @@ public class TestDataSeeder implements ApplicationRunner {
         && "run-owned-initial-admission-capability.json".equals(fileName.toString());
   }
 
-  private boolean validReceiptPath(String value) {
+  private static boolean validReceiptPath(String value) {
     if (!absolutePath(value)) {
       return false;
     }

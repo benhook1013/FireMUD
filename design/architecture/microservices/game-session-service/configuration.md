@@ -21,6 +21,7 @@ TLS certificates are supplied via [`FIREMUD_GRPC_CERT_CHAIN_PATH`, `FIREMUD_GRPC
 | `GAME_SOLO_TICK_BUDGET_MS` | Execution budget for isolated solo ticks | `500` |
 | `GAME_TICK_MAX_COMMANDS` | Max commands staged from the queue each tick | `50` |
 | `FIREMUD_SERVICES_GAME_LOGIC_SERVICE` | gRPC endpoint (`host:port`) for Game Logic Service | *(none)* |
+| `GAME_LOGIC_READINESS_URL` | Internal Game Logic actuator readiness URL bound to `game.logic.readiness-url`; required explicitly in `prod` | Local: `http://game-logic-service:8080/actuator/health/readiness`; `prod`: empty, unready |
 | `FIREMUD_SERVICES_WORLD_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for World Management Service | `world-management-service:6565` |
 | `FIREMUD_SERVICES_ENTITY_MANAGEMENT_SERVICE` | gRPC endpoint (`host:port`) for Entity Management Service | `entity-management-service:6565` |
 | `FIREMUD_CONFLICT_TTL_SECONDS` | TTL for conflict hotspot tracking in Redis | `300` |
@@ -44,6 +45,8 @@ Game Session currently owns the operator-default `firemud.*` layer for these sur
 The generated reference carries the current defaults, descriptions, valid values or ranges, scope/owner metadata, hot-reloadability, advanced flags, and example values for those keys.
 
 ## Configuration Notes
+
+`GAME_LOGIC_READINESS_URL` is non-secret deployment configuration, separate from the gRPC `host:port`. Kustomize's `firemud-config` and hosted Helm's shared configuration provide the internal URL. An absent production binding leaves readiness false. Accepted URL shape and the required Ping/HTTP conjunction remain owned by [Operations: Readiness and Liveness](./operations.md#readiness-and-liveness).
 
 - Settings distribution follows [ADR 0113](../../decisions/adr-0113-bounded-pull-settings-distribution-with-freshness-classes.md): Game Session consumes revisioned snapshots through a bounded local cache and must retain revision, age, provenance, and degraded/expired state in its effective-settings diagnostics. The current short TTL plus explicit refresh/evict behavior is a local implementation seam; class-specific freshness outcomes and an authoritative fence for restrictive settings remain gaps. No generalized push channel or concrete TTL is implied.
 - Environment variables configure PostgreSQL and Redis connections via `DatabaseAutoConfiguration` and `RedisProperties`.

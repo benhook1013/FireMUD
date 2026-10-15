@@ -6,19 +6,21 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 
-import java.io.IOException;
+import io.grpc.Server;
+import io.grpc.ServerInterceptors;
+import io.grpc.Status;
+import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
-import java.security.MessageDigest;
 import java.security.cert.CertificateFactory;
-import java.security.cert.CertificateNotYetValidException;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
-import java.util.HashSet;
-import java.util.HexFormat;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -26,10 +28,16 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
-import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec;
 import net.firedevops.firemud.gamedesign.GameDesignServiceApplication;
+import net.firedevops.firemud.gamedesign.data.RunOwnedFixtureOwnerReadAuthorization;
 import net.firedevops.firemud.gamedesign.data.TestDataSeeder;
+import net.firedevops.firemud.gamedesign.data.TestDataSeederIntegrationSupport;
 import net.firedevops.firemud.gamedesign.dto.PublishedReleaseBundleDto;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 import net.firedevops.firemud.gamedesign.dto.VersionAssetArtifactStateDto;
@@ -44,28 +52,22 @@ import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleReposi
 import net.firedevops.firemud.gamedesign.repository.RevisionRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
-import net.firedevops.firemud.gamedesign.service.LaunchDescriptorService;
-import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
-import net.firedevops.firemud.gamedesign.service.VersionService;
 import net.firedevops.firemud.gamedesign.service.impl.GameDesignLaunchReadProjectionMapper;
+import net.firedevops.firemud.gamedesign.service.impl.RunOwnedFixtureAuthoredWorldSourceReadGrpcService;
+import net.firedevops.firemud.gamedesign.service.impl.RunOwnedFixtureAuthoredWorldVersionStateGrpcService;
+import net.firedevops.firemud.gamedesign.v1.AuthoredWorldSourceReadServiceGrpc;
+import net.firedevops.firemud.gamedesign.v1.AuthoredWorldVersionStateServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.LaunchDescriptor;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
-import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
-import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.Record;
 import org.jooq.SQLDialect;
-import org.jooq.Table;
 import org.jooq.impl.DSL;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -73,17 +75,11 @@ import org.springframework.core.Ordered;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -93,6 +89,7 @@ import tools.jackson.databind.ObjectMapper;
     classes = GameDesignServiceApplication.class,
     properties = {
       "spring.profiles.active=test",
+      "spring.config.import=file:src/main/resources/application.yml",
       "firemud.smoke.seed-demo-runtime.enabled=true",
       "FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false",
       "spring.flyway.clean-disabled=false",
@@ -107,58 +104,366 @@ import tools.jackson.databind.ObjectMapper;
       "asset.store.secret-key=test-secret-key"
     })
 @Import(NoGrpcServerTestConfiguration.class)
-class TestDataSeederIntegrationTest {
-  private static final String NAMESPACE = "dev";
-  private static final String SESSION_URI_SAN = "spiffe://firemud/ns/dev/sa/game-session-service";
-  private static final String WORLD_MANAGEMENT_URI_SAN =
-      "spiffe://firemud/ns/dev/sa/world-management-service";
-  private static final Table<?> SOURCE_OPERATIONS =
-      DSL.table(DSL.name("game_design_authored_world_source_operations"));
-  private static final Table<?> SOURCE_DELIVERIES =
-      DSL.table(DSL.name("game_design_authored_world_source_deliveries"));
-  private static final Field<UUID> REGISTRATION_REQUEST_ID =
-      DSL.field(DSL.name("registration_request_id"), UUID.class);
-  private static final Field<UUID> SOURCE_OPERATION_ID =
-      DSL.field(DSL.name("operation_id"), UUID.class);
-  private static final Field<UUID> DELIVERY_WORLD_OPERATION_ID =
-      DSL.field(DSL.name("world_operation_id"), UUID.class);
-
-  @Container
-  static PostgreSQLContainer<?> postgres =
-      new PostgreSQLContainer<>(TestContainerImages.postgres());
-
-  @DynamicPropertySource
-  static void configure(DynamicPropertyRegistry registry) {
-    PostgresBackedServiceTestSupport.registerPostgresService(
-        registry, postgres, "game_design_service");
+class TestDataSeederIntegrationTest extends TestDataSeederIntegrationSupport {
+  @Test
+  void fixedWorldReadsQualifyRealPreexistingOwnersWithoutRewritingOrResolving(
+      @TempDir Path testDirectory) throws Exception {
+    Fixture fixture = prepareFixture(testDirectory);
+    configureSeeder(fixture);
+    seeder.run(new DefaultApplicationArguments(new String[] {}));
+    var capability =
+        net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
+            .parseCapability(Files.readAllBytes(fixture.capabilityPath()));
+    var receipt =
+        net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
+            .parseSourceReceipt(Files.readAllBytes(fixture.receiptPath()), capability);
+    var authorization =
+        new net.firedevops.firemud.gamedesign.data.RunOwnedFixtureOwnerReadAuthorization(
+            fixtureReadback,
+            fixturePolicy,
+            NAMESPACE,
+            fixture.runId(),
+            fixture.composeProjectName(),
+            fixture.capabilityPath().toString(),
+            fixture.receiptPath().toString(),
+            fixture.gameSessionCertificatePath().toString(),
+            fixture.worldManagementCertificatePath().toString(),
+            fixture.caCertificatePath().toString());
+    var source = receipt.sourceEvidence();
+    var sourceRequest =
+        net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec.toReadRequest(
+            new net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec.ReadRequest(
+                NAMESPACE,
+                UUID.randomUUID(),
+                source.operationId(),
+                source.canonicalTenantId(),
+                source.worldSlug()));
+    var versionRequest =
+        net.firedevops.firemud.gamedesign.v1.GetAuthoredWorldVersionStateRequest.newBuilder()
+            .setSchemaVersion(1)
+            .setTargetNamespace(NAMESPACE)
+            .setReadRequestId(UUID.randomUUID().toString())
+            .setCanonicalTenantId(source.canonicalTenantId().toString())
+            .setWorldSlug(source.worldSlug())
+            .setSourceOperationId(source.operationId().toString())
+            .setExpectedSourceEvidenceDigest(source.evidenceDigest())
+            .setVersionId(receipt.launchReadEvidence().versionState().getVersionId())
+            .build();
+    Map<String, String> before = fixedReadOwnerRows();
+    byte[] receiptBefore = Files.readAllBytes(fixture.receiptPath());
+    X509Certificate actualMountedWorldLeaf;
+    try (var input = Files.newInputStream(fixture.worldManagementCertificatePath())) {
+      actualMountedWorldLeaf =
+          (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+    }
+    // Peer context is controlled here; immutable PKI, producer and PostgreSQL owners are real.
+    var peerContext =
+        io.grpc.Context.current()
+            .withValue(
+                net.firedevops.firemud.common.grpc.GrpcPeerIdentity.CONTEXT_KEY,
+                net.firedevops.firemud.common.grpc.GrpcPeerIdentity.parseUri(
+                        WORLD_MANAGEMENT_URI_SAN)
+                    .orElseThrow())
+            .withValue(
+                net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence.CONTEXT_KEY,
+                net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence.fromCertificate(
+                        actualMountedWorldLeaf)
+                    .orElseThrow());
+    org.mockito.Mockito.clearInvocations(launchDescriptorService);
+    peerContext.run(
+        () -> {
+          assertThat(authorization.authorizeSource(sourceRequest)).isEqualTo(receipt);
+          assertThat(authorization.authorizeVersion(versionRequest)).isEqualTo(receipt);
+          var sourceOutput =
+              new FixedReadObserver<
+                  net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse>();
+          new net.firedevops.firemud.gamedesign.service.impl
+                  .RunOwnedFixtureAuthoredWorldSourceReadGrpcService(
+                  authorization, authoredWorldSourceRepository, NAMESPACE)
+              .resolveAuthoredWorldSource(sourceRequest, sourceOutput);
+          assertThat(sourceOutput.failure).isNull();
+          assertThat(sourceOutput.completed).isTrue();
+          assertThat(
+                  net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec
+                      .fromReadResponse(
+                          net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec
+                              .fromReadRequest(NAMESPACE, sourceRequest),
+                          sourceOutput.value))
+              .isEqualTo(source);
+          var versionOutput =
+              new FixedReadObserver<
+                  net.firedevops.firemud.gamedesign.v1.GetAuthoredWorldVersionStateResponse>();
+          new net.firedevops.firemud.gamedesign.service.impl
+                  .RunOwnedFixtureAuthoredWorldVersionStateGrpcService(
+                  authorization, transactionManager, authoredWorldSourceRepository, NAMESPACE)
+              .getAuthoredWorldVersionState(versionRequest, versionOutput);
+          assertThat(versionOutput.failure).isNull();
+          assertThat(versionOutput.completed).isTrue();
+          var actual =
+              net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateGrpcCodec
+                  .fromResponse(
+                      net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateGrpcCodec
+                          .fromRequest(versionRequest),
+                      versionOutput.value);
+          assertThat(actual.sourceEvidence()).isEqualTo(source);
+          assertThat(actual.versionStateEpoch())
+              .isEqualTo(receipt.launchReadEvidence().versionState().getVersionStateEpoch());
+        });
+    org.mockito.Mockito.verify(launchDescriptorService, org.mockito.Mockito.never())
+        .resolveLaunchDescriptor(any());
+    assertThat(fixedReadOwnerRows()).isEqualTo(before);
+    assertThat(Files.readAllBytes(fixture.receiptPath())).containsExactly(receiptBefore);
+    org.mockito.Mockito.clearInvocations(authoredWorldSourceRepository, launchDescriptorService);
+    peerContext.run(
+        () -> {
+          assertThatThrownBy(
+                  () ->
+                      authorization.authorizeSource(
+                          sourceRequest.toBuilder()
+                              .setOperationId(UUID.randomUUID().toString())
+                              .build()))
+              .isInstanceOf(SecurityException.class);
+          assertThatThrownBy(
+                  () ->
+                      authorization.authorizeSource(
+                          sourceRequest.toBuilder()
+                              .setCanonicalTenantId(UUID.randomUUID().toString())
+                              .build()))
+              .isInstanceOf(SecurityException.class);
+          assertThatThrownBy(
+                  () ->
+                      authorization.authorizeSource(
+                          sourceRequest.toBuilder().setWorldSlug("different-world").build()))
+              .isInstanceOf(SecurityException.class);
+          assertThatThrownBy(
+                  () ->
+                      authorization.authorizeVersion(
+                          versionRequest.toBuilder().setTargetNamespace("other").build()))
+              .isInstanceOf(SecurityException.class);
+          assertThatThrownBy(
+                  () ->
+                      authorization.authorizeVersion(
+                          versionRequest.toBuilder()
+                              .setVersionId(versionRequest.getVersionId() + 1)
+                              .build()))
+              .isInstanceOf(SecurityException.class);
+          assertThatThrownBy(
+                  () ->
+                      authorization.authorizeVersion(
+                          versionRequest.toBuilder()
+                              .setExpectedSourceEvidenceDigest("sha256:" + "f".repeat(64))
+                              .build()))
+              .isInstanceOf(SecurityException.class);
+        });
+    org.mockito.Mockito.verifyNoInteractions(
+        authoredWorldSourceRepository, launchDescriptorService);
+    assertThat(fixedReadOwnerRows()).isEqualTo(before);
   }
 
-  @Autowired private TestDataSeeder seeder;
-  @Autowired private Flyway flyway;
-  @MockitoSpyBean private GameAuthoredWorldSourceRepository authoredWorldSourceRepository;
-  @Autowired private GameRepository gameRepository;
-
-  @Autowired
-  private net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository
-      creationRepository;
-
-  @Autowired private GameTemplateRepository templateRepository;
-  @Autowired private VersionRepository versionRepository;
-  @Autowired private VersionAssetArtifactRepository artifactRepository;
-  @Autowired private VersionService versionService;
-  @Autowired private VersionAssetArtifactService artifactService;
-  @Autowired private LaunchDescriptorRepository launchDescriptorRepository;
-  @MockitoSpyBean private LaunchDescriptorService launchDescriptorService;
-  @Autowired private PlatformTransactionManager transactionManager;
-  @Autowired private DSLContext dsl;
-  @Autowired private ObjectMapper objectMapper;
-
-  @BeforeEach
-  void resetDisposableServiceSchema() {
-    ReflectionTestUtils.setField(seeder, "initialAdmissionFixtureEnabled", false);
-    flyway.clean();
-    flyway.migrate();
+  @Test
+  void fixedWorldClientsReadActualProducerOwnersOverMutualTlsWithoutOwnerWrites(
+      @TempDir Path testDirectory) throws Exception {
+    Fixture fixture = prepareFixture(testDirectory);
+    configureSeeder(fixture);
     seeder.run(new DefaultApplicationArguments(new String[] {}));
+    var capability =
+        net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
+            .parseCapability(Files.readAllBytes(fixture.capabilityPath()));
+    var receipt =
+        net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
+            .parseSourceReceipt(Files.readAllBytes(fixture.receiptPath()), capability);
+    var authorization =
+        new RunOwnedFixtureOwnerReadAuthorization(
+            fixtureReadback,
+            fixturePolicy,
+            NAMESPACE,
+            fixture.runId(),
+            fixture.composeProjectName(),
+            fixture.capabilityPath().toString(),
+            fixture.receiptPath().toString(),
+            fixture.gameSessionCertificatePath().toString(),
+            fixture.worldManagementCertificatePath().toString(),
+            fixture.caCertificatePath().toString());
+    var source = receipt.sourceEvidence();
+    var sourceRequest =
+        new AuthoredWorldSourceGrpcCodec.ReadRequest(
+            NAMESPACE,
+            UUID.randomUUID(),
+            source.operationId(),
+            source.canonicalTenantId(),
+            source.worldSlug());
+    var versionRequest =
+        new AuthoredWorldVersionStateEvidence.Request(
+            1,
+            NAMESPACE,
+            UUID.randomUUID(),
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest(),
+            receipt.launchReadEvidence().versionState().getVersionId());
+    var serverLeaf =
+        issueFixedReadLeaf(
+            fixture, "game-design-server", "spiffe://firemud/ns/dev/sa/game-design-service", true);
+    var otherWorldLeaf =
+        issueFixedReadLeaf(fixture, "different-world-client", WORLD_MANAGEMENT_URI_SAN, false);
+    var auth =
+        new AuthTokenInterceptor(
+            new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L),
+            Set.of(
+                AuthoredWorldSourceReadServiceGrpc.getResolveAuthoredWorldSourceMethod()
+                    .getFullMethodName(),
+                AuthoredWorldVersionStateServiceGrpc.getGetAuthoredWorldVersionStateMethod()
+                    .getFullMethodName()));
+    Map<String, String> originalRows = fixedReadOwnerRows();
+    byte[] originalReceipt = Files.readAllBytes(fixture.receiptPath());
+    // Actual handlers/interceptors on a loopback socket; Spring registration and Compose are
+    // separate proofs.
+    Server server =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(
+                            serverLeaf.certificate().toFile(), serverLeaf.privateKey().toFile()))
+                    .trustManager(fixture.caCertificatePath().toFile())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(
+                ServerInterceptors.intercept(
+                    new RunOwnedFixtureAuthoredWorldSourceReadGrpcService(
+                        authorization, authoredWorldSourceRepository, NAMESPACE),
+                    new GrpcPeerIdentityInterceptor(),
+                    auth))
+            .addService(
+                ServerInterceptors.intercept(
+                    new RunOwnedFixtureAuthoredWorldVersionStateGrpcService(
+                        authorization,
+                        transactionManager,
+                        authoredWorldSourceRepository,
+                        NAMESPACE),
+                    new GrpcPeerIdentityInterceptor(),
+                    auth))
+            .build()
+            .start();
+    try {
+      org.mockito.Mockito.clearInvocations(launchDescriptorService, fixturePolicy);
+      withFixedReadClients(
+          server,
+          fixture,
+          fixture.worldManagementCertificatePath(),
+          fixture.worldManagementCertificatePath().resolveSibling("world-management.key"),
+          (sourceClient, versionClient) -> {
+            assertThat(sourceClient.read(sourceRequest)).isEqualTo(source);
+            var actual = versionClient.read(versionRequest);
+            assertThat(actual.request()).isEqualTo(versionRequest);
+            assertThat(actual.sourceEvidence()).isEqualTo(source);
+            assertThat(actual.canonicalVersionId())
+                .isEqualTo(
+                    UUID.fromString(
+                        receipt
+                            .launchReadEvidence()
+                            .publishedReleaseBundle()
+                            .getCanonicalVersionId()));
+            assertThat(actual.versionState())
+                .isEqualTo(receipt.launchReadEvidence().versionState().getVersionState());
+            assertThat(actual.versionStateEpoch())
+                .isEqualTo(receipt.launchReadEvidence().versionState().getVersionStateEpoch());
+          });
+      org.mockito.Mockito.verify(launchDescriptorService, org.mockito.Mockito.never())
+          .resolveLaunchDescriptor(any());
+      assertThat(org.mockito.Mockito.mockingDetails(fixturePolicy).getInvocations())
+          .extracting(invocation -> invocation.getMethod().getName())
+          .contains("readExisting")
+          .doesNotContain("sealAndRead");
+      assertThat(fixedReadOwnerRows()).isEqualTo(originalRows);
+      assertThat(Files.readAllBytes(fixture.receiptPath())).containsExactly(originalReceipt);
+      org.mockito.Mockito.clearInvocations(
+          authoredWorldSourceRepository, launchDescriptorService, fixtureReadback, fixturePolicy);
+      for (var leaf :
+          java.util.List.of(
+              otherWorldLeaf,
+              new FixedReadLeaf(
+                  fixture.gameSessionCertificatePath(),
+                  fixture.gameSessionCertificatePath().resolveSibling("game-session.key")))) {
+        withFixedReadClients(
+            server,
+            fixture,
+            leaf.certificate(),
+            leaf.privateKey(),
+            (sourceClient, versionClient) -> {
+              assertSocketReadDenied(() -> sourceClient.read(sourceRequest));
+              assertSocketReadDenied(() -> versionClient.read(versionRequest));
+            });
+      }
+      withFixedReadClients(
+          server,
+          fixture,
+          fixture.worldManagementCertificatePath(),
+          fixture.worldManagementCertificatePath().resolveSibling("world-management.key"),
+          (sourceClient, versionClient) -> {
+            assertSocketReadDenied(
+                () ->
+                    sourceClient.read(
+                        new AuthoredWorldSourceGrpcCodec.ReadRequest(
+                            NAMESPACE,
+                            UUID.randomUUID(),
+                            UUID.randomUUID(),
+                            source.canonicalTenantId(),
+                            source.worldSlug())));
+            assertSocketReadDenied(
+                () ->
+                    sourceClient.read(
+                        new AuthoredWorldSourceGrpcCodec.ReadRequest(
+                            NAMESPACE,
+                            UUID.randomUUID(),
+                            source.operationId(),
+                            UUID.randomUUID(),
+                            source.worldSlug())));
+            assertSocketReadDenied(
+                () ->
+                    sourceClient.read(
+                        new AuthoredWorldSourceGrpcCodec.ReadRequest(
+                            NAMESPACE,
+                            UUID.randomUUID(),
+                            source.operationId(),
+                            source.canonicalTenantId(),
+                            "different-world")));
+            assertSocketReadDenied(
+                () ->
+                    versionClient.read(
+                        new AuthoredWorldVersionStateEvidence.Request(
+                            1,
+                            NAMESPACE,
+                            UUID.randomUUID(),
+                            source.canonicalTenantId(),
+                            source.worldSlug(),
+                            source.operationId(),
+                            source.evidenceDigest(),
+                            versionRequest.versionId() + 1)));
+            assertSocketReadDenied(
+                () ->
+                    versionClient.read(
+                        new AuthoredWorldVersionStateEvidence.Request(
+                            1,
+                            NAMESPACE,
+                            UUID.randomUUID(),
+                            source.canonicalTenantId(),
+                            source.worldSlug(),
+                            source.operationId(),
+                            "sha256:" + "f".repeat(64),
+                            versionRequest.versionId())));
+          });
+      org.mockito.Mockito.verifyNoInteractions(
+          authoredWorldSourceRepository, launchDescriptorService, fixtureReadback, fixturePolicy);
+      assertThat(fixedReadOwnerRows()).isEqualTo(originalRows);
+      assertThat(Files.readAllBytes(fixture.receiptPath())).containsExactly(originalReceipt);
+      // No physical missing-header case: immutable producer seal precedes receipt publication.
+      // Controlled missing-policy denial is covered separately without forging/deleting owner
+      // evidence.
+    } finally {
+      server.shutdownNow();
+      assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+    }
   }
 
   @Test
@@ -796,384 +1101,6 @@ class TestDataSeederIntegrationTest {
         .isOne();
   }
 
-  private Set<String> fieldNames(JsonNode object) {
-    Set<String> fields = new HashSet<>();
-    object.propertyNames().forEach(fields::add);
-    return fields;
-  }
-
-  private byte[] readPublishedReleaseBundleBytes() {
-    Record row =
-        dsl.fetchOne(
-            "select convert_to(row_to_json(release_bundle)::text, 'UTF8') as bundle_bytes "
-                + "from published_release_bundle as release_bundle "
-                + "where tenant_id = ? and version_id = ?",
-            "1",
-            1L);
-    assertThat(row).isNotNull();
-    return row.get("bundle_bytes", byte[].class);
-  }
-
-  private void writeVersionStateEpoch(
-      TransactionTemplate transaction, String tenantId, Long versionId, long epoch) {
-    transaction.executeWithoutResult(
-        status -> {
-          int updated =
-              dsl.execute(
-                  "update version set version_state_epoch = ? where tenant_id = ? and id = ?",
-                  epoch,
-                  tenantId,
-                  versionId);
-          assertThat(updated).isOne();
-        });
-  }
-
-  private Fixture prepareFixture(Path testDirectory) throws Exception {
-    return prepareFixture(testDirectory, true);
-  }
-
-  private Fixture prepareFixture(Path testDirectory, boolean prepareExistingOwner)
-      throws Exception {
-    Path certificateDirectory = Files.createDirectory(testDirectory.resolve("certificates"));
-    Path caKey = certificateDirectory.resolve("ca.key");
-    Path caCertificate = certificateDirectory.resolve("ca.crt");
-    Path sessionKey = certificateDirectory.resolve("game-session.key");
-    Path sessionRequest = certificateDirectory.resolve("game-session.csr");
-    Path sessionCertificate = certificateDirectory.resolve("game-session.crt");
-    Path sessionExtensions = certificateDirectory.resolve("game-session.ext");
-    Path worldManagementKey = certificateDirectory.resolve("world-management.key");
-    Path worldManagementRequest = certificateDirectory.resolve("world-management.csr");
-    Path worldManagementCertificate = certificateDirectory.resolve("world-management.crt");
-    Path worldManagementExtensions = certificateDirectory.resolve("world-management.ext");
-    runOpenSsl(
-        "req",
-        "-x509",
-        "-newkey",
-        "rsa:2048",
-        "-nodes",
-        "-sha256",
-        "-days",
-        "2",
-        "-keyout",
-        caKey.toString(),
-        "-out",
-        caCertificate.toString(),
-        "-subj",
-        "/CN=FireMUD test fixture CA",
-        "-addext",
-        "basicConstraints=critical,CA:TRUE",
-        "-addext",
-        "keyUsage=critical,keyCertSign,cRLSign");
-    runOpenSsl(
-        "req",
-        "-new",
-        "-newkey",
-        "rsa:2048",
-        "-nodes",
-        "-sha256",
-        "-keyout",
-        sessionKey.toString(),
-        "-out",
-        sessionRequest.toString(),
-        "-subj",
-        "/CN=game-session-service");
-    Files.writeString(
-        sessionExtensions,
-        "basicConstraints=critical,CA:FALSE\n"
-            + "keyUsage=critical,digitalSignature,keyEncipherment\n"
-            + "extendedKeyUsage=clientAuth\n"
-            + "subjectAltName=URI:"
-            + SESSION_URI_SAN
-            + ",DNS:game-session-service"
-            + ",DNS:game-session-service.dev"
-            + ",DNS:game-session-service.dev.svc"
-            + ",DNS:game-session-service.dev.svc.cluster.local"
-            + "\n");
-    runOpenSsl(
-        "x509",
-        "-req",
-        "-in",
-        sessionRequest.toString(),
-        "-CA",
-        caCertificate.toString(),
-        "-CAkey",
-        caKey.toString(),
-        "-CAcreateserial",
-        "-out",
-        sessionCertificate.toString(),
-        "-days",
-        "2",
-        "-sha256",
-        "-extfile",
-        sessionExtensions.toString());
-    runOpenSsl(
-        "req",
-        "-new",
-        "-newkey",
-        "rsa:2048",
-        "-nodes",
-        "-sha256",
-        "-keyout",
-        worldManagementKey.toString(),
-        "-out",
-        worldManagementRequest.toString(),
-        "-subj",
-        "/CN=world-management-service");
-    Files.writeString(
-        worldManagementExtensions,
-        "basicConstraints=critical,CA:FALSE\n"
-            + "keyUsage=critical,digitalSignature,keyEncipherment\n"
-            + "extendedKeyUsage=clientAuth\n"
-            + "subjectAltName=URI:"
-            + WORLD_MANAGEMENT_URI_SAN
-            + ",DNS:world-management-service"
-            + ",DNS:world-management-service.dev"
-            + ",DNS:world-management-service.dev.svc"
-            + ",DNS:world-management-service.dev.svc.cluster.local"
-            + "\n");
-    runOpenSsl(
-        "x509",
-        "-req",
-        "-in",
-        worldManagementRequest.toString(),
-        "-CA",
-        caCertificate.toString(),
-        "-CAkey",
-        caKey.toString(),
-        "-CAcreateserial",
-        "-out",
-        worldManagementCertificate.toString(),
-        "-days",
-        "2",
-        "-sha256",
-        "-extfile",
-        worldManagementExtensions.toString());
-    Files.setPosixFilePermissions(
-        caCertificate,
-        Set.of(
-            PosixFilePermission.OWNER_READ,
-            PosixFilePermission.GROUP_READ,
-            PosixFilePermission.OTHERS_READ));
-    Files.setPosixFilePermissions(
-        sessionCertificate,
-        Set.of(
-            PosixFilePermission.OWNER_READ,
-            PosixFilePermission.GROUP_READ,
-            PosixFilePermission.OTHERS_READ));
-    Files.setPosixFilePermissions(
-        worldManagementCertificate,
-        Set.of(
-            PosixFilePermission.OWNER_READ,
-            PosixFilePermission.GROUP_READ,
-            PosixFilePermission.OTHERS_READ));
-
-    String leafDigest = certificateDigest(sessionCertificate);
-    String worldManagementLeafDigest = certificateDigest(worldManagementCertificate);
-    String caDigest = certificateDigest(caCertificate);
-    String runId = "fixture-commit-proof";
-    String composeProjectName = "firemud-smoke-fixture-commit-proof";
-    String claimDigest = "e".repeat(64);
-    UUID operationId =
-        net.firedevops.firemud.common.smoke.RunOwnedInitialAdmissionFixtureWireCodec
-            .fixtureOperationId(claimDigest, runId, composeProjectName, leafDigest, caDigest);
-    Path capabilityPath = testDirectory.resolve("run-owned-initial-admission-capability.json");
-    Map<String, Object> capability = new LinkedHashMap<>();
-    capability.put("schema", "firemud.run-owned-initial-admission-fixture.v1");
-    capability.put("runId", runId);
-    capability.put("composeProjectName", composeProjectName);
-    capability.put("claimDigest", claimDigest);
-    capability.put("operationId", operationId.toString());
-    capability.put("tenantId", 1);
-    capability.put(
-        "gameTemplateId",
-        templateRepository.findByTenantIdAndName("1", "Default Template").orElseThrow().getId());
-    capability.put("ownerAccountId", 1);
-    capability.put("worldSlug", "demo");
-    capability.put("worldDisplayName", "Demo World");
-    capability.put("realmSlug", "production");
-    capability.put("realmDisplayName", "Live Realm");
-    capability.put("visible", true);
-    capability.put("publicProductionRealm", true);
-    capability.put("requiresCharacterSelection", false);
-    capability.put("stateScope", "SHARED");
-    capability.put("characterCreationPolicy", "ALLOW_NEW");
-    capability.put("gameSessionLeafSha256", leafDigest);
-    capability.put("gameSessionUriSan", SESSION_URI_SAN);
-    capability.put("worldManagementLeafSha256", worldManagementLeafDigest);
-    capability.put("worldManagementUriSan", WORLD_MANAGEMENT_URI_SAN);
-    capability.put("caCertificateSha256", caDigest);
-    Files.write(capabilityPath, objectMapper.writeValueAsBytes(capability));
-    Files.setPosixFilePermissions(
-        capabilityPath,
-        Set.of(
-            PosixFilePermission.OWNER_READ,
-            PosixFilePermission.GROUP_READ,
-            PosixFilePermission.OTHERS_READ));
-
-    awaitFixtureCertificatesValid(sessionCertificate, worldManagementCertificate, caCertificate);
-
-    Path receiptDirectory =
-        Files.createDirectory(testDirectory.resolve("run-owned-authored-world-source"));
-    Files.setPosixFilePermissions(
-        receiptDirectory,
-        Set.of(
-            PosixFilePermission.OWNER_READ,
-            PosixFilePermission.OWNER_WRITE,
-            PosixFilePermission.OWNER_EXECUTE,
-            PosixFilePermission.GROUP_READ,
-            PosixFilePermission.GROUP_WRITE,
-            PosixFilePermission.GROUP_EXECUTE,
-            PosixFilePermission.OTHERS_READ,
-            PosixFilePermission.OTHERS_WRITE,
-            PosixFilePermission.OTHERS_EXECUTE));
-    Fixture fixture =
-        new Fixture(
-            operationId,
-            runId,
-            composeProjectName,
-            capabilityPath,
-            receiptDirectory.resolve("source-receipt.json"),
-            sessionCertificate,
-            worldManagementCertificate,
-            caCertificate,
-            leafDigest,
-            worldManagementLeafDigest,
-            caDigest);
-    configureSeeder(fixture);
-    ReflectionTestUtils.invokeMethod(seeder, "loadFixtureCapability");
-    // Disposable test schema only: create the real fixture owner from inception, never backfill.
-    flyway.clean();
-    flyway.migrate();
-    if (prepareExistingOwner) {
-      new TransactionTemplate(transactionManager)
-          .executeWithoutResult(
-              status ->
-                  creationRepository.createCandidate(
-                      NAMESPACE, operationId, "1", "Demo Game", "Seed game"));
-      ReflectionTestUtils.setField(seeder, "initialAdmissionFixtureEnabled", false);
-      seeder.run(new DefaultApplicationArguments(new String[] {}));
-    }
-    return fixture;
-  }
-
-  private void configureSeeder(Fixture fixture) {
-    ReflectionTestUtils.setField(seeder, "initialAdmissionFixtureEnabled", true);
-    ReflectionTestUtils.setField(seeder, "fixtureRunId", fixture.runId());
-    ReflectionTestUtils.setField(seeder, "fixtureComposeProjectName", fixture.composeProjectName());
-    ReflectionTestUtils.setField(
-        seeder, "fixtureCapabilityPath", fixture.capabilityPath().toString());
-    ReflectionTestUtils.setField(seeder, "fixtureReceiptPath", fixture.receiptPath().toString());
-    ReflectionTestUtils.setField(
-        seeder, "gameSessionLeafCertPath", fixture.gameSessionCertificatePath().toString());
-    ReflectionTestUtils.setField(
-        seeder, "worldManagementLeafCertPath", fixture.worldManagementCertificatePath().toString());
-    ReflectionTestUtils.setField(seeder, "workloadNamespace", NAMESPACE);
-    ReflectionTestUtils.setField(seeder, "caCertPath", fixture.caCertificatePath().toString());
-  }
-
-  private String certificateDigest(Path path) throws Exception {
-    try (var input = Files.newInputStream(path)) {
-      X509Certificate certificate =
-          (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
-      return HexFormat.of()
-          .formatHex(MessageDigest.getInstance("SHA-256").digest(certificate.getEncoded()));
-    }
-  }
-
-  private void awaitFixtureCertificatesValid(Path... certificatePaths) throws Exception {
-    long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-    while (true) {
-      try {
-        for (Path path : certificatePaths) {
-          try (var input = Files.newInputStream(path)) {
-            X509Certificate certificate =
-                (X509Certificate)
-                    CertificateFactory.getInstance("X.509").generateCertificate(input);
-            certificate.checkValidity();
-          }
-        }
-        return;
-      } catch (CertificateNotYetValidException exception) {
-        long remainingNanos = deadlineNanos - System.nanoTime();
-        if (remainingNanos <= 0L) {
-          throw new IllegalStateException(
-              "Run-owned fixture certificates did not become valid within 5 seconds", exception);
-        }
-        TimeUnit.NANOSECONDS.sleep(Math.min(TimeUnit.MILLISECONDS.toNanos(10), remainingNanos));
-      }
-    }
-  }
-
-  private AuthoredWorldSourceEvidence changedSourceEvidence(AuthoredWorldSourceEvidence source) {
-    String changedWorldSlug = source.worldSlug() + "-changed";
-    String requestDigest =
-        AuthoredWorldSourceDigest.requestDigest(
-            source.targetNamespace(),
-            source.registrationRequestId(),
-            source.canonicalTenantId(),
-            source.tenantSlug(),
-            changedWorldSlug,
-            source.worldDisplayName());
-    String evidenceDigest =
-        AuthoredWorldSourceDigest.evidenceDigest(
-            source.targetNamespace(),
-            source.registrationRequestId(),
-            source.operationId(),
-            requestDigest,
-            source.canonicalTenantId(),
-            source.tenantSlug(),
-            changedWorldSlug,
-            source.worldDisplayName(),
-            source.sourceGameRowId(),
-            source.sourceGameTenantKey(),
-            source.provenanceKind());
-    return new AuthoredWorldSourceEvidence(
-        source.schemaVersion(),
-        source.targetNamespace(),
-        source.registrationRequestId(),
-        source.operationId(),
-        requestDigest,
-        source.canonicalTenantId(),
-        source.tenantSlug(),
-        changedWorldSlug,
-        source.worldDisplayName(),
-        source.sourceGameRowId(),
-        source.sourceGameTenantKey(),
-        source.provenanceKind(),
-        evidenceDigest);
-  }
-
-  private void runOpenSsl(String... arguments) throws Exception {
-    Process process =
-        new ProcessBuilder(concat(new String[] {"openssl"}, arguments))
-            .redirectErrorStream(true)
-            .start();
-    String output = new String(process.getInputStream().readAllBytes());
-    if (process.waitFor() != 0) {
-      throw new IOException("OpenSSL fixture certificate generation failed: " + output);
-    }
-  }
-
-  private String[] concat(String[] prefix, String[] suffix) {
-    String[] combined = new String[prefix.length + suffix.length];
-    System.arraycopy(prefix, 0, combined, 0, prefix.length);
-    System.arraycopy(suffix, 0, combined, prefix.length, suffix.length);
-    return combined;
-  }
-
-  private record Fixture(
-      UUID operationId,
-      String runId,
-      String composeProjectName,
-      Path capabilityPath,
-      Path receiptPath,
-      Path gameSessionCertificatePath,
-      Path worldManagementCertificatePath,
-      Path caCertificatePath,
-      String gameSessionLeafSha256,
-      String worldManagementLeafSha256,
-      String caCertificateSha256) {}
-
   @Test
   void freshBaselineSeedAndRestartReuseActualOwnerIdentityAndOpaqueBundle() {
     FoundationFixture fixture = foundationFixture(null);
@@ -1475,7 +1402,9 @@ class TestDataSeederIntegrationTest {
               .schemas(schema)
               .defaultSchema(schema)
               .placeholders(Map.of("serviceSchema", schema))
-              .locations("classpath:db/migration");
+              .locations(
+                  "filesystem:"
+                      + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize());
       if (target != null) configuration.target(target);
       configuration.load().migrate();
     }
@@ -1527,6 +1456,29 @@ class TestDataSeederIntegrationTest {
       return dsl.fetchSingle(
               "SELECT xmin::text AS xmin FROM version_asset_artifact WHERE tenant_id = '1'")
           .get("xmin", String.class);
+    }
+  }
+
+  private static final class FixedReadObserver<T> implements io.grpc.stub.StreamObserver<T> {
+    public FixedReadObserver() {}
+
+    public T value;
+    public Status.Code failure;
+    public boolean completed;
+
+    @Override
+    public void onNext(T response) {
+      value = response;
+    }
+
+    @Override
+    public void onError(Throwable error) {
+      failure = Status.fromThrowable(error).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
     }
   }
 }

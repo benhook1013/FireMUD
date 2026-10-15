@@ -124,27 +124,11 @@ public class GameLogicClient
     return callStub().resolveLook(request);
   }
 
-  public LookResult resolveLookForReadiness(
-      String tenantId, String sessionId, String characterId, String gameInstanceId, String roomId) {
-    String canonicalRoomId = GameplayRuntimeRoomIds.requireCanonical(roomId, "roomInstanceId");
-    LookRequest request =
-        LookRequest.newBuilder()
-            .setTenantId(tenantId)
-            .setSessionId(sessionId)
-            .setCharacterId(characterId)
-            .setRoomInstance(
-                RoomInstanceRef.newBuilder()
-                    .setTenantId(tenantId)
-                    .setGameInstanceId(gameInstanceId == null ? "" : gameInstanceId)
-                    .setRoomInstanceId(canonicalRoomId)
-                    .build())
-            .setSessionAttestation(
-                gameplaySessionAttestationService.issueInternalProbeAttestation(
-                    tenantId, gameInstanceId, canonicalRoomId))
-            .build();
+  /** Authenticated connectivity conjunct; downstream readiness is checked separately. */
+  public PingResponse pingForReadiness() {
     return stub()
         .withDeadlineAfter(READINESS_DEADLINE_SECONDS, TimeUnit.SECONDS)
-        .resolveLook(request);
+        .ping(PingRequest.getDefaultInstance());
   }
 
   public SendCommunicationResponse sendCommunication(

@@ -1191,6 +1191,9 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
                 props.put("firemud.postgres.username", postgresUsername);
                 props.put("firemud.postgres.password", postgresPassword);
                 props.put("firemud.database.enabled", "true");
+                props.put(
+                    "game.logic.readiness-url",
+                    "http://localhost:" + gameLogic.httpPort() + "/actuator/health/readiness");
                 props.put("firemud.services.gameDesignService", gameDesignStub.endpoint());
                 props.put("firemud.services.entityManagementService", entityStub.endpoint());
                 if (socialStub != null) {

@@ -181,30 +181,54 @@ class GameLogicClientTest {
   }
 
   @Test
-  void resolveLookForReadinessUsesInternalProbeAttestation() throws Exception {
-    GameLogicClient client = newClient();
-    GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
-        mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
-    when(stub.withDeadlineAfter(2L, TimeUnit.SECONDS)).thenReturn(stub);
-    when(stub.resolveLook(
-            LookRequest.newBuilder()
-                .setTenantId("22")
-                .setSessionId("41")
-                .setCharacterId("123")
-                .setRoomInstance(
-                    RoomInstanceRef.newBuilder()
-                        .setTenantId("22")
-                        .setGameInstanceId("1")
-                        .setRoomInstanceId("R-1021")
-                        .build())
-                .setSessionAttestation("probe-attestation")
-                .build()))
-        .thenReturn(LookResult.newBuilder().build());
+  void readinessPingUsesShortDeadlineWithoutPlayerRequestOrAttestation() throws Exception {
+    var attestationService = mock(GameplaySessionAttestationService.class);
+    var client =
+        new GameLogicClient(
+            new ServiceEndpointsProperties(),
+            new CommonGrpcClientProperties(),
+            mock(GrpcChannelFactory.class),
+            BlockingGrpcStubCustomizer.noop(),
+            attestationService);
+    var stub = mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    var boundedStub = mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(2L, TimeUnit.SECONDS)).thenReturn(boundedStub);
+    var expected =
+        net.firedevops.firemud.gamelogic.v1.PingResponse.newBuilder().setMessage("pong").build();
+    when(boundedStub.ping(net.firedevops.firemud.gamelogic.v1.PingRequest.getDefaultInstance()))
+        .thenReturn(expected);
     setStub(client, stub);
 
-    client.resolveLookForReadiness("22", "41", "123", "1", "R-1021");
+    assertThat(client.pingForReadiness()).isEqualTo(expected);
+    verify(stub).withDeadlineAfter(2L, TimeUnit.SECONDS);
+    verify(boundedStub).ping(net.firedevops.firemud.gamelogic.v1.PingRequest.getDefaultInstance());
+    org.mockito.Mockito.verifyNoMoreInteractions(stub, boundedStub);
+    org.mockito.Mockito.verifyNoInteractions(attestationService);
+  }
 
-    assertThat(true).isTrue();
+  @Test
+  void gameLogicStubRetainsConfiguredWorkloadCredentials() {
+    var credentials = mock(io.grpc.CallCredentials.class);
+    var customizer =
+        new BlockingGrpcStubCustomizer() {
+          @Override
+          public <T extends io.grpc.stub.AbstractStub<T>> T customize(T stub) {
+            return stub.withCallCredentials(credentials);
+          }
+        };
+    var client =
+        new GameLogicClient(
+            new ServiceEndpointsProperties(),
+            new CommonGrpcClientProperties(),
+            mock(GrpcChannelFactory.class),
+            customizer,
+            mock(GameplaySessionAttestationService.class));
+
+    var stub = client.buildStub(mock(io.grpc.ManagedChannel.class));
+
+    assertThat(stub.getCallOptions().getCredentials()).isSameAs(credentials);
+    assertThat(stub.withDeadlineAfter(2L, TimeUnit.SECONDS).getCallOptions().getCredentials())
+        .isSameAs(credentials);
   }
 
   @Test
@@ -630,8 +654,6 @@ class GameLogicClientTest {
     when(attestationService.issueGameplaySessionAttestation(
             "22", "41", "0", "123", "1", "R-2045", "world", "realm", "17", "SHARED"))
         .thenReturn("destination-attestation");
-    when(attestationService.issueInternalProbeAttestation("22", "1", "R-1021"))
-        .thenReturn("probe-attestation");
     return new GameLogicClient(
         new ServiceEndpointsProperties(),
         new CommonGrpcClientProperties(),

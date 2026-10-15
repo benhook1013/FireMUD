@@ -66,7 +66,9 @@ class CanonicalLaunchGrpcAuthWiringTest {
           "game_design.v1.PublishedRealmEntryPolicyService/ListPublishedRealmEntryPolicies",
           RESOLVE_LAUNCH_DESCRIPTOR_METHOD,
           GET_LAUNCH_DESCRIPTOR_METHOD,
-          GET_COMPLETE_LAUNCH_BINDING_METHOD);
+          GET_COMPLETE_LAUNCH_BINDING_METHOD,
+          "gamedesign.v1.AuthoredWorldSourceReadService/ResolveAuthoredWorldSource",
+          "gamedesign.v1.AuthoredWorldVersionStateService/GetAuthoredWorldVersionState");
   private static final String GAME_SESSION_URI = "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String WORLD_MANAGEMENT_URI =
       "spiffe://firemud/ns/test/sa/world-management-service";
@@ -261,6 +263,41 @@ class CanonicalLaunchGrpcAuthWiringTest {
         "Bearer " + jwtUtil.generateToken("player-42", Map.of("role", "player")));
 
     assertAllLaunchHandlersDeny(interceptor(jwtUtil), null, playerJwt);
+  }
+
+  @Test
+  void fixedOwnerReadBypassesAreExactInBothConfigurationProfiles() throws Exception {
+    for (String resource : List.of("application.yml", "application-prod.yml")) {
+      var factory = new org.springframework.beans.factory.config.YamlPropertiesFactoryBean();
+      factory.setResources(
+          new org.springframework.core.io.FileSystemResource("src/main/resources/" + resource));
+      var properties = java.util.Objects.requireNonNull(factory.getObject());
+      var methods =
+          properties.stringPropertyNames().stream()
+              .filter(key -> key.startsWith("firemud.auth.grpc.public-methods["))
+              .map(properties::getProperty)
+              .toList();
+      assertThat(methods).containsExactlyInAnyOrderElementsOf(ALLOWLISTED_METHODS);
+      assertThat(methods)
+          .doesNotContain(
+              UNLISTED_METHOD,
+              "gamedesign.v1.GameDesignService/GetVersionState",
+              "gamedesign.v1.GameDesignService/GetVersionAssetArtifactState");
+    }
+    for (String method : ALLOWLISTED_METHODS.subList(6, 8)) {
+      var result =
+          dispatch(
+              interceptor(),
+              null,
+              new Metadata(),
+              method,
+              GetPublishedReleaseBundleRequest.getDefaultInstance(),
+              GetPublishedReleaseBundleResponse.getDefaultInstance(),
+              GetPublishedReleaseBundleRequest.getDefaultInstance(),
+              (request, observer) -> observer.onCompleted());
+      assertThat(result.dispatched()).isTrue();
+      assertThat(result.closedStatus()).isNull();
+    }
   }
 
   @Test
