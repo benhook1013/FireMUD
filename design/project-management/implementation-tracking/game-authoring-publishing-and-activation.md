@@ -22,6 +22,10 @@ Original World source/version registration and APPLIED input remain controlled f
 
 ### Selected publication settlement transport receiving
 
+The canonical source continuation also preserves the donor's unique asset requiredness, identity, canonical payload, command closed-field, gameplay catalog/reference and realm-policy provenance regressions at their current owners. Terminal-read request and response refusal vectors use the current framed grammar, including explicit UNKNOWN, complete request echo, malformed or substituted terminal rejection and defensive original bytes. These structural and owner-local units use controlled values; they do not establish original authority, production activation or genuine physical handoffs.
+
+Current Account settlement and World terminal-completion requests require the complete v2 operation tag before owner access. The shared decoder preserves historical v1 operation and terminal bytes for history reads; that support does not widen either current transport contract. Both codecs reject the historical profile from direct request construction and protobuf decoding, following the existing rule that retained history does not widen consumers that lack older-profile support.
+
 The selected Account order, held-read and settlement clients, Game Design selection and terminal-read clients, and World terminal-read client release their local monitor before the shared certificate watcher drains an in-flight reload callback. Their close flags still deny reuse; the existing selected-owner lifecycle matrix covers callback contention, idempotent shutdown and closed-client initialization denial.
 
 The canonical Game Design publication terminal client retains the original donor's local transaction exclusion: active owner SQL and synchronization-only contexts fail before transport access. This guard stays on the current closed framed terminal-read API; the alternate donor client, evidence type and service are not reintroduced.

@@ -202,6 +202,9 @@ public final class AccountSelectedPublicationSettlementGrpcCodec {
       originalOperation = originalOperation.clone();
       GameDesignPublicationOperationBinding operation;
       try {
+        // Shared decoding preserves historical v1; this current wire requires complete v2 input.
+        new DraftAuthorizationFenceBinding.FrameReader(originalOperation)
+            .expect(GameDesignPublicationOperationBinding.SCHEMA);
         operation = GameDesignPublicationOperationBinding.fromStored(originalOperation);
       } catch (RuntimeException malformed) {
         throw new IllegalArgumentException(

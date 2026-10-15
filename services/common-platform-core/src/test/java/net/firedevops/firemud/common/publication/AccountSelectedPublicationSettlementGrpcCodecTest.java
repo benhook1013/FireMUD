@@ -43,6 +43,33 @@ class AccountSelectedPublicationSettlementGrpcCodecTest {
   }
 
   @Test
+  void retainsV1HistoryButRejectsItFromCurrentSettlementRequests() throws Exception {
+    var operation = WorldPublicationTerminalTestFixtures.operation();
+    var history = new ByteArrayOutputStream();
+    DraftAuthorizationFenceBinding.frame(history, "game-design-publication-operation/v1");
+    DraftAuthorizationFenceBinding.frame(history, operation.account().canonicalBytes());
+    DraftAuthorizationFenceBinding.frame(history, operation.world().canonicalBytes());
+    byte[] original = history.toByteArray();
+    assertThat(GameDesignPublicationOperationBinding.fromStored(original).canonicalBytes())
+        .containsExactly(original);
+
+    assertThatThrownBy(
+            () -> AccountSelectedPublicationSettlementGrpcCodec.Request.create("test", original))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Complete canonical original publication operation required");
+    var current =
+        AccountSelectedPublicationSettlementGrpcCodec.Request.create(
+            "test", operation.canonicalBytes());
+    var changed =
+        AccountSelectedPublicationSettlementGrpcCodec.toRequest(current).toBuilder()
+            .setOriginalOperation(ByteString.copyFrom(original))
+            .build();
+    assertThatThrownBy(() -> AccountSelectedPublicationSettlementGrpcCodec.fromRequest(changed))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Account publication settlement request is invalid");
+  }
+
+  @Test
   void rejectsMalformedAndNoncanonicalRequestsAndUnknownFields() throws Exception {
     var operation = WorldPublicationTerminalTestFixtures.operation();
     var request =

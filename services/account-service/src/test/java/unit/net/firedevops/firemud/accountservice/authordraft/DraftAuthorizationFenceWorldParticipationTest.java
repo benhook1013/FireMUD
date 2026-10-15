@@ -148,19 +148,30 @@ class DraftAuthorizationFenceWorldParticipationTest {
   }
 
   @Test
-  void disclosureSourceLockPreservesTheExisting512ByteBoundWithoutAliasing() throws Exception {
+  void disclosureSourceLocksRetainCompleteCanonicalKeysThrough2048Utf8Bytes() throws Exception {
     Fixture fixture = new Fixture(false);
     fixture.begin();
-    SourceEvidence boundary = source("x".repeat(499));
-    assertThat(boundary.key().getBytes(java.nio.charset.StandardCharsets.UTF_8)).hasSize(512);
+    SourceEvidence legacy = source("x".repeat(499));
+    SourceEvidence longer = source("x".repeat(500));
+    SourceEvidence boundary = source("x".repeat(2035));
+    SourceEvidence unicodeBoundary = source("😀".repeat(508) + "xxx");
+    assertThat(legacy.key().getBytes(java.nio.charset.StandardCharsets.UTF_8)).hasSize(512);
+    assertThat(longer.key().getBytes(java.nio.charset.StandardCharsets.UTF_8)).hasSize(513);
+    assertThat(boundary.key().getBytes(java.nio.charset.StandardCharsets.UTF_8)).hasSize(2048);
+    assertThat(unicodeBoundary.key().getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        .hasSize(2048);
 
-    fixture.repository.lockDisclosureSources(List.of(boundary));
+    // V76 and the shared SourceEvidence already own this exact byte bound; retain the whole key.
+    for (var source : List.of(legacy, longer, boundary, unicodeBoundary)) {
+      fixture.repository.lockDisclosureSources(List.of(source));
+    }
 
-    assertThat(fixture.lockedKeys).containsExactly(boundary.key());
-    assertThatThrownBy(
-            () -> fixture.repository.lockDisclosureSources(List.of(source("x".repeat(500)))))
+    assertThat(fixture.lockedKeys)
+        .containsExactly(legacy.key(), longer.key(), boundary.key(), unicodeBoundary.key());
+    assertThat(longer.key()).startsWith(legacy.key()).isNotEqualTo(legacy.key());
+    assertThatThrownBy(() -> source("x".repeat(2036)))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("existing Account source-lock bound");
+        .hasMessageContaining("2048 UTF-8 bytes");
   }
 
   private static SourceChange sourceChange(SourceEvidence source) {
