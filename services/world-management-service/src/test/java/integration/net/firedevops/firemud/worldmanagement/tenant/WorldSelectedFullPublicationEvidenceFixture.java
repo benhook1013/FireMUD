@@ -334,13 +334,22 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
       String namespace,
       DraftCommitBinding selectedCommit,
       AuthoredWorldSourceEvidence controlledWorldSource) {
-    return applyGraph(worldDsl, worldTransactions, namespace, selectedCommit, controlledWorldSource, UUID.randomUUID());
+    return applyGraph(
+        worldDsl,
+        worldTransactions,
+        namespace,
+        selectedCommit,
+        controlledWorldSource,
+        UUID.randomUUID());
   }
 
   /** Uses the existing GDS outbox's original World intake identity in composed proof. */
   public static AppliedGraph applyGraph(
-      DSLContext worldDsl, PlatformTransactionManager worldTransactions, String namespace,
-      DraftCommitBinding selectedCommit, AuthoredWorldSourceEvidence controlledWorldSource,
+      DSLContext worldDsl,
+      PlatformTransactionManager worldTransactions,
+      String namespace,
+      DraftCommitBinding selectedCommit,
+      AuthoredWorldSourceEvidence controlledWorldSource,
       UUID originalIntakeRequestId) {
     Objects.requireNonNull(originalIntakeRequestId, "originalIntakeRequestId");
     Objects.requireNonNull(worldDsl, "worldDsl");
@@ -580,10 +589,14 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
 
   /** Explicit test-only composition of existing readers; no runtime registration or authority. */
   public static java.util.List<io.grpc.BindableService> reservationReadEndpoints(
-      DSLContext dsl, PlatformTransactionManager transactions, String namespace,
-      net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient selectionClient,
+      DSLContext dsl,
+      PlatformTransactionManager transactions,
+      String namespace,
+      net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient
+          selectionClient,
       net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient versionClient,
-      net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient accountClient,
+      net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient
+          accountClient,
       net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient sourceClient) {
     var intake = new WorldAuthoredSourceIntakeRepository(dsl);
     var fence = new WorldDesignPublicationFenceRepository(dsl, intake);
@@ -592,21 +605,35 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
     var digest = digestService(dsl);
     var authorization = new WorldSelectedDraftPublicationAuthorizationRepository(dsl);
     var inventory = new WorldSelectedPublicationArtifactInventoryRepository(dsl);
-    var frozen = new WorldCanonicalFrozenTopologyRepository(
-        dsl, new WorldAuthoredGraphSnapshotRepository(dsl), topology, digest);
-    var service = new WorldSelectedDraftPublicationFreezeService(
-        namespace, selectionClient, versionClient, accountClient, intake, fence,
-        new WorldSelectedDraftPublicationCheckpointRepository(fence, applications, topology, digest),
-        authorization, inventory, applications,
-        new WorldSelectedPublicationSelectorCapture(namespace,
-            new WorldCanonicalFrozenTopologyService(frozen, transactions)), transactions);
+    var frozen =
+        new WorldCanonicalFrozenTopologyRepository(
+            dsl, new WorldAuthoredGraphSnapshotRepository(dsl), topology, digest);
+    var service =
+        new WorldSelectedDraftPublicationFreezeService(
+            namespace,
+            selectionClient,
+            versionClient,
+            accountClient,
+            intake,
+            fence,
+            new WorldSelectedDraftPublicationCheckpointRepository(
+                fence, applications, topology, digest),
+            authorization,
+            inventory,
+            applications,
+            new WorldSelectedPublicationSelectorCapture(
+                namespace, new WorldCanonicalFrozenTopologyService(frozen, transactions)),
+            transactions);
     return java.util.List.of(
-        new WorldSelectedDraftPublicationFreezeGrpcService(service,
-            new WorldSelectedPublicationArtifactInventoryReadService(namespace, fence, authorization, inventory), namespace),
+        new WorldSelectedDraftPublicationFreezeGrpcService(
+            service,
+            new WorldSelectedPublicationArtifactInventoryReadService(
+                namespace, fence, authorization, inventory),
+            namespace),
         new WorldPublishedStartLocationReadGrpcService(
             new WorldPublishedStartLocationRepository(dsl, frozen, applications), namespace),
         new WorldAuthoredSourceIntakeGrpcService(
-            new WorldAuthoredSourceIntakeService(sourceClient, intake, transactions, namespace), namespace));
+            new WorldAuthoredSourceIntakeService(sourceClient, intake, transactions, namespace),
+            namespace));
   }
-
 }

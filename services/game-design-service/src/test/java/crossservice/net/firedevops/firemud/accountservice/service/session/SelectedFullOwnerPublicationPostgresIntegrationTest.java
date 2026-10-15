@@ -76,8 +76,6 @@ import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceipt;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftGameLogicReceiptRepository;
-import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationOwner;
-import net.firedevops.firemud.gamedesign.publication.SelectedDraftTemplateWorldSourceAssociation;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishedReleaseBundleRepository;
@@ -166,16 +164,48 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
   static final PostgreSQLContainer<?> GAME_LOGIC_POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
-  private static final org.testcontainers.containers.Network ACCOUNT_NETWORK = org.testcontainers.containers.Network.newNetwork();
-  @Container static final PostgreSQLContainer<?> ACCOUNT_POSTGRES = new PostgreSQLContainer<>(TestContainerImages.postgres());
-  @Container static final org.testcontainers.containers.GenericContainer<?> ACCOUNT_REDIS =
+  private static final org.testcontainers.containers.Network ACCOUNT_NETWORK =
+      org.testcontainers.containers.Network.newNetwork();
+
+  @Container
+  static final PostgreSQLContainer<?> ACCOUNT_POSTGRES =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Container
+  static final org.testcontainers.containers.GenericContainer<?> ACCOUNT_REDIS =
       new org.testcontainers.containers.GenericContainer<>(TestContainerImages.redis())
-          .withNetwork(ACCOUNT_NETWORK).withNetworkAliases("selected-reservation-primary").withExposedPorts(6379)
-          .withCommand("redis-server", "--bind", "0.0.0.0", "--protected-mode", "no", "--appendonly", "yes", "--appendfsync", "always");
-  @Container static final org.testcontainers.containers.GenericContainer<?> ACCOUNT_REPLICA =
+          .withNetwork(ACCOUNT_NETWORK)
+          .withNetworkAliases("selected-reservation-primary")
+          .withExposedPorts(6379)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always");
+
+  @Container
+  static final org.testcontainers.containers.GenericContainer<?> ACCOUNT_REPLICA =
       new org.testcontainers.containers.GenericContainer<>(TestContainerImages.redis())
-          .withNetwork(ACCOUNT_NETWORK).dependsOn(ACCOUNT_REDIS)
-          .withCommand("redis-server", "--bind", "0.0.0.0", "--protected-mode", "no", "--appendonly", "yes", "--appendfsync", "always", "--replicaof", "selected-reservation-primary", "6379");
+          .withNetwork(ACCOUNT_NETWORK)
+          .dependsOn(ACCOUNT_REDIS)
+          .withCommand(
+              "redis-server",
+              "--bind",
+              "0.0.0.0",
+              "--protected-mode",
+              "no",
+              "--appendonly",
+              "yes",
+              "--appendfsync",
+              "always",
+              "--replicaof",
+              "selected-reservation-primary",
+              "6379");
 
   @TempDir Path temporary;
 
@@ -193,11 +223,19 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     var worldSource = registerControlledWorldSource(gds, draft.target());
     DraftCommitBinding commit = selectedCommit(gds, draft.target());
     applyGameDesignCommit(gds, commit);
-    var delivery = new net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository(gds.dsl())
-        .read(worldSource.operationId()).orElseThrow();
+    var delivery =
+        new net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository(
+                gds.dsl())
+            .read(worldSource.operationId())
+            .orElseThrow();
     var worldGraph =
         WorldSelectedFullPublicationEvidenceFixture.applyGraph(
-            world.dsl(), world.transactions(), NAMESPACE, commit, worldSource, delivery.request().intakeRequestId());
+            world.dsl(),
+            world.transactions(),
+            NAMESPACE,
+            commit,
+            worldSource,
+            delivery.request().intakeRequestId());
     completeGameDesignCommit(gds, commit, worldGraph.applied());
 
     String publishRequestId = "selected-full-" + UUID.randomUUID();
@@ -219,494 +257,558 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                             gds.dsl(), new DraftCommitCoordinatorRepository(gds.dsl()))
                         .reserve(intent)
                         .selection());
-    try (var accountFixture = new AccountControlUiOriginalOrderFixture(
-        ACCOUNT_POSTGRES.getJdbcUrl(), ACCOUNT_POSTGRES.getUsername(), ACCOUNT_POSTGRES.getPassword(),
-        ACCOUNT_REDIS.getHost(), ACCOUNT_REDIS.getMappedPort(6379), temporary.resolve("account-original"), draft.target().canonicalTenantId())) {
-    var issuedCreator = accountFixture.issueCreator();
-    var accountSources = issuedCreator.sources();
-    var publicationAuthorization = new AccountPublicationAuthorizationService(issuedCreator.actors(), accountSources.fences,
-        new AccountPublicationAuthorizationRepository(accountSources.dsl)).authorize(
-            issuedCreator.compact(), AuthoredDraftPublishSelectionBinding.fromStored(selection.canonicalJson(), selection.digest()),
-            issuedCreator.environment());
-    var worldOwners =
-        WorldSelectedFullPublicationEvidenceFixture.applyFreezeAndCapture(
-            world.dsl(),
-            world.transactions(),
-            NAMESPACE,
-            AuthoredDraftPublishSelectionBinding.fromStored(
-                selection.canonicalJson(), selection.digest()),
-            worldGraph,
-            ignored -> publicationAuthorization);
-    assertThat(worldOwners.selectedWorldDigest().digestSchemaVersion()).isEqualTo(4);
-    assertThat(worldOwners.appliedResultBytes()).isNotEmpty();
-    assertThat(worldOwners.graphBytes()).isNotEmpty();
-    assertThat(worldOwners.inventoryEvidence().freezeEvidence())
-        .isEqualTo(worldOwners.freezeEvidence());
+    try (var accountFixture =
+        new AccountControlUiOriginalOrderFixture(
+            ACCOUNT_POSTGRES.getJdbcUrl(),
+            ACCOUNT_POSTGRES.getUsername(),
+            ACCOUNT_POSTGRES.getPassword(),
+            ACCOUNT_REDIS.getHost(),
+            ACCOUNT_REDIS.getMappedPort(6379),
+            temporary.resolve("account-original"),
+            draft.target().canonicalTenantId())) {
+      var issuedCreator = accountFixture.issueCreator();
+      var accountSources = issuedCreator.sources();
+      var publicationAuthorization =
+          new AccountPublicationAuthorizationService(
+                  issuedCreator.actors(),
+                  accountSources.fences,
+                  new AccountPublicationAuthorizationRepository(accountSources.dsl))
+              .authorize(
+                  issuedCreator.compact(),
+                  AuthoredDraftPublishSelectionBinding.fromStored(
+                      selection.canonicalJson(), selection.digest()),
+                  issuedCreator.environment());
+      var worldOwners =
+          WorldSelectedFullPublicationEvidenceFixture.applyFreezeAndCapture(
+              world.dsl(),
+              world.transactions(),
+              NAMESPACE,
+              AuthoredDraftPublishSelectionBinding.fromStored(
+                  selection.canonicalJson(), selection.digest()),
+              worldGraph,
+              ignored -> publicationAuthorization);
+      assertThat(worldOwners.selectedWorldDigest().digestSchemaVersion()).isEqualTo(4);
+      assertThat(worldOwners.appliedResultBytes()).isNotEmpty();
+      assertThat(worldOwners.graphBytes()).isNotEmpty();
+      assertThat(worldOwners.inventoryEvidence().freezeEvidence())
+          .isEqualTo(worldOwners.freezeEvidence());
 
-    var sourceScopeActor = UUID.randomUUID();
-    var entityAuthorization =
-        selectedOwnerAuthorization(gds, selection, Owner.ENTITY_MANAGEMENT, sourceScopeActor);
-    var entityWorldRead =
-        SelectedOwnerWorldInventoryReadEvidence.create(
-            NAMESPACE, entityAuthorization, worldOwners.freezeEvidence());
-    var entityInputs =
-        new SelectedOwnerEmptySourceInputs(
-            entityAuthorization,
-            new SelectedOwnerWorldInventoryReadEvidence(
-                entityWorldRead, worldOwners.inventoryEvidence()));
-    var entityRepository = new EntityEmptySelectedSourceIntakeRepository(entity.dsl());
-    var entityReceipt =
-        entityRepository.retainFresh(
-            entityInputs,
-            EntityEmptySelectedSourceIntakeReceipt.requestDigest(
-                NAMESPACE, entityAuthorization, worldOwners.freezeEvidence()));
-    assertThat(
-            entityRepository
-                .read(entityReceipt.targetNamespace(), entityReceipt.intakeRequestId())
-                .orElseThrow()
-                .canonicalBytes())
-        .containsExactly(entityReceipt.canonicalBytes());
-    assertThat(
-            entityRepository
-                .retainFresh(
-                    entityInputs,
-                    EntityEmptySelectedSourceIntakeReceipt.requestDigest(
-                        NAMESPACE, entityAuthorization, worldOwners.freezeEvidence()))
-                .canonicalBytes())
-        .containsExactly(entityReceipt.canonicalBytes());
+      var sourceScopeActor = UUID.randomUUID();
+      var entityAuthorization =
+          selectedOwnerAuthorization(gds, selection, Owner.ENTITY_MANAGEMENT, sourceScopeActor);
+      var entityWorldRead =
+          SelectedOwnerWorldInventoryReadEvidence.create(
+              NAMESPACE, entityAuthorization, worldOwners.freezeEvidence());
+      var entityInputs =
+          new SelectedOwnerEmptySourceInputs(
+              entityAuthorization,
+              new SelectedOwnerWorldInventoryReadEvidence(
+                  entityWorldRead, worldOwners.inventoryEvidence()));
+      var entityRepository = new EntityEmptySelectedSourceIntakeRepository(entity.dsl());
+      var entityReceipt =
+          entityRepository.retainFresh(
+              entityInputs,
+              EntityEmptySelectedSourceIntakeReceipt.requestDigest(
+                  NAMESPACE, entityAuthorization, worldOwners.freezeEvidence()));
+      assertThat(
+              entityRepository
+                  .read(entityReceipt.targetNamespace(), entityReceipt.intakeRequestId())
+                  .orElseThrow()
+                  .canonicalBytes())
+          .containsExactly(entityReceipt.canonicalBytes());
+      assertThat(
+              entityRepository
+                  .retainFresh(
+                      entityInputs,
+                      EntityEmptySelectedSourceIntakeReceipt.requestDigest(
+                          NAMESPACE, entityAuthorization, worldOwners.freezeEvidence()))
+                  .canonicalBytes())
+          .containsExactly(entityReceipt.canonicalBytes());
 
-    var automationAuthorization =
-        selectedOwnerAuthorization(gds, selection, Owner.AUTOMATION_SCRIPTING, sourceScopeActor);
-    var automationWorldRead =
-        SelectedOwnerWorldInventoryReadEvidence.create(
-            NAMESPACE, automationAuthorization, worldOwners.freezeEvidence());
-    var automationInputs =
-        new SelectedOwnerEmptySourceInputs(
-            automationAuthorization,
-            new SelectedOwnerWorldInventoryReadEvidence(
-                automationWorldRead, worldOwners.inventoryEvidence()));
-    var automationRepository = new AutomationEmptySelectedSourceIntakeRepository(automation.dsl());
-    var automationReceipt =
-        automationRepository.retainFresh(
-            automationInputs,
-            net.firedevops.firemud.common.automation.sourceintake
-                .AutomationEmptySelectedSourceIntakeReceipt.requestDigest(
-                NAMESPACE, automationAuthorization, worldOwners.freezeEvidence()));
-    assertThat(
-            automationRepository
-                .read(automationReceipt.targetNamespace(), automationReceipt.intakeRequestId())
-                .orElseThrow()
-                .canonicalBytes())
-        .containsExactly(automationReceipt.canonicalBytes());
-    assertThat(
-            automationRepository
-                .retainFresh(
-                    automationInputs,
-                    net.firedevops.firemud.common.automation.sourceintake
-                        .AutomationEmptySelectedSourceIntakeReceipt.requestDigest(
-                        NAMESPACE, automationAuthorization, worldOwners.freezeEvidence()))
-                .canonicalBytes())
-        .containsExactly(automationReceipt.canonicalBytes());
+      var automationAuthorization =
+          selectedOwnerAuthorization(gds, selection, Owner.AUTOMATION_SCRIPTING, sourceScopeActor);
+      var automationWorldRead =
+          SelectedOwnerWorldInventoryReadEvidence.create(
+              NAMESPACE, automationAuthorization, worldOwners.freezeEvidence());
+      var automationInputs =
+          new SelectedOwnerEmptySourceInputs(
+              automationAuthorization,
+              new SelectedOwnerWorldInventoryReadEvidence(
+                  automationWorldRead, worldOwners.inventoryEvidence()));
+      var automationRepository =
+          new AutomationEmptySelectedSourceIntakeRepository(automation.dsl());
+      var automationReceipt =
+          automationRepository.retainFresh(
+              automationInputs,
+              net.firedevops.firemud.common.automation.sourceintake
+                  .AutomationEmptySelectedSourceIntakeReceipt.requestDigest(
+                  NAMESPACE, automationAuthorization, worldOwners.freezeEvidence()));
+      assertThat(
+              automationRepository
+                  .read(automationReceipt.targetNamespace(), automationReceipt.intakeRequestId())
+                  .orElseThrow()
+                  .canonicalBytes())
+          .containsExactly(automationReceipt.canonicalBytes());
+      assertThat(
+              automationRepository
+                  .retainFresh(
+                      automationInputs,
+                      net.firedevops.firemud.common.automation.sourceintake
+                          .AutomationEmptySelectedSourceIntakeReceipt.requestDigest(
+                          NAMESPACE, automationAuthorization, worldOwners.freezeEvidence()))
+                  .canonicalBytes())
+          .containsExactly(automationReceipt.canonicalBytes());
 
-    var synchronizedSources =
-        new GameDesignSourceRepository(gds.dsl())
-            .readSynchronized(draft.target(), commit.commitId())
-            .orElseThrow();
-    var gameplaySnapshot = synchronizedSources.gameplayEvidence().orElseThrow();
-    var gameplaySource = new GameplayRuleSelectedSource(gameplaySnapshot.canonicalJson());
-    var glAuthorization =
-        new GameLogicIntakeAuthorizationBinding(
-            UUID.randomUUID(),
-            UUID.randomUUID(),
-            UUID.randomUUID(),
-            sourceScopeActor,
-            gameplaySource,
-            controlledAccountSources(sourceScopeActor, draft.target().canonicalTenantId()));
-    var glOperation = new GameLogicGameplayRuleIntakeOperation(NAMESPACE, glAuthorization);
-    var glTerminal =
-        GameLogicGameplayRuleIntakeTerminal.retained(
-            glOperation,
-            gameplaySource.canonicalBytes(),
-            gameplaySource.manifest().canonicalJson().getBytes(StandardCharsets.UTF_8));
-    var glOwner = new GameLogicGameplayRuleIntakeRepository(gameLogic.dsl());
-    gameLogic
-        .write()
-        .execute(
-            ignored -> {
-              glOwner.lockOperation(glAuthorization.operationId());
-              glOwner.insertTerminal(glTerminal);
-              return null;
-            });
-    var committedGlTerminal = glOwner.findTerminal(glAuthorization.operationId()).orElseThrow();
-    assertThat(committedGlTerminal.canonicalBytes()).containsExactly(glTerminal.canonicalBytes());
+      var synchronizedSources =
+          new GameDesignSourceRepository(gds.dsl())
+              .readSynchronized(draft.target(), commit.commitId())
+              .orElseThrow();
+      var gameplaySnapshot = synchronizedSources.gameplayEvidence().orElseThrow();
+      var gameplaySource = new GameplayRuleSelectedSource(gameplaySnapshot.canonicalJson());
+      var glAuthorization =
+          new GameLogicIntakeAuthorizationBinding(
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              UUID.randomUUID(),
+              sourceScopeActor,
+              gameplaySource,
+              controlledAccountSources(sourceScopeActor, draft.target().canonicalTenantId()));
+      var glOperation = new GameLogicGameplayRuleIntakeOperation(NAMESPACE, glAuthorization);
+      var glTerminal =
+          GameLogicGameplayRuleIntakeTerminal.retained(
+              glOperation,
+              gameplaySource.canonicalBytes(),
+              gameplaySource.manifest().canonicalJson().getBytes(StandardCharsets.UTF_8));
+      var glOwner = new GameLogicGameplayRuleIntakeRepository(gameLogic.dsl());
+      gameLogic
+          .write()
+          .execute(
+              ignored -> {
+                glOwner.lockOperation(glAuthorization.operationId());
+                glOwner.insertTerminal(glTerminal);
+                return null;
+              });
+      var committedGlTerminal = glOwner.findTerminal(glAuthorization.operationId()).orElseThrow();
+      assertThat(committedGlTerminal.canonicalBytes()).containsExactly(glTerminal.canonicalBytes());
 
-    var selectedReceiptRepository = new SelectedDraftGameLogicReceiptRepository(gds.dsl());
-    var glReceiptCandidate =
-        new SelectedDraftGameLogicReceipt(
-            selection,
-            glAuthorization,
-            new AccountGameLogicIntakeSettlementEvidence(committedGlTerminal));
-    var glReceipt =
-        gds.write().execute(ignored -> selectedReceiptRepository.retain(glReceiptCandidate));
-    assertThat(
-            selectedReceiptRepository
-                .readForPublication(
-                    PublicationDigestRequestBinding.full(
-                        draft.target().canonicalTenantId().toString(),
-                        Long.toString(draft.version().getId()),
-                        publishRequestId))
-                .orElseThrow()
-                .receipt()
-                .canonicalBytes())
-        .containsExactly(glReceipt.receipt().canonicalBytes());
+      var selectedReceiptRepository = new SelectedDraftGameLogicReceiptRepository(gds.dsl());
+      var glReceiptCandidate =
+          new SelectedDraftGameLogicReceipt(
+              selection,
+              glAuthorization,
+              new AccountGameLogicIntakeSettlementEvidence(committedGlTerminal));
+      var glReceipt =
+          gds.write().execute(ignored -> selectedReceiptRepository.retain(glReceiptCandidate));
+      assertThat(
+              selectedReceiptRepository
+                  .readForPublication(
+                      PublicationDigestRequestBinding.full(
+                          draft.target().canonicalTenantId().toString(),
+                          Long.toString(draft.version().getId()),
+                          publishRequestId))
+                  .orElseThrow()
+                  .receipt()
+                  .canonicalBytes())
+          .containsExactly(glReceipt.receipt().canonicalBytes());
 
-    var selectionBinding =
-        AuthoredDraftPublishSelectionBinding.fromStored(
-            selection.canonicalJson(), selection.digest());
-    var accountBinding = worldOwners.accountBinding();
+      var selectionBinding =
+          AuthoredDraftPublishSelectionBinding.fromStored(
+              selection.canonicalJson(), selection.digest());
+      var accountBinding = worldOwners.accountBinding();
 
-    Long gdsBundleBefore =
-        gds.dsl()
-            .fetchSingle(
-                "SELECT count(*) FROM published_release_bundle WHERE tenant_id = ? AND version_id = ?",
-                draft.version().getTenantId(),
-                draft.version().getId())
-            .get(0, Long.class);
-    assertThat(gdsBundleBefore).isZero();
+      Long gdsBundleBefore =
+          gds.dsl()
+              .fetchSingle(
+                  "SELECT count(*) FROM published_release_bundle WHERE tenant_id = ? AND version_id = ?",
+                  draft.version().getTenantId(),
+                  draft.version().getId())
+              .get(0, Long.class);
+      assertThat(gdsBundleBefore).isZero();
 
-    ProofPki pki = new ProofPki(temporary.resolve("selected-full-pki"));
-    Server accountServer = null;
-    Server worldServer = null;
-    Server entityServer = null;
-    Server automationServer = null;
-    Server gameLogicServer = null;
-    // This case recovers the exact already-committed World freeze. Mutable owner reads must not repeat.
-    var replaySelection = org.mockito.Mockito.mock(net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient.class);
-    var replayVersion = org.mockito.Mockito.mock(net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient.class);
-    var replayAccount = org.mockito.Mockito.mock(net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient.class);
-    var replaySource = org.mockito.Mockito.mock(net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient.class);
-    try {
-      accountServer = ownerServer(pki, "account-service", new AccountPublicationAuthorizationReadGrpcService(
-          new AccountPublicationAuthorizationReadService(new AccountPublicationAuthorizationRepository(accountSources.dsl),
-              accountSources.manager, NAMESPACE), NAMESPACE));
-      var worldReaders = WorldSelectedFullPublicationEvidenceFixture.reservationReadEndpoints(
-          world.dsl(), world.transactions(), NAMESPACE, replaySelection, replayVersion, replayAccount, replaySource);
-      worldServer = ownerServer(pki, "world-management-service", worldReaders.toArray(io.grpc.BindableService[]::new));
-      entityServer =
-          ownerServer(
-              pki,
-              "entity-management-service",
-              new EntitySelectedEmptyPublicationDigestGrpcReceiver(
-                  new EntitySelectedEmptyPublicationDigestService(NAMESPACE, entityRepository),
-                  NAMESPACE,
-                  new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
-      automationServer =
-          ownerServer(
-              pki,
-              "automation-scripting-service",
-              new AutomationSelectedEmptyPublicationDigestGrpcReceiver(
-                  new AutomationSelectedEmptyPublicationDigestService(
-                      NAMESPACE, automationRepository),
-                  NAMESPACE,
-                  new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
-      gameLogicServer =
-          ownerServer(
-              pki,
-              "game-logic-service",
-              new GameLogicGrpcService(
+      ProofPki pki = new ProofPki(temporary.resolve("selected-full-pki"));
+      Server accountServer = null;
+      Server worldServer = null;
+      Server entityServer = null;
+      Server automationServer = null;
+      Server gameLogicServer = null;
+      // This case recovers the exact already-committed World freeze. Mutable owner reads must not
+      // repeat.
+      var replaySelection =
+          org.mockito.Mockito.mock(
+              net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient
+                  .class);
+      var replayVersion =
+          org.mockito.Mockito.mock(
+              net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient.class);
+      var replayAccount =
+          org.mockito.Mockito.mock(
+              net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient
+                  .class);
+      var replaySource =
+          org.mockito.Mockito.mock(
+              net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient.class);
+      try {
+        accountServer =
+            ownerServer(
+                pki,
+                "account-service",
+                new AccountPublicationAuthorizationReadGrpcService(
+                    new AccountPublicationAuthorizationReadService(
+                        new AccountPublicationAuthorizationRepository(accountSources.dsl),
+                        accountSources.manager,
+                        NAMESPACE),
+                    NAMESPACE));
+        var worldReaders =
+            WorldSelectedFullPublicationEvidenceFixture.reservationReadEndpoints(
+                world.dsl(),
+                world.transactions(),
+                NAMESPACE,
+                replaySelection,
+                replayVersion,
+                replayAccount,
+                replaySource);
+        worldServer =
+            ownerServer(
+                pki,
+                "world-management-service",
+                worldReaders.toArray(io.grpc.BindableService[]::new));
+        entityServer =
+            ownerServer(
+                pki,
+                "entity-management-service",
+                new EntitySelectedEmptyPublicationDigestGrpcReceiver(
+                    new EntitySelectedEmptyPublicationDigestService(NAMESPACE, entityRepository),
+                    NAMESPACE,
+                    new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
+        automationServer =
+            ownerServer(
+                pki,
+                "automation-scripting-service",
+                new AutomationSelectedEmptyPublicationDigestGrpcReceiver(
+                    new AutomationSelectedEmptyPublicationDigestService(
+                        NAMESPACE, automationRepository),
+                    NAMESPACE,
+                    new io.micrometer.core.instrument.simple.SimpleMeterRegistry()));
+        gameLogicServer =
+            ownerServer(
+                pki,
+                "game-logic-service",
+                new GameLogicGrpcService(
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    new GameLogicDraftDesignDigestServiceImpl(
+                        new GameLogicPublicationSourceReadService(glOwner, NAMESPACE)),
+                    null,
+                    new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                    new net.firedevops.firemud.common.security.PublicationReadGuard(NAMESPACE)));
+
+        var endpoints = new ServiceEndpointsProperties();
+        endpoints.setAccountService(loopback(accountServer));
+        endpoints.setWorldManagementService(loopback(worldServer));
+        endpoints.setEntityManagementService(loopback(entityServer));
+        endpoints.setAutomationScriptingService(loopback(automationServer));
+        endpoints.setGameLogicService(loopback(gameLogicServer));
+        var channelFactory = new GrpcChannelFactory();
+        try (var accountClient =
+                new net.firedevops.firemud.common.publication
+                    .AccountPublicationAuthorizationReadClient(
+                    endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
+            var freezeClient =
+                new net.firedevops.firemud.common.publication
+                    .WorldSelectedDraftPublicationFreezeClient(
+                    endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
+            var inventoryClient =
+                new net.firedevops.firemud.common.publication
+                    .WorldSelectedPublicationArtifactInventoryClient(
+                    endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
+            var selectorClient =
+                new net.firedevops.firemud.common.world.WorldPublishedStartLocationClient(
+                    endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
+            var sourceClient =
+                new net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient(
+                    endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
+            var entityClient =
+                new ReadyEntityManagementClient(
+                    endpoints, pki.client("game-design-service"), channelFactory);
+            var automationClient =
+                new ReadyAutomationScriptingClient(
+                    endpoints, pki.client("game-design-service"), channelFactory);
+            var gameLogicClient =
+                new ReadyGameLogicClient(
+                    endpoints, pki.client("game-design-service"), channelFactory)) {
+          accountClient.init();
+          freezeClient.init();
+          inventoryClient.init();
+          selectorClient.init();
+          sourceClient.init();
+          var admission =
+              new net.firedevops.firemud.gamedesign.publication
+                  .SelectedDraftPublicationAdmissionService(
+                  gds.dsl(),
+                  gds.transactions(),
+                  accountClient,
+                  freezeClient,
+                  inventoryClient,
+                  selectorClient,
+                  sourceClient,
+                  NAMESPACE);
+          var selectedOwnerReservation = admission.admitAndReserve(intent, accountBinding);
+          assertThat(selectedOwnerReservation.selection().canonicalBytes())
+              .containsExactly(selectionBinding.canonicalBytes());
+          var reservationReplay = admission.admitAndReserve(intent, accountBinding);
+          assertThat(reservationReplay.operation().canonicalBytes())
+              .containsExactly(selectedOwnerReservation.operation().canonicalBytes());
+          org.mockito.Mockito.verifyNoInteractions(
+              replaySelection, replayVersion, replayAccount, replaySource);
+          ReflectionTestUtils.setField(gameLogicClient, "workloadNamespace", NAMESPACE);
+          entityClient.connect();
+          automationClient.connect();
+          gameLogicClient.connect();
+          var gate =
+              new PublishGateServiceImpl(
+                  null,
+                  null,
+                  entityClient,
+                  gameLogicClient,
+                  automationClient,
+                  gds.dsl(),
+                  gds.transactions(),
+                  NAMESPACE);
+          VersionDto versionDto = versionDto(draft.version());
+          var publicationRequest =
+              PublicationDigestRequestBinding.full(
+                  draft.target().canonicalTenantId().toString(),
+                  Long.toString(draft.version().getId()),
+                  publishRequestId);
+          var participantDigests =
+              gate.collectSelectedFullVersionParticipantDigests(
+                  versionDto, publicationRequest, publicationRequest.derivedWorkflowIdentity());
+          assertThat(participantDigests)
+              .extracting(PublishParticipantDigestDto::participantKey)
+              .containsExactly(
+                  "WORLD_MANAGEMENT",
+                  "ENTITY_MANAGEMENT",
+                  "GAME_LOGIC",
+                  "AUTOMATION_SCRIPTING",
+                  "GAME_DESIGN_CONTROL_PLANE");
+          assertThat(participantDigests)
+              .extracting(PublishParticipantDigestDto::digestSchemaVersion)
+              .containsExactly(4, 3, 1, 6, 2);
+          assertThat(participantDigests)
+              .filteredOn(digest -> "WORLD_MANAGEMENT".equals(digest.participantKey()))
+              .singleElement()
+              .satisfies(
+                  digest ->
+                      assertThat(digest.contentDigest())
+                          .isEqualTo(worldOwners.selectedWorldDigest().contentDigest()));
+          assertThat(participantDigests)
+              .filteredOn(digest -> "GAME_LOGIC".equals(digest.participantKey()))
+              .singleElement()
+              .satisfies(digest -> assertThat(digest.abilitySchemaDigest()).startsWith("sha256:"));
+          gate.assertSelectedGatePassed(versionDto, participantDigests);
+
+          var altered = new ArrayList<>(participantDigests);
+          int automationIndex = 3;
+          var validAutomation = altered.get(automationIndex);
+          altered.set(
+              automationIndex,
+              new PublishParticipantDigestDto(
+                  validAutomation.participantKey(),
+                  validAutomation.scopeValue(),
+                  validAutomation.baseVersionId(),
+                  validAutomation.appliedCommitId(),
+                  validAutomation.contentDigest(),
+                  5,
+                  validAutomation.abilitySchemaDigest(),
+                  validAutomation.errorCode(),
+                  validAutomation.errorMessage()));
+          gate.assertSelectedGatePassed(versionDto, participantDigests);
+          assertThatThrownBy(() -> gate.assertSelectedGatePassed(versionDto, altered))
+              .isInstanceOf(RuntimeException.class);
+
+          var releaseService =
+              new PublishedReleaseBundleServiceImpl(
+                  new PublishedReleaseBundleRepository(gds.dsl()),
+                  new VersionRepository(gds.dsl()),
+                  new ObjectMapper());
+          var controlledEmptyManifest = controlledEmptyManifest();
+          var artifactRepository =
+              new net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository(
+                  gds.dsl());
+          var versions = new VersionRepository(gds.dsl());
+          var artifactService =
+              new net.firedevops.firemud.gamedesign.service.impl.VersionAssetArtifactServiceImpl(
+                  artifactRepository,
+                  null,
+                  versions,
                   null,
                   null,
                   null,
                   null,
                   null,
-                  null,
-                  new GameLogicDraftDesignDigestServiceImpl(
-                      new GameLogicPublicationSourceReadService(glOwner, NAMESPACE)),
-                  null,
-                  new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
-                  new net.firedevops.firemud.common.security.PublicationReadGuard(NAMESPACE)));
+                  new ObjectMapper());
+          var assetPublication =
+              new net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository(
+                  gds.dsl());
+          var exportSnapshot =
+              gds.write()
+                  .execute(
+                      ignored ->
+                          assetPublication.freezeOrReadSnapshot(
+                              versionDto.tenantId(), versionDto.versionNumber()));
+          assertThat(exportSnapshot.items()).isEmpty();
+          gds.write()
+              .execute(
+                  ignored ->
+                      artifactService.stageExport(
+                          versionDto.tenantId(),
+                          versionDto.id(),
+                          versionDto.versionNumber(),
+                          publicationRequest.derivedWorkflowIdentity()));
+          var candidateService =
+              new net.firedevops.firemud.gamedesign.service.impl
+                  .VersionAssetExportCandidateServiceImpl(
+                  versions,
+                  new GameRepository(gds.dsl()),
+                  new net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository(
+                      gds.dsl()),
+                  artifactRepository,
+                  assetPublication,
+                  gds.transactions(),
+                  new ObjectMapper());
+          // Controlled delivery origin and manifest metadata; no object-store or public delivery
+          // proof.
+          var candidate =
+              new net.firedevops.firemud.gamedesign.service.FrozenAssetExportCandidate(
+                  controlledEmptyManifest, "https://controlled.invalid/assets");
+          assertThat(
+                  candidateService.recordExportCandidate(
+                      versionDto.tenantId(), versionDto.versionNumber(), candidate))
+              .isEqualTo(candidate);
+          assertThat(
+                  candidateService.readExportCandidate(
+                      versionDto.tenantId(), versionDto.versionNumber()))
+              .isEqualTo(candidate);
+          assertThatThrownBy(
+                  () ->
+                      gds.write()
+                          .execute(
+                              ignored ->
+                                  releaseService.createFullVersionBundle(
+                                      versionDto,
+                                      publicationRequest.derivedWorkflowIdentity(),
+                                      controlledEmptyManifest,
+                                      "controlled-generation-input",
+                                      altered,
+                                      worldOwners.startLocationEvidence())))
+              .isInstanceOf(RuntimeException.class);
+          assertThat(
+                  gds.dsl()
+                      .fetchSingle(
+                          "SELECT count(*) FROM published_release_bundle WHERE tenant_id = ? AND version_id = ?",
+                          draft.version().getTenantId(),
+                          draft.version().getId())
+                      .get(0, Long.class))
+              .isZero();
 
-      var endpoints = new ServiceEndpointsProperties();
-      endpoints.setAccountService(loopback(accountServer));
-      endpoints.setWorldManagementService(loopback(worldServer));
-      endpoints.setEntityManagementService(loopback(entityServer));
-      endpoints.setAutomationScriptingService(loopback(automationServer));
-      endpoints.setGameLogicService(loopback(gameLogicServer));
-      var channelFactory = new GrpcChannelFactory();
-      try (var accountClient = new net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient(
-              endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
-          var freezeClient = new net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient(
-              endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
-          var inventoryClient = new net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient(
-              endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
-          var selectorClient = new net.firedevops.firemud.common.world.WorldPublishedStartLocationClient(
-              endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
-          var sourceClient = new net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient(
-              endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
-          var entityClient =
-              new ReadyEntityManagementClient(
-                  endpoints, pki.client("game-design-service"), channelFactory);
-          var automationClient =
-              new ReadyAutomationScriptingClient(
-                  endpoints, pki.client("game-design-service"), channelFactory);
-          var gameLogicClient =
-              new ReadyGameLogicClient(
-                  endpoints, pki.client("game-design-service"), channelFactory)) {
-        accountClient.init();
-        freezeClient.init();
-        inventoryClient.init();
-        selectorClient.init();
-        sourceClient.init();
-        var admission = new net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationAdmissionService(
-            gds.dsl(), gds.transactions(), accountClient, freezeClient, inventoryClient, selectorClient, sourceClient, NAMESPACE);
-        var selectedOwnerReservation = admission.admitAndReserve(intent, accountBinding);
-        assertThat(selectedOwnerReservation.selection().canonicalBytes()).containsExactly(selectionBinding.canonicalBytes());
-        var reservationReplay = admission.admitAndReserve(intent, accountBinding);
-        assertThat(reservationReplay.operation().canonicalBytes()).containsExactly(selectedOwnerReservation.operation().canonicalBytes());
-        org.mockito.Mockito.verifyNoInteractions(replaySelection, replayVersion, replayAccount, replaySource);
-        ReflectionTestUtils.setField(gameLogicClient, "workloadNamespace", NAMESPACE);
-        entityClient.connect();
-        automationClient.connect();
-        gameLogicClient.connect();
-        var gate =
-            new PublishGateServiceImpl(
-                null,
-                null,
-                entityClient,
-                gameLogicClient,
-                automationClient,
-                gds.dsl(),
-                gds.transactions(),
-                NAMESPACE);
-        VersionDto versionDto = versionDto(draft.version());
-        var publicationRequest =
-            PublicationDigestRequestBinding.full(
-                draft.target().canonicalTenantId().toString(),
-                Long.toString(draft.version().getId()),
-                publishRequestId);
-        var participantDigests =
-            gate.collectSelectedFullVersionParticipantDigests(
-                versionDto, publicationRequest, publicationRequest.derivedWorkflowIdentity());
-        assertThat(participantDigests)
-            .extracting(PublishParticipantDigestDto::participantKey)
-            .containsExactly(
-                "WORLD_MANAGEMENT",
-                "ENTITY_MANAGEMENT",
-                "GAME_LOGIC",
-                "AUTOMATION_SCRIPTING",
-                "GAME_DESIGN_CONTROL_PLANE");
-        assertThat(participantDigests)
-            .extracting(PublishParticipantDigestDto::digestSchemaVersion)
-            .containsExactly(4, 3, 1, 6, 2);
-        assertThat(participantDigests)
-            .filteredOn(digest -> "WORLD_MANAGEMENT".equals(digest.participantKey()))
-            .singleElement()
-            .satisfies(
-                digest ->
-                    assertThat(digest.contentDigest())
-                        .isEqualTo(worldOwners.selectedWorldDigest().contentDigest()));
-        assertThat(participantDigests)
-            .filteredOn(digest -> "GAME_LOGIC".equals(digest.participantKey()))
-            .singleElement()
-            .satisfies(digest -> assertThat(digest.abilitySchemaDigest()).startsWith("sha256:"));
-        gate.assertSelectedGatePassed(versionDto, participantDigests);
+          PublishedReleaseBundleService releaseOwner = releaseService;
+          var written =
+              gds.write()
+                  .execute(
+                      ignored -> {
+                        String workflow = publicationRequest.derivedWorkflowIdentity();
+                        var exported =
+                            artifactService.markExportedUnattested(
+                                versionDto.tenantId(),
+                                versionDto.id(),
+                                versionDto.versionNumber(),
+                                workflow,
+                                controlledEmptyManifest);
+                        var result =
+                            releaseOwner.createFullVersionBundle(
+                                versionDto,
+                                workflow,
+                                controlledEmptyManifest,
+                                "controlled-generation-input",
+                                participantDigests,
+                                worldOwners.startLocationEvidence());
+                        var version =
+                            versions
+                                .findByTenantIdAndIdForUpdate(
+                                    versionDto.tenantId(), versionDto.id())
+                                .orElseThrow();
+                        version.setVersionState(VersionLifecycleState.PUBLISHED);
+                        version.setVersionStateEpoch(
+                            Math.addExact(version.getVersionStateEpoch(), 1L));
+                        versions.save(version);
+                        artifactService.markPublished(
+                            versionDto.tenantId(),
+                            versionDto.id(),
+                            exported.stateEpoch(),
+                            workflow,
+                            controlledEmptyManifest.manifestHash());
+                        var attempts =
+                            new net.firedevops.firemud.gamedesign.repository
+                                .PublishAttemptRepository(gds.dsl());
+                        var attempt =
+                            attempts.findByPublishWorkflowIdForUpdate(workflow).orElseThrow();
+                        attempt.setStatus(
+                            net.firedevops.firemud.gamedesign.model.PublishAttemptStatus.SUCCEEDED);
+                        attempts.save(attempt);
+                        var operation = selectedOwnerReservation.operation();
+                        new net.firedevops.firemud.gamedesign.publication
+                                .GameDesignPublicationOperationRepository(gds.dsl())
+                            .seal(
+                                operation.tenantKey(),
+                                workflow,
+                                operation.versionId(),
+                                operation.selectionDigest(),
+                                true);
+                        return result;
+                      });
+          assertThat(written.attestationSchemaVersion()).isEqualTo("v4");
+          assertThat(written.participantDigests()).containsExactlyElementsOf(participantDigests);
+          assertThat(written.worldPublishedStartLocationEvidence().canonicalBytes())
+              .containsExactly(worldOwners.startLocationEvidence().canonicalBytes());
+          String committedBundleRow = bundleOwnerRow(gds, draft.version());
+          var independentRead =
+              new PublishedReleaseBundleServiceImpl(
+                      new PublishedReleaseBundleRepository(gds.dsl()),
+                      new VersionRepository(gds.dsl()),
+                      new ObjectMapper())
+                  .findPublishedReleaseBundle(
+                      draft.version().getTenantId(), draft.version().getId())
+                  .orElseThrow();
+          assertThat(independentRead).isEqualTo(written);
+          assertThat(independentRead.attestationSchemaVersion()).isEqualTo("v4");
+          assertThat(bundleOwnerRow(gds, draft.version())).isEqualTo(committedBundleRow);
 
-        var altered = new ArrayList<>(participantDigests);
-        int automationIndex = 3;
-        var validAutomation = altered.get(automationIndex);
-        altered.set(
-            automationIndex,
-            new PublishParticipantDigestDto(
-                validAutomation.participantKey(),
-                validAutomation.scopeValue(),
-                validAutomation.baseVersionId(),
-                validAutomation.appliedCommitId(),
-                validAutomation.contentDigest(),
-                5,
-                validAutomation.abilitySchemaDigest(),
-                validAutomation.errorCode(),
-                validAutomation.errorMessage()));
-        gate.assertSelectedGatePassed(versionDto, participantDigests);
-        assertThatThrownBy(() -> gate.assertSelectedGatePassed(versionDto, altered))
-            .isInstanceOf(RuntimeException.class);
-
-        var releaseService =
-            new PublishedReleaseBundleServiceImpl(
-                new PublishedReleaseBundleRepository(gds.dsl()),
-                new VersionRepository(gds.dsl()),
-                new ObjectMapper());
-        var controlledEmptyManifest = controlledEmptyManifest();
-        var artifactRepository =
-            new net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository(
-                gds.dsl());
-        var versions = new VersionRepository(gds.dsl());
-        var artifactService =
-            new net.firedevops.firemud.gamedesign.service.impl.VersionAssetArtifactServiceImpl(
-                artifactRepository,
-                null,
-                versions,
-                null,
-                null,
-                null,
-                null,
-                null,
-                new ObjectMapper());
-        var assetPublication =
-            new net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository(
-                gds.dsl());
-        var exportSnapshot =
-            gds.write()
-                .execute(
-                    ignored ->
-                        assetPublication.freezeOrReadSnapshot(
-                            versionDto.tenantId(), versionDto.versionNumber()));
-        assertThat(exportSnapshot.items()).isEmpty();
-        gds.write()
-            .execute(
-                ignored ->
-                    artifactService.stageExport(
-                        versionDto.tenantId(),
-                        versionDto.id(),
-                        versionDto.versionNumber(),
-                        publicationRequest.derivedWorkflowIdentity()));
-        var candidateService =
-            new net.firedevops.firemud.gamedesign.service.impl
-                .VersionAssetExportCandidateServiceImpl(
-                versions,
-                new GameRepository(gds.dsl()),
-                new net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository(
-                    gds.dsl()),
-                artifactRepository,
-                assetPublication,
-                gds.transactions(),
-                new ObjectMapper());
-        // Controlled delivery origin and manifest metadata; no object-store or public delivery
-        // proof.
-        var candidate =
-            new net.firedevops.firemud.gamedesign.service.FrozenAssetExportCandidate(
-                controlledEmptyManifest, "https://controlled.invalid/assets");
-        assertThat(
-                candidateService.recordExportCandidate(
-                    versionDto.tenantId(), versionDto.versionNumber(), candidate))
-            .isEqualTo(candidate);
-        assertThat(
-                candidateService.readExportCandidate(
-                    versionDto.tenantId(), versionDto.versionNumber()))
-            .isEqualTo(candidate);
-        assertThatThrownBy(
-                () ->
-                    gds.write()
-                        .execute(
-                            ignored ->
-                                releaseService.createFullVersionBundle(
-                                    versionDto,
-                                    publicationRequest.derivedWorkflowIdentity(),
-                                    controlledEmptyManifest,
-                                    "controlled-generation-input",
-                                    altered,
-                                    worldOwners.startLocationEvidence())))
-            .isInstanceOf(RuntimeException.class);
-        assertThat(
-                gds.dsl()
-                    .fetchSingle(
-                        "SELECT count(*) FROM published_release_bundle WHERE tenant_id = ? AND version_id = ?",
-                        draft.version().getTenantId(),
-                        draft.version().getId())
-                    .get(0, Long.class))
-            .isZero();
-
-        PublishedReleaseBundleService releaseOwner = releaseService;
-        var written =
-            gds.write()
-                .execute(
-                    ignored -> {
-                      String workflow = publicationRequest.derivedWorkflowIdentity();
-                      var exported =
-                          artifactService.markExportedUnattested(
-                              versionDto.tenantId(),
-                              versionDto.id(),
-                              versionDto.versionNumber(),
-                              workflow,
-                              controlledEmptyManifest);
-                      var result =
+          var replay =
+              gds.write()
+                  .execute(
+                      ignored ->
                           releaseOwner.createFullVersionBundle(
                               versionDto,
-                              workflow,
+                              publicationRequest.derivedWorkflowIdentity(),
                               controlledEmptyManifest,
                               "controlled-generation-input",
                               participantDigests,
-                              worldOwners.startLocationEvidence());
-                      var version =
-                          versions
-                              .findByTenantIdAndIdForUpdate(versionDto.tenantId(), versionDto.id())
-                              .orElseThrow();
-                      version.setVersionState(VersionLifecycleState.PUBLISHED);
-                      version.setVersionStateEpoch(
-                          Math.addExact(version.getVersionStateEpoch(), 1L));
-                      versions.save(version);
-                      artifactService.markPublished(
-                          versionDto.tenantId(),
-                          versionDto.id(),
-                          exported.stateEpoch(),
-                          workflow,
-                          controlledEmptyManifest.manifestHash());
-                      var attempts =
-                          new net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository(
-                              gds.dsl());
-                      var attempt =
-                          attempts.findByPublishWorkflowIdForUpdate(workflow).orElseThrow();
-                      attempt.setStatus(
-                          net.firedevops.firemud.gamedesign.model.PublishAttemptStatus.SUCCEEDED);
-                      attempts.save(attempt);
-                      var operation = selectedOwnerReservation.operation();
-                      new net.firedevops.firemud.gamedesign.publication
-                              .GameDesignPublicationOperationRepository(gds.dsl())
-                          .seal(
-                              operation.tenantKey(),
-                              workflow,
-                              operation.versionId(),
-                              operation.selectionDigest(),
-                              true);
-                      return result;
-                    });
-        assertThat(written.attestationSchemaVersion()).isEqualTo("v4");
-        assertThat(written.participantDigests()).containsExactlyElementsOf(participantDigests);
-        assertThat(written.worldPublishedStartLocationEvidence().canonicalBytes())
-            .containsExactly(worldOwners.startLocationEvidence().canonicalBytes());
-        String committedBundleRow = bundleOwnerRow(gds, draft.version());
-        var independentRead =
-            new PublishedReleaseBundleServiceImpl(
-                    new PublishedReleaseBundleRepository(gds.dsl()),
-                    new VersionRepository(gds.dsl()),
-                    new ObjectMapper())
-                .findPublishedReleaseBundle(draft.version().getTenantId(), draft.version().getId())
-                .orElseThrow();
-        assertThat(independentRead).isEqualTo(written);
-        assertThat(independentRead.attestationSchemaVersion()).isEqualTo("v4");
-        assertThat(bundleOwnerRow(gds, draft.version())).isEqualTo(committedBundleRow);
-
-        var replay =
-            gds.write()
-                .execute(
-                    ignored ->
-                        releaseOwner.createFullVersionBundle(
-                            versionDto,
-                            publicationRequest.derivedWorkflowIdentity(),
-                            controlledEmptyManifest,
-                            "controlled-generation-input",
-                            participantDigests,
-                            worldOwners.startLocationEvidence()));
-        assertThat(replay).isEqualTo(written);
-        assertThat(bundleOwnerRow(gds, draft.version())).isEqualTo(committedBundleRow);
+                              worldOwners.startLocationEvidence()));
+          assertThat(replay).isEqualTo(written);
+          assertThat(bundleOwnerRow(gds, draft.version())).isEqualTo(committedBundleRow);
+        }
+      } finally {
+        stop(accountServer);
+        stop(worldServer);
+        stop(entityServer);
+        stop(automationServer);
+        stop(gameLogicServer);
       }
-    } finally {
-      stop(accountServer);
-      stop(worldServer);
-      stop(entityServer);
-      stop(automationServer);
-      stop(gameLogicServer);
     }
-  }
   }
 
   private static Draft createDraft(Store gds) {
@@ -1036,17 +1138,6 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             });
   }
 
-  private static AccountPublicationAuthorizationBinding controlledAccountBinding(
-      AuthoredDraftPublishSelectionBinding selection) {
-    UUID actor = UUID.randomUUID();
-    var input = new AccountPublicationAuthorizationBinding.PreallocationInput(actor, selection);
-    return new AccountPublicationAuthorizationBinding(
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        input,
-        controlledAccountSources(actor, selection.intent().canonicalTenantId()));
-  }
-
   private static SelectedOwnerIntakeAuthorizationBinding selectedOwnerAuthorization(
       Store gds, AuthoredDraftPublishSelection selection, Owner recipient, UUID actor) {
     var scope =
@@ -1143,13 +1234,18 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     return "127.0.0.1:" + server.getPort();
   }
 
-  private static Server ownerServer(ProofPki pki, String service, io.grpc.BindableService... handlers)
-      throws Exception {
+  private static Server ownerServer(
+      ProofPki pki, String service, io.grpc.BindableService... handlers) throws Exception {
     var identity = pki.server(service);
-    var builder = NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
-        .sslContext(GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
-            .trustManager(pki.ca().toFile()).clientAuth(ClientAuth.REQUIRE).build());
-    for (var handler : handlers) builder.addService(ServerInterceptors.intercept(handler, new GrpcPeerIdentityInterceptor()));
+    var builder =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .sslContext(
+                GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
+                    .trustManager(pki.ca().toFile())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build());
+    for (var handler : handlers)
+      builder.addService(ServerInterceptors.intercept(handler, new GrpcPeerIdentityInterceptor()));
     return builder.build().start();
   }
 
