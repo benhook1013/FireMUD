@@ -130,3 +130,8 @@ Entry format:
   - Context: Reading subprocess output to EOF before a timed wait leaves the supposed deadline unbounded.
   - Observation: The original claim-read test PKI helper now redirects output to an owned temporary file, waits before reading it, and terminates/reaps a timed-out or interrupted child with interrupt preservation. Actual stalled-keytool timeout and interruption cases pass alongside the affected TLS and native owner proofs.
   - Expected pattern: Keep this correction in the purpose-specific fixture; it does not require a general command framework or change production TLS material policy.
+
+- `2026-10-16`: Recheck original ControlUI expiry after owner locks
+  - Context: An initial ControlUI token expiry check became stale across later owner locks in both current-actor paths. Registry cleanup retention and authorization-reference expiry did not replace the original token's validity boundary.
+  - Observation: The focused native fixture advances the existing actor clock at the real locking read: the old code entered both callbacks after expiry; the correction rejects them without changing the original row while preserving exact held-order recovery.
+  - Expected pattern: Keep current authorization and historical recovery distinct when reconciling displaced guards.

@@ -168,6 +168,7 @@ public final class AccountControlUiActorService {
           if (!committed.tokenHash().equals(tokenHash)) {
             throw denied();
           }
+          requireUnexpiredOriginalToken(stored);
           return action.apply(new Current(stored, current));
         });
   }
@@ -223,8 +224,15 @@ public final class AccountControlUiActorService {
               || !Arrays.equals(committed.activeRegistry, exactRegistry)) {
             throw denied();
           }
+          requireUnexpiredOriginalToken(committed);
           return action.apply(new Current(committed, current));
         });
+  }
+
+  private void requireUnexpiredOriginalToken(AccountControlUiIssuanceRepository.Stored original) {
+    if (original.expiresAt == null || !clock.instant().isBefore(original.expiresAt)) {
+      throw denied();
+    }
   }
 
   /** Production asymmetric/profile verification, also used before any candidate is persisted. */

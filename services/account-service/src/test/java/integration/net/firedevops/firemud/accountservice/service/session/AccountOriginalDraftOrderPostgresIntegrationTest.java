@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 import io.grpc.Context;
 import java.nio.file.Path;
@@ -12,6 +13,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderCredentials;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec;
@@ -19,8 +21,13 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.test.TestContainerImages;
+import org.jooq.ExecuteContext;
+import org.jooq.impl.DefaultExecuteListener;
+import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -77,6 +84,112 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
               "6379");
 
   @TempDir Path temporary;
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void originalCreatorExpiryAtFinalOwnerLockDeniesCurrentCallback(
+      boolean signedCredential, @TempDir Path proofDirectory) throws Exception {
+    var clock = new ActorClock();
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            proofDirectory,
+            UUID.randomUUID(),
+            clock)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      String tokenHash =
+          AccountControlUiCoordination.digest(
+              "SHA-256", issued.compact().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+      var jti =
+          f.tx(
+              () ->
+                  f.dsl
+                      .fetchSingle(
+                          "SELECT token_jti FROM account_control_ui_issuance_operations "
+                              + "WHERE token_hash=? AND status='COMMITTED'",
+                          tokenHash)
+                      .get("token_jti", UUID.class));
+      var before =
+          f.tx(
+              () ->
+                  f.dsl.fetchSingle(
+                      "SELECT row_to_json(a)::TEXT AS payload, a.xmin::TEXT AS row_version "
+                          + "FROM account_control_ui_issuance_operations a WHERE token_jti=?",
+                      jti));
+      var callback = new AtomicBoolean();
+      var clockAdvanced = new AtomicBoolean();
+      var originalListeners = f.dsl.configuration().executeListenerProviders();
+      var expiryAtOwnerLock =
+          new DefaultExecuteListenerProvider(
+              new DefaultExecuteListener() {
+                @Override
+                public void executeEnd(ExecuteContext context) {
+                  String sql = context.sql();
+                  if (sql != null
+                      && sql.contains("account_control_ui_issuance_operations")
+                      && sql.contains("FOR UPDATE")
+                      && clockAdvanced.compareAndSet(false, true)) {
+                    // The real locking read has completed; simulate elapsed time at this precise
+                    // boundary.
+                    // This is deterministic temporal-boundary proof, not physical lock-contention
+                    // proof.
+                    clock.advance(Duration.ofMinutes(10));
+                  }
+                }
+              });
+      var listeners = java.util.Arrays.copyOf(originalListeners, originalListeners.length + 1);
+      listeners[originalListeners.length] = expiryAtOwnerLock;
+      f.dsl.configuration().set(listeners);
+      try {
+        Throwable failure =
+            catchThrowable(
+                () -> {
+                  if (signedCredential) {
+                    issued
+                        .actors()
+                        .withCurrent(
+                            issued.compact(),
+                            f.tenant,
+                            issued.environment(),
+                            current -> {
+                              callback.set(true);
+                              return "must not authorize";
+                            });
+                  } else {
+                    issued
+                        .actors()
+                        .withCurrentCommitted(
+                            f.account.getAccountUuid(),
+                            f.tenant,
+                            jti,
+                            issued.environment(),
+                            current -> {
+                              callback.set(true);
+                              return "must not authorize";
+                            });
+                  }
+                });
+        assertThat(clockAdvanced).isTrue();
+        assertThat(callback).isFalse();
+        assertThat(failure).isInstanceOf(IllegalStateException.class);
+        assertThat(
+                f.tx(
+                    () ->
+                        f.dsl.fetchSingle(
+                            "SELECT row_to_json(a)::TEXT AS payload, a.xmin::TEXT AS row_version "
+                                + "FROM account_control_ui_issuance_operations a WHERE token_jti=?",
+                            jti)))
+            .isEqualTo(before);
+      } finally {
+        f.dsl.configuration().set(originalListeners);
+      }
+    }
+  }
 
   @Test
   void lostOriginalOrderResponseRecoversAfterSignedCreatorExpiryButCannotCreateOrSubstitute()
