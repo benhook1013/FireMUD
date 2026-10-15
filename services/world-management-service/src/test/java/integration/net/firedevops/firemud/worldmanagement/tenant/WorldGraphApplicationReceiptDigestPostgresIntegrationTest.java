@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
+import net.firedevops.firemud.common.world.RoomTemplateRef;
+import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -32,10 +34,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Proves the forward digest repair against the installed World guards. The positive APPLIED and
- * receipt rows use controlled table clones with the original functions and predicates; they prove
- * SQL predicate behavior only and do not claim genuine Account authority or production APPLIED
- * creation.
+ * Proves the forward semantic receipt-digest repair against the installed World guards. The
+ * positive APPLIED and receipt rows use controlled table clones with the original functions and
+ * predicates; they prove SQL predicate behavior only and do not claim genuine Account authority or
+ * production APPLIED creation.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -75,8 +77,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
-  void forwardMigrationBindsDigestColumnsToRetainedBytesOnFreshAndUpgradedSchemas()
-      throws Exception {
+  void forwardMigrationBindsSemanticReceiptDigestOnFreshAndUpgradedSchemas() throws Exception {
     Path root = repositoryRoot();
     String worldLocation = worldMigrations(root);
     String sagaLocation = sagaMigrations(root);
@@ -102,50 +103,18 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
       through104211.validate();
       assertThat(latestVersion(upgradeDsl)).isEqualTo("1042.11");
 
-      FunctionMetadata graphBefore = functionMetadata(upgradeDsl, upgradeSchema, GRAPH_GUARD);
-      FunctionMetadata receiptBefore = functionMetadata(upgradeDsl, upgradeSchema, RECEIPT_GUARD);
-      List<String> graphTriggersBefore =
-          triggerMetadata(upgradeDsl, upgradeSchema, "world_draft_graph_application");
-      List<String> receiptTriggersBefore =
-          triggerMetadata(upgradeDsl, upgradeSchema, "world_draft_start_location_receipt");
       String history1012Before = migrationHistory(upgradeDsl, "1012");
       String history1014Before = migrationHistory(upgradeDsl, "1014");
       String history104211Before = migrationHistory(upgradeDsl, "1042.11");
-      List<String> applicationRowsBefore = applicationRows(upgradeDsl, upgradeSchema);
-      List<String> receiptRowsBefore = receiptRows(upgradeDsl, upgradeSchema);
-      assertThat(applicationRowsBefore).isEmpty();
-      assertThat(receiptRowsBefore).isEmpty();
-      assertProtectedGuardMetadata(
-          graphBefore, receiptBefore, graphTriggersBefore, receiptTriggersBefore);
 
       cloneProbeTables(upgradeDsl, upgradeSchema, probeSchema);
       copyInstalledFunctions(upgradeDsl, upgradeSchema, probeSchema);
       installProbeTriggers(probeDsl, probeSchema);
-      FunctionMetadata probeGraphBefore = functionMetadata(probeDsl, probeSchema, GRAPH_GUARD);
-      FunctionMetadata probeReceiptBefore = functionMetadata(probeDsl, probeSchema, RECEIPT_GUARD);
-      List<String> probeGraphTriggersBefore =
-          triggerMetadata(probeDsl, probeSchema, "world_draft_graph_application");
-      List<String> probeReceiptTriggersBefore =
-          triggerMetadata(probeDsl, probeSchema, "world_draft_start_location_receipt");
 
       Fixture retainedFixture = fixture();
       persistFixture(probeDsl, probeSchema, retainedFixture, Corruption.NONE);
-      List<String> probeApplicationRowsBefore = applicationRows(probeDsl, probeSchema);
-      List<String> probeReceiptRowsBefore = receiptRows(probeDsl, probeSchema);
-      assertThat(probeApplicationRowsBefore).hasSize(1);
-      assertThat(probeReceiptRowsBefore).hasSize(1);
 
-      Flyway current = flyway(upgradeSource, upgradeSchema, null, worldLocation, sagaLocation);
-      current.migrate();
-      current.validate();
-      assertThat(current.info().pending()).isEmpty();
-
-      Flyway fresh = flyway(freshSource, freshSchema, null, worldLocation, sagaLocation);
-      fresh.migrate();
-      fresh.validate();
-      assertThat(fresh.info().pending()).isEmpty();
-
-      Flyway probeUpgrade =
+      Flyway probeThrough104212 =
           Flyway.configure()
               .dataSource(probeSource)
               .schemas(probeSchema)
@@ -157,21 +126,76 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
               .placeholders(Map.of("serviceSchema", probeSchema))
               .locations(worldLocation, sagaLocation)
               .load();
-      probeUpgrade.migrate();
-      probeUpgrade.validate();
+      probeThrough104212.migrate();
+      probeThrough104212.validate();
       assertThat(latestVersion(probeDsl)).isEqualTo("1042.12");
 
-      assertThat(
-              MigrationVersion.fromVersion(latestVersion(upgradeDsl))
-                      .compareTo(MigrationVersion.fromVersion("1042.12"))
-                  >= 0)
-          .isTrue();
+      FunctionMetadata probeGraphBefore = functionMetadata(probeDsl, probeSchema, GRAPH_GUARD);
+      FunctionMetadata probeReceiptBefore = functionMetadata(probeDsl, probeSchema, RECEIPT_GUARD);
+      List<String> probeGraphTriggersBefore =
+          triggerMetadata(probeDsl, probeSchema, "world_draft_graph_application");
+      List<String> probeReceiptTriggersBefore =
+          triggerMetadata(probeDsl, probeSchema, "world_draft_start_location_receipt");
+      List<String> probeApplicationRowsBefore = applicationRows(probeDsl, probeSchema);
+      List<String> probeReceiptRowsBefore = receiptRows(probeDsl, probeSchema);
+      assertThat(probeApplicationRowsBefore).hasSize(1);
+      assertThat(probeReceiptRowsBefore).hasSize(1);
+      assertProtectedGuardMetadata(
+          probeGraphBefore,
+          probeReceiptBefore,
+          probeGraphTriggersBefore,
+          probeReceiptTriggersBefore);
+
+      Flyway through104212 =
+          flyway(
+              upgradeSource,
+              upgradeSchema,
+              MigrationVersion.fromVersion("1042.12"),
+              worldLocation,
+              sagaLocation);
+      through104212.migrate();
+      through104212.validate();
+      assertThat(latestVersion(upgradeDsl)).isEqualTo("1042.12");
+
+      FunctionMetadata graphBefore = functionMetadata(upgradeDsl, upgradeSchema, GRAPH_GUARD);
+      FunctionMetadata receiptBefore = functionMetadata(upgradeDsl, upgradeSchema, RECEIPT_GUARD);
+      List<String> graphTriggersBefore =
+          triggerMetadata(upgradeDsl, upgradeSchema, "world_draft_graph_application");
+      List<String> receiptTriggersBefore =
+          triggerMetadata(upgradeDsl, upgradeSchema, "world_draft_start_location_receipt");
+      String history104212Before = migrationHistory(upgradeDsl, "1042.12");
+      List<String> applicationRowsBefore = applicationRows(upgradeDsl, upgradeSchema);
+      List<String> receiptRowsBefore = receiptRows(upgradeDsl, upgradeSchema);
+      assertThat(applicationRowsBefore).isEmpty();
+      assertThat(receiptRowsBefore).isEmpty();
+      assertProtectedGuardMetadata(
+          graphBefore, receiptBefore, graphTriggersBefore, receiptTriggersBefore);
+
+      Flyway current = flyway(upgradeSource, upgradeSchema, null, worldLocation, sagaLocation);
+      current.migrate();
+      current.validate();
+      assertThat(current.info().pending()).isEmpty();
+
+      Flyway fresh = flyway(freshSource, freshSchema, null, worldLocation, sagaLocation);
+      fresh.migrate();
+      fresh.validate();
+      assertThat(fresh.info().pending()).isEmpty();
+
+      Flyway probeCurrent = flyway(probeSource, probeSchema, null, worldLocation, sagaLocation);
+      probeCurrent.migrate();
+      probeCurrent.validate();
+      assertThat(probeCurrent.info().pending()).isEmpty();
+
+      assertThat(latestVersion(upgradeDsl)).isEqualTo("1042.13");
       assertThat(latestVersion(freshDsl)).isEqualTo(latestVersion(upgradeDsl));
+      assertThat(latestVersion(probeDsl)).isEqualTo(latestVersion(upgradeDsl));
       assertThat(migrationHistory(upgradeDsl, "1012")).isEqualTo(history1012Before);
       assertThat(migrationHistory(upgradeDsl, "1014")).isEqualTo(history1014Before);
       assertThat(migrationHistory(upgradeDsl, "1042.11")).isEqualTo(history104211Before);
-      assertThat(migrationHistory(upgradeDsl, "1042.12")).isNotNull();
+      assertThat(migrationHistory(upgradeDsl, "1042.12")).isEqualTo(history104212Before);
+      assertThat(migrationHistory(upgradeDsl, "1042.13")).isNotNull();
       assertThat(migrationHistory(freshDsl, "1042.12")).isNotNull();
+      assertThat(migrationHistory(freshDsl, "1042.13")).isNotNull();
       assertThat(applicationRows(upgradeDsl, upgradeSchema)).isEqualTo(applicationRowsBefore);
       assertThat(receiptRows(upgradeDsl, upgradeSchema)).isEqualTo(receiptRowsBefore);
 
@@ -218,12 +242,20 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
           () -> persistFixture(probeDsl, probeSchema, fixture(), Corruption.RECEIPT_DIGEST),
           "23514");
       assertSqlState(
+          () -> persistFixture(probeDsl, probeSchema, fixture(), Corruption.RECEIPT_FIELD_MISMATCH),
+          "23514");
+      assertSqlState(
           () ->
               persistFixture(
                   probeDsl, probeSchema, fixture(), Corruption.APPLICATION_ACCOUNT_DIGEST),
           "23514");
       assertSqlState(
           () -> persistFixture(probeDsl, probeSchema, fixture(), Corruption.RESULT_DIGEST),
+          "23514");
+      assertSqlState(
+          () ->
+              persistFixture(
+                  probeDsl, probeSchema, fixture(), Corruption.APPLICATION_RECEIPT_FIELD_MISMATCH),
           "23514");
     } finally {
       dropSchema(upgradeSource, upgradeSchema);
@@ -264,10 +296,12 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
         .contains("encode(sha256(NEW.account_binding_bytes), 'hex')")
         .contains("encode(sha256(NEW.result_bytes), 'hex')")
         .contains("encode(sha256(receipt.account_binding_bytes), 'hex')")
-        .contains("encode(sha256(receipt.receipt_bytes), 'hex')");
+        .contains("world_start_location_receipt_matches(")
+        .doesNotContain("encode(sha256(receipt.receipt_bytes), 'hex')");
     assertThat(receipt.source())
         .contains("encode(sha256(NEW.account_binding_bytes), 'hex')")
-        .contains("encode(sha256(NEW.receipt_bytes), 'hex')");
+        .contains("world_start_location_receipt_matches(")
+        .doesNotContain("encode(sha256(NEW.receipt_bytes), 'hex')");
   }
 
   private static void cloneProbeTables(DSLContext dsl, String sourceSchema, String probeSchema) {
@@ -295,6 +329,8 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
               .replace(sourceSchema + ".", probeSchema + ".")
               .replace("'" + sourceSchema + "'", "'" + probeSchema + "'");
       dsl.execute(definition);
+      // Function definitions do not carry ACLs into this controlled clone.
+      dsl.execute("REVOKE ALL ON FUNCTION " + DSL.name(probeSchema, function) + "() FROM PUBLIC");
     }
   }
 
@@ -332,7 +368,22 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
   }
 
   private static void persistFixture(
-      DSLContext dsl, String schema, Fixture fixture, Corruption corruption) {
+      DSLContext dsl, String schema, Fixture fixture, Corruption corruption) throws Exception {
+    boolean receiptFieldMismatch =
+        corruption == Corruption.RECEIPT_FIELD_MISMATCH
+            || corruption == Corruption.APPLICATION_RECEIPT_FIELD_MISMATCH;
+    UUID evidenceFenceId =
+        receiptFieldMismatch ? UUID.randomUUID() : fixture.authorizationFenceId();
+    WorldDraftStartLocationEvidence receiptEvidence = receiptEvidence(fixture, evidenceFenceId);
+    byte[] receiptBytes = receiptEvidence.canonicalBytes();
+    String claimedReceiptDigest = receiptEvidence.receiptDigest();
+    String receiptDigest =
+        corruption == Corruption.RECEIPT_DIGEST
+            ? wrongDigest(claimedReceiptDigest)
+            : claimedReceiptDigest;
+    byte[] resultBytes = resultBytes(fixture, receiptBytes, receiptDigest);
+    String correctResultDigest = digest(resultBytes);
+
     dsl.transaction(
         configuration -> {
           DSLContext tx = DSL.using(configuration);
@@ -396,10 +447,13 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
               corruption == Corruption.RECEIPT_ACCOUNT_DIGEST
                   ? wrongDigest(fixture.accountBindingDigest())
                   : fixture.accountBindingDigest();
-          String receiptDigest =
-              corruption == Corruption.RECEIPT_DIGEST
-                  ? wrongDigest(fixture.receiptDigest())
-                  : fixture.receiptDigest();
+          boolean bypassReceiptGuard = corruption == Corruption.APPLICATION_RECEIPT_FIELD_MISMATCH;
+          if (bypassReceiptGuard) {
+            tx.execute(
+                "ALTER TABLE "
+                    + receiptTable
+                    + " DISABLE TRIGGER trg_world_start_location_receipt_guard");
+          }
           tx.execute(
               "INSERT INTO "
                   + receiptTable
@@ -420,7 +474,13 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
               fixture.roomTemplateId(),
               fixture.graphDigest(),
               receiptDigest,
-              fixture.receiptBytes());
+              receiptBytes);
+          if (bypassReceiptGuard) {
+            tx.execute(
+                "ALTER TABLE "
+                    + receiptTable
+                    + " ENABLE TRIGGER trg_world_start_location_receipt_guard");
+          }
 
           String applicationAccountDigest =
               corruption == Corruption.APPLICATION_ACCOUNT_DIGEST
@@ -428,8 +488,8 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
                   : fixture.accountBindingDigest();
           String resultDigest =
               corruption == Corruption.RESULT_DIGEST
-                  ? wrongDigest(fixture.resultDigest())
-                  : fixture.resultDigest();
+                  ? wrongDigest(correctResultDigest)
+                  : correctResultDigest;
           tx.execute(
               "INSERT INTO "
                   + applicationTable
@@ -444,7 +504,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
               fixture.operationBytes(),
               fixture.accountBindingBytes(),
               applicationAccountDigest,
-              fixture.resultBytes(),
+              resultBytes,
               resultDigest);
         });
   }
@@ -461,30 +521,29 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
     UUID roomTemplateId = UUID.randomUUID();
     byte[] accountBindingBytes =
         "{\"accountBinding\":\"controlled\"}".getBytes(StandardCharsets.UTF_8);
-    byte[] receiptBytes = "{\"receipt\":\"controlled\"}".getBytes(StandardCharsets.UTF_8);
     byte[] operationBytes = "{\"operation\":\"controlled\"}".getBytes(StandardCharsets.UTF_8);
     byte[] graphBytes =
         "{\"schemaVersion\":3,\"rows\":[{\"family\":\"ROOM\"}]}".getBytes(StandardCharsets.UTF_8);
     String accountBindingDigest = digest(accountBindingBytes);
-    String receiptDigest = digest(receiptBytes);
     String graphDigest = digest(graphBytes);
     String bindingDigest = "sha256:" + "b".repeat(64);
     String bindingJson = bindingJson(tenantId, versionId, roomTemplateId);
+    WorldDraftStartLocationEvidence evidence =
+        WorldDraftStartLocationEvidence.create(
+            "dev",
+            operationId,
+            requestId,
+            commitId,
+            authorizationFenceId,
+            accountBindingDigest,
+            bindingDigest,
+            new RoomTemplateRef(tenantId, versionId, roomTemplateId),
+            graphDigest);
+    byte[] receiptBytes = evidence.canonicalBytes();
+    String receiptDigest = evidence.receiptDigest();
     long privateKeyBase = NEXT_PRIVATE_KEY_BASE.getAndAdd(10);
-    String resultJson =
-        "{\"schema\":\"world-draft-graph-applied/v2\",\"status\":\"APPLIED\","
-            + "\"graphDigest\":\""
-            + graphDigest
-            + "\",\"startLocationReceiptDigest\":\""
-            + receiptDigest
-            + "\",\"startLocationReceiptBase64\":\""
-            + Base64.getEncoder().encodeToString(receiptBytes)
-            + "\",\"operationBytesBase64\":\""
-            + Base64.getEncoder().encodeToString(operationBytes)
-            + "\",\"graphBytesBase64\":\""
-            + Base64.getEncoder().encodeToString(graphBytes)
-            + "\"}";
-    byte[] resultBytes = resultJson.getBytes(StandardCharsets.UTF_8);
+    byte[] resultBytes =
+        resultBytes(graphDigest, receiptBytes, receiptDigest, operationBytes, graphBytes);
     return new Fixture(
         tenantId,
         versionId,
@@ -510,6 +569,50 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
         bindingJson,
         resultBytes,
         digest(resultBytes));
+  }
+
+  private static WorldDraftStartLocationEvidence receiptEvidence(Fixture fixture, UUID fenceId) {
+    return WorldDraftStartLocationEvidence.create(
+        "dev",
+        fixture.operationId(),
+        fixture.requestId(),
+        fixture.commitId(),
+        fenceId,
+        fixture.accountBindingDigest(),
+        fixture.bindingDigest(),
+        new RoomTemplateRef(fixture.tenantId(), fixture.versionId(), fixture.roomTemplateId()),
+        fixture.graphDigest());
+  }
+
+  private static byte[] resultBytes(Fixture fixture, byte[] receiptBytes, String receiptDigest) {
+    return resultBytes(
+        fixture.graphDigest(),
+        receiptBytes,
+        receiptDigest,
+        fixture.operationBytes(),
+        fixture.graphBytes());
+  }
+
+  private static byte[] resultBytes(
+      String graphDigest,
+      byte[] receiptBytes,
+      String receiptDigest,
+      byte[] operationBytes,
+      byte[] graphBytes) {
+    String resultJson =
+        "{\"schema\":\"world-draft-graph-applied/v2\",\"status\":\"APPLIED\","
+            + "\"graphDigest\":\""
+            + graphDigest
+            + "\",\"startLocationReceiptDigest\":\""
+            + receiptDigest
+            + "\",\"startLocationReceiptBase64\":\""
+            + Base64.getEncoder().encodeToString(receiptBytes)
+            + "\",\"operationBytesBase64\":\""
+            + Base64.getEncoder().encodeToString(operationBytes)
+            + "\",\"graphBytesBase64\":\""
+            + Base64.getEncoder().encodeToString(graphBytes)
+            + "\"}";
+    return resultJson.getBytes(StandardCharsets.UTF_8);
   }
 
   private static String bindingJson(UUID tenantId, UUID versionId, UUID roomTemplateId) {
@@ -659,8 +762,10 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
     NONE,
     RECEIPT_ACCOUNT_DIGEST,
     RECEIPT_DIGEST,
+    RECEIPT_FIELD_MISMATCH,
     APPLICATION_ACCOUNT_DIGEST,
-    RESULT_DIGEST
+    RESULT_DIGEST,
+    APPLICATION_RECEIPT_FIELD_MISMATCH
   }
 
   private record FunctionMetadata(
