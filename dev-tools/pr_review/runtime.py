@@ -953,9 +953,9 @@ class LiveEvidence:
                 unresolved_findings.append(label)
                 if source_status == "finding_pending":
                     finding_only_findings.append(label)
-                    for requested in admission_finding_only:
+                    for requested, requested_findings in admission_finding_only.items():
                         if requested == channel or not ReviewController._verified_source_fix_preparation(item, pr):
-                            admission_finding_only[requested].append(label)
+                            requested_findings.append(label)
                 else:
                     unknown_review_evidence.append(label)
         checkpoints = [

@@ -3149,18 +3149,17 @@ class ReviewController:
             if sorted(classified_unresolved) != sorted([*finding_only_findings, *classified_unknown]):
                 raise ControllerError("review-stop audit has inconsistent finding classification")
         admission_findings = audit.get("admission_finding_only_findings")
-        if admission_findings is not None:
-            if (
-                not isinstance(admission_findings, Mapping)
-                or set(admission_findings) != {"hosted", "cli"}
-                or any(
-                    not isinstance(values, list)
-                    or any(not isinstance(value, str) for value in values)
-                    or any(values.count(value) > finding_only_findings.count(value) for value in values)
-                    for values in admission_findings.values()
-                )
-            ):
-                raise ControllerError("review-stop audit has malformed admission finding classification")
+        if admission_findings is not None and (
+            not isinstance(admission_findings, Mapping)
+            or set(admission_findings) != {"hosted", "cli"}
+            or any(
+                not isinstance(values, list)
+                or any(not isinstance(value, str) for value in values)
+                or any(values.count(value) > finding_only_findings.count(value) for value in values)
+                for values in admission_findings.values()
+            )
+        ):
+            raise ControllerError("review-stop audit has malformed admission finding classification")
         return normalized_audit
 
     def _stop_ambiguity_pins(
@@ -3650,7 +3649,10 @@ class ReviewController:
             finding_reasons.append(self._accepted_findings_pending_reason(latest))
         # Positive classifications are valid only after every canonical safety,
         # history and latest-checkpoint check above has completed.
-        if audit.get("request_preparation_only") is True:
+        own_findings_pending = admission_channel is not None and any(
+            self._accepted_findings_pending(value, current.child_head) for value in histories[admission_channel]
+        )
+        if audit.get("request_preparation_only") is True and not (finding_reasons and own_findings_pending):
             raise _RequestPreparationError("known pull-request preparation identity moved after complete safety audit")
         if finding_reasons:
             raise _FindingOnlyStopEvidence(finding_reasons[0])
@@ -5517,7 +5519,12 @@ class ReviewController:
                             admission_channel=consumed.get("admission_channel"),
                             **consumed.get("overlap", {}),
                         )
-                    except (_FindingOnlyStopEvidence, _RequestPreparationError):
+                    except _FindingOnlyStopEvidence as error:
+                        # A finding may release completed discovery, but cannot
+                        # authorize another request on this still-selected PR.
+                        if result[channel.value].get("pr") == pr:
+                            clearance_error = str(error)
+                    except _RequestPreparationError:
                         pass
                     except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
                         clearance_error = str(error)

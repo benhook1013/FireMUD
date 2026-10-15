@@ -4488,7 +4488,7 @@ class ControllerTests(unittest.TestCase):
                             "historical_unmatched_responses": [], "ambiguous_responses": [], "unresolved_findings": [],
                         }
                         with (
-                            patch.object(provider, "history", side_effect=lambda pr, channel, **kw: histories[(pr, channel)]),
+                            patch.object(provider, "history", side_effect=lambda pr, channel, histories=histories, **kw: histories[(pr, channel)]),
                             patch.object(provider, "_audit_complete_hosted_history", return_value=empty_audit),
                             patch.object(provider, "_complete_trigger_paths", return_value=[]),
                             patch.object(provider.live, "pull_request", return_value=SimpleNamespace(
@@ -4544,7 +4544,7 @@ class ControllerTests(unittest.TestCase):
                                 self.assertTrue(aggregate["finding_only_findings"])
                                 self.assertEqual(aggregate["admission_finding_only_findings"][requested], [])
                                 self.assertTrue(aggregate["admission_finding_only_findings"][peer])
-                                live, reconciliation = controller._reconciliation(controller._state())
+                                _live, reconciliation = controller._reconciliation(controller._state())
                                 # Final snapshot rechecks retain the admission context;
                                 # aggregate merge/source clearance remains global.
                                 controller._check_stop_evidence(
@@ -4565,6 +4565,82 @@ class ControllerTests(unittest.TestCase):
                                 self.assertEqual(target.status, ReviewStatus.HELD)
                             self.assertEqual(source, saved_source)
                             self.assertEqual(controller._state(), before)
+
+    def test_preparation_movement_cannot_hide_own_default_source_fix(self):
+        for channel, peer in (("hosted", "cli"), ("cli", "hosted")):
+            with self.subTest(channel=channel):
+                histories = {(1, channel): [self.allocation_evidence(
+                    checkpoint="own-source", channel=channel, accepted=1, raw=1,
+                    source_resolution_status="finding_pending",
+                )]}
+                evidence = AuditedEvidence(histories, audit={
+                    "complete": True, "active_reservations": [], "unmatched_responses": [],
+                    "ambiguous_responses": [], "unresolved_findings": [],
+                    "finding_only_findings": [], "unknown_review_evidence": [],
+                    "request_preparation_only": True,
+                })
+                controller = self.make({1: dataclasses.replace(pr(1, HEAD_1), base_tip="9" * 40)}, evidence,
+                                       heads={"feature-1": HEAD_1})
+                controller.set_stack([1])
+                target = controller._target(channel, expected_pr=1)
+                self.assertEqual(target.status, ReviewStatus.HELD)
+                self.assertIn("accepted findings", target.reason)
+                with self.assertRaises(ControllerError):
+                    controller._ensure_runnable(target, force=True)
+                # Once its own proof clears, the peer's known fix preparation
+                # does not turn the same preparation warning into a finding hold.
+                histories[(1, peer)] = [dict(histories[(1, channel)][0], channel=peer, checkpoint="peer-source")]
+                histories[(1, channel)][0]["source_resolution_status"] = "resolved"
+                target = controller._target(channel, expected_pr=1)
+                controller._ensure_runnable(target, force=True)
+                self.assertIn(target.status, (ReviewStatus.READY, ReviewStatus.PARENT_MOVED, ReviewStatus.UNRECONCILED))
+
+    def test_final_audit_own_source_fix_holds_open_but_releases_closed_discovery(self):
+        for closed in (False, True):
+            with self.subTest(closed=closed):
+                values, heads = _stacked_prs(2)
+                evidence = CountingEvidence()
+                for channel in ("hosted", "cli"):
+                    evidence[(1, channel)] = [self.allocation_evidence(
+                        head=values[1].head, checkpoint=f"{channel}-baseline", channel=channel, accepted=1, raw=1,
+                        source_resolution_status="resolved",
+                    )]
+                controller = self.grant_bounded_allocation(
+                    channel="hosted", checkpoint="hosted-baseline", minimum=1 if closed else 2,
+                    cap=4, fresh_taper=True, evidence=evidence, values=values, heads=heads,
+                )
+                controller.decide_allocation(
+                    action="grant", pr=1, channel="cli", head=values[1].head, checkpoint="cli-baseline",
+                    min_additional_completed=2, max_additional_completed=4, fresh_taper=True,
+                    reason="open CLI discovery supplies the later audit",
+                )
+                for channel in ("hosted", "cli"):
+                    accepted = 0 if channel == "hosted" and closed else 1
+                    evidence[(1, channel)].append(self.allocation_evidence(
+                        head=values[1].head, checkpoint=f"{channel}-result", channel=channel, accepted=accepted, raw=accepted,
+                        source_resolution_status="resolved",
+                    ))
+                evidence.audit.update(unresolved_findings=[], finding_only_findings=[], unknown_review_evidence=[])
+                count = 0
+                def discover_own_fix(evidence=evidence):
+                    nonlocal count
+                    count += 1
+                    if count == 2:
+                        evidence[(1, "hosted")][-1]["source_resolution_status"] = "finding_pending"
+                evidence.on_audit = discover_own_fix
+                self._enable_batch_status(controller, values)
+                credit = controller._review_credit_projection(evidence[(1, "hosted")])
+                saved = controller._state()
+                report = controller.status_overview()
+                self.assertEqual(count, 2)
+                front = report["review_fronts"]["hosted"]
+                self.assertEqual(front["pr"], 2 if closed else 1)
+                if not closed:
+                    self.assertEqual(front["status"], "HELD")
+                    self.assertIn("accepted findings", front["reason"])
+                self.assertIn("hosted-result", report["prs"][0]["review_obligations"]["hosted"])
+                self.assertEqual(controller._review_credit_projection(evidence[(1, "hosted")]), credit)
+                self.assertEqual(controller._state(), saved)
 
     def test_bounded_allocation_uses_durable_resolution_for_accepted_finding_clearance(self):
         resolved_history = {
