@@ -658,12 +658,8 @@ require_list_item(
     "dev-tools-readme-contract",
     "ci workflow",
 )
-require_list_item(
-    ci,
-    ("jobs", "validation-summary", "needs"),
-    "dev-tools-readme-contract",
-    "ci workflow",
-)
+if "validation-summary" in ci["jobs"]:
+    raise SystemExit("Optional Validation Summary must not delay the original workflow completion")
 readme_checkout_step = find_step(
     ci, "dev-tools-readme-contract", "⬇️ Checkout Code", "ci workflow"
 )
