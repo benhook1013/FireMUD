@@ -18,11 +18,9 @@ class AuthoredInitialActorCoreReadGrpcCodecTest {
     var wireRequest = AuthoredInitialActorCoreReadGrpcCodec.toRequest(request);
     var response = AuthoredInitialActorCoreReadGrpcCodec.toResponse(fixture.result());
 
-    var decoded =
-        AuthoredInitialActorCoreReadGrpcCodec.fromResponse(fixture.request(), response);
+    var decoded = AuthoredInitialActorCoreReadGrpcCodec.fromResponse(fixture.request(), response);
 
-    assertThat(AuthoredInitialActorCoreReadGrpcCodec.fromRequest(wireRequest))
-        .isEqualTo(request);
+    assertThat(AuthoredInitialActorCoreReadGrpcCodec.fromRequest(wireRequest)).isEqualTo(request);
     assertThat(decoded.canonicalBytes()).containsExactly(fixture.result().canonicalBytes());
     assertThat(decoded.request()).isEqualTo(fixture.request());
     assertThat(decoded.associationRead()).isEqualTo(fixture.associationRead());
@@ -32,8 +30,7 @@ class AuthoredInitialActorCoreReadGrpcCodecTest {
   @Test
   void rejectsMissingInitialUnknownAndChangedExactRequestSelectors() throws Exception {
     var fixture = AuthoredInitialActorCoreReadTestFixture.create();
-    var wire =
-        AuthoredInitialActorCoreReadGrpcCodec.toRequest(new ReadRequest(fixture.request()));
+    var wire = AuthoredInitialActorCoreReadGrpcCodec.toRequest(new ReadRequest(fixture.request()));
     assertThatThrownBy(
             () ->
                 AuthoredInitialActorCoreReadGrpcCodec.fromRequest(
@@ -90,15 +87,15 @@ class AuthoredInitialActorCoreReadGrpcCodecTest {
                 AuthoredInitialActorCoreReadGrpcCodec.fromResponse(
                     fixture.request(),
                     response.toBuilder()
-                        .setCanonicalResultBytes(
-                            com.google.protobuf.ByteString.copyFromUtf8("{}"))
+                        .setCanonicalResultBytes(com.google.protobuf.ByteString.copyFromUtf8("{}"))
                         .build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical complete content");
     assertThatThrownBy(
             () ->
                 AuthoredInitialActorCoreReadGrpcCodec.fromResponse(
-                    fixture.request(), response.toBuilder().setResultDigest("sha256:" + "0".repeat(64)).build()))
+                    fixture.request(),
+                    response.toBuilder().setResultDigest("sha256:" + "0".repeat(64)).build()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical complete content");
 
@@ -113,17 +110,22 @@ class AuthoredInitialActorCoreReadGrpcCodecTest {
                     .build())
             .build();
     assertThatThrownBy(
-            () -> AuthoredInitialActorCoreReadGrpcCodec.fromResponse(fixture.request(), unknownNested))
+            () ->
+                AuthoredInitialActorCoreReadGrpcCodec.fromResponse(
+                    fixture.request(), unknownNested))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("unsupported fields");
   }
 
-  private static net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Request
+  private static net.firedevops.firemud.common.gamedesign
+          .StartSessionTemplateAssociationReadEvidence.Request
       changedRequest(
-          net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Request
+          net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence
+                  .Request
               request) {
     var replay = (ExactReplay) request.selection();
-    return new net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence.Request(
+    return new net.firedevops.firemud.common.gamedesign.StartSessionTemplateAssociationReadEvidence
+        .Request(
         request.schemaVersion(),
         request.targetNamespace(),
         request.readRequestId(),

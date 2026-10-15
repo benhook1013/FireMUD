@@ -188,7 +188,8 @@ public final class AuthoredInitialActorCoreReadService {
     var templateCapture =
         capture
             .templateConfig()
-            .orElseThrow(() -> conflict("Exact selected template configuration capture is unavailable"));
+            .orElseThrow(
+                () -> conflict("Exact selected template configuration capture is unavailable"));
     if (!templateCapture.snapshot().binding().equals(selection.selectedCommit())) {
       throw conflict("Selected template capture differs from its publication commit");
     }
@@ -235,7 +236,8 @@ public final class AuthoredInitialActorCoreReadService {
             operation.canonicalBytes(),
             readback.terminalEvidenceBytes(),
             selection.selectedCommit(),
-            capture.policy().snapshot().shared(),
+            net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot.fromStored(
+                capture.policy().snapshot().canonicalJson()),
             selectedRules.snapshot());
     return new CapturedSources(actorBindings, selectedRules.receiptBinding());
   }

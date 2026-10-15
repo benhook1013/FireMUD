@@ -24,8 +24,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 class AuthoredInitialActorCoreReadEvidenceTest {
   @Test
-  void completeResultBindsTheExactAssociationDescriptorAndOrderedProjectionSet()
-      throws Exception {
+  void completeResultBindsTheExactAssociationDescriptorAndOrderedProjectionSet() throws Exception {
     var fixture = AuthoredInitialActorCoreReadTestFixture.create();
     var result = fixture.result();
 
@@ -50,9 +49,7 @@ class AuthoredInitialActorCoreReadEvidenceTest {
             fixture.request().ownerFence(),
             new StartSessionTemplateAssociationReadEvidence.InitialConfigured());
 
-    assertThatThrownBy(
-            () ->
-                new AuthoredInitialActorCoreReadEvidence.ReadRequest(initial))
+    assertThatThrownBy(() -> new AuthoredInitialActorCoreReadEvidence.ReadRequest(initial))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Exact pinned association replay");
   }
@@ -243,7 +240,9 @@ final class AuthoredInitialActorCoreReadTestFixture {
         original.schemaVersion(),
         namespace,
         original.readRequestId(),
-        postTuple(original.decodedTuple().preAuthorizationTuple().action().scope().tenantId(), namespace)
+        postTuple(
+                original.decodedTuple().preAuthorizationTuple().action().scope().tenantId(),
+                namespace)
             .canonicalBytes(),
         original.ownerAttemptId(),
         original.ownerFence(),
@@ -306,8 +305,10 @@ final class AuthoredInitialActorCoreReadTestFixture {
                 "controlPlaneRequestId", tuple.controlPlaneRequestId(),
                 "actionFamilyRequestIdentity",
                     Map.of(
-                        "requestIdentityKind", "controlPlaneRequestId",
-                        "requestId", tuple.controlPlaneRequestId()),
+                        "requestIdentityKind",
+                        "controlPlaneRequestId",
+                        "requestId",
+                        tuple.controlPlaneRequestId()),
                 "mutationDigest", tuple.mutationDigest()),
             "issuanceKind",
             "human_operator",

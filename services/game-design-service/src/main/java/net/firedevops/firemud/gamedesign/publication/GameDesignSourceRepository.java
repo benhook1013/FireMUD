@@ -76,11 +76,7 @@ public final class GameDesignSourceRepository {
     var templateConfig = templateConfigs.enrollFreshDraft(target);
     Genesis result =
         new Genesis(
-            policy,
-            command,
-            Optional.of(asset),
-            Optional.of(rules),
-            Optional.of(templateConfig));
+            policy, command, Optional.of(asset), Optional.of(rules), Optional.of(templateConfig));
     if (!result.equals(
         readGenesis(target)
             .orElseThrow(
@@ -108,8 +104,7 @@ public final class GameDesignSourceRepository {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_GENESIS_INCOMPLETE");
     }
     return Optional.of(
-        new Genesis(
-            policy.orElseThrow(), command.orElseThrow(), asset, rules, templateConfig));
+        new Genesis(policy.orElseThrow(), command.orElseThrow(), asset, rules, templateConfig));
   }
 
   /** Pure typed owner/scope validation; this does not read storage or grant write authority. */
@@ -159,7 +154,10 @@ public final class GameDesignSourceRepository {
       // first, then records the combined result using actual sibling readback bytes.
       policy =
           Optional.of(
-      command.isPresent() || asset.isPresent() || rules.isPresent() || templateConfig.isPresent()
+              command.isPresent()
+                      || asset.isPresent()
+                      || rules.isPresent()
+                      || templateConfig.isPresent()
                   ? policies.applyMutation(binding)
                   : policies.apply(binding));
     }
@@ -439,11 +437,7 @@ public final class GameDesignSourceRepository {
         || assets.size() != (hasAsset ? 1 : 0)
         || rules.size() != (hasGameplay ? 1 : 0)
         || templateConfigs.size() != (hasTemplateConfig ? 1 : 0)
-        || commands.size()
-                + policies.size()
-                + assets.size()
-                + rules.size()
-                + templateConfigs.size()
+        || commands.size() + policies.size() + assets.size() + rules.size() + templateConfigs.size()
             != units.size()
         || units.stream()
             .anyMatch(
@@ -556,8 +550,7 @@ public final class GameDesignSourceRepository {
           || policy.isPresent() && !binding.equals(policy.orElseThrow().snapshot().binding())
           || asset.isPresent() && !binding.equals(asset.orElseThrow().binding())
           || gameplay.isPresent() && !binding.equals(gameplay.orElseThrow().binding())
-          || templateConfig.isPresent()
-              && !binding.equals(templateConfig.orElseThrow().binding())
+          || templateConfig.isPresent() && !binding.equals(templateConfig.orElseThrow().binding())
           || ownerOutcome.owner() != Owner.GAME_DESIGN_CONTROL_PLANE
           || ownerOutcome.status() != OwnerStatus.APPLIED
           || !binding.commitId().equals(ownerOutcome.commitId())

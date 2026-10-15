@@ -34,9 +34,9 @@ import net.firedevops.firemud.gamedesign.publication.SelectedDraftTemplateWorldS
 import net.firedevops.firemud.gamedesign.publication.TemplateConfigSource;
 import net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceSnapshot;
-import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
+import net.firedevops.firemud.gamedesign.service.impl.PublishedWorldSelectorFixtures;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
@@ -911,7 +911,8 @@ class TemplateConfigSourcePostgresIntegrationTest {
   }
 
   @Test
-  void selectedPublicationRetainsInheritedTemplateToOriginalWorldSourceAssociation() {
+  void selectedPublicationRetainsInheritedTemplateToOriginalWorldSourceAssociation()
+      throws Exception {
     var f = fixture();
     UUID ruleRevision = UUID.randomUUID();
     var rule =
@@ -1182,14 +1183,17 @@ class TemplateConfigSourcePostgresIntegrationTest {
                           selectedCommit.digest());
                   return new PreparedSelection(
                       intent, AuthoredDraftPublishSelection.capture(intent, f.target, evidence));
-                })));
+                }));
     var selection =
         AuthoredDraftPublishSelectionBinding.fromStored(
             prepared.selection().canonicalJson(), prepared.selection().digest());
     var worldSeed = PublishedWorldSelectorFixtures.evidence(f.target, selectedCommit);
     var operation = IsolatedPublicationOperationFixtures.forSelection(selection, worldSeed);
     return new SelectedPublicationInputs(
-        prepared.intent(), selection, operation, syntheticWorldSourceRead(f.target, operation.world()));
+        prepared.intent(),
+        selection,
+        operation,
+        syntheticWorldSourceRead(f.target, operation.world()));
   }
 
   /** Structured, isolated source evidence for owner-local association tests only. */
@@ -1205,12 +1209,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
     String worldDisplayName = "Isolated World";
     String sourceRequestDigest =
         AuthoredWorldSourceDigest.requestDigest(
-            namespace,
-            registrationRequestId,
-            tenantId,
-            tenantSlug,
-            worldSlug,
-            worldDisplayName);
+            namespace, registrationRequestId, tenantId, tenantSlug, worldSlug, worldDisplayName);
     String sourceEvidenceDigest =
         AuthoredWorldSourceDigest.evidenceDigest(
             namespace,
