@@ -420,6 +420,161 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   @Test
+  void fixtureAssociationRejectsEveryWorldCopyMismatchThroughTheOwnerTransaction() {
+    var retainedEvidence = controlledEvidence();
+    RunOwnedWorldFixtureLifecycleTestFactory.prepare(
+        nativeService(retainedEvidence), retainedEvidence);
+
+    var evidence = controlledEvidence();
+    var sourceRepository = new WorldAuthoredSourceIntakeRepository(dsl);
+    var versionRepository = new WorldAuthoredVersionIdentityRepository(dsl);
+    var source =
+        Objects.requireNonNull(
+            ownerTransaction()
+                .execute(
+                    status ->
+                        sourceRepository.acceptFresh(
+                            "dev", UUID.randomUUID(), evidence.sourceReceipt().sourceEvidence())));
+    var state =
+        AuthoredWorldVersionStateEvidence.create(
+            new AuthoredWorldVersionStateEvidence.Request(
+                1,
+                "dev",
+                UUID.randomUUID(),
+                source.canonicalTenantId(),
+                source.worldSlug(),
+                source.sourceOperationId(),
+                source.sourceEvidenceDigest(),
+                evidence.launchDescriptor().versionId()),
+            source.source(),
+            evidence.gameSessionAssociation().canonicalVersionId(),
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+            evidence.launchDescriptor().versionStateEpoch());
+    var version =
+        Objects.requireNonNull(
+            ownerTransaction().execute(status -> versionRepository.acceptFresh(source, state)));
+    var gs = evidence.gameSessionAssociation();
+    var descriptor = evidence.launchDescriptor();
+    var request =
+        new PreparedWorldInstanceRequest(
+            gs.gameSessionTenantId(),
+            gs.gameInstanceId(),
+            descriptor.gameTemplateId(),
+            evidence.capability().operationId(),
+            descriptor.launchDescriptorId(),
+            descriptor.versionId(),
+            null,
+            descriptor.runtimeFlagsJson(),
+            descriptor.generationConfigRevision(),
+            descriptor.releaseBundleId(),
+            descriptor.publishedReleaseBundleRef(),
+            descriptor.versionStateEpoch(),
+            null);
+    var associationRepository = associationRepository();
+    var fenceRepository = new WorldDesignPublicationFenceRepository(dsl, sourceRepository);
+
+    String schema = dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+    String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+    String functionName = "world_test_fixture_copy_mutation_" + suffix;
+    String triggerName = "trg_world_canonical_instance_association_01_test_copy_" + suffix;
+    String function = DSL.name(schema, functionName).toString();
+    String associationTable = DSL.name(schema, "world_canonical_instance_association").toString();
+    String createFunction =
+        """
+        CREATE FUNCTION __test_function__() RETURNS TRIGGER
+        LANGUAGE plpgsql
+        AS $test$
+        DECLARE
+            mismatch_field TEXT := current_setting('world.fixture_copy_mismatch_field', TRUE);
+        BEGIN
+            IF TG_OP = 'INSERT' AND NEW.schema_version = 3
+                AND NEW.canonical_authority_kind = 'RUN_OWNED_FIXTURE'
+                AND mismatch_field IS NOT NULL THEN
+                CASE mismatch_field
+                    WHEN 'canonical_realm_id' THEN NEW.canonical_realm_id := pg_catalog.gen_random_uuid();
+                    WHEN 'catalog_revision' THEN NEW.catalog_revision := NEW.catalog_revision + 1;
+                    WHEN 'playtest_lifecycle_id' THEN NEW.playtest_lifecycle_id := pg_catalog.gen_random_uuid();
+                    WHEN 'playtest_state_generation' THEN NEW.playtest_state_generation := COALESCE(NEW.playtest_state_generation, 0) + 1;
+                    WHEN 'script_patch_version' THEN NEW.script_patch_version := COALESCE(NEW.script_patch_version, 'fixture-copy-mismatch') || '-mutated';
+                    WHEN 'runtime_flags_json' THEN NEW.runtime_flags_json := NEW.runtime_flags_json || ' ';
+                    WHEN 'generation_config_revision' THEN NEW.generation_config_revision := NEW.generation_config_revision || '-mutated';
+                    WHEN 'release_bundle_id' THEN NEW.release_bundle_id := NEW.release_bundle_id + 1;
+                    WHEN 'published_release_bundle_ref' THEN NEW.published_release_bundle_ref := NEW.published_release_bundle_ref || '-mutated';
+                    WHEN 'remap_set_id' THEN NEW.remap_set_id := COALESCE(NEW.remap_set_id, 'fixture-copy-mismatch') || '-mutated';
+                    ELSE RAISE EXCEPTION 'Unknown fixture copy mutation field';
+                END CASE;
+            END IF;
+            RETURN NEW;
+        END;
+        $test$
+        """
+            .replace("__test_function__", function);
+    String trigger =
+        "CREATE TRIGGER "
+            + DSL.name(triggerName)
+            + " BEFORE INSERT ON "
+            + associationTable
+            + " FOR EACH ROW EXECUTE FUNCTION "
+            + function
+            + "()";
+
+    try {
+      dsl.execute(createFunction);
+      dsl.execute(trigger);
+      var beforeInsertTriggers =
+          dsl.fetch(
+                  "SELECT tgname FROM pg_trigger WHERE tgrelid = ?::REGCLASS "
+                      + "AND NOT tgisinternal AND (tgtype & 7) = 7 ORDER BY tgname",
+                  associationTable)
+              .getValues(0, String.class);
+      String executionGuard = "trg_world_canonical_instance_association_00_execution";
+      String ownerCopyValidator = "trg_world_canonical_instance_association_exact_insert";
+      assertThat(beforeInsertTriggers)
+          .as("real manifest guard, injected row mutation, then owner-copy validator")
+          .contains(executionGuard, triggerName, ownerCopyValidator);
+      assertThat(beforeInsertTriggers.indexOf(executionGuard))
+          .isLessThan(beforeInsertTriggers.indexOf(triggerName));
+      assertThat(beforeInsertTriggers.indexOf(triggerName))
+          .isLessThan(beforeInsertTriggers.indexOf(ownerCopyValidator));
+
+      var originalRows = allRows(dsl);
+      for (String field :
+          List.of(
+              "canonical_realm_id",
+              "catalog_revision",
+              "playtest_lifecycle_id",
+              "playtest_state_generation",
+              "script_patch_version",
+              "runtime_flags_json",
+              "generation_config_revision",
+              "release_bundle_id",
+              "published_release_bundle_ref",
+              "remap_set_id")) {
+        assertSqlState(
+            () ->
+                ownerTransaction()
+                    .executeWithoutResult(
+                        status -> {
+                          dsl.fetchOne(
+                              "SELECT set_config('world.fixture_copy_mismatch_field', ?, TRUE)",
+                              field);
+                          fenceRepository.lockOpen(binding(source, version));
+                          associationRepository.allocateRunOwnedFixtureInOwnerTransaction(
+                              evidence, request, source, version);
+                        }),
+            "23514",
+            "Run-owned fixture association differs from its exact World, source, Version, or GS owner readback");
+        assertThat(allRows(dsl))
+            .as("original rows and xmin after %s owner-copy mismatch", field)
+            .isEqualTo(originalRows);
+      }
+    } finally {
+      dsl.execute("DROP TRIGGER IF EXISTS " + DSL.name(triggerName) + " ON " + associationTable);
+      dsl.execute("DROP FUNCTION IF EXISTS " + function + "()");
+    }
+  }
+
+  @Test
   void racingActualPackageOwnersConvergeOneOriginalAllocation() throws Exception {
     var evidence = controlledEvidence();
     var firstOwner = nativeService(evidence);
@@ -1442,6 +1597,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertThat(allRows(dsl))
         .as("no row or byte changes after standalone readback")
         .isEqualTo(readbackRowsBefore);
+    assertRoomReadbackRequiresBothRooms(plan, worldId, privateKey, readbackRowsBefore);
     assertNoPendingManifests(worldId);
     assertThat(
             scalarLong(
@@ -1781,6 +1937,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1042.1");
     versions.add("1042.2");
     versions.add("1042.3");
+    versions.add("1042.4");
+    versions.add("1042.5");
     return List.copyOf(versions);
   }
 
@@ -1910,6 +2068,153 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     }
     assertThat(allRows(dsl)).as("no row or byte changes after " + mode).isEqualTo(rowsBefore);
     assertNoPendingManifests(worldId);
+  }
+
+  private void assertRoomReadbackRequiresBothRooms(
+      RunOwnedWorldFixedPresetResources.FixedPresetPlan plan,
+      long worldId,
+      long privateGameInstanceKey,
+      Map<String, List<String>> rowsBefore) {
+    String schema = dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+    String originalRoutine =
+        DSL.name(schema, "world_read_run_owned_fixed_preset") + "(text,text,bigint,bigint)";
+    String installedDefinition =
+        dsl.fetchSingle("SELECT pg_get_functiondef(?::regprocedure)", originalRoutine)
+            .get(0, String.class);
+    var originalReadback =
+        RunOwnedWorldFixedPresetResources.readCommitted(dsl, plan, worldId, privateGameInstanceKey);
+    String roomCountStart =
+        "OR (SELECT count(*)\n"
+            + "        FROM \""
+            + schema
+            + "\".world_authored_topology_identity m\n"
+            + "        JOIN \""
+            + schema
+            + "\".room r ON r.id = m.private_row_key";
+    String anyRoomStart =
+        "OR NOT EXISTS (\n"
+            + "        SELECT 1\n"
+            + "        FROM \""
+            + schema
+            + "\".world_authored_topology_identity m\n"
+            + "        JOIN \""
+            + schema
+            + "\".room r ON r.id = m.private_row_key";
+    String roomCountEnd =
+        "AND ri.zone_instance_id = zi.runtime_row_id)) <> 2\n"
+            + "        OR (SELECT count(*) FROM \""
+            + schema
+            + "\".world_authored_topology_identity m\n"
+            + "            JOIN \""
+            + schema
+            + "\".room_exit e";
+    String anyRoomEnd =
+        "AND ri.zone_instance_id = zi.runtime_row_id))\n"
+            + "        OR (SELECT count(*) FROM \""
+            + schema
+            + "\".world_authored_topology_identity m\n"
+            + "            JOIN \""
+            + schema
+            + "\".room_exit e";
+    String callArguments = "(?, ?, ?, ?)";
+    for (var roomMismatch :
+        List.of(
+            Map.entry("Candle-lit Antechamber", "Candle-lit Antechamber (test-only mismatch)"),
+            Map.entry("Smith''s Annex", "Smith''s Annex (test-only mismatch)"))) {
+      String expectedRoomName = "r.name = '" + roomMismatch.getKey() + "'";
+      String substitutedRoomName = "r.name = '" + roomMismatch.getValue() + "'";
+      String changedRoomDefinition =
+          replaceExactlyOnce(
+              installedDefinition,
+              expectedRoomName,
+              substitutedRoomName,
+              "fixed room expectation " + roomMismatch.getKey());
+
+      String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+      String oldName = "world_test_old_room_readback_" + suffix;
+      String currentName = "world_test_current_room_readback_" + suffix;
+      String oldQualifiedName = DSL.name(schema, oldName).toString();
+      String currentQualifiedName = DSL.name(schema, currentName).toString();
+      String nameAnchor = "world_read_run_owned_fixed_preset(";
+      String oldDefinition =
+          replaceExactlyOnce(
+              changedRoomDefinition,
+              nameAnchor,
+              oldName + "(",
+              "old test function name for " + roomMismatch.getKey());
+      String currentDefinition =
+          replaceExactlyOnce(
+              changedRoomDefinition,
+              nameAnchor,
+              currentName + "(",
+              "current test function name for " + roomMismatch.getKey());
+      oldDefinition =
+          replaceExactlyOnce(
+              oldDefinition,
+              roomCountStart,
+              anyRoomStart,
+              "old room predicate start for " + roomMismatch.getKey());
+      oldDefinition =
+          replaceExactlyOnce(
+              oldDefinition,
+              roomCountEnd,
+              anyRoomEnd,
+              "old room predicate end for " + roomMismatch.getKey());
+
+      try {
+        dsl.execute(oldDefinition);
+        dsl.execute(currentDefinition);
+        assertThat(
+                dsl.fetchOne(
+                    "SELECT * FROM " + oldQualifiedName + callArguments,
+                    plan.planJson(),
+                    plan.expectedContentDigest(),
+                    worldId,
+                    privateGameInstanceKey))
+            .as(
+                "the former any-matching-room check accepts a mismatch for "
+                    + roomMismatch.getKey())
+            .isNotNull();
+        assertSqlState(
+            () ->
+                dsl.fetchOne(
+                    "SELECT * FROM " + currentQualifiedName + callArguments,
+                    plan.planJson(),
+                    plan.expectedContentDigest(),
+                    worldId,
+                    privateGameInstanceKey),
+            "23514",
+            "RUN_OWNED_WORLD_FIXED_PRESET_TOPOLOGY_MISMATCH");
+        assertThat(allRows(dsl))
+            .as("test-local read copies preserve rows and xmin for " + roomMismatch.getKey())
+            .isEqualTo(rowsBefore);
+      } finally {
+        dsl.execute(
+            "DROP FUNCTION IF EXISTS "
+                + oldQualifiedName
+                + "(text,text,bigint,bigint), "
+                + currentQualifiedName
+                + "(text,text,bigint,bigint)");
+      }
+    }
+    assertThat(
+            RunOwnedWorldFixedPresetResources.readCommitted(
+                dsl, plan, worldId, privateGameInstanceKey))
+        .as("the installed committed read remains unchanged after the controlled copies")
+        .isEqualTo(originalReadback);
+    assertThat(allRows(dsl))
+        .as("the installed read and test-local copies preserve every stored row and xmin")
+        .isEqualTo(rowsBefore);
+  }
+
+  private static String replaceExactlyOnce(
+      String source, String anchor, String replacement, String description) {
+    int offset = source.indexOf(anchor);
+    assertThat(offset).as(description + " anchor exists").isGreaterThanOrEqualTo(0);
+    assertThat(source.indexOf(anchor, offset + anchor.length()))
+        .as(description + " anchor is unique")
+        .isEqualTo(-1);
+    return source.substring(0, offset) + replacement + source.substring(offset + anchor.length());
   }
 
   private RunOwnedWorldFixedPresetResources.MaterializedFixedPreset readPresetInCurrentTransaction(
