@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for Game Session runtime and tick
 
 ## Current Status
 
+### Human original StartSession launch association read
+
+The prepared `CanonicalGameInstanceLaunchAssociationReadGrpcService` is a standalone, unregistered adapter over the existing Game Session repository’s original Human StartSession association read. It accepts only the exact same-namespace World workload with no authenticated caller context, rejects ambient owner transactions or synchronization, and returns the exact current STARTING association with its retained pending owner attempt/fence and complete descriptor/release binding. Fixture association evidence remains a distinct path and is not promoted to Human authority. This is a point-in-time owner observation; it performs no mutation, lease renewal, execution admission, activation or pointer update.
+
+R82 passes the focused adapter unit/static/format gate in 54 seconds with eight fresh cases and zero failures/errors/skips. These cases use a mocked repository; authenticated socket composition and genuine original issuer authority remain unproved. The initial R79 compile failed on a missing production-class import in the new test; that fixture issue is corrected without changing owner semantics. Production Game Design complete-launch reads remain denied, and this adapter supplies neither a genuine original StartSession producer nor current Account authority through a downstream commit. Its World consumer and recovery dependencies are recorded in [the World tracker](./world-runtime-and-movement.md#original-startsession-world-preparation-and-recovery). Deployment, ACTIVE lifecycle, admission, Entity placement and packaged playable closure remain held. The [restricted original-claim continuation contract](../../architecture/microservices/game-session-service/api-contracts.md#restricted-original-claim-evidence-continuation) and World’s existing creation/runtime contracts retain authority; earlier fixture and owner proofs below keep their original attribution.
+
 ### Canonical fixture launch owner stage
 
 The successor to the guarded World owner stage prepares the closed Game Design fixture-policy receipt and actual Game Session fresh association, catalog and canonical `STARTING` launch. The scheduler completes only that independently read owner phase. Its authenticated fixed World read echoes the original policy request/seal and owner-allocated private identities; it neither writes an admission pointer nor reports an active World.

@@ -83,10 +83,36 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
       UUID gameDesignTenant,
       Clock actorClock)
       throws Exception {
+    this(
+        jdbcUrl,
+        username,
+        password,
+        redisHost,
+        redisPort,
+        temporary,
+        gameDesignTenant,
+        actorClock,
+        null);
+  }
+
+  /**
+   * Test-only historical owner fixture. A null target retains the existing current-default setup.
+   */
+  public AccountControlUiOriginalOrderFixture(
+      String jdbcUrl,
+      String username,
+      String password,
+      String redisHost,
+      int redisPort,
+      Path temporary,
+      UUID gameDesignTenant,
+      Clock actorClock,
+      String migrationTarget)
+      throws Exception {
     this.temporary = temporary;
     f =
         new AccountControlUiOwnerSourcesFixture(
-            jdbcUrl, username, password, temporary, false, gameDesignTenant);
+            jdbcUrl, username, password, temporary, false, gameDesignTenant, migrationTarget);
     var lifecycle = new AccountControlUiSignerFixture(f, temporary);
     lifecycle.commit();
     var originalSigner = f.tx(lifecycle.signer::captureCurrent);
@@ -180,6 +206,20 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
 
   public UUID tenantId() {
     return f.tenant;
+  }
+
+  /**
+   * Real Account-owned selected Game Logic source reads over this fixture's SQL and Coordination
+   * Redis owners; callers choose the clock and target namespace for their composition.
+   */
+  public AccountGameLogicIntakeSourceReadService gameLogicIntakeSourceReadService(
+      Clock clock, String namespace) {
+    return new AccountGameLogicIntakeSourceReadService(
+        new AccountGameLogicIntakeAuthorizationRepository(f.dsl),
+        coordination,
+        f.manager,
+        clock,
+        namespace);
   }
 
   /**

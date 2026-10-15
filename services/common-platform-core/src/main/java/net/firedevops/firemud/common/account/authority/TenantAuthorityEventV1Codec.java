@@ -1,4 +1,4 @@
-package net.firedevops.firemud.accountservice.dto;
+package net.firedevops.firemud.common.account.authority;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -8,10 +8,10 @@ import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
-import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import tools.jackson.core.StreamReadFeature;
@@ -28,6 +28,8 @@ public final class TenantAuthorityEventV1Codec {
 
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final String STREAM_PREFIX = "account:auth-authority:v1:tenant/";
+  private static final String BILLING_STREAM_PREFIX = "account:tenant-entitlement:v1:tenant/";
+  private static final String BILLING_EVENT_SCHEMA_VERSION = "account-tenant-entitlement-event/v1";
   private static final Pattern DIGEST = Pattern.compile("sha256:[0-9a-f]{64}");
   private static final Pattern POSITIVE_DECIMAL = Pattern.compile("[1-9][0-9]{0,18}");
   private static final Set<String> EVENT_FIELDS =
@@ -72,13 +74,29 @@ public final class TenantAuthorityEventV1Codec {
     return STREAM_PREFIX + tenantId;
   }
 
+  /** Canonical tenant billing stream reference carried as provenance in this event. */
+  public static String tenantBillingStreamKey(UUID tenantId) {
+    if (tenantId == null || NIL_UUID.equals(tenantId)) {
+      throw new IllegalArgumentException(
+          "Canonical tenant UUID is required for entitlement stream");
+    }
+    return BILLING_STREAM_PREFIX + tenantId;
+  }
+
+  /** Stable Account billing event identity used only to validate the receipt reference. */
+  public static UUID tenantBillingEventId(UUID requestId) {
+    requireUuid(requestId, "billing request ID");
+    return UUID.nameUUIDFromBytes(
+        (BILLING_EVENT_SCHEMA_VERSION + ":" + requestId).getBytes(StandardCharsets.UTF_8));
+  }
+
   public static Event seal(
-      DemoTenantEntitlementRequest request,
+      AuthorityRequest request,
       FreshTenantCreationEvidence source,
       long tenantAuthorityGeneration,
       long tenantAuthoritySourceVersion,
       long outboxSequence,
-      DemoTenantEntitlementEventV1Codec.Event billingEvent) {
+      BillingReceipt billingEvent) {
     if (request == null || source == null || billingEvent == null) {
       throw new IllegalArgumentException(
           "Tenant authority request, source, and committed billing event are required");
@@ -89,10 +107,16 @@ public final class TenantAuthorityEventV1Codec {
         || !"NEW_GAME_ROW".equals(source.provenanceKind())
         || !request.requestId().equals(billingEvent.requestId())
         || !request.requestDigest().equals(billingEvent.requestDigest())
-        || !request.canonicalTenantId().equals(billingEvent.canonicalTenantId())) {
+        || !request.canonicalTenantId().equals(billingEvent.canonicalTenantId())
+        || !tenantBillingStreamKey(request.canonicalTenantId())
+            .equals(billingEvent.outboxStreamKey())
+        || !tenantBillingEventId(request.requestId()).equals(billingEvent.eventId())) {
       throw new IllegalArgumentException(
           "Tenant authority event differs from its exact source or billing request");
     }
+    requireDigest(request.requestDigest(), "request digest");
+    requirePositive(billingEvent.tenantBillingSequence(), "tenant billing sequence");
+    requireDigest(billingEvent.eventDigest(), "tenant billing event digest");
     requirePositive(tenantAuthorityGeneration, "tenant authority generation");
     requirePositive(tenantAuthoritySourceVersion, "tenant authority source version");
     requirePositive(outboxSequence, "authority outbox sequence");
@@ -181,10 +205,10 @@ public final class TenantAuthorityEventV1Codec {
         positiveDecimal(billing.get("tenantBillingSequence"), "tenantBillingSequence");
     UUID billingEventId = uuid(billing.get("eventId"), "billing eventId");
     String billingDigest = digestText(billing.get("eventDigest"), "billing eventDigest");
-    if (!AccountTenantEntitlementOutboxRepository.streamKey(tenantId).equals(billingStream)) {
+    if (!tenantBillingStreamKey(tenantId).equals(billingStream)) {
       throw new IllegalArgumentException("Tenant billing receipt has another tenant scope");
     }
-    if (!DemoTenantEntitlementEventV1Codec.eventId(requestId).equals(billingEventId)) {
+    if (!tenantBillingEventId(requestId).equals(billingEventId)) {
       throw new IllegalArgumentException("Tenant billing receipt has another request identity");
     }
 
@@ -241,7 +265,7 @@ public final class TenantAuthorityEventV1Codec {
       String streamKey,
       long sequence,
       UUID eventId,
-      DemoTenantEntitlementEventV1Codec.Event billingEvent,
+      BillingReceipt billingEvent,
       FreshTenantCreationEvidence source) {
     Map<String, Object> values = new LinkedHashMap<>();
     values.put("schemaVersion", SCHEMA_VERSION);
@@ -369,6 +393,12 @@ public final class TenantAuthorityEventV1Codec {
     }
   }
 
+  private static void requireDigest(String value, String field) {
+    if (value == null || !DIGEST.matcher(value).matches()) {
+      throw new IllegalArgumentException("Tenant authority event " + field + " is invalid");
+    }
+  }
+
   private static void requireUuid(UUID value, String field) {
     if (value == null || NIL_UUID.equals(value)) {
       throw new IllegalArgumentException("Tenant authority event " + field + " is required");
@@ -405,7 +435,7 @@ public final class TenantAuthorityEventV1Codec {
           || tenantBillingEventDigest == null
           || !DIGEST.matcher(tenantBillingEventDigest).matches()
           || !streamKey(tenantId).equals(outboxStreamKey)
-          || !AccountTenantEntitlementOutboxRepository.streamKey(tenantId)
+          || !TenantAuthorityEventV1Codec.tenantBillingStreamKey(tenantId)
               .equals(tenantBillingStreamKey)
           || tenantAuthorityGeneration <= 0L
           || tenantAuthoritySourceVersion <= 0L
@@ -422,6 +452,42 @@ public final class TenantAuthorityEventV1Codec {
     @Override
     public byte[] payload() {
       return payload.clone();
+    }
+  }
+
+  /** Data-only tenant mutation fields required to encode the unchanged authority event schema. */
+  public record AuthorityRequest(
+      UUID requestId,
+      String requestDigest,
+      UUID canonicalTenantId,
+      UUID tenantCreationRequestId,
+      String tenantCreationRequestDigest) {
+    public AuthorityRequest {
+      requireUuid(requestId, "request ID");
+      requireDigest(requestDigest, "request digest");
+      requireUuid(canonicalTenantId, "tenant UUID");
+      requireUuid(tenantCreationRequestId, "tenant creation request ID");
+      requireDigest(tenantCreationRequestDigest, "tenant creation request digest");
+    }
+  }
+
+  /** Data-only committed billing reference; it grants no entitlement authority. */
+  public record BillingReceipt(
+      UUID canonicalTenantId,
+      UUID requestId,
+      String requestDigest,
+      String outboxStreamKey,
+      long tenantBillingSequence,
+      UUID eventId,
+      String eventDigest) {
+    public BillingReceipt {
+      requireUuid(canonicalTenantId, "billing tenant UUID");
+      requireUuid(requestId, "billing request ID");
+      requireDigest(requestDigest, "billing request digest");
+      requireUuid(eventId, "billing event ID");
+      requireDigest(eventDigest, "billing event digest");
+      requirePositive(tenantBillingSequence, "tenant billing sequence");
+      Objects.requireNonNull(outboxStreamKey, "billing outbox stream key is required");
     }
   }
 }

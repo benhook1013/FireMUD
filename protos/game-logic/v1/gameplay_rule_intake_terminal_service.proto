@@ -1,0 +1,24 @@
+syntax = "proto3";
+package game_logic.v1;
+option java_package = "net.firedevops.firemud.gamelogic.v1";
+option java_multiple_files = true;
+
+// Standalone and unregistered. Only the same-namespace Account workload may read.
+service GameLogicGameplayRuleIntakeTerminalReadService {
+  rpc ReadGameplayRuleIntakeTerminal(ReadGameplayRuleIntakeTerminalRequest) returns (ReadGameplayRuleIntakeTerminalResponse);
+}
+message ReadGameplayRuleIntakeTerminalRequest {
+  uint32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  bytes original_intake_authorization = 4;
+  string intake_authorization_digest = 5;
+}
+message ReadGameplayRuleIntakeTerminalResponse {
+  ReadGameplayRuleIntakeTerminalRequest request = 1;
+  oneof result {
+    bool absent = 2;
+    bytes original_terminal = 3;
+  }
+  string terminal_digest = 4;
+}

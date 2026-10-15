@@ -1032,11 +1032,7 @@ class RealmPolicySourcePostgresIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
-        .locations(
-            "filesystem:"
-                + java.nio.file.Path.of("src/main/resources/db/migration")
-                    .toAbsolutePath()
-                    .normalize())
+        .locations(migrationLocation())
         .table("flyway_schema_history_game_design_service")
         .load()
         .migrate();
@@ -1210,11 +1206,7 @@ class RealmPolicySourcePostgresIntegrationTest {
         .schemas(schema)
         .defaultSchema(schema)
         .placeholders(Map.of("serviceSchema", schema))
-        .locations(
-            "filesystem:"
-                + java.nio.file.Path.of("src/main/resources/db/migration")
-                    .toAbsolutePath()
-                    .normalize())
+        .locations(migrationLocation())
         .table("flyway_schema_history_game_design_service")
         .target(target)
         .load()
@@ -1269,5 +1261,10 @@ class RealmPolicySourcePostgresIntegrationTest {
     <T> T tx(Supplier<T> work) {
       return write.execute(status -> work.get());
     }
+  }
+
+  private static String migrationLocation() {
+    return "filesystem:"
+        + java.nio.file.Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
   }
 }
