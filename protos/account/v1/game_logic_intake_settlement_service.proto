@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package account.v1;
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone and unregistered. Only same-namespace Game Design may settle/recover.
+// This is receipt production/recovery, never fresh intake or publication authorization.
+service AccountGameLogicIntakeSettlementService {
+  rpc SettleGameLogicIntake(SettleGameLogicIntakeRequest) returns (SettleGameLogicIntakeResponse);
+}
+
+message SettleGameLogicIntakeRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  // Transport correlation, separate from all durable intake identities.
+  string read_request_id = 3;
+  bytes original_intake_authorization = 4;
+  string intake_authorization_digest = 5;
+}
+
+message SettleGameLogicIntakeResponse {
+  SettleGameLogicIntakeRequest request = 1;
+  // Complete immutable Account receipt, never a publication-operation identity.
+  bytes original_settlement_receipt = 2;
+  string settlement_receipt_digest = 3;
+}

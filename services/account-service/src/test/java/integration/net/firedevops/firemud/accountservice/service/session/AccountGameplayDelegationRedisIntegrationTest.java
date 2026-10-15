@@ -50,7 +50,6 @@ import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
 import net.firedevops.firemud.accountservice.dto.GameplayCredentialSourceContext;
-import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
 import net.firedevops.firemud.accountservice.entity.PasswordResetToken;
@@ -94,6 +93,7 @@ import net.firedevops.firemud.accountservice.service.session.AccountResponseEnve
 import net.firedevops.firemud.accountservice.service.session.AccountSelectedGameplayAuthorityProjection;
 import net.firedevops.firemud.common.account.authority.AccountAuthoritySourceEventV1Codec;
 import net.firedevops.firemud.common.account.authority.AccountSecurityStateAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptCatalog;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationProfile;
 import net.firedevops.firemud.common.security.GameSessionAccountDelegationRegistryRecord;
@@ -2614,7 +2614,26 @@ class AccountGameplayDelegationRedisIntegrationTest {
             true,
             new DemoTenantEntitlementRequest.Quotas(1L, 1L, 1L));
     var billing = DemoTenantEntitlementEventV1Codec.seal(request, source, 1L, 2L, 2L, 1L);
-    var event = TenantAuthorityEventV1Codec.seal(request, source, 2L, 2L, 1L, billing);
+    var event =
+        TenantAuthorityEventV1Codec.seal(
+            new TenantAuthorityEventV1Codec.AuthorityRequest(
+                request.requestId(),
+                request.requestDigest(),
+                request.canonicalTenantId(),
+                request.tenantCreationRequestId(),
+                request.tenantCreationRequestDigest()),
+            source,
+            2L,
+            2L,
+            1L,
+            new TenantAuthorityEventV1Codec.BillingReceipt(
+                billing.canonicalTenantId(),
+                billing.requestId(),
+                billing.requestDigest(),
+                billing.outboxStreamKey(),
+                billing.tenantBillingSequence(),
+                billing.eventId(),
+                billing.eventDigest()));
     return new byte[][] {
       initial[0],
       initial[1],
@@ -2815,7 +2834,24 @@ class AccountGameplayDelegationRedisIntegrationTest {
             request, source, outboxSequence, generation, sourceVersion, outboxSequence);
     var event =
         TenantAuthorityEventV1Codec.seal(
-            request, source, generation, sourceVersion, outboxSequence, billing);
+            new TenantAuthorityEventV1Codec.AuthorityRequest(
+                request.requestId(),
+                request.requestDigest(),
+                request.canonicalTenantId(),
+                request.tenantCreationRequestId(),
+                request.tenantCreationRequestDigest()),
+            source,
+            generation,
+            sourceVersion,
+            outboxSequence,
+            new TenantAuthorityEventV1Codec.BillingReceipt(
+                billing.canonicalTenantId(),
+                billing.requestId(),
+                billing.requestDigest(),
+                billing.outboxStreamKey(),
+                billing.tenantBillingSequence(),
+                billing.eventId(),
+                billing.eventDigest()));
     return selectedProjectionBytes(
         Map.of(
             "schemaVersion", AccountSelectedGameplayAuthorityProjection.TENANT_SCHEMA,
