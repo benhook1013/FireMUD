@@ -348,14 +348,13 @@ Entry format:
 - `2026-10-15`: Keep proof completion separate from a coherent CI checkpoint
   - Context: Gameplay published the #3210 receiving carry after its runtime/source gate passed while the separate final proof-note-only documentation session was still running.
   - Observation: the final documentation result was pending at publication; the PR/job/Overseer report explicitly retained that limit and made no READY claim. The session later passed in 21 seconds, and Gameplay consumed its exit 0 before recording final documentation proof. Root subsequently corrected the initial characterization: publishing a coherent checkpoint with the pending-check limit was permitted and was not a publication-safety violation. The later pass does not change the proof state at publication.
-  - Expected pattern: gate dependent mutation and qualification claims on the consumed terminal exit status. A coherent CI checkpoint may be published with an explicit pending-check limitation; distinguish that pending proof state or an inaccurate qualification report from a safety incident.
+  - Expected pattern: gate dependent mutation and qualification claims on the consumed terminal exit status. A coherent CI checkpoint may be published with an explicit pending-check limitation; distinguish that pending proof state or an inaccurate qualification report from a safety incident. Record routine proof completion in the next aggregated milestone.
 
-- 2026-10-15: Preflight native Actions response shapes before publishing trusted callbacks. Completed Validation runs `38662647370` (20 modules) and `38651777538` (zero modules) both returned `pull_requests: []` despite canonical PR/base-SHA/head titles; association-required fixtures would have passed locally while disabling reporting. The optional summary now distinguishes title/SHA attribution from a separately pinned current-ref write fence; this is not historical-ref or required-gate provenance proof. Native webhook execution and partial-rerun shape still need hosted qualification.
-
-- `2026-10-15`: Clarify reporting for a checkpoint with pending proof
-  - Context: follow-up to the #3210 pending-documentation report.
-  - Observation: Root clarified that publishing a coherent CI checkpoint with an explicit pending-check limitation is permitted and is not, by itself, a publication-safety violation.
-  - Expected pattern: consume results before claiming qualification; distinguish a pending proof state or inaccurate qualification report from a genuine safety incident. Record routine proof completion in the next aggregated milestone.
+- `2026-10-15`: Qualify native Actions callback evidence at the hosted boundary
+  - Context: completed Validation runs [38662647370](https://github.com/benhook1013/FireMUD/actions/runs/38662647370) and [38651777538](https://github.com/benhook1013/FireMUD/actions/runs/38651777538) covered 20 modules and zero modules respectively, and returned `pull_requests: []` despite canonical PR, base-SHA, and head titles.
+  - Observation: association-required fixtures would have passed locally while disabling reporting. The optional summary distinguishes title/SHA attribution from a separately pinned current-ref write fence; local fixtures do not prove historical-ref or required-gate provenance, native webhook delivery, or partial-rerun response shapes.
+  - Expected pattern: preserve that proof limit separately from installed consumer code, and retain the required producer/activation and callback qualification in the [platform operations tracker](implementation-tracking/platform-operations-and-delivery.md).
+  - Reconsideration trigger: remove after producer activation and hosted webhook plus partial-rerun qualification establish the actual callback boundary.
 
 - `2026-10-15`: Identify the channel checkpoint behind PR-wide parent movement
   - Context: after a focused fix on #3206, review admission reported PR-wide `PARENT_MOVED` even though the live base, effective parent, and latest Hosted parent were unchanged.
