@@ -309,7 +309,7 @@ class WorldSameTransactionGuardSubtransactionPostgresIntegrationTest {
                 .get(0, Long.class))
         .isZero();
     assertThat(
-            dsl.fetchOne(
+            dsl.fetchSingle(
                     "SELECT count(*) FROM world_selected_publication_artifact_inventory WHERE publication_fence = ?",
                     publicationFence)
                 .get(0, Long.class))
