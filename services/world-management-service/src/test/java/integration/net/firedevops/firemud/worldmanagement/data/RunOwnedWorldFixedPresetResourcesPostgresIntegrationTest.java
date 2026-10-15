@@ -1339,12 +1339,14 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
         assertThat(retainedRows(connection, schema, entry.getKey(), entry.getValue()))
             .as("all original values and xmin for %s", entry.getKey())
             .containsAll(originalRows.get(entry.getKey()));
-      var retainedRowsAtDefaultFrontier =
+      var retainedRowsAtDefaultFrontierOriginalColumns =
           new LinkedHashMap<>(allRowsWithoutNewAttemptStamp(connection));
-      retainedRowsAtDefaultFrontier.remove(HISTORY);
-      assertThat(retainedRowsAtDefaultFrontier)
+      retainedRowsAtDefaultFrontierOriginalColumns.remove(HISTORY);
+      assertThat(retainedRowsAtDefaultFrontierOriginalColumns)
           .as("all retained row values and xmin from V1042.8 through the V1042.9 repair")
           .isEqualTo(retainedRowsAt10428);
+      var retainedRowsAtDefaultFrontier = new LinkedHashMap<>(allRows(connection));
+      retainedRowsAtDefaultFrontier.remove(HISTORY);
       assertThat(
               connection.fetchSingle(
                   "SELECT oid::text, proowner::text, prosecdef, proconfig::text, proacl::text FROM pg_proc WHERE oid = to_regprocedure(?)",
