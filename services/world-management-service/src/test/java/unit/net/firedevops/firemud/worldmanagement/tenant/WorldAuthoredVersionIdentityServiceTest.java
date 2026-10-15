@@ -436,7 +436,7 @@ class WorldAuthoredVersionIdentityServiceTest {
     verify(versionStateClient, times(1)).read(any());
     assertThat(transactionManager.transactionStarts).isEqualTo(transactionStartsAfterAcceptance);
 
-    for (VersionLifecycleState changedState :
+    for (VersionLifecycleState retainedState :
         List.of(
             VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
             VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)) {
@@ -445,9 +445,9 @@ class WorldAuthoredVersionIdentityServiceTest {
               originalState.get().request(),
               source,
               canonicalVersion,
-              changedState,
+              retainedState,
               evidence.sourceReceipt().launchReadEvidence().versionState().getVersionStateEpoch()
-                  + (changedState == VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED
+                  + (retainedState == VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED
                       ? 1L
                       : 0L));
       retained.set(identityReceipt(intake, changed, 101L));

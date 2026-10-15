@@ -272,13 +272,15 @@ Entry format:
   - Current status: the test now waits for the database-owned expiry condition; current physical qualification remains required.
 
 - `2026-10-14`: Hold asynchronous recovery until failure-state assertions finish
-  - Context: the TLS certificate watcher callback-failure test signalled its first attempt before the watcher recorded an unhealthy state. A successful retry could restore health before the test observed that state.
+  - Context: the TLS certificate watcher callback-failure test signalled its first attempt before the watcher recorded an unhealthy state.
+  - Observation: a successful retry could restore health before the test observed the unhealthy state.
   - Expected pattern: gate the successful test callback until the existing unhealthy-state and aggregate-health assertions finish, release the gate in `finally`, then verify retry and recovered health. Preserve the production retry policy and every failure/recovery assertion.
   - Current status: the test-only latch correction passed the full 486-case Common unit suite and static checks. The separate PostgreSQL refusal and cleanup chronology remains unexplained under the existing local PostgreSQL availability observation; later passing proof does not identify that cause.
 
-- 2026-10-14: Use explicit shell failure propagation for dependent proof and publication steps.
-  - Observation: a multiline Bash execution continued to stage and commit after an auxiliary Python count assertion failed because the shell did not enable `errexit`. The actual gate passed 11 PostgreSQL cases; the failed assertion used a preliminary count of 10. The committed code remained qualified, but the command sequence did not enforce its intended dependency.
-  - Guidance: use `set -euo pipefail` or separate sequential tool calls when a proof assertion must succeed before staging, committing or publishing. Read actual result counts before pinning them; an overall shell exit code can otherwise hide an earlier failure.
+- `2026-10-14`: Use explicit shell failure propagation for dependent proof and publication steps
+  - Context: a multiline Bash command coupled a Python result-count assertion to later staging and commit commands.
+  - Observation: the shell continued after the assertion failed because `errexit` was disabled. The actual gate passed 11 PostgreSQL cases, while the failed assertion used a preliminary count of 10. The committed code remained qualified, but the command sequence did not enforce its intended dependency.
+  - Expected pattern: use `set -euo pipefail` or separate sequential tool calls when a proof assertion must succeed before staging, committing, or publishing. Read actual result counts before pinning them; an overall shell exit code can otherwise hide an earlier failure.
   - Current status: the [#3211](https://github.com/benhook1013/FireMUD/pull/3211) result was checked against the actual XML, corrected to 11 passing cases, and subsequent dependent commands use explicit failure propagation.
 
 - `2026-10-14`: Review-period bookkeeping must not contend for provider execution locks
@@ -328,12 +330,26 @@ Entry format:
   - Observation: the repeated failures support a higher shared local daemon heap for serialized work; the passing run was mostly up-to-date and does not establish cold-build speedup or a total-memory guarantee.
   - Qualification: the 3 GiB setting is not a restoration of an earlier default; the shared 1500m setting predates the recent guard since August 28. Worker, test, and code-generation JVM memory remains additional, and the hosted module runner's explicit 2500m setting is unchanged.
 
-- 2026-10-15: Two sequential same-candidate Controller `reviews decide reconcile` operations for #3206 (Hosted and CLI) succeeded after a several-minute silent execution. The slow phase is not isolated; a long-running administrative-looking command is difficult to distinguish from a stall without phase/duration output. Reported to Overseer as nonblocking, alongside the terminology friction that queue inspection uses `reviews stack show` rather than `reviews queue`. Consider progress/duration diagnostics or a guarded shared-evidence operation; no timing, admission or review authority was bypassed.
+- `2026-10-15`: Distinguish slow reconciliation from a stall
+  - Context: two sequential same-candidate Controller `reviews decide reconcile` operations for #3206 (Hosted and CLI) succeeded after a several-minute silent execution.
+  - Observation: the slow phase is not isolated, so a long-running administrative command is difficult to distinguish from a stall without phase or duration output. Queue inspection also uses `reviews stack show` rather than the expected `reviews queue` terminology.
+  - Expected pattern: consider phase/duration diagnostics or a guarded shared-evidence operation for long reconciliations.
+  - Current status: reported to Overseer as nonblocking; no timing, admission, or review authority was bypassed.
 
-- 2026-10-15: Gameplay published the #3210 receiving carry after its runtime/source gate passed but before consuming the separate final proof-note-only documentation session, which was still running. The final documentation result therefore remained pending at publication; the PR/job/Overseer report explicitly retain that limit and no READY claim was made. A yielded session is not completion: dependent mutation must be gated on its consumed terminal exit status, even when earlier runtime proof passed. The pending documentation session subsequently passed in 21 seconds, and Gameplay consumed its exit 0 before recording the final documentation proof. The publication-order mistake remains recorded; a later pass does not change that ordering.
+- `2026-10-15`: Keep proof completion separate from a coherent CI checkpoint
+  - Context: Gameplay published the #3210 receiving carry after its runtime/source gate passed while the separate final proof-note-only documentation session was still running.
+  - Observation: the final documentation result was pending at publication; the PR/job/Overseer report explicitly retained that limit and made no READY claim. The session later passed in 21 seconds, and Gameplay consumed its exit 0 before recording final documentation proof. The publication-order mistake remains recorded; a later pass does not change that ordering.
+  - Expected pattern: gate dependent mutation and qualification claims on the consumed terminal exit status. A coherent CI checkpoint may be published with an explicit pending-check limitation; distinguish that pending proof state or an inaccurate qualification report from a safety incident.
 
 - 2026-10-15: Preflight native Actions response shapes before publishing trusted callbacks. Completed Validation runs `38662647370` (20 modules) and `38651777538` (zero modules) both returned `pull_requests: []` despite canonical PR/base-SHA/head titles; association-required fixtures would have passed locally while disabling reporting. The optional summary now distinguishes title/SHA attribution from a separately pinned current-ref write fence; this is not historical-ref or required-gate provenance proof. Native webhook execution and partial-rerun shape still need hosted qualification.
 
-- 2026-10-15 follow-up to the #3210 pending-documentation report: Overseer clarified that publishing a coherent CI checkpoint with an explicit pending-check limitation is permitted and is not, by itself, a publication-safety violation. Consume results before claiming qualification; distinguish a pending proof state or inaccurate qualification report from a genuine safety incident. Routine proof completion belongs in the next aggregated milestone.
+- `2026-10-15`: Clarify reporting for a checkpoint with pending proof
+  - Context: follow-up to the #3210 pending-documentation report.
+  - Observation: Root clarified that publishing a coherent CI checkpoint with an explicit pending-check limitation is permitted and is not, by itself, a publication-safety violation.
+  - Expected pattern: consume results before claiming qualification; distinguish a pending proof state or inaccurate qualification report from a genuine safety incident. Record routine proof completion in the next aggregated milestone.
 
-- 2026-10-15: Review admission can report PR-wide `PARENT_MOVED` after a focused fix even when the live base, effective parent and latest Hosted parent are unchanged: an older CLI checkpoint retains a different parent and its prior reconciliation binds the preceding child head. On #3206, both new channel requests refused before quota use; compact status identified the historical evidence, and exact reconciliation was initiated. Admission diagnostics should identify the offending channel/checkpoint and reconciliation action. Reported to Overseer; this establishes diagnostic friction, not a policy defect.
+- `2026-10-15`: Identify the channel checkpoint behind PR-wide parent movement
+  - Context: after a focused fix on #3206, review admission reported PR-wide `PARENT_MOVED` even though the live base, effective parent, and latest Hosted parent were unchanged.
+  - Observation: an older CLI checkpoint retained a different parent and its reconciliation bound the preceding child head. Both new channel requests refused before quota use; compact status identified the historical evidence and exact reconciliation was initiated.
+  - Expected pattern: admission diagnostics should identify the offending channel/checkpoint and the required reconciliation action.
+  - Current status: reported to Overseer; this establishes diagnostic friction, not a policy defect.

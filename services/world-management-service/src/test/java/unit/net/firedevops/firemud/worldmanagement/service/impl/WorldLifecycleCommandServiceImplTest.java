@@ -605,12 +605,17 @@ class WorldLifecycleCommandServiceImplTest {
     verify(entityManagementClient, times(1)).cleanupRuntimeInstance(42L, 101L, "term-fixture");
     verify(worldInstanceRepository, times(2)).save(any(WorldInstance.class));
 
+    WorldInstance retainedTerminal = copyWorldInstance(persisted.get());
     IllegalArgumentException conflict =
         assertThrows(
             IllegalArgumentException.class,
             () -> fixtureService.terminateWorldInstance(42L, 101L, 2L, "term-other", "stop"));
 
-    assertTrue(conflict.getMessage().contains("terminated under a different request id"));
+    assertTrue(conflict.getMessage().startsWith("IDEMPOTENCY_CONFLICT:"));
+    assertEquals("TERMINATED", persisted.get().getStatus());
+    assertEquals(retainedTerminal.getLifecycleEpoch(), persisted.get().getLifecycleEpoch());
+    assertEquals(
+        retainedTerminal.getTerminationRequestId(), persisted.get().getTerminationRequestId());
     assertEquals(terminalRowVersion, persisted.get().getRowVersion());
     verify(entityManagementClient, times(1)).cleanupRuntimeInstance(42L, 101L, "term-fixture");
     verify(worldInstanceRepository, times(2)).save(any(WorldInstance.class));
