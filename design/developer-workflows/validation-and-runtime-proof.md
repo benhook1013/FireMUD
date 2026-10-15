@@ -44,6 +44,8 @@ The wrapper also accepts `--resource-session <command> [args...]` for a complete
 
 The wrapper acquires a user-wide exclusive resource lock across worktrees before its existing worktree output locks. Service-scoped tasks retain a service lock and shared repository guard; unscoped or mixed tasks retain the exclusive repository guard. Output-lock metadata remains under `.gradle/firemud-validation-locks/`. The resource lock defaults to `${XDG_CACHE_HOME:-$HOME/.cache}/firemud/gradle-validation`, using the home cache when `XDG_CACHE_HOME` is unset or empty, independently of `GRADLE_USER_HOME`; separate Gradle caches do not create extra local build slots. Serialization limits concurrent admitted builds, not the memory usage of one build.
 
+The shared local Gradle daemon has a 3 GiB maximum heap while heavy local work is serialized. This is a daemon heap limit, not a total-process memory guarantee: worker, test, and code-generation JVMs can use additional memory. The hosted module runner retains its explicit 2500m heap setting.
+
 Local runs force `--no-daemon` and reject explicit `--daemon`. Gradle may still start a single-use daemon to satisfy JVM settings; reusable dependency and task caches remain available, with a JVM startup cost on each run. The repository's ten-minute reusable-daemon idle expiry applies to direct Gradle launches. Under `CI=true`, the wrapper bypasses the local resource guard, retains the existing daemon policy and output locks, and keeps bounded lock acquisition. CI runs have no finite local run budget and do not parse `FIREMUD_LOCK_GRADLE_RUN_SECONDS` or `FIREMUD_LOCK_GRADLE_CANCEL_SECONDS`; this local policy does not serialize hosted jobs.
 
 | Setting | Default | Effect |
