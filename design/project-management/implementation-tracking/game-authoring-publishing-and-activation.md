@@ -6,6 +6,10 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Selected publication reservation preparation
+
+A separate unregistered reservation adapter is being reconciled from the remaining carrier. It independently reads the retained selection, exact Account HELD evidence, World freeze/inventory/selector and original World source/delivery before the existing local reservation transaction. Current client types and binding guards remain authoritative. Focused proof is pending. This preparation does not supply through-commit Account protection, failed-selection recovery, a reachable publication finalizer or a production entrypoint; fresh/PENDING publication and runtime authority remain denied.
+
 ### Selected-full owner publication preparation
 
 The source candidate prepares complete selected-owner publication consumption under the [canonical selected-full profile](../../architecture/microservices/game-design-service/version-control.md#selected-full-publication-profile). It reuses the actual parent World closure producer, adds its full-profile consumer mapping, and composes the selected Game Design digest read/collector with independently retained Entity, Automation and Game Logic receipts. The Game Logic adapter reads the exact retained terminal, selected source and manifest through the existing owner repository and returns both manifest and ability projections; its default Spring composition remains denied. Private selected writer mechanics use the exact canonical selection/request binding and selected gate. Public Game Design fresh/PENDING publication remains denied. Existing Game Design V1020 storage is reused; no Game Design migration is added.
