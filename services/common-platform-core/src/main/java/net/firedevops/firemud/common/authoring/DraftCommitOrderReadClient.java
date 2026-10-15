@@ -84,15 +84,18 @@ public final class DraftCommitOrderReadClient
       buildStub(ManagedChannel channel) {
     String expectedPeerUri = "spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service";
     return AccountDraftCommitOrderReadServiceGrpc.newBlockingStub(channel)
+        .withMaxInboundMessageSize(DraftCommitOrderReadGrpcCodec.MAX_RESPONSE_WIRE_BYTES)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
   }
 
   @Override
-  public synchronized void close() throws IOException {
-    closed = true;
-    initialized = false;
+  public void close() throws IOException {
+    synchronized (this) {
+      closed = true;
+      initialized = false;
+    }
     super.close();
   }
 

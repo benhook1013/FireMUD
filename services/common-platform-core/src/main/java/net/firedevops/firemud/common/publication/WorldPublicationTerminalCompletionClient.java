@@ -2,8 +2,6 @@ package net.firedevops.firemud.common.publication;
 
 import io.grpc.ManagedChannel;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
@@ -36,7 +34,7 @@ public final class WorldPublicationTerminalCompletionClient
       String workloadNamespace) {
     super(
         endpoints,
-        requireFileBackedMtls(tlsProperties),
+        FileBackedMtls.require(tlsProperties, "World publication completion"),
         channelFactory,
         WorldPublicationTerminalCompletionClient.class);
     if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
@@ -121,39 +119,5 @@ public final class WorldPublicationTerminalCompletionClient
           "World publication completion client is not initialized and available");
     }
     return currentStub;
-  }
-
-  private static CommonGrpcClientProperties requireFileBackedMtls(
-      CommonGrpcClientProperties tlsProperties) {
-    if (tlsProperties == null || tlsProperties.isPlaintext()) {
-      throw new IllegalArgumentException("World publication completion requires workload mTLS");
-    }
-    requireReadableFile(tlsProperties.getCertChain(), "certificate chain");
-    requireReadableFile(tlsProperties.getPrivateKey(), "private key");
-    requireReadableFile(tlsProperties.getCaCert(), "CA certificate");
-    return tlsProperties;
-  }
-
-  private static void requireReadableFile(String configuredPath, String label) {
-    if (configuredPath == null || configuredPath.isBlank()) {
-      throw new IllegalArgumentException(
-          "World publication completion requires file-backed certificate, key, and CA material");
-    }
-    String pathText = configuredPath.trim();
-    if (pathText.startsWith("classpath:")) {
-      throw new IllegalArgumentException(
-          "World publication completion requires file-backed certificate, key, and CA material");
-    }
-    Path path;
-    try {
-      path = Path.of(pathText);
-    } catch (RuntimeException invalid) {
-      throw new IllegalArgumentException(
-          "World publication completion " + label + " must be a file-backed path", invalid);
-    }
-    if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
-      throw new IllegalArgumentException(
-          "World publication completion " + label + " must be an existing readable file");
-    }
   }
 }
