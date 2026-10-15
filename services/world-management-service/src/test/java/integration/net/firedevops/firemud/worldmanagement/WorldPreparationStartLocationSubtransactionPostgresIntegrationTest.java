@@ -414,7 +414,8 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
   private Fixture fixture() throws Exception {
     UUID tenantId = UUID.randomUUID();
     UUID versionId = UUID.randomUUID();
-    UUID operationId = UUID.randomUUID();
+    UUID versionIdentityOperationId = UUID.randomUUID();
+    UUID applicationOperationId = UUID.randomUUID();
     UUID requestId = UUID.randomUUID();
     UUID commitId = UUID.randomUUID();
     UUID publicationFence = UUID.randomUUID();
@@ -492,7 +493,8 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
     return new Fixture(
         tenantId,
         versionId,
-        operationId,
+        versionIdentityOperationId,
+        applicationOperationId,
         requestId,
         commitId,
         publicationFence,
@@ -558,6 +560,7 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
       UUID tenantId,
       UUID versionId,
       UUID versionIdentityOperationId,
+      UUID applicationOperationId,
       UUID requestId,
       UUID commitId,
       UUID publicationFence,
