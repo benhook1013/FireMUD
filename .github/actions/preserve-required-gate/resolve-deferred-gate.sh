@@ -7,7 +7,7 @@ fail_closed() {
 }
 resolution_phase="${1:-admit}"
 case "${resolution_phase}" in
-  preflight|admit) ;;
+  preflight|admit|reconcile) ;;
   *) fail_closed "Unsupported resolver phase." ;;
 esac
 report_eligible() {
@@ -107,6 +107,115 @@ if ! pr_is_current "${pr_json}"; then
 fi
 head_repository="$(jq -er '.head.repo.full_name' <<<"${pr_json}")"
 base_branch="$(jq -er '.base.ref' <<<"${pr_json}")"
+
+# Supplementary statuses may withhold native proof but never replace it.
+# This phase does not enter the legacy targeted-rerun admission protocol.
+if [[ "${resolution_phase}" == reconcile ]]; then
+  latest_barrier() {
+    gh api --method GET "/repos/${GITHUB_REPOSITORY}/commits/${head_sha}/status" \
+      -f per_page=100 --paginate --slurp | jq -c --arg name "${gate_name}" --arg head "${head_sha}" '
+      if type != "array" or length == 0 or any(.[];
+        type != "object" or .sha != $head or (.statuses | type) != "array")
+      then error("malformed status inventory") else . end
+      | .[0].total_count as $total
+      | if ($total | type) != "number" or $total < 0 or ($total | floor) != $total or
+          any(.[]; .total_count != $total) or ([.[].statuses[]] | length) != $total or
+          ([.[].statuses[].id] | unique | length) != $total
+        then error("incomplete status inventory") else . end
+      | [.[].statuses[] | select(.context == $name)]
+      | if length == 0 then null elif length == 1 then .[0]
+        else error("ambiguous latest status") end'
+  }
+  barrier="$(latest_barrier)" || fail_closed "Supplementary status inventory is unavailable or ambiguous."
+  if [[ "${barrier}" == null ]]; then exit 0; fi
+  if ! jq -e '.state == "pending" and .creator.id == 41898282 and
+      .creator.login == "github-actions[bot]" and .creator.type == "Bot" and
+      (.id | type == "number" and . > 0 and . == floor)' <<<"${barrier}" >/dev/null; then
+    exit 0 # Foreign or already terminal statuses are not ours to modify.
+  fi
+  target_url="$(jq -er '.target_url' <<<"${barrier}")"
+  url_prefix="https://github.com/${GITHUB_REPOSITORY}/actions/runs/"
+  [[ "${target_url}" == "${url_prefix}"* ]] || exit 0
+  target_suffix="${target_url#"${url_prefix}"}"
+  [[ "${target_suffix}" =~ ^([1-9][0-9]*)/attempts/([1-9][0-9]*)$ ]] || exit 0
+  bridge_run_id="${BASH_REMATCH[1]}"
+  bridge_attempt="${BASH_REMATCH[2]}"
+  bridge_native() {
+    local target jobs check check_id
+    target="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${bridge_run_id}")" || return 1
+    jq -e --argjson id "${bridge_run_id}" --argjson attempt "${bridge_attempt}" \
+      --argjson workflow "${workflow_id}" --arg repo "${GITHUB_REPOSITORY}" \
+      --arg head_repo "${head_repository}" --arg head "${head_sha}" --arg branch "${head_branch}" \
+      --arg title "${source_title}" --arg name "${workflow_name}" --arg path "${workflow_file}" --argjson pr "${pr_number}" '
+      .id == $id and .run_attempt == $attempt and .workflow_id == $workflow and
+      .repository.full_name == $repo and .head_repository.full_name == $head_repo and
+      .head_sha == $head and .head_branch == $branch and .display_title == $title and
+      (.name == $name or .name == $title) and
+      (.path == $path or (.path | startswith($path + "@") and length > ($path | length) + 1)) and
+      .event == "pull_request" and .status == "completed" and
+      (.pull_requests | type == "array") and
+      ((.pull_requests | length) == 0 or any(.pull_requests[]; .number == $pr))' <<<"${target}" >/dev/null || return 1
+    jobs="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${bridge_run_id}/attempts/${bridge_attempt}/jobs" \
+      -f per_page=100 --paginate --slurp)" || return 1
+    jobs="$(jq -ce --arg name "${gate_name}" --arg head "${head_sha}" --argjson run "${bridge_run_id}" '
+      if type != "array" or length == 0 or any(.[]; type != "object" or (.jobs | type) != "array")
+      then error("malformed jobs") else . end
+      | .[0].total_count as $total
+      | if ($total | type) != "number" or $total < 0 or ($total | floor) != $total or
+          any(.[]; .total_count != $total) or ([.[].jobs[]] | length) != $total or
+          ([.[].jobs[].id] | unique | length) != $total then error("incomplete jobs") else . end
+      | [.[].jobs[] | select(.name == $name)]
+      | if length != 1 then error("ambiguous gate") else .[0] end
+      | select(.run_id == $run and .head_sha == $head and .status == "completed")
+      | select([.steps[]? | select(.name == "Publish pending required gate status" and
+          .status == "completed" and .conclusion == "success")] | length == 1)
+      | select([.steps[]? | select(.name == "Preserve successful required gate on metadata-only edit" and
+          .status == "completed" and .conclusion == "success")] | length == 1)' <<<"${jobs}")" || return 1
+    check_id="$(jq -er '.check_run_url | capture("/check-runs/(?<id>[1-9][0-9]*)$").id' <<<"${jobs}")" || return 1
+    check="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/check-runs/${check_id}")" || return 1
+    jq -e --argjson id "${check_id}" --arg head "${head_sha}" --arg name "${gate_name}" \
+      --argjson job "${jobs}" '
+      .id == $id and .app.id == 15368 and .app.slug == "github-actions" and
+      .head_sha == $head and .name == $name and .status == "completed" and
+      .conclusion == $job.conclusion' <<<"${check}" >/dev/null || return 1
+    # Keep the full native snapshot for the immediate pre-POST comparison.
+    jq -cn --argjson run "${target}" --argjson job "${jobs}" --argjson check "${check}" \
+      '{run: $run, job: $job, check: $check}'
+  }
+  native="$(bridge_native)" || fail_closed "Supplementary barrier lacks bound terminal native metadata evidence."
+  assessment_output="$(mktemp)"
+  trap 'rm -f "$assessment_output"' EXIT
+  terminal_state=failure
+  if GITHUB_EVENT_NAME=pull_request GITHUB_RUN_ID="${bridge_run_id}" \
+    BASE_SHA="${base_sha}" HEAD_SHA="${head_sha}" PR_NUMBER="${pr_number}" \
+    REQUIRED_GATE_NAME="${gate_name}" EXPECTED_WORKFLOW_NAME="${workflow_name}" \
+    EXPECTED_WORKFLOW_FILE="${workflow_filename}" EXPECTED_WORKFLOW_PATH="${workflow_file}" \
+    GITHUB_OUTPUT="${assessment_output}" \
+    bash "$(dirname "${BASH_SOURCE[0]}")/assess-required-gate.sh"; then
+    case "$(<"${assessment_output}")" in
+      assessment=dependency-deferred)
+        if jq -e '.run.conclusion == "success" and .job.conclusion == "success" and
+            .check.conclusion == "success"' <<<"${native}" >/dev/null; then exit 0; fi ;;
+      assessment=success)
+        if jq -e '.run.conclusion == "success" and .job.conclusion == "success" and
+            .check.conclusion == "success"' <<<"${native}" >/dev/null; then terminal_state=success; fi ;;
+      *) fail_closed "Unexpected supplementary proof assessment." ;;
+    esac
+  fi
+  pr_json="$(current_pr)"
+  pr_is_current "${pr_json}" || exit 0
+  fresh_native="$(bridge_native)" || fail_closed "Native supplementary evidence changed or became unavailable."
+  [[ "${fresh_native}" == "${native}" ]] || exit 0
+  fresh_barrier="$(latest_barrier)" || fail_closed "Latest supplementary status became unavailable."
+  [[ "${fresh_barrier}" == "${barrier}" ]] || exit 0
+  # Commit Status writes have no conditional-update primitive. Do not replay an
+  # unacknowledged POST; later callbacks re-read the latest native/API evidence.
+  gh api --method POST "/repos/${GITHUB_REPOSITORY}/statuses/${head_sha}" \
+    -f state="${terminal_state}" -f context="${gate_name}" -f target_url="${target_url}" \
+    -f description="Metadata gate original proof: ${terminal_state}" >/dev/null ||
+    fail_closed "Supplementary status POST was rejected or ambiguous."
+  exit 0
+fi
 
 # A capped exact-head query bounds both target discovery and the native history
 # window. Resolver completions cannot predate their source creation. Twenty

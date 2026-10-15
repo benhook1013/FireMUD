@@ -1392,7 +1392,7 @@ import json
 
 assert job["if"] == "${{ github.event.workflow_run.event == 'pull_request' }}"
 assert "REQUIRED_GATE_PROOF_ALLOWLIST" not in (job.get("env") or {})
-assert job["permissions"] == {"contents": "read", "checks": "read", "pull-requests": "read", "actions": "write"}
+assert job["permissions"] == {"contents": "read", "checks": "read", "pull-requests": "read", "actions": "write", "statuses": "write"}
 checkouts = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
 assert len(checkouts) == 1 and checkouts[0]["with"] == {"ref": "${{ github.sha }}", "persist-credentials": "false"}
 preflight = next(step for step in job["steps"] if step["name"] == "Preflight deferred gate resolution")
@@ -1403,6 +1403,10 @@ assert admission["if"] == "${{ steps.preflight.outputs.eligible == 'true' }}" an
 confirmation = job["steps"][job["steps"].index(admission) + 1]
 assert confirmation["name"] == "Confirm admitted deferred gate jobs ${{ steps.admission.outputs.accepted_job_ids }}"
 assert confirmation["if"] == "${{ steps.admission.outcome == 'success' }}" and confirmation["run"] == ":"
+reconcile = job["steps"][-1]
+assert reconcile["name"] == "Reconcile supplementary required gate status"
+assert reconcile["if"] == "${{ always() }}" and reconcile["run"].endswith(" reconcile")
+assert job["steps"].index(reconcile) > job["steps"].index(confirmation)
 PY
 
 mkdir "$tmp_dir/resolver-bin"
@@ -1426,7 +1430,7 @@ endpoint = next(arg for arg in args if arg.startswith("/repos/"))
 scenario = state["scenario"]
 head, base = "a" * 40, "b" * 40
 title = f"CI — Validation pr-123 base-{base} head-{head}"
-repository = "other-owner/firemud" if scenario == "fork-empty" else "example/firemud"
+repository = "other-owner/firemud" if scenario in {"fork-empty", "bridge-fork"} else "example/firemud"
 # The existing fork predecessor fixture is run 200. Keep its resolver target
 # distinct so the shared selector correctly excludes only the target itself.
 target_id = 300 if scenario == "fork-empty" else 200
@@ -1488,7 +1492,51 @@ def resolver_run(run_id):
             "conclusion": None if scenario == "cancelled-pending-unknown" and run_id == 9001 else "cancelled" if scenario.startswith("cancelled-pending-") and run_id == 9001 and scenario != "cancelled-pending-unknown" else "failure" if scenario == "pending-callback-concluded" and run_id == 9001 else None if status in {"queued", "pending", "in_progress"} else "success",
             "display_title": f"Resolve Required Gates workflow-42 head-{head} source-{source}"}
 
-if method == "POST":
+if scenario.startswith("bridge-") and method == "POST":
+    assert endpoint == f"/repos/example/firemud/statuses/{head}", endpoint
+    state.setdefault("status_posts", []).append(dict(arg.split("=", 1) for arg in args if "=" in arg))
+    if scenario == "bridge-write-denied":
+        exit_status = 1
+elif scenario.startswith("bridge-") and endpoint.endswith(f"/commits/{head}/status"):
+    state["status_reads"] = state.get("status_reads", 0) + 1
+    barrier = {"id": 500, "context": "Validation Gate", "state": "pending",
+               "target_url": "https://github.com/example/firemud/actions/runs/200/attempts/1",
+               "creator": {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}}
+    if scenario == "bridge-foreign":
+        barrier["creator"]["id"] = 99
+    elif scenario == "bridge-wrong-url":
+        barrier["target_url"] = "https://github.com/foreign/repo/actions/runs/200/attempts/1"
+    elif scenario == "bridge-replaced" and state["status_reads"] > 1:
+        barrier["id"] = 501
+    elif scenario == "bridge-terminal":
+        barrier["state"] = "success"
+    result = [{"sha": head, "total_count": 0 if scenario == "bridge-absent" else 1,
+               "statuses": [] if scenario == "bridge-absent" else [barrier]}]
+    if scenario == "bridge-incomplete-status":
+        result[0]["total_count"] = 2
+elif scenario.startswith("bridge-") and endpoint.endswith("/actions/runs/200/attempts/1/jobs"):
+    job = {"id": 2000, "run_id": 200, "head_sha": head, "name": "Validation Gate", "status": "completed",
+           "conclusion": "cancelled" if scenario == "bridge-cancelled" else "success",
+           "check_run_url": "https://api.github.com/repos/example/firemud/check-runs/3000",
+           "steps": [{"name": name, "status": "completed", "conclusion": "success"} for name in
+                     ("Preserve successful required gate on metadata-only edit", "Publish pending required gate status")]}
+    if scenario == "bridge-no-producer":
+        job["steps"].pop()
+    result = [{"total_count": 2 if scenario == "bridge-incomplete-jobs" else 1, "jobs": [job]}]
+elif scenario.startswith("bridge-") and endpoint.endswith("/check-runs/3000"):
+    result = {"id": 3000, "head_sha": head, "name": "Validation Gate", "status": "completed",
+              "conclusion": "cancelled" if scenario == "bridge-cancelled" else "success",
+              "app": {"id": 99 if scenario == "bridge-wrong-app" else 15368, "slug": "github-actions"}}
+elif scenario.startswith("bridge-") and endpoint.endswith("/actions/runs/200"):
+    result = run(200)
+    result["conclusion"] = "cancelled" if scenario == "bridge-cancelled" else "success"
+    if scenario == "bridge-wrong-attempt":
+        result["run_attempt"] = 2
+    if scenario == "bridge-empty-association":
+        result["pull_requests"] = []
+    if scenario == "bridge-wrong-title":
+        result["display_title"] = title.replace(base, "f" * 40)
+elif method == "POST":
     job_id = int(endpoint.split("/")[-2])
     assert job_id in {2000, 2001} and endpoint.endswith(f"/actions/jobs/{job_id}/rerun"), endpoint
     state["posts"] = state.get("posts", 0) + 1
@@ -1665,7 +1713,7 @@ elif endpoint.endswith("/actions/workflows/ci.yml/runs"):
 elif endpoint.endswith("/pulls/123"):
     state["pr_reads"] = state.get("pr_reads", 0) + 1
     result = {"number": 123, "state": "open", "base": {"sha": base, "ref": "develop", "repo": {"full_name": "example/firemud"}},
-              "head": {"sha": "c" * 40 if scenario == "stale-pr" else head, "ref": "proof-branch", "repo": {"full_name": repository}}}
+              "head": {"sha": "c" * 40 if scenario == "stale-pr" or (scenario == "bridge-pr-changed" and state["pr_reads"] > 1) else head, "ref": "proof-branch", "repo": {"full_name": repository}}}
     if state["pr_reads"] >= 2 and scenario == "fresh-base-branch":
         result["base"]["ref"] = "main"
     elif state["pr_reads"] >= 2 and scenario == "fresh-head-repository":
@@ -1812,6 +1860,44 @@ PY
   fi
   return "$result_status"
 }
+# Support is dormant until a producer publishes the exact recognizable barrier.
+for scenario in bridge-success bridge-empty-association bridge-fork bridge-pending bridge-failed bridge-cancelled bridge-replaced bridge-pr-changed bridge-foreign bridge-wrong-url bridge-terminal bridge-absent; do
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  original=no-local-workflow-file
+  [[ "$scenario" != bridge-pending ]] || original=pending-predecessor
+  [[ "$scenario" != bridge-failed ]] || original=failed-predecessor
+  # Both substantive-first and metadata-first callbacks use the same target.
+  source_id=100
+  [[ "$scenario" != bridge-empty-association ]] || source_id=200
+  run_resolver "$scenario" "$source_id" "$original" reconcile
+  python3 - "$tmp_dir/resolver-state-$scenario" "$scenario" <<'PY_BRIDGE'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+scenario = sys.argv[2]
+posts = state.get("status_posts", [])
+expected = "success" if scenario in {"bridge-success", "bridge-empty-association", "bridge-fork"} else "failure" if scenario in {"bridge-failed", "bridge-cancelled"} else None
+assert len(posts) == (1 if expected else 0), state
+if expected:
+    assert posts[0]["state"] == expected, state
+assert not state.get("posts"), "bridge entered legacy rerun admission"
+PY_BRIDGE
+done
+for scenario in bridge-no-producer bridge-incomplete-status bridge-incomplete-jobs bridge-wrong-app bridge-wrong-attempt bridge-wrong-title bridge-write-denied; do
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  if run_resolver "$scenario" 100 no-local-workflow-file reconcile; then
+    echo "unproved bridge settlement succeeded: $scenario" >&2; exit 1
+  fi
+  python3 - "$tmp_dir/resolver-state-$scenario" "$scenario" <<'PY_BRIDGE'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+assert len(state.get("status_posts", [])) == (1 if sys.argv[2] == "bridge-write-denied" else 0), state
+PY_BRIDGE
+done
+
 resolver_posts() {
   jq -r '.posts // 0' "$tmp_dir/resolver-state-$1"
 }
