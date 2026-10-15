@@ -372,8 +372,7 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
         .table("flyway_schema_history_game_design_service")
         .placeholders(Map.of("serviceSchema", schema))
         .locations(
-            "filesystem:"
-                + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
+            "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
         .load()
         .migrate();
     var dsl = DSL.using(new TransactionAwareDataSourceProxy(data), SQLDialect.POSTGRES);
@@ -399,12 +398,16 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
             saved.getIdentitySourceGameRowId(),
             saved.getIdentitySourceGameTenantKey(),
             saved.getIdentitySourceProvenanceKind());
+    var policyGenesis =
+        new net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository(dsl)
+            .readGenesis(target)
+            .orElseThrow();
     var binding =
         DraftCommitBinding.create(
             target,
             UUID.randomUUID(),
             UUID.randomUUID(),
-            "base-commit-0",
+            "genesis:" + policyGenesis.receiptId(),
             List.of(
                 new DraftCommitBinding.RevisionPayload(
                     "0",
