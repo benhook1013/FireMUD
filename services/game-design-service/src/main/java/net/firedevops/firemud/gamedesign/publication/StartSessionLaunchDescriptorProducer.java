@@ -456,7 +456,9 @@ public final class StartSessionLaunchDescriptorProducer {
         || !row.worldSlug().equals(publicAssociation.worldSlug())) {
       throw conflict("Retained association row differs from the public pinned association");
     }
-    var policySnapshot = capture.policy().snapshot().shared();
+    var policySnapshot =
+        net.firedevops.firemud.common.gamedesign.RealmPolicySnapshot.fromStored(
+            capture.policy().snapshot().canonicalJson());
     var gameplayRules = selectedGameplayRules.snapshot();
     List<AuthoredInitialActorCoreSourceBinding> actorCoreBindings;
     try {

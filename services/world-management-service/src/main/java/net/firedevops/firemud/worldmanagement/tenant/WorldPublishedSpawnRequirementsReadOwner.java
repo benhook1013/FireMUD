@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.gamedesign.CompleteLaunchBindingEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.RoomTemplateRef;
+import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEvidence.EntityTemplateReference;
 import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEvidence.FamilyCount;
@@ -21,7 +22,6 @@ import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEviden
 import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEvidence.Request;
 import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsEvidence.SpawnRequirement;
 import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsGrpcCodec;
-import net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshot.CaptureRequest;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalAuthoredGraph.Family;
@@ -374,10 +374,7 @@ final class WorldPublishedSpawnRequirementsReadOwner {
     if (!selector.request().equals(expected)
         || !declaration.startLocation().equals(receipt.startLocation())
         || !receipt.bindingDigest().equals(binding.digest())
-        || frozenTopology
-                .graph()
-                .family(Family.ROOM)
-                .stream()
+        || frozenTopology.graph().family(Family.ROOM).stream()
                 .filter(
                     room ->
                         room.template()

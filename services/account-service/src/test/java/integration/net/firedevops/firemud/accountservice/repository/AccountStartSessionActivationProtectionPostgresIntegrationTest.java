@@ -40,11 +40,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
- * Runs V1003 through V1004.4 against the actual Account PostgreSQL schema and assembled
- * source-writer guard. The integrity and currentness fixtures seed related owner rows with upstream
- * producer triggers disabled. Protection acquisition, child completeness, settlement and
- * source-writer guards remain enabled; they prove SQL currentness/exclusion/immutability only, not
- * authenticated activation-protection production.
+ * Runs V1003 through V1006 against the actual Account PostgreSQL schema and assembled source-writer
+ * guard. The integrity and currentness fixtures seed related owner rows with upstream producer
+ * triggers disabled. Protection acquisition, child completeness, settlement and source-writer
+ * guards remain enabled; they prove SQL currentness/exclusion/immutability only, not authenticated
+ * activation-protection production.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class AccountStartSessionActivationProtectionPostgresIntegrationTest {
@@ -57,7 +57,8 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
   @Test
   void digestAlignmentUpgradePreservesRetainedParentAndRequiresCanonicalWorldPrefix()
       throws Exception {
-    Fixture fixture = fixture("1004.3");
+    Fixture fixture = fixture("1005");
+    seedRetainedCombinedParentRows(fixture);
     CurrentnessCase current = currentnessCase(fixture, Instant.now().plusSeconds(180));
     acquireProtection(fixture, current);
     var stored =
@@ -98,11 +99,19 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
                 .get("activationResultSha256"))
         .isEqualTo(hash(result));
     String historyQuery =
-        "SELECT installed_rank || ':' || version || ':' || script || ':' "
-            + "|| checksum || ':' || success FROM flyway_schema_history "
-            + "WHERE version IS NOT NULL AND version <> '1004.4' ORDER BY installed_rank";
+        "SELECT jsonb_build_object('row', to_jsonb(h), 'xmin', h.xmin::TEXT)::TEXT "
+            + "FROM flyway_schema_history h WHERE version IS NULL OR version <> '1006' "
+            + "ORDER BY installed_rank";
     var history = fixture.dsl().fetch(historyQuery).getValues(0, String.class);
+    assertThat(
+            fixture
+                .dsl()
+                .fetch("SELECT version FROM flyway_schema_history WHERE success")
+                .getValues(0, String.class))
+        .contains("1000", "1001", "1002", "1005")
+        .doesNotContain("1006");
     var parents = retainedActivationRows(fixture);
+    assertThat(parents.values()).allSatisfy(rows -> assertThat(rows).isNotEmpty());
     String guardQuery =
         "SELECT pg_get_functiondef('account_ss_activation_settlement_insert_guard()'::regprocedure)";
     String beforeGuard = fixture.dsl().fetchSingle(guardQuery).get(0, String.class);
@@ -112,7 +121,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
         "terminal->>'activationResultSha256' IS DISTINCT FROM 'sha256:' || encode(sha256(result_bytes), 'hex')";
     assertThat(beforeGuard).containsOnlyOnce(anchor);
 
-    Flyway upgrade = activationFlyway(fixture.dataSource(), "1004.4");
+    Flyway upgrade = activationFlyway(fixture.dataSource(), "1006");
     assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
     upgrade.validate();
     assertThat(fixture.dsl().fetch(historyQuery).getValues(0, String.class)).isEqualTo(history);
@@ -174,12 +183,57 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
         .isEqualTo("sha256:" + hash(canonicalTerminal));
   }
 
+  private static void seedRetainedCombinedParentRows(Fixture fixture) {
+    Long sagaId =
+        fixture
+            .dsl()
+            .fetchSingle(
+                "INSERT INTO saga_instance(saga_name, state) VALUES (?, ?) RETURNING id",
+                "retained-activation-upgrade",
+                "PENDING")
+            .get(0, Long.class);
+    fixture
+        .dsl()
+        .execute(
+            "INSERT INTO saga_step(instance_id, name, status, attempt) VALUES (?, ?, ?, ?)",
+            sagaId,
+            "retained-step",
+            "PENDING",
+            3);
+    insert(
+        fixture.dsl(),
+        "account_initial_gameplay_login_disposals",
+        "request_id",
+        UUID.randomUUID(),
+        "disposal_operation_id",
+        UUID.randomUUID(),
+        "caller_workload",
+        "spiffe://firemud/ns/test/sa/game-session-service",
+        "caller_context_id",
+        UUID.randomUUID(),
+        "disposal_digest",
+        "a".repeat(64),
+        "witness_canonical_bytes",
+        bytes("retained parent disposal witness"));
+  }
+
   private static Map<String, List<String>> retainedActivationRows(Fixture fixture) {
     Map<String, List<String>> rows = new LinkedHashMap<>();
     for (String table :
         List.of(
+            "account_canonical_tenant_identity_claims",
+            "account_draft_authorization_source_locks",
+            "account_start_session_authority_captures",
+            "account_start_session_operator_authorizations",
+            "account_start_session_world_participations",
+            "account_start_session_world_participation_sources",
+            "account_start_session_world_original_attempt_evidence",
+            "account_start_session_world_participation_settlements",
             "account_start_session_activation_protections",
-            "account_start_session_activation_protection_sources")) {
+            "account_start_session_activation_protection_sources",
+            "account_initial_gameplay_login_disposals",
+            "saga_instance",
+            "saga_step")) {
       rows.put(
           table,
           fixture
@@ -1555,7 +1609,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
             .fetchExists(
                 DSL.selectOne()
                     .from("flyway_schema_history")
-                    .where("version = '1004.4' AND success"));
+                    .where("version = '1006' AND success"));
     terminal.put(
         "activationResultSha256", (aligned ? "sha256:" : "") + hash(activationResultBytes));
     try {
@@ -2092,7 +2146,7 @@ class AccountStartSessionActivationProtectionPostgresIntegrationTest {
         .schemas(source.getSchema())
         .defaultSchema(source.getSchema())
         .placeholders(Map.of("serviceSchema", source.getSchema()))
-        .locations("classpath:db/migration")
+        .locations("classpath:db/migration", "classpath:db/migration/saga")
         .target(target)
         .load();
   }

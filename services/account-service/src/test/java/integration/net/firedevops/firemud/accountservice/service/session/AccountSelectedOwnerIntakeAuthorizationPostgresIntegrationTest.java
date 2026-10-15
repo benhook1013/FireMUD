@@ -813,7 +813,54 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
   }
 
   @Test
-  void migratesRetainedV1008AutomationBytesWithoutReleasingPendingEntity() throws Exception {
+  void upgradesCombinedV1007ParentThroughFinalAuthorizationAndBothTerminalOwnersWithoutBackfill()
+      throws Exception {
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(),
+            redis.getHost(), redis.getMappedPort(6379), temporary, UUID.randomUUID(),
+            Clock.systemUTC(), "1007")) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      assertThat(f.dsl.fetch("SELECT version FROM flyway_schema_history WHERE success")
+              .getValues(0, String.class))
+          .contains("1000", "1001", "1002", "1005", "1006", "1007")
+          .doesNotContain("1008", "1009", "1010");
+      var selected = selectedForSettlement(f.tenant);
+      settleOriginal(issued, selected);
+      var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
+      var reservations = new AccountSelectedOwnerIntakeSourceReservationService(
+          issued.actors(), f.fences, repository, f.manager, "test");
+      var scope = asGameDesign(() -> reservations.reserveSourceRead(
+          issued.compact(), UUID.randomUUID(), Owner.ENTITY_MANAGEMENT, selected, issued.environment()));
+      seedRetainedCombinedParentRows(f.dsl);
+      var retainedRows = retainedCombinedParentRows(f.dsl);
+      assertThat(retainedRows.values()).allSatisfy(rows -> assertThat(rows).isNotEmpty());
+      String historyQuery =
+          "SELECT jsonb_build_object('row', to_jsonb(h), 'xmin', h.xmin::TEXT)::TEXT "
+              + "FROM flyway_schema_history h WHERE version IS NULL "
+              + "OR version NOT IN ('1008', '1009', '1010') ORDER BY installed_rank";
+      var retainedHistory = f.dsl.fetch(historyQuery).getValues(0, String.class);
+      var inheritedGuards = retainedInheritedGuardDefinitions(f.dsl);
+      assertThat(inheritedGuards.get("account_ss_activation_settlement_insert_guard()"))
+          .contains("terminal->>'activationResultSha256' IS DISTINCT FROM 'sha256:' || encode(sha256(result_bytes), 'hex')");
+      Flyway upgrade = intakeMigration(f, "1010");
+      assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(3);
+      upgrade.validate();
+      assertThat(f.dsl.fetch(historyQuery).getValues(0, String.class)).isEqualTo(retainedHistory);
+      assertThat(retainedCombinedParentRows(f.dsl)).isEqualTo(retainedRows);
+      assertThat(retainedInheritedGuardDefinitions(f.dsl)).isEqualTo(inheritedGuards);
+      for (String table : List.of("account_selected_owner_intake_authorizations",
+          "account_selected_owner_intake_sources", "account_selected_owner_intake_settlements")) {
+        assertThat(f.dsl.fetchCount(org.jooq.impl.DSL.table(table))).isZero();
+      }
+      assertThat(f.dsl.fetchSingle("SELECT account_selected_owner_intake_source_read_is_pending(?)",
+              scope.operationId()).get(0, Boolean.class)).isTrue();
+    }
+  }
+
+  @Test
+  void migratesRetainedV1009AutomationBytesWithoutReleasingPendingEntity() throws Exception {
     try (var fixture =
         new AccountControlUiOriginalOrderFixture(
             postgres.getJdbcUrl(),
@@ -824,7 +871,7 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
             temporary,
             UUID.randomUUID(),
             Clock.systemUTC(),
-            "1008")) {
+            "1009")) {
       var issued = fixture.issueCreator();
       var f = issued.sources();
       var selected = selectedForSettlement(f.tenant);
@@ -834,11 +881,11 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
           new AccountSelectedOwnerIntakeSourceReservationService(
               issued.actors(), f.fences, repository, f.manager, "test");
       var automation =
-          finalizeAutomationBinding(issued, reservations, repository, selected, "retained-v1008");
+          finalizeAutomationBinding(issued, reservations, repository, selected, "retained-v1009");
       var original =
           f.tx(() -> repository.settleCommittedEmpty(terminalEvidence(automation, 8801, 8802)));
       var entity =
-          finalizeEntityBinding(issued, reservations, repository, selected, "pending-v1008-entity");
+          finalizeEntityBinding(issued, reservations, repository, selected, "pending-v1009-entity");
       var terminal = entityTerminalEvidence(entity, 8901, 8902);
       byte[] retainedAuthorization =
           f.dsl
@@ -859,36 +906,22 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
           terminal.receipt().canonicalBytes(),
           "active Automation authorization");
 
-      String historyQuery = "SELECT installed_rank || ':' || version || ':' || script || ':' "
-          + "|| checksum || ':' || success FROM flyway_schema_history "
-          + "WHERE version IS NOT NULL AND version <> '1009' ORDER BY installed_rank";
+      seedRetainedCombinedParentRows(f.dsl);
+      var retainedParents = retainedCombinedParentRows(f.dsl);
+      String historyQuery =
+          "SELECT jsonb_build_object('row', to_jsonb(h), 'xmin', h.xmin::TEXT)::TEXT "
+              + "FROM flyway_schema_history h WHERE version IS NULL OR version <> '1010' "
+              + "ORDER BY installed_rank";
       var retainedHistory = f.dsl.fetch(historyQuery).getValues(0, String.class);
       Map<String, List<String>> retainedRows = retainedSelectedOwnerRows(f.dsl);
 
-      String schema = f.dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
-      Path current = Path.of("").toAbsolutePath();
-      while (current != null
-          && !java.nio.file.Files.isDirectory(
-              current.resolve("services/account-service/src/main/resources/db/migration"))) {
-        current = current.getParent();
-      }
-      Path migrations =
-          Objects.requireNonNull(current, "Account migrations must be available")
-              .resolve("services/account-service/src/main/resources/db/migration");
-      Flyway.configure()
-          .dataSource(Objects.requireNonNull(f.manager.getDataSource()))
-          .schemas(schema)
-          .defaultSchema(schema)
-          .placeholders(Map.of("serviceSchema", schema))
-          .locations("filesystem:" + migrations,
-              "filesystem:" + Objects.requireNonNull(current)
-                  .resolve("services/common-saga/src/main/resources/db/migration/saga"))
-          .target("1009")
-          .load()
-          .migrate();
+      Flyway upgrade = intakeMigration(f, "1010");
+      assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
+      upgrade.validate();
 
       assertThat(f.dsl.fetch(historyQuery).getValues(0, String.class)).isEqualTo(retainedHistory);
       assertThat(retainedSelectedOwnerRows(f.dsl)).isEqualTo(retainedRows);
+      assertThat(retainedCombinedParentRows(f.dsl)).isEqualTo(retainedParents);
 
       var recovered = f.tx(() -> repository.findSettlement(automation).orElseThrow());
       assertThat(recovered.canonicalBytes()).isEqualTo(original.canonicalBytes());
@@ -2176,6 +2209,62 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       Thread.sleep(10);
     } while (System.nanoTime() < deadline);
     throw new AssertionError("Source writer did not block on settlement-held source locks");
+  }
+
+  private static Flyway intakeMigration(AccountControlUiOwnerSourcesFixture f, String target) {
+    String schema = f.dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
+    Path root = Path.of("").toAbsolutePath();
+    while (root != null && !java.nio.file.Files.isDirectory(
+        root.resolve("services/account-service/src/main/resources/db/migration"))) {
+      root = root.getParent();
+    }
+    Path repositoryRoot = Objects.requireNonNull(root, "Account migrations must be available");
+    return Flyway.configure()
+        .dataSource(Objects.requireNonNull(f.manager.getDataSource()))
+        .schemas(schema).defaultSchema(schema).placeholders(Map.of("serviceSchema", schema))
+        .locations("filesystem:" + repositoryRoot.resolve("services/account-service/src/main/resources/db/migration"),
+            "filesystem:" + repositoryRoot.resolve("services/common-saga/src/main/resources/db/migration/saga"))
+        .target(target).load();
+  }
+
+  private static void seedRetainedCombinedParentRows(DSLContext dsl) {
+    Long sagaId = dsl.fetchSingle(
+        "INSERT INTO saga_instance(saga_name, state) VALUES (?, ?) RETURNING id",
+        "retained-final-intake-upgrade", "PENDING").get(0, Long.class);
+    dsl.execute("INSERT INTO saga_step(instance_id, name, status, attempt) VALUES (?, ?, ?, ?)",
+        sagaId, "retained-step", "PENDING", 3);
+    dsl.execute(
+        "INSERT INTO account_initial_gameplay_login_disposals(request_id, disposal_operation_id, "
+            + "caller_workload, caller_context_id, disposal_digest, witness_canonical_bytes) "
+            + "VALUES (?, ?, ?, ?, ?, ?)",
+        UUID.randomUUID(), UUID.randomUUID(), "spiffe://firemud/ns/test/sa/game-session-service",
+        UUID.randomUUID(), "a".repeat(64), "retained parent disposal witness".getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static Map<String, List<String>> retainedCombinedParentRows(DSLContext dsl) {
+    Map<String, List<String>> rows = new LinkedHashMap<>();
+    for (String table : List.of("accounts", "account_authority_source_records",
+        "account_initial_gameplay_login_disposals", "saga_instance", "saga_step",
+        "account_selected_owner_intake_source_read_reservations",
+        "account_selected_owner_intake_source_read_sources")) {
+      rows.put(table, dsl.fetch(
+          "SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
+              + table + " t ORDER BY to_jsonb(t)::TEXT").getValues(0, String.class));
+    }
+    return rows;
+  }
+
+  private static Map<String, String> retainedInheritedGuardDefinitions(DSLContext dsl) {
+    Map<String, String> definitions = new LinkedHashMap<>();
+    for (String signature : List.of("account_ss_admission_assert_no_pending(text[])",
+        "account_ss_activation_insert_guard()", "account_ss_activation_settlement_insert_guard()",
+        "account_initial_gameplay_login_disposal_immutable()", "account_initial_gameplay_login_writer_guard()",
+        "account_control_ui_hold_required_sources(text[])", "account_draft_authorization_source_change_guard()",
+        "account_hosted_terms_disclosure_handoff_guard()")) {
+      definitions.put(signature,
+          dsl.fetchSingle("SELECT pg_get_functiondef(?::regprocedure)", signature).get(0, String.class));
+    }
+    return definitions;
   }
 
   private static Map<String, List<String>> retainedSelectedOwnerRows(DSLContext dsl) {

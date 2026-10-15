@@ -55,7 +55,8 @@ class AuthoredInitialActorCoreReadClientMtlsTest {
     CommonGrpcClientProperties tls = new CommonGrpcClientProperties();
     tls.setCertChain(Files.writeString(directory.resolve("client.crt"), "certificate").toString());
     tls.setPrivateKey(Files.writeString(directory.resolve("client.key"), "private key").toString());
-    tls.setCaCert(Files.writeString(directory.resolve("server-ca.crt"), "CA certificate").toString());
+    tls.setCaCert(
+        Files.writeString(directory.resolve("server-ca.crt"), "CA certificate").toString());
     return tls;
   }
 }
