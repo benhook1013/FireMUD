@@ -71,7 +71,8 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
     DSLContext upgradeDsl = DSL.using(upgradeSource, SQLDialect.POSTGRES);
     DSLContext freshDsl = DSL.using(freshSource, SQLDialect.POSTGRES);
 
-    try {
+    try (AutoCloseable freshSchemaCleanup = () -> dropSchema(freshSource, freshSchema);
+        AutoCloseable upgradeSchemaCleanup = () -> dropSchema(upgradeSource, upgradeSchema)) {
       Flyway through10425 =
           flyway(
               upgradeSource,
@@ -253,9 +254,6 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       assertSqlState(
           freshSource, "TRUNCATE TABLE \"" + freshSchema + "\".character_location", "55000");
       exerciseCharacterLocationDeleteProbe(freshSource, freshSchema);
-    } finally {
-      dropSchema(upgradeSource, upgradeSchema);
-      dropSchema(freshSource, freshSchema);
     }
   }
 
