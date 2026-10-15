@@ -64,6 +64,7 @@ class WorldPreparationStartLocationSubtransactionPostgresIntegrationTest {
           "world_draft_graph_application",
           "world_topology_draft_commit",
           "world_authored_topology_identity",
+          "world_canonical_instance_association",
           "world_canonical_instance_topology_identity",
           "world_canonical_instance_preparation",
           "world_canonical_preparation_start_location");
