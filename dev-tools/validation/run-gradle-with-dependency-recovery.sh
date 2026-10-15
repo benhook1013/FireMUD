@@ -175,6 +175,15 @@ classify_failure_body() {
         transient++
         next
       }
+      if (line == "> Repository MavenRepo is disabled due to earlier error below:") {
+        mavenrepo_disabled++
+        next
+      }
+      if (line ~ /^> Connect to repo\.maven\.apache\.org:443 \[repo\.maven\.apache\.org\/[0-9a-fA-F:.]+\] failed: Connect timed out$/) {
+        protoc_connect_timeout++
+        transient++
+        next
+      }
 
       if (line == "1 problem was found storing the configuration cache.") {
         cache_summary++
@@ -264,11 +273,22 @@ classify_failure_body() {
       }
       if (line ~ /^> Could not (find|resolve) [[:alnum:]_.-]+:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*\.$/ ||
           line ~ /^> Could not find [^[:space:]]+ \([[:alnum:]_.-]+:[[:alnum:]_.-]+:[0-9][[:alnum:]_.-]*\)\.$/) {
+        if (line ~ /^> Could not resolve com\.google\.protobuf:protoc:[0-9][[:alnum:]_.-]*\.$/) {
+          protoc_coordinates++
+          protoc_version = line
+          sub(/^> Could not resolve com\.google\.protobuf:protoc:/, "", protoc_version)
+          sub(/\.$/, "", protoc_version)
+          protoc_pom_url = "https://repo.maven.apache.org/maven2/com/google/protobuf/protoc/" protoc_version "/protoc-" protoc_version ".pom"
+        }
         coordinates++
         next
       }
       if (line ~ /^> Could not (get resource|GET|HEAD) [\047\042]?https?:\/\// ||
           line ~ /^> Could not GET https?:\/\//) {
+        if (protoc_pom_url != "") {
+          if (line == "> Could not get resource " quote protoc_pom_url quote ".") protoc_pom_resource++
+          if (line == "> Could not GET " quote protoc_pom_url quote ".") protoc_pom_get++
+        }
         repository_requests++
         next
       }
@@ -305,6 +325,11 @@ classify_failure_body() {
     }
     END {
       if (invalid || resolver_roots == 0 || coordinates == 0 ||
+          ((mavenrepo_disabled || protoc_connect_timeout) &&
+            (mavenrepo_disabled != 1 || protoc_connect_timeout != 1 ||
+             protoc_coordinates != 1 || protoc_pom_resource != 1 || protoc_pom_get != 1 ||
+             coordinates != 2 || repository_requests != 2 || searched ||
+             jooq_wrapper_causes != 1)) ||
           ((buildsrc_configuration || buildsrc_context || buildsrc_repository || buildsrc_pom || buildsrc_http_429) &&
             (buildsrc_configuration != 1 || buildsrc_context == 0 ||
              resolver_roots != 1 || buildsrc_classpath != 1 || buildsrc_http_429 == 0 ||
@@ -415,7 +440,7 @@ retry_delay_seconds() {
 
   retry_after="$(failure_body "$log_path" | sed -nE 's/^.*[Rr]etry-[Aa]fter:[[:space:]]*(.*)$/\1/p')" || return 1
   if [[ -z "$retry_after" ]]; then
-    if failure_body "$log_path" | grep -Eq 'Connection reset|Connection timed out|SocketTimeoutException|Received status code 429 from server|Received status code 5[0-9][0-9] from server'; then
+    if failure_body "$log_path" | grep -Eq 'Connection reset|Connection timed out|Connect timed out|SocketTimeoutException|Received status code 429 from server|Received status code 5[0-9][0-9] from server'; then
       printf '2\n'
     else
       printf '0\n'

@@ -343,6 +343,85 @@ assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2
 assert_output_contains "Configuration cache state could not be cached: field \`classpath\` of \`org.gradle.process.internal.DefaultJavaExecSpec_Decorated\`"
 assert_output_contains "refreshed-captured-jooq-resolution"
 
+# PR 3252 retained a protoc connect timeout under a disabled MavenRepo and
+# the existing pre-execution jOOQ configuration-cache wrapper.
+write_jooq_protoc_timeout_cause() {
+  cat > "$CASE_DIR/jooq-cause.log" <<'LOG'
+8 problems were found storing the configuration cache, 4 of which seem unique.
+- Task `:automation-scripting-service:generateIntegrationTestProto` of type `com.google.protobuf.gradle.GenerateProtoTask`: error writing value of type 'org.gradle.api.internal.artifacts.configurations.DefaultLegacyConfiguration'
+FAILURE: Build failed with an exception.
+* What went wrong:
+Configuration cache state could not be cached: field `classpath` of `org.gradle.process.internal.DefaultJavaExecSpec_Decorated` bean found in field `javaExecSpec` of task `:automation-scripting-service:generateJooq` of type `org.gradle.api.tasks.JavaExec`: error writing value of type 'org.gradle.api.internal.file.collections.DefaultConfigurableFileCollection'
+> Could not resolve all files for configuration ':automation-scripting-service:jooqCodegen'.
+   > Could not resolve org.jooq:jooq-codegen:3.21.9.
+     Required by:
+         project ':automation-scripting-service'
+      > Repository MavenRepo is disabled due to earlier error below:
+         > Could not resolve com.google.protobuf:protoc:4.36.2.
+            > Could not get resource 'https://repo.maven.apache.org/maven2/com/google/protobuf/protoc/4.36.2/protoc-4.36.2.pom'.
+               > Could not GET 'https://repo.maven.apache.org/maven2/com/google/protobuf/protoc/4.36.2/protoc-4.36.2.pom'.
+                  > Connect to repo.maven.apache.org:443 [repo.maven.apache.org/104.18.19.12] failed: Connect timed out
+* Try:
+> Run with --stacktrace option for details.
+BUILD FAILED in 2m 2s
+LOG
+}
+
+new_case captured-jooq-protoc-timeout
+write_jooq_protoc_timeout_cause
+write_jooq_wrapper ''
+run_case automation-scripting-service 0
+assert_call_count 2
+assert_call 2 "--refresh-dependencies --max-workers=2 -Dorg.gradle.jvmargs=-Xmx2500m -Dfile.encoding=UTF-8 :automation-scripting-service:check -PfullCheck"
+[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "protoc connect timeout did not use one short delay"
+assert_output_contains "Connect timed out"
+assert_output_contains "refreshed-captured-jooq-resolution"
+
+for mutation in repository configuration pin url host cache-family mixed unknown; do
+  new_case "protoc-timeout-invalid-$mutation"
+  write_jooq_protoc_timeout_cause
+  case "$mutation" in
+    repository) sed -i 's/Repository MavenRepo/Repository OtherRepo/' "$CASE_DIR/jooq-cause.log" ;;
+    configuration) sed -i 's/:jooqCodegen/:runtimeClasspath/' "$CASE_DIR/jooq-cause.log" ;;
+    pin) sed -i 's/:protoc:4.36.2\./:protoc:4.+./' "$CASE_DIR/jooq-cause.log" ;;
+    url) sed -i 's@protoc/4.36.2/protoc-4.36.2.pom@protoc/4.36.3/protoc-4.36.3.pom@g' "$CASE_DIR/jooq-cause.log" ;;
+    host) sed -i 's@repo.maven.apache.org@other.example.org@g' "$CASE_DIR/jooq-cause.log" ;;
+    cache-family) sed -i 's/DefaultJavaExecSpec_Decorated/OtherJavaExecSpec/' "$CASE_DIR/jooq-cause.log" ;;
+    mixed) sed -i '/^[*] Try:/i > Received status code 403 from server: Forbidden' "$CASE_DIR/jooq-cause.log" ;;
+    unknown) sed -i '/^[*] Try:/i > Unknown repository policy failure' "$CASE_DIR/jooq-cause.log" ;;
+  esac
+  write_jooq_wrapper ''
+  run_case automation-scripting-service 1
+  assert_no_retry
+done
+
+for status in 401 403 409; do
+  new_case "protoc-http-$status"
+  write_jooq_protoc_timeout_cause
+  sed -i "s/> Connect to .*failed: Connect timed out/> Received status code $status from server: Rejected/" "$CASE_DIR/jooq-cause.log"
+  write_jooq_wrapper ''
+  run_case automation-scripting-service 1
+  assert_no_retry
+done
+
+for progress in '> Task :automation-scripting-service:generateJooq' '> Task :automation-scripting-service:compileJava' '> Task :automation-scripting-service:test' 'Compilation failed'; do
+  new_case "protoc-timeout-progress-${progress//[^[:alnum:]]/}"
+  write_jooq_protoc_timeout_cause
+  write_jooq_wrapper "$progress"
+  run_case automation-scripting-service 1
+  assert_no_retry
+done
+
+new_case protoc-timeout-refresh-failure
+write_jooq_protoc_timeout_cause
+# shellcheck disable=SC2016
+write_wrapper 'cat "$CASE_DIR/jooq-cause.log"
+if [[ "$call_count" -eq 1 ]]; then exit 1; fi
+exit 23'
+run_case automation-scripting-service 23
+assert_call_count 2
+[[ "$(cat "$CASE_DIR/sleeps")" == 2 ]] || fail "protoc refresh failure exceeded retry delay count"
+
 # This retained runtime-image failure is a different narrow boundary: Gradle
 # marks generateJooq failed because its jooqCodegen classpath is unresolved,
 # before the JavaExec generator process can run.
