@@ -162,7 +162,8 @@ public final class WorldDraftDesignDigestServiceImpl implements WorldDraftDesign
                   .toList());
       int schemaVersion = DIGEST_SCHEMA_VERSION;
       if (inboundSourceClosure != null) {
-        digestInput.put("inboundSourceClosure", inboundSourceClosureContent(inboundSourceClosure));
+        digestInput.put(
+            "inboundSourceClosure", canonical(inboundSourceClosureContent(inboundSourceClosure)));
         schemaVersion = SELECTED_DIGEST_SCHEMA_VERSION;
       }
       String canonicalJson = objectMapper.writeValueAsString(digestInput);
