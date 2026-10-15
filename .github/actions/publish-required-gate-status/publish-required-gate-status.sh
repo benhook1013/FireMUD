@@ -49,19 +49,27 @@ pr_matches() {
     .base.sha == $base and .base.ref == $base_ref and .head.sha == $head and
     .head.ref == $branch and .head.repo.full_name == $head_repo' <<<"$1" >/dev/null
 }
-# Complete one-page inventories keep API work bounded; overflow refuses writes.
+# Rich status records retain creator evidence missing from the combined projection.
 latest_status() {
-  local inventory
-  inventory="$(gh api --method GET "${api_root}/commits/${HEAD_SHA}/status" -f per_page=100)" || return 1
-  jq -c --arg head "${HEAD_SHA}" --arg context "${gate_name}" '
-    if type != "object" or .sha != $head or (.statuses | type) != "array" or
-      (.total_count | type) != "number" or .total_count < 0 or .total_count > 100 or
-      (.total_count | floor) != .total_count or (.statuses | length) != .total_count or
-      any(.statuses[]; type != "object" or (.context | type) != "string" or (.context | length) == 0 or
-        (.id | type) != "number" or .id <= 0 or (.id | floor) != .id) or
-      ([.statuses[].id] | unique | length) != .total_count then error("incomplete status evidence") else . end
-    | [.statuses[] | select(.context == $context)]
-    | if length == 0 then null elif length == 1 then .[0] else error("ambiguous context") end' <<<"${inventory}"
+  local inventory='[]' page rows prefix found
+  # GitHub returns newest first; stop at the first exact context, regardless
+  # of its actor. Exhaust history only to establish absence, never ownership.
+  for page in {1..10}; do
+    rows="$(gh api --method GET "${api_root}/statuses/${HEAD_SHA}" -f per_page=100 -f page="${page}")" || return 1
+    prefix="$(jq -ce --arg context "${gate_name}" '
+      if type != "array" or length > 100 then error("invalid status page") else . end
+      | (map(if type == "object" then .context == $context else false end) | index(true)) as $index
+      | {found: ($index != null), rows: (if $index == null then . else .[0:($index + 1)] end)}' <<<"${rows}")" || return 1
+    found="$(jq -r .found <<<"${prefix}")"
+    inventory="$(jq -cs '.[0] + .[1].rows' <(printf '%s\n' "${inventory}") <(printf '%s\n' "${prefix}"))" || return 1
+    jq -e --arg url "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" '
+      all(.[]; type == "object" and (.context | type) == "string" and (.context | length) > 0 and
+        (.id | type) == "number" and .id > 0 and (.id | floor) == .id and .url == $url) and
+      ([.[].id] | unique | length) == length' <<<"${inventory}" >/dev/null || return 1
+    if [[ "${found}" == true ]]; then jq -c '.[-1]' <<<"${inventory}"; return 0; fi
+    if [[ "$(jq length <<<"${rows}")" -lt 100 ]]; then printf 'null\n'; return 0; fi
+  done
+  return 1 # Budget exhaustion cannot establish absence.
 }
 # This proves ownership, not original source success. Old base SHA and failed or
 # cancelled publisher steps identify provenance only and cannot grant proof.
