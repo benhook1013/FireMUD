@@ -374,7 +374,8 @@ public class PublishedReleaseBundleRepository {
       return;
     }
     if (bytes == null) {
-      throw new IllegalArgumentException("World selector evidence is mandatory for selected release v2/v4");
+      throw new IllegalArgumentException(
+          "World selector evidence is mandatory for selected release v2/v4");
     }
     var request =
         WorldPublishedStartLocationEvidence.fromStored(bytes.getBytes(StandardCharsets.UTF_8))

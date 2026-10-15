@@ -493,6 +493,27 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                 new VersionRepository(gds.dsl()),
                 new ObjectMapper());
         var controlledEmptyManifest = controlledEmptyManifest();
+        var artifactRepository = new net.firedevops.firemud.gamedesign.repository.VersionAssetArtifactRepository(gds.dsl());
+        var versions = new VersionRepository(gds.dsl());
+        var artifactService = new net.firedevops.firemud.gamedesign.service.impl.VersionAssetArtifactServiceImpl(
+            artifactRepository, null, versions, null, null, null, null, null, new ObjectMapper());
+        var assetPublication = new net.firedevops.firemud.gamedesign.repository.VersionAssetPublicationRepository(gds.dsl());
+        var exportSnapshot = gds.write().execute(ignored -> assetPublication.freezeOrReadSnapshot(
+            versionDto.tenantId(), versionDto.versionNumber()));
+        assertThat(exportSnapshot.items()).isEmpty();
+        gds.write().execute(ignored -> artifactService.stageExport(versionDto.tenantId(), versionDto.id(),
+            versionDto.versionNumber(), publicationRequest.derivedWorkflowIdentity()));
+        var candidateService = new net.firedevops.firemud.gamedesign.service.impl.VersionAssetExportCandidateServiceImpl(
+            versions, new GameRepository(gds.dsl()),
+            new net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository(gds.dsl()),
+            artifactRepository, assetPublication, gds.transactions(), new ObjectMapper());
+        // Controlled delivery origin and manifest metadata; no object-store or public delivery proof.
+        var candidate = new net.firedevops.firemud.gamedesign.service.FrozenAssetExportCandidate(
+            controlledEmptyManifest, "https://controlled.invalid/assets");
+        assertThat(candidateService.recordExportCandidate(versionDto.tenantId(), versionDto.versionNumber(), candidate))
+            .isEqualTo(candidate);
+        assertThat(candidateService.readExportCandidate(versionDto.tenantId(), versionDto.versionNumber()))
+            .isEqualTo(candidate);
         assertThatThrownBy(
                 () ->
                     gds.write()
@@ -519,14 +540,28 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         var written =
             gds.write()
                 .execute(
-                    ignored ->
-                        releaseOwner.createFullVersionBundle(
-                            versionDto,
-                            publicationRequest.derivedWorkflowIdentity(),
-                            controlledEmptyManifest,
-                            "controlled-generation-input",
-                            participantDigests,
-                            worldOwners.startLocationEvidence()));
+                    ignored -> {
+                      String workflow = publicationRequest.derivedWorkflowIdentity();
+                      var exported = artifactService.markExportedUnattested(versionDto.tenantId(), versionDto.id(),
+                          versionDto.versionNumber(), workflow, controlledEmptyManifest);
+                      var result = releaseOwner.createFullVersionBundle(
+                          versionDto, workflow, controlledEmptyManifest, "controlled-generation-input",
+                          participantDigests, worldOwners.startLocationEvidence());
+                      var version = versions.findByTenantIdAndIdForUpdate(versionDto.tenantId(), versionDto.id()).orElseThrow();
+                      version.setVersionState(VersionLifecycleState.PUBLISHED);
+                      version.setVersionStateEpoch(Math.addExact(version.getVersionStateEpoch(), 1L));
+                      versions.save(version);
+                      artifactService.markPublished(versionDto.tenantId(), versionDto.id(), exported.stateEpoch(),
+                          workflow, controlledEmptyManifest.manifestHash());
+                      var attempts = new net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository(gds.dsl());
+                      var attempt = attempts.findByPublishWorkflowIdForUpdate(workflow).orElseThrow();
+                      attempt.setStatus(net.firedevops.firemud.gamedesign.model.PublishAttemptStatus.SUCCEEDED);
+                      attempts.save(attempt);
+                      var operation = selectedOwnerReservation.operation();
+                      new net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository(gds.dsl())
+                          .seal(operation.tenantKey(), workflow, operation.versionId(), operation.selectionDigest(), true);
+                      return result;
+                    });
         assertThat(written.attestationSchemaVersion()).isEqualTo("v4");
         assertThat(written.participantDigests()).containsExactlyElementsOf(participantDigests);
         assertThat(written.worldPublishedStartLocationEvidence().canonicalBytes())
@@ -980,7 +1015,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         HexFormat.of()
             .formatHex(
                 java.security.MessageDigest.getInstance("SHA-256")
-                    .digest("[]".getBytes(StandardCharsets.UTF_8)));
+                    .digest("{\"assets\":{},\"schemaVersion\":1}".getBytes(StandardCharsets.UTF_8)));
     return new ExportedAssetManifest("sha256:" + hash, 1, List.of(), List.of());
   }
 
@@ -1042,9 +1077,13 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
           .setTransactionalLock(false);
     }
     flyway.load().migrate();
-    DSLContext dsl =
-        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     var manager = new DataSourceTransactionManager(dataSource);
+    var configuration = new org.jooq.impl.DefaultConfiguration();
+    configuration.set(SQLDialect.POSTGRES);
+    configuration.set(new org.jooq.impl.DataSourceConnectionProvider(
+        new TransactionAwareDataSourceProxy(dataSource)));
+    configuration.set(new org.springframework.boot.jooq.autoconfigure.SpringTransactionProvider(manager));
+    DSLContext dsl = DSL.using(configuration);
     return new Store(schema, dsl, manager);
   }
 

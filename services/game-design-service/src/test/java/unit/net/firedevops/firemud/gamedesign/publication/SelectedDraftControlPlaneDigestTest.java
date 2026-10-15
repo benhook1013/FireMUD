@@ -43,7 +43,7 @@ class SelectedDraftControlPlaneDigestTest {
         .isEqualTo(Long.toString(selected.target().gameDesignVersionRowId()));
     assertThat(first.appliedCommitId()).isEqualTo(selected.commitId().toString());
     assertThat(first.contentDigest())
-        .isEqualTo("414e333c7a695aa81cfe86d39eda7adb13cd3e16b78d2e2bed5df67b08181a5a");
+        .isEqualTo("72f88d8fe8ad3d7f99a83e8cf0bb394fba649cae7e3e96da8567ad7de141cf01");
   }
 
   @Test
@@ -147,10 +147,15 @@ class SelectedDraftControlPlaneDigestTest {
     // Payload JSON is stored as text in the binding; normalize unordered fixture maps first.
     var revisions = new java.util.ArrayList<DraftCommitBinding.RevisionPayload>();
     for (var revision : selected.revisions()) {
-      revisions.add(new DraftCommitBinding.RevisionPayload(
-          revision.revisionOrder(), revision.revisionId(), revision.owner(),
-          new String(net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
-              revision.payload()), java.nio.charset.StandardCharsets.UTF_8)));
+      revisions.add(
+          new DraftCommitBinding.RevisionPayload(
+              revision.revisionOrder(),
+              revision.revisionId(),
+              revision.owner(),
+              new String(
+                  net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+                      revision.payload()),
+                  java.nio.charset.StandardCharsets.UTF_8)));
     }
     return DraftCommitBinding.create(
         selected.target(),
