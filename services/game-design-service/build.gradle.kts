@@ -20,6 +20,9 @@ testing {
         named<JvmTestSuite>("integrationTest") {
             sources.java.srcDir("src/sharedTest/java")
         }
+        named<JvmTestSuite>("crossServiceTest") {
+            sources.java.srcDir("src/sharedTest/java")
+        }
     }
 }
 
@@ -28,5 +31,8 @@ dependencies {
     implementation(libs.aws.sdk.s3)
     testCompileOnly(libs.spotbugs.annotations)
     add("integrationTestCompileOnly", libs.spotbugs.annotations)
+    add("crossServiceTestCompileOnly", libs.spotbugs.annotations)
+    add("crossServiceTestImplementation", project(":game-session-service"))
+    add("crossServiceTestImplementation", project(":world-management-service"))
     testImplementation(libs.bouncycastle.pkix)
 }

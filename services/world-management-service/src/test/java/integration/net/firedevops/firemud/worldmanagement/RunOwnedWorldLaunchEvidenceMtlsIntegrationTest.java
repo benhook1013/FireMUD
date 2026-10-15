@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -60,6 +61,7 @@ import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
 import net.firedevops.firemud.gamedesign.v1.ArtifactState;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.GetLaunchDescriptorRequest;
@@ -84,7 +86,9 @@ import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository
 import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.PrepareWorldInstanceRequest;
+import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.junit.jupiter.api.AfterEach;
@@ -111,6 +115,15 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
   private static final String STORE_PASSWORD = "test-only-world-mtls-password";
   private static final String TEST_JWT_SECRET = "testsecretkeytestsecretkeytest1234";
   private static final JwtUtil WORLD_JWT_UTIL = new JwtUtil(TEST_JWT_SECRET, 3_600_000L);
+  private static final RuntimeIdentity GAME_SESSION_RUNTIME_IDENTITY =
+      new RuntimeIdentity(
+          "game-session-service",
+          "world-mtls-fixture-test-gs",
+          "localhost",
+          Instant.parse("2026-10-11T00:00:00Z"),
+          "test",
+          "test",
+          "local");
   private static final RuntimeIdentity WORLD_RUNTIME_IDENTITY =
       new RuntimeIdentity(
           "world-management-service",
@@ -195,14 +208,15 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       RunOwnedWorldLaunchEvidenceProvider evidenceProvider = fixture.provider(gameDesignClient);
       AtomicReference<WorldInstance> storedWorld = new AtomicReference<>();
       AtomicInteger worldSaves = new AtomicInteger();
+      AtomicInteger entityCleanupCalls = new AtomicInteger();
       WorldInstanceRepository worldRepository = mockWorldRepository(storedWorld, worldSaves);
       WorldLifecycleCommandServiceImpl commandService =
-          newCommandService(worldRepository, evidenceProvider, gameDesignClient);
+          newCommandService(
+              worldRepository, evidenceProvider, gameDesignClient, entityCleanupCalls);
       WorldInstanceActivationServiceImpl activationService =
           new WorldInstanceActivationServiceImpl(
               commandService, java.util.Optional.empty(), evidenceProvider, worldRepository);
       AtomicReference<GrpcPeerIdentity> gameSessionAtWorld = new AtomicReference<>();
-      AtomicBoolean injectPlayerContext = new AtomicBoolean();
       WorldManagementGrpcService grpcService =
           new WorldManagementGrpcService(
               null,
@@ -233,42 +247,82 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
                             .ActivatePreparedWorldInstanceResponse>
                     responseObserver) {
               gameSessionAtWorld.set(GrpcPeerIdentity.current());
-              if (injectPlayerContext.get()) {
-                SessionContext.setContext("42", List.of("tenantAdmin"), java.util.Map.of());
-              }
-              try {
-                super.activatePreparedWorldInstance(request, responseObserver);
-              } finally {
-                SessionContext.clear();
-              }
+              super.activatePreparedWorldInstance(request, responseObserver);
+            }
+
+            @Override
+            public void failPreparedWorldInstance(
+                FailPreparedWorldInstanceRequest request,
+                StreamObserver<
+                        net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse>
+                    responseObserver) {
+              gameSessionAtWorld.set(GrpcPeerIdentity.current());
+              super.failPreparedWorldInstance(request, responseObserver);
+            }
+
+            @Override
+            public void terminateWorldInstance(
+                TerminateWorldInstanceRequest request,
+                StreamObserver<
+                        net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse>
+                    responseObserver) {
+              gameSessionAtWorld.set(GrpcPeerIdentity.current());
+              super.terminateWorldInstance(request, responseObserver);
             }
           };
       worldServer = startWorldServer(grpcService);
       gameSessionChannel = channel("localhost", worldServer.getPort(), pki.gameSessionClient());
       WorldManagementServiceGrpc.WorldManagementServiceBlockingStub gameSession =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel);
+          authenticatedGameSessionStub();
 
-      var prepare =
-          gameSession.prepareWorldInstance(
-              PrepareWorldInstanceRequest.newBuilder()
-                  .setTenantId("42")
-                  .setGameInstanceId("101")
-                  .setGameTemplateId("17")
-                  .setControlPlaneRequestId(fixture.operationId())
-                  .setLaunchDescriptorId("launch-descriptor-fixture-11")
-                  .setVersionId("11")
-                  .setRuntimeFlagsJson("{}")
-                  .setGenerationConfigRevision("genrev-11")
-                  .setReleaseBundleId("77")
-                  .setPublishedReleaseBundleRef(RELEASE_REF)
-                  .setVersionStateEpoch(77L)
-                  .build());
+      PrepareWorldInstanceRequest prepareRequest =
+          PrepareWorldInstanceRequest.newBuilder()
+              .setTenantId("42")
+              .setGameInstanceId("101")
+              .setGameTemplateId("17")
+              .setControlPlaneRequestId(fixture.operationId())
+              .setLaunchDescriptorId("launch-descriptor-fixture-11")
+              .setVersionId("11")
+              .setRuntimeFlagsJson("{}")
+              .setGenerationConfigRevision("genrev-11")
+              .setReleaseBundleId("77")
+              .setPublishedReleaseBundleRef(RELEASE_REF)
+              .setVersionStateEpoch(77L)
+              .build();
+      var missingJwtStub = WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel);
+      assertThatThrownBy(() -> missingJwtStub.prepareWorldInstance(prepareRequest))
+          .isInstanceOfSatisfying(
+              StatusRuntimeException.class,
+              failure ->
+                  assertThat(failure.getStatus().getCode()).isEqualTo(Status.Code.UNAUTHENTICATED));
+      assertThat(worldSaves).hasValue(0);
+      assertThat(descriptorReads).hasValue(0);
+      assertThat(entityCleanupCalls).hasValue(0);
+
+      var prepare = gameSession.prepareWorldInstance(prepareRequest);
       assertThat(prepare.hasError()).isFalse();
       assertThat(prepare.getWorldInstance().getStatus())
           .isEqualTo(WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING);
       assertThat(storedWorld.get().getRunOwnedFixtureBindingSha256()).matches("[0-9a-f]{64}");
       assertThat(storedWorld.get().getRunOwnedFixturePreparingLifecycleEpoch()).isEqualTo(1L);
       int writesAfterPrepare = worldSaves.get();
+      int readsAfterPrepare = descriptorReads.get();
+      SessionContext.setContext("42", List.of("tenantAdmin"), java.util.Map.of());
+      var playerContextFailure =
+          authenticatedPlayerGameSessionStub()
+              .failPreparedWorldInstance(
+                  FailPreparedWorldInstanceRequest.newBuilder()
+                      .setTenantId("42")
+                      .setGameInstanceId("101")
+                      .setExpectedLifecycleEpoch(1L)
+                      .setReason("denied player context")
+                      .build());
+      SessionContext.clear();
+      assertThat(playerContextFailure.hasError()).isTrue();
+      assertThat(playerContextFailure.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+      assertThat(worldSaves).hasValue(writesAfterPrepare);
+      assertThat(descriptorReads).hasValue(readsAfterPrepare);
+
       var wrongReference =
           gameSession.prepareWorldInstance(
               PrepareWorldInstanceRequest.newBuilder()
@@ -338,16 +392,18 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
           .extracting(GrpcPeerIdentity::uri)
           .isEqualTo(GS_URI);
 
-      injectPlayerContext.set(true);
+      SessionContext.setContext("42", List.of("tenantAdmin"), java.util.Map.of());
       var ordinaryCaller =
-          gameSession.activatePreparedWorldInstance(
-              ActivatePreparedWorldInstanceRequest.newBuilder()
-                  .setTenantId("42")
-                  .setGameInstanceId("101")
-                  .setExpectedLifecycleEpoch(1L)
-                  .build());
-      injectPlayerContext.set(false);
+          authenticatedPlayerGameSessionStub()
+              .activatePreparedWorldInstance(
+                  ActivatePreparedWorldInstanceRequest.newBuilder()
+                      .setTenantId("42")
+                      .setGameInstanceId("101")
+                      .setExpectedLifecycleEpoch(1L)
+                      .build());
+      SessionContext.clear();
       assertThat(ordinaryCaller.hasError()).isTrue();
+      assertThat(ordinaryCaller.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
       assertThat(worldSaves).hasValue(writesAfterActivation);
       assertThat(descriptorReads).hasValue(4);
 
@@ -356,7 +412,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       gameSessionChannel = channelWithoutClientIdentity("localhost", worldServer.getPort());
       assertThatThrownBy(
               () ->
-                  WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+                  authenticatedGameSessionStub()
                       .activatePreparedWorldInstance(
                           ActivatePreparedWorldInstanceRequest.newBuilder()
                               .setTenantId("42")
@@ -372,7 +428,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       gameSessionChannel =
           channel("localhost", worldServer.getPort(), pki.wrongNamespaceGameSessionClient());
       var wrongPeer =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -388,7 +444,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       gameSessionChannel =
           channel("localhost", worldServer.getPort(), pki.wrongGameSessionLeafClient());
       var wrongLeaf =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -405,7 +461,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
           channel("localhost", worldServer.getPort(), pki.wrongCaGameSessionClient());
       assertThatThrownBy(
               () ->
-                  WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+                  authenticatedGameSessionStub()
                       .activatePreparedWorldInstance(
                           ActivatePreparedWorldInstanceRequest.newBuilder()
                               .setTenantId("42")
@@ -422,7 +478,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       fixture.reset();
       Fixture.writeFieldMismatch(fixture, "caCertificateSha256", "f".repeat(64));
       var wrongCa =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -436,7 +492,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       fixture.reset();
       Fixture.writeFieldMismatch(fixture, "worldManagementLeafSha256", "e".repeat(64));
       var wrongWorldRecipient =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -451,7 +507,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       Fixture.writeFieldMismatch(
           fixture, "worldManagementUriSan", "spiffe://firemud/ns/dev/sa/other-world-service");
       var wrongWorldUri =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -464,7 +520,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
 
       fixture.reset();
       var unknownInstance =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -476,7 +532,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       assertThat(descriptorReads).hasValue(4);
 
       var duplicateOperation =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .prepareWorldInstance(
                   PrepareWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -496,7 +552,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       assertThat(descriptorReads).hasValue(5);
 
       var staleAttempt =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -510,7 +566,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       fixture.reset();
       Fixture.writeReceiptFieldMismatch(fixture, "sourceGameTenantKey", "43");
       var changedSource =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -524,7 +580,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       fixture.reset();
       Fixture.writeFieldMismatch(fixture, "runId", "changed-run");
       var changedRun =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -538,7 +594,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       fixture.reset();
       Fixture.writeFieldMismatch(fixture, "composeProjectName", "different-project");
       var changedProject =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -553,7 +609,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       Fixture.writeReceiptFieldMismatch(
           fixture, "fixtureOperationId", "11111111-1111-4111-8111-111111111111");
       var changedReceipt =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -567,7 +623,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       fixture.reset();
       Fixture.writeReceiptFieldMismatch(fixture, "launchDescriptorBase64", "AAAA");
       var changedReceiptDescriptor =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -581,7 +637,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       fixture.reset();
       returnChangedDescriptor.set(true);
       var changedOwnerDescriptor =
-          WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel)
+          authenticatedGameSessionStub()
               .activatePreparedWorldInstance(
                   ActivatePreparedWorldInstanceRequest.newBuilder()
                       .setTenantId("42")
@@ -592,6 +648,85 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
       assertThat(changedOwnerDescriptor.hasError()).isTrue();
       assertThat(worldSaves).hasValue(writesAfterActivation);
       assertThat(descriptorReads).hasValue(7);
+
+      fixture.reset();
+      TerminateWorldInstanceRequest terminationRequest =
+          TerminateWorldInstanceRequest.newBuilder()
+              .setTenantId("42")
+              .setGameInstanceId("101")
+              .setExpectedLifecycleEpoch(2L)
+              .setTerminationRequestId("term-mtls-fixture-11")
+              .setReason("stop")
+              .build();
+      int writesBeforeTermination = worldSaves.get();
+      int readsBeforeDeniedTermination = descriptorReads.get();
+
+      SessionContext.setContext("42", List.of("tenantAdmin"), java.util.Map.of());
+      var playerContextTermination =
+          authenticatedPlayerGameSessionStub().terminateWorldInstance(terminationRequest);
+      SessionContext.clear();
+      assertThat(playerContextTermination.hasError()).isTrue();
+      assertThat(playerContextTermination.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+      assertThat(worldSaves).hasValue(writesBeforeTermination);
+      assertThat(entityCleanupCalls).hasValue(0);
+      assertThat(descriptorReads).hasValue(readsBeforeDeniedTermination);
+
+      gameSessionChannel.shutdownNow();
+      assertThat(gameSessionChannel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      gameSessionChannel =
+          channel("localhost", worldServer.getPort(), pki.wrongNamespaceGameSessionClient());
+      var wrongPeerTermination =
+          authenticatedGameSessionStub().terminateWorldInstance(terminationRequest);
+      assertThat(wrongPeerTermination.hasError()).isTrue();
+      assertThat(worldSaves).hasValue(writesBeforeTermination);
+      assertThat(entityCleanupCalls).hasValue(0);
+      assertThat(descriptorReads).hasValue(readsBeforeDeniedTermination);
+
+      gameSessionChannel.shutdownNow();
+      assertThat(gameSessionChannel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      gameSessionChannel =
+          channel("localhost", worldServer.getPort(), pki.wrongGameSessionLeafClient());
+      var wrongLeafTermination =
+          authenticatedGameSessionStub().terminateWorldInstance(terminationRequest);
+      assertThat(wrongLeafTermination.hasError()).isTrue();
+      assertThat(worldSaves).hasValue(writesBeforeTermination);
+      assertThat(entityCleanupCalls).hasValue(0);
+      assertThat(descriptorReads).hasValue(readsBeforeDeniedTermination);
+
+      gameSessionChannel.shutdownNow();
+      assertThat(gameSessionChannel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      gameSessionChannel = channelWithoutClientIdentity("localhost", worldServer.getPort());
+      assertThatThrownBy(
+              () -> authenticatedGameSessionStub().terminateWorldInstance(terminationRequest))
+          .isInstanceOf(StatusRuntimeException.class);
+      assertThat(worldSaves).hasValue(writesBeforeTermination);
+      assertThat(entityCleanupCalls).hasValue(0);
+
+      gameSessionChannel.shutdownNow();
+      assertThat(gameSessionChannel.awaitTermination(2, TimeUnit.SECONDS)).isTrue();
+      gameSessionChannel = channel("localhost", worldServer.getPort(), pki.gameSessionClient());
+      var terminated = authenticatedGameSessionStub().terminateWorldInstance(terminationRequest);
+      assertThat(terminated.hasError()).isFalse();
+      assertThat(terminated.getWorldInstance().getStatus())
+          .isEqualTo(WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED);
+      assertThat(terminated.getWorldInstance().getLifecycleEpoch()).isEqualTo(4L);
+      assertThat(worldSaves).hasValue(writesBeforeTermination + 2);
+      assertThat(entityCleanupCalls).hasValue(1);
+
+      var terminalReplay =
+          authenticatedGameSessionStub().terminateWorldInstance(terminationRequest);
+      assertThat(terminalReplay.hasError()).isFalse();
+      assertThat(terminalReplay.getWorldInstance()).isEqualTo(terminated.getWorldInstance());
+      assertThat(worldSaves).hasValue(writesBeforeTermination + 2);
+      assertThat(entityCleanupCalls).hasValue(1);
+
+      var changedTerminalRequest =
+          authenticatedGameSessionStub()
+              .terminateWorldInstance(
+                  terminationRequest.toBuilder().setTerminationRequestId("term-other").build());
+      assertThat(changedTerminalRequest.hasError()).isTrue();
+      assertThat(worldSaves).hasValue(writesBeforeTermination + 2);
+      assertThat(entityCleanupCalls).hasValue(1);
     } finally {
       if (previousReload == null) {
         System.clearProperty("firemud.grpc.tls-reload.enabled");
@@ -729,9 +864,30 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
                 .trustManager(pki.caCertificateValue())
                 .clientAuth(ClientAuth.REQUIRE)
                 .build())
-        .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
+        .addService(
+            ServerInterceptors.intercept(
+                service,
+                new GrpcPeerIdentityInterceptor(),
+                new AuthTokenInterceptor(
+                    WORLD_JWT_UTIL, Set.of("world_management.v1.WorldManagementService/Ping"))))
         .build()
         .start();
+  }
+
+  private WorldManagementServiceGrpc.WorldManagementServiceBlockingStub
+      authenticatedGameSessionStub() {
+    return GrpcClientAuth.attachInternal(
+        WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel),
+        WORLD_JWT_UTIL,
+        GAME_SESSION_RUNTIME_IDENTITY);
+  }
+
+  private WorldManagementServiceGrpc.WorldManagementServiceBlockingStub
+      authenticatedPlayerGameSessionStub() {
+    return GrpcClientAuth.attach(
+        WorldManagementServiceGrpc.newBlockingStub(gameSessionChannel),
+        WORLD_JWT_UTIL,
+        GAME_SESSION_RUNTIME_IDENTITY);
   }
 
   private ManagedChannel channel(String host, int port, TestIdentity identity) throws Exception {
@@ -827,7 +983,8 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
   private WorldLifecycleCommandServiceImpl newCommandService(
       WorldInstanceRepository worldRepository,
       RunOwnedWorldLaunchEvidenceProvider evidenceProvider,
-      GameDesignClient client) {
+      GameDesignClient client,
+      AtomicInteger entityCleanupCalls) {
     RegionInstanceRepository regionRepository = mock(RegionInstanceRepository.class);
     ZoneRepository zoneRepository = mock(ZoneRepository.class);
     ZoneInstanceRepository zoneInstanceRepository = mock(ZoneInstanceRepository.class);
@@ -846,6 +1003,13 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
     when(roomInstanceRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(roomInstanceExitRepository.save(any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    EntityManagementClient entityManagementClient = mock(EntityManagementClient.class);
+    when(entityManagementClient.cleanupRuntimeInstance(anyLong(), anyLong(), anyString()))
+        .thenAnswer(
+            invocation -> {
+              entityCleanupCalls.incrementAndGet();
+              return CleanupRuntimeInstanceResponse.newBuilder().build();
+            });
     WorldProperties properties = new WorldProperties();
     properties.setLocalShardId(7);
     WorldLifecycleCommandServiceImpl commandService =
@@ -861,7 +1025,7 @@ class RunOwnedWorldLaunchEvidenceMtlsIntegrationTest {
             mock(WorldEventRepository.class),
             properties,
             client,
-            mock(EntityManagementClient.class),
+            entityManagementClient,
             new SimpleMeterRegistry(),
             new PlatformTransactionManager() {
               @Override

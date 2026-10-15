@@ -399,6 +399,7 @@ class TlsCertificateWatcherTest {
     AtomicInteger attempts = new AtomicInteger();
     CountDownLatch firstAttempt = new CountDownLatch(1);
     CountDownLatch successfulRetry = new CountDownLatch(1);
+    CountDownLatch allowSuccessfulRetry = new CountDownLatch(1);
     WatcherCounts baseline = watcherCounts(TlsCertificateWatcher.health());
 
     try (TlsCertificateWatcher watcher =
@@ -410,12 +411,24 @@ class TlsCertificateWatcherTest {
                 firstAttempt.countDown();
                 throw new IllegalStateException("simulated reload failure");
               }
+              try {
+                // Keep failure observable until the test has checked unhealthy aggregate state.
+                allowSuccessfulRetry.await();
+              } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(
+                    "Interrupted while awaiting test recovery", exception);
+              }
               successfulRetry.countDown();
             })) {
-      Files.writeString(certificate, "certificate-2");
-      assertTrue(firstAttempt.await(5, TimeUnit.SECONDS));
-      awaitUnhealthy(watcher);
-      assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
+      try {
+        Files.writeString(certificate, "certificate-2");
+        assertTrue(firstAttempt.await(5, TimeUnit.SECONDS));
+        awaitUnhealthy(watcher);
+        assertHealthDelta(baseline, 1, 0, 1, TlsCertificateWatcher.health());
+      } finally {
+        allowSuccessfulRetry.countDown();
+      }
 
       assertTrue(successfulRetry.await(5, TimeUnit.SECONDS));
       assertTrue(attempts.get() >= 2);

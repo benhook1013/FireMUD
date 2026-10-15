@@ -3,6 +3,7 @@ package unit.net.firedevops.firemud.worldmanagement.tenant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -18,13 +19,19 @@ import io.grpc.StatusRuntimeException;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidence;
+import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidenceTestFixtures;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeDigest;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeReceipt;
 import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
@@ -70,6 +77,509 @@ class WorldAuthoredVersionIdentityServiceTest {
   @AfterEach
   void clearTransactionState() {
     TransactionSynchronizationManager.clear();
+  }
+
+  @Test
+  void fixtureVersionRevalidatesPeerAndCallerBeforeAnyOwnerOrRemoteRead() {
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    var sourceReceipt = sourceReceipt(evidence.sourceReceipt().sourceEvidence());
+    WorldAuthoredVersionIdentityService fixtureService = fixtureService();
+    assertThatThrownBy(
+            () ->
+                withoutPeer(() -> fixtureService.associateRunOwnedFixture(evidence, sourceReceipt)))
+        .isInstanceOf(SecurityException.class);
+    for (String[] candidate :
+        new String[][] {
+          {"dev", "world-management-service", "a".repeat(64)},
+          {"other", "game-session-service", "a".repeat(64)},
+          {"dev", "game-session-service", "d".repeat(64)},
+          {"dev", "game-session-service", null}
+        }) {
+      assertThatThrownBy(
+              () ->
+                  withFixturePeer(
+                      candidate[0],
+                      candidate[1],
+                      candidate[2],
+                      () -> fixtureService.associateRunOwnedFixture(evidence, sourceReceipt)))
+          .isInstanceOf(SecurityException.class);
+    }
+    assertThatThrownBy(
+            () ->
+                withFixturePeer(
+                    "dev",
+                    "game-session-service",
+                    "a".repeat(64),
+                    () -> {
+                      SessionContext.setContext(TENANT.toString(), List.of(), java.util.Map.of());
+                      try {
+                        return fixtureService.associateRunOwnedFixture(evidence, sourceReceipt);
+                      } finally {
+                        SessionContext.clear();
+                      }
+                    }))
+        .isInstanceOf(SecurityException.class);
+    verifyNoInteractions(sourceIntakeRepository, repository, versionStateClient);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void fixtureVersionConsumesCommittedSourceThenControlledCurrentStateBeforeSqlAndExactRetry() {
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    var source = evidence.sourceReceipt().sourceEvidence();
+    var intake = sourceReceipt(source);
+    var canonicalVersion = evidence.gameSessionAssociation().canonicalVersionId();
+    long gameDesignVersion = evidence.launchDescriptor().versionId();
+    AtomicInteger ownerReads = new AtomicInteger();
+    AtomicReference<WorldAuthoredVersionIdentityReceipt> committed = new AtomicReference<>();
+    when(sourceIntakeRepository.readBySource(
+            "dev",
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest()))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return Optional.of(intake);
+            });
+    when(repository.readByCanonicalVersion(
+            "dev", source.canonicalTenantId(), source.worldSlug(), canonicalVersion))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return ownerReads.incrementAndGet() == 1
+                  ? Optional.empty()
+                  : Optional.of(committed.get());
+            });
+    when(repository.readByGameDesignVersion(
+            "dev", source.canonicalTenantId(), source.worldSlug(), gameDesignVersion))
+        .thenReturn(Optional.empty());
+    when(versionStateClient.read(any()))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              assertThat(transactionManager.startedWith).isNull();
+              AuthoredWorldVersionStateEvidence.Request request = call.getArgument(0);
+              assertThat(request.targetNamespace()).isEqualTo("dev");
+              assertThat(request.canonicalTenantId()).isEqualTo(source.canonicalTenantId());
+              assertThat(request.versionId()).isEqualTo(gameDesignVersion);
+              assertThat(request.readRequestId())
+                  .isNotEqualTo(intake.intakeRequestId())
+                  .isNotEqualTo(source.operationId());
+              return AuthoredWorldVersionStateEvidence.create(
+                  request,
+                  source,
+                  canonicalVersion,
+                  VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+                  evidence
+                      .sourceReceipt()
+                      .launchReadEvidence()
+                      .versionState()
+                      .getVersionStateEpoch());
+            });
+    when(repository.acceptFresh(any(), any()))
+        .thenAnswer(
+            call -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+              assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+                  .isFalse();
+              assertThat(call.<WorldAuthoredSourceIntakeReceipt>getArgument(0)).isEqualTo(intake);
+              committed.set(identityReceipt(intake, call.getArgument(1), 101L));
+              return committed.get();
+            });
+    WorldAuthoredVersionIdentityService fixtureService = fixtureService();
+    var result =
+        withFixturePeer(
+            "dev",
+            "game-session-service",
+            "a".repeat(64),
+            () -> fixtureService.associateRunOwnedFixture(evidence, intake));
+    assertThat(result).isSameAs(committed.get());
+    assertThat(result.canonicalVersionId()).isEqualTo(canonicalVersion);
+    assertThat(result.localVersionKey()).isEqualTo(101L);
+    assertThat(result.sourceIntakeReceipt()).isEqualTo(intake);
+    InOrder order = inOrder(sourceIntakeRepository, repository, versionStateClient);
+    order
+        .verify(sourceIntakeRepository)
+        .readBySource(
+            "dev",
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest());
+    order
+        .verify(repository)
+        .readByCanonicalVersion(
+            "dev", source.canonicalTenantId(), source.worldSlug(), canonicalVersion);
+    order
+        .verify(repository)
+        .readByGameDesignVersion(
+            "dev", source.canonicalTenantId(), source.worldSlug(), gameDesignVersion);
+    order.verify(versionStateClient).read(any());
+    order.verify(repository).acceptFresh(intake, result.versionStateEvidence());
+    order
+        .verify(repository)
+        .readByCanonicalVersion(
+            "dev", source.canonicalTenantId(), source.worldSlug(), canonicalVersion);
+    order
+        .verify(sourceIntakeRepository)
+        .readBySource(
+            "dev",
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest());
+    assertThat(
+            withFixturePeer(
+                "dev",
+                "game-session-service",
+                "a".repeat(64),
+                () -> fixtureService.associateRunOwnedFixture(evidence, intake)))
+        .isSameAs(result);
+    verify(versionStateClient, times(1)).read(any());
+    verify(repository, times(1)).acceptFresh(any(), any());
+    assertThat(transactionManager.startedWith.getIsolationLevel())
+        .isEqualTo(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    assertThat(transactionManager.startedWith.getPropagationBehavior())
+        .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+  }
+
+  @Test
+  void fixtureVersionRejectsDifferentCommittedSourceBeforeVersionAccessOrSql() {
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    var source = evidence.sourceReceipt().sourceEvidence();
+    var intake = sourceReceipt(source);
+    var different =
+        new WorldAuthoredSourceIntakeReceipt(
+            intake.schemaVersion(),
+            intake.targetNamespace(),
+            intake.intakeRequestId(),
+            intake.operationId(),
+            intake.canonicalTenantId(),
+            intake.worldSlug(),
+            intake.sourceOperationId(),
+            intake.sourceEvidenceDigest(),
+            intake.requestDigest(),
+            WorldAuthoredSourceIntakeDigest.receiptDigest(
+                intake.targetNamespace(),
+                intake.operationId(),
+                intake.requestDigest(),
+                source,
+                intake.localTenantKey() + 1),
+            intake.localTenantKey() + 1,
+            source);
+    when(sourceIntakeRepository.readBySource(
+            "dev",
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest()))
+        .thenReturn(Optional.of(different));
+    assertThatThrownBy(
+            () ->
+                withFixturePeer(
+                    "dev",
+                    "game-session-service",
+                    "a".repeat(64),
+                    () -> fixtureService().associateRunOwnedFixture(evidence, intake)))
+        .isInstanceOf(WorldAuthoredVersionIdentityRepository.RegistrationConflictException.class);
+    verifyNoInteractions(repository, versionStateClient);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void fixtureVersionRejectsRemoteStateEpochCanonicalVersionAndRequestSubstitutionBeforeSql() {
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    var source = evidence.sourceReceipt().sourceEvidence();
+    var intake = sourceReceipt(source);
+    when(sourceIntakeRepository.readBySource(
+            "dev",
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest()))
+        .thenReturn(Optional.of(intake));
+    for (int variation = 0; variation < 4; variation++) {
+      int selected = variation;
+      doAnswer(
+              call -> {
+                AuthoredWorldVersionStateEvidence.Request request = call.getArgument(0);
+                if (selected == 3) {
+                  request =
+                      new AuthoredWorldVersionStateEvidence.Request(
+                          request.schemaVersion(),
+                          request.targetNamespace(),
+                          UUID.randomUUID(),
+                          request.canonicalTenantId(),
+                          request.worldSlug(),
+                          request.sourceOperationId(),
+                          request.expectedSourceEvidenceDigest(),
+                          request.versionId());
+                }
+                return AuthoredWorldVersionStateEvidence.create(
+                    request,
+                    source,
+                    selected == 2
+                        ? OTHER_VERSION
+                        : evidence.gameSessionAssociation().canonicalVersionId(),
+                    selected == 0
+                        ? VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT
+                        : VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+                    evidence
+                            .sourceReceipt()
+                            .launchReadEvidence()
+                            .versionState()
+                            .getVersionStateEpoch()
+                        + (selected == 1 ? 1L : 0L));
+              })
+          .when(versionStateClient)
+          .read(any());
+      assertThatThrownBy(
+              () ->
+                  withFixturePeer(
+                      "dev",
+                      "game-session-service",
+                      "a".repeat(64),
+                      () -> fixtureService().associateRunOwnedFixture(evidence, intake)))
+          .isInstanceOf(
+              WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException.class);
+    }
+    verify(versionStateClient, times(4)).read(any());
+    verify(repository, never()).acceptFresh(any(), any());
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void fixtureVersionRejectsChangedRetainedSnapshotOnExactRetryWithoutRemoteOrSql() {
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    var source = evidence.sourceReceipt().sourceEvidence();
+    var intake = sourceReceipt(source);
+    var canonicalVersion = evidence.gameSessionAssociation().canonicalVersionId();
+    long gameDesignVersion = evidence.launchDescriptor().versionId();
+    AtomicReference<AuthoredWorldVersionStateEvidence> originalState = new AtomicReference<>();
+    AtomicReference<WorldAuthoredVersionIdentityReceipt> retained = new AtomicReference<>();
+    when(sourceIntakeRepository.readBySource(
+            "dev",
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest()))
+        .thenReturn(Optional.of(intake));
+    when(repository.readByCanonicalVersion(
+            "dev", source.canonicalTenantId(), source.worldSlug(), canonicalVersion))
+        .thenAnswer(call -> Optional.ofNullable(retained.get()));
+    when(repository.readByGameDesignVersion(
+            "dev", source.canonicalTenantId(), source.worldSlug(), gameDesignVersion))
+        .thenReturn(Optional.empty());
+    when(versionStateClient.read(any()))
+        .thenAnswer(
+            call -> {
+              AuthoredWorldVersionStateEvidence.Request request = call.getArgument(0);
+              assertThat(request.targetNamespace()).isEqualTo("dev");
+              assertThat(request.canonicalTenantId()).isEqualTo(source.canonicalTenantId());
+              assertThat(request.worldSlug()).isEqualTo(source.worldSlug());
+              assertThat(request.sourceOperationId()).isEqualTo(source.operationId());
+              assertThat(request.expectedSourceEvidenceDigest()).isEqualTo(source.evidenceDigest());
+              assertThat(request.versionId()).isEqualTo(gameDesignVersion);
+              var current =
+                  AuthoredWorldVersionStateEvidence.create(
+                      request,
+                      source,
+                      canonicalVersion,
+                      VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+                      evidence
+                          .sourceReceipt()
+                          .launchReadEvidence()
+                          .versionState()
+                          .getVersionStateEpoch());
+              originalState.set(current);
+              return current;
+            });
+    when(repository.acceptFresh(any(), any()))
+        .thenAnswer(
+            call -> {
+              var accepted = identityReceipt(intake, call.getArgument(1), 101L);
+              retained.set(accepted);
+              return accepted;
+            });
+
+    WorldAuthoredVersionIdentityService fixtureService = fixtureService();
+    var accepted =
+        withFixturePeer(
+            "dev",
+            "game-session-service",
+            "a".repeat(64),
+            () -> fixtureService.associateRunOwnedFixture(evidence, intake));
+    assertThat(accepted).isSameAs(retained.get());
+    assertThat(originalState.get()).isNotNull();
+    assertThat(accepted.versionStateEvidence()).isSameAs(originalState.get());
+    assertThat(accepted.versionStateEvidence().versionState())
+        .isEqualTo(VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED);
+    assertThat(accepted.versionStateEvidence().versionStateEpoch())
+        .isEqualTo(
+            evidence.sourceReceipt().launchReadEvidence().versionState().getVersionStateEpoch());
+    assertThat(accepted.versionStateEvidence().request()).isEqualTo(originalState.get().request());
+    int transactionStartsAfterAcceptance = transactionManager.transactionStarts;
+
+    assertThat(
+            withFixturePeer(
+                "dev",
+                "game-session-service",
+                "a".repeat(64),
+                () -> fixtureService.associateRunOwnedFixture(evidence, intake)))
+        .isSameAs(accepted);
+    verify(versionStateClient, times(1)).read(any());
+    assertThat(transactionManager.transactionStarts).isEqualTo(transactionStartsAfterAcceptance);
+
+    for (VersionLifecycleState retainedState :
+        List.of(
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)) {
+      var changed =
+          AuthoredWorldVersionStateEvidence.create(
+              originalState.get().request(),
+              source,
+              canonicalVersion,
+              retainedState,
+              evidence.sourceReceipt().launchReadEvidence().versionState().getVersionStateEpoch()
+                  + (retainedState == VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED
+                      ? 1L
+                      : 0L));
+      retained.set(identityReceipt(intake, changed, 101L));
+      assertThatThrownBy(
+              () ->
+                  withFixturePeer(
+                      "dev",
+                      "game-session-service",
+                      "a".repeat(64),
+                      () -> fixtureService().associateRunOwnedFixture(evidence, intake)))
+          .isInstanceOf(
+              WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException.class);
+    }
+    verify(versionStateClient, times(1)).read(any());
+    verify(repository, times(1)).acceptFresh(any(), any());
+    assertThat(transactionManager.transactionStarts).isEqualTo(transactionStartsAfterAcceptance);
+  }
+
+  @Test
+  void fixtureVersionDeniesMissingOrSubstitutedIndependentVersionReceipt() {
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    var source = evidence.sourceReceipt().sourceEvidence();
+    var intake = sourceReceipt(source);
+    var canonicalVersion = evidence.gameSessionAssociation().canonicalVersionId();
+    long gameDesignVersion = evidence.launchDescriptor().versionId();
+    when(sourceIntakeRepository.readBySource(
+            "dev",
+            source.canonicalTenantId(),
+            source.worldSlug(),
+            source.operationId(),
+            source.evidenceDigest()))
+        .thenReturn(Optional.of(intake));
+    for (int variation = 0; variation < 2; variation++) {
+      int selected = variation;
+      AtomicInteger ownerReads = new AtomicInteger();
+      AtomicReference<AuthoredWorldVersionStateEvidence> current = new AtomicReference<>();
+      when(repository.readByCanonicalVersion(
+              "dev", source.canonicalTenantId(), source.worldSlug(), canonicalVersion))
+          .thenAnswer(
+              call -> {
+                if (ownerReads.incrementAndGet() == 1 || selected == 0) return Optional.empty();
+                var original = current.get();
+                var changed =
+                    AuthoredWorldVersionStateEvidence.create(
+                        original.request(),
+                        source,
+                        canonicalVersion,
+                        original.versionState(),
+                        original.versionStateEpoch() + 1L);
+                return Optional.of(identityReceipt(intake, changed, 101L));
+              });
+      when(repository.readByGameDesignVersion(
+              "dev", source.canonicalTenantId(), source.worldSlug(), gameDesignVersion))
+          .thenReturn(Optional.empty());
+      doAnswer(
+              call -> {
+                var state =
+                    AuthoredWorldVersionStateEvidence.create(
+                        call.getArgument(0),
+                        source,
+                        canonicalVersion,
+                        VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+                        evidence
+                            .sourceReceipt()
+                            .launchReadEvidence()
+                            .versionState()
+                            .getVersionStateEpoch());
+                current.set(state);
+                return state;
+              })
+          .when(versionStateClient)
+          .read(any());
+      doAnswer(call -> identityReceipt(intake, call.getArgument(1), 101L))
+          .when(repository)
+          .acceptFresh(any(), any());
+      assertThatThrownBy(
+              () ->
+                  withFixturePeer(
+                      "dev",
+                      "game-session-service",
+                      "a".repeat(64),
+                      () -> fixtureService().associateRunOwnedFixture(evidence, intake)))
+          .isInstanceOf(
+              WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException.class);
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    }
+    verify(repository, times(2)).acceptFresh(any(), any());
+  }
+
+  @Test
+  void fixtureVersionDeniesAmbientTransactionBeforeOwnerAccess() {
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    TransactionSynchronizationManager.setActualTransactionActive(true);
+    assertThatThrownBy(
+            () ->
+                withFixturePeer(
+                    "dev",
+                    "game-session-service",
+                    "a".repeat(64),
+                    () ->
+                        fixtureService()
+                            .associateRunOwnedFixture(
+                                evidence,
+                                sourceReceipt(evidence.sourceReceipt().sourceEvidence()))))
+        .isInstanceOf(IllegalStateException.class);
+    verifyNoInteractions(repository, sourceIntakeRepository, versionStateClient);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  private WorldAuthoredVersionIdentityService fixtureService() {
+    return new WorldAuthoredVersionIdentityService(
+        versionStateClient, repository, sourceIntakeRepository, transactionManager, "dev");
+  }
+
+  private static <T> T withFixturePeer(
+      String namespace, String service, String leaf, Supplier<T> action) {
+    Context context =
+        Context.ROOT.withValue(GrpcPeerIdentity.CONTEXT_KEY, peer(namespace, service));
+    if (leaf != null) {
+      GrpcPeerCertificateEvidence certificate = mock(GrpcPeerCertificateEvidence.class);
+      when(certificate.leafSha256()).thenReturn(leaf);
+      context = context.withValue(GrpcPeerCertificateEvidence.CONTEXT_KEY, certificate);
+    }
+    Context previous = context.attach();
+    try {
+      return action.get();
+    } finally {
+      context.detach(previous);
+    }
   }
 
   @Test
@@ -511,6 +1021,7 @@ class WorldAuthoredVersionIdentityServiceTest {
   private static final class RecordingTransactionManager
       implements org.springframework.transaction.PlatformTransactionManager {
     private TransactionDefinition startedWith;
+    private int transactionStarts;
     private boolean loseCommitAcknowledgment;
     private boolean commitFailureThrown;
 
@@ -518,6 +1029,7 @@ class WorldAuthoredVersionIdentityServiceTest {
     public TransactionStatus getTransaction(TransactionDefinition definition) {
       assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
       startedWith = definition;
+      transactionStarts++;
       TransactionSynchronizationManager.setActualTransactionActive(true);
       TransactionSynchronizationManager.setCurrentTransactionReadOnly(definition.isReadOnly());
       TransactionSynchronizationManager.setCurrentTransactionIsolationLevel(

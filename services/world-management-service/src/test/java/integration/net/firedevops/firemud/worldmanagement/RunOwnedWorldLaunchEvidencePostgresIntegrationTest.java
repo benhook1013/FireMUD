@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -17,6 +18,16 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
+import net.firedevops.firemud.gamedesign.v1.ArtifactState;
+import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
+import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
+import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
+import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
+import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
@@ -211,10 +222,59 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
                       gameInstanceId))
           .isInstanceOf(RuntimeException.class);
 
+      WorldInstance fixtureBeforeMetadataMutation =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      WorldInstance rejectedFixtureMutation =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      rejectedFixtureMutation.setFailureReason("fixture metadata mutation");
+      assertThatThrownBy(() -> repository.save(rejectedFixtureMutation))
+          .isInstanceOf(RuntimeException.class)
+          .hasMessageContaining("World lifecycle transitions are disabled");
+      WorldInstance fixtureAfterMetadataMutation =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(fixtureAfterMetadataMutation.getStatus()).isEqualTo("ACTIVE");
+      assertThat(fixtureAfterMetadataMutation.getFailureReason()).isNull();
+      assertThat(fixtureAfterMetadataMutation.getLifecycleEpoch())
+          .isEqualTo(fixtureBeforeMetadataMutation.getLifecycleEpoch());
+      assertThat(fixtureAfterMetadataMutation.getRowVersion())
+          .isEqualTo(fixtureBeforeMetadataMutation.getRowVersion());
+      assertThat(fixtureAfterMetadataMutation.getRunOwnedFixtureBindingSha256()).isEqualTo(binding);
+
+      long ordinaryTenantId = 8_810_007L;
+      long ordinaryGameInstanceId = uniqueId();
+      when(fixtureProvider.isEnabled()).thenReturn(false);
+      configureOrdinaryLaunchInputs(ordinaryTenantId);
+      var ordinaryPrepared =
+          lifecycleService.prepareWorldInstance(
+              request(ordinaryTenantId, ordinaryGameInstanceId, operationId()));
+      assertThat(ordinaryPrepared.status()).isEqualTo("PREPARING");
+      WorldInstance ordinaryWorld =
+          repository
+              .findByTenantIdAndGameInstanceId(ordinaryTenantId, ordinaryGameInstanceId)
+              .orElseThrow();
+      assertThat(ordinaryWorld.getRunOwnedFixtureBindingSha256()).isNull();
+      assertThat(ordinaryWorld.getRunOwnedFixturePreparingLifecycleEpoch()).isNull();
+      var ordinaryCanonicalFields =
+          dsl.fetchOne(
+              "SELECT canonical_game_instance_id, canonical_target_namespace, canonical_tenant_id, "
+                  + "canonical_world_slug, playable_state_namespace_id, playable_state_scope, "
+                  + "public_production, playtest_lifecycle_id, playtest_state_generation, "
+                  + "canonical_launch_binding_operation_id, canonical_authority_kind, "
+                  + "fixture_provenance_digest, canonical_realm_id, catalog_revision, "
+                  + "game_session_tenant_id, game_session_game_instance_id, game_design_version_id "
+                  + "FROM world_instance WHERE tenant_id = ? AND game_instance_id = ?",
+              ordinaryTenantId,
+              ordinaryGameInstanceId);
+      assertThat(ordinaryCanonicalFields.intoMap().values()).containsOnlyNulls();
+
       WorldInstance staleCopy =
-          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+          repository
+              .findByTenantIdAndGameInstanceId(ordinaryTenantId, ordinaryGameInstanceId)
+              .orElseThrow();
       WorldInstance winningCopy =
-          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+          repository
+              .findByTenantIdAndGameInstanceId(ordinaryTenantId, ordinaryGameInstanceId)
+              .orElseThrow();
       winningCopy.setFailureReason("CAS winner");
       WorldInstance savedWinningCopy = repository.save(winningCopy);
       staleCopy.setFailureReason("stale loser");
@@ -222,7 +282,9 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Failed to update world_instance id=" + staleCopy.getId());
       WorldInstance durableWinner =
-          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+          repository
+              .findByTenantIdAndGameInstanceId(ordinaryTenantId, ordinaryGameInstanceId)
+              .orElseThrow();
       assertThat(durableWinner.getFailureReason()).isEqualTo("CAS winner");
       assertThat(durableWinner.getRowVersion()).isEqualTo(savedWinningCopy.getRowVersion());
 
@@ -248,6 +310,7 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
       assertThatThrownBy(() -> repository.save(duplicate)).isInstanceOf(RuntimeException.class);
     } finally {
       dsl.execute("DELETE FROM world_instance WHERE tenant_id = ?", tenantId);
+      dsl.execute("DELETE FROM world_instance WHERE tenant_id = ?", 8_810_007L);
     }
   }
 
@@ -285,6 +348,195 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
       assertThat(secondHasLock.getCount()).isZero();
     } finally {
       releaseFirst.countDown();
+    }
+  }
+
+  @Test
+  void fixtureFailureRequiresExactOwnerAndPersistsTheLockedPredecessorTransition() {
+    long tenantId = 8_810_004L;
+    long gameInstanceId = uniqueId();
+    PreparedWorldInstanceRequest request = request(tenantId, gameInstanceId, operationId());
+    String binding = "c".repeat(64);
+    configureEvidence(binding);
+    try {
+      var prepared = lifecycleService.prepareWorldInstance(request);
+      assertThat(prepared.status()).isEqualTo("PREPARING");
+      WorldInstance beforeFailure =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(beforeFailure.getLifecycleEpoch()).isEqualTo(1L);
+      assertThat(beforeFailure.getRowVersion()).isZero();
+
+      when(fixtureEvidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+          .thenReturn("d".repeat(64));
+      assertThatThrownBy(
+              () ->
+                  lifecycleService.failPreparedWorldInstance(
+                      tenantId, gameInstanceId, 1L, "failed"))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageStartingWith("RUN_OWNED_WORLD_LAUNCH_EVIDENCE_MISMATCH:");
+      WorldInstance unchanged =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(unchanged.getStatus()).isEqualTo("PREPARING");
+      assertThat(unchanged.getLifecycleEpoch()).isEqualTo(1L);
+      assertThat(unchanged.getRowVersion()).isZero();
+
+      when(fixtureEvidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
+          .thenReturn(binding);
+      var failed =
+          lifecycleService.failPreparedWorldInstance(tenantId, gameInstanceId, 1L, "failed");
+      WorldInstance durable =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(failed.status()).isEqualTo("FAILED_PRE_ACTIVATION");
+      assertThat(failed.lifecycleEpoch()).isEqualTo(2L);
+      assertThat(durable.getStatus()).isEqualTo("FAILED_PRE_ACTIVATION");
+      assertThat(durable.getLifecycleEpoch()).isEqualTo(2L);
+      assertThat(durable.getRowVersion()).isEqualTo(1L);
+      assertThat(durable.getRunOwnedFixtureBindingSha256()).isEqualTo(binding);
+      assertThat(durable.getRunOwnedFixturePreparingLifecycleEpoch()).isEqualTo(1L);
+    } finally {
+      dsl.execute("DELETE FROM world_instance WHERE tenant_id = ?", tenantId);
+    }
+  }
+
+  @Test
+  void fixtureTerminationHonorsPhysicalHoldAndRetainsEntityCleanupFailureForExactReplay() {
+    long tenantId = 8_810_005L;
+    long gameInstanceId = uniqueId();
+    PreparedWorldInstanceRequest request = request(tenantId, gameInstanceId, operationId());
+    String binding = "e".repeat(64);
+    UUID holdId = UUID.randomUUID();
+    configureEvidence(binding);
+    AtomicBoolean failEntityCleanup = new AtomicBoolean(true);
+    when(entityManagementClient.cleanupRuntimeInstance(anyLong(), anyLong(), anyString()))
+        .thenAnswer(
+            invocation -> {
+              if (failEntityCleanup.getAndSet(false)) {
+                throw new IllegalStateException("Entity cleanup unavailable");
+              }
+              return CleanupRuntimeInstanceResponse.newBuilder().build();
+            });
+    try {
+      lifecycleService.prepareWorldInstance(request);
+      var active = lifecycleService.activatePreparedWorldInstance(tenantId, gameInstanceId, 1L);
+      assertThat(active.status()).isEqualTo("ACTIVE");
+      WorldInstance activeRow =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(activeRow.getLifecycleEpoch()).isEqualTo(2L);
+      assertThat(activeRow.getRowVersion()).isEqualTo(1L);
+
+      dsl.execute(
+          "INSERT INTO initial_admission_bind_hold ("
+              + "hold_id, hold_fence, tenant_id, realm_uuid, playable_state_namespace_uuid, "
+              + "playable_state_scope, game_instance_id, version_id, active_lifecycle_epoch, "
+              + "initial_admission_request_id, request_digest, expected_no_prior_pointer, "
+              + "expected_catalog_revision, status, diagnostic_expires_at) "
+              + "VALUES (?, ?, ?, ?, ?, 'ISOLATED', ?, 11, 2, ?, ?, TRUE, 1, 'PENDING', "
+              + "CURRENT_TIMESTAMP + INTERVAL '1 hour')",
+          holdId,
+          UUID.randomUUID(),
+          tenantId,
+          UUID.randomUUID(),
+          UUID.randomUUID(),
+          gameInstanceId,
+          operationId(),
+          "a".repeat(64));
+
+      assertThatThrownBy(
+              () ->
+                  lifecycleService.terminateWorldInstance(
+                      tenantId, gameInstanceId, 2L, "term-fixture", "stop"))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageStartingWith("INITIAL_ADMISSION_BIND_HOLD_ACTIVE:");
+      WorldInstance held =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(held.getStatus()).isEqualTo("ACTIVE");
+      assertThat(held.getLifecycleEpoch()).isEqualTo(2L);
+      assertThat(held.getRowVersion()).isEqualTo(1L);
+      verify(entityManagementClient, never())
+          .cleanupRuntimeInstance(tenantId, gameInstanceId, "term-fixture");
+      dsl.execute("DELETE FROM initial_admission_bind_hold WHERE hold_id = ?", holdId);
+
+      assertThatThrownBy(
+              () ->
+                  lifecycleService.terminateWorldInstance(
+                      tenantId, gameInstanceId, 2L, "term-fixture", "stop"))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("Entity cleanup unavailable");
+      WorldInstance terminating =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(terminating.getStatus()).isEqualTo("TERMINATING");
+      assertThat(terminating.getLifecycleEpoch()).isEqualTo(3L);
+      assertThat(terminating.getTerminationRequestId()).isEqualTo("term-fixture");
+      assertThat(terminating.getRowVersion()).isEqualTo(2L);
+      assertThat(terminating.getRunOwnedFixtureBindingSha256()).isEqualTo(binding);
+
+      var terminated =
+          lifecycleService.terminateWorldInstance(
+              tenantId, gameInstanceId, 3L, "term-fixture", "stop");
+      assertThat(terminated.status()).isEqualTo("TERMINATED");
+      assertThat(terminated.lifecycleEpoch()).isEqualTo(4L);
+      WorldInstance terminalRow =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(terminalRow.getRowVersion()).isEqualTo(3L);
+      assertThat(terminalRow.getTerminationRequestId()).isEqualTo("term-fixture");
+
+      var replay =
+          lifecycleService.terminateWorldInstance(
+              tenantId, gameInstanceId, 2L, "term-fixture", "stop");
+      assertThat(replay).isEqualTo(terminated);
+      assertThat(
+              repository
+                  .findByTenantIdAndGameInstanceId(tenantId, gameInstanceId)
+                  .orElseThrow()
+                  .getRowVersion())
+          .isEqualTo(3L);
+      assertThatThrownBy(
+              () ->
+                  lifecycleService.terminateWorldInstance(
+                      tenantId, gameInstanceId, 2L, "term-other", "stop"))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("terminated under a different request id");
+      verify(entityManagementClient, org.mockito.Mockito.times(2))
+          .cleanupRuntimeInstance(tenantId, gameInstanceId, "term-fixture");
+    } finally {
+      dsl.execute("DELETE FROM initial_admission_bind_hold WHERE hold_id = ?", holdId);
+      dsl.execute("DELETE FROM world_instance WHERE tenant_id = ?", tenantId);
+    }
+  }
+
+  @Test
+  void ordinaryFailureJoinsAndRollsBackWithItsCallerTransaction() {
+    long tenantId = 8_810_006L;
+    long gameInstanceId = uniqueId();
+    when(fixtureProvider.isEnabled()).thenReturn(false);
+    configureOrdinaryLaunchInputs(tenantId);
+    try {
+      var prepared =
+          lifecycleService.prepareWorldInstance(request(tenantId, gameInstanceId, operationId()));
+      assertThat(prepared.status()).isEqualTo("PREPARING");
+
+      TransactionTemplate callerTransaction = new TransactionTemplate(transactionManager);
+      assertThatThrownBy(
+              () ->
+                  callerTransaction.executeWithoutResult(
+                      status -> {
+                        var failed =
+                            lifecycleService.failPreparedWorldInstance(
+                                tenantId, gameInstanceId, 1L, "caller will roll back");
+                        assertThat(failed.status()).isEqualTo("FAILED_PRE_ACTIVATION");
+                        assertThat(failed.lifecycleEpoch()).isEqualTo(2L);
+                        throw new IllegalStateException("rollback ordinary caller");
+                      }))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage("rollback ordinary caller");
+
+      WorldInstance afterRollback =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(afterRollback.getStatus()).isEqualTo("PREPARING");
+      assertThat(afterRollback.getLifecycleEpoch()).isEqualTo(1L);
+      assertThat(afterRollback.getRowVersion()).isZero();
+    } finally {
+      dsl.execute("DELETE FROM world_instance WHERE tenant_id = ?", tenantId);
     }
   }
 
@@ -334,6 +586,47 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
     when(fixtureProvider.requireAuthenticatedEvidence()).thenReturn(fixtureEvidence);
     when(fixtureEvidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
         .thenReturn(binding);
+  }
+
+  private void configureOrdinaryLaunchInputs(long tenantId) {
+    when(gameDesignClient.getPublishedReleaseBundle(tenantId, 11L))
+        .thenReturn(
+            GetPublishedReleaseBundleResponse.newBuilder()
+                .setBundle(
+                    PublishedReleaseBundle.newBuilder()
+                        .setId(77L)
+                        .setVersionId(11L)
+                        .setAttestationSchemaVersion("v1")
+                        .setManifestHash("manifest-11")
+                        .addRequiredManifestAssetKeys("manifest.json")
+                        .setGenerationConfigRevision("genrev-11")
+                        .setPublishedReleaseBundleRef(RELEASE_REF)
+                        .build())
+                .build());
+    when(gameDesignClient.getVersionAssetArtifactState(tenantId, 11L))
+        .thenReturn(
+            GetVersionAssetArtifactStateResponse.newBuilder()
+                .setArtifactState(
+                    VersionAssetArtifactState.newBuilder()
+                        .setTenantId(Long.toString(tenantId))
+                        .setVersionId(11L)
+                        .setArtifactState(ArtifactState.ARTIFACT_STATE_PUBLISHED)
+                        .setStateEpoch(3L)
+                        .setManifestHash("manifest-11")
+                        .addExportedManifestAssetKeys("manifest.json")
+                        .build())
+                .build());
+    when(gameDesignClient.getVersionState(tenantId, 11L))
+        .thenReturn(
+            GetVersionStateResponse.newBuilder()
+                .setVersionState(
+                    VersionStateSnapshot.newBuilder()
+                        .setTenantId(Long.toString(tenantId))
+                        .setVersionId(11L)
+                        .setVersionState(VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED)
+                        .setVersionStateEpoch(77L)
+                        .build())
+                .build());
   }
 
   private WorldLifecycleCommandServiceImpl restartedLifecycleService(
