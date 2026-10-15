@@ -837,29 +837,29 @@ if [[ "$*" == *"/actions/jobs/"* ]]; then
       multiple-metadata:103) preserve_conclusion=cancelled ;;
       *) preserve_conclusion=success ;;
     esac
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"%s","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"%s"}]}\n' "$job_id" "$run_id" "$job_workflow_name" "$job_id" "$preserve_conclusion"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"%s","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"%s"}]}\n' "$job_id" "$run_id" "$job_workflow_name" "$job_id" "$preserve_conclusion"
   elif [[ "${GH_SCENARIO:-}" == "unverified-pending-gate" && "${job_id}" == "100" ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "pending-preservation-step-not-concluded" &&
     "${job_id}" == "100" && "$(<"$count_file")" -le 3 ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "pending-gate-discovery-throttle" &&
     "${job_id}" == "100" && "$(<"$count_file")" -le 5 ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "pending-missing-step-with-failed-substantive" &&
     "${job_id}" == "101" ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"in_progress","completed_at":null,"conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "completed-preservation-step-lag" &&
     "${job_id}" == "100" && "$(<"$count_file")" -eq 1 ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" == "completed-preservation-step-persistent-lag" &&
     "${job_id}" == "100" ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   elif [[ "${GH_SCENARIO:-}" =~ ^completed-(cancelled|skipped|stale)-missing-step$ &&
     "${job_id}" == "100" ]]; then
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"CI — Validation","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":null}]}\n' "$job_id" "$run_id" "$job_id"
   else
-    printf '{"id":%s,"run_id":%s,"name":"Validation Gate","workflow_name":"%s","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"skipped"}]}\n' "$job_id" "$run_id" "$job_workflow_name" "$job_id"
+    printf '{"id":%s,"run_id":%s,"run_attempt":1,"name":"Validation Gate","workflow_name":"%s","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","check_run_url":"https://api.github.com/repos/example/firemud/check-runs/%s","steps":[{"name":"Preserve successful required gate on metadata-only edit","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"skipped"}]}\n' "$job_id" "$run_id" "$job_workflow_name" "$job_id"
   fi
   exit 0
 fi
@@ -1032,6 +1032,9 @@ JSON
     else
       printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","conclusion":"success","completed_at":"2026-07-30T02:00:00Z","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
     fi
+    ;;
+  retry-success)
+    printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":101,"details_url":"https://github.com/example/firemud/actions/runs/101/job/101","status":"completed","completed_at":"2026-07-30T03:00:00Z","conclusion":"success","started_at":"2026-07-30T02:00:00Z"}]}]\n'
     ;;
   no-local-workflow-file)
     printf '[{"total_count":1,"check_runs":[{"app":{"slug":"github-actions"},"name":"Validation Gate","id":100,"details_url":"https://github.com/example/firemud/actions/runs/100/job/100","status":"completed","completed_at":"2026-07-30T02:00:00Z","conclusion":"success","started_at":"2026-07-30T01:00:00Z","created_at":"2026-07-30T01:00:00Z"}]}]\n'
@@ -1392,7 +1395,7 @@ import json
 
 assert job["if"] == "${{ github.event.workflow_run.event == 'pull_request' }}"
 assert "REQUIRED_GATE_PROOF_ALLOWLIST" not in (job.get("env") or {})
-assert job["permissions"] == {"contents": "read", "checks": "read", "pull-requests": "read", "actions": "write"}
+assert job["permissions"] == {"contents": "read", "checks": "read", "pull-requests": "read", "actions": "write", "statuses": "write"}
 checkouts = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
 assert len(checkouts) == 1 and checkouts[0]["with"] == {"ref": "${{ github.sha }}", "persist-credentials": "false"}
 preflight = next(step for step in job["steps"] if step["name"] == "Preflight deferred gate resolution")
@@ -1403,6 +1406,10 @@ assert admission["if"] == "${{ steps.preflight.outputs.eligible == 'true' }}" an
 confirmation = job["steps"][job["steps"].index(admission) + 1]
 assert confirmation["name"] == "Confirm admitted deferred gate jobs ${{ steps.admission.outputs.accepted_job_ids }}"
 assert confirmation["if"] == "${{ steps.admission.outcome == 'success' }}" and confirmation["run"] == ":"
+reconcile = job["steps"][-1]
+assert reconcile["name"] == "Reconcile supplementary required gate status"
+assert reconcile["if"] == "${{ always() }}" and reconcile["run"].endswith(" reconcile")
+assert job["steps"].index(reconcile) > job["steps"].index(confirmation)
 PY
 
 mkdir "$tmp_dir/resolver-bin"
@@ -1426,7 +1433,7 @@ endpoint = next(arg for arg in args if arg.startswith("/repos/"))
 scenario = state["scenario"]
 head, base = "a" * 40, "b" * 40
 title = f"CI — Validation pr-123 base-{base} head-{head}"
-repository = "other-owner/firemud" if scenario == "fork-empty" else "example/firemud"
+repository = "other-owner/firemud" if scenario in {"fork-empty", "bridge-fork"} else "example/firemud"
 # The existing fork predecessor fixture is run 200. Keep its resolver target
 # distinct so the shared selector correctly excludes only the target itself.
 target_id = 300 if scenario == "fork-empty" else 200
@@ -1442,10 +1449,43 @@ result = None
 exit_status = 0
 state.setdefault("calls", []).append(f"{method} {endpoint}")
 
+def rich_history_case(scenario, barrier, page):
+    # Native GET /statuses/<head> is a newest-first array with creator; the
+    # combined projection above has the same IDs but deliberately no creator.
+    case = scenario.removeprefix("bridge-").removeprefix("history-")
+    older = {**barrier, "id": 499, "created_at": "2026-10-14T00:00:00Z",
+             "creator": {"id": 99, "login": "foreign", "type": "User"}}
+    unrelated = [{**barrier, "id": 1000 + (page - 1) * 100 + index, "context": f"other-{page}-{index}",
+                  "created_at": "2026-10-15T01:00:00Z"} for index in range(100)]
+    if case == "latest-owned": return [barrier, older]
+    if case == "latest-foreign": return [{**barrier, "creator": older["creator"]}, {**older, "creator": barrier["creator"]}]
+    if case == "null-actor": return [{**barrier, "creator": None}]
+    if case == "missing-actor": return [{key: value for key, value in barrier.items() if key != "creator"}]
+    if case == "unknown-state": return [{**barrier, "state": "unknown"}]
+    if case == "page-two-owned": return unrelated if page == 1 else [barrier, older]
+    if case == "page-two-absent": return unrelated if page == 1 else []
+    if case == "budget": return unrelated
+    if case == "unavailable-page":
+        if page == 1: return unrelated
+        raise RuntimeError("status page unavailable")
+    if case == "duplicate-page": return unrelated if page == 1 else [{**unrelated[0], "id": 1000}]
+    if case == "wrong-head-url": return [{**barrier, "url": barrier["url"].replace("a" * 40, "b" * 40)}]
+    if case == "same-second": return [barrier, {**older, "created_at": barrier["created_at"]}]
+    if case == "foreign-same-second": return [{**barrier, "creator": older["creator"]}, {**older, "creator": barrier["creator"], "created_at": barrier["created_at"]}]
+    if case == "first-page-stop":
+        if page != 1: raise RuntimeError("older pages must not be read")
+        return [barrier] + unrelated[:99]
+    if case == "ignore-old-malformed": return [barrier, "bad"]
+    if case == "overfull": return unrelated + [barrier]
+    if case == "scalar": return "bad"
+    if case == "malformed-row": return ["bad"]
+    raise AssertionError(case)
+
+
 def run(run_id):
     return {"id": run_id, "workflow_id": 42, "name": "CI — Validation", "path": ".github/workflows/ci.yml",
             "created_at": "2026-07-30T01:00:00Z" if run_id == 100 else "2026-07-30T02:00:00Z",
-            "display_title": title, "head_sha": head, "head_branch": "proof-branch",
+            "display_title": title.replace(base, "c" * 40) if scenario.startswith("bridge-cross-") and run_id == 200 else title, "head_sha": head, "head_branch": "proof-branch",
             "repository": {"full_name": "example/firemud"}, "head_repository": {"full_name": repository},
             "event": "pull_request", "status": "completed", "conclusion": "failure" if run_id in {target_id, 200, 201} else "success",
             "run_attempt": state.get("attempt", 1), "pull_requests": [] if scenario == "fork-empty" else [{"number": 123}]}
@@ -1488,7 +1528,105 @@ def resolver_run(run_id):
             "conclusion": None if scenario == "cancelled-pending-unknown" and run_id == 9001 else "cancelled" if scenario.startswith("cancelled-pending-") and run_id == 9001 and scenario != "cancelled-pending-unknown" else "failure" if scenario == "pending-callback-concluded" and run_id == 9001 else None if status in {"queued", "pending", "in_progress"} else "success",
             "display_title": f"Resolve Required Gates workflow-42 head-{head} source-{source}"}
 
-if method == "POST":
+if scenario.startswith("bridge-") and method == "POST":
+    assert endpoint == f"/repos/example/firemud/statuses/{head}", endpoint
+    fields = dict(arg.split("=", 1) for arg in args if "=" in arg)
+    state.setdefault("status_posts", []).append(fields)
+    state["barrier_state"] = fields["state"]
+    if scenario == "bridge-write-denied":
+        exit_status = 1
+elif scenario.startswith("bridge-") and (endpoint.endswith(f"/commits/{head}/status") or endpoint.endswith(f"/statuses/{head}")):
+    state["status_reads"] = state.get("status_reads", 0) + 1
+    barrier = {"id": 500, "url": f"https://api.github.com/repos/example/firemud/statuses/{head}",
+               "created_at": "2026-10-15T00:00:00Z", "context": "Validation Gate", "state": state.get("barrier_state", "pending"),
+               "target_url": "https://github.com/example/firemud/actions/runs/200/attempts/1",
+               "creator": {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}}
+    if scenario in {"bridge-foreign", "bridge-cross-foreign"}:
+        barrier["creator"]["id"] = 99
+    elif scenario == "bridge-wrong-url":
+        barrier["target_url"] = "https://github.com/foreign/repo/actions/runs/200/attempts/1"
+    elif scenario in {"bridge-replaced", "bridge-cross-replaced"} and state["status_reads"] > 1:
+        barrier["id"] = 501
+    elif scenario == "bridge-terminal":
+        barrier["state"] = "success"
+    rich = [] if scenario == "bridge-absent" else [barrier]
+    combined = {"sha": head, "total_count": len(rich), "statuses": [{key: value for key, value in row.items() if key != "creator"} for row in rich]}
+    assert all("creator" not in row for row in combined["statuses"])
+    if endpoint.endswith("/status"):
+        result = [combined] # Actual combined projection deliberately omits creator.
+    else:
+        fields = dict(arg.split("=", 1) for arg in args if "=" in arg)
+        assert fields["per_page"] == "100" and "--paginate" not in args
+        page = int(fields["page"])
+        state.setdefault("status_pages", []).append(page)
+        result = rich
+        if scenario.startswith("bridge-history-"):
+            try:
+                result = rich_history_case(scenario, barrier, page)
+            except RuntimeError:
+                result = None
+                exit_status = 1
+        if scenario == "bridge-incomplete-status":
+            result = combined # Wrong endpoint shape must never qualify.
+elif scenario.startswith("bridge-") and any(endpoint.endswith(f"/actions/runs/{identity}/attempts/1") for identity in (99, 100, 101)):
+    identity = int(endpoint.split("/")[-3])
+    result = run(identity)
+    result["conclusion"] = "success"
+    if scenario == "bridge-cross-source-wrong-title":
+        result["display_title"] = title.replace(base, "c" * 40)
+elif scenario.startswith("bridge-") and any(endpoint.endswith(f"/actions/jobs/{identity}") for identity in (99, 100, 101)):
+    identity = int(endpoint.rsplit("/", 1)[1])
+    result = {"id": identity, "run_id": identity, "run_attempt": 1, "head_sha": head, "name": "Validation Gate",
+              "status": "completed", "conclusion": "success",
+              "check_run_url": f"https://api.github.com/repos/example/firemud/check-runs/{identity}",
+              "steps": [{"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "skipped"}]}
+    if scenario == "bridge-cross-source-metadata":
+        result["steps"][0]["conclusion"] = "success"
+elif scenario.startswith("bridge-") and any(endpoint.endswith(f"/check-runs/{identity}") for identity in (99, 100, 101)):
+    identity = int(endpoint.rsplit("/", 1)[1])
+    state["selected_check_reads"] = state.get("selected_check_reads", 0) + 1
+    result = {"id": identity, "head_sha": head, "name": "Validation Gate", "status": "completed", "conclusion": "success",
+              "app": {"id": 99 if scenario == "bridge-cross-source-wrong-app" else 15368, "slug": "github-actions"}}
+    if scenario == "bridge-cross-source-changed" and state["selected_check_reads"] > 1:
+        result["conclusion"] = "failure"
+elif scenario == "bridge-retry" and endpoint.endswith("/actions/runs/101"):
+    result = run(101)
+elif scenario.startswith("bridge-") and endpoint.endswith("/actions/runs/200/attempts/1/jobs"):
+    job = {"id": 2000, "run_id": 200, "head_sha": head, "name": "Validation Gate", "status": "completed",
+           "conclusion": "cancelled" if scenario == "bridge-cancelled" else "success",
+           "check_run_url": "https://api.github.com/repos/example/firemud/check-runs/3000",
+           "steps": [{"name": name, "status": "completed", "conclusion": "success"} for name in
+                     ("Preserve successful required gate on metadata-only edit", "Publish pending required gate status")]}
+    if scenario in {"bridge-running", "bridge-running-wrong-app", "bridge-cross-running"} and not state.get("metadata_completed"):
+        job.update(status="in_progress", conclusion=None)
+        # The acknowledged POST is visible before publication completes; the
+        # preservation step has not yet appeared in this native snapshot.
+        job["steps"] = [{"name": "Publish pending required gate status", "status": "in_progress", "conclusion": None}]
+    if scenario == "bridge-failed-producer":
+        job["steps"][1]["conclusion"] = "failure"
+    if scenario == "bridge-failed-preservation":
+        job["steps"][0]["conclusion"] = "failure"
+    if scenario == "bridge-no-producer":
+        job["steps"].pop()
+    result = [{"total_count": 2 if scenario == "bridge-incomplete-jobs" else 1, "jobs": [job]}]
+elif scenario.startswith("bridge-") and endpoint.endswith("/check-runs/3000"):
+    result = {"id": 3000, "head_sha": head, "name": "Validation Gate", "status": "completed",
+              "conclusion": "cancelled" if scenario == "bridge-cancelled" else "success",
+              "app": {"id": 99 if scenario in {"bridge-wrong-app", "bridge-running-wrong-app"} else 15368, "slug": "github-actions"}}
+    if scenario in {"bridge-running", "bridge-running-wrong-app", "bridge-cross-running"} and not state.get("metadata_completed"):
+        result.update(status="in_progress", conclusion=None)
+elif scenario.startswith("bridge-") and (endpoint.endswith("/actions/runs/200") or endpoint.endswith("/actions/runs/200/attempts/1")):
+    result = run(200)
+    result["conclusion"] = "cancelled" if scenario == "bridge-cancelled" else "success"
+    if scenario in {"bridge-running", "bridge-running-wrong-app", "bridge-cross-running"} and not state.get("metadata_completed"):
+        result.update(status="in_progress", conclusion=None)
+    if scenario == "bridge-wrong-attempt" or (scenario == "bridge-cross-earlier-attempt" and endpoint.endswith("/actions/runs/200")):
+        result["run_attempt"] = 2
+    if scenario == "bridge-empty-association":
+        result["pull_requests"] = []
+    if scenario == "bridge-wrong-title":
+        result["display_title"] = title.replace("pr-123", "pr-456")
+elif method == "POST":
     job_id = int(endpoint.split("/")[-2])
     assert job_id in {2000, 2001} and endpoint.endswith(f"/actions/jobs/{job_id}/rerun"), endpoint
     state["posts"] = state.get("posts", 0) + 1
@@ -1665,7 +1803,9 @@ elif endpoint.endswith("/actions/workflows/ci.yml/runs"):
 elif endpoint.endswith("/pulls/123"):
     state["pr_reads"] = state.get("pr_reads", 0) + 1
     result = {"number": 123, "state": "open", "base": {"sha": base, "ref": "develop", "repo": {"full_name": "example/firemud"}},
-              "head": {"sha": "c" * 40 if scenario == "stale-pr" else head, "ref": "proof-branch", "repo": {"full_name": repository}}}
+              "head": {"sha": "c" * 40 if scenario == "stale-pr" or (scenario == "bridge-pr-changed" and state["pr_reads"] > 1) else head, "ref": "proof-branch", "repo": {"full_name": repository}}}
+    if scenario == "bridge-cross-obsolete":
+        result["base"]["sha"] = "c" * 40
     if state["pr_reads"] >= 2 and scenario == "fresh-base-branch":
         result["base"]["ref"] = "main"
     elif state["pr_reads"] >= 2 and scenario == "fresh-head-repository":
@@ -1812,6 +1952,150 @@ PY
   fi
   return "$result_status"
 }
+# Source completion can arrive after publication but before metadata completes.
+printf '{"scenario":"bridge-running"}\n' >"$tmp_dir/resolver-state-bridge-running"
+run_resolver bridge-running 100 pending-predecessor reconcile
+python3 - "$tmp_dir/resolver-state-bridge-running" <<'PY_BRIDGE'
+import json
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+state = json.loads(path.read_text())
+assert not state.get("status_posts"), state
+state["metadata_completed"] = True
+path.write_text(json.dumps(state))
+PY_BRIDGE
+run_resolver bridge-running 200 no-local-workflow-file reconcile
+python3 - "$tmp_dir/resolver-state-bridge-running" <<'PY_BRIDGE'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+assert len(state.get("status_posts", [])) == 1 and state["status_posts"][0]["state"] == "success", state
+PY_BRIDGE
+
+# Support is dormant until a producer publishes the exact recognizable barrier.
+for scenario in bridge-success bridge-failed-producer bridge-failed-preservation bridge-empty-association bridge-fork bridge-pending bridge-failed bridge-cancelled bridge-replaced bridge-pr-changed bridge-foreign bridge-wrong-url bridge-terminal bridge-absent; do
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  original=no-local-workflow-file
+  [[ "$scenario" != bridge-pending ]] || original=pending-predecessor
+  [[ "$scenario" != bridge-failed ]] || original=failed-predecessor
+  # Both substantive-first and metadata-first callbacks use the same target.
+  source_id=100
+  [[ "$scenario" != bridge-empty-association ]] || source_id=200
+  run_resolver "$scenario" "$source_id" "$original" reconcile
+  python3 - "$tmp_dir/resolver-state-$scenario" "$scenario" <<'PY_BRIDGE'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+scenario = sys.argv[2]
+posts = state.get("status_posts", [])
+expected = "success" if scenario in {"bridge-success", "bridge-failed-producer", "bridge-failed-preservation", "bridge-empty-association", "bridge-fork", "bridge-cancelled"} else "failure" if scenario in {"bridge-failed"} else None
+assert len(posts) == (1 if expected else 0), state
+if expected:
+    assert posts[0]["state"] == expected, state
+assert not state.get("posts"), "bridge entered legacy rerun admission"
+PY_BRIDGE
+done
+for scenario in bridge-running-wrong-app bridge-no-producer bridge-incomplete-status bridge-incomplete-jobs bridge-wrong-app bridge-wrong-attempt bridge-wrong-title bridge-write-denied; do
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  if run_resolver "$scenario" 100 no-local-workflow-file reconcile; then
+    echo "unproved bridge settlement succeeded: $scenario" >&2; exit 1
+  fi
+  python3 - "$tmp_dir/resolver-state-$scenario" "$scenario" <<'PY_BRIDGE'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+assert len(state.get("status_posts", [])) == (1 if sys.argv[2] == "bridge-write-denied" else 0), state
+PY_BRIDGE
+done
+
+# Mirrors the observed Security ordering: metadata38678293269/1 published
+# pending56392930570 before original38678278927 completed successfully; callback
+#38678584212 executed reconciliation. Normalized identities below must now recover
+# using rich creator evidence, while combined records omit that evidence.
+for history_case in latest-owned latest-foreign null-actor missing-actor unknown-state page-two-owned page-two-absent budget unavailable-page duplicate-page wrong-head-url same-second foreign-same-second first-page-stop ignore-old-malformed overfull scalar malformed-row; do
+  scenario="bridge-history-$history_case"
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  case "$history_case" in
+    budget|unavailable-page|duplicate-page|wrong-head-url|overfull|scalar|malformed-row)
+      if run_resolver "$scenario" 100 no-local-workflow-file reconcile; then
+        echo "invalid rich resolver history qualified: $history_case" >&2; exit 1
+      fi ;;
+    *) run_resolver "$scenario" 100 no-local-workflow-file reconcile ;;
+  esac
+  python3 - "$tmp_dir/resolver-state-$scenario" "$history_case" <<'PY_HISTORY'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+case = sys.argv[2]
+assert len(state.get("status_posts", [])) == (1 if case in {"latest-owned", "page-two-owned", "same-second", "first-page-stop", "ignore-old-malformed"} else 0), state
+assert not any("/commits/" in call and call.endswith("/status") for call in state["calls"]), state
+if case.startswith("page-two-"): assert 2 in state["status_pages"], state
+if case == "first-page-stop": assert all(page == 1 for page in state["status_pages"]), state
+if case == "budget": assert state["status_pages"] == list(range(1, 11)), state
+PY_HISTORY
+done
+
+# Same-head base advancement uses historical ownership and CURRENT proof.
+for scenario in bridge-cross-success bridge-cross-running bridge-cross-earlier-attempt bridge-cross-no-proof bridge-cross-failure bridge-cross-foreign bridge-cross-replaced bridge-cross-obsolete bridge-cross-cancelled-selection; do
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  original=no-local-workflow-file
+  [[ "$scenario" != bridge-cross-no-proof ]] || original=no-prior
+  [[ "$scenario" != bridge-cross-failure ]] || original=failed-predecessor
+  [[ "$scenario" != bridge-cross-cancelled-selection ]] || original=completed-cancelled-missing-step
+  if ! run_resolver "$scenario" 100 "$original" reconcile; then
+    cat "$tmp_dir/resolver-log-$scenario" >&2; exit 1
+  fi
+  # A later old-base metadata completion cannot reclaim current-base authority.
+  if [[ "$scenario" != bridge-cross-obsolete ]]; then
+    jq '.metadata_completed = true' "$tmp_dir/resolver-state-$scenario" >"$tmp_dir/recovery-state-update"
+    mv "$tmp_dir/recovery-state-update" "$tmp_dir/resolver-state-$scenario"
+    run_resolver "$scenario" 200 no-local-workflow-file reconcile
+  fi
+  python3 - "$tmp_dir/resolver-state-$scenario" "$scenario" <<'PY_RECOVERY'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+expected = "success" if sys.argv[2] in {"bridge-cross-success", "bridge-cross-running", "bridge-cross-earlier-attempt", "bridge-cross-cancelled-selection"} else "failure" if sys.argv[2] == "bridge-cross-failure" else None
+posts = state.get("status_posts", [])
+assert len(posts) == (1 if expected else 0), state
+if expected:
+    assert posts[0]["state"] == expected, state
+    assert posts[0]["target_url"].endswith("/200/attempts/1"), state
+PY_RECOVERY
+done
+for scenario in bridge-cross-source-wrong-app bridge-cross-source-wrong-title bridge-cross-source-metadata bridge-cross-source-changed; do
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  if run_resolver "$scenario" 100 no-local-workflow-file reconcile; then
+    echo "invalid independent current-base source accepted: $scenario" >&2; exit 1
+  fi
+  [[ "$(jq '.status_posts // [] | length' "$tmp_dir/resolver-state-$scenario")" == 0 ]] || exit 1
+done
+printf '{"scenario":"bridge-retry"}\n' >"$tmp_dir/resolver-state-bridge-retry"
+run_resolver bridge-retry 100 failed-predecessor reconcile
+run_resolver bridge-retry 101 retry-success reconcile
+python3 - "$tmp_dir/resolver-state-bridge-retry" <<'PY_RECOVERY'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+assert [post["state"] for post in state["status_posts"]] == ["failure", "success"], state
+PY_RECOVERY
+printf '{"scenario":"bridge-retry","barrier_state":"error"}\n' >"$tmp_dir/resolver-state-bridge-retry"
+run_resolver bridge-retry 101 retry-success reconcile
+python3 - "$tmp_dir/resolver-state-bridge-retry" <<'PY_RECOVERY'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+assert [post["state"] for post in state["status_posts"]] == ["success"], state
+PY_RECOVERY
+
 resolver_posts() {
   jq -r '.posts // 0' "$tmp_dir/resolver-state-$1"
 }
@@ -2099,3 +2383,292 @@ PY_WINDOW
 done
 
 echo "PR required-gate context contract checks passed"
+
+# The new producer is inert: none of the five callers activates it in support.
+PUBLISH_SCRIPT="$ROOT_DIR/.github/actions/publish-required-gate-status/publish-required-gate-status.sh"
+python3 - "$ROOT_DIR" <<'PY_PUBLISH'
+from pathlib import Path
+import sys
+import yaml
+root = Path(sys.argv[1])
+action = yaml.load((root / ".github/actions/publish-required-gate-status/action.yml").read_text(), Loader=yaml.BaseLoader)
+assert set(action["inputs"]) == {"assessment", "gate-name", "workflow-name", "workflow-file", "workflow-path"}
+assert all(value["required"] == "true" for value in action["inputs"].values())
+assert action["outputs"]["publication"]["value"] == "${{ steps.publish.outputs.publication }}"
+for filename in ("ci.yml", "security.yml", "codeql.yml", "license-scan.yml", "smoke.yml"):
+    text = (root / ".github/workflows" / filename).read_text()
+    assert "publish-required-gate-status" not in text
+    assert "Report dependency-deferred required gate" in text
+PY_PUBLISH
+mkdir "$tmp_dir/producer-bin"
+cat >"$tmp_dir/producer-bin/gh" <<'EOF_PRODUCER_GH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${GITHUB_OUTPUT}" != "${PRODUCER_OUTPUT_PATH}" ]]; then
+  exec "${MOCK_ORIGINAL_GH}" "$@"
+fi
+python3 - "$@" <<'PY_PRODUCER_GH'
+import json
+import os
+from pathlib import Path
+import sys
+args = sys.argv[1:]
+state_path = Path(os.environ["PRODUCER_STATE"])
+state = json.loads(state_path.read_text())
+scenario = state["scenario"]
+method = args[args.index("--method") + 1]
+endpoint = next(arg for arg in args if arg.startswith("/repos/"))
+head, base, old_base = "a" * 40, "b" * 40, "c" * 40
+repo = "example/firemud"
+head_repo = "fork-owner/firemud" if scenario == "deferred-fork" else repo
+current_attempt = 2 if scenario == "deferred-owned-earlier-attempt" else 1
+api_url = f"https://api.github.com/repos/{repo}/statuses/{head}"
+run_url = f"https://github.com/{repo}/actions/runs/"
+creator = {"id": 41898282, "login": "github-actions[bot]", "type": "Bot"}
+state.setdefault("calls", []).append(f"{method} {endpoint}")
+
+def rich_history_case(scenario, barrier, page):
+    # Native GET /statuses/<head> is a newest-first array with creator; the
+    # combined projection above has the same IDs but deliberately no creator.
+    case = scenario.removeprefix("bridge-").removeprefix("history-")
+    older = {**barrier, "id": 499, "created_at": "2026-10-14T00:00:00Z",
+             "creator": {"id": 99, "login": "foreign", "type": "User"}}
+    unrelated = [{**barrier, "id": 1000 + (page - 1) * 100 + index, "context": f"other-{page}-{index}",
+                  "created_at": "2026-10-15T01:00:00Z"} for index in range(100)]
+    if case == "latest-owned": return [barrier, older]
+    if case == "latest-foreign": return [{**barrier, "creator": older["creator"]}, {**older, "creator": barrier["creator"]}]
+    if case == "null-actor": return [{**barrier, "creator": None}]
+    if case == "missing-actor": return [{key: value for key, value in barrier.items() if key != "creator"}]
+    if case == "unknown-state": return [{**barrier, "state": "unknown"}]
+    if case == "page-two-owned": return unrelated if page == 1 else [barrier, older]
+    if case == "page-two-absent": return unrelated if page == 1 else []
+    if case == "budget": return unrelated
+    if case == "unavailable-page":
+        if page == 1: return unrelated
+        raise RuntimeError("status page unavailable")
+    if case == "duplicate-page": return unrelated if page == 1 else [{**unrelated[0], "id": 1000}]
+    if case == "wrong-head-url": return [{**barrier, "url": barrier["url"].replace("a" * 40, "b" * 40)}]
+    if case == "same-second": return [barrier, {**older, "created_at": barrier["created_at"]}]
+    if case == "foreign-same-second": return [{**barrier, "creator": older["creator"]}, {**older, "creator": barrier["creator"], "created_at": barrier["created_at"]}]
+    if case == "first-page-stop":
+        if page != 1: raise RuntimeError("older pages must not be read")
+        return [barrier] + unrelated[:99]
+    if case == "ignore-old-malformed": return [barrier, "bad"]
+    if case == "overfull": return unrelated + [barrier]
+    if case == "scalar": return "bad"
+    if case == "malformed-row": return ["bad"]
+    raise AssertionError(case)
+
+result = None
+exit_status = 0
+if method == "POST":
+    assert endpoint == f"/repos/{repo}/statuses/{head}", endpoint
+    fields = dict(arg.split("=", 1) for arg in args if "=" in arg)
+    state.setdefault("posts", []).append(fields)
+    result = {"id": 501, "url": api_url, "creator": creator,
+              "state": fields["state"], "context": fields["context"], "target_url": fields["target_url"],
+              "created_at": "2026-10-15T00:00:00Z", "updated_at": "2026-10-15T00:00:00Z"}
+    # Deliberately no sha/app_id: those fields do not exist in native statuses.
+    if scenario in {"ack-denied", "ack-ambiguous"}:
+        exit_status = 1
+    elif scenario == "ack-wrong-url":
+        result["url"] = api_url.replace(head, base)
+    elif scenario == "ack-missing-creator":
+        result.pop("creator")
+    elif scenario == "ack-missing-id":
+        result.pop("id")
+    elif scenario == "ack-bad-timestamp":
+        result["created_at"] = "unknown"
+    elif scenario == "ack-wrong-state":
+        result["state"] = "success"
+elif endpoint.endswith("/actions/workflows/ci.yml"):
+    result = {"id": 42, "name": "CI — Validation", "path": ".github/workflows/ci.yml"}
+elif endpoint.endswith("/pulls/123"):
+    state["pr_reads"] = state.get("pr_reads", 0) + 1
+    result = {"number": 123, "state": "open", "base": {"sha": base, "ref": "develop", "repo": {"full_name": repo}},
+              "head": {"sha": head, "ref": "proof-branch", "repo": {"full_name": head_repo}}}
+    if scenario == "tuple-replaced" and state["pr_reads"] > 1:
+        result["base"]["sha"] = old_base
+elif endpoint.endswith(f"/commits/{head}/status") or endpoint.endswith(f"/statuses/{head}"):
+    state["status_reads"] = state.get("status_reads", 0) + 1
+    barrier_state = "pending"
+    if scenario in {"deferred-owned-failure", "success-owned-failure"}:
+        barrier_state = "failure"
+    elif scenario in {"deferred-owned-error", "success-owned-error"}:
+        barrier_state = "error"
+    elif scenario in {"deferred-owned-success", "success-owned-success"}:
+        barrier_state = "success"
+    barrier = {"id": 500, "url": api_url, "created_at": "2026-10-15T00:00:00Z", "context": "Validation Gate", "state": barrier_state,
+               "target_url": f"{run_url}{300 if current_attempt == 2 else 200}/attempts/1", "creator": creator}
+    if scenario.endswith("foreign"):
+        barrier["creator"] = {"id": 99, "login": "foreign", "type": "User"}
+    if scenario == "status-replaced" and state["status_reads"] > 1:
+        barrier["id"] = 999
+    absent = scenario in {"deferred-absent", "deferred-fork", "success-absent"} or scenario.startswith("ack-") or scenario.startswith("current-")
+    rich = [] if absent else [barrier]
+    combined = {"sha": head, "total_count": len(rich), "statuses": [{key: value for key, value in row.items() if key != "creator"} for row in rich]}
+    assert all("creator" not in row for row in combined["statuses"])
+    if endpoint.endswith("/status"):
+        result = combined # Actual combined projection deliberately omits creator.
+    else:
+        fields = dict(arg.split("=", 1) for arg in args if "=" in arg)
+        assert fields["per_page"] == "100" and "--paginate" not in args
+        page = int(fields["page"])
+        state.setdefault("status_pages", []).append(page)
+        result = rich
+        if scenario.startswith("history-"):
+            try:
+                result = rich_history_case(scenario, barrier, page)
+            except RuntimeError:
+                result = None
+                exit_status = 1
+        if scenario == "incomplete-status":
+            result = combined # Wrong endpoint shape must never qualify.
+elif "/actions/runs/" in endpoint and not endpoint.endswith("/jobs"):
+    historical = "/attempts/" in endpoint
+    run_id = int(endpoint.split("/")[-3] if historical else endpoint.rsplit("/", 1)[1])
+    assert run_id in {200, 300}, endpoint
+    old = historical
+    attempt = int(endpoint.rsplit("/", 1)[1]) if historical else current_attempt
+    running = not old or scenario == "deferred-owned-running"
+    run_base = old_base if run_id == 200 else base
+    result = {"id": run_id, "run_attempt": attempt, "run_number": 2 if run_id == 200 else 3, "workflow_id": 42, "event": "pull_request",
+              "repository": {"full_name": repo}, "head_repository": {"full_name": head_repo},
+              "head_sha": head, "head_branch": "proof-branch", "name": "CI — Validation",
+              "path": ".github/workflows/ci.yml", "pull_requests": [],
+              "display_title": f"CI — Validation pr-123 base-{run_base} head-{head}",
+              "status": "in_progress" if running else "completed",
+              "conclusion": None if running else "cancelled" if scenario == "deferred-owned-cancelled" else "failure" if scenario == "deferred-owned-step-failed" else "success"}
+    if old and scenario == "deferred-owned-newer":
+        result["run_number"] = 4
+    if old and scenario == "deferred-old-equal-number":
+        result["run_number"] = 3
+    if old and scenario == "deferred-old-missing-number":
+        result.pop("run_number")
+    if old and scenario == "deferred-old-wrong-title":
+        result["display_title"] = result["display_title"].replace("pr-123", "pr-456")
+    if not old and scenario == "current-wrong-tuple":
+        result["head_sha"] = old_base
+elif endpoint.endswith("/jobs"):
+    run_id = int(endpoint.split("/")[-4])
+    attempt = int(endpoint.split("/")[-2])
+    old = run_id == 200 or (current_attempt == 2 and attempt == 1)
+    running = not old or scenario == "deferred-owned-running"
+    native_id = run_id * 10 + attempt if current_attempt == 2 else run_id * 10
+    publisher = {"name": "Publish pending required gate status", "status": "in_progress" if running else "completed",
+                 "conclusion": None if running else "cancelled" if scenario == "deferred-owned-cancelled" else "failure" if scenario == "deferred-owned-step-failed" else "skipped" if scenario == "deferred-old-skipped" else "success"}
+    steps = [{"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "success"}, publisher]
+    if old and running:
+        steps = [publisher]
+    job = {"id": native_id, "run_id": run_id, "name": "Validation Gate", "head_sha": head,
+           "status": "in_progress" if running else "completed",
+           "conclusion": None if running else "cancelled" if scenario == "deferred-owned-cancelled" else "failure" if scenario == "deferred-owned-step-failed" else "success",
+           "check_run_url": f"https://api.github.com/repos/{repo}/check-runs/{native_id}", "steps": steps}
+    result = {"total_count": 1, "jobs": [job]}
+    if scenario == "current-incomplete-jobs" and not old:
+        result["total_count"] = 2
+elif "/check-runs/" in endpoint:
+    check_id = int(endpoint.rsplit("/", 1)[1])
+    old = check_id == 2000 or (current_attempt == 2 and check_id == 3001)
+    running = not old or scenario == "deferred-owned-running"
+    result = {"id": check_id, "name": "Validation Gate", "head_sha": head,
+              "status": "in_progress" if running else "completed",
+              "conclusion": None if running else "cancelled" if scenario == "deferred-owned-cancelled" else "failure" if scenario == "deferred-owned-step-failed" else "success",
+              "app": {"id": 99 if scenario == "deferred-old-wrong-app" or (not old and scenario == "current-wrong-app") else 15368, "slug": "github-actions"}}
+else:
+    raise AssertionError(endpoint)
+state_path.write_text(json.dumps(state))
+if result is not None:
+    print(json.dumps(result))
+    if scenario == "ack-multiple" and method == "POST":
+        print(json.dumps(result))
+sys.exit(exit_status)
+PY_PRODUCER_GH
+EOF_PRODUCER_GH
+chmod +x "$tmp_dir/producer-bin/gh"
+run_producer() {
+  local scenario="$1" assessment="$2" original="${3:-no-local-workflow-file}"
+  local event_file="$tmp_dir/producer-event-$scenario" head_repository=example/firemud current_attempt=1
+  [[ "$scenario" != deferred-owned-earlier-attempt ]] || current_attempt=2
+  [[ "$scenario" != deferred-fork ]] || head_repository=fork-owner/firemud
+  jq -n --arg head_repo "$head_repository" '{action: "edited", number: 123, repository: {full_name: "example/firemud"}, changes: {title: {from: "old"}},
+    pull_request: {number: 123, base: {sha: ("b" * 40), ref: "develop", repo: {full_name: "example/firemud"}},
+      head: {sha: ("a" * 40), ref: "proof-branch", repo: {full_name: $head_repo}}}}' >"$event_file"
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/producer-state-$scenario"
+  : >"$tmp_dir/producer-output-$scenario"
+  PATH="$tmp_dir/producer-bin:$PATH" GH_TOKEN=test-token GITHUB_REPOSITORY=example/firemud \
+    GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$event_file" GITHUB_RUN_ID=300 GITHUB_RUN_ATTEMPT="$current_attempt" \
+    GITHUB_OUTPUT="$tmp_dir/producer-output-$scenario" PRODUCER_OUTPUT_PATH="$tmp_dir/producer-output-$scenario" \
+    PRODUCER_STATE="$tmp_dir/producer-state-$scenario" MOCK_ORIGINAL_GH="$tmp_dir/gh" \
+    GH_SCENARIO="$original" GH_FAILURE_MODE=none GH_RETRY_COUNT_FILE="$tmp_dir/producer-proof-count-$scenario" \
+    BASE_SHA=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb HEAD_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    PR_NUMBER=123 ASSESSMENT="$assessment" REQUIRED_GATE_NAME='Validation Gate' EXPECTED_WORKFLOW_NAME='CI — Validation' \
+    EXPECTED_WORKFLOW_FILE=ci.yml EXPECTED_WORKFLOW_PATH=.github/workflows/ci.yml \
+    bash "$PUBLISH_SCRIPT" >"$tmp_dir/producer-log-$scenario" 2>&1
+}
+for scenario in deferred-absent deferred-fork deferred-owned-pending deferred-owned-earlier-attempt deferred-owned-newer deferred-old-equal-number deferred-old-missing-number deferred-owned-failure deferred-owned-error deferred-owned-success deferred-owned-running deferred-owned-cancelled deferred-owned-step-failed success-owned-pending success-owned-failure success-owned-error success-assessment-pending status-replaced tuple-replaced deferred-foreign deferred-old-wrong-app deferred-old-wrong-title deferred-old-skipped success-absent success-owned-success success-foreign; do
+  assessment=dependency-deferred
+  [[ "$scenario" != success-* ]] || assessment=success
+  original=no-local-workflow-file
+  [[ "$scenario" != success-assessment-pending ]] || original=pending-predecessor
+  if ! run_producer "$scenario" "$assessment" "$original"; then
+    cat "$tmp_dir/producer-log-$scenario" >&2; exit 1
+  fi
+  python3 - "$tmp_dir/producer-state-$scenario" "$tmp_dir/producer-output-$scenario" "$scenario" <<'PY_PUBLISH'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+scenario = sys.argv[3]
+unchanged = scenario in {"status-replaced", "tuple-replaced", "deferred-owned-newer", "deferred-old-equal-number", "deferred-old-missing-number", "deferred-foreign", "deferred-old-wrong-app", "deferred-old-wrong-title", "deferred-old-skipped", "success-absent", "success-owned-success", "success-foreign"}
+expected = "unchanged" if unchanged else "success-acknowledged" if scenario in {"success-owned-pending", "success-owned-failure", "success-owned-error"} else "pending-acknowledged"
+assert Path(sys.argv[2]).read_text().strip() == f"publication={expected}", (scenario, state)
+assert len(state.get("posts", [])) == (0 if unchanged else 1), state
+if not unchanged:
+    assert state["posts"][0]["target_url"] == f"https://github.com/example/firemud/actions/runs/300/attempts/{2 if scenario == 'deferred-owned-earlier-attempt' else 1}", state
+    assert state["posts"][0]["state"] == expected.split("-")[0], state
+PY_PUBLISH
+done
+for history_case in latest-owned latest-foreign null-actor missing-actor unknown-state page-two-owned page-two-absent budget unavailable-page duplicate-page wrong-head-url same-second foreign-same-second first-page-stop ignore-old-malformed overfull scalar malformed-row; do
+  scenario="history-$history_case"
+  case "$history_case" in
+    budget|unavailable-page|duplicate-page|wrong-head-url|overfull|scalar|malformed-row)
+      if run_producer "$scenario" success; then
+        echo "invalid rich producer history qualified: $history_case" >&2; exit 1
+      fi ;;
+    *) run_producer "$scenario" success ;;
+  esac
+  python3 - "$tmp_dir/producer-state-$scenario" "$tmp_dir/producer-output-$scenario" "$history_case" <<'PY_HISTORY'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+case = sys.argv[3]
+expected = "success-acknowledged" if case in {"latest-owned", "page-two-owned", "same-second", "first-page-stop", "ignore-old-malformed"} else "unchanged" if case in {"latest-foreign", "foreign-same-second", "null-actor", "missing-actor", "unknown-state", "page-two-absent"} else None
+assert Path(sys.argv[2]).read_text().strip() == (f"publication={expected}" if expected else ""), state
+assert len(state.get("posts", [])) == (1 if expected == "success-acknowledged" else 0), state
+assert not any("/commits/" in call and call.endswith("/status") for call in state["calls"]), state
+if case.startswith("page-two-"): assert 2 in state["status_pages"], state
+if case == "first-page-stop": assert all(page == 1 for page in state["status_pages"]), state
+if case == "budget": assert state["status_pages"] == list(range(1, 11)), state
+PY_HISTORY
+done
+
+for scenario in success-assessment-failed incomplete-status current-wrong-app current-wrong-tuple current-incomplete-jobs ack-denied ack-ambiguous ack-wrong-url ack-missing-creator ack-missing-id ack-bad-timestamp ack-wrong-state ack-multiple; do
+  assessment=dependency-deferred
+  original=no-local-workflow-file
+  if [[ "$scenario" == success-assessment-failed ]]; then assessment=success; original=failed-predecessor; fi
+  if run_producer "$scenario" "$assessment" "$original"; then
+    echo "invalid publication succeeded: $scenario" >&2; exit 1
+  fi
+  [[ ! -s "$tmp_dir/producer-output-$scenario" ]] || { echo "failed publication emitted native-success allowance" >&2; exit 1; }
+  python3 - "$tmp_dir/producer-state-$scenario" "$scenario" <<'PY_PUBLISH'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+assert len(state.get("posts", [])) == (1 if sys.argv[2].startswith("ack-") else 0), state
+PY_PUBLISH
+done
+
+echo "Inert required-gate status producer contract checks passed"
