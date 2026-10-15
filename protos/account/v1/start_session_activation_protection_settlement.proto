@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered World-to-Account historical activation settlement. The request is
+// lookup-only: it supplies no terminal result, currentness claim, or release instruction.
+service AccountStartSessionActivationProtectionSettlementService {
+  rpc SettleOriginalStartSessionActivationProtection(
+      SettleOriginalStartSessionActivationProtectionRequest)
+      returns (SettleOriginalStartSessionActivationProtectionResponse);
+}
+
+// Each repeated field must occur exactly once. Repetition is intentional so duplicate scalar
+// occurrences survive generated parsing and can be rejected by the closed receiver.
+message SettleOriginalStartSessionActivationProtectionRequest {
+  repeated int32 schema_version = 1;
+  repeated string target_namespace = 2;
+  repeated string settlement_request_id = 3;
+  repeated string account_protection_id = 4;
+  // Canonical positive unsigned-decimal text bounded by a positive signed Java long.
+  repeated string account_protection_fence = 5;
+}
+
+message SettleOriginalStartSessionActivationProtectionResponse {
+  repeated int32 schema_version = 1;
+  repeated string settlement_request_id = 2;
+  repeated string account_protection_id = 3;
+  repeated string account_protection_fence = 4;
+  // Exact canonical UTC instant with six fractional digits from the immutable Account row.
+  repeated string settled_at = 5;
+  // Complete immutable World terminal receipt, never a digest-only substitute.
+  repeated bytes terminal_evidence_canonical_bytes = 6;
+}
