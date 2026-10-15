@@ -59,7 +59,8 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
       "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String OTHER_NAMESPACE_URI =
       "spiffe://firemud/ns/other-test/sa/world-management-service";
-  private static final String GAME_SESSION_CLIENT_URI = "spiffe://firemud/ns/test/sa/game-session-service";
+  private static final String GAME_SESSION_CLIENT_URI =
+      "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String STORE_PASSWORD = "test-only-store-password";
   private static final long ABOVE_JAVASCRIPT_INTEGER = 9_007_199_254_740_993L;
 

@@ -246,8 +246,9 @@ class AccountStartSessionActivationProtectionAcquisitionServiceTest {
           new AccountStartSessionWorldParticipationRepository.StoredSettlement(retained.participationId(), WorldStartSessionExecutionTerminal.Outcome.COMMITTED,
               1L, new byte[] {1}, "sha256:" + "c".repeat(64), OffsetDateTime.parse("2030-01-01T00:00:01Z"))));
       when(currentAttemptReader.read(any())).thenAnswer(invocation -> new OriginalStartSessionCurrentAttemptEvidence.Result(invocation.getArgument(0), lease, tuple.canonicalBytes()));
+      // Explicit controlled GS realm/catalog inputs; these mocks establish no owner provenance.
       when(launchReader.read(any())).thenAnswer(invocation -> new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(invocation.getArgument(0), world.playableStateNamespaceId(),
-          RealmEntryPolicy.StateScope.SHARED, true, CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus.STARTING, 0L, attempt, fence, preparing.launchBinding()));
+          RealmEntryPolicy.StateScope.SHARED, true, CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus.STARTING, 0L, attempt, fence, UUID.fromString("e8e8e8e8-e8e8-48e8-88e8-e8e8e8e8e8e8"), 17L, preparing.launchBinding()));
       when(attempts.findHistoricalExact(any(), any())).thenAnswer(invocation -> Optional.of(witness(invocation.getArgument(1), lease)));
       doAnswer(invocation -> {
         Function<AccountStartSessionAuthorityCapture, Object> callback = invocation.getArgument(3);

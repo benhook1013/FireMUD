@@ -452,6 +452,8 @@ class AccountStartSessionActivationProtectionEvidenceTest {
             valid.launchAssociation().currentRowVersion(),
             uuid("e5e5e5e5-e5e5-45e5-85e5-e5e5e5e5e5e5"),
             valid.launchAssociation().ownerFence(),
+            valid.launchAssociation().canonicalRealmId(),
+            valid.launchAssociation().catalogRevision(),
             valid.launchAssociation().launchBindingEvidence());
     assertThatThrownBy(
             () ->
@@ -474,6 +476,8 @@ class AccountStartSessionActivationProtectionEvidenceTest {
             valid.launchAssociation().currentRowVersion(),
             valid.launchAssociation().ownerAttemptId(),
             valid.launchAssociation().ownerFence() - 1L,
+            valid.launchAssociation().canonicalRealmId(),
+            valid.launchAssociation().catalogRevision(),
             valid.launchAssociation().launchBindingEvidence());
     assertThatThrownBy(
             () ->
@@ -607,7 +611,7 @@ class AccountStartSessionActivationProtectionEvidenceTest {
     var selector = old.request();
     var operation = new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(tuple.canonicalBytes(), GAME_SESSION_MUTATION, GAME_SESSION_ATTEMPT, Long.MAX_VALUE);
     var boundSelector = new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(selector.readRequestId(), selector.targetNamespace(), selector.canonicalTenantId(), selector.worldSlug(), selector.gameInstanceUuid(), selector.controlPlaneRequestId(), selector.launchDescriptorId(), selector.expectedDescriptorRequestDigest(), selector.expectedDescriptorResultDigest(), selector.expectedReleaseAttestationEvidenceDigest(), operation);
-    var bound = new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(boundSelector, old.playableStateNamespaceId(), old.playableStateScope(), old.publicProduction(), old.currentGameInstanceStatus(), old.currentRowVersion(), old.ownerAttemptId(), old.ownerFence(), old.launchBindingEvidence());
+    var bound = new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(boundSelector, old.playableStateNamespaceId(), old.playableStateScope(), old.publicProduction(), old.currentGameInstanceStatus(), old.currentRowVersion(), old.ownerAttemptId(), old.ownerFence(), old.canonicalRealmId(), old.catalogRevision(), old.launchBindingEvidence());
     var valid = AccountStartSessionActivationProtectionRequest.create(ACCOUNT_PARTICIPATION, Long.MAX_VALUE, bound, first.originalCurrentAttempt(), first.worldActivationRequest());
     var decoded = AccountStartSessionActivationProtectionRequest.decode(valid.canonicalBytes());
     assertThat(decoded.launchAssociation().request().originalOperation()).isEqualTo(valid.launchAssociation().request().originalOperation());
@@ -667,6 +671,8 @@ class AccountStartSessionActivationProtectionEvidenceTest {
             gameSessionRowVersion,
             GAME_SESSION_ATTEMPT,
             Long.MAX_VALUE,
+            fixture.launch.canonicalRealmId(),
+            fixture.launch.catalogRevision(),
             fixture.binding);
     var currentAttemptRequest =
         new OriginalStartSessionCurrentAttemptEvidence.Request(
@@ -895,6 +901,9 @@ class AccountStartSessionActivationProtectionEvidenceTest {
             7L,
             GAME_SESSION_ATTEMPT,
             Long.MAX_VALUE,
+            // Explicit fixture-owned realm/catalog values, not authenticated GS owner output.
+            uuid("e8e8e8e8-e8e8-48e8-88e8-e8e8e8e8e8e8"),
+            17L,
             binding);
     return new Fixture(gsRequest, gsResult, binding, preparing);
   }

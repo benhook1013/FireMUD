@@ -251,8 +251,7 @@ public final class WorldCanonicalInstancePreparationAssemblyService {
       CanonicalGameInstanceLaunchAssociationReadEvidence.Request request,
       CanonicalGameInstanceLaunchAssociationReadEvidence.Result result,
       CompleteLaunchBindingEvidence expected) {
-    if (!WorldCompleteLaunchBindingService.hasExactGameSessionBinding(
-        request, result, expected)) {
+    if (!WorldCompleteLaunchBindingService.hasExactGameSessionBinding(request, result, expected)) {
       throw new AssemblyRejectedException(
           "Authenticated Game Session association differs from the exact World selector or release pair");
     }

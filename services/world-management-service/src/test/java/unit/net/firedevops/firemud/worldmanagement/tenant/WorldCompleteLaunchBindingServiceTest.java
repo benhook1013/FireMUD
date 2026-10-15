@@ -1026,6 +1026,8 @@ class WorldCompleteLaunchBindingServiceTest {
             7L,
             UUID.fromString("cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"),
             1L,
+            UUID.fromString("dededede-dede-4ded-8ded-dededededede"),
+            3L,
             pair);
     WorldCompleteLaunchBindingReceipt receipt = mock(WorldCompleteLaunchBindingReceipt.class);
     when(receipt.targetNamespace()).thenReturn(NAMESPACE);

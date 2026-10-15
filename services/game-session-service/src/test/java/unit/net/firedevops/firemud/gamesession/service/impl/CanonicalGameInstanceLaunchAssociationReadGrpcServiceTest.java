@@ -77,7 +77,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest {
     Context.ROOT.run(
         () ->
             service.getCanonicalGameInstanceLaunchAssociation(
-                GetCanonicalGameInstanceLaunchAssociationRequest.getDefaultInstance(), missingPeer));
+                GetCanonicalGameInstanceLaunchAssociationRequest.getDefaultInstance(),
+                missingPeer));
     assertDenied(missingPeer, Status.Code.UNAUTHENTICATED);
 
     assertDenied(
@@ -150,6 +151,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest {
             association.currentRowVersion(),
             OWNER_ATTEMPT,
             8L,
+            fixture.original().canonicalRealmId(),
+            fixture.original().catalogRevision(),
             association.launchBindingEvidence());
 
     assertThat(observer.error()).isNull();
@@ -232,7 +235,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest {
   void missingOrNullOriginalRowsFailClosedWithoutReturningEvidence() {
     Fixture fixture = fixture();
     when(repository.readOriginalStartSessionAssociation(fixture.request()))
-        .thenReturn(Optional.empty(), null);
+        .thenReturn(Optional.empty())
+        .thenReturn(null);
 
     assertDenied(invokeWorld(fixture.wireRequest()), Status.Code.FAILED_PRECONDITION);
     assertDenied(invokeWorld(fixture.wireRequest()), Status.Code.FAILED_PRECONDITION);

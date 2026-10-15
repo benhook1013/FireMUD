@@ -27,6 +27,9 @@ class WorldCanonicalInstancePreparationAssemblyServiceTest {
   private static final String NAMESPACE = "test";
   private static final UUID TENANT_ID = UUID.randomUUID();
   private static final UUID INSTANCE_ID = UUID.randomUUID();
+  private static final UUID CANONICAL_REALM_ID =
+      UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+  private static final long CATALOG_REVISION = 9L;
   private static final UUID BINDING_TENANT_ID = UUID.randomUUID();
   private static final UUID BINDING_SOURCE_OPERATION_ID = UUID.randomUUID();
   private static final UUID BINDING_VERSION_ID = UUID.randomUUID();
@@ -310,6 +313,8 @@ class WorldCanonicalInstancePreparationAssemblyServiceTest {
         17L,
         UUID.randomUUID(),
         1L,
+        CANONICAL_REALM_ID,
+        CATALOG_REVISION,
         binding);
   }
 

@@ -250,6 +250,8 @@ public final class CanonicalGameInstanceLaunchAssociationReadEvidence {
       long currentRowVersion,
       UUID ownerAttemptId,
       long ownerFence,
+      UUID canonicalRealmId,
+      long catalogRevision,
       CompleteLaunchBindingEvidence launchBindingEvidence) {
     public Result {
       Objects.requireNonNull(request, "request");
@@ -268,6 +270,10 @@ public final class CanonicalGameInstanceLaunchAssociationReadEvidence {
       requireNonNil(ownerAttemptId, "ownerAttemptId");
       if (ownerFence <= 0) {
         throw new IllegalArgumentException("ownerFence must be positive");
+      }
+      requireNonNil(canonicalRealmId, "canonicalRealmId");
+      if (catalogRevision <= 0) {
+        throw new IllegalArgumentException("catalogRevision must be positive");
       }
       Objects.requireNonNull(launchBindingEvidence, "launchBindingEvidence");
       var descriptor = launchBindingEvidence.descriptor();

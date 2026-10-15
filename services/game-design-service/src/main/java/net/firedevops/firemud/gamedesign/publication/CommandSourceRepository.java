@@ -556,16 +556,24 @@ public final class CommandSourceRepository {
         units.stream().filter(this::isPolicyScope).toList();
     List<DraftCommitBinding.AffectedUnit> assets =
         units.stream().filter(AssetSourceRepository::isScope).toList();
+    var gameplay =
+        units.stream()
+            .filter(net.firedevops.firemud.common.gamedesign.GameplayRuleSource::isScope)
+            .toList();
+    boolean gameplayMutation =
+        !net.firedevops.firemud.common.gamedesign.GameplayRuleSource.mutations(binding).isEmpty();
     if (commands.size() != (commandMutations.isEmpty() ? 0 : 1)
         || policies.size() != (policyMutation ? 1 : 0)
         || assets.size() != (assetMutation ? 1 : 0)
-        || commands.size() + policies.size() + assets.size() != units.size()) {
+        || gameplay.size() != (gameplayMutation ? 1 : 0)
+        || commands.size() + policies.size() + assets.size() + gameplay.size() != units.size()) {
       throw new IllegalArgumentException(
           "Complete supported Game Design control-plane scopes are required");
     }
     if (!commands.isEmpty()) requireScopeTarget(commands.getFirst(), binding.target());
     if (!policies.isEmpty()) requireScopeTarget(policies.getFirst(), binding.target());
     if (!assets.isEmpty()) requireScopeTarget(assets.getFirst(), binding.target());
+    if (!gameplay.isEmpty()) requireScopeTarget(gameplay.getFirst(), binding.target());
   }
 
   private boolean isCommandScope(DraftCommitBinding.AffectedUnit unit) {

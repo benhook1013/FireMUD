@@ -104,6 +104,122 @@ class GameSessionFreshTenantAssociationRepositoryIntegrationTest {
   }
 
   @Test
+  void skipsExplicitLegacyReservationWhenTheDefaultIdentitySequenceCollides() {
+    Fixture fixture = fixture();
+    IntakeReceipt source = fixture.registerFreshSource();
+    fixture.dsl.execute(
+        "INSERT INTO game_session_tenant_scope_reservation"
+            + " (game_session_tenant_id, reservation_kind, reserved_at)"
+            + " VALUES (1, 'LEGACY_OCCUPIED', TIMESTAMPTZ '2020-01-02 03:04:05+00')");
+    setTenantReservationSequenceNextValue(fixture.dsl, 1L);
+    var legacyReservation =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT reservation_kind, reserved_at, xmin::text AS xmin"
+                    + " FROM game_session_tenant_scope_reservation"
+                    + " WHERE game_session_tenant_id = 1"),
+            "expected explicit legacy reservation");
+
+    FreshGameSessionTenantAssociation association = fixture.associate(uuid(627), NAMESPACE, source);
+
+    assertThat(association.legacyGameSessionTenantId()).isEqualTo(2L);
+    var preservedReservation =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT reservation_kind, reserved_at, xmin::text AS xmin"
+                    + " FROM game_session_tenant_scope_reservation"
+                    + " WHERE game_session_tenant_id = 1"),
+            "expected legacy reservation after allocation");
+    assertThat(preservedReservation.get("reservation_kind", String.class))
+        .isEqualTo(legacyReservation.get("reservation_kind", String.class));
+    assertThat(preservedReservation.get("reserved_at"))
+        .isEqualTo(legacyReservation.get("reserved_at"));
+    assertThat(preservedReservation.get("xmin", String.class))
+        .isEqualTo(legacyReservation.get("xmin", String.class));
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_tenant_scope_reservation"))))
+        .isEqualTo(2);
+  }
+
+  @Test
+  void skipsExistingFreshReservationAndKeepsItsExactAssociationReplay() {
+    Fixture fixture = fixture();
+    IntakeReceipt originalSource = fixture.registerFreshSource();
+    FreshGameSessionTenantAssociation original =
+        fixture.associate(uuid(628), NAMESPACE, originalSource);
+    long originalTenantId = original.legacyGameSessionTenantId();
+    var originalReservation =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT reservation_kind, reserved_at, xmin::text AS xmin"
+                    + " FROM game_session_tenant_scope_reservation"
+                    + " WHERE game_session_tenant_id = ?",
+                originalTenantId),
+            "expected original fresh reservation");
+    IntakeReceipt nextSource =
+        fixture.registerSource(uuid(629), uuid(630), uuid(631), uuid(632), 968L, "second-world");
+    setTenantReservationSequenceNextValue(fixture.dsl, originalTenantId);
+
+    FreshGameSessionTenantAssociation next = fixture.associate(uuid(633), NAMESPACE, nextSource);
+    FreshGameSessionTenantAssociation replay =
+        fixture.associate(uuid(628), NAMESPACE, originalSource);
+
+    assertThat(next.legacyGameSessionTenantId()).isEqualTo(originalTenantId + 1);
+    assertThat(replay).isEqualTo(original);
+    var preservedReservation =
+        Objects.requireNonNull(
+            fixture.dsl.fetchOne(
+                "SELECT reservation_kind, reserved_at, xmin::text AS xmin"
+                    + " FROM game_session_tenant_scope_reservation"
+                    + " WHERE game_session_tenant_id = ?",
+                originalTenantId),
+            "expected original fresh reservation after allocation and replay");
+    assertThat(preservedReservation.get("reservation_kind", String.class))
+        .isEqualTo("FRESH_SOURCE_BOUND");
+    assertThat(preservedReservation.get("reserved_at"))
+        .isEqualTo(originalReservation.get("reserved_at"));
+    assertThat(preservedReservation.get("xmin", String.class))
+        .isEqualTo(originalReservation.get("xmin", String.class));
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_tenant_scope_reservation"))))
+        .isEqualTo(2);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_tenant_canonical_claim"))))
+        .isEqualTo(2);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_fresh_tenant_association"))))
+        .isEqualTo(2);
+  }
+
+  @Test
+  void refusesAfterBoundedReservationCollisionsWithoutCreatingPartialAssociation() {
+    Fixture fixture = fixture();
+    IntakeReceipt source = fixture.registerFreshSource();
+    fixture.dsl.execute(
+        "INSERT INTO game_session_tenant_scope_reservation"
+            + " (game_session_tenant_id, reservation_kind)"
+            + " SELECT occupied_id, 'LEGACY_OCCUPIED'"
+            + " FROM generate_series(1, 64) AS occupied(occupied_id)");
+    setTenantReservationSequenceNextValue(fixture.dsl, 1L);
+
+    assertThatThrownBy(() -> fixture.associate(uuid(634), NAMESPACE, source))
+        .isExactlyInstanceOf(InvalidFreshTenantAssociationException.class)
+        .hasMessageContaining("bounded allocation attempts");
+
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_tenant_scope_reservation"))))
+        .isEqualTo(64);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_tenant_canonical_claim"))))
+        .isZero();
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_fresh_tenant_association"))))
+        .isZero();
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances")))).isZero();
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("gameplay_admission_pointer")))).isZero();
+  }
+
+  private static void setTenantReservationSequenceNextValue(DSLContext dsl, long nextValue) {
+    dsl.fetchOne(
+        "SELECT setval(pg_get_serial_sequence("
+            + "'game_session_tenant_scope_reservation', 'game_session_tenant_id'), ?, false)",
+        nextValue);
+  }
+
+  @Test
   void exactHumanRetryReadsCommittedAssociationAfterAdvisoryWaitOnRepeatableReadDefault()
       throws Exception {
     HumanRetryFixture humanFixture = fixtureWithRepeatableReadDefault();

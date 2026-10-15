@@ -308,8 +308,11 @@ class GameDesignWorldSourceCommitServiceTest {
     var states = arrange(original, false);
     states.put(
         Owner.GAME_DESIGN_CONTROL_PLANE,
-        state(Owner.GAME_DESIGN_CONTROL_PLANE, OwnerStatus.UNKNOWN,
-            unknownOutcome(new GameDesignDraftTerminalOperation(original).gameDesignBinding(),
+        state(
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            OwnerStatus.UNKNOWN,
+            unknownOutcome(
+                new GameDesignDraftTerminalOperation(original).gameDesignBinding(),
                 Owner.GAME_DESIGN_CONTROL_PLANE)));
     assertThatThrownBy(() -> service.commit(original, "creator.credential"))
         .isInstanceOf(IllegalStateException.class)
@@ -322,8 +325,13 @@ class GameDesignWorldSourceCommitServiceTest {
   void unknownWorldApplicationCanRecoverThroughExactApply() {
     var original = original();
     var states = arrange(original, false);
-    states.put(Owner.WORLD_MANAGEMENT, state(Owner.WORLD_MANAGEMENT, OwnerStatus.UNKNOWN,
-            unknownOutcome(new GameDesignDraftTerminalOperation(original).gameDesignBinding(),
+    states.put(
+        Owner.WORLD_MANAGEMENT,
+        state(
+            Owner.WORLD_MANAGEMENT,
+            OwnerStatus.UNKNOWN,
+            unknownOutcome(
+                new GameDesignDraftTerminalOperation(original).gameDesignBinding(),
                 Owner.WORLD_MANAGEMENT)));
     when(world.apply(any())).thenAnswer(invocation -> successfulWorld(invocation.getArgument(0)));
     assertThat(service.commit(original, "creator.credential").result())
@@ -390,9 +398,16 @@ class GameDesignWorldSourceCommitServiceTest {
   @Test
   void emptyAppliedEpochVectorIsRejectedByCanonicalOutcomeConstructor() {
     var binding = new GameDesignDraftTerminalOperation(original()).gameDesignBinding();
-    assertThatThrownBy(() -> new OwnerOutcome(
-        Owner.GAME_DESIGN_CONTROL_PLANE, OwnerStatus.APPLIED, binding.commitId(), binding.digest(),
-        "mock", new byte[] {1}, List.of()))
+    assertThatThrownBy(
+            () ->
+                new OwnerOutcome(
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    OwnerStatus.APPLIED,
+                    binding.commitId(),
+                    binding.digest(),
+                    "mock",
+                    new byte[] {1},
+                    List.of()))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("complete tuple vector");
     verifyNoInteractions(account, world, coordinator, terminals, sources, transactions);
@@ -405,14 +420,31 @@ class GameDesignWorldSourceCommitServiceTest {
     var binding = new GameDesignDraftTerminalOperation(original).gameDesignBinding();
     var expected = outcome(binding, Owner.GAME_DESIGN_CONTROL_PLANE).appliedEpochs();
     var first = expected.getFirst();
-    for (var epochs : List.of(
-        List.of(first),
-        List.of(new AppliedEpoch(first.aggregateType(), first.aggregateId(), first.scopeType(),
-            first.scopeId(), "1", "2"), expected.get(1)))) {
-      states.put(Owner.GAME_DESIGN_CONTROL_PLANE,
-          state(Owner.GAME_DESIGN_CONTROL_PLANE, OwnerStatus.APPLIED,
-              new OwnerOutcome(Owner.GAME_DESIGN_CONTROL_PLANE, OwnerStatus.APPLIED,
-                  binding.commitId(), binding.digest(), "mock", new byte[] {1}, epochs)));
+    for (var epochs :
+        List.of(
+            List.of(first),
+            List.of(
+                new AppliedEpoch(
+                    first.aggregateType(),
+                    first.aggregateId(),
+                    first.scopeType(),
+                    first.scopeId(),
+                    "1",
+                    "2"),
+                expected.get(1)))) {
+      states.put(
+          Owner.GAME_DESIGN_CONTROL_PLANE,
+          state(
+              Owner.GAME_DESIGN_CONTROL_PLANE,
+              OwnerStatus.APPLIED,
+              new OwnerOutcome(
+                  Owner.GAME_DESIGN_CONTROL_PLANE,
+                  OwnerStatus.APPLIED,
+                  binding.commitId(),
+                  binding.digest(),
+                  "mock",
+                  new byte[] {1},
+                  epochs)));
       assertThatThrownBy(() -> service.commit(original, "creator.credential"))
           .isInstanceOf(IllegalStateException.class);
     }
@@ -617,22 +649,44 @@ class GameDesignWorldSourceCommitServiceTest {
   }
 
   private static OwnerOutcome unknownOutcome(DraftCommitBinding binding, Owner owner) {
-    return new OwnerOutcome(owner, OwnerStatus.UNKNOWN, binding.commitId(), binding.digest(),
-        null, null, List.of());
+    return new OwnerOutcome(
+        owner, OwnerStatus.UNKNOWN, binding.commitId(), binding.digest(), null, null, List.of());
   }
 
   private static DraftAuthorizationFenceBinding originalWithTwoLocalScopes() {
     var original = original();
     var binding = new GameDesignDraftTerminalOperation(original).gameDesignBinding();
     var units = new java.util.ArrayList<>(binding.affectedUnits());
-    units.add(new DraftCommitBinding.AffectedUnit(Owner.GAME_DESIGN_CONTROL_PLANE,
-        "MOCK_SCOPE", binding.target().canonicalVersionId().toString(), "MOCK_SCOPE", "other", "0"));
-    var complete = DraftCommitBinding.create(binding.target(), binding.requestId(), binding.commitId(),
-        binding.baseCommitId(), binding.revisions(), units);
-    return new DraftAuthorizationFenceBinding(original.operationId(), complete.requestId(),
-        complete.commitId(), original.fenceId(), original.actorAccountId(), original.tenantId(),
-        original.versionId(), original.baseCommitId(), original.expectedDraftEpoch(),
-        complete.canonicalBytes(), complete.canonicalBytes(), complete.digest(), original.sources())
+    units.add(
+        new DraftCommitBinding.AffectedUnit(
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            "MOCK_SCOPE",
+            binding.target().canonicalVersionId().toString(),
+            "MOCK_SCOPE",
+            "other",
+            "0"));
+    var complete =
+        DraftCommitBinding.create(
+            binding.target(),
+            binding.requestId(),
+            binding.commitId(),
+            binding.baseCommitId(),
+            binding.revisions(),
+            units);
+    return new DraftAuthorizationFenceBinding(
+            original.operationId(),
+            complete.requestId(),
+            complete.commitId(),
+            original.fenceId(),
+            original.actorAccountId(),
+            original.tenantId(),
+            original.versionId(),
+            original.baseCommitId(),
+            original.expectedDraftEpoch(),
+            complete.canonicalBytes(),
+            complete.canonicalBytes(),
+            complete.digest(),
+            original.sources())
         .withRequiredOwners();
   }
 

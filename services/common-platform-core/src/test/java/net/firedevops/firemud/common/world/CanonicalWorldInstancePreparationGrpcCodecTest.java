@@ -245,55 +245,115 @@ class CanonicalWorldInstancePreparationGrpcCodecTest {
     var request = request(evidence());
     var operation = originalOperation(request);
     var nil = new UUID(0, 0);
-    assertThatThrownBy(() -> new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
-        new byte[] {1, 2, 3}, operation.gameSessionOwnerMutationId(), operation.gameSessionOwnerAttemptId(), 1))
+    assertThatThrownBy(
+            () ->
+                new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
+                    new byte[] {1, 2, 3},
+                    operation.gameSessionOwnerMutationId(),
+                    operation.gameSessionOwnerAttemptId(),
+                    1))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
-        operation.originalPostAuthorizationTuple(), nil, operation.gameSessionOwnerAttemptId(), 1))
+    assertThatThrownBy(
+            () ->
+                new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
+                    operation.originalPostAuthorizationTuple(),
+                    nil,
+                    operation.gameSessionOwnerAttemptId(),
+                    1))
         .isInstanceOf(IllegalArgumentException.class);
-    assertThatThrownBy(() -> new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
-        operation.originalPostAuthorizationTuple(), operation.gameSessionOwnerMutationId(), nil, 1))
+    assertThatThrownBy(
+            () ->
+                new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
+                    operation.originalPostAuthorizationTuple(),
+                    operation.gameSessionOwnerMutationId(),
+                    nil,
+                    1))
         .isInstanceOf(IllegalArgumentException.class);
-    var otherTenant = new Request(request.readRequestId(), request.targetNamespace(),
-        uuid("88888888-8888-4888-8888-888888888888"), request.worldSlug(), request.gameInstanceUuid(),
-        request.controlPlaneRequestId(), request.launchDescriptorId(), request.expectedDescriptorRequestDigest(),
-        request.expectedDescriptorResultDigest(), request.expectedReleaseAttestationEvidenceDigest());
-    assertThatThrownBy(() -> CanonicalWorldInstancePreparationGrpcCodec.toRequest(otherTenant, operation))
-        .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("differs from preparation selector");
+    var otherTenant =
+        new Request(
+            request.readRequestId(),
+            request.targetNamespace(),
+            uuid("88888888-8888-4888-8888-888888888888"),
+            request.worldSlug(),
+            request.gameInstanceUuid(),
+            request.controlPlaneRequestId(),
+            request.launchDescriptorId(),
+            request.expectedDescriptorRequestDigest(),
+            request.expectedDescriptorResultDigest(),
+            request.expectedReleaseAttestationEvidenceDigest());
+    assertThatThrownBy(
+            () -> CanonicalWorldInstancePreparationGrpcCodec.toRequest(otherTenant, operation))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("differs from preparation selector");
     var bytes = operation.originalPostAuthorizationTuple();
     bytes[0] ^= 1;
     assertThat(operation.originalPostAuthorizationTuple()).isNotEqualTo(bytes);
   }
 
-  static CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput
-      originalOperation(Request request) {
+  static CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput originalOperation(
+      Request request) {
     // Canonical controlled upstream bytes; this builder supplies no genuine Account authority.
     var actor = uuid("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
-    var pre = net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple
-        .createHuman(request.controlPlaneRequestId(), actor,
-            new net.firedevops.firemud.common.operator.StartSessionOperatorAction(
-                net.firedevops.firemud.common.operator.StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID,
-                net.firedevops.firemud.common.operator.StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
-                new net.firedevops.firemud.common.operator.StartSessionOperatorAction.Scope(
-                    request.canonicalTenantId(), request.targetNamespace()),
-                new net.firedevops.firemud.common.operator.StartSessionOperatorAction.Target(91L, actor),
-                net.firedevops.firemud.common.operator.StartSessionOperatorAction.ExpectedVersion.ABSENT,
-                new net.firedevops.firemud.common.operator.StartSessionOperatorAction.Mutation(
-                    net.firedevops.firemud.common.operator.StartSessionOperatorAction.ClientIp.absent()),
-                "controlled preparation transport proof"));
-    var values = new net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.Values(
-        uuid("44444444-4444-4444-8444-444444444444"), "sha256:" + "a".repeat(64), "17", "CURRENT",
-        java.time.Instant.parse("2026-10-09T00:00:00Z"), java.time.Instant.parse("2026-10-09T00:05:00Z"),
-        1, 1, 1, 1, 23, 31, uuid("55555555-5555-4555-8555-555555555555"), "1", "1");
-    var tuple = net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple.createHuman(
-        pre, "spiffe://firemud/ns/" + request.targetNamespace() + "/sa/logging-admin-service",
-        "arfp/v1/test-key/" + "b".repeat(64), uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), 19L,
-        net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(pre, values),
-        new net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BundleReference(
-            net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "17", "23", "31"));
-    return new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(tuple.canonicalBytes(),
+    var pre =
+        net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple
+            .createHuman(
+                request.controlPlaneRequestId(),
+                actor,
+                new net.firedevops.firemud.common.operator.StartSessionOperatorAction(
+                    net.firedevops.firemud.common.operator.StartSessionOperatorAction
+                        .ACTION_FAMILY_SCHEMA_ID,
+                    net.firedevops.firemud.common.operator.StartSessionOperatorAction
+                        .ACTION_FAMILY_SCHEMA_VERSION,
+                    new net.firedevops.firemud.common.operator.StartSessionOperatorAction.Scope(
+                        request.canonicalTenantId(), request.targetNamespace()),
+                    new net.firedevops.firemud.common.operator.StartSessionOperatorAction.Target(
+                        91L, actor),
+                    net.firedevops.firemud.common.operator.StartSessionOperatorAction
+                        .ExpectedVersion.ABSENT,
+                    new net.firedevops.firemud.common.operator.StartSessionOperatorAction.Mutation(
+                        net.firedevops.firemud.common.operator.StartSessionOperatorAction.ClientIp
+                            .absent()),
+                    "controlled preparation transport proof"));
+    var values =
+        new net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture
+            .Values(
+            uuid("44444444-4444-4444-8444-444444444444"),
+            "sha256:" + "a".repeat(64),
+            "17",
+            "CURRENT",
+            java.time.Instant.parse("2026-10-09T00:00:00Z"),
+            java.time.Instant.parse("2026-10-09T00:05:00Z"),
+            1,
+            1,
+            1,
+            1,
+            23,
+            31,
+            uuid("55555555-5555-4555-8555-555555555555"),
+            "1",
+            "1");
+    var tuple =
+        net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple
+            .createHuman(
+                pre,
+                "spiffe://firemud/ns/" + request.targetNamespace() + "/sa/logging-admin-service",
+                "arfp/v1/test-key/" + "b".repeat(64),
+                uuid("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+                19L,
+                net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture
+                    .canonicalBytes(pre, values),
+                new net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle
+                    .BundleReference(
+                    net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle
+                        .BUNDLE_VERSION,
+                    "17",
+                    "23",
+                    "31"));
+    return new CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput(
+        tuple.canonicalBytes(),
         uuid("66666666-6666-4666-8666-666666666666"),
-        uuid("77777777-7777-4777-8777-777777777777"), 31L);
+        uuid("77777777-7777-4777-8777-777777777777"),
+        31L);
   }
 
   private static Request request(WorldCanonicalInstanceLifecycleEvidence evidence) {

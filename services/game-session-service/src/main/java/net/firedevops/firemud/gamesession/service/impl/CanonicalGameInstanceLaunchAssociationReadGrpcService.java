@@ -128,6 +128,8 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
               association.currentRowVersion(),
               original.ownerAttemptId(),
               original.ownerFence(),
+              original.canonicalRealmId(),
+              original.catalogRevision(),
               association.launchBindingEvidence());
       response = CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toResponse(result);
     } catch (DataAccessException unavailable) {
@@ -189,9 +191,7 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
         || !selector.launchDescriptorId().equals(association.launchDescriptorId())
         || !selector.expectedDescriptorRequestDigest().equals(descriptor.requestDigest())
         || !selector.expectedDescriptorResultDigest().equals(descriptor.resultDigest())
-        || !selector
-            .expectedReleaseAttestationEvidenceDigest()
-            .equals(attestation.evidenceDigest())
+        || !selector.expectedReleaseAttestationEvidenceDigest().equals(attestation.evidenceDigest())
         || !selector.controlPlaneRequestId().equals(tuple.controlPlaneRequestId())
         || !selector
             .controlPlaneRequestId()

@@ -176,6 +176,7 @@ class WorldOriginalStartSessionActivationTerminalEvidenceTest {
     var tuple = originalTuple(fixture);
     var original = fixture.preparing().request();
     var gsRequest = fixture.launchRequest();
+    // Explicit fixture-owned realm/catalog values, not authenticated GS owner output.
     var gsResult =
         new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
             gsRequest,
@@ -186,6 +187,8 @@ class WorldOriginalStartSessionActivationTerminalEvidenceTest {
             0L,
             uuid("56565656-5656-4565-8565-565656565656"),
             11L,
+            uuid("e8e8e8e8-e8e8-48e8-88e8-e8e8e8e8e8e8"),
+            17L,
             fixture.binding());
     var currentAttemptRequest =
         new OriginalStartSessionCurrentAttemptEvidence.Request(

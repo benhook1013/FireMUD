@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Standalone, unregistered World-to-Account historical participation settlement. The request is
+// lookup-only: it supplies no terminal result, currentness claim, or release instruction.
+service AccountStartSessionWorldParticipationSettlementService {
+  rpc SettleOriginalStartSessionWorldParticipation(
+      SettleOriginalStartSessionWorldParticipationRequest)
+      returns (SettleOriginalStartSessionWorldParticipationResponse);
+}
+
+// Each repeated field must occur exactly once. Repetition preserves duplicate scalar occurrences
+// so the closed receiver can reject them after parsing.
+message SettleOriginalStartSessionWorldParticipationRequest {
+  repeated int32 schema_version = 1;
+  repeated string target_namespace = 2;
+  repeated string settlement_request_id = 3;
+  repeated string account_world_participation_id = 4;
+  // Canonical positive unsigned-decimal text bounded by a positive signed Java long.
+  repeated string account_world_participation_fence = 5;
+}
+
+message SettleOriginalStartSessionWorldParticipationResponse {
+  repeated int32 schema_version = 1;
+  repeated string settlement_request_id = 2;
+  repeated string account_world_participation_id = 3;
+  repeated string account_world_participation_fence = 4;
+  // Exact canonical UTC instant with six fractional digits from the immutable Account row.
+  repeated string settled_at = 5;
+  // Complete immutable World terminal, never a digest-only substitute.
+  repeated bytes terminal_evidence_canonical_bytes = 6;
+}
