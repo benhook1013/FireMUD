@@ -915,7 +915,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
             "publishWorkflowId", jsonString(workflowId.toString()),
             "appliedCommitId", jsonString(selectedCommit.commitId().toString()),
             "contentDigest", jsonString(contentDigest),
-            "digestSchemaVersion", "1",
+            "digestSchemaVersion", "3",
             "worldAffectedTuples", expectedTuples);
     String selectorJson =
         jsonObject(
@@ -1021,7 +1021,7 @@ class AccountSourceCurrentnessForwardMigrationsPostgresIntegrationTest {
                 jsonObject(
                     "appliedCommitId", jsonString(selectedCommit.commitId().toString()),
                     "contentDigest", jsonString(contentDigest),
-                    "digestSchemaVersion", "1"),
+                    "digestSchemaVersion", "3"),
             "sourceModel", modelJson,
             "artifactDecisions",
                 "[{\"artifactKind\":\"NAVMESH\",\"state\":\"NOT_REQUIRED\","
