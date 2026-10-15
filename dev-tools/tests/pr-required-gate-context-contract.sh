@@ -809,6 +809,12 @@ elif "/actions/runs/" in endpoint:
         output.update(id=101, conclusion=None, status="queued")
     if scenario == "cancellation-run-conflict" and "/attempts/" in endpoint:
         output["display_title"] = "unbound"
+    if scenario in ("cancellation-later-attempt", "cancellation-later-attempt-failed-source"):
+        # Latest run is attempt 2; candidate gate belongs to retained attempt 1.
+        if "/attempts/" not in endpoint:
+            output.update(run_attempt=2, conclusion="success")
+        elif scenario == "cancellation-later-attempt-failed-source":
+            output["conclusion"] = "failure"
 else:
     raise AssertionError(endpoint)
 print(json.dumps(output))
@@ -1460,14 +1466,14 @@ for scenario in job-failure-retry completed-preservation-step-lag completed-pres
 done
 # Cancellation cannot become success: only the exact pre-execution shape is
 # removed from authoritative failures, leaving existing missing/pending proof.
-for scenario in cancellation-only cancellation-pending cancellation-metadata; do
+for scenario in cancellation-only cancellation-pending cancellation-metadata cancellation-later-attempt; do
   output_file="$tmp_dir/$scenario-output"
   run_action "$tmp_dir/$scenario-count" none "$scenario" "" "$output_file"
   [[ "$(<"$output_file")" == assessment=dependency-deferred ]] || {
     echo "cancellation lost missing-proof behavior: $scenario" >&2; exit 1;
   }
 done
-for scenario in cancellation-real-failure cancellation-hidden-step-failure cancellation-executed-check cancellation-gate-other-failure cancellation-unknown-assertion cancellation-timed-out cancellation-action-required cancellation-partial cancellation-wrong-attempt cancellation-wrong-head cancellation-duplicate cancellation-missing-steps cancellation-wrong-app cancellation-check-conflict cancellation-run-conflict; do
+for scenario in cancellation-later-attempt-failed-source cancellation-real-failure cancellation-hidden-step-failure cancellation-executed-check cancellation-gate-other-failure cancellation-unknown-assertion cancellation-timed-out cancellation-action-required cancellation-partial cancellation-wrong-attempt cancellation-wrong-head cancellation-duplicate cancellation-missing-steps cancellation-wrong-app cancellation-check-conflict cancellation-run-conflict; do
   output_file="$tmp_dir/$scenario-output"
   if run_action "$tmp_dir/$scenario-count" none "$scenario" "" "$output_file" >"$tmp_dir/$scenario-log" 2>&1; then
     echo "cancellation suppressed failed or incomplete proof: $scenario" >&2; exit 1

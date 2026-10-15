@@ -83,7 +83,7 @@ validation_cancelled_before_checks() {
   jq -e --argjson original "${workflow_run_json}" --argjson attempt "${attempt}" '
     . as $run | .run_attempt == $attempt and .status == "completed" and .conclusion == "cancelled" and
     all(["id", "workflow_id", "name", "path", "head_sha", "display_title", "repository", "event"][];
-      . as $key | $run[$key] == $original[$key]) and $original.run_attempt == $attempt
+      . as $key | $run[$key] == $original[$key])
   ' <<<"${run_snapshot}" >/dev/null || return 1
   jobs_snapshot="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${workflow_run_id}/attempts/${attempt}/jobs" \
     -f per_page=100 --paginate --slurp)" || return 1
@@ -446,8 +446,7 @@ while IFS=$'\t' read -r app_slug check_name details_url check_run_id check_statu
   # missing validation. Unavailable or different evidence retains failure.
   if [[ "${EXPECTED_WORKFLOW_PATH}" == ".github/workflows/ci.yml" &&
     "${EXPECTED_WORKFLOW_NAME}" == "CI — Validation" && "${REQUIRED_GATE_NAME}" == "Validation Gate" &&
-    "${check_status}" == completed && "${conclusion}" == failure &&
-    "$(jq -r '.conclusion // ""' <<<"${workflow_run_json}")" == cancelled ]]; then
+    "${check_status}" == completed && "${conclusion}" == failure ]]; then
     if validation_cancelled_before_checks; then
       echo "Cancelled Validation aggregate has no executed prerequisite checks; original proof remains missing." >&2
       continue
