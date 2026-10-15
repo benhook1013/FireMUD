@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,11 +16,12 @@ import io.grpc.ManagedChannel;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.stream.Stream;
+import net.firedevops.firemud.common.authoring.DraftCommitOrderReadClient;
+import net.firedevops.firemud.common.authoring.WorldOriginalDraftGraphApplyClient;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -37,43 +39,60 @@ class PublicationClientCloseLifecycleTest {
 
   @TestFactory
   @ResourceLock(Resources.SYSTEM_PROPERTIES)
-  Stream<DynamicTest> closesEveryPublicationClientOutsideItsMonitor(@TempDir Path directory) {
+  Stream<DynamicTest> sharesInitAndCloseLifecycleAcrossExplicitClients(@TempDir Path directory) {
     return clientCases().stream()
         .map(
             testCase ->
                 DynamicTest.dynamicTest(
-                    testCase.name(), () -> assertCloseLifecycle(testCase, directory)));
+                    testCase.name(), () -> assertLifecycle(testCase, directory)));
   }
 
   private static List<ClientCase> clientCases() {
     return List.of(
         new ClientCase(
+            "DraftCommitOrderReadClient",
+            "Account COMMIT_ORDER read client is closed",
+            DraftCommitOrderReadClient::new),
+        new ClientCase(
+            "WorldOriginalDraftGraphApplyClient",
+            "World original graph apply client is closed",
+            WorldOriginalDraftGraphApplyClient::new),
+        new ClientCase(
             "AccountPublicationAuthorizationReadClient",
+            "Account publication authorization read client is closed",
             AccountPublicationAuthorizationReadClient::new),
         new ClientCase(
             "AuthoredDraftPublishSelectionReadClient",
+            "Game Design selected Draft publication read client is closed",
             AuthoredDraftPublishSelectionReadClient::new),
         new ClientCase(
             "WorldPublicationTerminalCompletionClient",
+            "World publication completion client is closed",
             WorldPublicationTerminalCompletionClient::new),
         new ClientCase(
-            "WorldPublicationTerminalReadClient", WorldPublicationTerminalReadClient::new),
+            "WorldPublicationTerminalReadClient",
+            "World publication terminal read client is closed",
+            WorldPublicationTerminalReadClient::new),
         new ClientCase(
             "WorldSelectedDraftPublicationFreezeClient",
+            "World selected-publication freeze client is closed",
             WorldSelectedDraftPublicationFreezeClient::new),
         new ClientCase(
             "WorldSelectedPublicationArtifactInventoryClient",
+            "World selected-publication inventory client is closed",
             WorldSelectedPublicationArtifactInventoryClient::new),
         new ClientCase(
-            "WorldPublishedStartLocationClient", WorldPublishedStartLocationClient::new));
+            "WorldPublishedStartLocationClient",
+            "World selector read client is closed",
+            WorldPublishedStartLocationClient::new));
   }
 
-  private static void assertCloseLifecycle(ClientCase testCase, Path directory) throws Exception {
+  private static void assertLifecycle(ClientCase testCase, Path directory) throws Exception {
     String previousReloadPolicy = System.getProperty(TLS_RELOAD_PROPERTY);
     System.setProperty(TLS_RELOAD_PROPERTY, "false");
     AbstractReloadingBlockingGrpcClient<?> client = null;
     try {
-      Path clientDirectory = Files.createTempDirectory(directory, "publication-client-");
+      Path clientDirectory = Files.createTempDirectory(directory, "explicit-client-");
       CommonGrpcClientProperties tls = tls(clientDirectory);
       GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
       ManagedChannel channel = mock(ManagedChannel.class);
@@ -84,6 +103,9 @@ class PublicationClientCloseLifecycleTest {
       client =
           testCase.factory().create(new ServiceEndpointsProperties(), tls, channelFactory, "test");
       initializeClient(client);
+      initializeClient(client);
+      verify(channelFactory, times(1))
+          .buildChannel(anyString(), anyInt(), any(CommonGrpcClientProperties.class), anyBoolean());
 
       AbstractReloadingBlockingGrpcClient<?> clientUnderTest = client;
       TlsCertificateWatcher closeBoundary = mock(TlsCertificateWatcher.class);
@@ -100,13 +122,9 @@ class PublicationClientCloseLifecycleTest {
 
       clientUnderTest.close();
 
-      assertThat(readClientField(clientUnderTest, "closed")).isEqualTo(true);
-      assertThat(readClientField(clientUnderTest, "initialized")).isEqualTo(false);
-      Method requireStub = clientUnderTest.getClass().getDeclaredMethod("requireStub");
-      requireStub.setAccessible(true);
-      assertThatThrownBy(() -> requireStub.invoke(clientUnderTest))
-          .isInstanceOf(InvocationTargetException.class)
-          .hasCauseInstanceOf(IllegalStateException.class);
+      assertThatThrownBy(() -> initializeClient(clientUnderTest))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessage(testCase.closedMessage());
       verify(closeBoundary).close();
       verify(channel).shutdown();
     } finally {
@@ -130,15 +148,15 @@ class PublicationClientCloseLifecycleTest {
   }
 
   private static void initializeClient(AbstractReloadingBlockingGrpcClient<?> client)
-      throws ReflectiveOperationException {
-    client.getClass().getMethod("init").invoke(client);
-  }
-
-  private static Object readClientField(AbstractReloadingBlockingGrpcClient<?> client, String name)
-      throws ReflectiveOperationException {
-    Field field = client.getClass().getDeclaredField(name);
-    field.setAccessible(true);
-    return field.get(client);
+      throws Exception {
+    try {
+      client.getClass().getMethod("init").invoke(client);
+    } catch (InvocationTargetException failure) {
+      if (failure.getCause() instanceof Exception cause) {
+        throw cause;
+      }
+      throw failure;
+    }
   }
 
   private static CommonGrpcClientProperties tls(Path directory) throws IOException {
@@ -149,7 +167,7 @@ class PublicationClientCloseLifecycleTest {
     return tls;
   }
 
-  private record ClientCase(String name, ClientFactory factory) {}
+  private record ClientCase(String name, String closedMessage, ClientFactory factory) {}
 
   @FunctionalInterface
   private interface ClientFactory {

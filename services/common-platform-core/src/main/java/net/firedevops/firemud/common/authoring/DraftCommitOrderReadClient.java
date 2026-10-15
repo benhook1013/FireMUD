@@ -22,8 +22,6 @@ public final class DraftCommitOrderReadClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public DraftCommitOrderReadClient(
       ServiceEndpointsProperties endpoints,
@@ -41,13 +39,9 @@ public final class DraftCommitOrderReadClient
     this.workloadNamespace = workloadNamespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) throw new IllegalStateException("Account COMMIT_ORDER read client is closed");
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null)
-      throw new IllegalStateException("Account COMMIT_ORDER read stub unavailable");
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "Account COMMIT_ORDER read client is closed", "Account COMMIT_ORDER read stub unavailable");
   }
 
   /** Returns a validated HELD result only after exact Account server mTLS identity verification. */
@@ -58,7 +52,7 @@ public final class DraftCommitOrderReadClient
           "Account COMMIT_ORDER read must use the configured workload namespace");
     }
     var response =
-        requireStub()
+        requireInitializedStub("Account COMMIT_ORDER read client is not initialized and available")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .readHeldOriginalCommitOrder(DraftCommitOrderReadGrpcCodec.toRequest(request));
     try {
@@ -87,24 +81,5 @@ public final class DraftCommitOrderReadClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private AccountDraftCommitOrderReadServiceGrpc.AccountDraftCommitOrderReadServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "Account COMMIT_ORDER read client is not initialized and available");
-    }
-    return currentStub;
   }
 }
