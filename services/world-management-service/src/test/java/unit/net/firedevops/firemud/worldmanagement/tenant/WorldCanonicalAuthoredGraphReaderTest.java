@@ -173,12 +173,12 @@ class WorldCanonicalAuthoredGraphReaderTest {
     graph.put("canonicalVersionId", plan.graph().versionId().toString());
     graph.put(
         "inboundSourceClosure",
-        WorldDraftTopologyCommitRepository.inboundSourceClosureContent(
-            plan.graph()
-                .freshGraphDeclaration()
-                .orElseThrow()
-                .inboundSourceClosure()
-                .orElseThrow()));
+        plan.graph()
+            .freshGraphDeclaration()
+            .orElseThrow()
+            .inboundSourceClosure()
+            .orElseThrow()
+            .content());
     graph.put("rows", rows);
     return tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsBytes(graph);
   }

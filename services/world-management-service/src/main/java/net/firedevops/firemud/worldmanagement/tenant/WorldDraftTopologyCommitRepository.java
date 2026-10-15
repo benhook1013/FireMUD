@@ -21,7 +21,6 @@ import net.firedevops.firemud.common.gamedesign.DraftSynchronizedVisibilityEvide
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.ConflictException;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceRepository.OpenOwner;
-import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.Node;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -504,26 +503,9 @@ public class WorldDraftTopologyCommitRepository {
         .freshGraphDeclaration()
         .flatMap(WorldDraftTopologyInputGraph.FreshGraphDeclaration::inboundSourceClosure)
         .ifPresent(
-            closure -> graph.put("inboundSourceClosure", inboundSourceClosureContent(closure)));
+            closure -> graph.put("inboundSourceClosure", closure.content()));
     graph.put("rows", rows);
     return STABLE_JSON.writeValueAsBytes(graph);
-  }
-
-  static Map<String, Object> inboundSourceClosureContent(InboundSourceClosureDeclaration closure) {
-    Map<String, Object> content = new LinkedHashMap<>();
-    content.put("schemaVersion", closure.schemaVersion());
-    content.put(
-        "familyCounts",
-        closure.familyCounts().stream()
-            .map(
-                family -> {
-                  Map<String, Object> entry = new LinkedHashMap<>();
-                  entry.put("family", family.family().name());
-                  entry.put("count", family.count());
-                  return entry;
-                })
-            .toList());
-    return content;
   }
 
   static Map<String, Object> expectedContent(

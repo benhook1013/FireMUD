@@ -1,7 +1,9 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -76,6 +78,24 @@ public final class WorldDraftTopologyInputGraph {
         throw new IllegalArgumentException("World inbound source schema version must be positive");
       }
       familyCounts = List.copyOf(Objects.requireNonNull(familyCounts, "familyCounts"));
+    }
+
+    /** Encodes the exact schema-ordered closure content shared by graph and digest storage. */
+    public Map<String, Object> content() {
+      Map<String, Object> content = new LinkedHashMap<>();
+      content.put("schemaVersion", schemaVersion);
+      content.put(
+          "familyCounts",
+          familyCounts.stream()
+              .map(
+                  family -> {
+                    Map<String, Object> entry = new LinkedHashMap<>();
+                    entry.put("family", family.family().name());
+                    entry.put("count", family.count());
+                    return entry;
+                  })
+              .toList());
+      return content;
     }
   }
 
