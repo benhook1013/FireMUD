@@ -2271,6 +2271,7 @@ runtime_paths = pull_request_paths(runtime_images, "runtime-images.yml")
 
 # Boot JARs use these helpers; each selector must retain both dependencies.
 build_dependencies = {
+    "dev-tools/validation/run-gradle-with-dependency-recovery.sh",
     "dev-tools/validation/run-locked-gradle.sh",
     "dev-tools/validation/gradle-run-supervisor.py",
 }
