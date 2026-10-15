@@ -166,6 +166,17 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
   static final PostgreSQLContainer<?> GAME_LOGIC_POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
+  private static final org.testcontainers.containers.Network ACCOUNT_NETWORK = org.testcontainers.containers.Network.newNetwork();
+  @Container static final PostgreSQLContainer<?> ACCOUNT_POSTGRES = new PostgreSQLContainer<>(TestContainerImages.postgres());
+  @Container static final org.testcontainers.containers.GenericContainer<?> ACCOUNT_REDIS =
+      new org.testcontainers.containers.GenericContainer<>(TestContainerImages.redis())
+          .withNetwork(ACCOUNT_NETWORK).withNetworkAliases("selected-reservation-primary").withExposedPorts(6379)
+          .withCommand("redis-server", "--bind", "0.0.0.0", "--protected-mode", "no", "--appendonly", "yes", "--appendfsync", "always");
+  @Container static final org.testcontainers.containers.GenericContainer<?> ACCOUNT_REPLICA =
+      new org.testcontainers.containers.GenericContainer<>(TestContainerImages.redis())
+          .withNetwork(ACCOUNT_NETWORK).dependsOn(ACCOUNT_REDIS)
+          .withCommand("redis-server", "--bind", "0.0.0.0", "--protected-mode", "no", "--appendonly", "yes", "--appendfsync", "always", "--replicaof", "selected-reservation-primary", "6379");
+
   @TempDir Path temporary;
 
   @Test
@@ -182,9 +193,11 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     var worldSource = registerControlledWorldSource(gds, draft.target());
     DraftCommitBinding commit = selectedCommit(gds, draft.target());
     applyGameDesignCommit(gds, commit);
+    var delivery = new net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceDeliveryRepository(gds.dsl())
+        .read(worldSource.operationId()).orElseThrow();
     var worldGraph =
         WorldSelectedFullPublicationEvidenceFixture.applyGraph(
-            world.dsl(), world.transactions(), NAMESPACE, commit, worldSource);
+            world.dsl(), world.transactions(), NAMESPACE, commit, worldSource, delivery.request().intakeRequestId());
     completeGameDesignCommit(gds, commit, worldGraph.applied());
 
     String publishRequestId = "selected-full-" + UUID.randomUUID();
@@ -206,6 +219,15 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                             gds.dsl(), new DraftCommitCoordinatorRepository(gds.dsl()))
                         .reserve(intent)
                         .selection());
+    try (var accountFixture = new AccountControlUiOriginalOrderFixture(
+        ACCOUNT_POSTGRES.getJdbcUrl(), ACCOUNT_POSTGRES.getUsername(), ACCOUNT_POSTGRES.getPassword(),
+        ACCOUNT_REDIS.getHost(), ACCOUNT_REDIS.getMappedPort(6379), temporary.resolve("account-original"), draft.target().canonicalTenantId())) {
+    var issuedCreator = accountFixture.issueCreator();
+    var accountSources = issuedCreator.sources();
+    var publicationAuthorization = new AccountPublicationAuthorizationService(issuedCreator.actors(), accountSources.fences,
+        new AccountPublicationAuthorizationRepository(accountSources.dsl)).authorize(
+            issuedCreator.compact(), AuthoredDraftPublishSelectionBinding.fromStored(selection.canonicalJson(), selection.digest()),
+            issuedCreator.environment());
     var worldOwners =
         WorldSelectedFullPublicationEvidenceFixture.applyFreezeAndCapture(
             world.dsl(),
@@ -214,7 +236,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             AuthoredDraftPublishSelectionBinding.fromStored(
                 selection.canonicalJson(), selection.digest()),
             worldGraph,
-            SelectedFullOwnerPublicationPostgresIntegrationTest::controlledAccountBinding);
+            ignored -> publicationAuthorization);
     assertThat(worldOwners.selectedWorldDigest().digestSchemaVersion()).isEqualTo(4);
     assertThat(worldOwners.appliedResultBytes()).isNotEmpty();
     assertThat(worldOwners.graphBytes()).isNotEmpty();
@@ -342,22 +364,6 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         AuthoredDraftPublishSelectionBinding.fromStored(
             selection.canonicalJson(), selection.digest());
     var accountBinding = worldOwners.accountBinding();
-    var templateSourceRead =
-        new SelectedDraftTemplateWorldSourceAssociation.SourceRead(
-            worldOwners.sourceReadRequest(), worldOwners.sourceReadReceipt());
-    var selectedOwnerReservation =
-        gds.write()
-            .execute(
-                ignored ->
-                    new SelectedDraftPublicationOwner(gds.dsl())
-                        .reserve(
-                            intent,
-                            accountBinding,
-                            worldOwners.startLocationEvidence(),
-                            worldOwners.inventoryEvidence(),
-                            templateSourceRead));
-    assertThat(selectedOwnerReservation.selection().canonicalBytes())
-        .containsExactly(selectionBinding.canonicalBytes());
 
     Long gdsBundleBefore =
         gds.dsl()
@@ -369,10 +375,23 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     assertThat(gdsBundleBefore).isZero();
 
     ProofPki pki = new ProofPki(temporary.resolve("selected-full-pki"));
+    Server accountServer = null;
+    Server worldServer = null;
     Server entityServer = null;
     Server automationServer = null;
     Server gameLogicServer = null;
+    // This case recovers the exact already-committed World freeze. Mutable owner reads must not repeat.
+    var replaySelection = org.mockito.Mockito.mock(net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionReadClient.class);
+    var replayVersion = org.mockito.Mockito.mock(net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateClient.class);
+    var replayAccount = org.mockito.Mockito.mock(net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient.class);
+    var replaySource = org.mockito.Mockito.mock(net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient.class);
     try {
+      accountServer = ownerServer(pki, "account-service", new AccountPublicationAuthorizationReadGrpcService(
+          new AccountPublicationAuthorizationReadService(new AccountPublicationAuthorizationRepository(accountSources.dsl),
+              accountSources.manager, NAMESPACE), NAMESPACE));
+      var worldReaders = WorldSelectedFullPublicationEvidenceFixture.reservationReadEndpoints(
+          world.dsl(), world.transactions(), NAMESPACE, replaySelection, replayVersion, replayAccount, replaySource);
+      worldServer = ownerServer(pki, "world-management-service", worldReaders.toArray(io.grpc.BindableService[]::new));
       entityServer =
           ownerServer(
               pki,
@@ -408,11 +427,23 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                   new net.firedevops.firemud.common.security.PublicationReadGuard(NAMESPACE)));
 
       var endpoints = new ServiceEndpointsProperties();
+      endpoints.setAccountService(loopback(accountServer));
+      endpoints.setWorldManagementService(loopback(worldServer));
       endpoints.setEntityManagementService(loopback(entityServer));
       endpoints.setAutomationScriptingService(loopback(automationServer));
       endpoints.setGameLogicService(loopback(gameLogicServer));
       var channelFactory = new GrpcChannelFactory();
-      try (var entityClient =
+      try (var accountClient = new net.firedevops.firemud.common.publication.AccountPublicationAuthorizationReadClient(
+              endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
+          var freezeClient = new net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient(
+              endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
+          var inventoryClient = new net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient(
+              endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
+          var selectorClient = new net.firedevops.firemud.common.world.WorldPublishedStartLocationClient(
+              endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
+          var sourceClient = new net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient(
+              endpoints, pki.client("game-design-service"), channelFactory, NAMESPACE);
+          var entityClient =
               new ReadyEntityManagementClient(
                   endpoints, pki.client("game-design-service"), channelFactory);
           var automationClient =
@@ -421,6 +452,18 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
           var gameLogicClient =
               new ReadyGameLogicClient(
                   endpoints, pki.client("game-design-service"), channelFactory)) {
+        accountClient.init();
+        freezeClient.init();
+        inventoryClient.init();
+        selectorClient.init();
+        sourceClient.init();
+        var admission = new net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationAdmissionService(
+            gds.dsl(), gds.transactions(), accountClient, freezeClient, inventoryClient, selectorClient, sourceClient, NAMESPACE);
+        var selectedOwnerReservation = admission.admitAndReserve(intent, accountBinding);
+        assertThat(selectedOwnerReservation.selection().canonicalBytes()).containsExactly(selectionBinding.canonicalBytes());
+        var reservationReplay = admission.admitAndReserve(intent, accountBinding);
+        assertThat(reservationReplay.operation().canonicalBytes()).containsExactly(selectedOwnerReservation.operation().canonicalBytes());
+        org.mockito.Mockito.verifyNoInteractions(replaySelection, replayVersion, replayAccount, replaySource);
         ReflectionTestUtils.setField(gameLogicClient, "workloadNamespace", NAMESPACE);
         entityClient.connect();
         automationClient.connect();
@@ -657,10 +700,13 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         assertThat(bundleOwnerRow(gds, draft.version())).isEqualTo(committedBundleRow);
       }
     } finally {
+      stop(accountServer);
+      stop(worldServer);
       stop(entityServer);
       stop(automationServer);
       stop(gameLogicServer);
     }
+  }
   }
 
   private static Draft createDraft(Store gds) {
@@ -1097,18 +1143,14 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
     return "127.0.0.1:" + server.getPort();
   }
 
-  private static Server ownerServer(ProofPki pki, String service, io.grpc.BindableService handler)
+  private static Server ownerServer(ProofPki pki, String service, io.grpc.BindableService... handlers)
       throws Exception {
     var identity = pki.server(service);
-    return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
-        .sslContext(
-            GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
-                .trustManager(pki.ca().toFile())
-                .clientAuth(ClientAuth.REQUIRE)
-                .build())
-        .addService(ServerInterceptors.intercept(handler, new GrpcPeerIdentityInterceptor()))
-        .build()
-        .start();
+    var builder = NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+        .sslContext(GrpcSslContexts.forServer(identity.certificate().toFile(), identity.key().toFile())
+            .trustManager(pki.ca().toFile()).clientAuth(ClientAuth.REQUIRE).build());
+    for (var handler : handlers) builder.addService(ServerInterceptors.intercept(handler, new GrpcPeerIdentityInterceptor()));
+    return builder.build().start();
   }
 
   private static void stop(Server server) throws InterruptedException {
@@ -1260,6 +1302,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       for (String service :
           List.of(
               "game-design-service",
+              "account-service",
+              "world-management-service",
               "entity-management-service",
               "automation-scripting-service",
               "game-logic-service")) {
