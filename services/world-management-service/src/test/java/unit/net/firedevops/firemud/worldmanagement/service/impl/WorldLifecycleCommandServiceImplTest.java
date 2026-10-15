@@ -274,8 +274,6 @@ class WorldLifecycleCommandServiceImplTest {
         .thenReturn(Optional.of(instance));
     when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenReturn(Optional.of(instance));
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
-        .thenReturn(Optional.of(instance));
     when(worldInstanceRepository.save(any(WorldInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
