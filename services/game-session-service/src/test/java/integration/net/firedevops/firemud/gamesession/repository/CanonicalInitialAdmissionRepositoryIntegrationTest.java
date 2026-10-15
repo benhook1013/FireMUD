@@ -1476,26 +1476,25 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
 
   private static void assertV1013RetentionLaunchForeignKey(Fixture fixture) {
     var foreignKey =
-        fixture
-            .dsl
-            .fetchSingle(
-                "SELECT fk.conname::TEXT, child_namespace.nspname::TEXT AS child_schema, "
-                    + "child.relname::TEXT AS child_table, parent_namespace.nspname::TEXT AS parent_schema, "
-                    + "parent.relname::TEXT AS parent_table, pg_get_constraintdef(fk.oid) AS definition, "
-                    + "fk.convalidated, fk.condeferrable FROM pg_constraint fk "
-                    + "JOIN pg_class child ON child.oid = fk.conrelid "
-                    + "JOIN pg_namespace child_namespace ON child_namespace.oid = child.relnamespace "
-                    + "JOIN pg_class parent ON parent.oid = fk.confrelid "
-                    + "JOIN pg_namespace parent_namespace ON parent_namespace.oid = parent.relnamespace "
-                    + "WHERE fk.conname = 'fk_gs_original_start_session_actor_core_launch' "
-                    + "AND child.relname = 'game_session_original_start_session_authored_actor_core_retention' "
-                    + "AND child_namespace.nspname = current_schema() "
-                    + "AND parent.relname = 'game_session_canonical_instance_launch' "
-                    + "AND parent_namespace.nspname = current_schema()");
+        fixture.dsl.fetchSingle(
+            "SELECT fk.conname::TEXT, child_namespace.nspname::TEXT AS child_schema, "
+                + "child.relname::TEXT AS child_table, parent_namespace.nspname::TEXT AS parent_schema, "
+                + "parent.relname::TEXT AS parent_table, pg_get_constraintdef(fk.oid) AS definition, "
+                + "fk.convalidated, fk.condeferrable FROM pg_constraint fk "
+                + "JOIN pg_class child ON child.oid = fk.conrelid "
+                + "JOIN pg_namespace child_namespace ON child_namespace.oid = child.relnamespace "
+                + "JOIN pg_class parent ON parent.oid = fk.confrelid "
+                + "JOIN pg_namespace parent_namespace ON parent_namespace.oid = parent.relnamespace "
+                + "WHERE fk.conname = 'fk_gs_original_start_session_actor_core_launch' "
+                + "AND child.relname = 'game_session_original_start_session_authored_actor_core_retention' "
+                + "AND child_namespace.nspname = current_schema() "
+                + "AND parent.relname = 'game_session_canonical_instance_launch' "
+                + "AND parent_namespace.nspname = current_schema()");
     assertThat(foreignKey.get("child_schema", String.class))
         .isEqualTo(foreignKey.get("parent_schema", String.class));
+    // PostgreSQL stores at most 63 bytes for a relation identifier.
     assertThat(foreignKey.get("child_table", String.class))
-        .isEqualTo("game_session_original_start_session_authored_actor_core_retention");
+        .isEqualTo("game_session_original_start_session_authored_actor_core_retenti");
     assertThat(foreignKey.get("parent_table", String.class))
         .isEqualTo("game_session_canonical_instance_launch");
     assertThat(foreignKey.get("definition", String.class))
@@ -1507,22 +1506,20 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     assertThat(foreignKey.get("condeferrable", Boolean.class)).isFalse();
 
     var launchTriggers =
-        fixture
-            .dsl
-            .fetch(
-                "SELECT launch_trigger.tgtype, launch_trigger.tgenabled::TEXT, "
-                    + "launch_trigger.tgisinternal FROM pg_trigger launch_trigger "
-                    + "JOIN pg_constraint fk ON fk.oid = launch_trigger.tgconstraint "
-                    + "JOIN pg_class child ON child.oid = fk.conrelid "
-                    + "JOIN pg_namespace child_namespace ON child_namespace.oid = child.relnamespace "
-                    + "JOIN pg_class parent ON parent.oid = fk.confrelid "
-                    + "JOIN pg_namespace parent_namespace ON parent_namespace.oid = parent.relnamespace "
-                    + "WHERE fk.conname = 'fk_gs_original_start_session_actor_core_launch' "
-                    + "AND child.relname = 'game_session_original_start_session_authored_actor_core_retention' "
-                    + "AND child_namespace.nspname = current_schema() "
-                    + "AND parent.relname = 'game_session_canonical_instance_launch' "
-                    + "AND parent_namespace.nspname = current_schema() "
-                    + "AND launch_trigger.tgrelid = parent.oid ORDER BY launch_trigger.tgtype");
+        fixture.dsl.fetch(
+            "SELECT launch_trigger.tgtype, launch_trigger.tgenabled::TEXT, "
+                + "launch_trigger.tgisinternal FROM pg_trigger launch_trigger "
+                + "JOIN pg_constraint fk ON fk.oid = launch_trigger.tgconstraint "
+                + "JOIN pg_class child ON child.oid = fk.conrelid "
+                + "JOIN pg_namespace child_namespace ON child_namespace.oid = child.relnamespace "
+                + "JOIN pg_class parent ON parent.oid = fk.confrelid "
+                + "JOIN pg_namespace parent_namespace ON parent_namespace.oid = parent.relnamespace "
+                + "WHERE fk.conname = 'fk_gs_original_start_session_actor_core_launch' "
+                + "AND child.relname = 'game_session_original_start_session_authored_actor_core_retention' "
+                + "AND child_namespace.nspname = current_schema() "
+                + "AND parent.relname = 'game_session_canonical_instance_launch' "
+                + "AND parent_namespace.nspname = current_schema() "
+                + "AND launch_trigger.tgrelid = parent.oid ORDER BY launch_trigger.tgtype");
     assertThat(launchTriggers).hasSize(2);
     assertThat(launchTriggers)
         .extracting(row -> ((Number) row.get("tgtype")).intValue())

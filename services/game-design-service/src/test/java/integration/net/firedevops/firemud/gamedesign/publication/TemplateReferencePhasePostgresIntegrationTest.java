@@ -196,8 +196,7 @@ class TemplateReferencePhasePostgresIntegrationTest {
     UUID revisionId = UUID.randomUUID();
     GameDesignSourceRepository sources = new GameDesignSourceRepository(fixture.dsl());
     String baseReference =
-        "genesis:"
-            + sources.readGenesis(fixture.target()).orElseThrow().policy().receiptId();
+        "genesis:" + sources.readGenesis(fixture.target()).orElseThrow().policy().receiptId();
     DraftCommitBinding binding =
         DraftCommitBinding.create(
             fixture.target(),
