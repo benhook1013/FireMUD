@@ -33,7 +33,7 @@ plugins {
     alias(libs.plugins.flyway) apply false
     id("com.diffplug.spotless") version "8.10.4"
     id("checkstyle")
-    id("com.github.spotbugs") version "6.5.12"
+    id("com.github.spotbugs") version "6.5.13"
     jacoco
 }
 
@@ -92,7 +92,7 @@ tasks.register<JavaCompile>("compileBufGeneratedJava") {
 
 val fullCheck = project.hasProperty("fullCheck") || System.getenv("CI") != null
 val checkstyleToolVersion = "14.3.0"
-val spotbugsToolVersion = "4.10.4"
+val spotbugsToolVersion = "4.10.5"
 val platformSettingsMetadataFiles = listOf(
     file("services/game-session-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json"),
     file("services/game-logic-service/src/main/resources/META-INF/additional-spring-configuration-metadata.json")
@@ -268,6 +268,10 @@ subprojects {
     dependencies {
         implementation(platform(libs.findLibrary("spring-boot-dependencies").get()))
         testImplementation(platform(libs.findLibrary("spring-boot-dependencies").get()))
+        implementation(platform(libs.findLibrary("jackson-2-bom").get()))
+        implementation(platform(libs.findLibrary("jackson-3-bom").get()))
+        testImplementation(platform(libs.findLibrary("jackson-2-bom").get()))
+        testImplementation(platform(libs.findLibrary("jackson-3-bom").get()))
         implementation(libs.findLibrary("protobuf-java").get())
         implementation(libs.findLibrary("grpc-netty-shaded").get())
         implementation(libs.findLibrary("grpc-protobuf").get())
@@ -283,12 +287,24 @@ subprojects {
         }
     }
 
+    plugins.withId("java-test-fixtures") {
+        dependencies {
+            add("testFixturesImplementation", platform(libs.findLibrary("jackson-2-bom").get()))
+            add("testFixturesImplementation", platform(libs.findLibrary("jackson-3-bom").get()))
+        }
+    }
+
     val testcontainersVersion = libs.findVersion("testcontainers").get().requiredVersion
+    val tomcatVersion = libs.findVersion("tomcat").get().requiredVersion
     configurations.configureEach {
         resolutionStrategy.eachDependency {
             if (requested.group == "org.testcontainers") {
                 useVersion(testcontainersVersion)
                 because("Testcontainers modules must resolve on one catalog-managed version train")
+            }
+            if (requested.group == "org.apache.tomcat" || requested.group == "org.apache.tomcat.embed") {
+                useVersion(tomcatVersion)
+                because("Tomcat modules must resolve on one catalog-managed security patch train")
             }
         }
     }

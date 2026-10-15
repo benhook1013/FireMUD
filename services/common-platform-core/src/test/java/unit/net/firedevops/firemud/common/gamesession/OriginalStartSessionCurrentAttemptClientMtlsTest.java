@@ -63,9 +63,9 @@ class OriginalStartSessionCurrentAttemptClientMtlsTest {
   private final AtomicInteger calls = new AtomicInteger();
   private final AtomicReference<String> lastPeerUri = new AtomicReference<>();
   private Server server;
-  private boolean substituteEcho;
-  private boolean malformedExpiry;
-  private boolean stall;
+  private volatile boolean substituteEcho;
+  private volatile boolean malformedExpiry;
+  private volatile boolean stall;
 
   @BeforeAll
   static void certificates() throws Exception {

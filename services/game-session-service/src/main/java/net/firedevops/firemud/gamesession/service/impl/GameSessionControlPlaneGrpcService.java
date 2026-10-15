@@ -21,7 +21,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionFixtureCoordinator;
+import net.firedevops.firemud.gamesession.data.RunOwnedCanonicalLaunchPreparationOwner;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionLaunchEvidence;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.InitialAdmissionBindHoldBinding;
@@ -121,7 +121,7 @@ public final class GameSessionControlPlaneGrpcService
   private final MeterRegistry meterRegistry;
   private InitialAdmissionBindOwnerProofReader initialAdmissionBindOwnerProofReader;
   private InitialAdmissionBindOwnerReadWorkloadGuard initialAdmissionBindOwnerReadWorkloadGuard;
-  private RunOwnedInitialAdmissionFixtureCoordinator runOwnedFixtureCoordinator;
+  private RunOwnedCanonicalLaunchPreparationOwner runOwnedLaunchPreparationOwner;
   private String fixtureReadWorkloadNamespace;
   private boolean fixtureLaunchReadEnabled;
 
@@ -159,10 +159,10 @@ public final class GameSessionControlPlaneGrpcService
 
   @Autowired(required = false)
   public void configureRunOwnedFixtureLaunchAssociationReadBoundary(
-      RunOwnedInitialAdmissionFixtureCoordinator fixtureCoordinator,
+      RunOwnedCanonicalLaunchPreparationOwner fixtureOwner,
       @Value("${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:false}") boolean fixtureEnabled,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
-    this.runOwnedFixtureCoordinator = fixtureCoordinator;
+    this.runOwnedLaunchPreparationOwner = fixtureOwner;
     this.fixtureLaunchReadEnabled = fixtureEnabled;
     this.fixtureReadWorkloadNamespace = workloadNamespace;
   }
@@ -318,7 +318,7 @@ public final class GameSessionControlPlaneGrpcService
     Objects.requireNonNull(responseObserver, "responseObserver");
     try {
       requireWorldFixtureLaunchAssociationReadCaller();
-      if (!fixtureLaunchReadEnabled || runOwnedFixtureCoordinator == null) {
+      if (!fixtureLaunchReadEnabled || runOwnedLaunchPreparationOwner == null) {
         throw new IllegalStateException("Fixed fixture owner read is disabled");
       }
       if (TransactionSynchronizationManager.isActualTransactionActive()
@@ -336,7 +336,7 @@ public final class GameSessionControlPlaneGrpcService
 
       // Authentication and the fixed default-off boundary precede strict wire decoding.
       RunOwnedInitialAdmissionLaunchEvidence evidence =
-          runOwnedFixtureCoordinator.loadFixedVerifiedEvidenceForWorldPeer();
+          runOwnedLaunchPreparationOwner.loadFixedVerifiedEvidenceForWorldPeer();
       CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureRequest selector;
       try {
         selector = CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromFixtureRequest(request);
@@ -364,7 +364,7 @@ public final class GameSessionControlPlaneGrpcService
         return;
       }
 
-      var launch = runOwnedFixtureCoordinator.readFixedFixtureLaunch(evidence);
+      var launch = runOwnedLaunchPreparationOwner.readFixedFixtureLaunch(evidence);
       var catalog = launch.catalog().snapshot();
       var result =
           new CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureResult(
