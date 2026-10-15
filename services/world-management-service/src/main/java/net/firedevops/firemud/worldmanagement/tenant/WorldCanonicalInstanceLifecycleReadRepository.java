@@ -463,7 +463,8 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
         switch (release.schemaVersion()) {
           case AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION -> 3;
           case AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION,
-              AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION -> 4;
+              AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION ->
+              4;
           default ->
               throw invalid("Retained release has no supported selected World graph profile");
         };

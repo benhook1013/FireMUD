@@ -26,9 +26,9 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
-import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsClient;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
+import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsClient;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
@@ -196,11 +196,13 @@ class AuthoredCoreAndSpawnReadClientLifecycleTest {
           yield new ClientHandle(client, client::init);
         }
         case WORLD_SELECTED_FREEZE -> {
-          var client = new WorldSelectedDraftPublicationFreezeClient(endpoints, tls, factory, "test");
+          var client =
+              new WorldSelectedDraftPublicationFreezeClient(endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
         }
         case WORLD_SELECTED_INVENTORY -> {
-          var client = new WorldSelectedPublicationArtifactInventoryClient(endpoints, tls, factory, "test");
+          var client =
+              new WorldSelectedPublicationArtifactInventoryClient(endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
         }
       };
