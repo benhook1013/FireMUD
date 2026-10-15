@@ -36,6 +36,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidenc
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -714,6 +715,98 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   @Test
+  void actualFixtureMaterializationRetainsUnderOwnerSavepoint() {
+    var evidence = controlledEvidence();
+    var sourceOwner = new WorldAuthoredSourceIntakeRepository(dsl);
+    var versionOwner = new WorldAuthoredVersionIdentityRepository(dsl);
+    var intake =
+        ownerTransaction()
+            .execute(
+                status ->
+                    sourceOwner.acceptFresh(
+                        "dev", UUID.randomUUID(), evidence.sourceReceipt().sourceEvidence()));
+    var state =
+        AuthoredWorldVersionStateEvidence.create(
+            new AuthoredWorldVersionStateEvidence.Request(
+                1,
+                "dev",
+                UUID.randomUUID(),
+                intake.canonicalTenantId(),
+                intake.worldSlug(),
+                intake.sourceOperationId(),
+                intake.sourceEvidenceDigest(),
+                evidence.launchDescriptor().versionId()),
+            intake.source(),
+            evidence.gameSessionAssociation().canonicalVersionId(),
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+            evidence.launchDescriptor().versionStateEpoch());
+    var version = ownerTransaction().execute(status -> versionOwner.acceptFresh(intake, state));
+    var fixtureAssociations =
+        new WorldCanonicalInstanceAssociationRepository(
+            dsl,
+            new WorldCompleteLaunchBindingRepository(dsl),
+            sourceOwner,
+            versionOwner);
+    var fixtureFence = new WorldDesignPublicationFenceRepository(dsl, sourceOwner);
+    var fixtureRequest = RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence);
+    var allocatedFixture =
+        ownerTransaction()
+            .execute(
+                status -> {
+                  fixtureFence.lockOpen(binding(intake, version));
+                  return fixtureAssociations.allocateRunOwnedFixtureInOwnerTransaction(
+                      evidence, fixtureRequest, intake, version);
+                });
+    var fixtureAssociation =
+        fixtureAssociations.readRunOwnedFixtureAssociation(evidence, fixtureRequest);
+    var fixturePlan = RunOwnedWorldFixedPresetResources.plan(fixtureAssociation, intake, version);
+    var savepoint = new TransactionTemplate(transactionManager);
+    savepoint.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
+    savepoint.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+
+    var materialized =
+        ownerTransaction()
+            .execute(
+                status -> {
+                  var result =
+                      savepoint.execute(
+                          nestedStatus ->
+                              RunOwnedWorldFixedPresetResources.materialize(
+                                  dsl,
+                                  evidence,
+                                  fixturePlan,
+                                  allocatedFixture.worldInstanceId(),
+                                  allocatedFixture.worldPrivateKeys().gameInstanceId()));
+                  assertThat(
+                          scalarText(
+                              "SELECT p.xmin::text FROM world_canonical_instance_preparation p "
+                                  + "WHERE p.world_instance_id = ?",
+                              allocatedFixture.worldInstanceId()))
+                      .isNotEqualTo(
+                          scalarText("SELECT (txid_current() % 4294967296)::text"));
+                  return result;
+                });
+    assertThat(materialized).isNotNull();
+    assertThat(materialized.regionCount()).isEqualTo(1);
+    assertThat(materialized.zoneCount()).isEqualTo(1);
+    assertThat(materialized.roomCount()).isEqualTo(2);
+    assertThat(materialized.exitCount()).isEqualTo(2);
+    assertThat(
+            scalarLong(
+                "SELECT count(*) FROM world_canonical_instance_preparation "
+                    + "WHERE world_instance_id = ?",
+                allocatedFixture.worldInstanceId()))
+        .isEqualTo(1L);
+    assertThat(
+            scalarLong(
+                "SELECT count(*) FROM world_canonical_instance_preparation_execution_manifest "
+                    + "WHERE fixture_world_instance_id = ?",
+                allocatedFixture.worldInstanceId()))
+        .isZero();
+    assertNoPendingManifests(allocatedFixture.worldInstanceId());
+  }
+
+  @Test
   void fixturePreparingCannotActivateAcquireHoldsPlaceActorsOrReuseConsumedManifests()
       throws Exception {
     var evidence = controlledEvidence();
@@ -967,7 +1060,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             .isEqualTo(originalRows.get(entry.getKey()));
 
       // Create and materialize a controlled schema-3 fixture through the existing World owners at
-      // the V1041 checkpoint, then prove V1042 retains every stored row image and xmin.
+      // the V1041 checkpoint, then preserve that real fixture while advancing to V1042.8.
       var fixtureAssociations =
           new WorldCanonicalInstanceAssociationRepository(
               connection,
@@ -1026,9 +1119,145 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                   .get(0, Long.class))
           .isEqualTo(1L);
 
-      var retainedRowsAtV1042 = new LinkedHashMap<>(allRows(connection));
-      retainedRowsAtV1042.remove(HISTORY);
-      var historyAtV1042 = history(connection);
+      var through10428 = migration(source, schema, "1042.8");
+      through10428.migrate();
+      through10428.validate();
+      assertThat(through10428.getConfiguration().isOutOfOrder()).isFalse();
+      assertThat(versions(connection)).contains("1042.8").doesNotContain("1042.9");
+      String preservedPublicationRequestId = "pre-v1042-9-null-stamp";
+      var preservedWorkflow =
+          PublicationDigestRequestBinding.full(
+                  intake.canonicalTenantId().toString(),
+                  Long.toString(version.gameDesignVersionId()),
+                  preservedPublicationRequestId)
+              .derivedWorkflowIdentity();
+      UUID preservedPublicationFence = UUID.randomUUID();
+      connection.execute(
+          "INSERT INTO world_design_publication_fence_attempt "
+              + "(publication_fence, target_namespace, canonical_tenant_id, local_tenant_key, "
+              + "version_id, intake_operation_id, intake_request_id, source_operation_id, "
+              + "source_evidence_digest, intake_receipt_digest, publication_request_id, "
+              + "request_digest, version_state_epoch, publish_workflow_id, applied_commit_id, "
+              + "content_digest, digest_schema_version, owner_binding_schema_version, "
+              + "canonical_version_id, version_identity_operation_id, game_design_version_id, "
+              + "intake_request_digest, attempt_created_full_xid) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3, 1, ?, ?, ?, ?, NULL)",
+          preservedPublicationFence,
+          intake.targetNamespace(),
+          intake.canonicalTenantId(),
+          intake.localTenantKey(),
+          version.localVersionKey(),
+          intake.operationId(),
+          intake.intakeRequestId(),
+          intake.sourceOperationId(),
+          intake.sourceEvidenceDigest(),
+          intake.receiptDigest(),
+          preservedPublicationRequestId,
+          "a".repeat(64),
+          evidence.launchDescriptor().versionStateEpoch(),
+          preservedWorkflow,
+          "retained-null-stamp-commit",
+          "b".repeat(64),
+          version.canonicalVersionId(),
+          version.operationId(),
+          version.gameDesignVersionId(),
+          intake.requestDigest());
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT attempt_created_full_xid::text FROM world_design_publication_fence_attempt "
+                          + "WHERE publication_fence = ?",
+                      preservedPublicationFence)
+                  .get(0, String.class))
+          .isNull();
+      String preservedForgedRequestId = "pre-v1042-9-forged-stamp";
+      var preservedForgedWorkflow =
+          PublicationDigestRequestBinding.full(
+                  intake.canonicalTenantId().toString(),
+                  Long.toString(version.gameDesignVersionId()),
+                  preservedForgedRequestId)
+              .derivedWorkflowIdentity();
+      UUID preservedForgedPublicationFence = UUID.randomUUID();
+      connection.execute(
+          "INSERT INTO world_design_publication_fence_attempt "
+              + "(publication_fence, target_namespace, canonical_tenant_id, local_tenant_key, "
+              + "version_id, intake_operation_id, intake_request_id, source_operation_id, "
+              + "source_evidence_digest, intake_receipt_digest, publication_request_id, "
+              + "request_digest, version_state_epoch, publish_workflow_id, applied_commit_id, "
+              + "content_digest, digest_schema_version, owner_binding_schema_version, "
+              + "canonical_version_id, version_identity_operation_id, game_design_version_id, "
+              + "intake_request_digest, attempt_created_full_xid) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3, 1, ?, ?, ?, ?, ?::xid8)",
+          preservedForgedPublicationFence,
+          intake.targetNamespace(),
+          intake.canonicalTenantId(),
+          intake.localTenantKey(),
+          version.localVersionKey(),
+          intake.operationId(),
+          intake.intakeRequestId(),
+          intake.sourceOperationId(),
+          intake.sourceEvidenceDigest(),
+          intake.receiptDigest(),
+          preservedForgedRequestId,
+          "c".repeat(64),
+          evidence.launchDescriptor().versionStateEpoch(),
+          preservedForgedWorkflow,
+          "retained-forged-stamp-commit",
+          "d".repeat(64),
+          version.canonicalVersionId(),
+          version.operationId(),
+          version.gameDesignVersionId(),
+          intake.requestDigest(),
+          "9223372036854775807");
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT attempt_created_full_xid::text FROM world_design_publication_fence_attempt "
+                          + "WHERE publication_fence = ?",
+                      preservedForgedPublicationFence)
+                  .get(0, String.class))
+          .isEqualTo("9223372036854775807");
+      int versionedCountAt10428 = versions(connection).size();
+      var retainedRowsAt10428 = new LinkedHashMap<>(allRows(connection));
+      retainedRowsAt10428.remove(HISTORY);
+      var historyAt10428 = history(connection);
+      Map<String, String> sameTransactionFunctionMetadata = new LinkedHashMap<>();
+      for (String function :
+          List.of(
+              "world_validate_selected_publication_account_binding()",
+              "world_validate_selected_publication_artifact_inventory()",
+              "world_retain_preparation_start_location()"))
+        sameTransactionFunctionMetadata.put(
+            function,
+            connection
+                .fetchSingle(
+                    "SELECT jsonb_build_array(oid::text, proowner::text, prosecdef::text, "
+                        + "proconfig::text, proacl::text)::text FROM pg_proc "
+                        + "WHERE oid = to_regprocedure(?)",
+                    schema + "." + function)
+                .get(0, String.class));
+      Map<String, String> sameTransactionTriggerMetadata = new LinkedHashMap<>();
+      for (String trigger :
+          List.of(
+              "trg_world_publication_account_binding_validate",
+              "trg_world_publication_account_binding_immutable",
+              "trg_world_publication_account_binding_no_truncate",
+              "trg_world_selected_publication_artifact_inventory_validate",
+              "trg_world_selected_publication_artifact_inventory_immutable",
+              "trg_world_selected_publication_artifact_inventory_no_truncate",
+              "trg_world_preparation_retain_start_location"))
+        sameTransactionTriggerMetadata.put(
+            trigger,
+            connection
+                .fetchSingle(
+                    "SELECT jsonb_build_array(t.oid::text, t.tgfoid::text, t.tgtype::text, "
+                        + "t.tgenabled::text, encode(t.tgargs, 'hex'), "
+                        + "pg_get_expr(t.tgqual, t.tgrelid))::text "
+                        + "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                        + "WHERE c.relnamespace = to_regnamespace(?) AND t.tgname = ?",
+                    schema,
+                    trigger)
+                .get(0, String.class));
       String guardProcedure = schema + ".world_guard_canonical_activation_transition()";
       var originalGuardIdentity =
           connection.fetchSingle(
@@ -1049,21 +1278,152 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       assertThat(versions(connection).subList(40, resolvedVersionedCount))
           .containsExactlyElementsOf(remainingVersions());
       assertThat(history(connection).subList(0, 40)).isEqualTo(parentHistory);
-      assertThat(history(connection).subList(0, 75)).isEqualTo(historyAtV1042);
+      assertThat(history(connection).subList(0, versionedCountAt10428)).isEqualTo(historyAt10428);
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT attempt_created_full_xid::text FROM world_design_publication_fence_attempt "
+                          + "WHERE publication_fence = ?",
+                      preservedPublicationFence)
+                  .get(0, String.class))
+          .isNull();
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT attempt_inserted_full_xid::text FROM world_design_publication_fence_attempt "
+                          + "WHERE publication_fence = ?",
+                      preservedPublicationFence)
+                  .get(0, String.class))
+          .isNull();
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT attempt_created_full_xid::text, attempt_inserted_full_xid::text "
+                          + "FROM world_design_publication_fence_attempt WHERE publication_fence = ?",
+                      preservedForgedPublicationFence))
+          .as("the pre-1042.9 caller-forged stamp is retained while the new server stamp stays NULL")
+          .satisfies(
+              row -> {
+                assertThat(row.get(0, String.class)).isEqualTo("9223372036854775807");
+                assertThat(row.get(1, String.class)).isNull();
+              });
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT count(*) FROM world_design_publication_fence_attempt "
+                          + "WHERE attempt_inserted_full_xid IS NOT NULL")
+                  .get(0, Long.class))
+          .isZero();
+      for (var entry : sameTransactionFunctionMetadata.entrySet())
+        assertThat(
+                connection
+                    .fetchSingle(
+                        "SELECT jsonb_build_array(oid::text, proowner::text, prosecdef::text, "
+                            + "proconfig::text, proacl::text)::text FROM pg_proc "
+                            + "WHERE oid = to_regprocedure(?)",
+                        schema + "." + entry.getKey())
+                    .get(0, String.class))
+            .as("function OID, owner, security, search_path and ACL for %s", entry.getKey())
+            .isEqualTo(entry.getValue());
+      for (var entry : sameTransactionTriggerMetadata.entrySet())
+        assertThat(
+                connection
+                    .fetchSingle(
+                        "SELECT jsonb_build_array(t.oid::text, t.tgfoid::text, t.tgtype::text, "
+                            + "t.tgenabled::text, encode(t.tgargs, 'hex'), "
+                            + "pg_get_expr(t.tgqual, t.tgrelid))::text "
+                            + "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                            + "WHERE c.relnamespace = to_regnamespace(?) AND t.tgname = ?",
+                        schema,
+                        entry.getKey())
+                    .get(0, String.class))
+            .as("existing trigger identity and behavior for %s", entry.getKey())
+            .isEqualTo(entry.getValue());
       for (var entry : originalColumns.entrySet())
         assertThat(retainedRows(connection, schema, entry.getKey(), entry.getValue()))
             .as("all original values and xmin for %s", entry.getKey())
             .containsAll(originalRows.get(entry.getKey()));
-      var retainedRowsAtDefaultFrontier = new LinkedHashMap<>(allRows(connection));
+      var retainedRowsAtDefaultFrontier =
+          new LinkedHashMap<>(allRowsWithoutNewAttemptStamp(connection));
       retainedRowsAtDefaultFrontier.remove(HISTORY);
       assertThat(retainedRowsAtDefaultFrontier)
-          .as("all retained row values and xmin from V1042 through the default frontier")
-          .isEqualTo(retainedRowsAtV1042);
+          .as("all retained row values and xmin from V1042.8 through the V1042.9 repair")
+          .isEqualTo(retainedRowsAt10428);
       assertThat(
               connection.fetchSingle(
                   "SELECT oid::text, proowner::text, prosecdef, proconfig::text, proacl::text FROM pg_proc WHERE oid = to_regprocedure(?)",
                   guardProcedure))
           .isEqualTo(originalGuardIdentity);
+      var installedAccountBinding =
+          connection
+              .fetchSingle(
+                  "SELECT pg_get_functiondef(to_regprocedure(?))",
+                  schema + ".world_validate_selected_publication_account_binding()")
+              .get(0, String.class);
+      var installedArtifactInventory =
+          connection
+              .fetchSingle(
+                  "SELECT pg_get_functiondef(to_regprocedure(?))",
+                  schema + ".world_validate_selected_publication_artifact_inventory()")
+              .get(0, String.class);
+      var installedPreparationRetainer =
+          connection
+              .fetchSingle(
+                  "SELECT pg_get_functiondef(to_regprocedure(?))",
+                  schema + ".world_retain_preparation_start_location()")
+              .get(0, String.class);
+      assertThat(installedAccountBinding)
+          .contains("attempt_created_full_xid = pg_current_xact_id()")
+          .contains("attempt_inserted_full_xid = pg_current_xact_id()")
+          .doesNotContain("a.xmin::TEXT");
+      assertThat(installedArtifactInventory)
+          .contains("attempt_created_full_xid = pg_current_xact_id()")
+          .contains("attempt_inserted_full_xid = pg_current_xact_id()")
+          .doesNotContain("a.xmin::TEXT");
+      assertThat(installedPreparationRetainer)
+          .contains("to_jsonb(retained) = to_jsonb(NEW)")
+          .contains("world_canonical_instance_preparation_execution_manifest")
+          .doesNotContain("retained.xmin::TEXT");
+      var stampFunction =
+          connection.fetchSingle(
+              "SELECT proowner::text, prosecdef, proconfig::text FROM pg_proc "
+                  + "WHERE oid = to_regprocedure(?)",
+              schema + ".world_stamp_publication_attempt_full_xid()");
+      assertThat(stampFunction.get("proowner", String.class))
+          .isEqualTo(
+              connection
+                  .fetchSingle(
+                      "SELECT proowner::text FROM pg_proc WHERE oid = to_regprocedure(?)",
+                      schema + ".world_validate_selected_publication_account_binding()")
+                  .get(0, String.class));
+      assertThat(stampFunction.get("prosecdef", Boolean.class)).isTrue();
+      assertThat(stampFunction.get("proconfig", String.class))
+          .contains("pg_catalog")
+          .contains(schema);
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT count(*) FROM pg_proc p CROSS JOIN LATERAL "
+                          + "aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl "
+                          + "WHERE p.oid = to_regprocedure(?) AND acl.grantee = 0::oid "
+                          + "AND acl.privilege_type = 'EXECUTE'",
+                      schema + ".world_stamp_publication_attempt_full_xid()")
+                  .get(0, Long.class))
+          .as("the stamp trigger function grants no EXECUTE privilege to PUBLIC")
+          .isZero();
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                          + "WHERE c.relnamespace = to_regnamespace(?) "
+                          + "AND t.tgname = 'trg_world_publication_attempt_full_xid_stamp' "
+                          + "AND c.relname = 'world_design_publication_fence_attempt' "
+                          + "AND t.tgtype = 7 AND t.tgenabled = 'O' "
+                          + "AND t.tgfoid = to_regprocedure(?)",
+                      schema,
+                      schema + ".world_stamp_publication_attempt_full_xid()")
+                  .get(0, Long.class))
+          .isEqualTo(1L);
       assertThat(
               connection.fetchSingle(
                   "SELECT t.oid::text, t.tgfoid::text, t.tgtype, t.tgenabled, t.tgargs::text, t.tgqual::text "
@@ -1869,6 +2229,35 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     return rows;
   }
 
+  private static Map<String, List<String>> allRowsWithoutNewAttemptStamp(DSLContext connection) {
+    String schema = connection.fetchSingle("SELECT current_schema()").get(0, String.class);
+    assertThat(schema).isNotBlank();
+    var tables =
+        connection
+            .fetch(
+                "SELECT tablename FROM pg_tables WHERE schemaname = ? ORDER BY tablename", schema)
+            .getValues(0, String.class);
+    assertThat(tables).isNotEmpty().contains("world_design_publication_fence_attempt");
+    Map<String, List<String>> rows = new LinkedHashMap<>();
+    for (String table : tables) {
+      String retainedRow =
+          table.equals("world_design_publication_fence_attempt")
+              ? "(to_jsonb(retained) - 'attempt_inserted_full_xid')"
+              : "to_jsonb(retained)";
+      rows.put(
+          table,
+          connection
+              .fetch(
+                  "SELECT "
+                      + retainedRow
+                      + "::text || ':xmin=' || retained.xmin::text FROM "
+                      + DSL.name(schema, table)
+                      + " retained ORDER BY 1")
+              .getValues(0, String.class));
+    }
+    return rows;
+  }
+
   /**
    * Exercises the installed trigger against controlled copies of an owner-created row. This is SQL
    * predicate and retention proof only; it does not invoke or stand in for the authenticated
@@ -2642,6 +3031,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1042.6");
     versions.add("1042.7");
     versions.add("1042.8");
+    versions.add("1042.9");
     return List.copyOf(versions);
   }
 

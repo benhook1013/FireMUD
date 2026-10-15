@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -564,6 +565,69 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
     }
 
     verify(factory).create(any(), any(), any(), eq("dev"));
+  }
+
+  @Test
+  void closingBeforeFirstUsePreventsFixtureClientCreation() throws Exception {
+    ProviderFixture fixture = providerFixture();
+    GameDesignClient gameDesignClient = mockDescriptorReader(fixture.evidence());
+    RunOwnedCanonicalWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory = mock();
+    RunOwnedCanonicalWorldLaunchEvidenceProvider provider =
+        provider(
+            fixture,
+            gameDesignClient,
+            null,
+            fixture.endpoints(),
+            fixture.tlsProperties(),
+            factory);
+
+    provider.closeGameSessionFixtureClient();
+
+    try (PeerContext ignored = fixture.attachGameSessionPeer()) {
+      assertThatThrownBy(provider::requireAuthenticatedEvidence)
+          .isInstanceOf(
+              RunOwnedCanonicalWorldLaunchEvidenceProvider
+                  .InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class)
+          .hasMessage("Run-owned World launch evidence is invalid");
+    }
+
+    verifyNoInteractions(factory);
+  }
+
+  @Test
+  void repeatedCloseClosesInitializedClientOnceAndPreventsProviderReuse() throws Exception {
+    ProviderFixture fixture = providerFixture();
+    GameDesignClient gameDesignClient = mockDescriptorReader(fixture.evidence());
+    CanonicalGameInstanceLaunchAssociationClient fixtureClient = mock();
+    when(fixtureClient.readFixture(any(), anyString()))
+        .thenAnswer(invocation -> fixture.association(invocation.getArgument(0)));
+    RunOwnedCanonicalWorldLaunchEvidenceProvider.GameSessionFixtureClientFactory factory = mock();
+    when(factory.create(any(), any(), any(), anyString())).thenReturn(fixtureClient);
+    RunOwnedCanonicalWorldLaunchEvidenceProvider provider =
+        provider(
+            fixture,
+            gameDesignClient,
+            fixtureClient,
+            fixture.endpoints(),
+            fixture.tlsProperties(),
+            factory);
+
+    try (PeerContext ignored = fixture.attachGameSessionPeer()) {
+      provider.requireAuthenticatedEvidence();
+    }
+    provider.closeGameSessionFixtureClient();
+    provider.closeGameSessionFixtureClient();
+
+    try (PeerContext ignored = fixture.attachGameSessionPeer()) {
+      assertThatThrownBy(provider::requireAuthenticatedEvidence)
+          .isInstanceOf(
+              RunOwnedCanonicalWorldLaunchEvidenceProvider
+                  .InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class)
+          .hasMessage("Run-owned World launch evidence is invalid");
+    }
+
+    verify(factory, times(1)).create(any(), any(), any(), eq("dev"));
+    verify(fixtureClient, times(1)).close();
   }
 
   private static void assertFileRejectionStoppedBeforeWireParse(CapturedOutput output) {
