@@ -68,12 +68,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
           "world_reject_draft_start_location_receipt_mutation");
   private static final List<String> FAMILY_NAMES =
       List.of(
-          "REGION",
-          "ZONE",
-          "ROOM",
-          "ROOM_EXIT",
-          "GENERATION_RULE",
-          "WORLD_ENTITY_SPAWN_BINDING");
+          "REGION", "ZONE", "ROOM", "ROOM_EXIT", "GENERATION_RULE", "WORLD_ENTITY_SPAWN_BINDING");
 
   @Container
   static PostgreSQLContainer<?> postgres =
@@ -168,7 +163,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
 
       assertThat(
               MigrationVersion.fromVersion(latestVersion(upgradeDsl))
-                  .compareTo(MigrationVersion.fromVersion("1042.12"))
+                      .compareTo(MigrationVersion.fromVersion("1042.12"))
                   >= 0)
           .isTrue();
       assertThat(latestVersion(freshDsl)).isEqualTo(latestVersion(upgradeDsl));
@@ -223,10 +218,13 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
           () -> persistFixture(probeDsl, probeSchema, fixture(), Corruption.RECEIPT_DIGEST),
           "23514");
       assertSqlState(
-          () -> persistFixture(probeDsl, probeSchema, fixture(), Corruption.APPLICATION_ACCOUNT_DIGEST),
+          () ->
+              persistFixture(
+                  probeDsl, probeSchema, fixture(), Corruption.APPLICATION_ACCOUNT_DIGEST),
           "23514");
       assertSqlState(
-          () -> persistFixture(probeDsl, probeSchema, fixture(), Corruption.RESULT_DIGEST), "23514");
+          () -> persistFixture(probeDsl, probeSchema, fixture(), Corruption.RESULT_DIGEST),
+          "23514");
     } finally {
       dropSchema(upgradeSource, upgradeSchema);
       dropSchema(freshSource, freshSchema);
@@ -245,8 +243,10 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
     assertThat(receipt.configuration()).contains("search_path=pg_catalog");
     assertThat(graph.publicExecuteGrant()).isFalse();
     assertThat(receipt.publicExecuteGrant()).isFalse();
-    assertThat(graphTriggers).anyMatch(value -> value.contains("trg_world_graph_application_guard"));
-    assertThat(receiptTriggers).anyMatch(value -> value.contains("trg_world_start_location_receipt_guard"));
+    assertThat(graphTriggers)
+        .anyMatch(value -> value.contains("trg_world_graph_application_guard"));
+    assertThat(receiptTriggers)
+        .anyMatch(value -> value.contains("trg_world_start_location_receipt_guard"));
   }
 
   private static void assertFunctionPreservedExceptBody(
@@ -259,8 +259,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
     assertThat(after.configuration()).isEqualTo(before.configuration());
   }
 
-  private static void assertDigestPredicates(
-      FunctionMetadata graph, FunctionMetadata receipt) {
+  private static void assertDigestPredicates(FunctionMetadata graph, FunctionMetadata receipt) {
     assertThat(graph.source())
         .contains("encode(sha256(NEW.account_binding_bytes), 'hex')")
         .contains("encode(sha256(NEW.result_bytes), 'hex')")
@@ -287,7 +286,8 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
     for (String function : PROBE_FUNCTIONS) {
       String definition =
           dsl.fetchSingle(
-                  "SELECT pg_get_functiondef(to_regprocedure(?))", sourceSchema + "." + function + "()")
+                  "SELECT pg_get_functiondef(to_regprocedure(?))",
+                  sourceSchema + "." + function + "()")
               .get(0, String.class);
       definition =
           definition
@@ -459,10 +459,12 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
     UUID versionIdentityOperationId = UUID.randomUUID();
     UUID revisionId = UUID.randomUUID();
     UUID roomTemplateId = UUID.randomUUID();
-    byte[] accountBindingBytes = "{\"accountBinding\":\"controlled\"}".getBytes(StandardCharsets.UTF_8);
+    byte[] accountBindingBytes =
+        "{\"accountBinding\":\"controlled\"}".getBytes(StandardCharsets.UTF_8);
     byte[] receiptBytes = "{\"receipt\":\"controlled\"}".getBytes(StandardCharsets.UTF_8);
     byte[] operationBytes = "{\"operation\":\"controlled\"}".getBytes(StandardCharsets.UTF_8);
-    byte[] graphBytes = "{\"schemaVersion\":3,\"rows\":[{\"family\":\"ROOM\"}]}".getBytes(StandardCharsets.UTF_8);
+    byte[] graphBytes =
+        "{\"schemaVersion\":3,\"rows\":[{\"family\":\"ROOM\"}]}".getBytes(StandardCharsets.UTF_8);
     String accountBindingDigest = digest(accountBindingBytes);
     String receiptDigest = digest(receiptBytes);
     String graphDigest = digest(graphBytes);
@@ -522,7 +524,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
                         + "}")
             .reduce((left, right) -> left + "," + right)
             .orElseThrow();
-    return "{\"revisions\":[{\"owner\":\"WORLD_MANAGEMENT\",\"payload\":{" 
+    return "{\"revisions\":[{\"owner\":\"WORLD_MANAGEMENT\",\"payload\":{"
         + "\"freshGraphDeclaration\":{\"tenantId\":\""
         + tenantId
         + "\",\"versionId\":\""
@@ -538,8 +540,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
         + "\"}}}}],\"affectedUnits\":[]}";
   }
 
-  private static FunctionMetadata functionMetadata(
-      DSLContext dsl, String schema, String function) {
+  private static FunctionMetadata functionMetadata(DSLContext dsl, String schema, String function) {
     var row =
         dsl.fetchSingle(
             "SELECT p.oid::bigint, pg_get_userbyid(p.proowner), COALESCE(p.proacl::text, ''), "
@@ -565,7 +566,7 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
   private static List<String> triggerMetadata(DSLContext dsl, String schema, String table) {
     return dsl.fetch(
             "SELECT t.tgname || ':' || t.oid::text || ':' || t.tgfoid::text || ':' "
-                + "|| t.tgtype::text || ':' || t.tgenabled || ':' || t.tgdeferrable::text || ':' "
+                + "|| t.tgtype::text || ':' || t.tgenabled::text || ':' || t.tgdeferrable::text || ':' "
                 + "|| t.tginitdeferred::text || ':' || pg_get_triggerdef(t.oid) "
                 + "FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid "
                 + "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
@@ -642,8 +643,10 @@ class WorldGraphApplicationReceiptDigestPostgresIntegrationTest {
     return source;
   }
 
-  private static void dropSchema(DriverManagerDataSource source, String schema) throws SQLException {
-    try (var connection = source.getConnection(); var statement = connection.createStatement()) {
+  private static void dropSchema(DriverManagerDataSource source, String schema)
+      throws SQLException {
+    try (var connection = source.getConnection();
+        var statement = connection.createStatement()) {
       statement.execute("DROP SCHEMA IF EXISTS " + DSL.name(schema) + " CASCADE");
     }
   }
