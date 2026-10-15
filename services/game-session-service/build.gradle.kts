@@ -60,6 +60,7 @@ dependencies {
     implementation(libs.spring.boot.starter.websocket)
     implementation(project(":common-saga"))
     implementation(project(":common-security"))
+    implementation(project(":common-redis-contracts"))
     implementation(libs.flyway.core)
     implementation(libs.flyway.database.postgresql)
     implementation(libs.junixsocket.common)

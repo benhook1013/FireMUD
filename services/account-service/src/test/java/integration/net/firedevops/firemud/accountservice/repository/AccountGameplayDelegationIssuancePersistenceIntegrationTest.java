@@ -1,5 +1,6 @@
 package integration.net.firedevops.firemud.accountservice.repository;
 
+import static integration.net.firedevops.firemud.accountservice.repository.AccountPostgresIntegrationFixture.transactionalIssuanceOwner;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -214,7 +215,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     assertPendingWithoutCommitProof(harness);
     assertThat(tokenFenceCount(harness)).isZero();
     assertCommitBundleEvidenceUnchanged(harness, evidenceBefore);
-    verify(harness.issuance(), times(1))
+    verify(harness.issuanceInteractionTarget(), times(1))
         .bindSignedCandidate(eq(harness.pending().requestId()), anyString(), anyString());
     PendingRegistryCandidate pendingBeforeRetry =
         inTransaction(
@@ -223,12 +224,12 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     Record envelopeBeforeRetry = readResponseEnvelope(harness);
 
     // The exact original proof succeeds after the invalid variants leave all owner evidence intact.
-    reset(harness.issuance());
+    reset(harness.issuanceInteractionTarget());
     assertThat(harness.service().commitPendingCandidate(harness.pending().requestId()).outcome())
         .isEqualTo(AccountGameplayDelegationIssuanceCommitService.Outcome.COMMITTED);
     assertThat(tokenFenceCount(harness)).isEqualTo(1L);
     assertCommitBundleEvidenceUnchanged(harness, evidenceBefore);
-    verify(harness.issuance(), never())
+    verify(harness.issuanceInteractionTarget(), never())
         .bindSignedCandidate(eq(harness.pending().requestId()), anyString(), anyString());
     Record committedCandidate = readCandidateRow(harness);
     assertThat(committedCandidate.get("token_hash", String.class))
@@ -1386,7 +1387,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
 
     assertPendingWithoutCommitProof(harness);
     assertThat(harness.redis().connectionCloseCount()).isEqualTo(1);
-    verify(harness.issuance(), times(1))
+    verify(harness.issuanceInteractionTarget(), times(1))
         .bindSignedCandidate(eq(harness.pending().requestId()), anyString(), anyString());
     PendingRegistryCandidate pendingBeforeRetry =
         inTransaction(
@@ -1395,10 +1396,10 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     Record envelopeBeforeRetry = readResponseEnvelope(harness);
 
     harness.redis().restorePendingReadback();
-    reset(harness.issuance());
+    reset(harness.issuanceInteractionTarget());
     assertThat(harness.service().commitPendingCandidate(harness.pending().requestId()).outcome())
         .isEqualTo(AccountGameplayDelegationIssuanceCommitService.Outcome.COMMITTED);
-    verify(harness.issuance(), never())
+    verify(harness.issuanceInteractionTarget(), never())
         .bindSignedCandidate(eq(harness.pending().requestId()), anyString(), anyString());
     Record committedCandidate = readCandidateRow(harness);
     assertThat(committedCandidate.get("token_hash", String.class))
@@ -1531,6 +1532,8 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
       boolean mismatchRedisReadback)
       throws Exception {
     DSLContext dsl = context.dsl();
+    AccountGameplayDelegationIssuanceRepository transactionalIssuance =
+        transactionalIssuanceOwner(issuance, context.manager());
     IssuerAccountSourceSnapshot snapshot = currentSnapshot(context, sources, accountId);
     Path responseKeyring = temporaryDirectory.resolve("response-keyring-" + UUID.randomUUID());
     writeTestKeyring(responseKeyring);
@@ -1547,7 +1550,11 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
     TransactionHookManager transactionManager = new TransactionHookManager(context.manager());
     AccountGameplayDelegationCommitSignerFixture signerFixture =
         AccountGameplayDelegationCommitSignerFixture.create(
-            temporaryDirectory, issuance, responseService, context.manager(), Clock.systemUTC());
+            temporaryDirectory,
+            transactionalIssuance,
+            responseService,
+            context.manager(),
+            Clock.systemUTC());
     signerFixture.observeDatabaseFailures(dsl);
     transactionManager.setBeforeTargetTransaction(
         switch (hook) {
@@ -1563,7 +1570,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         new RedisHarness(accountId, snapshot, mismatchRedisReadback, getClass().getClassLoader());
     AccountGameplayDelegationTokenRegistry tokenRegistry =
         new AccountGameplayDelegationTokenRegistry(
-            issuance,
+            transactionalIssuance,
             context.manager(),
             redis.client(),
             Clock.systemUTC(),
@@ -1577,19 +1584,23 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
             signerFixture.signer(),
             tokenRegistry,
             authorityProjection,
-            issuance,
+            transactionalIssuance,
             transactionManager,
             Clock.systemUTC());
     AccountGameplayDelegationCommittedIssuanceOwner committedOwner =
         new AccountGameplayDelegationCommittedIssuanceOwner(
-            issuance, signerFixture.signer(), tokenRegistry, context.manager(), Clock.systemUTC());
+            transactionalIssuance,
+            signerFixture.signer(),
+            tokenRegistry,
+            context.manager(),
+            Clock.systemUTC());
     AccountGameplayDelegationResponseRecoveryOwner responseOwner =
         new AccountGameplayDelegationResponseRecoveryOwner(
             responseRepository, committedOwner, context.manager());
     AccountGameplayCanonicalLoginOwner loginOwner =
         new AccountGameplayCanonicalLoginOwner(
             new AccountRepository(dsl, sources),
-            issuance,
+            transactionalIssuance,
             integrationDigestKeySource(),
             service,
             responseOwner,
@@ -1603,6 +1614,7 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
         pending,
         redis,
         service,
+        transactionalIssuance,
         issuance,
         signerFixture,
         signerFixture.signer(),
@@ -2343,6 +2355,8 @@ class AccountGameplayDelegationIssuancePersistenceIntegrationTest {
       RedisHarness redis,
       AccountGameplayDelegationIssuanceCommitService service,
       AccountGameplayDelegationIssuanceRepository issuance,
+      // Mockito interactions use the original spy; service calls retain real transaction advice.
+      AccountGameplayDelegationIssuanceRepository issuanceInteractionTarget,
       AccountGameplayDelegationCommitSignerFixture signerFixture,
       AccountGameplayDelegationSigner signer,
       AccountGameplayCanonicalLoginOwner loginOwner,

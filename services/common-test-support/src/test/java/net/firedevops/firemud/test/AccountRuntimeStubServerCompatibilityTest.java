@@ -28,6 +28,7 @@ class AccountRuntimeStubServerCompatibilityTest {
           "ExportAccount",
           "ExportTenantData",
           "DeleteAccount",
+          "RetireInitialGameplayLogin",
           "RequestPasswordReset",
           "CompletePasswordReset",
           "LinkExternalAccount",
