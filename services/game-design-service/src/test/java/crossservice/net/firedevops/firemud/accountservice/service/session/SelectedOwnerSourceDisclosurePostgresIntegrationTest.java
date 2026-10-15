@@ -277,7 +277,7 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
                   f.tx(() -> f.authority.captureInitial(f.tenant, issued.environment()));
               var blockedWriter =
                   new net.firedevops.firemud.accountservice.authordraft
-                          .DraftAuthorizationFenceRepository.SourceChange(
+                      .DraftAuthorizationFenceRepository.SourceChange(
                       UUID.randomUUID(), capturedSources.sources(), new byte[] {7});
               assertThat(f.<Boolean>tx(() -> f.fences.requestSourceChange(blockedWriter)))
                   .isFalse();
@@ -294,7 +294,8 @@ class SelectedOwnerSourceDisclosurePostgresIntegrationTest {
                     f.fences.markSourceAborted(
                         blockedWriter,
                         net.firedevops.firemud.accountservice.authordraft
-                            .DraftAuthorizationFenceRepository.SourceChangeAbortReason.DEFINITIVE_ABORT);
+                            .DraftAuthorizationFenceRepository.SourceChangeAbortReason
+                            .DEFINITIVE_ABORT);
                     return null;
                   });
               var aborted = retainedReservation(f, scope);
