@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftBaseReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -146,14 +147,27 @@ class BrandingSourcePostgresIntegrationTest {
           var commands =
               new net.firedevops.firemud.gamedesign.publication.CommandSourceRepository(f.dsl);
           var commandGenesis = commands.readNewDraftGenesis(f.target).orElseThrow();
-          byte[] reviewedEvidence =
-              historicalReviewedGenesisBytes(f.target, policyGenesis, commandGenesis);
-          insertReviewedBaseV1(
-              f.dsl,
-              original,
-              reviewedEvidence,
-              net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.digest(
-                  reviewedEvidence));
+          var assetGenesis =
+              new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(f.dsl)
+                  .readGenesis(f.target)
+                  .orElseThrow();
+          var gameplayGenesis =
+              new net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository(f.dsl)
+                  .readGenesis(f.target)
+                  .orElseThrow();
+          var templateGenesis =
+              new net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository(f.dsl)
+                  .readGenesis(f.target)
+                  .orElseThrow();
+          var reviewedEvidence =
+              GameDesignReviewedBaseEvidence.genesis(
+                  new GameDesignSourceRepository.Genesis(
+                      policyGenesis,
+                      commandGenesis,
+                      Optional.of(assetGenesis),
+                      Optional.of(gameplayGenesis),
+                      Optional.of(templateGenesis)));
+          insertReviewedBaseV2(f.dsl, original, reviewedEvidence);
           coordinator.claimApplicationSlot(original);
           coordinator.markOwnerInProgress(
               original, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
@@ -200,12 +214,11 @@ class BrandingSourcePostgresIntegrationTest {
         originalSources.stream()
             .map(
                 name ->
-                    f.dsl
-                        .fetchSingle(
-                            "SELECT snapshot_json, xmin::text AS row_xmin FROM game_design_"
-                                + name
-                                + "_snapshot WHERE canonical_version_id = ?",
-                            f.target.canonicalVersionId()))
+                    f.dsl.fetchSingle(
+                        "SELECT snapshot_json, xmin::text AS row_xmin FROM game_design_"
+                            + name
+                            + "_snapshot WHERE canonical_version_id = ?",
+                        f.target.canonicalVersionId()))
             .toList();
     var sourceJson =
         originalSourceRows.stream().map(row -> row.get("snapshot_json", String.class)).toList();
@@ -358,51 +371,16 @@ class BrandingSourcePostgresIntegrationTest {
         .isEmpty();
   }
 
-  private static byte[] historicalReviewedGenesisBytes(
-      DraftCommitBinding.TargetProof target,
-      net.firedevops.firemud.gamedesign.publication.RealmPolicyGenesis policyGenesis,
-      CommandSource.NewDraftGenesisReceipt commandGenesis) {
-    var ownerEvidence = new java.io.ByteArrayOutputStream();
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        ownerEvidence, "shared-policy-command-genesis/v1");
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        ownerEvidence, policyGenesis.creationTransactionId());
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        ownerEvidence, policyGenesis.canonicalBytes());
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        ownerEvidence, commandGenesis.canonicalBytes());
-
-    var evidence = new java.io.ByteArrayOutputStream();
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        evidence, GameDesignReviewedBaseEvidence.HISTORICAL_SCHEMA);
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        evidence, DraftBaseReference.SCHEMA);
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        evidence, DraftBaseReference.Kind.GENESIS.name());
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        evidence, "genesis:" + policyGenesis.receiptId());
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        evidence, target.canonicalTenantId().toString());
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        evidence, target.canonicalVersionId().toString());
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        evidence, Long.toString(target.gameDesignVersionRowId()));
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        evidence, target.gameDesignVersionTenantKey());
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        evidence, Long.toString(target.sourceGameRowId()));
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        evidence, target.sourceGameTenantKey());
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        evidence, target.sourceProvenanceKind());
-    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
-        evidence, ownerEvidence.toByteArray());
-    return evidence.toByteArray();
-  }
-
-  private static void insertReviewedBaseV1(
-      DSLContext dsl, DraftCommitBinding binding, byte[] evidenceBytes, String evidenceDigest) {
-    var reference = DraftBaseReference.parse(binding.baseCommitId());
+  private static void insertReviewedBaseV2(
+      DSLContext dsl,
+      DraftCommitBinding binding,
+      GameDesignReviewedBaseEvidence reviewedEvidence) {
+    if (!binding.target().equals(reviewedEvidence.target())
+        || !binding.baseCommitId().equals(reviewedEvidence.reference().canonicalValue())) {
+      throw new IllegalArgumentException(
+          "Reviewed genesis evidence must match the exact historical Draft base");
+    }
+    var reference = reviewedEvidence.reference();
     dsl.execute(
         "INSERT INTO game_design_reviewed_draft_base "
             + "(canonical_tenant_id, canonical_version_id, request_id, commit_id, input_digest, "
@@ -417,9 +395,9 @@ class BrandingSourcePostgresIntegrationTest {
         reference.kind().name(),
         reference.identity(),
         reference.canonicalValue(),
-        GameDesignReviewedBaseEvidence.HISTORICAL_SCHEMA,
-        evidenceBytes,
-        evidenceDigest);
+        GameDesignReviewedBaseEvidence.SCHEMA,
+        reviewedEvidence.canonicalBytes(),
+        reviewedEvidence.digest());
   }
 
   private void apply(Fixture f, DraftCommitBinding binding) {
@@ -488,12 +466,7 @@ class BrandingSourcePostgresIntegrationTest {
                         scope.equals(primaryScope) ? epoch : "0"))
             .toList();
     return DraftCommitBinding.create(
-        f.target,
-        UUID.randomUUID(),
-        UUID.randomUUID(),
-        currentBaseReference(f),
-        revisions,
-        units);
+        f.target, UUID.randomUUID(), UUID.randomUUID(), currentBaseReference(f), revisions, units);
   }
 
   private static String currentBaseReference(Fixture f) {
