@@ -87,6 +87,7 @@ class AccountPublicationAuthorizationReadGrpcCodecTest {
 
     for (ReadHeldPublicationAuthorizationResponse changed :
         List.of(
+            held.toBuilder().setSchemaVersion(2).build(),
             held.toBuilder().setTargetNamespace("other").build(),
             held.toBuilder().setReadRequestId(UUID.randomUUID().toString()).build(),
             held.toBuilder()
@@ -98,6 +99,7 @@ class AccountPublicationAuthorizationReadGrpcCodecTest {
                     HeldPublicationAuthorizationStatus
                         .HELD_PUBLICATION_AUTHORIZATION_STATUS_UNSPECIFIED)
                 .build(),
+            held.toBuilder().setStatusValue(99).build(),
             held.toBuilder().setUnknownFields(unknown).build())) {
       assertThatThrownBy(
               () -> AccountPublicationAuthorizationReadGrpcCodec.fromResponse(request, changed))

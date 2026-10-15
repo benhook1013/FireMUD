@@ -107,6 +107,16 @@ class AccountPublicationAuthorizationReadClientTest {
       }
       verifyNoInteractions(stub);
 
+      TransactionSynchronizationManager.initSynchronization();
+      try {
+        assertThatThrownBy(() -> client.read(request))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("Account publication authorization read requires no owner transaction");
+      } finally {
+        TransactionSynchronizationManager.clearSynchronization();
+      }
+      verifyNoInteractions(stub);
+
       assertThat(client.read(request).request()).isEqualTo(request);
       verify(stub).readHeldPublicationAuthorization(any());
 

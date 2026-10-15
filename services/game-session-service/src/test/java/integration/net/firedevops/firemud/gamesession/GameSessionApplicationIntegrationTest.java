@@ -28,8 +28,10 @@ import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryRetentionSweepJob;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.impl.TickScheduler;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.test.FiremudAuthTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
@@ -66,6 +68,7 @@ import tools.jackson.databind.ObjectMapper;
       "firemud.auth.http.public-routes[0].method=GET",
       "firemud.auth.http.public-routes[0].path-pattern=/ping"
     })
+@MockitoBean(types = {TickScheduler.class, PlayerCommandHistoryRetentionSweepJob.class})
 class GameSessionApplicationIntegrationTest {
   private static final String OPAQUE_PUBLISHED_RELEASE_BUNDLE_REF =
       "6bf9e6d0-7f6b-4c85-b75e-d65949694f13";
