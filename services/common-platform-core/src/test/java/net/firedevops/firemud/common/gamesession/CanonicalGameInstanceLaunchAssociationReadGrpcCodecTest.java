@@ -4,6 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.UUID;
+import java.time.Instant;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundle;
+import net.firedevops.firemud.common.operator.StartSessionAuthorityEvidenceBundleFixture;
+import net.firedevops.firemud.common.operator.StartSessionOperatorAction;
+import net.firedevops.firemud.common.operator.StartSessionPostAuthorizationExecutionTuple;
+import net.firedevops.firemud.common.operator.StartSessionPreAuthorizationReservationTuple;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence.CurrentGameInstanceStatus;
 import net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence.Request;
@@ -87,6 +93,43 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
                       request, wireResponse))
           .isInstanceOf(IllegalArgumentException.class);
     }
+  }
+
+  @Test
+  void accountOperationRoundTripsExactTupleAndOwnerSelectorAndRejectsPartialOrChangedEchoes() throws Exception {
+    var binding = AuthoringFixtures.lifecycleEvidence("PREPARING", 1L).launchBinding();
+    var descriptor = binding.descriptor();
+    var tuple = originalTuple(descriptor);
+    var operation = new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(tuple.canonicalBytes(), UUID.randomUUID(), OWNER_ATTEMPT_ID, 4L);
+    var request = new Request(READ_REQUEST_ID, descriptor.targetNamespace(), descriptor.canonicalTenantId(), descriptor.worldSlug(), GAME_INSTANCE_ID,
+        descriptor.controlPlaneRequestId(), descriptor.launchDescriptorId(), descriptor.requestDigest(), descriptor.resultDigest(), binding.releaseAttestation().evidenceDigest(), operation);
+    var wire = CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toRequest(request);
+    assertThat(CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromRequest(wire)).isEqualTo(request);
+    var result = new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(request, UUID.randomUUID(), RealmEntryPolicy.StateScope.SHARED, true, CurrentGameInstanceStatus.STARTING, 1L, OWNER_ATTEMPT_ID, 4L, binding);
+    var response = CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toResponse(result);
+    assertThat(CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(request, response)).isEqualTo(result);
+    byte[] copy = operation.originalPostAuthorizationTuple();
+    copy[0] ^= 1;
+    assertThat(operation.originalPostAuthorizationTuple()).containsExactly(tuple.canonicalBytes());
+    for (var invalid : java.util.List.of(wire.toBuilder().clearOriginalPostAuthorizationTuple().build(), wire.toBuilder().clearExpectedOwnerMutationId().build(), wire.toBuilder().clearExpectedOwnerAttemptId().build(), wire.toBuilder().setExpectedOwnerFence(0L).build())) {
+      assertThatThrownBy(() -> CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromRequest(invalid)).isInstanceOf(IllegalArgumentException.class);
+    }
+    for (var invalid : java.util.List.of(response.toBuilder().clearOriginalPostAuthorizationTuple().build(), response.toBuilder().clearExpectedOwnerMutationId().build(), response.toBuilder().setExpectedOwnerMutationId(UUID.randomUUID().toString()).build(), response.toBuilder().setExpectedOwnerFence(5L).build(), response.toBuilder().setOwnerFence(5L).build())) {
+      assertThatThrownBy(() -> CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(request, invalid)).isInstanceOf(IllegalArgumentException.class);
+    }
+    var worldRequest = new Request(request.readRequestId(), request.targetNamespace(), request.canonicalTenantId(), request.worldSlug(), request.gameInstanceUuid(), request.controlPlaneRequestId(), request.launchDescriptorId(), request.expectedDescriptorRequestDigest(), request.expectedDescriptorResultDigest(), request.expectedReleaseAttestationEvidenceDigest());
+    assertThatThrownBy(() -> CanonicalGameInstanceLaunchAssociationReadGrpcCodec.fromResponse(worldRequest, response)).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new Request(operation.ownerMutationId(), request.targetNamespace(), request.canonicalTenantId(), request.worldSlug(), request.gameInstanceUuid(), request.controlPlaneRequestId(), request.launchDescriptorId(), request.expectedDescriptorRequestDigest(), request.expectedDescriptorResultDigest(), request.expectedReleaseAttestationEvidenceDigest(), operation)).isInstanceOf(IllegalArgumentException.class);
+  }
+
+  private static StartSessionPostAuthorizationExecutionTuple originalTuple(net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence descriptor) {
+    var pre = StartSessionPreAuthorizationReservationTuple.createHuman(descriptor.controlPlaneRequestId(), UUID.randomUUID(),
+        new StartSessionOperatorAction(StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_ID, StartSessionOperatorAction.ACTION_FAMILY_SCHEMA_VERSION,
+            new StartSessionOperatorAction.Scope(descriptor.canonicalTenantId(), descriptor.targetNamespace()),
+            new StartSessionOperatorAction.Target(descriptor.gameTemplateId(), UUID.randomUUID()), StartSessionOperatorAction.ExpectedVersion.ABSENT,
+            new StartSessionOperatorAction.Mutation(StartSessionOperatorAction.ClientIp.absent()), "TEST_ONLY canonical Account read codec"));
+    var bytes = StartSessionAuthorityEvidenceBundleFixture.canonicalBytes(pre, new StartSessionAuthorityEvidenceBundleFixture.Values(UUID.randomUUID(), "sha256:" + "a".repeat(64), "1", "CURRENT", Instant.parse("2030-01-01T00:00:00Z"), Instant.parse("2030-01-01T00:05:00Z"), 1, 1, 1, 1, 1, 1, UUID.randomUUID(), "1", "1"));
+    return StartSessionPostAuthorizationExecutionTuple.createHuman(pre, "spiffe://firemud/ns/" + descriptor.targetNamespace() + "/sa/logging-admin-service", "arfp/v1/test-key/" + "b".repeat(64), UUID.randomUUID(), 1L, bytes, new StartSessionAuthorityEvidenceBundle.BundleReference(StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION, "1", "1", "1"));
   }
 
   private static GetCanonicalGameInstanceLaunchAssociationResponse response(

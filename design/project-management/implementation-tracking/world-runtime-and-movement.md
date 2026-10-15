@@ -6,6 +6,10 @@ This is a non-normative implementation tracker for world runtime and movement. C
 
 ## Current Status
 
+### Original StartSession protected activation source
+
+The prepared standalone consumer acquires exact Account protection for the retained PREPARING binding, performs the World lifecycle CAS under that evidence, and exposes exact historical activation terminal readback. Its companion Account producer/read/settlement and strict Common transports are prepared over the existing guarded owner tables; no new SQL migration or runtime registration is added. Source tests remain unrun and parent integration remains pending. Preparation, Account permission, ACTIVE lifecycle, Entity placement and operational delivery must be qualified separately; pending source alone does not authorize activation. The Account acquisition prerequisites and proof limits belong to [Player Access](./player-access-and-session.md#original-startsession-protected-activation-source), while the canonical [World creation workflow](../../architecture/microservices/world-management-service/world-creation-workflow.md) retains lifecycle authority.
+
 ### Original StartSession World preparation and recovery
 
 The prepared source adds standalone canonical preparation assembly, topology planning and World owner materialization, exact execution identity and recovery, lifecycle readback, and original StartSession execution-terminal readback. The preparation path consumes the exact Human Game Session launch association and complete descriptor/release pair, binds the original StartSession tuple and owner attempt/fence, and acquires Account participation through the inherited Common-security client before World SQL. Existing preparation/execution SQL guards and migration history are retained. The source verifies the original Game Session observation and unchanged lease at World admission; a point-in-time remote observation is not continuous foreign-owner protection. The exact Human association adapter is tracked by [Game Session](./game-session-runtime-and-tick-coordination.md#human-original-startsession-launch-association-read).

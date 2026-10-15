@@ -108,6 +108,44 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
   }
 
   @Test
+  void accountOperationSelectorReadsOnlyActualTupleMutationAttemptAndFenceWithoutWrites() {
+    var tuple = GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.tuple("account-original-association-positive");
+    var fixture = fixture(tuple, Duration.ofSeconds(30));
+    var starting = fixture.startWithOwnerPins(tuple);
+    var selector = selector(starting.startingInstance().launchAssociation());
+    var before = originalOwnerRows(fixture);
+    var request = accountSelector(selector, tuple, starting.claim().ownerMutationId(), starting.claim().ownerAttemptId(), starting.claim().ownerFence());
+    var actual = fixture.read(request).orElseThrow();
+    assertThat(actual.postAuthorizationExecutionTuple().canonicalBytes()).containsExactly(tuple.canonicalBytes());
+    assertThat(actual.ownerAttemptId()).isEqualTo(starting.claim().ownerAttemptId());
+    assertThat(actual.ownerFence()).isEqualTo(starting.claim().ownerFence());
+    assertThat(actual.association()).isEqualTo(starting.startingInstance().launchAssociation());
+    var worldRead = fixture.read(selector).orElseThrow();
+    assertThat(actual.canonicalRealmId()).isEqualTo(worldRead.canonicalRealmId());
+    assertThat(actual.catalogRevision()).isEqualTo(worldRead.catalogRevision());
+    assertThat(fixture.read(accountSelector(selector, tuple, UUID.randomUUID(), starting.claim().ownerAttemptId(), starting.claim().ownerFence()))).isEmpty();
+    assertThat(fixture.read(accountSelector(selector, tuple, starting.claim().ownerMutationId(), UUID.randomUUID(), starting.claim().ownerFence()))).isEmpty();
+    assertThat(fixture.read(accountSelector(selector, tuple, starting.claim().ownerMutationId(), starting.claim().ownerAttemptId(), starting.claim().ownerFence() + 1))).isEmpty();
+    var substitutedTuple = StartSessionPostAuthorizationExecutionTuple.createHuman(tuple.preAuthorizationTuple(), tuple.authenticatedWorkloadIdentity(),
+        "arfp/v1/test-key/" + "c".repeat(64), tuple.reservationOwnerId(), tuple.reservationClaimFence(), tuple.authorityEvidenceBundleBytes(), tuple.bundleReference());
+    assertThat(fixture.read(accountSelector(selector, substitutedTuple, starting.claim().ownerMutationId(), starting.claim().ownerAttemptId(), starting.claim().ownerFence()))).isEmpty();
+    assertThat(originalOwnerRows(fixture)).isEqualTo(before);
+  }
+
+  private static CanonicalGameInstanceLaunchAssociationReadEvidence.Request accountSelector(CanonicalGameInstanceLaunchAssociationReadEvidence.Request selector, StartSessionPostAuthorizationExecutionTuple tuple, UUID mutation, UUID attempt, long fence) {
+    return new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(selector.readRequestId(), selector.targetNamespace(), selector.canonicalTenantId(), selector.worldSlug(), selector.gameInstanceUuid(), selector.controlPlaneRequestId(), selector.launchDescriptorId(), selector.expectedDescriptorRequestDigest(), selector.expectedDescriptorResultDigest(), selector.expectedReleaseAttestationEvidenceDigest(),
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(tuple.canonicalBytes(), mutation, attempt, fence));
+  }
+
+  private static java.util.Map<String, java.util.List<String>> originalOwnerRows(Fixture fixture) {
+    var result = new java.util.TreeMap<String, java.util.List<String>>();
+    for (String table : java.util.List.of("game_session_start_session_operator_attempt", "game_session_start_session_template_association_pin", "game_session_start_session_launch_descriptor_pin", "game_session_canonical_instance_launch", "game_instances")) {
+      result.put(table, fixture.dsl().fetch("SELECT row_to_json(t)::text AS body FROM " + table + " t ORDER BY row_to_json(t)::text").getValues("body", String.class));
+    }
+    return result;
+  }
+
+  @Test
   void absentOriginalAttemptAndPinsDoNotExposeTheStartingAssociation() {
     StartSessionPostAuthorizationExecutionTuple tuple =
         GameSessionStartSessionTemplateAssociationRepositoryIntegrationTest.tuple(
@@ -154,7 +192,11 @@ class GameSessionOriginalStartSessionAssociationReadIntegrationTest {
     OwnerBackedStarting starting = fixture.startWithOwnerPins(tuple);
     Thread.sleep(5_250L);
 
-    assertThat(fixture.read(selector(starting.startingInstance().launchAssociation()))).isEmpty();
+    var selector = selector(starting.startingInstance().launchAssociation());
+    assertThat(fixture.read(selector)).isEmpty();
+    var before = originalOwnerRows(fixture);
+    assertThat(fixture.read(accountSelector(selector, tuple, starting.claim().ownerMutationId(), starting.claim().ownerAttemptId(), starting.claim().ownerFence()))).isEmpty();
+    assertThat(originalOwnerRows(fixture)).isEqualTo(before);
   }
 
   @Test
