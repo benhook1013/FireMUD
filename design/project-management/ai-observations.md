@@ -121,3 +121,12 @@ Entry format:
   - Context: FireController job briefs are capped at 200,000 characters.
   - Observation: Repeatedly prepending completed and running checkpoints caused a revision to be rejected before the active execution state could be saved.
   - Expected pattern: Archive the full previous brief, retain standing instructions and superseding decisions, replace the active execution section, and put milestones in native updates/checkpoints. Consolidation restored guarded updates without losing source history or standing authority.
+
+- `2026-10-16`: Keep the original Logging claim-read client workload-only
+  - Context: A generic gRPC channel and stub customizer did not establish the original Logging claim-read client's workload-only boundary: the common customizer attaches bearer metadata, and a trusted TLS channel alone does not pin the expected SPIFFE workload.
+  - Observation: The corrected client uses the existing Common peer credentials and response verifier, preserves default-off composition, and rejects ambient SQL, synchronization and caller context before RPC. Controlled loopback mTLS and the existing native owner consumer now prove this bounded behavior; they do not establish genuine upstream authority.
+  - Expected pattern: Keep the configured server identity separate from mutation target data, and follow canonical usable TLS-material policy rather than copying a donor's regular-file predicate.
+- `2026-10-16`: Bound subprocess output and waits in the original claim-read test PKI fixture
+  - Context: Reading subprocess output to EOF before a timed wait leaves the supposed deadline unbounded.
+  - Observation: The original claim-read test PKI helper now redirects output to an owned temporary file, waits before reading it, and terminates/reaps a timed-out or interrupted child with interrupt preservation. Actual stalled-keytool timeout and interruption cases pass alongside the affected TLS and native owner proofs.
+  - Expected pattern: Keep this correction in the purpose-specific fixture; it does not require a general command framework or change production TLS material policy.
