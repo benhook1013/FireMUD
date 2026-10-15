@@ -11,8 +11,8 @@ import java.time.Clock;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -102,7 +102,8 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
   private static final Network NETWORK = Network.newNetwork();
 
   @Container
-  static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(TestContainerImages.postgres());
+  static final PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static final GenericContainer<?> redis =
@@ -817,22 +818,38 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       throws Exception {
     try (var fixture =
         new AccountControlUiOriginalOrderFixture(
-            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword(),
-            redis.getHost(), redis.getMappedPort(6379), temporary, UUID.randomUUID(),
-            Clock.systemUTC(), "1007")) {
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            temporary,
+            UUID.randomUUID(),
+            Clock.systemUTC(),
+            "1007")) {
       var issued = fixture.issueCreator();
       var f = issued.sources();
-      assertThat(f.dsl.fetch("SELECT version FROM flyway_schema_history WHERE success")
-              .getValues(0, String.class))
+      assertThat(
+              f.dsl
+                  .fetch("SELECT version FROM flyway_schema_history WHERE success")
+                  .getValues(0, String.class))
           .contains("1000", "1001", "1002", "1005", "1006", "1007")
           .doesNotContain("1008", "1009", "1010");
       var selected = selectedForSettlement(f.tenant);
       settleOriginal(issued, selected);
       var repository = new AccountSelectedOwnerIntakeSourceReservationRepository(f.dsl);
-      var reservations = new AccountSelectedOwnerIntakeSourceReservationService(
-          issued.actors(), f.fences, repository, f.manager, "test");
-      var scope = asGameDesign(() -> reservations.reserveSourceRead(
-          issued.compact(), UUID.randomUUID(), Owner.ENTITY_MANAGEMENT, selected, issued.environment()));
+      var reservations =
+          new AccountSelectedOwnerIntakeSourceReservationService(
+              issued.actors(), f.fences, repository, f.manager, "test");
+      var scope =
+          asGameDesign(
+              () ->
+                  reservations.reserveSourceRead(
+                      issued.compact(),
+                      UUID.randomUUID(),
+                      Owner.ENTITY_MANAGEMENT,
+                      selected,
+                      issued.environment()));
       seedRetainedCombinedParentRows(f.dsl);
       var retainedRows = retainedCombinedParentRows(f.dsl);
       assertThat(retainedRows.values()).allSatisfy(rows -> assertThat(rows).isNotEmpty());
@@ -843,19 +860,28 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
       var retainedHistory = f.dsl.fetch(historyQuery).getValues(0, String.class);
       var inheritedGuards = retainedInheritedGuardDefinitions(f.dsl);
       assertThat(inheritedGuards.get("account_ss_activation_settlement_insert_guard()"))
-          .contains("terminal->>'activationResultSha256' IS DISTINCT FROM 'sha256:' || encode(sha256(result_bytes), 'hex')");
+          .contains(
+              "terminal->>'activationResultSha256' IS DISTINCT FROM 'sha256:' || encode(sha256(result_bytes), 'hex')");
       Flyway upgrade = intakeMigration(f, "1010");
       assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(3);
       upgrade.validate();
       assertThat(f.dsl.fetch(historyQuery).getValues(0, String.class)).isEqualTo(retainedHistory);
       assertThat(retainedCombinedParentRows(f.dsl)).isEqualTo(retainedRows);
       assertThat(retainedInheritedGuardDefinitions(f.dsl)).isEqualTo(inheritedGuards);
-      for (String table : List.of("account_selected_owner_intake_authorizations",
-          "account_selected_owner_intake_sources", "account_selected_owner_intake_settlements")) {
+      for (String table :
+          List.of(
+              "account_selected_owner_intake_authorizations",
+              "account_selected_owner_intake_sources",
+              "account_selected_owner_intake_settlements")) {
         assertThat(f.dsl.fetchCount(org.jooq.impl.DSL.table(table))).isZero();
       }
-      assertThat(f.dsl.fetchSingle("SELECT account_selected_owner_intake_source_read_is_pending(?)",
-              scope.operationId()).get(0, Boolean.class)).isTrue();
+      assertThat(
+              f.dsl
+                  .fetchSingle(
+                      "SELECT account_selected_owner_intake_source_read_is_pending(?)",
+                      scope.operationId())
+                  .get(0, Boolean.class))
+          .isTrue();
     }
   }
 
@@ -2214,67 +2240,112 @@ class AccountSelectedOwnerIntakeAuthorizationPostgresIntegrationTest {
   private static Flyway intakeMigration(AccountControlUiOwnerSourcesFixture f, String target) {
     String schema = f.dsl.fetchSingle("SELECT current_schema()").get(0, String.class);
     Path root = Path.of("").toAbsolutePath();
-    while (root != null && !java.nio.file.Files.isDirectory(
-        root.resolve("services/account-service/src/main/resources/db/migration"))) {
+    while (root != null
+        && !java.nio.file.Files.isDirectory(
+            root.resolve("services/account-service/src/main/resources/db/migration"))) {
       root = root.getParent();
     }
     Path repositoryRoot = Objects.requireNonNull(root, "Account migrations must be available");
     return Flyway.configure()
         .dataSource(Objects.requireNonNull(f.manager.getDataSource()))
-        .schemas(schema).defaultSchema(schema).placeholders(Map.of("serviceSchema", schema))
-        .locations("filesystem:" + repositoryRoot.resolve("services/account-service/src/main/resources/db/migration"),
-            "filesystem:" + repositoryRoot.resolve("services/common-saga/src/main/resources/db/migration/saga"))
-        .target(target).load();
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations(
+            "filesystem:"
+                + repositoryRoot.resolve(
+                    "services/account-service/src/main/resources/db/migration"),
+            "filesystem:"
+                + repositoryRoot.resolve(
+                    "services/common-saga/src/main/resources/db/migration/saga"))
+        .target(target)
+        .load();
   }
 
   private static void seedRetainedCombinedParentRows(DSLContext dsl) {
-    Long sagaId = dsl.fetchSingle(
-        "INSERT INTO saga_instance(saga_name, state) VALUES (?, ?) RETURNING id",
-        "retained-final-intake-upgrade", "PENDING").get(0, Long.class);
-    dsl.execute("INSERT INTO saga_step(instance_id, name, status, attempt) VALUES (?, ?, ?, ?)",
-        sagaId, "retained-step", "PENDING", 3);
+    Long sagaId =
+        dsl.fetchSingle(
+                "INSERT INTO saga_instance(saga_name, state) VALUES (?, ?) RETURNING id",
+                "retained-final-intake-upgrade",
+                "PENDING")
+            .get(0, Long.class);
+    dsl.execute(
+        "INSERT INTO saga_step(instance_id, name, status, attempt) VALUES (?, ?, ?, ?)",
+        sagaId,
+        "retained-step",
+        "PENDING",
+        3);
     dsl.execute(
         "INSERT INTO account_initial_gameplay_login_disposals(request_id, disposal_operation_id, "
             + "caller_workload, caller_context_id, disposal_digest, witness_canonical_bytes) "
             + "VALUES (?, ?, ?, ?, ?, ?)",
-        UUID.randomUUID(), UUID.randomUUID(), "spiffe://firemud/ns/test/sa/game-session-service",
-        UUID.randomUUID(), "a".repeat(64), "retained parent disposal witness".getBytes(StandardCharsets.UTF_8));
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        "spiffe://firemud/ns/test/sa/game-session-service",
+        UUID.randomUUID(),
+        "a".repeat(64),
+        "retained parent disposal witness".getBytes(StandardCharsets.UTF_8));
   }
 
   private static Map<String, List<String>> retainedCombinedParentRows(DSLContext dsl) {
     Map<String, List<String>> rows = new LinkedHashMap<>();
-    for (String table : List.of("accounts", "account_authority_source_records",
-        "account_initial_gameplay_login_disposals", "saga_instance", "saga_step",
-        "account_selected_owner_intake_source_read_reservations",
-        "account_selected_owner_intake_source_read_sources")) {
-      rows.put(table, dsl.fetch(
-          "SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
-              + table + " t ORDER BY to_jsonb(t)::TEXT").getValues(0, String.class));
+    for (String table :
+        List.of(
+            "accounts",
+            "account_authority_source_records",
+            "account_initial_gameplay_login_disposals",
+            "saga_instance",
+            "saga_step",
+            "account_selected_owner_intake_source_read_reservations",
+            "account_selected_owner_intake_source_read_sources")) {
+      rows.put(
+          table,
+          dsl.fetch(
+                  "SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
+                      + table
+                      + " t ORDER BY to_jsonb(t)::TEXT")
+              .getValues(0, String.class));
     }
     return rows;
   }
 
   private static Map<String, String> retainedInheritedGuardDefinitions(DSLContext dsl) {
     Map<String, String> definitions = new LinkedHashMap<>();
-    for (String signature : List.of("account_ss_admission_assert_no_pending(text[])",
-        "account_ss_activation_insert_guard()", "account_ss_activation_settlement_insert_guard()",
-        "account_initial_gameplay_login_disposal_immutable()", "account_initial_gameplay_login_writer_guard()",
-        "account_control_ui_hold_required_sources(text[])", "account_draft_authorization_source_change_guard()",
-        "account_hosted_terms_disclosure_handoff_guard()")) {
-      definitions.put(signature,
-          dsl.fetchSingle("SELECT pg_get_functiondef(?::regprocedure)", signature).get(0, String.class));
+    for (String signature :
+        List.of(
+            "account_ss_admission_assert_no_pending(text[])",
+            "account_ss_activation_insert_guard()",
+            "account_ss_activation_settlement_insert_guard()",
+            "account_initial_gameplay_login_disposal_immutable()",
+            "account_initial_gameplay_login_writer_guard()",
+            "account_control_ui_hold_required_sources(text[])",
+            "account_draft_authorization_source_change_guard()",
+            "account_hosted_terms_disclosure_handoff_guard()")) {
+      definitions.put(
+          signature,
+          dsl.fetchSingle("SELECT pg_get_functiondef(?::regprocedure)", signature)
+              .get(0, String.class));
     }
     return definitions;
   }
 
   private static Map<String, List<String>> retainedSelectedOwnerRows(DSLContext dsl) {
     Map<String, List<String>> rows = new LinkedHashMap<>();
-    for (String table : List.of("account_selected_owner_intake_source_read_reservations",
-        "account_selected_owner_intake_source_read_sources", "account_selected_owner_intake_source_read_aborts",
-        "account_selected_owner_intake_authorizations", "account_selected_owner_intake_sources",
-        "account_selected_owner_intake_settlements")) {
-      rows.put(table, dsl.fetch("SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
-          + table + " t ORDER BY to_jsonb(t)::TEXT").getValues(0, String.class));
+    for (String table :
+        List.of(
+            "account_selected_owner_intake_source_read_reservations",
+            "account_selected_owner_intake_source_read_sources",
+            "account_selected_owner_intake_source_read_aborts",
+            "account_selected_owner_intake_authorizations",
+            "account_selected_owner_intake_sources",
+            "account_selected_owner_intake_settlements")) {
+      rows.put(
+          table,
+          dsl.fetch(
+                  "SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
+                      + table
+                      + " t ORDER BY to_jsonb(t)::TEXT")
+              .getValues(0, String.class));
     }
     return rows;
   }

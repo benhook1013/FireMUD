@@ -19,16 +19,16 @@ import java.nio.file.Path;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.firedevops.firemud.entitymanagement.v1.EntitySelectedSourceIntakeTerminalReadServiceGrpc;
-import net.firedevops.firemud.entitymanagement.v1.ReadSelectedSourceIntakeTerminalRequest;
-import net.firedevops.firemud.entitymanagement.v1.ReadSelectedSourceIntakeTerminalResponse;
 import net.firedevops.firemud.common.account.sourceintake.SelectedOwnerIntakeAuthorizationBinding;
-import net.firedevops.firemud.common.entity.sourceintake.GrpcEntitySelectedSourceIntakeTerminalReadClient;
-import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.entity.sourceintake.EntitySelectedSourceIntakeTerminalReadEvidence;
+import net.firedevops.firemud.common.entity.sourceintake.GrpcEntitySelectedSourceIntakeTerminalReadClient;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import net.firedevops.firemud.entitymanagement.v1.EntitySelectedSourceIntakeTerminalReadServiceGrpc;
+import net.firedevops.firemud.entitymanagement.v1.ReadSelectedSourceIntakeTerminalRequest;
+import net.firedevops.firemud.entitymanagement.v1.ReadSelectedSourceIntakeTerminalResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -38,8 +38,7 @@ import org.junit.jupiter.api.io.TempDir;
 class GrpcEntitySelectedSourceIntakeTerminalReadClientMtlsTest {
   private static final String NAMESPACE = "test";
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
-  private static final String ENTITY_URI =
-      "spiffe://firemud/ns/test/sa/entity-management-service";
+  private static final String ENTITY_URI = "spiffe://firemud/ns/test/sa/entity-management-service";
 
   @TempDir static Path tempDirectory;
 

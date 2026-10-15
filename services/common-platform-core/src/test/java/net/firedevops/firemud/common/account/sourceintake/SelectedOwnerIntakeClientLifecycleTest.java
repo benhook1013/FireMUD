@@ -24,11 +24,11 @@ import java.util.function.BooleanSupplier;
 import net.firedevops.firemud.common.automation.sourceintake.AutomationSelectedSourceIntakeTerminalReadClient;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamedesign.GrpcSelectedOwnerIntakeSourceClient;
-import net.firedevops.firemud.common.publication.WorldSelectedOwnerInventoryGrpcClient;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
+import net.firedevops.firemud.common.publication.WorldSelectedOwnerInventoryGrpcClient;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
@@ -186,11 +186,15 @@ class SelectedOwnerIntakeClientLifecycleTest {
         GrpcChannelFactory factory) {
       return switch (this) {
         case AUTHORIZATION -> {
-          var client = new AccountSelectedOwnerIntakeAuthorizationGrpcClient(endpoints, tls, factory, "test");
+          var client =
+              new AccountSelectedOwnerIntakeAuthorizationGrpcClient(
+                  endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
         }
         case WORLD_CLOSURE_AUTHORIZATION -> {
-          var client = new AccountSelectedOwnerIntakeWorldClosureAuthorizationGrpcClient(endpoints, tls, factory, "test");
+          var client =
+              new AccountSelectedOwnerIntakeWorldClosureAuthorizationGrpcClient(
+                  endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
         }
         case SOURCE_READ -> {
@@ -198,7 +202,8 @@ class SelectedOwnerIntakeClientLifecycleTest {
           yield new ClientHandle(client, client::init);
         }
         case AUTOMATION_TERMINAL -> {
-          var client = new AutomationSelectedSourceIntakeTerminalReadClient(endpoints, tls, factory, "test");
+          var client =
+              new AutomationSelectedSourceIntakeTerminalReadClient(endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
         }
         case GAME_DESIGN_SOURCE -> {

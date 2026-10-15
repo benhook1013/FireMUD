@@ -7,7 +7,6 @@ import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
-import net.firedevops.firemud.entitymanagement.v1.EntitySelectedSourceIntakeTerminalReadServiceGrpc;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -15,6 +14,7 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import net.firedevops.firemud.entitymanagement.v1.EntitySelectedSourceIntakeTerminalReadServiceGrpc;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** File-backed mTLS client for Entity's exact original selected-source terminal read. */
@@ -99,8 +99,7 @@ public final class GrpcEntitySelectedSourceIntakeTerminalReadClient
     String expectedPeerUri =
         "spiffe://firemud/ns/" + workloadNamespace + "/sa/entity-management-service";
     return EntitySelectedSourceIntakeTerminalReadServiceGrpc.newBlockingStub(channel)
-        .withMaxInboundMessageSize(
-            EntitySelectedSourceIntakeTerminalReadGrpcCodec.MAX_WIRE_BYTES)
+        .withMaxInboundMessageSize(EntitySelectedSourceIntakeTerminalReadGrpcCodec.MAX_WIRE_BYTES)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
