@@ -1520,16 +1520,22 @@ elif scenario.startswith("bridge-") and endpoint.endswith("/actions/runs/200/att
            "check_run_url": "https://api.github.com/repos/example/firemud/check-runs/3000",
            "steps": [{"name": name, "status": "completed", "conclusion": "success"} for name in
                      ("Preserve successful required gate on metadata-only edit", "Publish pending required gate status")]}
+    if scenario in {"bridge-running", "bridge-running-wrong-app"} and not state.get("metadata_completed"):
+        job.update(status="in_progress", conclusion=None)
     if scenario == "bridge-no-producer":
         job["steps"].pop()
     result = [{"total_count": 2 if scenario == "bridge-incomplete-jobs" else 1, "jobs": [job]}]
 elif scenario.startswith("bridge-") and endpoint.endswith("/check-runs/3000"):
     result = {"id": 3000, "head_sha": head, "name": "Validation Gate", "status": "completed",
               "conclusion": "cancelled" if scenario == "bridge-cancelled" else "success",
-              "app": {"id": 99 if scenario == "bridge-wrong-app" else 15368, "slug": "github-actions"}}
+              "app": {"id": 99 if scenario in {"bridge-wrong-app", "bridge-running-wrong-app"} else 15368, "slug": "github-actions"}}
+    if scenario in {"bridge-running", "bridge-running-wrong-app"} and not state.get("metadata_completed"):
+        result.update(status="in_progress", conclusion=None)
 elif scenario.startswith("bridge-") and endpoint.endswith("/actions/runs/200"):
     result = run(200)
     result["conclusion"] = "cancelled" if scenario == "bridge-cancelled" else "success"
+    if scenario in {"bridge-running", "bridge-running-wrong-app"} and not state.get("metadata_completed"):
+        result.update(status="in_progress", conclusion=None)
     if scenario == "bridge-wrong-attempt":
         result["run_attempt"] = 2
     if scenario == "bridge-empty-association":
@@ -1860,6 +1866,28 @@ PY
   fi
   return "$result_status"
 }
+# Source completion can arrive after publication but before metadata completes.
+printf '{"scenario":"bridge-running"}\n' >"$tmp_dir/resolver-state-bridge-running"
+run_resolver bridge-running 100 no-local-workflow-file reconcile
+python3 - "$tmp_dir/resolver-state-bridge-running" <<'PY_BRIDGE'
+import json
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+state = json.loads(path.read_text())
+assert not state.get("status_posts"), state
+state["metadata_completed"] = True
+path.write_text(json.dumps(state))
+PY_BRIDGE
+run_resolver bridge-running 200 no-local-workflow-file reconcile
+python3 - "$tmp_dir/resolver-state-bridge-running" <<'PY_BRIDGE'
+import json
+from pathlib import Path
+import sys
+state = json.loads(Path(sys.argv[1]).read_text())
+assert len(state.get("status_posts", [])) == 1 and state["status_posts"][0]["state"] == "success", state
+PY_BRIDGE
+
 # Support is dormant until a producer publishes the exact recognizable barrier.
 for scenario in bridge-success bridge-empty-association bridge-fork bridge-pending bridge-failed bridge-cancelled bridge-replaced bridge-pr-changed bridge-foreign bridge-wrong-url bridge-terminal bridge-absent; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
@@ -1884,7 +1912,7 @@ if expected:
 assert not state.get("posts"), "bridge entered legacy rerun admission"
 PY_BRIDGE
 done
-for scenario in bridge-no-producer bridge-incomplete-status bridge-incomplete-jobs bridge-wrong-app bridge-wrong-attempt bridge-wrong-title bridge-write-denied; do
+for scenario in bridge-running-wrong-app bridge-no-producer bridge-incomplete-status bridge-incomplete-jobs bridge-wrong-app bridge-wrong-attempt bridge-wrong-title bridge-write-denied; do
   printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
   if run_resolver "$scenario" 100 no-local-workflow-file reconcile; then
     echo "unproved bridge settlement succeeded: $scenario" >&2; exit 1

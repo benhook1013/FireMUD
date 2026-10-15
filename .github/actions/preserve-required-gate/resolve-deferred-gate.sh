@@ -152,7 +152,10 @@ if [[ "${resolution_phase}" == reconcile ]]; then
       .head_sha == $head and .head_branch == $branch and .display_title == $title and
       (.name == $name or .name == $title) and
       (.path == $path or (.path | startswith($path + "@") and length > ($path | length) + 1)) and
-      .event == "pull_request" and .status == "completed" and
+      .event == "pull_request" and
+      ((.status == "completed" and (.conclusion | type == "string" and length > 0)) or
+       ((.status == "queued" or .status == "in_progress" or .status == "waiting" or
+         .status == "pending" or .status == "requested") and .conclusion == null)) and
       (.pull_requests | type == "array") and
       ((.pull_requests | length) == 0 or any(.pull_requests[]; .number == $pr))' <<<"${target}" >/dev/null || return 1
     jobs="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${bridge_run_id}/attempts/${bridge_attempt}/jobs" \
@@ -166,7 +169,10 @@ if [[ "${resolution_phase}" == reconcile ]]; then
           ([.[].jobs[].id] | unique | length) != $total then error("incomplete jobs") else . end
       | [.[].jobs[] | select(.name == $name)]
       | if length != 1 then error("ambiguous gate") else .[0] end
-      | select(.run_id == $run and .head_sha == $head and .status == "completed")
+      | select(.run_id == $run and .head_sha == $head)
+      | select((.status == "completed" and (.conclusion | type == "string" and length > 0)) or
+          ((.status == "queued" or .status == "in_progress" or .status == "waiting" or
+            .status == "pending" or .status == "requested") and .conclusion == null))
       | select([.steps[]? | select(.name == "Publish pending required gate status" and
           .status == "completed" and .conclusion == "success")] | length == 1)
       | select([.steps[]? | select(.name == "Preserve successful required gate on metadata-only edit" and
@@ -176,13 +182,17 @@ if [[ "${resolution_phase}" == reconcile ]]; then
     jq -e --argjson id "${check_id}" --arg head "${head_sha}" --arg name "${gate_name}" \
       --argjson job "${jobs}" '
       .id == $id and .app.id == 15368 and .app.slug == "github-actions" and
-      .head_sha == $head and .name == $name and .status == "completed" and
+      .head_sha == $head and .name == $name and .status == $job.status and
       .conclusion == $job.conclusion' <<<"${check}" >/dev/null || return 1
     # Keep the full native snapshot for the immediate pre-POST comparison.
     jq -cn --argjson run "${target}" --argjson job "${jobs}" --argjson check "${check}" \
       '{run: $run, job: $job, check: $check}'
   }
-  native="$(bridge_native)" || fail_closed "Supplementary barrier lacks bound terminal native metadata evidence."
+  native="$(bridge_native)" || fail_closed "Supplementary barrier lacks bound native metadata evidence."
+  if jq -e '.run.status != "completed" or .job.status != "completed"' <<<"${native}" >/dev/null; then
+    echo "Bound metadata gate is still running; leave its supplementary barrier pending."
+    exit 0
+  fi
   assessment_output="$(mktemp)"
   trap 'rm -f "$assessment_output"' EXIT
   terminal_state=failure
