@@ -326,15 +326,19 @@ class WorldLifecycleCommandServiceImplTest {
         .thenReturn(Optional.of(instance));
 
     for (long expectedEpoch : new long[] {1L, 4L, 0L, -1L, Long.MAX_VALUE}) {
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> service.activatePreparedWorldInstance(42L, 101L, expectedEpoch));
+      IllegalArgumentException exception =
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> service.activatePreparedWorldInstance(42L, 101L, expectedEpoch));
+      assertTrue(exception.getMessage().startsWith("WORLD_INSTANCE_LIFECYCLE_STALE:"));
     }
 
     instance.setLifecycleEpoch(Long.MIN_VALUE);
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> service.activatePreparedWorldInstance(42L, 101L, Long.MAX_VALUE));
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.activatePreparedWorldInstance(42L, 101L, Long.MAX_VALUE));
+    assertTrue(exception.getMessage().startsWith("WORLD_INSTANCE_LIFECYCLE_STALE:"));
 
     verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
     verify(gameDesignClient, never()).getPublishedReleaseBundle(anyLong(), anyLong());
