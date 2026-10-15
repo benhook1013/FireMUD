@@ -1,6 +1,5 @@
 package net.firedevops.firemud.accountservice.service.session;
 
-import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -585,10 +584,6 @@ public final class AccountJwtJwksConfigMapClient {
     return node != null && node.isTextual() && !node.asText().isEmpty() ? node.asText() : null;
   }
 
-  @SuppressFBWarnings(
-      value = "NP_BOOLEAN_RETURN_NULL",
-      justification =
-          "The parser intentionally preserves absent or malformed booleans as unknown; callers require explicit true.")
   private static Boolean booleanValue(JsonNode node) {
     return node != null && node.isBoolean() ? node.booleanValue() : null;
   }
