@@ -914,6 +914,10 @@ class AccountGameplayDelegationRedisIntegrationTest {
           new net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalRequest(
               request, context, null);
       var admin = adminConnection.sync();
+      net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.TokenIdentity
+          pendingRevocationIdentity = null;
+      UUID revocationRequest = UUID.randomUUID();
+      String pendingRevocationXmin = null;
       if (!"UNBOUND".equals(stage)) {
         signer.preparePendingCandidate(request);
         var candidate =
@@ -938,6 +942,42 @@ class AccountGameplayDelegationRedisIntegrationTest {
                   database.manager(),
                   Clock.systemUTC());
           commit.commitPendingCandidate(request);
+          var fenceRow =
+              dsl.fetchSingle(
+                  "SELECT * FROM account_gameplay_token_identity_fences WHERE issuance_request_id = ?",
+                  request);
+          pendingRevocationIdentity =
+              new net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence
+                  .TokenIdentity(
+                  fenceRow.get("account_uuid", UUID.class),
+                  fenceRow.get("operation_id", UUID.class),
+                  request,
+                  fenceRow.get("token_hash", String.class),
+                  fenceRow.get("token_jti", UUID.class),
+                  fenceRow.get("not_before_epoch_second", Long.class),
+                  fenceRow.get("token_generation", Long.class),
+                  fenceRow.get("issuance_fence", Long.class));
+          var identity = pendingRevocationIdentity;
+          String digest =
+              net.firedevops.firemud.accountservice.repository
+                  .AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                  identity, revocationRequest);
+          var started =
+              inTransaction(
+                  database,
+                  () ->
+                      new net.firedevops.firemud.accountservice.repository
+                              .AccountGameplayTokenIdentityFenceRepository(dsl)
+                          .beginRevocationIntent(identity, revocationRequest, digest));
+          assertThat(started.state())
+              .isEqualTo(
+                  net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.State
+                      .PENDING);
+          pendingRevocationXmin =
+              dsl.fetchSingle(
+                      "SELECT xmin::text AS row_version FROM account_gameplay_token_identity_fences WHERE operation_id = ?",
+                      identity.operationId())
+                  .get("row_version", String.class);
         }
         var intent =
             inTransaction(
@@ -961,6 +1001,43 @@ class AccountGameplayDelegationRedisIntegrationTest {
                 net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalResult
                     .Disposition.RETIRED);
         assertThat(admin.get(ascii(tokenKey))).containsExactly(intent.tombstoneBytes());
+        if (pendingRevocationIdentity != null) {
+          var identity = pendingRevocationIdentity;
+          String digest =
+              net.firedevops.firemud.accountservice.repository
+                  .AccountGameplayTokenIdentityFenceRepository.revocationDigest(
+                  identity, revocationRequest);
+          var replayed =
+              inTransaction(
+                  database,
+                  () ->
+                      new net.firedevops.firemud.accountservice.repository
+                              .AccountGameplayTokenIdentityFenceRepository(dsl)
+                          .beginRevocationIntent(identity, revocationRequest, digest));
+          assertThat(replayed.state())
+              .isEqualTo(
+                  net.firedevops.firemud.accountservice.dto.AccountGameplayTokenIdentityFence.State
+                      .PENDING);
+          assertThat(replayed.revocationRequestId()).isEqualTo(revocationRequest);
+          assertThat(replayed.revocationDigest()).isEqualTo(digest);
+          assertThat(
+                  dsl.fetchSingle(
+                          "SELECT xmin::text AS row_version FROM account_gameplay_token_identity_fences WHERE operation_id = ?",
+                          identity.operationId())
+                      .get("row_version", String.class))
+              .isEqualTo(pendingRevocationXmin);
+          assertThatThrownBy(
+                  () ->
+                      inTransaction(
+                          database,
+                          () ->
+                              new net.firedevops.firemud.accountservice.repository
+                                      .AccountGameplayTokenIdentityFenceRepository(dsl)
+                                  .requireActiveForUpdate(identity)))
+              .isInstanceOf(
+                  net.firedevops.firemud.accountservice.repository
+                      .AccountGameplayTokenIdentityFenceRepository.TokenRevokedException.class);
+        }
         assertThatThrownBy(
                 () ->
                     redis.registerPending(
