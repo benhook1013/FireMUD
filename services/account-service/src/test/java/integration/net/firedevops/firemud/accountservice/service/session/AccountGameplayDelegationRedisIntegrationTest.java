@@ -1243,7 +1243,11 @@ class AccountGameplayDelegationRedisIntegrationTest {
                 rolledBackRequest))
         .isNull();
     assertThatThrownBy(
-        () -> inTransaction(database, () -> disposals.readUnqualifiedNoBinding(rolledBackIntent)));
+            () ->
+                inTransaction(database, () -> disposals.readUnqualifiedNoBinding(rolledBackIntent)))
+        .isInstanceOf(
+            net.firedevops.firemud.accountservice.repository
+                .AccountInitialGameplayLoginDisposalRepository.DisposalUnavailableException.class);
     assertThat(owner.retire(rollbackIdentity, CALLER_WORKLOAD).disposition())
         .isEqualTo(
             net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalResult.Disposition
