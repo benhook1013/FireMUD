@@ -36,6 +36,7 @@ import net.firedevops.firemud.common.gamedesign.AuthoredWorldVersionStateEvidenc
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcPeerCertificateEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
@@ -97,6 +98,20 @@ import tools.jackson.databind.ObjectMapper;
     classes = WorldManagementServiceApplication.class,
     properties = "spring.grpc.server.port=0")
 class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
+  private record LifecycleGuardProbeCase(
+      int key,
+      String label,
+      String oldMutation,
+      String activationMutation,
+      String expectedDiagnostic) {}
+
+  private record LifecycleTransitionGuardProbeCase(
+      int key,
+      String label,
+      String startingMutation,
+      String transitionMutation,
+      String expectedDiagnostic) {}
+
   private static final String CONTENT_DIGEST =
       "sha256:f817af2770072bab0384c30c19b8cd30fce7a5a33f7587faed0024aa7c0909bc";
   private static final String VALID_DIGEST = "sha256:" + "a".repeat(64);
@@ -220,6 +235,27 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
           Map.entry(
               "V1041__world_run_owned_fixed_preset_preparation.sql",
               "c702cbb04c60f07fdf319c05a3f14f155c01ae8b0f1c9f5830ca152d5be5fbc4"),
+          Map.entry(
+              "V1042__world_canonical_association_required_field_checks.sql",
+              "670e8c82e4a736a5e645ce3ebb3ee2fb5692d996080b473ec5055885c4d73ebb"),
+          Map.entry(
+              "V1042.1__world_execution_terminal_service_schema.sql",
+              "d64c9ad97a4af81d6fddc4c44da7dc4e9afd87b27e905764094f1f37c7c7bd70"),
+          Map.entry(
+              "V1042.2__world_fixed_preset_read_transaction.sql",
+              "4edc9508e967a7fd0c367e00abab4d9694c5dfbc6c5474aaeda9b1eb561c70aa"),
+          Map.entry(
+              "V1042.3__world_fixture_row_mutation_diagnostic.sql",
+              "7e8e2d531c693d5856ee808c26f7c910d1117fbddf8a9044784b10d4372280f5"),
+          Map.entry(
+              "V1042.4__world_fixture_association_owner_copy_checks.sql",
+              "47d443cd8cf2aa74566476575a96faf7a69466daac2324deb2be4f88095b1c60"),
+          Map.entry(
+              "V1042.5__world_fixed_preset_complete_room_readback.sql",
+              "b32bf71e51132168f385ef6b5042c70d99587ab26ab73927234bda03a66464b8"),
+          Map.entry(
+              "V1042.6__world_terminal_binding_and_location_operation_checks.sql",
+              "87b0c67affa696bda5f2bfafdf533405b90cea01b0c2a5a7de8f79f4ff8eca80"),
           Map.entry(
               "V1007.1__world_restore_stable_legacy_update_fastpath.sql",
               "56efb5521ba235ce413caa8ed6ce54dad2c169064f9478e1d31bf1dd869743ed"),
@@ -679,6 +715,102 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   @Test
+  void actualFixtureMaterializationRetainsUnderOwnerSavepoint() {
+    var evidence = controlledEvidence();
+    var sourceOwner = new WorldAuthoredSourceIntakeRepository(dsl);
+    var versionOwner = new WorldAuthoredVersionIdentityRepository(dsl);
+    var intake =
+        ownerTransaction()
+            .execute(
+                status ->
+                    sourceOwner.acceptFresh(
+                        "dev", UUID.randomUUID(), evidence.sourceReceipt().sourceEvidence()));
+    var state =
+        AuthoredWorldVersionStateEvidence.create(
+            new AuthoredWorldVersionStateEvidence.Request(
+                1,
+                "dev",
+                UUID.randomUUID(),
+                intake.canonicalTenantId(),
+                intake.worldSlug(),
+                intake.sourceOperationId(),
+                intake.sourceEvidenceDigest(),
+                evidence.launchDescriptor().versionId()),
+            intake.source(),
+            evidence.gameSessionAssociation().canonicalVersionId(),
+            VersionLifecycleState.VERSION_LIFECYCLE_STATE_PUBLISHED,
+            evidence.launchDescriptor().versionStateEpoch());
+    var version = ownerTransaction().execute(status -> versionOwner.acceptFresh(intake, state));
+    var fixtureAssociations =
+        new WorldCanonicalInstanceAssociationRepository(
+            dsl, new WorldCompleteLaunchBindingRepository(dsl), sourceOwner, versionOwner);
+    var fixtureFence = new WorldDesignPublicationFenceRepository(dsl, sourceOwner);
+    var fixtureRequest = RunOwnedWorldFixtureEvidenceTestFixtures.request(evidence);
+    var allocatedFixture =
+        ownerTransaction()
+            .execute(
+                status -> {
+                  fixtureFence.lockOpen(binding(intake, version));
+                  return fixtureAssociations.allocateRunOwnedFixtureInOwnerTransaction(
+                      evidence, fixtureRequest, intake, version);
+                });
+    var fixtureAssociation =
+        fixtureAssociations.readRunOwnedFixtureAssociation(evidence, fixtureRequest);
+    var fixturePlan = RunOwnedWorldFixedPresetResources.plan(fixtureAssociation, intake, version);
+    var savepoint = new TransactionTemplate(transactionManager);
+    savepoint.setPropagationBehavior(TransactionDefinition.PROPAGATION_NESTED);
+    savepoint.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+
+    var materialized =
+        ownerTransaction()
+            .execute(
+                status -> {
+                  var result =
+                      savepoint.execute(
+                          nestedStatus ->
+                              RunOwnedWorldFixedPresetResources.materialize(
+                                  dsl,
+                                  evidence,
+                                  fixturePlan,
+                                  allocatedFixture.worldInstanceId(),
+                                  allocatedFixture.worldPrivateKeys().gameInstanceId()));
+                  var preparationStamp =
+                      dsl.fetchSingle(
+                          "SELECT p.preparation_inserted_full_xid::text, p.xmin::text, "
+                              + "pg_current_xact_id()::text, "
+                              + "(txid_current() % 4294967296)::text "
+                              + "FROM world_canonical_instance_preparation p "
+                              + "WHERE p.world_instance_id = ?",
+                          allocatedFixture.worldInstanceId());
+                  assertThat(preparationStamp.get(0, String.class))
+                      .as("the BEFORE INSERT server stamp records the top-level full XID")
+                      .isEqualTo(preparationStamp.get(2, String.class));
+                  assertThat(preparationStamp.get(1, String.class))
+                      .as("the row inserted beneath the owner savepoint keeps its child xmin")
+                      .isNotEqualTo(preparationStamp.get(3, String.class));
+                  return result;
+                });
+    assertThat(materialized).isNotNull();
+    assertThat(materialized.regionCount()).isEqualTo(1);
+    assertThat(materialized.zoneCount()).isEqualTo(1);
+    assertThat(materialized.roomCount()).isEqualTo(2);
+    assertThat(materialized.exitCount()).isEqualTo(2);
+    assertThat(
+            scalarLong(
+                "SELECT count(*) FROM world_canonical_instance_preparation "
+                    + "WHERE world_instance_id = ?",
+                allocatedFixture.worldInstanceId()))
+        .isEqualTo(1L);
+    assertThat(
+            scalarLong(
+                "SELECT count(*) FROM world_canonical_instance_preparation_execution_manifest "
+                    + "WHERE fixture_world_instance_id = ?",
+                allocatedFixture.worldInstanceId()))
+        .isZero();
+    assertNoPendingManifests(allocatedFixture.worldInstanceId());
+  }
+
+  @Test
   void fixturePreparingCannotActivateAcquireHoldsPlaceActorsOrReuseConsumedManifests()
       throws Exception {
     var evidence = controlledEvidence();
@@ -932,7 +1064,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             .isEqualTo(originalRows.get(entry.getKey()));
 
       // Create and materialize a controlled schema-3 fixture through the existing World owners at
-      // the V1041 checkpoint, then prove V1042 retains every stored row image and xmin.
+      // the V1041 checkpoint, then preserve that real fixture while advancing to V1042.8.
       var fixtureAssociations =
           new WorldCanonicalInstanceAssociationRepository(
               connection,
@@ -990,15 +1122,169 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                       fixtureAssociation.worldInstanceId())
                   .get(0, Long.class))
           .isEqualTo(1L);
+      String retainedPreparationAt10428 =
+          connection
+              .fetchSingle(
+                  "SELECT (to_jsonb(p) - 'preparation_inserted_full_xid')::text "
+                      + "|| ':xmin=' || p.xmin::text "
+                      + "FROM world_canonical_instance_preparation p WHERE p.world_instance_id = ?",
+                  fixtureAssociation.worldInstanceId())
+              .get(0, String.class);
 
-      var retainedRowsAtV1042 = new LinkedHashMap<>(allRows(connection));
-      retainedRowsAtV1042.remove(HISTORY);
-      var historyAtV1042 = history(connection);
+      var through10428 = migration(source, schema, "1042.8");
+      through10428.migrate();
+      through10428.validate();
+      assertThat(through10428.getConfiguration().isOutOfOrder()).isFalse();
+      assertThat(versions(connection)).contains("1042.8").doesNotContain("1042.9");
+      String preservedPublicationRequestId = "pre-v1042-9-null-stamp";
+      var preservedWorkflow =
+          PublicationDigestRequestBinding.full(
+                  intake.canonicalTenantId().toString(),
+                  Long.toString(version.gameDesignVersionId()),
+                  preservedPublicationRequestId)
+              .derivedWorkflowIdentity();
+      UUID preservedPublicationFence = UUID.randomUUID();
+      connection.execute(
+          "INSERT INTO world_design_publication_fence_attempt "
+              + "(publication_fence, target_namespace, canonical_tenant_id, local_tenant_key, "
+              + "version_id, intake_operation_id, intake_request_id, source_operation_id, "
+              + "source_evidence_digest, intake_receipt_digest, publication_request_id, "
+              + "request_digest, version_state_epoch, publish_workflow_id, applied_commit_id, "
+              + "content_digest, digest_schema_version, owner_binding_schema_version, "
+              + "canonical_version_id, version_identity_operation_id, game_design_version_id, "
+              + "intake_request_digest, attempt_created_full_xid) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3, 1, ?, ?, ?, ?, NULL)",
+          preservedPublicationFence,
+          intake.targetNamespace(),
+          intake.canonicalTenantId(),
+          intake.localTenantKey(),
+          version.localVersionKey(),
+          intake.operationId(),
+          intake.intakeRequestId(),
+          intake.sourceOperationId(),
+          intake.sourceEvidenceDigest(),
+          intake.receiptDigest(),
+          preservedPublicationRequestId,
+          "a".repeat(64),
+          evidence.launchDescriptor().versionStateEpoch(),
+          preservedWorkflow,
+          "retained-null-stamp-commit",
+          "b".repeat(64),
+          version.canonicalVersionId(),
+          version.operationId(),
+          version.gameDesignVersionId(),
+          intake.requestDigest());
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT attempt_created_full_xid::text FROM world_design_publication_fence_attempt "
+                          + "WHERE publication_fence = ?",
+                      preservedPublicationFence)
+                  .get(0, String.class))
+          .isNull();
+      String preservedForgedRequestId = "pre-v1042-9-forged-stamp";
+      var preservedForgedWorkflow =
+          PublicationDigestRequestBinding.full(
+                  intake.canonicalTenantId().toString(),
+                  Long.toString(version.gameDesignVersionId()),
+                  preservedForgedRequestId)
+              .derivedWorkflowIdentity();
+      UUID preservedForgedPublicationFence = UUID.randomUUID();
+      connection.execute(
+          "INSERT INTO world_design_publication_fence_attempt "
+              + "(publication_fence, target_namespace, canonical_tenant_id, local_tenant_key, "
+              + "version_id, intake_operation_id, intake_request_id, source_operation_id, "
+              + "source_evidence_digest, intake_receipt_digest, publication_request_id, "
+              + "request_digest, version_state_epoch, publish_workflow_id, applied_commit_id, "
+              + "content_digest, digest_schema_version, owner_binding_schema_version, "
+              + "canonical_version_id, version_identity_operation_id, game_design_version_id, "
+              + "intake_request_digest, attempt_created_full_xid) "
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 3, 1, ?, ?, ?, ?, ?::xid8)",
+          preservedForgedPublicationFence,
+          intake.targetNamespace(),
+          intake.canonicalTenantId(),
+          intake.localTenantKey(),
+          version.localVersionKey(),
+          intake.operationId(),
+          intake.intakeRequestId(),
+          intake.sourceOperationId(),
+          intake.sourceEvidenceDigest(),
+          intake.receiptDigest(),
+          preservedForgedRequestId,
+          "c".repeat(64),
+          evidence.launchDescriptor().versionStateEpoch(),
+          preservedForgedWorkflow,
+          "retained-forged-stamp-commit",
+          "d".repeat(64),
+          version.canonicalVersionId(),
+          version.operationId(),
+          version.gameDesignVersionId(),
+          intake.requestDigest(),
+          "9223372036854775807");
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT attempt_created_full_xid::text FROM world_design_publication_fence_attempt "
+                          + "WHERE publication_fence = ?",
+                      preservedForgedPublicationFence)
+                  .get(0, String.class))
+          .isEqualTo("9223372036854775807");
+      int versionedCountAt10428 = versions(connection).size();
+      var retainedRowsAt10428 = new LinkedHashMap<>(allRows(connection));
+      retainedRowsAt10428.remove(HISTORY);
+      var historyAt10428 = history(connection);
+      Map<String, String> sameTransactionFunctionMetadata = new LinkedHashMap<>();
+      for (String function :
+          List.of(
+              "world_validate_selected_publication_account_binding()",
+              "world_validate_selected_publication_artifact_inventory()",
+              "world_retain_preparation_start_location()",
+              "world_guard_preparation_start_location()",
+              "world_require_preparation_start_location(jsonb,jsonb,uuid)"))
+        sameTransactionFunctionMetadata.put(
+            function,
+            connection
+                .fetchSingle(
+                    "SELECT jsonb_build_array(oid::text, proowner::text, prosecdef::text, "
+                        + "proconfig::text, proacl::text)::text FROM pg_proc "
+                        + "WHERE oid = to_regprocedure(?)",
+                    schema + "." + function)
+                .get(0, String.class));
+      Map<String, String> sameTransactionTriggerMetadata = new LinkedHashMap<>();
+      for (String trigger :
+          List.of(
+              "trg_world_publication_account_binding_validate",
+              "trg_world_publication_account_binding_immutable",
+              "trg_world_publication_account_binding_no_truncate",
+              "trg_world_selected_publication_artifact_inventory_validate",
+              "trg_world_selected_publication_artifact_inventory_immutable",
+              "trg_world_selected_publication_artifact_inventory_no_truncate",
+              "trg_world_preparation_retain_start_location",
+              "trg_world_preparation_start_location_guard",
+              "trg_world_preparation_start_location_no_truncate"))
+        sameTransactionTriggerMetadata.put(
+            trigger,
+            connection
+                .fetchSingle(
+                    "SELECT jsonb_build_array(t.oid::text, t.tgfoid::text, t.tgtype::text, "
+                        + "t.tgenabled::text, encode(t.tgargs, 'hex'), "
+                        + "pg_get_expr(t.tgqual, t.tgrelid))::text "
+                        + "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                        + "WHERE c.relnamespace = to_regnamespace(?) AND t.tgname = ?",
+                    schema,
+                    trigger)
+                .get(0, String.class));
       String guardProcedure = schema + ".world_guard_canonical_activation_transition()";
       var originalGuardIdentity =
           connection.fetchSingle(
-              "SELECT oid::text, prosecdef, proacl::text FROM pg_proc WHERE oid = to_regprocedure(?)",
+              "SELECT oid::text, proowner::text, prosecdef, proconfig::text, proacl::text FROM pg_proc WHERE oid = to_regprocedure(?)",
               guardProcedure);
+      var originalGuardTrigger =
+          connection.fetchSingle(
+              "SELECT t.oid::text, t.tgfoid::text, t.tgtype, t.tgenabled, t.tgargs::text, t.tgqual::text "
+                  + "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                  + "WHERE c.relnamespace = to_regnamespace(?) AND t.tgname = 'trg_world_canonical_activation_transition'",
+              schema);
       var full = migration(source, schema, null);
       full.migrate();
       full.validate();
@@ -1008,21 +1294,247 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       assertThat(versions(connection).subList(40, resolvedVersionedCount))
           .containsExactlyElementsOf(remainingVersions());
       assertThat(history(connection).subList(0, 40)).isEqualTo(parentHistory);
-      assertThat(history(connection).subList(0, 75)).isEqualTo(historyAtV1042);
+      assertThat(history(connection).subList(0, versionedCountAt10428)).isEqualTo(historyAt10428);
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT attempt_created_full_xid::text FROM world_design_publication_fence_attempt "
+                          + "WHERE publication_fence = ?",
+                      preservedPublicationFence)
+                  .get(0, String.class))
+          .isNull();
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT attempt_inserted_full_xid::text FROM world_design_publication_fence_attempt "
+                          + "WHERE publication_fence = ?",
+                      preservedPublicationFence)
+                  .get(0, String.class))
+          .isNull();
+      assertThat(
+              connection.fetchSingle(
+                  "SELECT attempt_created_full_xid::text, attempt_inserted_full_xid::text "
+                      + "FROM world_design_publication_fence_attempt WHERE publication_fence = ?",
+                  preservedForgedPublicationFence))
+          .as(
+              "the pre-1042.9 caller-forged stamp is retained while the new server stamp stays NULL")
+          .satisfies(
+              row -> {
+                assertThat(row.get(0, String.class)).isEqualTo("9223372036854775807");
+                assertThat(row.get(1, String.class)).isNull();
+              });
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT count(*) FROM world_design_publication_fence_attempt "
+                          + "WHERE attempt_inserted_full_xid IS NOT NULL")
+                  .get(0, Long.class))
+          .isZero();
+      for (var entry : sameTransactionFunctionMetadata.entrySet())
+        assertThat(
+                connection
+                    .fetchSingle(
+                        "SELECT jsonb_build_array(oid::text, proowner::text, prosecdef::text, "
+                            + "proconfig::text, proacl::text)::text FROM pg_proc "
+                            + "WHERE oid = to_regprocedure(?)",
+                        schema + "." + entry.getKey())
+                    .get(0, String.class))
+            .as("function OID, owner, security, search_path and ACL for %s", entry.getKey())
+            .isEqualTo(entry.getValue());
+      for (var entry : sameTransactionTriggerMetadata.entrySet())
+        assertThat(
+                connection
+                    .fetchSingle(
+                        "SELECT jsonb_build_array(t.oid::text, t.tgfoid::text, t.tgtype::text, "
+                            + "t.tgenabled::text, encode(t.tgargs, 'hex'), "
+                            + "pg_get_expr(t.tgqual, t.tgrelid))::text "
+                            + "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                            + "WHERE c.relnamespace = to_regnamespace(?) AND t.tgname = ?",
+                        schema,
+                        entry.getKey())
+                    .get(0, String.class))
+            .as("existing trigger identity and behavior for %s", entry.getKey())
+            .isEqualTo(entry.getValue());
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT pg_get_functiondef(to_regprocedure(?))",
+                      schema + ".world_guard_preparation_start_location()")
+                  .get(0, String.class))
+          .contains("p.preparation_inserted_full_xid=pg_current_xact_id()")
+          .doesNotContain("p.xmin::TEXT");
+      var preparationStampFunction =
+          connection.fetchSingle(
+              "SELECT proowner::text, prosecdef, proconfig::text FROM pg_proc "
+                  + "WHERE oid = to_regprocedure(?)",
+              schema + ".world_stamp_preparation_insert_full_xid()");
+      assertThat(preparationStampFunction.get("prosecdef", Boolean.class)).isTrue();
+      assertThat(preparationStampFunction.get("proconfig", String.class))
+          .contains("pg_catalog")
+          .contains(schema);
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT count(*) FROM pg_proc p CROSS JOIN LATERAL "
+                          + "aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl "
+                          + "WHERE p.oid = to_regprocedure(?) AND acl.grantee = 0::oid "
+                          + "AND acl.privilege_type = 'EXECUTE'",
+                      schema + ".world_stamp_preparation_insert_full_xid()")
+                  .get(0, Long.class))
+          .as("the preparation stamp trigger function grants no EXECUTE to PUBLIC")
+          .isZero();
+      assertThat(
+              connection.fetchSingle(
+                  "SELECT t.tgtype::text, t.tgenabled::text, t.tgfoid::text "
+                      + "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                      + "WHERE c.relnamespace = to_regnamespace(?) "
+                      + "AND c.relname = 'world_canonical_instance_preparation' "
+                      + "AND t.tgname = 'trg_world_preparation_full_xid_stamp'",
+                  schema))
+          .satisfies(
+              row -> {
+                assertThat(row.get(0, String.class)).isEqualTo("7");
+                assertThat(row.get(1, String.class)).isEqualTo("O");
+                assertThat(row.get(2, String.class))
+                    .isEqualTo(
+                        connection
+                            .fetchSingle(
+                                "SELECT oid::text FROM pg_proc WHERE oid = to_regprocedure(?)",
+                                schema + ".world_stamp_preparation_insert_full_xid()")
+                            .get(0, String.class));
+              });
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                          + "WHERE c.relnamespace = to_regnamespace(?) "
+                          + "AND c.relname = 'world_canonical_instance_preparation' "
+                          + "AND NOT t.tgisinternal AND (t.tgtype & 7) = 7",
+                      schema)
+                  .get(0, Long.class))
+          .as(
+              "the exact manifest validator and server stamp are the only BEFORE INSERT row triggers")
+          .isEqualTo(2L);
+      assertThat("trg_world_canonical_instance_preparation_exact_insert")
+          .isLessThan("trg_world_preparation_full_xid_stamp");
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT preparation_inserted_full_xid::text "
+                          + "FROM world_canonical_instance_preparation WHERE world_instance_id = ?",
+                      fixtureAssociation.worldInstanceId())
+                  .get(0, String.class))
+          .as("a preparation retained before V1042.11 remains unbackfilled")
+          .isNull();
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT (to_jsonb(p) - 'preparation_inserted_full_xid')::text "
+                          + "|| ':xmin=' || p.xmin::text "
+                          + "FROM world_canonical_instance_preparation p WHERE p.world_instance_id = ?",
+                      fixtureAssociation.worldInstanceId())
+                  .get(0, String.class))
+          .as("all original preparation columns and xmin survive the V1042.11 upgrade")
+          .isEqualTo(retainedPreparationAt10428);
       for (var entry : originalColumns.entrySet())
         assertThat(retainedRows(connection, schema, entry.getKey(), entry.getValue()))
             .as("all original values and xmin for %s", entry.getKey())
             .containsAll(originalRows.get(entry.getKey()));
+      var retainedRowsAtDefaultFrontierOriginalColumns =
+          new LinkedHashMap<>(allRowsWithoutNewServerStamps(connection));
+      retainedRowsAtDefaultFrontierOriginalColumns.remove(HISTORY);
+      assertThat(retainedRowsAtDefaultFrontierOriginalColumns)
+          .as("all retained original row values and xmin from V1042.8 through the V1042.11 repairs")
+          .isEqualTo(retainedRowsAt10428);
       var retainedRowsAtDefaultFrontier = new LinkedHashMap<>(allRows(connection));
       retainedRowsAtDefaultFrontier.remove(HISTORY);
-      assertThat(retainedRowsAtDefaultFrontier)
-          .as("all retained row values and xmin from V1042 through the default frontier")
-          .isEqualTo(retainedRowsAtV1042);
       assertThat(
               connection.fetchSingle(
-                  "SELECT oid::text, prosecdef, proacl::text FROM pg_proc WHERE oid = to_regprocedure(?)",
+                  "SELECT oid::text, proowner::text, prosecdef, proconfig::text, proacl::text FROM pg_proc WHERE oid = to_regprocedure(?)",
                   guardProcedure))
           .isEqualTo(originalGuardIdentity);
+      var installedAccountBinding =
+          connection
+              .fetchSingle(
+                  "SELECT pg_get_functiondef(to_regprocedure(?))",
+                  schema + ".world_validate_selected_publication_account_binding()")
+              .get(0, String.class);
+      var installedArtifactInventory =
+          connection
+              .fetchSingle(
+                  "SELECT pg_get_functiondef(to_regprocedure(?))",
+                  schema + ".world_validate_selected_publication_artifact_inventory()")
+              .get(0, String.class);
+      var installedPreparationRetainer =
+          connection
+              .fetchSingle(
+                  "SELECT pg_get_functiondef(to_regprocedure(?))",
+                  schema + ".world_retain_preparation_start_location()")
+              .get(0, String.class);
+      assertThat(installedAccountBinding)
+          .contains("attempt_created_full_xid = pg_current_xact_id()")
+          .contains("attempt_inserted_full_xid = pg_current_xact_id()")
+          .doesNotContain("a.xmin::TEXT");
+      assertThat(installedArtifactInventory)
+          .contains("attempt_created_full_xid = pg_current_xact_id()")
+          .contains("attempt_inserted_full_xid = pg_current_xact_id()")
+          .doesNotContain("a.xmin::TEXT");
+      assertThat(installedPreparationRetainer)
+          .contains("to_jsonb(retained) = to_jsonb(NEW)")
+          .contains("world_canonical_instance_preparation_execution_manifest")
+          .doesNotContain("retained.xmin::TEXT");
+      var stampFunction =
+          connection.fetchSingle(
+              "SELECT proowner::text, prosecdef, proconfig::text FROM pg_proc "
+                  + "WHERE oid = to_regprocedure(?)",
+              schema + ".world_stamp_publication_attempt_full_xid()");
+      assertThat(stampFunction.get("proowner", String.class))
+          .isEqualTo(
+              connection
+                  .fetchSingle(
+                      "SELECT proowner::text FROM pg_proc WHERE oid = to_regprocedure(?)",
+                      schema + ".world_validate_selected_publication_account_binding()")
+                  .get(0, String.class));
+      assertThat(stampFunction.get("prosecdef", Boolean.class)).isTrue();
+      assertThat(stampFunction.get("proconfig", String.class))
+          .contains("pg_catalog")
+          .contains(schema);
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT count(*) FROM pg_proc p CROSS JOIN LATERAL "
+                          + "aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) acl "
+                          + "WHERE p.oid = to_regprocedure(?) AND acl.grantee = 0::oid "
+                          + "AND acl.privilege_type = 'EXECUTE'",
+                      schema + ".world_stamp_publication_attempt_full_xid()")
+                  .get(0, Long.class))
+          .as("the stamp trigger function grants no EXECUTE privilege to PUBLIC")
+          .isZero();
+      assertThat(
+              connection
+                  .fetchSingle(
+                      "SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                          + "WHERE c.relnamespace = to_regnamespace(?) "
+                          + "AND t.tgname = 'trg_world_publication_attempt_full_xid_stamp' "
+                          + "AND c.relname = 'world_design_publication_fence_attempt' "
+                          + "AND t.tgtype = 7 AND t.tgenabled = 'O' "
+                          + "AND t.tgfoid = to_regprocedure(?)",
+                      schema,
+                      schema + ".world_stamp_publication_attempt_full_xid()")
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+      assertThat(
+              connection.fetchSingle(
+                  "SELECT t.oid::text, t.tgfoid::text, t.tgtype, t.tgenabled, t.tgargs::text, t.tgqual::text "
+                      + "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                      + "WHERE c.relnamespace = to_regnamespace(?) AND t.tgname = 'trg_world_canonical_activation_transition'",
+                  schema))
+          .isEqualTo(originalGuardTrigger);
+      assertPredecessorLifecycleGuardProbe(
+          source,
+          schema,
+          fixtureAssociation.worldInstanceId(),
+          fixtureAssociation.identity().canonicalGameInstanceId().toString());
       List<String> deniedMetadataUpdates =
           List.of(
               "failure_reason = 'fixture failure'",
@@ -1073,7 +1585,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       assertThat(allRows(connection).get("world_instance"))
           .as(
               "fixture row remains byte-for-byte and xmin stable after denied lifecycle metadata writes")
-          .isEqualTo(retainedRowsAtV1042.get("world_instance"));
+          .isEqualTo(retainedRowsAt10428.get("world_instance"));
       assertThat(sourceOwner.read("dev", intakeRequest)).contains(intake);
       assertThat(
               versionOwner.readByCanonicalVersion(
@@ -1256,7 +1768,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   @Test
   @SuppressWarnings("unchecked")
   void realWorldOwnersMaterializeSixFixtureMappingsAndReplayExactCommittedBytes() {
-    RunOwnedWorldLaunchEvidence evidence = controlledEvidence();
+    RunOwnedCanonicalWorldLaunchEvidence evidence = controlledEvidence();
     var sourceRepository = new WorldAuthoredSourceIntakeRepository(dsl);
     var versionRepository = new WorldAuthoredVersionIdentityRepository(dsl);
     var associationRepository =
@@ -1686,12 +2198,13 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertNoPendingManifests(worldId);
   }
 
-  private WorldLifecycleCommandServiceImpl nativeService(RunOwnedWorldLaunchEvidence evidence) {
+  private WorldLifecycleCommandServiceImpl nativeService(
+      RunOwnedCanonicalWorldLaunchEvidence evidence) {
     return nativeService(evidence, new AtomicInteger());
   }
 
   private WorldLifecycleCommandServiceImpl nativeService(
-      RunOwnedWorldLaunchEvidence evidence, AtomicInteger upstreamReads) {
+      RunOwnedCanonicalWorldLaunchEvidence evidence, AtomicInteger upstreamReads) {
     // Only upstream replies are controlled. The fixture bridge uses real World SQL owners.
     var source = mock(AuthoredWorldSourceClient.class);
     when(source.read(any()))
@@ -1718,7 +2231,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     // Package preparation consumes the closed-parser carrier directly; this enabled provider
     // supplies configuration only and does not pretend to read files or authenticate producers.
     var provider =
-        new RunOwnedWorldLaunchEvidenceProvider(
+        new RunOwnedCanonicalWorldLaunchEvidenceProvider(
             true,
             "/controlled-unused-capability",
             "/controlled-unused-receipt",
@@ -1813,6 +2326,685 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
                       + " retained ORDER BY 1")
               .getValues(0, String.class));
     return rows;
+  }
+
+  private static Map<String, List<String>> allRowsWithoutNewServerStamps(DSLContext connection) {
+    String schema = connection.fetchSingle("SELECT current_schema()").get(0, String.class);
+    assertThat(schema).isNotBlank();
+    var tables =
+        connection
+            .fetch(
+                "SELECT tablename FROM pg_tables WHERE schemaname = ? ORDER BY tablename", schema)
+            .getValues(0, String.class);
+    assertThat(tables).isNotEmpty().contains("world_design_publication_fence_attempt");
+    Map<String, List<String>> rows = new LinkedHashMap<>();
+    for (String table : tables) {
+      String retainedRow =
+          switch (table) {
+            case "world_design_publication_fence_attempt" ->
+                "(to_jsonb(retained) - 'attempt_inserted_full_xid')";
+            case "world_canonical_instance_preparation" ->
+                "(to_jsonb(retained) - 'preparation_inserted_full_xid')";
+            default -> "to_jsonb(retained)";
+          };
+      rows.put(
+          table,
+          connection
+              .fetch(
+                  "SELECT "
+                      + retainedRow
+                      + "::text || ':xmin=' || retained.xmin::text FROM "
+                      + DSL.name(schema, table)
+                      + " retained ORDER BY 1")
+              .getValues(0, String.class));
+    }
+    return rows;
+  }
+
+  /**
+   * Exercises the installed trigger against controlled copies of an owner-created row. This is SQL
+   * predicate and retention proof only; it does not invoke or stand in for the authenticated
+   * source-first predecessor owner, receipt, World hold, or lifecycle handoff.
+   */
+  private static void assertPredecessorLifecycleGuardProbe(
+      DriverManagerDataSource source,
+      String schema,
+      long canonicalWorldInstanceId,
+      String canonicalGameInstanceId)
+      throws Exception {
+    String probeTable = "pg_temp.fixture_source_lifecycle_probe";
+    String worldTable = DSL.name(schema, "world_instance").toString();
+    List<LifecycleGuardProbeCase> cases =
+        List.of(
+            new LifecycleGuardProbeCase(0, "exact source-only activation", null, null, null),
+            new LifecycleGuardProbeCase(
+                1,
+                "binding removed on activation",
+                null,
+                "run_owned_fixture_binding_sha256 = NULL, status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                2,
+                "malformed original binding",
+                "run_owned_fixture_binding_sha256 = repeat('A', 64)",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                3,
+                "changed binding on activation",
+                null,
+                "run_owned_fixture_binding_sha256 = CASE WHEN run_owned_fixture_binding_sha256 = repeat('0', 64) THEN repeat('1', 64) ELSE repeat('0', 64) END, status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                4,
+                "changed preparing epoch",
+                "run_owned_fixture_preparing_lifecycle_epoch = 2",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                5,
+                "stale lifecycle epoch",
+                "lifecycle_epoch = 2",
+                "status = 'ACTIVE', lifecycle_epoch = 3, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                6,
+                "wrong original lifecycle state",
+                "status = 'FAILED_PRE_ACTIVATION'",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                7,
+                "unexpected next lifecycle epoch",
+                null,
+                "status = 'ACTIVE', lifecycle_epoch = 3, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                8,
+                "row version skips a compare-and-set step",
+                null,
+                "status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 2",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                9,
+                "canonical identity partial",
+                "canonical_game_instance_id = '00000000-0000-0000-0000-000000000001'::uuid",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                10,
+                "realm-only partial",
+                "canonical_realm_id = '00000000-0000-0000-0000-000000000001'::uuid",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                11,
+                "catalog-only partial",
+                "catalog_revision = 7",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                12,
+                "realm/catalog-only partial pair",
+                "canonical_realm_id = '00000000-0000-0000-0000-000000000001'::uuid, catalog_revision = 7",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                13,
+                "fixture provenance partial",
+                "fixture_provenance_digest = 'sha256:' || repeat('a', 64)",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                14,
+                "Game Session tenant allocation partial",
+                "game_session_tenant_id = 44",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                15,
+                "Game Session instance allocation partial",
+                "game_session_game_instance_id = 45",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                16,
+                "Game Design version allocation partial",
+                "game_design_version_id = 46",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                17,
+                "allocation tuple without canonical identity",
+                "game_session_tenant_id = 44, game_session_game_instance_id = 45, game_design_version_id = 46",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                18,
+                "new row adds realm metadata",
+                null,
+                "canonical_realm_id = '00000000-0000-0000-0000-000000000001'::uuid, status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                19,
+                "new row adds catalog metadata",
+                null,
+                "catalog_revision = 7, status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                20,
+                "new row adopts canonical identity",
+                null,
+                "canonical_game_instance_id = '00000000-0000-0000-0000-000000000001'::uuid, status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                21,
+                "new row adds fixture provenance",
+                null,
+                "fixture_provenance_digest = 'sha256:' || repeat('a', 64), status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                22,
+                "new row adds allocation data",
+                null,
+                "game_session_tenant_id = 44, status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                23,
+                "new row changes source request identity",
+                null,
+                "control_plane_request_id = 'different-source-operation', status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                24,
+                "existing termination request",
+                "termination_request_id = 'staged-termination-request'",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                25,
+                "existing terminal timestamp",
+                "terminated_at = TIMESTAMPTZ '2026-10-14T00:00:00Z'",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                26,
+                "Human activation still needs its committed operation",
+                "run_owned_fixture_binding_sha256 = NULL, run_owned_fixture_preparing_lifecycle_epoch = NULL, "
+                    + "canonical_game_instance_id = '"
+                    + canonicalGameInstanceId
+                    + "'::uuid, canonical_authority_kind = 'HUMAN', canonical_launch_binding_operation_id = '00000000-0000-0000-0000-000000000002'::uuid",
+                "status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 1",
+                "requires its exact activation operation"),
+            new LifecycleGuardProbeCase(
+                27,
+                "null original preparing epoch",
+                "run_owned_fixture_preparing_lifecycle_epoch = NULL",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                28,
+                "null original lifecycle epoch",
+                "lifecycle_epoch = NULL",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                29,
+                "null original lifecycle status",
+                "status = NULL",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                30,
+                "null original row version",
+                "row_version = NULL",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                31,
+                "null resulting lifecycle epoch",
+                null,
+                "status = 'ACTIVE', lifecycle_epoch = NULL, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                32,
+                "null resulting row version",
+                null,
+                "status = 'ACTIVE', lifecycle_epoch = 2, row_version = NULL",
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                33,
+                "negative original row version",
+                "row_version = -1",
+                null,
+                "lifecycle transitions are disabled"),
+            new LifecycleGuardProbeCase(
+                49,
+                "lifecycle transition cannot rewrite update timestamp",
+                null,
+                "updated_at = updated_at + INTERVAL '1 second', status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 1",
+                "lifecycle transitions are disabled"));
+    List<LifecycleTransitionGuardProbeCase> transitionCases =
+        List.of(
+            new LifecycleTransitionGuardProbeCase(
+                34,
+                "PREPARING cannot skip to TERMINATING",
+                null,
+                "status = 'TERMINATING', lifecycle_epoch = 2, row_version = row_version + 1, termination_request_id = 'preparing-skip'",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                35,
+                "PREPARING cannot skip to TERMINATED",
+                null,
+                "status = 'TERMINATED', lifecycle_epoch = 2, row_version = row_version + 1, termination_request_id = 'preparing-skip', terminated_at = TIMESTAMPTZ '2026-10-14T00:00:00Z'",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                36,
+                "FAILED_PRE_ACTIVATION cannot enter termination",
+                "status = 'FAILED_PRE_ACTIVATION', lifecycle_epoch = 2, row_version = 1, failure_reason = 'prepare failed'",
+                "status = 'TERMINATING', lifecycle_epoch = 3, row_version = row_version + 1, termination_request_id = 'failed-skip'",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                37,
+                "ACTIVE cannot skip to TERMINATED",
+                "status = 'ACTIVE', lifecycle_epoch = 2, row_version = 1",
+                "status = 'TERMINATED', lifecycle_epoch = 3, row_version = row_version + 1, termination_request_id = 'active-skip', terminated_at = TIMESTAMPTZ '2026-10-14T00:00:00Z'",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                38,
+                "ACTIVE termination requires a nonblank request ID",
+                "status = 'ACTIVE', lifecycle_epoch = 2, row_version = 1",
+                "status = 'TERMINATING', lifecycle_epoch = 3, row_version = row_version + 1, termination_request_id = '   '",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                39,
+                "ACTIVE termination requires a request ID",
+                "status = 'ACTIVE', lifecycle_epoch = 2, row_version = 1",
+                "status = 'TERMINATING', lifecycle_epoch = 3, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                40,
+                "ACTIVE termination requires the next epoch",
+                "status = 'ACTIVE', lifecycle_epoch = 2, row_version = 1",
+                "status = 'TERMINATING', lifecycle_epoch = 4, row_version = row_version + 1, termination_request_id = 'stale-epoch'",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                41,
+                "ACTIVE termination requires one row-version step",
+                "status = 'ACTIVE', lifecycle_epoch = 2, row_version = 1",
+                "status = 'TERMINATING', lifecycle_epoch = 3, row_version = row_version + 2, termination_request_id = 'stale-row-version'",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                42,
+                "termination finalization preserves its request ID",
+                "status = 'TERMINATING', lifecycle_epoch = 3, row_version = 2, failure_reason = 'cleanup pending', termination_request_id = 'termination-42'",
+                "status = 'TERMINATED', lifecycle_epoch = 4, row_version = row_version + 1, termination_request_id = 'different-request', terminated_at = TIMESTAMPTZ '2026-10-14T00:00:00Z'",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                43,
+                "termination finalization requires a terminal timestamp",
+                "status = 'TERMINATING', lifecycle_epoch = 3, row_version = 2, termination_request_id = 'termination-43'",
+                "status = 'TERMINATED', lifecycle_epoch = 4, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                44,
+                "termination finalization retains failure metadata",
+                "status = 'TERMINATING', lifecycle_epoch = 3, row_version = 2, failure_reason = 'cleanup pending', termination_request_id = 'termination-44'",
+                "status = 'TERMINATED', lifecycle_epoch = 4, row_version = row_version + 1, failure_reason = 'rewritten failure', terminated_at = TIMESTAMPTZ '2026-10-14T00:00:00Z'",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                45,
+                "TERMINATED cannot reopen as ACTIVE",
+                "status = 'TERMINATED', lifecycle_epoch = 4, row_version = 3, failure_reason = 'cleanup pending', termination_request_id = 'termination-45', terminated_at = TIMESTAMPTZ '2026-10-14T00:00:00Z'",
+                "status = 'ACTIVE', lifecycle_epoch = 5, row_version = row_version + 1",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                46,
+                "TERMINATED cannot reopen as TERMINATING",
+                "status = 'TERMINATED', lifecycle_epoch = 4, row_version = 3, failure_reason = 'cleanup pending', termination_request_id = 'termination-46', terminated_at = TIMESTAMPTZ '2026-10-14T00:00:00Z'",
+                "status = 'TERMINATING', lifecycle_epoch = 5, row_version = row_version + 1, terminated_at = NULL",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                47,
+                "termination finalization requires one row-version step",
+                "status = 'TERMINATING', lifecycle_epoch = 3, row_version = 2, termination_request_id = 'termination-47'",
+                "status = 'TERMINATED', lifecycle_epoch = 4, row_version = row_version + 2, terminated_at = TIMESTAMPTZ '2026-10-14T00:00:00Z'",
+                "lifecycle transitions are disabled"),
+            new LifecycleTransitionGuardProbeCase(
+                48,
+                "source-only fixture row rejects metadata-only mutation",
+                null,
+                "failure_reason = 'unowned metadata change', row_version = row_version + 1",
+                "lifecycle transitions are disabled"));
+
+    try (var connection = source.getConnection()) {
+      var probe = DSL.using(connection, SQLDialect.POSTGRES);
+      String originalBinding =
+          probe
+              .fetchSingle(
+                  "SELECT run_owned_fixture_binding_sha256 FROM " + worldTable + " WHERE id = ?",
+                  canonicalWorldInstanceId)
+              .get(0, String.class);
+      assertThat(originalBinding).matches("[0-9a-f]{64}");
+      probe.execute(
+          "CREATE TEMP TABLE fixture_source_lifecycle_probe AS SELECT 0::INTEGER AS probe_key, source.* FROM "
+              + worldTable
+              + " source WITH NO DATA");
+      for (LifecycleGuardProbeCase probeCase : cases) {
+        insertSourceOnlyLifecycleProbeRow(
+            probe, probeTable, worldTable, canonicalWorldInstanceId, probeCase.key());
+        if (probeCase.oldMutation() != null) {
+          probe.execute(
+              "UPDATE " + probeTable + " SET " + probeCase.oldMutation() + " WHERE probe_key = ?",
+              probeCase.key());
+        }
+      }
+      for (LifecycleTransitionGuardProbeCase probeCase : transitionCases) {
+        insertSourceOnlyLifecycleProbeRow(
+            probe, probeTable, worldTable, canonicalWorldInstanceId, probeCase.key());
+        if (probeCase.startingMutation() != null) {
+          probe.execute(
+              "UPDATE "
+                  + probeTable
+                  + " SET "
+                  + probeCase.startingMutation()
+                  + " WHERE probe_key = ?",
+              probeCase.key());
+        }
+      }
+      int failedPreparationKey = 100;
+      insertSourceOnlyLifecycleProbeRow(
+          probe, probeTable, worldTable, canonicalWorldInstanceId, failedPreparationKey);
+      // This row shape reaches the original Human activation-operation guard, but it is only a
+      // trigger probe; its Human label and copied fixture UUID do not represent Human authority.
+      probe.execute(
+          "CREATE TRIGGER fixture_source_lifecycle_guard BEFORE UPDATE ON "
+              + probeTable
+              + " FOR EACH ROW EXECUTE FUNCTION "
+              + DSL.name(schema, "world_guard_canonical_activation_transition")
+              + "()");
+
+      LifecycleGuardProbeCase valid = cases.getFirst();
+      probe.execute(
+          "UPDATE "
+              + probeTable
+              + " SET status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 1 "
+              + "WHERE probe_key = ?",
+          valid.key());
+      var activated =
+          probe.fetchSingle(
+              "SELECT status, lifecycle_epoch, row_version, run_owned_fixture_binding_sha256, "
+                  + "run_owned_fixture_preparing_lifecycle_epoch, canonical_game_instance_id, "
+                  + "canonical_realm_id, catalog_revision, fixture_provenance_digest, "
+                  + "game_session_tenant_id, game_session_game_instance_id, game_design_version_id "
+                  + "FROM "
+                  + probeTable
+                  + " WHERE probe_key = ?",
+              valid.key());
+      assertThat(activated.get(0, String.class)).isEqualTo("ACTIVE");
+      assertThat(activated.get(1, Long.class)).isEqualTo(2L);
+      assertThat(activated.get(2, Long.class)).isEqualTo(1L);
+      assertThat(activated.get(3, String.class)).isEqualTo(originalBinding);
+      assertThat(activated.get(4, Long.class)).isEqualTo(1L);
+      assertSourceOnlyCanonicalColumnsNull(probe, probeTable, valid.key());
+      assertThat(
+              probe
+                  .fetchSingle(
+                      "SELECT canonical_game_instance_id, canonical_realm_id, catalog_revision, "
+                          + "fixture_provenance_digest, game_session_tenant_id, "
+                          + "game_session_game_instance_id, game_design_version_id FROM "
+                          + probeTable
+                          + " WHERE probe_key = ?",
+                      valid.key())
+                  .intoArray())
+          .containsOnlyNulls();
+
+      // Termination commits ACTIVE→TERMINATING before the Entity cleanup call. A cleanup error
+      // returns with these exact request/reason fields retained; it is not another row transition.
+      probe.execute(
+          "UPDATE "
+              + probeTable
+              + " SET status = 'TERMINATING', lifecycle_epoch = 3, row_version = row_version + 1, "
+              + "termination_request_id = 'entity-cleanup-request-0', "
+              + "failure_reason = 'Entity cleanup failure retained for retry' WHERE probe_key = ?",
+          valid.key());
+      var terminating =
+          probe.fetchSingle(
+              "SELECT status, lifecycle_epoch, row_version, run_owned_fixture_binding_sha256, "
+                  + "run_owned_fixture_preparing_lifecycle_epoch, termination_request_id, "
+                  + "failure_reason, terminated_at FROM "
+                  + probeTable
+                  + " WHERE probe_key = ?",
+              valid.key());
+      assertThat(terminating.get(0, String.class)).isEqualTo("TERMINATING");
+      assertThat(terminating.get(1, Long.class)).isEqualTo(3L);
+      assertThat(terminating.get(2, Long.class)).isEqualTo(2L);
+      assertThat(terminating.get(3, String.class)).isEqualTo(originalBinding);
+      assertThat(terminating.get(4, Long.class)).isEqualTo(1L);
+      assertThat(terminating.get(5, String.class)).isEqualTo("entity-cleanup-request-0");
+      assertThat(terminating.get(6, String.class))
+          .isEqualTo("Entity cleanup failure retained for retry");
+      assertThat(terminating.get(7)).isNull();
+      assertSourceOnlyCanonicalColumnsNull(probe, probeTable, valid.key());
+      var retainedAfterCleanupFailure =
+          probe.fetch(
+              "SELECT to_jsonb(row)::text || ':xmin=' || row.xmin::text FROM "
+                  + probeTable
+                  + " row WHERE probe_key = ?",
+              valid.key());
+      assertSqlState(
+          () ->
+              probe.execute(
+                  "UPDATE "
+                      + probeTable
+                      + " SET failure_reason = 'unowned cleanup retry metadata', "
+                      + "row_version = row_version + 1 WHERE probe_key = ?",
+                  valid.key()),
+          "23514",
+          "lifecycle transitions are disabled");
+      assertThat(
+              probe.fetch(
+                  "SELECT to_jsonb(row)::text || ':xmin=' || row.xmin::text FROM "
+                      + probeTable
+                      + " row WHERE probe_key = ?",
+                  valid.key()))
+          .as("a rejected metadata-only update leaves the controlled TERMINATING row unchanged")
+          .isEqualTo(retainedAfterCleanupFailure);
+
+      probe.execute(
+          "UPDATE "
+              + probeTable
+              + " SET status = 'TERMINATED', lifecycle_epoch = 4, row_version = row_version + 1, "
+              + "terminated_at = TIMESTAMPTZ '2026-10-14T00:00:00Z' WHERE probe_key = ?",
+          valid.key());
+      var terminated =
+          probe.fetchSingle(
+              "SELECT status, lifecycle_epoch, row_version, termination_request_id, failure_reason, "
+                  + "terminated_at FROM "
+                  + probeTable
+                  + " WHERE probe_key = ?",
+              valid.key());
+      assertThat(terminated.get(0, String.class)).isEqualTo("TERMINATED");
+      assertThat(terminated.get(1, Long.class)).isEqualTo(4L);
+      assertThat(terminated.get(2, Long.class)).isEqualTo(3L);
+      assertThat(terminated.get(3, String.class)).isEqualTo("entity-cleanup-request-0");
+      assertThat(terminated.get(4, String.class))
+          .isEqualTo("Entity cleanup failure retained for retry");
+      assertThat(terminated.get(5)).isNotNull();
+      assertSourceOnlyCanonicalColumnsNull(probe, probeTable, valid.key());
+      var beforeTerminalReopen =
+          probe.fetch(
+              "SELECT to_jsonb(row)::text || ':xmin=' || row.xmin::text FROM "
+                  + probeTable
+                  + " row WHERE probe_key = ?",
+              valid.key());
+      assertSqlState(
+          () ->
+              probe.execute(
+                  "UPDATE "
+                      + probeTable
+                      + " SET status = 'ACTIVE', lifecycle_epoch = 5, row_version = row_version + 1 "
+                      + "WHERE probe_key = ?",
+                  valid.key()),
+          "23514",
+          "lifecycle transitions are disabled");
+      assertThat(
+              probe.fetch(
+                  "SELECT to_jsonb(row)::text || ':xmin=' || row.xmin::text FROM "
+                      + probeTable
+                      + " row WHERE probe_key = ?",
+                  valid.key()))
+          .as("terminal lifecycle reopening fails without changing the controlled row")
+          .isEqualTo(beforeTerminalReopen);
+
+      probe.execute(
+          "UPDATE "
+              + probeTable
+              + " SET status = 'FAILED_PRE_ACTIVATION', lifecycle_epoch = 2, "
+              + "row_version = row_version + 1, failure_reason = 'preparation failure retained' "
+              + "WHERE probe_key = ?",
+          failedPreparationKey);
+      var failedPreparation =
+          probe.fetchSingle(
+              "SELECT status, lifecycle_epoch, row_version, failure_reason, "
+                  + "run_owned_fixture_binding_sha256, run_owned_fixture_preparing_lifecycle_epoch "
+                  + "FROM "
+                  + probeTable
+                  + " WHERE probe_key = ?",
+              failedPreparationKey);
+      assertThat(failedPreparation.get(0, String.class)).isEqualTo("FAILED_PRE_ACTIVATION");
+      assertThat(failedPreparation.get(1, Long.class)).isEqualTo(2L);
+      assertThat(failedPreparation.get(2, Long.class)).isEqualTo(1L);
+      assertThat(failedPreparation.get(3, String.class)).isEqualTo("preparation failure retained");
+      assertThat(failedPreparation.get(4, String.class)).isEqualTo(originalBinding);
+      assertThat(failedPreparation.get(5, Long.class)).isEqualTo(1L);
+      assertSourceOnlyCanonicalColumnsNull(probe, probeTable, failedPreparationKey);
+      var beforeDowngrade =
+          probe.fetch(
+              "SELECT to_jsonb(row)::text || ':xmin=' || row.xmin::text FROM "
+                  + probeTable
+                  + " row WHERE probe_key = ?",
+              valid.key());
+      assertSqlState(
+          () ->
+              probe.execute(
+                  "UPDATE "
+                      + probeTable
+                      + " SET status = 'PREPARING', lifecycle_epoch = 1, row_version = row_version + 1 "
+                      + "WHERE probe_key = ?",
+                  valid.key()),
+          "23514",
+          "lifecycle transitions are disabled");
+      assertThat(
+              probe.fetch(
+                  "SELECT to_jsonb(row)::text || ':xmin=' || row.xmin::text FROM "
+                      + probeTable
+                      + " row WHERE probe_key = ?",
+                  valid.key()))
+          .as("a lifecycle downgrade fails without changing the controlled row")
+          .isEqualTo(beforeDowngrade);
+
+      for (LifecycleGuardProbeCase probeCase : cases.subList(1, cases.size())) {
+        String activation =
+            probeCase.activationMutation() == null
+                ? "status = 'ACTIVE', lifecycle_epoch = 2, row_version = row_version + 1"
+                : probeCase.activationMutation();
+        var before =
+            probe.fetch(
+                "SELECT to_jsonb(row)::text || ':xmin=' || row.xmin::text FROM "
+                    + probeTable
+                    + " row WHERE probe_key = ?",
+                probeCase.key());
+        assertSqlState(
+            () ->
+                probe.execute(
+                    "UPDATE " + probeTable + " SET " + activation + " WHERE probe_key = ?",
+                    probeCase.key()),
+            "23514",
+            probeCase.expectedDiagnostic());
+        assertThat(
+                probe.fetch(
+                    "SELECT to_jsonb(row)::text || ':xmin=' || row.xmin::text FROM "
+                        + probeTable
+                        + " row WHERE probe_key = ?",
+                    probeCase.key()))
+            .as("%s fails without changing the controlled row", probeCase.label())
+            .isEqualTo(before);
+      }
+      for (LifecycleTransitionGuardProbeCase probeCase : transitionCases) {
+        var before =
+            probe.fetch(
+                "SELECT to_jsonb(row)::text || ':xmin=' || row.xmin::text FROM "
+                    + probeTable
+                    + " row WHERE probe_key = ?",
+                probeCase.key());
+        assertSqlState(
+            () ->
+                probe.execute(
+                    "UPDATE "
+                        + probeTable
+                        + " SET "
+                        + probeCase.transitionMutation()
+                        + " WHERE probe_key = ?",
+                    probeCase.key()),
+            "23514",
+            probeCase.expectedDiagnostic());
+        assertThat(
+                probe.fetch(
+                    "SELECT to_jsonb(row)::text || ':xmin=' || row.xmin::text FROM "
+                        + probeTable
+                        + " row WHERE probe_key = ?",
+                    probeCase.key()))
+            .as("%s fails without changing the controlled row", probeCase.label())
+            .isEqualTo(before);
+      }
+    }
+  }
+
+  private static void insertSourceOnlyLifecycleProbeRow(
+      DSLContext probe, String probeTable, String worldTable, long worldInstanceId, int key) {
+    probe.execute(
+        "INSERT INTO "
+            + probeTable
+            + " SELECT ?, source.* FROM "
+            + worldTable
+            + " source WHERE source.id = ?",
+        key,
+        worldInstanceId);
+    probe.execute(
+        "UPDATE "
+            + probeTable
+            + " SET canonical_game_instance_id = NULL, canonical_target_namespace = NULL, "
+            + "canonical_tenant_id = NULL, canonical_world_slug = NULL, "
+            + "playable_state_namespace_id = NULL, playable_state_scope = NULL, "
+            + "public_production = NULL, playtest_lifecycle_id = NULL, "
+            + "playtest_state_generation = NULL, canonical_launch_binding_operation_id = NULL, "
+            + "canonical_authority_kind = NULL, fixture_provenance_digest = NULL, "
+            + "canonical_realm_id = NULL, catalog_revision = NULL, game_session_tenant_id = NULL, "
+            + "game_session_game_instance_id = NULL, game_design_version_id = NULL, "
+            + "run_owned_fixture_preparing_lifecycle_epoch = 1, "
+            + "status = 'PREPARING', lifecycle_epoch = 1, row_version = 0, failure_reason = NULL, "
+            + "termination_request_id = NULL, terminated_at = NULL WHERE probe_key = ?",
+        key);
+  }
+
+  private static void assertSourceOnlyCanonicalColumnsNull(
+      DSLContext probe, String probeTable, int key) {
+    assertThat(
+            probe
+                .fetchSingle(
+                    "SELECT canonical_game_instance_id, canonical_target_namespace, canonical_tenant_id, "
+                        + "canonical_world_slug, playable_state_namespace_id, playable_state_scope, "
+                        + "public_production, playtest_lifecycle_id, playtest_state_generation, "
+                        + "canonical_launch_binding_operation_id, canonical_authority_kind, "
+                        + "fixture_provenance_digest, canonical_realm_id, catalog_revision, "
+                        + "game_session_tenant_id, game_session_game_instance_id, game_design_version_id "
+                        + "FROM "
+                        + probeTable
+                        + " WHERE probe_key = ?",
+                    key)
+                .intoArray())
+        .containsOnlyNulls();
   }
 
   private void assertPresetContent(WorldCanonicalInstanceAssociation association) {
@@ -1940,6 +3132,11 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     versions.add("1042.4");
     versions.add("1042.5");
     versions.add("1042.6");
+    versions.add("1042.7");
+    versions.add("1042.8");
+    versions.add("1042.9");
+    versions.add("1042.10");
+    versions.add("1042.11");
     return List.copyOf(versions);
   }
 
@@ -2480,7 +3677,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
             });
   }
 
-  private RunOwnedWorldLaunchEvidence controlledEvidence() {
+  private RunOwnedCanonicalWorldLaunchEvidence controlledEvidence() {
     return RunOwnedWorldFixtureEvidenceTestFixtures.create(objectMapper);
   }
 }

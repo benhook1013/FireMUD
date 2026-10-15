@@ -637,6 +637,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
         String v1011Guard = launchGuardProjection(predecessor, true);
         migration(predecessor, null).migrate();
         migration(predecessor, null).validate();
+        assertV1013RetentionLaunchForeignKey(predecessor);
         assertThat(
                 predecessor
                     .dsl
@@ -1473,16 +1474,86 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
     return guards.get(0).formatJSON();
   }
 
+  private static void assertV1013RetentionLaunchForeignKey(Fixture fixture) {
+    var foreignKey =
+        fixture.dsl.fetchSingle(
+            "SELECT fk.conname::TEXT, child_namespace.nspname::TEXT AS child_schema, "
+                + "child.relname::TEXT AS child_table, parent_namespace.nspname::TEXT AS parent_schema, "
+                + "parent.relname::TEXT AS parent_table, pg_get_constraintdef(fk.oid) AS definition, "
+                + "fk.convalidated, fk.condeferrable FROM pg_constraint fk "
+                + "JOIN pg_class child ON child.oid = fk.conrelid "
+                + "JOIN pg_namespace child_namespace ON child_namespace.oid = child.relnamespace "
+                + "JOIN pg_class parent ON parent.oid = fk.confrelid "
+                + "JOIN pg_namespace parent_namespace ON parent_namespace.oid = parent.relnamespace "
+                + "WHERE fk.conname = 'fk_gs_original_start_session_actor_core_launch' "
+                + "AND child.relname = 'game_session_original_start_session_authored_actor_core_retention' "
+                + "AND child_namespace.nspname = current_schema() "
+                + "AND parent.relname = 'game_session_canonical_instance_launch' "
+                + "AND parent_namespace.nspname = current_schema()");
+    assertThat(foreignKey.get("child_schema", String.class))
+        .isEqualTo(foreignKey.get("parent_schema", String.class));
+    // PostgreSQL stores at most 63 bytes for a relation identifier.
+    assertThat(foreignKey.get("child_table", String.class))
+        .isEqualTo("game_session_original_start_session_authored_actor_core_retenti");
+    assertThat(foreignKey.get("parent_table", String.class))
+        .isEqualTo("game_session_canonical_instance_launch");
+    assertThat(foreignKey.get("definition", String.class))
+        .contains(
+            "FOREIGN KEY (target_namespace, control_plane_request_id)",
+            "REFERENCES game_session_canonical_instance_launch(target_namespace, control_plane_request_id)",
+            "ON DELETE RESTRICT");
+    assertThat(foreignKey.get("convalidated", Boolean.class)).isTrue();
+    assertThat(foreignKey.get("condeferrable", Boolean.class)).isFalse();
+
+    var launchTriggers =
+        fixture.dsl.fetch(
+            "SELECT launch_trigger.tgtype, launch_trigger.tgenabled::TEXT, "
+                + "launch_trigger.tgisinternal FROM pg_trigger launch_trigger "
+                + "JOIN pg_constraint fk ON fk.oid = launch_trigger.tgconstraint "
+                + "JOIN pg_class child ON child.oid = fk.conrelid "
+                + "JOIN pg_namespace child_namespace ON child_namespace.oid = child.relnamespace "
+                + "JOIN pg_class parent ON parent.oid = fk.confrelid "
+                + "JOIN pg_namespace parent_namespace ON parent_namespace.oid = parent.relnamespace "
+                + "WHERE fk.conname = 'fk_gs_original_start_session_actor_core_launch' "
+                + "AND child.relname = 'game_session_original_start_session_authored_actor_core_retention' "
+                + "AND child_namespace.nspname = current_schema() "
+                + "AND parent.relname = 'game_session_canonical_instance_launch' "
+                + "AND parent_namespace.nspname = current_schema() "
+                + "AND launch_trigger.tgrelid = parent.oid ORDER BY launch_trigger.tgtype");
+    assertThat(launchTriggers).hasSize(2);
+    assertThat(launchTriggers)
+        .extracting(row -> row.get("tgtype", Integer.class))
+        .containsExactly(9, 17);
+    assertThat(launchTriggers)
+        .allSatisfy(
+            trigger -> {
+              assertThat(trigger.get("tgenabled", String.class)).isEqualTo("O");
+              assertThat(trigger.get("tgisinternal", Boolean.class)).isTrue();
+            });
+  }
+
   private static String otherGuardProjection(Fixture fixture) {
     return fixture
         .dsl
         .fetchSingle(
             "SELECT jsonb_agg(to_jsonb(guard) ORDER BY guard.oid)::TEXT FROM ("
-                + "SELECT oid, tgrelid, tgname, tgfoid, tgtype, tgenabled FROM pg_trigger "
-                + "WHERE tgrelid IN ('game_session_canonical_instance_launch'::regclass, "
+                + "SELECT trigger.oid, trigger.tgrelid, trigger.tgname, trigger.tgfoid, "
+                + "trigger.tgtype, trigger.tgenabled FROM pg_trigger trigger "
+                + "WHERE trigger.tgrelid IN ('game_session_canonical_instance_launch'::regclass, "
                 + "'game_session_canonical_initial_admission_attempt'::regclass, "
                 + "'game_session_canonical_initial_admission_intent'::regclass) "
-                + "AND tgfoid <> 'require_complete_canonical_launch_catalog_identity()'::regprocedure) guard")
+                + "AND trigger.tgfoid <> 'require_complete_canonical_launch_catalog_identity()'::regprocedure "
+                + "AND NOT EXISTS (SELECT 1 FROM pg_constraint fk "
+                + "JOIN pg_class retention_child ON retention_child.oid = fk.conrelid "
+                + "JOIN pg_namespace retention_namespace ON retention_namespace.oid = retention_child.relnamespace "
+                + "JOIN pg_class launch_parent ON launch_parent.oid = fk.confrelid "
+                + "JOIN pg_namespace launch_namespace ON launch_namespace.oid = launch_parent.relnamespace "
+                + "WHERE fk.oid = trigger.tgconstraint "
+                + "AND fk.conname = 'fk_gs_original_start_session_actor_core_launch' "
+                + "AND retention_child.relname = 'game_session_original_start_session_authored_actor_core_retention' "
+                + "AND retention_namespace.nspname = current_schema() "
+                + "AND launch_parent.relname = 'game_session_canonical_instance_launch' "
+                + "AND launch_namespace.nspname = current_schema())) guard")
         .get(0, String.class);
   }
 

@@ -88,6 +88,7 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
         || binding.descriptor().gameTemplateId() != action.target().gameTemplateId()) {
       throw new IllegalArgumentException("Original tuple differs from the exact canonical launch");
     }
+    lockRequest(binding.descriptor().controlPlaneRequestId());
     requireOriginalPinsBeforeStarting(originalTuple, binding.evidence());
     RuntimeTenantIdentityEvidence source = tenantAssociation.sourceEvidence();
     requireFreshSourceIdentity(tenantAssociation, source);
@@ -95,7 +96,6 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
       throw new IllegalArgumentException("Launch binding does not match its fresh tenant owner");
     }
 
-    lockRequest(binding.descriptor().controlPlaneRequestId());
     FreshTenantOwnerMapping mapping = requireFreshTenantMapping(tenantAssociation);
     GameInstanceRow runtime =
         requireLockedRuntime(tenantAssociation.legacyGameSessionTenantId(), gameInstanceId);

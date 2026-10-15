@@ -109,6 +109,77 @@ class AuthoredWorldReleaseAttestationSelectorTest {
   }
 
   @Test
+  void v4BindsTheExactSelectedFullParticipantVectorInANewDomain() throws Exception {
+    var selector = selectorEvidence(4);
+    var descriptor = descriptor(selector);
+    var release =
+        release(
+            descriptor,
+            selector,
+            AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+    var stored = JSON.writeValueAsString(release);
+    var readback = JSON.readValue(stored, AuthoredWorldReleaseAttestationEvidence.class);
+
+    assertThat(release.schemaVersion())
+        .isEqualTo(AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+    assertThat(release.participantDigests())
+        .extracting(AuthoredWorldReleaseAttestationEvidence.Participant::digestSchemaVersion)
+        .containsExactly(4, 3, 1, 6, 2);
+    assertThat(readback).isEqualTo(release);
+    readback.requireValid(descriptor);
+    assertThat(
+            new String(
+                AuthoredWorldReleaseAttestationEvidence.evidencePreimage(release),
+                StandardCharsets.UTF_8))
+        .startsWith("49:game-design-authored-world-release-attestation/v4")
+        .contains("worldStartLocationEvidence.canonicalBytesBase64")
+        .endsWith(Base64.getEncoder().encodeToString(selector.canonicalBytes()));
+
+    var mixedParticipants =
+        release.participantDigests().stream()
+            .map(
+                participant ->
+                    new AuthoredWorldReleaseAttestationEvidence.Participant(
+                        participant.participantKey(),
+                        participant.scopeValue(),
+                        participant.baseVersionIdPresent(),
+                        participant.baseVersionId(),
+                        participant.appliedCommitId(),
+                        participant.contentDigest(),
+                        "AUTOMATION_SCRIPTING".equals(participant.participantKey())
+                            ? 5
+                            : participant.digestSchemaVersion(),
+                        participant.abilitySchemaDigestPresent(),
+                        participant.abilitySchemaDigest()))
+            .toList();
+    assertThatThrownBy(
+            () ->
+                AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
+                    release.targetNamespace(),
+                    release.descriptorResultDigest(),
+                    release.canonicalTenantId(),
+                    release.canonicalVersionId(),
+                    release.worldSlug(),
+                    release.authoredWorldSourceOperationId(),
+                    release.authoredWorldSourceEvidenceDigest(),
+                    release.launchDescriptorId(),
+                    release.publishedReleaseBundleRef(),
+                    release.versionStateEpoch(),
+                    release.publishWorkflowId(),
+                    release.commitId(),
+                    mixedParticipants,
+                    release.manifestHash(),
+                    release.manifestSchemaVersion(),
+                    release.requiredManifestAssetKeys(),
+                    release.artifactDigests(),
+                    release.commandDefinitions(),
+                    release.generationConfigRevision(),
+                    selector))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Participant digest schema is unsupported");
+  }
+
+  @Test
   void terminalReleaseProjectionAcceptsExactV2AndV3OwnerSchemasAndRejectsMixedSchemas()
       throws Exception {
     for (int schema : List.of(2, 3)) {
@@ -427,6 +498,30 @@ class AuthoredWorldReleaseAttestationSelectorTest {
     if (attestationSchemaVersion
         == AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION) {
       return AuthoredWorldReleaseAttestationEvidence.createClosureSelector(
+          descriptor.targetNamespace(),
+          descriptor.resultDigest(),
+          descriptor.canonicalTenantId(),
+          selector.request().canonicalVersionId(),
+          descriptor.worldSlug(),
+          descriptor.authoredWorldSourceOperationId(),
+          descriptor.authoredWorldSourceEvidenceDigest(),
+          descriptor.launchDescriptorId(),
+          descriptor.publishedReleaseBundleRef(),
+          descriptor.versionStateEpoch(),
+          selector.request().publishWorkflowId(),
+          selector.request().appliedCommitId(),
+          participants,
+          "sha256:" + "d".repeat(64),
+          1,
+          List.of(),
+          List.of(),
+          List.of("LOOK"),
+          descriptor.generationConfigRevision(),
+          selector);
+    }
+    if (attestationSchemaVersion
+        == AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION) {
+      return AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
           descriptor.targetNamespace(),
           descriptor.resultDigest(),
           descriptor.canonicalTenantId(),

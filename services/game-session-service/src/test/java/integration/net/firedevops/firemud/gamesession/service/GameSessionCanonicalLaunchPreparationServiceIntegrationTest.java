@@ -954,6 +954,10 @@ class GameSessionCanonicalLaunchPreparationServiceIntegrationTest {
       String historicalNamespaceBefore,
       String historicalBindingBefore) {
     void requireHistoricalRowsRetained() {
+      java.util.Objects.requireNonNull(
+          preV24Catalog, "fixture was created without historical V23 owner rows");
+      java.util.Objects.requireNonNull(
+          preV24Source, "fixture was created without historical V23 owner rows");
       assertThat(
               historicalProjection(
                   dsl,

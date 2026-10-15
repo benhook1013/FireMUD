@@ -212,27 +212,27 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     }
     jdbc.execute("TRUNCATE TABLE runtime_region_status RESTART IDENTITY");
     // This is a disposable Testcontainers baseline reset, not runtime/bootstrap behavior. Keep
-    // the FK descendants explicit and temporarily suspend only the launch-evidence TRUNCATE guard
-    // inside the same transaction; the production migration and all application SQL retain it.
+    // the FK descendants explicit and temporarily suspend only the launch-evidence and retained
+    // actor-core TRUNCATE guards inside the same transaction; production SQL retains both.
     TransactionTemplate baselineReset =
         new TransactionTemplate(gameSession.bean(PlatformTransactionManager.class));
-    String originalLaunchGuardState =
+    BaselineTruncateGuardStates originalGuardStates =
         baselineReset.execute(
             status -> {
-              String originalState = canonicalLaunchTruncateGuardState(jdbc);
-              if (!"O".equals(originalState) && !"A".equals(originalState)) {
-                throw new IllegalStateException(
-                    "Expected exactly one canonical launch TRUNCATE guard enabled during"
-                        + " disposable gameplay fixture reset; observed "
-                        + originalState);
-              }
-              jdbc.execute(
-                  "ALTER TABLE game_session_canonical_instance_launch "
-                      + "DISABLE TRIGGER game_session_canonical_instance_launch_no_truncate");
-              requireCanonicalLaunchTruncateGuardState(jdbc, "D");
+              BaselineTruncateGuardStates originalStates =
+                  new BaselineTruncateGuardStates(
+                      requireOriginalTruncateGuardState(
+                          jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH),
+                      requireOriginalTruncateGuardState(
+                          jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE));
+              disableTruncateGuard(jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH);
+              requireTruncateGuardState(jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, "D");
+              disableTruncateGuard(jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE);
+              requireTruncateGuardState(jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE, "D");
               jdbc.execute(
                   """
                   TRUNCATE TABLE
+                      game_session_original_start_session_authored_actor_core_retention,
                       game_session_canonical_closed_admission_pointer_request,
                       gameplay_initial_admission_bind_attempt,
                       game_session_canonical_initial_admission_intent,
@@ -247,11 +247,24 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
               // preserving
               // the real guard failure instead of masking it with a re-enable attempt on an aborted
               // transaction.
-              restoreCanonicalLaunchTruncateGuard(jdbc, originalState);
-              requireCanonicalLaunchTruncateGuardState(jdbc, originalState);
-              return originalState;
+              restoreTruncateGuard(
+                  jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, originalStates.canonicalLaunch());
+              requireTruncateGuardState(
+                  jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, originalStates.canonicalLaunch());
+              restoreTruncateGuard(
+                  jdbc,
+                  BaselineTruncateGuard.AUTHORED_ACTOR_CORE,
+                  originalStates.authoredActorCore());
+              requireTruncateGuardState(
+                  jdbc,
+                  BaselineTruncateGuard.AUTHORED_ACTOR_CORE,
+                  originalStates.authoredActorCore());
+              return originalStates;
             });
-    requireCanonicalLaunchTruncateGuardState(jdbc, originalLaunchGuardState);
+    requireTruncateGuardState(
+        jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, originalGuardStates.canonicalLaunch());
+    requireTruncateGuardState(
+        jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE, originalGuardStates.authoredActorCore());
     if (characterIds.length > 0) {
       clearScreenBuffers(tenantId, gameplayInstanceId, characterIds);
     }
@@ -265,54 +278,102 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     return gameInstanceId;
   }
 
-  private static String canonicalLaunchTruncateGuardState(JdbcTemplate jdbc) {
+  private enum BaselineTruncateGuard {
+    CANONICAL_LAUNCH(
+        "canonical launch",
+        "game_session_canonical_instance_launch",
+        "game_session_canonical_instance_launch_no_truncate"),
+    AUTHORED_ACTOR_CORE(
+        "authored actor-core retention",
+        "game_session_original_start_session_authored_actor_core_retention",
+        "game_session_original_start_session_actor_core_retention_no_truncate");
+
+    private final String description;
+    private final String tableName;
+    private final String triggerName;
+
+    BaselineTruncateGuard(String description, String tableName, String triggerName) {
+      this.description = description;
+      this.tableName = tableName;
+      this.triggerName = triggerName;
+    }
+  }
+
+  private record BaselineTruncateGuardStates(String canonicalLaunch, String authoredActorCore) {}
+
+  private static String requireOriginalTruncateGuardState(
+      JdbcTemplate jdbc, BaselineTruncateGuard guard) {
+    String state = truncateGuardState(jdbc, guard);
+    if (!"O".equals(state) && !"A".equals(state)) {
+      throw new IllegalStateException(
+          "Expected exactly one "
+              + guard.description
+              + " TRUNCATE guard enabled during disposable gameplay fixture reset; observed "
+              + state);
+    }
+    return state;
+  }
+
+  private static String truncateGuardState(JdbcTemplate jdbc, BaselineTruncateGuard guard) {
     List<String> states =
         jdbc.query(
             """
             SELECT tgenabled::text
             FROM pg_trigger
-            WHERE tgrelid = 'game_session_canonical_instance_launch'::regclass
-              AND tgname = 'game_session_canonical_instance_launch_no_truncate'
+            WHERE tgrelid = CAST(? AS regclass)
+              AND tgname = CAST(? AS name)
               AND NOT tgisinternal
             """,
-            (row, rowNumber) -> row.getString(1));
+            (row, rowNumber) -> row.getString(1),
+            guard.tableName,
+            guard.triggerName);
     if (states.size() != 1
         || (!"O".equals(states.getFirst())
             && !"A".equals(states.getFirst())
             && !"D".equals(states.getFirst()))) {
       throw new IllegalStateException(
-          "Expected exactly one canonical launch TRUNCATE guard in O, A, or D state during"
-              + " disposable gameplay fixture reset; observed "
+          "Expected exactly one "
+              + guard.description
+              + " TRUNCATE guard in O, A, or D state during disposable "
+              + "gameplay fixture reset; observed "
               + states);
     }
     return states.getFirst();
   }
 
-  private static void requireCanonicalLaunchTruncateGuardState(
-      JdbcTemplate jdbc, String expectedState) {
-    String observedState = canonicalLaunchTruncateGuardState(jdbc);
+  private static void requireTruncateGuardState(
+      JdbcTemplate jdbc, BaselineTruncateGuard guard, String expectedState) {
+    String observedState = truncateGuardState(jdbc, guard);
     if (!expectedState.equals(observedState)) {
       throw new IllegalStateException(
-          "Expected canonical launch TRUNCATE guard state "
+          "Expected "
+              + guard.description
+              + " TRUNCATE guard state "
               + expectedState
               + " during disposable gameplay fixture reset; observed "
               + observedState);
     }
   }
 
-  private static void restoreCanonicalLaunchTruncateGuard(JdbcTemplate jdbc, String state) {
+  private static void disableTruncateGuard(JdbcTemplate jdbc, BaselineTruncateGuard guard) {
+    jdbc.execute("ALTER TABLE " + guard.tableName + " DISABLE TRIGGER " + guard.triggerName);
+  }
+
+  private static void restoreTruncateGuard(
+      JdbcTemplate jdbc, BaselineTruncateGuard guard, String state) {
     String enableMode =
         switch (state) {
           case "O" -> "ENABLE";
           case "A" -> "ENABLE ALWAYS";
           default ->
               throw new IllegalStateException(
-                  "Cannot restore unsupported canonical launch TRUNCATE guard state " + state);
+                  "Cannot restore unsupported "
+                      + guard.description
+                      + " TRUNCATE guard state "
+                      + state);
         };
     jdbc.execute(
-        "ALTER TABLE game_session_canonical_instance_launch "
-            + enableMode
-            + " TRIGGER game_session_canonical_instance_launch_no_truncate");
+        "ALTER TABLE " + guard.tableName + " " + enableMode + " TRIGGER " + guard.triggerName);
   }
 
   private void clearDefaultDemoAdmissionBinding(JdbcTemplate jdbc, long tenantId) {

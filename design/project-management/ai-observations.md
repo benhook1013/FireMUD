@@ -272,13 +272,15 @@ Entry format:
   - Current status: the test now waits for the database-owned expiry condition; current physical qualification remains required.
 
 - `2026-10-14`: Hold asynchronous recovery until failure-state assertions finish
-  - Context: the TLS certificate watcher callback-failure test signalled its first attempt before the watcher recorded an unhealthy state. A successful retry could restore health before the test observed that state.
+  - Context: the TLS certificate watcher callback-failure test signalled its first attempt before the watcher recorded an unhealthy state.
+  - Observation: a successful retry could restore health before the test observed the unhealthy state.
   - Expected pattern: gate the successful test callback until the existing unhealthy-state and aggregate-health assertions finish, release the gate in `finally`, then verify retry and recovered health. Preserve the production retry policy and every failure/recovery assertion.
   - Current status: the test-only latch correction passed the full 486-case Common unit suite and static checks. The separate PostgreSQL refusal and cleanup chronology remains unexplained under the existing local PostgreSQL availability observation; later passing proof does not identify that cause.
 
-- 2026-10-14: Use explicit shell failure propagation for dependent proof and publication steps.
-  - Observation: a multiline Bash execution continued to stage and commit after an auxiliary Python count assertion failed because the shell did not enable `errexit`. The actual gate passed 11 PostgreSQL cases; the failed assertion used a preliminary count of 10. The committed code remained qualified, but the command sequence did not enforce its intended dependency.
-  - Guidance: use `set -euo pipefail` or separate sequential tool calls when a proof assertion must succeed before staging, committing or publishing. Read actual result counts before pinning them; an overall shell exit code can otherwise hide an earlier failure.
+- `2026-10-14`: Use explicit shell failure propagation for dependent proof and publication steps
+  - Context: a multiline Bash command coupled a Python result-count assertion to later staging and commit commands.
+  - Observation: the shell continued after the assertion failed because `errexit` was disabled. The actual gate passed 11 PostgreSQL cases, while the failed assertion used a preliminary count of 10. The committed code remained qualified, but the command sequence did not enforce its intended dependency.
+  - Expected pattern: use `set -euo pipefail` or separate sequential tool calls when a proof assertion must succeed before staging, committing, or publishing. Read actual result counts before pinning them; an overall shell exit code can otherwise hide an earlier failure.
   - Current status: the [#3211](https://github.com/benhook1013/FireMUD/pull/3211) result was checked against the actual XML, corrected to 11 passing cases, and subsequent dependent commands use explicit failure propagation.
 
 - `2026-10-14`: Review-period bookkeeping must not contend for provider execution locks
@@ -338,3 +340,26 @@ Entry format:
   - Qualification: the 3 GiB setting is not a restoration of an earlier default; the shared 1500m setting predates the recent guard since August 28. Worker, test, and code-generation JVM memory remains additional, and the hosted module runner's explicit 2500m setting is unchanged.
 
 - `2026-10-15`: Classes-only foreign-owner proof artifacts intentionally omit application and Flyway resources. A composed test that reads another owner’s migrations from disk must declare those directories as task inputs; otherwise a SQL-only change can leave the composition up-to-date. The selected Game Logic proof exposed this after its forward migration was reconciled, and Game Design now tracks the foreign Game Logic and World migration directories.
+
+- `2026-10-15`: Distinguish slow reconciliation from a stall
+  - Context: two sequential same-candidate Controller `reviews decide reconcile` operations for #3206 (Hosted and CLI) succeeded after a several-minute silent execution.
+  - Observation: the slow phase is not isolated, so a long-running administrative command is difficult to distinguish from a stall without phase or duration output. Queue inspection also uses `reviews stack show` rather than the expected `reviews queue` terminology.
+  - Expected pattern: consider phase/duration diagnostics or a guarded shared-evidence operation for long reconciliations.
+  - Current status: reported to Overseer as nonblocking; no timing, admission, or review authority was bypassed.
+
+- `2026-10-15`: Keep proof completion separate from a coherent CI checkpoint
+  - Context: Gameplay published the #3210 receiving carry after its runtime/source gate passed while the separate final proof-note-only documentation session was still running.
+  - Observation: the final documentation result was pending at publication; the PR/job/Overseer report explicitly retained that limit and made no READY claim. The session later passed in 21 seconds, and Gameplay consumed its exit 0 before recording final documentation proof. Root subsequently corrected the initial characterization: publishing a coherent checkpoint with the pending-check limit was permitted and was not a publication-safety violation. The later pass does not change the proof state at publication.
+  - Expected pattern: gate dependent mutation and qualification claims on the consumed terminal exit status. A coherent CI checkpoint may be published with an explicit pending-check limitation; distinguish that pending proof state or an inaccurate qualification report from a safety incident. Record routine proof completion in the next aggregated milestone.
+
+- `2026-10-15`: Qualify native Actions callback evidence at the hosted boundary
+  - Context: completed Validation runs [38662647370](https://github.com/benhook1013/FireMUD/actions/runs/38662647370) and [38651777538](https://github.com/benhook1013/FireMUD/actions/runs/38651777538) covered 20 modules and zero modules respectively, and returned `pull_requests: []` despite canonical PR, base-SHA, and head titles.
+  - Observation: association-required fixtures would have passed locally while disabling reporting. The optional summary distinguishes title/SHA attribution from a separately pinned current-ref write fence; local fixtures do not prove historical-ref or required-gate provenance, native webhook delivery, or partial-rerun response shapes.
+  - Expected pattern: preserve that proof limit separately from installed consumer code, and retain the required producer/activation and callback qualification in the [platform operations tracker](implementation-tracking/platform-operations-and-delivery.md).
+  - Reconsideration trigger: remove after producer activation and hosted webhook plus partial-rerun qualification establish the actual callback boundary.
+
+- `2026-10-15`: Identify the channel checkpoint behind PR-wide parent movement
+  - Context: after a focused fix on #3206, review admission reported PR-wide `PARENT_MOVED` even though the live base, effective parent, and latest Hosted parent were unchanged.
+  - Observation: an older CLI checkpoint retained a different parent and its reconciliation bound the preceding child head. Both new channel requests refused before quota use; compact status identified the historical evidence and exact reconciliation was initiated.
+  - Expected pattern: admission diagnostics should identify the offending channel/checkpoint and the required reconciliation action.
+  - Current status: reported to Overseer; this establishes diagnostic friction, not a policy defect.

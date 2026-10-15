@@ -119,6 +119,29 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
         .hasMessageContaining("Participant digest schema is unsupported");
   }
 
+  @Test
+  void selectedFullAttestationUsesTheExistingWorld4FrozenGraphProfile() throws Exception {
+    var full = release(AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+    assertThat(full.participantDigests())
+        .extracting(AuthoredWorldReleaseAttestationEvidence.Participant::digestSchemaVersion)
+        .containsExactly(4, 3, 1, 6, 2);
+    assertThat(full.worldStartLocationEvidence().request().digestSchemaVersion()).isEqualTo(4);
+    assertThat(expectedFrozenGraphSchemaVersion(full)).isEqualTo(3);
+
+    for (String owner : List.of("WORLD_MANAGEMENT", "ENTITY_MANAGEMENT", "AUTOMATION_SCRIPTING")) {
+      int staleSchema =
+          switch (owner) {
+            case "WORLD_MANAGEMENT" -> 3;
+            case "ENTITY_MANAGEMENT" -> 2;
+            default -> 5;
+          };
+      assertThatThrownBy(
+              () -> selectedFull(full, participantDigestsWithSchema(full, owner, staleSchema)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Participant digest schema is unsupported");
+    }
+  }
+
   private static int expectedFrozenGraphSchemaVersion(
       AuthoredWorldReleaseAttestationEvidence release) {
     try {
@@ -140,8 +163,11 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
     WorldPublishedStartLocationEvidence selector =
         AuthoredWorldReleaseAttestationEvidence.requiresWorldStartLocationEvidence(schemaVersion)
             ? selectedWorldEvidence(
-                schemaVersion
-                        == AuthoredWorldReleaseAttestationEvidence.CLOSURE_SELECTOR_SCHEMA_VERSION
+                (schemaVersion
+                            == AuthoredWorldReleaseAttestationEvidence
+                                .CLOSURE_SELECTOR_SCHEMA_VERSION
+                        || schemaVersion
+                            == AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION)
                     ? 4
                     : 3)
             : null;
@@ -248,6 +274,28 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
               List.of(),
               "test-generation-config",
               selector);
+      case AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION ->
+          AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
+              namespace,
+              descriptorDigest,
+              tenantId,
+              versionId,
+              "synthetic-world",
+              UUID.fromString("33333333-3333-4333-8333-333333333333"),
+              "sha256:" + "e".repeat(64),
+              "test-descriptor",
+              "test-release",
+              1,
+              workflow,
+              commitId,
+              participants,
+              manifestHash,
+              1,
+              List.of(),
+              List.of(),
+              List.of(),
+              "test-generation-config",
+              selector);
       default -> throw new IllegalArgumentException("Unsupported test release schema");
     };
   }
@@ -306,6 +354,32 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
       AuthoredWorldReleaseAttestationEvidence basis,
       List<AuthoredWorldReleaseAttestationEvidence.Participant> participants) {
     return AuthoredWorldReleaseAttestationEvidence.createClosureSelector(
+        basis.targetNamespace(),
+        basis.descriptorResultDigest(),
+        basis.canonicalTenantId(),
+        basis.canonicalVersionId(),
+        basis.worldSlug(),
+        basis.authoredWorldSourceOperationId(),
+        basis.authoredWorldSourceEvidenceDigest(),
+        basis.launchDescriptorId(),
+        basis.publishedReleaseBundleRef(),
+        basis.versionStateEpoch(),
+        basis.publishWorkflowId(),
+        basis.commitId(),
+        participants,
+        basis.manifestHash(),
+        basis.manifestSchemaVersion(),
+        basis.requiredManifestAssetKeys(),
+        basis.artifactDigests(),
+        basis.commandDefinitions(),
+        basis.generationConfigRevision(),
+        basis.worldStartLocationEvidence());
+  }
+
+  private static AuthoredWorldReleaseAttestationEvidence selectedFull(
+      AuthoredWorldReleaseAttestationEvidence basis,
+      List<AuthoredWorldReleaseAttestationEvidence.Participant> participants) {
+    return AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
         basis.targetNamespace(),
         basis.descriptorResultDigest(),
         basis.canonicalTenantId(),
