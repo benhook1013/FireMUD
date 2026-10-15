@@ -1522,7 +1522,7 @@ class CanonicalInitialAdmissionRepositoryIntegrationTest {
                 + "AND launch_trigger.tgrelid = parent.oid ORDER BY launch_trigger.tgtype");
     assertThat(launchTriggers).hasSize(2);
     assertThat(launchTriggers)
-        .extracting(row -> ((Number) row.get("tgtype")).intValue())
+        .extracting(row -> row.get("tgtype", Integer.class))
         .containsExactly(9, 17);
     assertThat(launchTriggers)
         .allSatisfy(
