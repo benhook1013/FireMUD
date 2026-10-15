@@ -156,7 +156,8 @@ class BrandingSourcePostgresIntegrationTest {
                   .readGenesis(f.target)
                   .orElseThrow();
           var templateGenesis =
-              new net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository(f.dsl)
+              new net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository(
+                      f.dsl)
                   .readGenesis(f.target)
                   .orElseThrow();
           var reviewedEvidence =
@@ -372,9 +373,7 @@ class BrandingSourcePostgresIntegrationTest {
   }
 
   private static void insertReviewedBaseV2(
-      DSLContext dsl,
-      DraftCommitBinding binding,
-      GameDesignReviewedBaseEvidence reviewedEvidence) {
+      DSLContext dsl, DraftCommitBinding binding, GameDesignReviewedBaseEvidence reviewedEvidence) {
     if (!binding.target().equals(reviewedEvidence.target())
         || !binding.baseCommitId().equals(reviewedEvidence.reference().canonicalValue())) {
       throw new IllegalArgumentException(
