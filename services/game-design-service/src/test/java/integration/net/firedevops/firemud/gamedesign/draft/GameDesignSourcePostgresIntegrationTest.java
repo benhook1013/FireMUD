@@ -78,7 +78,7 @@ class GameDesignSourcePostgresIntegrationTest {
 
   private static void assertFirstReferenceRejectsStaleUpdate(boolean branding, boolean metadata)
       throws Exception {
-    Fixture fixture = fixture(branding);
+    Fixture fixture = fixture();
     byte[] bytes = {0, 1, (byte) 0xff};
     long assetId =
         fixture
@@ -958,10 +958,6 @@ class GameDesignSourcePostgresIntegrationTest {
   }
 
   private static Fixture fixture() {
-    return fixture(false);
-  }
-
-  private static Fixture fixture(boolean branding) {
     String schema = "gd_combined_" + UUID.randomUUID().toString().replace("-", "");
     var dataSource =
         new DriverManagerDataSource(
@@ -996,20 +992,6 @@ class GameDesignSourcePostgresIntegrationTest {
               version.setTenantId(game.getTenantId());
               version.setVersionNumber(1);
               version = new VersionRepository(dsl).save(version);
-              if (branding) {
-                dsl.execute(
-                    "INSERT INTO game_design_branding_source_genesis "
-                        + "(canonical_tenant_id, canonical_version_id, version_id, receipt_id, creation_transaction_id, target_json, roles_json) "
-                        + "SELECT canonical_tenant_id, canonical_version_id, version_id, ?, creation_transaction_id, target_json, "
-                        + "'{\"RESOURCE\":\"EMPTY\",\"LOGO\":\"EMPTY\",\"FAVICON\":\"EMPTY\",\"THEME\":\"EMPTY\"}' "
-                        + "FROM game_design_asset_source_genesis WHERE version_id = ?",
-                    UUID.randomUUID(),
-                    version.getId());
-                dsl.execute(
-                    "INSERT INTO game_design_branding_source_head (canonical_tenant_id, canonical_version_id, source_epoch, genesis_receipt_id) "
-                        + "SELECT canonical_tenant_id, canonical_version_id, '0', receipt_id FROM game_design_branding_source_genesis WHERE version_id = ?",
-                    version.getId());
-              }
               return new TargetProof(
                   version.getCanonicalTenantId(),
                   version.getCanonicalVersionId(),

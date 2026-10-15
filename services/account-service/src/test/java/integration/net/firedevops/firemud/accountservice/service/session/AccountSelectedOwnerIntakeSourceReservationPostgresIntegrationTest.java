@@ -47,7 +47,7 @@ class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
         ownerTransaction.setIsolationLevel(
             org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
         var account = new net.firedevops.firemud.accountservice.entity.Account();
-        account.setUsername("retained-parent-" + UUID.randomUUID());
+        account.setUsername("selected-" + UUID.randomUUID());
         account.setEmail(UUID.randomUUID() + "@example.test");
         account.setPasswordHash("TEST_ONLY unused password verifier");
         account.setRole("player");
