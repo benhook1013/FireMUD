@@ -305,8 +305,8 @@ public final class AccountGameplayDelegationAuthorityProjection {
                           "tenantAuthorityGeneration",
                               Long.toString(tenant.tenantAuthorityGeneration()),
                           "tenantBillingSequence", Long.toString(tenant.tenantBillingSequence()),
-                          "outboxStreamKey", tenant.tenantBillingStreamKey(),
-                          "outboxSequence", Long.toString(tenant.tenantBillingSequence()))));
+                          "outboxStreamKey", tenant.outboxStreamKey(),
+                          "outboxSequence", Long.toString(tenant.outboxSequence()))));
               byte[][] initial = canonicalProjectionPair(source);
               byte[] tenantProjectionBytes =
                   tenantProjection(tenantEvent, tenantId).canonicalBytes();
