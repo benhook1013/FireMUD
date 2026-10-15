@@ -8,6 +8,7 @@ import java.util.function.LongFunction;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec.Event;
 import net.firedevops.firemud.accountservice.service.DemoTenantEntitlementException;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
@@ -33,11 +34,7 @@ public class AccountTenantEntitlementOutboxRepository {
   }
 
   public static String streamKey(UUID canonicalTenantId) {
-    if (canonicalTenantId == null || NIL_UUID.equals(canonicalTenantId)) {
-      throw new IllegalArgumentException(
-          "Canonical tenant UUID is required for entitlement stream");
-    }
-    return "account:tenant-entitlement:v1:tenant/" + canonicalTenantId;
+    return TenantAuthorityEventV1Codec.tenantBillingStreamKey(canonicalTenantId);
   }
 
   /** Appends one event or returns only an exact request and payload replay. */

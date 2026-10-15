@@ -5,6 +5,7 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.repository.AccountTenantEntitlementOutboxRepository;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 
 /** Exact committed demo entitlement and its current Account tenant-generation/outbox evidence. */
