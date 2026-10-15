@@ -1167,8 +1167,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     if (fixtureModeEnabled()) {
       if (!fixtureBound) throw fixtureIdentityConflict();
       if (fixtureEvidence == null) throw fixtureEvidenceUnavailable();
-      requireRunOwnedFixtureBinding(
-          worldInstance, fixtureEvidence, preparedRequest(worldInstance));
+      requireRunOwnedFixtureBinding(worldInstance, fixtureEvidence, preparedRequest(worldInstance));
     } else if (fixtureBound) {
       throw fixtureEvidenceUnavailable();
     }

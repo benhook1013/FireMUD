@@ -19,6 +19,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
 import net.firedevops.firemud.gamedesign.v1.ArtifactState;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionAssetArtifactStateResponse;
@@ -27,7 +28,6 @@ import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.VersionAssetArtifactState;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.v1.VersionStateSnapshot;
-import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
@@ -222,10 +222,59 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
                       gameInstanceId))
           .isInstanceOf(RuntimeException.class);
 
+      WorldInstance fixtureBeforeMetadataMutation =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      WorldInstance rejectedFixtureMutation =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      rejectedFixtureMutation.setFailureReason("fixture metadata mutation");
+      assertThatThrownBy(() -> repository.save(rejectedFixtureMutation))
+          .isInstanceOf(RuntimeException.class)
+          .hasMessageContaining("World lifecycle transitions are disabled");
+      WorldInstance fixtureAfterMetadataMutation =
+          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+      assertThat(fixtureAfterMetadataMutation.getStatus()).isEqualTo("ACTIVE");
+      assertThat(fixtureAfterMetadataMutation.getFailureReason()).isNull();
+      assertThat(fixtureAfterMetadataMutation.getLifecycleEpoch())
+          .isEqualTo(fixtureBeforeMetadataMutation.getLifecycleEpoch());
+      assertThat(fixtureAfterMetadataMutation.getRowVersion())
+          .isEqualTo(fixtureBeforeMetadataMutation.getRowVersion());
+      assertThat(fixtureAfterMetadataMutation.getRunOwnedFixtureBindingSha256()).isEqualTo(binding);
+
+      long ordinaryTenantId = 8_810_007L;
+      long ordinaryGameInstanceId = uniqueId();
+      when(fixtureProvider.isEnabled()).thenReturn(false);
+      configureOrdinaryLaunchInputs(ordinaryTenantId);
+      var ordinaryPrepared =
+          lifecycleService.prepareWorldInstance(
+              request(ordinaryTenantId, ordinaryGameInstanceId, operationId()));
+      assertThat(ordinaryPrepared.status()).isEqualTo("PREPARING");
+      WorldInstance ordinaryWorld =
+          repository
+              .findByTenantIdAndGameInstanceId(ordinaryTenantId, ordinaryGameInstanceId)
+              .orElseThrow();
+      assertThat(ordinaryWorld.getRunOwnedFixtureBindingSha256()).isNull();
+      assertThat(ordinaryWorld.getRunOwnedFixturePreparingLifecycleEpoch()).isNull();
+      var ordinaryCanonicalFields =
+          dsl.fetchOne(
+              "SELECT canonical_game_instance_id, canonical_target_namespace, canonical_tenant_id, "
+                  + "canonical_world_slug, playable_state_namespace_id, playable_state_scope, "
+                  + "public_production, playtest_lifecycle_id, playtest_state_generation, "
+                  + "canonical_launch_binding_operation_id, canonical_authority_kind, "
+                  + "fixture_provenance_digest, canonical_realm_id, catalog_revision, "
+                  + "game_session_tenant_id, game_session_game_instance_id, game_design_version_id "
+                  + "FROM world_instance WHERE tenant_id = ? AND game_instance_id = ?",
+              ordinaryTenantId,
+              ordinaryGameInstanceId);
+      assertThat(ordinaryCanonicalFields.intoMap().values()).containsOnlyNulls();
+
       WorldInstance staleCopy =
-          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+          repository
+              .findByTenantIdAndGameInstanceId(ordinaryTenantId, ordinaryGameInstanceId)
+              .orElseThrow();
       WorldInstance winningCopy =
-          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+          repository
+              .findByTenantIdAndGameInstanceId(ordinaryTenantId, ordinaryGameInstanceId)
+              .orElseThrow();
       winningCopy.setFailureReason("CAS winner");
       WorldInstance savedWinningCopy = repository.save(winningCopy);
       staleCopy.setFailureReason("stale loser");
@@ -233,7 +282,9 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
           .isInstanceOf(IllegalStateException.class)
           .hasMessage("Failed to update world_instance id=" + staleCopy.getId());
       WorldInstance durableWinner =
-          repository.findByTenantIdAndGameInstanceId(tenantId, gameInstanceId).orElseThrow();
+          repository
+              .findByTenantIdAndGameInstanceId(ordinaryTenantId, ordinaryGameInstanceId)
+              .orElseThrow();
       assertThat(durableWinner.getFailureReason()).isEqualTo("CAS winner");
       assertThat(durableWinner.getRowVersion()).isEqualTo(savedWinningCopy.getRowVersion());
 
@@ -259,6 +310,7 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
       assertThatThrownBy(() -> repository.save(duplicate)).isInstanceOf(RuntimeException.class);
     } finally {
       dsl.execute("DELETE FROM world_instance WHERE tenant_id = ?", tenantId);
+      dsl.execute("DELETE FROM world_instance WHERE tenant_id = ?", 8_810_007L);
     }
   }
 
@@ -317,7 +369,9 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
       when(fixtureEvidence.bindingDigest(any(PreparedWorldInstanceRequest.class), anyLong()))
           .thenReturn("d".repeat(64));
       assertThatThrownBy(
-              () -> lifecycleService.failPreparedWorldInstance(tenantId, gameInstanceId, 1L, "failed"))
+              () ->
+                  lifecycleService.failPreparedWorldInstance(
+                      tenantId, gameInstanceId, 1L, "failed"))
           .isInstanceOf(IllegalArgumentException.class)
           .hasMessageStartingWith("RUN_OWNED_WORLD_LAUNCH_EVIDENCE_MISMATCH:");
       WorldInstance unchanged =
@@ -458,8 +512,7 @@ class RunOwnedWorldLaunchEvidencePostgresIntegrationTest {
     configureOrdinaryLaunchInputs(tenantId);
     try {
       var prepared =
-          lifecycleService.prepareWorldInstance(
-              request(tenantId, gameInstanceId, operationId()));
+          lifecycleService.prepareWorldInstance(request(tenantId, gameInstanceId, operationId()));
       assertThat(prepared.status()).isEqualTo("PREPARING");
 
       TransactionTemplate callerTransaction = new TransactionTemplate(transactionManager);

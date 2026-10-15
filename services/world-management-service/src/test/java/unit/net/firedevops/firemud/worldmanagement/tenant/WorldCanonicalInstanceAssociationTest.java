@@ -53,7 +53,8 @@ class WorldCanonicalInstanceAssociationTest {
   }
 
   private static FixtureCase validFixtureCase() {
-    RunOwnedCanonicalWorldLaunchEvidence evidence = RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     var source = evidence.sourceReceipt().sourceEvidence();
     UUID intakeRequestId = UUID.fromString("11111111-1111-4111-8111-111111111111");
     UUID intakeOperationId = UUID.fromString("22222222-2222-4222-8222-222222222222");

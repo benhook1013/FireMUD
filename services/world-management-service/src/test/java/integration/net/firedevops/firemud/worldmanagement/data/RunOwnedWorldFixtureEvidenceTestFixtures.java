@@ -295,7 +295,8 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
   }
 
   /** A fresh response correlation with identical allocation and original immutable policy bytes. */
-  public static RunOwnedCanonicalWorldLaunchEvidence freshObservation(RunOwnedCanonicalWorldLaunchEvidence original) {
+  public static RunOwnedCanonicalWorldLaunchEvidence freshObservation(
+      RunOwnedCanonicalWorldLaunchEvidence original) {
     var gs = original.gameSessionAssociation();
     var freshRequest =
         new CanonicalGameInstanceLaunchAssociationReadEvidence.FixtureRequest(
@@ -335,7 +336,8 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
   }
 
   /** Controlled contradictory GS owner allocation, for the actual retained-owner conflict guard. */
-  public static RunOwnedCanonicalWorldLaunchEvidence secondAssignment(RunOwnedCanonicalWorldLaunchEvidence original) {
+  public static RunOwnedCanonicalWorldLaunchEvidence secondAssignment(
+      RunOwnedCanonicalWorldLaunchEvidence original) {
     var gs = original.gameSessionAssociation();
     long otherInstance = gs.gameInstanceId() == Long.MAX_VALUE ? 1L : gs.gameInstanceId() + 1L;
     var changed =
@@ -356,7 +358,8 @@ public final class RunOwnedWorldFixtureEvidenceTestFixtures {
     return copy(original, original.sourceReceiptBytes(), changed);
   }
 
-  public static PreparedWorldInstanceRequest request(RunOwnedCanonicalWorldLaunchEvidence evidence) {
+  public static PreparedWorldInstanceRequest request(
+      RunOwnedCanonicalWorldLaunchEvidence evidence) {
     var gs = evidence.gameSessionAssociation();
     var descriptor = evidence.launchDescriptor();
     return new PreparedWorldInstanceRequest(

@@ -1739,7 +1739,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     assertNoPendingManifests(worldId);
   }
 
-  private WorldLifecycleCommandServiceImpl nativeService(RunOwnedCanonicalWorldLaunchEvidence evidence) {
+  private WorldLifecycleCommandServiceImpl nativeService(
+      RunOwnedCanonicalWorldLaunchEvidence evidence) {
     return nativeService(evidence, new AtomicInteger());
   }
 
@@ -1869,8 +1870,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   }
 
   /**
-   * Exercises the installed trigger against controlled copies of an owner-created row. This is
-   * SQL predicate and retention proof only; it does not invoke or stand in for the authenticated
+   * Exercises the installed trigger against controlled copies of an owner-created row. This is SQL
+   * predicate and retention proof only; it does not invoke or stand in for the authenticated
    * source-first predecessor owner, receipt, World hold, or lifecycle handoff.
    */
   private static void assertPredecessorLifecycleGuardProbe(
@@ -2187,10 +2188,9 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
     try (var connection = source.getConnection()) {
       var probe = DSL.using(connection, SQLDialect.POSTGRES);
       String originalBinding =
-          probe.fetchSingle(
-                  "SELECT run_owned_fixture_binding_sha256 FROM "
-                      + worldTable
-                      + " WHERE id = ?",
+          probe
+              .fetchSingle(
+                  "SELECT run_owned_fixture_binding_sha256 FROM " + worldTable + " WHERE id = ?",
                   canonicalWorldInstanceId)
               .get(0, String.class);
       assertThat(originalBinding).matches("[0-9a-f]{64}");
@@ -2256,7 +2256,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       assertThat(activated.get(4, Long.class)).isEqualTo(1L);
       assertSourceOnlyCanonicalColumnsNull(probe, probeTable, valid.key());
       assertThat(
-              probe.fetchSingle(
+              probe
+                  .fetchSingle(
                       "SELECT canonical_game_instance_id, canonical_realm_id, catalog_revision, "
                           + "fixture_provenance_digest, game_session_tenant_id, "
                           + "game_session_game_instance_id, game_design_version_id FROM "
@@ -2382,8 +2383,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
       assertThat(failedPreparation.get(0, String.class)).isEqualTo("FAILED_PRE_ACTIVATION");
       assertThat(failedPreparation.get(1, Long.class)).isEqualTo(2L);
       assertThat(failedPreparation.get(2, Long.class)).isEqualTo(1L);
-      assertThat(failedPreparation.get(3, String.class))
-          .isEqualTo("preparation failure retained");
+      assertThat(failedPreparation.get(3, String.class)).isEqualTo("preparation failure retained");
       assertThat(failedPreparation.get(4, String.class)).isEqualTo(originalBinding);
       assertThat(failedPreparation.get(5, Long.class)).isEqualTo(1L);
       assertSourceOnlyCanonicalColumnsNull(probe, probeTable, failedPreparationKey);
@@ -2426,11 +2426,7 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
         assertSqlState(
             () ->
                 probe.execute(
-                    "UPDATE "
-                        + probeTable
-                        + " SET "
-                        + activation
-                        + " WHERE probe_key = ?",
+                    "UPDATE " + probeTable + " SET " + activation + " WHERE probe_key = ?",
                     probeCase.key()),
             "23514",
             probeCase.expectedDiagnostic());
@@ -2503,7 +2499,8 @@ class RunOwnedWorldFixedPresetResourcesPostgresIntegrationTest {
   private static void assertSourceOnlyCanonicalColumnsNull(
       DSLContext probe, String probeTable, int key) {
     assertThat(
-            probe.fetchSingle(
+            probe
+                .fetchSingle(
                     "SELECT canonical_game_instance_id, canonical_target_namespace, canonical_tenant_id, "
                         + "canonical_world_slug, playable_state_namespace_id, playable_state_scope, "
                         + "public_production, playtest_lifecycle_id, playtest_state_generation, "

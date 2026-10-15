@@ -96,7 +96,8 @@ public final class RunOwnedWorldFixedPresetResources {
       RunOwnedCanonicalWorldLaunchEvidence evidence,
       WorldAuthoredSourceIntakeReceipt sourceReceipt,
       WorldAuthoredVersionIdentityReceipt versionReceipt) {
-    RunOwnedCanonicalWorldLaunchEvidence typedEvidence = Objects.requireNonNull(evidence, "evidence");
+    RunOwnedCanonicalWorldLaunchEvidence typedEvidence =
+        Objects.requireNonNull(evidence, "evidence");
     typedEvidence.requireFixedGameSessionPeer();
     var descriptor = typedEvidence.launchDescriptor();
     if (descriptor.scriptPatchVersionPresent() || descriptor.remapSetIdPresent()) {

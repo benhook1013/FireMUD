@@ -47,9 +47,9 @@ import net.firedevops.firemud.gamesession.service.impl.GameSessionControlPlaneGr
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.test.TestContainerImages;
-import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldFixedPresetResources;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidence;
 import net.firedevops.firemud.worldmanagement.data.RunOwnedCanonicalWorldLaunchEvidenceProvider;
+import net.firedevops.firemud.worldmanagement.data.RunOwnedWorldFixedPresetResources;
 import net.firedevops.firemud.worldmanagement.service.impl.WorldLifecycleCommandServiceImpl;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceAssociationRepository;
 import org.flywaydb.core.Flyway;
@@ -100,8 +100,8 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Test
-  void actualProducerAndCanonicalOwnersComposeOverMutualTlsOwnerReads(
-      @TempDir Path testDirectory) throws Exception {
+  void actualProducerAndCanonicalOwnersComposeOverMutualTlsOwnerReads(@TempDir Path testDirectory)
+      throws Exception {
     assertThat(environment.getRequiredProperty("spring.application.name"))
         .isEqualTo("game-design-service");
     var applicationNameOrigin =
@@ -314,15 +314,17 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
               worldTls,
               factory,
               registry);
+      var initialProvider = provider;
+      var initialCommands = commands;
       var bundle = receipt.launchReadEvidence().publishedReleaseBundle();
       var originalGdsRows = fixedReadOwnerRows();
       var originalGsRows = allComposedOwnerRows(gsDatabase.dsl());
       RunOwnedCanonicalWorldLaunchEvidence worldEvidence =
-          withControlledGameSessionPeer(
-              fixture, provider::requireAuthenticatedEvidence);
+          withControlledGameSessionPeer(fixture, provider::requireAuthenticatedEvidence);
       var request = exactPreparedWorldRequest(worldEvidence);
       var emptyWorldRows = allComposedOwnerRows(worldDatabase.dsl());
-      var changedSource = changedSourceEvidence(receipt.sourceEvidence());
+      org.mockito.Mockito.clearInvocations(authoredWorldSourceRepository);
+      var changedSource = changedPreparedSourceEvidence(receipt.sourceEvidence());
       org.mockito.Mockito.doReturn(java.util.Optional.of(changedSource))
           .when(authoredWorldSourceRepository)
           .read(any(UUID.class), any(UUID.class), any(String.class), any(String.class));
@@ -332,7 +334,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
                       fixture,
                       () ->
                           ReflectionTestUtils.invokeMethod(
-                              commands, "prepareRunOwnedFixture", request, worldEvidence)))
+                              initialCommands, "prepareRunOwnedFixture", request, worldEvidence)))
           .isInstanceOf(RuntimeException.class);
       assertThat(allComposedOwnerRows(worldDatabase.dsl())).isEqualTo(emptyWorldRows);
       org.mockito.Mockito.verify(authoredWorldSourceRepository)
@@ -346,7 +348,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
               () ->
                   (net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto)
                       ReflectionTestUtils.invokeMethod(
-                          commands, "prepareRunOwnedFixture", request, worldEvidence));
+                          initialCommands, "prepareRunOwnedFixture", request, worldEvidence));
       assertThat(prepared).isNotNull();
       assertThat(prepared.status()).isEqualTo("PREPARING");
       assertThat(prepared.lifecycleEpoch()).isEqualTo(1L);
@@ -452,13 +454,12 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
               withControlledGameSessionPeer(
                   fixture,
                   () ->
-                      (net.firedevops.firemud.worldmanagement.dto
-                              .WorldInstanceLifecycleSnapshotDto)
+                      (net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto)
                           ReflectionTestUtils.invokeMethod(
-                              commands,
+                              initialCommands,
                               "prepareRunOwnedFixture",
                               request,
-                              provider.requireAuthenticatedEvidence())))
+                              initialProvider.requireAuthenticatedEvidence())))
           .isEqualTo(prepared);
       var reread = independentlyReadWorldFixture(worldDatabase.dsl(), starting.gameInstanceUuid());
       assertThat(
@@ -495,7 +496,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
                       fixture,
                       () ->
                           ReflectionTestUtils.invokeMethod(
-                              commands,
+                              initialCommands,
                               "prepareRunOwnedFixture",
                               mismatchedRequest,
                               worldEvidence)))
@@ -535,16 +536,17 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
               worldTls,
               factory,
               registry);
+      var replayProvider = provider;
+      var replayCommands = commands;
       var replayEvidence =
           withControlledGameSessionPeer(fixture, provider::requireAuthenticatedEvidence);
       assertThat(
               withControlledGameSessionPeer(
                   fixture,
                   () ->
-                      (net.firedevops.firemud.worldmanagement.dto
-                              .WorldInstanceLifecycleSnapshotDto)
+                      (net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto)
                           ReflectionTestUtils.invokeMethod(
-                              commands, "prepareRunOwnedFixture", request, replayEvidence)))
+                              replayCommands, "prepareRunOwnedFixture", request, replayEvidence)))
           .isEqualTo(prepared);
       assertThat(allComposedOwnerRows(worldDatabase.dsl())).isEqualTo(worldRows);
       var reads =
@@ -566,7 +568,7 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
       org.assertj.core.api.Assertions.assertThatThrownBy(
               () ->
                   withControlledPeer(
-                      wrongSessionCertificate, provider::requireAuthenticatedEvidence))
+                      wrongSessionCertificate, replayProvider::requireAuthenticatedEvidence))
           .isInstanceOf(
               RunOwnedCanonicalWorldLaunchEvidenceProvider
                   .InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class);
@@ -673,8 +675,8 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
     return tls;
   }
 
-  private <T> T withControlledGameSessionPeer(Fixture fixture, java.util.concurrent.Callable<T> work)
-      throws Exception {
+  private <T> T withControlledGameSessionPeer(
+      Fixture fixture, java.util.concurrent.Callable<T> work) throws Exception {
     return withControlledPeer(readCertificate(fixture.gameSessionCertificatePath()), work);
   }
 
@@ -714,7 +716,8 @@ class RunOwnedFixtureOwnerCompositionCrossServiceTest extends TestDataSeederInte
         descriptor.remapSetIdPresent() ? descriptor.remapSetId() : null);
   }
 
-  private AuthoredWorldSourceEvidence changedSourceEvidence(AuthoredWorldSourceEvidence original) {
+  private AuthoredWorldSourceEvidence changedPreparedSourceEvidence(
+      AuthoredWorldSourceEvidence original) {
     String changedDisplayName = original.worldDisplayName() + " changed";
     long changedSourceRowId =
         original.sourceGameRowId() == Long.MAX_VALUE ? 1L : original.sourceGameRowId() + 1L;

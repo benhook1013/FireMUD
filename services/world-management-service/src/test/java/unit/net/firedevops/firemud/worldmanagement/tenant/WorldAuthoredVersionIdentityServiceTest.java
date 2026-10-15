@@ -81,7 +81,8 @@ class WorldAuthoredVersionIdentityServiceTest {
 
   @Test
   void fixtureVersionRevalidatesPeerAndCallerBeforeAnyOwnerOrRemoteRead() {
-    RunOwnedCanonicalWorldLaunchEvidence evidence = RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     var sourceReceipt = sourceReceipt(evidence.sourceReceipt().sourceEvidence());
     WorldAuthoredVersionIdentityService fixtureService = fixtureService();
     assertThatThrownBy(
@@ -125,7 +126,8 @@ class WorldAuthoredVersionIdentityServiceTest {
 
   @Test
   void fixtureVersionConsumesCommittedSourceThenControlledCurrentStateBeforeSqlAndExactRetry() {
-    RunOwnedCanonicalWorldLaunchEvidence evidence = RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     var source = evidence.sourceReceipt().sourceEvidence();
     var intake = sourceReceipt(source);
     var canonicalVersion = evidence.gameSessionAssociation().canonicalVersionId();
@@ -247,7 +249,8 @@ class WorldAuthoredVersionIdentityServiceTest {
 
   @Test
   void fixtureVersionRejectsDifferentCommittedSourceBeforeVersionAccessOrSql() {
-    RunOwnedCanonicalWorldLaunchEvidence evidence = RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     var source = evidence.sourceReceipt().sourceEvidence();
     var intake = sourceReceipt(source);
     var different =
@@ -290,7 +293,8 @@ class WorldAuthoredVersionIdentityServiceTest {
 
   @Test
   void fixtureVersionRejectsRemoteStateEpochCanonicalVersionAndRequestSubstitutionBeforeSql() {
-    RunOwnedCanonicalWorldLaunchEvidence evidence = RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     var source = evidence.sourceReceipt().sourceEvidence();
     var intake = sourceReceipt(source);
     when(sourceIntakeRepository.readBySource(
@@ -351,7 +355,8 @@ class WorldAuthoredVersionIdentityServiceTest {
 
   @Test
   void fixtureVersionRejectsChangedRetainedSnapshotOnExactRetryWithoutRemoteOrSql() {
-    RunOwnedCanonicalWorldLaunchEvidence evidence = RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     var source = evidence.sourceReceipt().sourceEvidence();
     var intake = sourceReceipt(source);
     var canonicalVersion = evidence.gameSessionAssociation().canonicalVersionId();
@@ -463,7 +468,8 @@ class WorldAuthoredVersionIdentityServiceTest {
 
   @Test
   void fixtureVersionDeniesMissingOrSubstitutedIndependentVersionReceipt() {
-    RunOwnedCanonicalWorldLaunchEvidence evidence = RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     var source = evidence.sourceReceipt().sourceEvidence();
     var intake = sourceReceipt(source);
     var canonicalVersion = evidence.gameSessionAssociation().canonicalVersionId();
@@ -534,7 +540,8 @@ class WorldAuthoredVersionIdentityServiceTest {
 
   @Test
   void fixtureVersionDeniesAmbientTransactionBeforeOwnerAccess() {
-    RunOwnedCanonicalWorldLaunchEvidence evidence = RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     TransactionSynchronizationManager.setActualTransactionActive(true);
     assertThatThrownBy(
             () ->

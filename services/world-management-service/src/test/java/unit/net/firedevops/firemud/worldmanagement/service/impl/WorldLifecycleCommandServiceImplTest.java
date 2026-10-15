@@ -380,8 +380,7 @@ class WorldLifecycleCommandServiceImplTest {
 
       assertTrue(error.getMessage().contains("no ambient transaction"));
       verify(provider, never()).requireAuthenticatedEvidence();
-      verify(worldInstanceRepository, never())
-          .findByTenantIdAndGameInstanceIdForUpdate(42L, 101L);
+      verify(worldInstanceRepository, never()).findByTenantIdAndGameInstanceIdForUpdate(42L, 101L);
       verify(worldInstanceRepository, never()).save(any(WorldInstance.class));
       verify(gameDesignClient, never()).getPublishedReleaseBundle(42L, 11L);
       verify(entityManagementClient, never())
@@ -536,8 +535,7 @@ class WorldLifecycleCommandServiceImplTest {
     WorldLifecycleCommandServiceImpl fixtureService =
         fixtureService(provider, lifecycleTransactionOperations);
 
-    var terminated =
-        fixtureService.terminateWorldInstance(42L, 101L, 2L, "term-fixture", "stop");
+    var terminated = fixtureService.terminateWorldInstance(42L, 101L, 2L, "term-fixture", "stop");
     long terminalRowVersion = persisted.get().getRowVersion();
     var replay = fixtureService.terminateWorldInstance(42L, 101L, 2L, "term-fixture", "stop");
 

@@ -91,7 +91,8 @@ public final class WorldAuthoredVersionIdentityService {
    * bypass the ordinary authenticated Game Design entry point.
    */
   public WorldAuthoredVersionIdentityReceipt associateRunOwnedFixture(
-      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence, WorldAuthoredSourceIntakeReceipt sourceReceipt) {
+      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence,
+      WorldAuthoredSourceIntakeReceipt sourceReceipt) {
     Objects.requireNonNull(fixtureEvidence, "fixtureEvidence");
     fixtureEvidence.requireFixedGameSessionPeer();
     Objects.requireNonNull(sourceReceipt, "sourceReceipt");
@@ -295,7 +296,8 @@ public final class WorldAuthoredVersionIdentityService {
   }
 
   private static void requireFixtureVersionStateMatches(
-      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence, AuthoredWorldVersionStateEvidence current) {
+      RunOwnedCanonicalWorldLaunchEvidence fixtureEvidence,
+      AuthoredWorldVersionStateEvidence current) {
     if (current == null) {
       throw new WorldAuthoredVersionIdentityRepository.InvalidIdentityEvidenceException(
           "Game Design returned no current Version state for the sealed run-owned fixture");

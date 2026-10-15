@@ -116,7 +116,8 @@ class RunOwnedWorldFixedPresetResourcesTest {
   }
 
   private static WorldAuthoredVersionIdentityReceipt versionReceipt(
-      RunOwnedCanonicalWorldLaunchEvidence evidence, WorldAuthoredSourceIntakeReceipt sourceReceipt) {
+      RunOwnedCanonicalWorldLaunchEvidence evidence,
+      WorldAuthoredSourceIntakeReceipt sourceReceipt) {
     var source = sourceReceipt.source();
     var snapshot = evidence.sourceReceipt().launchReadEvidence().versionState();
     var request =
@@ -144,7 +145,8 @@ class RunOwnedWorldFixedPresetResourcesTest {
         stateEvidence);
   }
 
-  private static <T> T withFixturePeer(RunOwnedCanonicalWorldLaunchEvidence evidence, Supplier<T> action) {
+  private static <T> T withFixturePeer(
+      RunOwnedCanonicalWorldLaunchEvidence evidence, Supplier<T> action) {
     GrpcPeerIdentity peer =
         new GrpcPeerIdentity(
             "spiffe://firemud/ns/dev/sa/game-session-service", "dev", "game-session-service");

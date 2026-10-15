@@ -71,7 +71,8 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
 
   @Test
   void retainedCarrierRequiresOriginalFixedPeerAndLeafForEveryOwnerOperation() {
-    RunOwnedCanonicalWorldLaunchEvidence evidence = RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
+    RunOwnedCanonicalWorldLaunchEvidence evidence =
+        RunOwnedCanonicalWorldLaunchEvidenceTestFixtures.create();
     assertThatThrownBy(() -> withControlledPeer(null, null, evidence::requireFixedGameSessionPeer))
         .isInstanceOf(SecurityException.class);
     assertThatThrownBy(
@@ -362,7 +363,8 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
     try (PeerContext ignored = fixture.attachGameSessionPeer()) {
       assertThatThrownBy(provider::requireAuthenticatedEvidence)
           .isInstanceOf(
-              RunOwnedCanonicalWorldLaunchEvidenceProvider.InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class)
+              RunOwnedCanonicalWorldLaunchEvidenceProvider
+                  .InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class)
           .hasMessage("Run-owned World launch evidence is invalid");
     } finally {
       provider.closeGameSessionFixtureClient();
@@ -430,7 +432,8 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
     try (PeerContext ignored = fixture.attachGameSessionPeer()) {
       assertThatThrownBy(provider::requireAuthenticatedEvidence)
           .isInstanceOf(
-              RunOwnedCanonicalWorldLaunchEvidenceProvider.InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class)
+              RunOwnedCanonicalWorldLaunchEvidenceProvider
+                  .InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class)
           .hasMessage("Run-owned World launch evidence is invalid");
     } finally {
       provider.closeGameSessionFixtureClient();
@@ -470,7 +473,8 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
     try (PeerContext ignored = fixture.attachGameSessionPeer()) {
       assertThatThrownBy(provider::requireAuthenticatedEvidence)
           .isInstanceOf(
-              RunOwnedCanonicalWorldLaunchEvidenceProvider.InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class)
+              RunOwnedCanonicalWorldLaunchEvidenceProvider
+                  .InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class)
           .hasMessage("Run-owned World launch evidence is invalid");
     }
 
@@ -494,7 +498,8 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
     try (PeerContext ignored = fixture.attachGameSessionPeer()) {
       assertThatThrownBy(provider::requireAuthenticatedEvidence)
           .isInstanceOf(
-              RunOwnedCanonicalWorldLaunchEvidenceProvider.InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class)
+              RunOwnedCanonicalWorldLaunchEvidenceProvider
+                  .InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class)
           .hasMessage("Run-owned World launch evidence is invalid");
     }
 
@@ -524,8 +529,8 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
       try (PeerContext ignored = fixture.attachGameSessionPeer()) {
         assertThatThrownBy(provider::requireAuthenticatedEvidence)
             .isInstanceOf(
-                RunOwnedCanonicalWorldLaunchEvidenceProvider.InvalidRunOwnedCanonicalWorldLaunchEvidenceException
-                    .class)
+                RunOwnedCanonicalWorldLaunchEvidenceProvider
+                    .InvalidRunOwnedCanonicalWorldLaunchEvidenceException.class)
             .hasMessage("Run-owned World launch evidence is invalid");
       }
 
@@ -648,7 +653,8 @@ class RunOwnedCanonicalWorldLaunchEvidenceProviderTest {
     return new ProviderFixture(evidence, capability, receipt, pki, tls, endpoints, gameSessionLeaf);
   }
 
-  private static GameDesignClient mockDescriptorReader(RunOwnedCanonicalWorldLaunchEvidence evidence) {
+  private static GameDesignClient mockDescriptorReader(
+      RunOwnedCanonicalWorldLaunchEvidence evidence) {
     GameDesignClient client = mock(GameDesignClient.class);
     var message =
         net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorGrpcCodec

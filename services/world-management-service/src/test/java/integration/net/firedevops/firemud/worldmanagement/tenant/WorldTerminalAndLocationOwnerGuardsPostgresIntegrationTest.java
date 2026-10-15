@@ -32,9 +32,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * Exercises V1042.6's two forward owner-guard repairs against native PostgreSQL. The malformed
- * terminal tuples and APPLIED location operations run only through test-local predicate probes;
- * they do not create production owner rows or claim Account-authorized admission.
+ * Exercises V1042.6's two forward owner-guard repairs at the V1042.7 migration frontier against
+ * native PostgreSQL. The malformed terminal tuples and APPLIED location operations run only
+ * through test-local predicate probes; they do not create production owner rows or claim
+ * Account-authorized admission.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
@@ -90,10 +91,15 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
       List<String> productionRowsBefore = productionLocationRows(upgradeDsl, upgradeSchema);
       assertThat(productionRowsBefore).isEmpty();
 
-      // Targetless migrate is the normal forward path from the installed V1042.5 frontier.
-      Flyway current = flyway(upgradeSource, upgradeSchema, null, worldLocation, sagaLocation);
-      current.migrate();
-      current.validate();
+      Flyway through10426 =
+          flyway(
+              upgradeSource,
+              upgradeSchema,
+              MigrationVersion.fromVersion("1042.6"),
+              worldLocation,
+              sagaLocation);
+      through10426.migrate();
+      through10426.validate();
       assertThat(latestVersion(upgradeDsl)).isEqualTo("1042.6");
       assertThat(migrationHistory(upgradeDsl, "1010")).isEqualTo(oldTerminalHistory);
       assertThat(migrationHistory(upgradeDsl, "1019")).isEqualTo(oldLocationHistory);
@@ -117,11 +123,24 @@ class WorldTerminalAndLocationOwnerGuardsPostgresIntegrationTest {
           upgradeSource, upgradeSchema, after.functionSource(), false, false);
       assertThat(productionLocationRows(upgradeDsl, upgradeSchema)).isEqualTo(productionRowsBefore);
 
+      String repairedTerminalHistory = migrationHistory(upgradeDsl, "1042.6");
+      Flyway current = flyway(upgradeSource, upgradeSchema, null, worldLocation, sagaLocation);
+      current.migrate();
+      current.validate();
+      assertThat(latestVersion(upgradeDsl)).isEqualTo("1042.7");
+      assertThat(migrationHistory(upgradeDsl, "1042.6")).isEqualTo(repairedTerminalHistory);
+      assertThat(migrationHistory(upgradeDsl, "1010")).isEqualTo(oldTerminalHistory);
+      assertThat(migrationHistory(upgradeDsl, "1019")).isEqualTo(oldLocationHistory);
+      assertThat(constraintDefinition(upgradeDsl, upgradeSchema)).isEqualTo(currentTerminalConstraint);
+      LocationFunctionMetadata atCurrentFrontier =
+          locationFunctionMetadata(upgradeDsl, upgradeSchema);
+      assertFunctionMetadataPreserved(after, atCurrentFrontier);
+
       // A clean default installation must also land on the same repaired frontier.
       Flyway fresh = flyway(freshSource, freshSchema, null, worldLocation, sagaLocation);
       fresh.migrate();
       fresh.validate();
-      assertThat(latestVersion(freshDsl)).isEqualTo("1042.6");
+      assertThat(latestVersion(freshDsl)).isEqualTo("1042.7");
       assertThat(constraintDefinition(freshDsl, freshSchema)).contains("IS TRUE");
       assertThat(
               normalizeFunctionSource(
