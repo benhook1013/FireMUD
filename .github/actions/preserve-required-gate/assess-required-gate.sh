@@ -73,6 +73,55 @@ expected_workflow_id=""
 declare -A workflow_run_cache=()
 declare -A job_cache=()
 
+# Recognize only the observed pre-execution Validation cancellation shape. A
+# cancelled workflow may still contain genuine failures; its conclusion alone
+# never suppresses a failed gate. Return 0 only for independently bound proof.
+validation_cancelled_before_checks() {
+  local attempt run_snapshot jobs_snapshot check_snapshot native_job check_id
+  attempt="$(jq -er '.run_attempt | select(type == "number" and . > 0 and . == floor)' <<<"${job_json}")" || return 1
+  run_snapshot="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${workflow_run_id}/attempts/${attempt}")" || return 1
+  jq -e --argjson original "${workflow_run_json}" --argjson attempt "${attempt}" '
+    . as $run | .run_attempt == $attempt and .status == "completed" and .conclusion == "cancelled" and
+    all(["id", "workflow_id", "name", "path", "head_sha", "display_title", "repository", "event"][];
+      . as $key | $run[$key] == $original[$key]) and $original.run_attempt == $attempt
+  ' <<<"${run_snapshot}" >/dev/null || return 1
+  jobs_snapshot="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/actions/runs/${workflow_run_id}/attempts/${attempt}/jobs" \
+    -f per_page=100 --paginate --slurp)" || return 1
+  jq -e --argjson run "${workflow_run_id}" --argjson attempt "${attempt}" \
+    --arg head "${HEAD_SHA}" --arg repo "${GITHUB_REPOSITORY}" --argjson gate "${job_json}" '
+    ["Detect CI-Relevant Changes", "GitHub Workflow Lint", "Buf Generation", "Dev Tools README Contract",
+     ("Build and Test ($" + "{{ matrix.module }})"), "Metrics Cardinality Policy Check", "Flyway Migration Sanity Checks",
+     "gRPC Transport Configuration Sanity Checks", "PostgreSQL Runtime Upgrade Proof", "Validate Documentation",
+     "YAML Lint", "Dockerfile Lint", "Helm Render Validation", "Helm Chart Lint", "Python Script Validation",
+     "ShellCheck", "Frontend Checks", "Dev Tool Contract Checks", "Helm Transaction Proof", "Validation Gate"] as $names
+    | type == "array" and length == 1 and .[0].total_count == 20 and (.[0].jobs | type) == "array" and
+      (.[0].jobs | length) == 20 and ([.[0].jobs[].id] | unique | length) == 20 and
+      ([.[0].jobs[].name] | sort) == ($names | sort) and
+      all(.[0].jobs[]; (.id | type) == "number" and .id > 0 and .id == (.id | floor) and
+        .run_id == $run and .run_attempt == $attempt and .head_sha == $head and .status == "completed" and
+        (.check_run_url | type) == "string" and
+        (.check_run_url | startswith("https://api.github.com/repos/" + $repo + "/check-runs/")) and
+        (.check_run_url | split("/check-runs/") | last | test("^[1-9][0-9]*$")) and
+        if .name == "Validation Gate" then
+          . == $gate and .conclusion == "failure" and (.steps | type) == "array" and
+          ([.steps[] | select(.name == "Enforce validation success" and .status == "completed" and .conclusion == "failure")] | length) == 1 and
+          ([.steps[] | select(.name == "Preserve successful required gate on metadata-only edit" and .status == "completed" and .conclusion == "skipped")] | length) == 1 and
+          all(.steps[]; .status == "completed" and
+            (if .name == "Enforce validation success" then .conclusion == "failure"
+             else (.conclusion == "success" or .conclusion == "skipped") end))
+        else .conclusion == "cancelled" and .steps == [] end)
+  ' <<<"${jobs_snapshot}" >/dev/null || return 1
+  while IFS= read -r native_job; do
+    check_id="$(jq -er '.check_run_url | capture("/check-runs/(?<id>[1-9][0-9]*)$").id' <<<"${native_job}")" || return 1
+    check_snapshot="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/check-runs/${check_id}")" || return 1
+    jq -e --argjson job "${native_job}" --argjson id "${check_id}" '
+      .id == $id and .app.id == 15368 and .app.slug == "github-actions" and
+      .head_sha == $job.head_sha and .name == $job.name and .status == $job.status and
+      .conclusion == $job.conclusion and .details_url == $job.html_url
+    ' <<<"${check_snapshot}" >/dev/null || return 1
+  done < <(jq -c '.[0].jobs[]' <<<"${jobs_snapshot}")
+}
+
 # A metadata-only run emits this same gate name. Its preservation step
 # identifies the recursive run; substantive gates skip that step and
 # remain authoritative, including failures.
@@ -391,6 +440,18 @@ while IFS=$'\t' read -r app_slug check_name details_url check_run_id check_statu
         ;;
       *) candidate_ambiguous=true; continue ;;
     esac
+  fi
+
+  # Failed cancelled aggregates require complete proof before being treated as
+  # missing validation. Unavailable or different evidence retains failure.
+  if [[ "${EXPECTED_WORKFLOW_PATH}" == ".github/workflows/ci.yml" &&
+    "${EXPECTED_WORKFLOW_NAME}" == "CI — Validation" && "${REQUIRED_GATE_NAME}" == "Validation Gate" &&
+    "${check_status}" == completed && "${conclusion}" == failure &&
+    "$(jq -r '.conclusion // ""' <<<"${workflow_run_json}")" == cancelled ]]; then
+    if validation_cancelled_before_checks; then
+      echo "Cancelled Validation aggregate has no executed prerequisite checks; original proof remains missing." >&2
+      continue
+    fi
   fi
 
   case "${check_status}" in
