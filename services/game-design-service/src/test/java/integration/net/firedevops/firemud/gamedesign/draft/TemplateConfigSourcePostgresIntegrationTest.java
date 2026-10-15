@@ -643,7 +643,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
     String templateId = first.entries().getFirst().templateId();
     assertThat(first.entries().getFirst().sourceBinding()).isEqualTo(binding);
     var initialBaseReference =
-        f.dsl.fetchOne(
+        f.dsl.fetchSingle(
             "SELECT canonical_tenant_id, template_id, canonical_version_id, source_commit_id, source_revision_id "
                 + "FROM game_template_version_ref WHERE canonical_tenant_id = ? AND template_id = ?",
             f.target.canonicalTenantId(),
@@ -696,7 +696,7 @@ class TemplateConfigSourcePostgresIntegrationTest {
     apply(f, update);
     assertThat(source(f, update).entries().getFirst().sourceBinding()).isEqualTo(update);
     var updatedBaseReference =
-        f.dsl.fetchOne(
+        f.dsl.fetchSingle(
             "SELECT canonical_version_id, source_commit_id, source_revision_id "
                 + "FROM game_template_version_ref WHERE canonical_tenant_id = ? AND template_id = ?",
             f.target.canonicalTenantId(),
