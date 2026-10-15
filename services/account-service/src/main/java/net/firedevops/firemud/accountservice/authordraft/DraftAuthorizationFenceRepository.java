@@ -267,6 +267,7 @@ public final class DraftAuthorizationFenceRepository {
     }
     requireNoPendingPublication(sources);
     requireNoPendingGameLogicIntake(sources);
+    requireNoPendingSelectedOwnerIntakeSourceRead(sources);
     requireNoPendingWorldParticipation(sources);
     for (UUID operationId : affectedOperations(sources)) {
       Record row = readOperation(operationId);
@@ -358,6 +359,47 @@ public final class DraftAuthorizationFenceRepository {
       throw new IllegalStateException(
           "Exact selected author operation has not committed and settled");
     }
+  }
+
+  /** Distinct recipient-bound intake requires the exact settled original author selection. */
+  public void requireSelectedOwnerIntakeAdmission(
+      List<SourceEvidence> sources, DraftCommitBinding selected) {
+    requirePublicationAdmission(sources);
+    Objects.requireNonNull(selected, "selected Draft binding is required");
+    Record originalRow =
+        dsl.fetchOne(
+            "SELECT * FROM " + FENCES + " WHERE request_id = ? AND commit_id = ? FOR UPDATE",
+            selected.requestId(),
+            selected.commitId());
+    if (originalRow == null)
+      throw new IllegalStateException("Selected author operation is unavailable");
+    DraftAuthorizationFenceBinding original = originalBinding(originalRow);
+    if (!Arrays.equals(original.gameDesignBinding(), selected.canonicalBytes())
+        || !Ordering.COMMIT_ORDER.name().equals(originalRow.get("ordering", String.class))
+        || settlement(original, Ordering.COMMIT_ORDER) != Settlement.COMMITTED) {
+      throw new IllegalStateException(
+          "Exact selected original author operation must be committed and settled");
+    }
+  }
+
+  private void requireNoPendingSelectedOwnerIntakeSourceRead(List<SourceEvidence> sources) {
+    if (hasPendingSelectedOwnerIntakeSourceRead(sources)) {
+      throw new IllegalStateException("Selected owner intake source read remains pending");
+    }
+  }
+
+  private boolean hasPendingSelectedOwnerIntakeSourceRead(List<SourceEvidence> sources) {
+    for (SourceEvidence source : sources) {
+      if (!dsl.fetch(
+              "SELECT source.operation_id FROM account_selected_owner_intake_source_read_sources source "
+                  + "WHERE source.source_key = ? "
+                  + "AND account_selected_owner_intake_source_read_is_pending(source.operation_id)",
+              source.key())
+          .isEmpty()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private boolean hasPendingGameLogicIntake(List<SourceEvidence> sources) {
@@ -855,7 +897,8 @@ public final class DraftAuthorizationFenceRepository {
   private boolean allAffectedSettled(List<SourceEvidence> sources) {
     if (hasPendingPublication(sources)
         || hasPendingGameLogicIntake(sources)
-        || hasPendingWorldParticipation(sources)) {
+        || hasPendingWorldParticipation(sources)
+        || hasPendingSelectedOwnerIntakeSourceRead(sources)) {
       return false;
     }
     for (UUID operation : affectedOperations(sources)) {

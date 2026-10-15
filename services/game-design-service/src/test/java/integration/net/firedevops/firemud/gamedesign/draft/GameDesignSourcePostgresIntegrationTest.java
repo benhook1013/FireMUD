@@ -22,10 +22,10 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.PostgresProperties;
 import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.common.gamedesign.BrandingSource;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
-import net.firedevops.firemud.gamedesign.publication.CommandSource;
 import net.firedevops.firemud.gamedesign.publication.CommandSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
@@ -78,7 +78,7 @@ class GameDesignSourcePostgresIntegrationTest {
 
   private static void assertFirstReferenceRejectsStaleUpdate(boolean branding, boolean metadata)
       throws Exception {
-    Fixture fixture = fixture(branding);
+    Fixture fixture = fixture();
     byte[] bytes = {0, 1, (byte) 0xff};
     long assetId =
         fixture
@@ -445,6 +445,10 @@ class GameDesignSourcePostgresIntegrationTest {
     assertThat(genesis.policy().receiptId()).isEqualTo(genesis.command().receiptId());
     assertThat(genesis.asset().receiptId()).isNotEqualTo(genesis.policy().receiptId());
     assertThat(genesis.asset().target()).isEqualTo(fixture.target());
+    assertThat(genesis.brandingEvidence()).isPresent();
+    assertThat(genesis.brandingEvidence().orElseThrow().target()).isEqualTo(fixture.target());
+    assertThat(genesis.brandingEvidence().orElseThrow().creationTransactionId())
+        .isEqualTo(genesis.policy().creationTransactionId());
     assertThat(genesis.asset().creationTransactionId())
         .isEqualTo(genesis.policy().creationTransactionId());
     assertThat(genesis.policy().creationTransactionId())
@@ -768,11 +772,18 @@ class GameDesignSourcePostgresIntegrationTest {
     var read = fixture.sources().readCapture(operation).orElseThrow();
     assertThat(retry.command().canonicalBytes()).containsExactly(first.command().canonicalBytes());
     assertThat(retry.policy().canonicalBytes()).containsExactly(first.policy().canonicalBytes());
+    assertThat(retry.branding()).isPresent();
+    assertThat(retry.branding().orElseThrow().canonicalBytes())
+        .containsExactly(first.branding().orElseThrow().canonicalBytes());
     assertThat(read.command().canonicalBytes()).containsExactly(first.command().canonicalBytes());
     assertThat(read.policy().canonicalBytes()).containsExactly(first.policy().canonicalBytes());
+    assertThat(read.branding().orElseThrow().canonicalBytes())
+        .containsExactly(first.branding().orElseThrow().canonicalBytes());
     assertThat(read.command().snapshot().binding())
         .isEqualTo(operation.account().input().selection().selectedCommit());
     assertThat(read.policy().snapshot().binding())
+        .isEqualTo(operation.account().input().selection().selectedCommit());
+    assertThat(read.branding().orElseThrow().snapshot().binding())
         .isEqualTo(operation.account().input().selection().selectedCommit());
   }
 
@@ -943,15 +954,10 @@ class GameDesignSourcePostgresIntegrationTest {
         + "\"promptPolicy\":\"NEVER\",\"actionCategory\":\"GAMEPLAY\",\"historyRecordable\":true,"
         + "\"aliases\":[\""
         + alias
-        + "\"],\"actionTags\":[\"WORLD_BROWSE\"],\"effects\":[],"
-        + "\"legacyExtension\":{\"kept\":true}}";
+        + "\"],\"actionTags\":[\"WORLD_BROWSE\"],\"effects\":[]}";
   }
 
   private static Fixture fixture() {
-    return fixture(false);
-  }
-
-  private static Fixture fixture(boolean branding) {
     String schema = "gd_combined_" + UUID.randomUUID().toString().replace("-", "");
     var dataSource =
         new DriverManagerDataSource(
@@ -986,20 +992,6 @@ class GameDesignSourcePostgresIntegrationTest {
               version.setTenantId(game.getTenantId());
               version.setVersionNumber(1);
               version = new VersionRepository(dsl).save(version);
-              if (branding) {
-                dsl.execute(
-                    "INSERT INTO game_design_branding_source_genesis "
-                        + "(canonical_tenant_id, canonical_version_id, version_id, receipt_id, creation_transaction_id, target_json, roles_json) "
-                        + "SELECT canonical_tenant_id, canonical_version_id, version_id, ?, creation_transaction_id, target_json, "
-                        + "'{\"RESOURCE\":\"EMPTY\",\"LOGO\":\"EMPTY\",\"FAVICON\":\"EMPTY\",\"THEME\":\"EMPTY\"}' "
-                        + "FROM game_design_asset_source_genesis WHERE version_id = ?",
-                    UUID.randomUUID(),
-                    version.getId());
-                dsl.execute(
-                    "INSERT INTO game_design_branding_source_head (canonical_tenant_id, canonical_version_id, source_epoch, genesis_receipt_id) "
-                        + "SELECT canonical_tenant_id, canonical_version_id, '0', receipt_id FROM game_design_branding_source_genesis WHERE version_id = ?",
-                    version.getId());
-              }
               return new TargetProof(
                   version.getCanonicalTenantId(),
                   version.getCanonicalVersionId(),
