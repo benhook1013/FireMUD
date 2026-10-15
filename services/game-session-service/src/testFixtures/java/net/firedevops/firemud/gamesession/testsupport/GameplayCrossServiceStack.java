@@ -248,13 +248,9 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
               // the real guard failure instead of masking it with a re-enable attempt on an aborted
               // transaction.
               restoreTruncateGuard(
-                  jdbc,
-                  BaselineTruncateGuard.CANONICAL_LAUNCH,
-                  originalStates.canonicalLaunch());
+                  jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, originalStates.canonicalLaunch());
               requireTruncateGuardState(
-                  jdbc,
-                  BaselineTruncateGuard.CANONICAL_LAUNCH,
-                  originalStates.canonicalLaunch());
+                  jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, originalStates.canonicalLaunch());
               restoreTruncateGuard(
                   jdbc,
                   BaselineTruncateGuard.AUTHORED_ACTOR_CORE,
@@ -268,9 +264,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     requireTruncateGuardState(
         jdbc, BaselineTruncateGuard.CANONICAL_LAUNCH, originalGuardStates.canonicalLaunch());
     requireTruncateGuardState(
-        jdbc,
-        BaselineTruncateGuard.AUTHORED_ACTOR_CORE,
-        originalGuardStates.authoredActorCore());
+        jdbc, BaselineTruncateGuard.AUTHORED_ACTOR_CORE, originalGuardStates.authoredActorCore());
     if (characterIds.length > 0) {
       clearScreenBuffers(tenantId, gameplayInstanceId, characterIds);
     }
@@ -362,11 +356,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   }
 
   private static void disableTruncateGuard(JdbcTemplate jdbc, BaselineTruncateGuard guard) {
-    jdbc.execute(
-        "ALTER TABLE "
-            + guard.tableName
-            + " DISABLE TRIGGER "
-            + guard.triggerName);
+    jdbc.execute("ALTER TABLE " + guard.tableName + " DISABLE TRIGGER " + guard.triggerName);
   }
 
   private static void restoreTruncateGuard(
@@ -383,12 +373,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
                       + state);
         };
     jdbc.execute(
-        "ALTER TABLE "
-            + guard.tableName
-            + " "
-            + enableMode
-            + " TRIGGER "
-            + guard.triggerName);
+        "ALTER TABLE " + guard.tableName + " " + enableMode + " TRIGGER " + guard.triggerName);
   }
 
   private void clearDefaultDemoAdmissionBinding(JdbcTemplate jdbc, long tenantId) {
