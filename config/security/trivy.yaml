@@ -1,3 +1,11 @@
+db:
+  # Prefer published origins; redirected mirror 404s do not trigger native fallback.
+  repository:
+    - ghcr.io/aquasecurity/trivy-db:2
+    - mirror.gcr.io/aquasec/trivy-db:2
+  java-repository:
+    - ghcr.io/aquasecurity/trivy-java-db:1
+    - mirror.gcr.io/aquasec/trivy-java-db:1
 severity:
   - CRITICAL
   - HIGH
