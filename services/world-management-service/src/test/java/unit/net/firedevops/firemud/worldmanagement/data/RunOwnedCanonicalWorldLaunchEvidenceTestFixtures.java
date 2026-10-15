@@ -62,7 +62,7 @@ public final class RunOwnedCanonicalWorldLaunchEvidenceTestFixtures {
       String worldManagementLeafSha256,
       String caCertificateSha256,
       UUID canonicalTenantId,
-      long capabilityEpoch,
+      long ownerAccountId,
       boolean scriptPatchVersionPresent,
       boolean remapSetIdPresent) {
     String operationId =
@@ -175,7 +175,7 @@ public final class RunOwnedCanonicalWorldLaunchEvidenceTestFixtures {
             operationId,
             42L,
             17L,
-            capabilityEpoch,
+            ownerAccountId,
             "demo",
             "Demo World",
             "production",
