@@ -233,7 +233,8 @@ public final class InitialGameplayLoginContextState {
       Object checkpoints = projection(evidence.outboxCheckpointsCanonicalJson(), false, 8 * 1024);
       Object events =
           projection(evidence.outboxSourceEventEvidenceCanonicalJson(), false, 8 * 1024);
-      validateCheckpoints(evidence, object(tuple), checkpoints, events);
+      CanonicalGameplayLoginResult.requireCheckpointEvidence(
+          evidence.accountId(), object(tuple), checkpoints, events);
     } catch (Exception failure) {
       throw invalid();
     }
@@ -254,56 +255,6 @@ public final class InitialGameplayLoginContextState {
     if (!Arrays.equals(bytes.toByteArray(), Rfc8785CanonicalJson.canonicalizeUtf8(text)))
       throw invalid();
     return parsed;
-  }
-
-  private static void validateCheckpoints(
-      NonSecretEvidence evidence, Map<?, ?> tuple, Object checkpointValue, Object eventValue) {
-    if (!(checkpointValue instanceof java.util.List<?> checkpoints)
-        || checkpoints.size() != 2
-        || !(eventValue instanceof java.util.List<?> events)
-        || events.size() > 2) throw invalid();
-    var streams =
-        java.util.List.of(
-            "account:auth-authority:v1:account/" + evidence.accountId(),
-            "account:auth-authority:v1:issuer/" + GameSessionAccountDelegationProfile.ISSUER);
-    int eventIndex = 0;
-    for (int index = 0; index < streams.size(); index++) {
-      var checkpoint = object(checkpoints.get(index));
-      if (!checkpoint.keySet().equals(Set.of("outboxStreamKey", "outboxSequence"))
-          || !streams.get(index).equals(checkpoint.get("outboxStreamKey"))) throw invalid();
-      long sequence = sequence(text(checkpoint, "outboxSequence"));
-      if (sequence > 0) {
-        if (eventIndex >= events.size()) throw invalid();
-        var event = object(events.get(eventIndex++));
-        String eventId = text(event, "sourceEventId");
-        if (!event
-                .keySet()
-                .equals(
-                    Set.of(
-                        "outboxStreamKey", "outboxSequence", "sourceEventId", "sourceEventDigest"))
-            || !streams.get(index).equals(event.get("outboxStreamKey"))
-            || !checkpoint.get("outboxSequence").equals(event.get("outboxSequence"))
-            || eventId.isBlank()
-            || eventId.length() > 512
-            || eventId.chars().anyMatch(Character::isISOControl)
-            || !text(event, "sourceEventDigest").matches("sha256:[0-9a-f]{64}")) throw invalid();
-      }
-      if (index == 0 && tuple.containsKey("accountSecurityCutoff")) {
-        var cutoff = object(tuple.get("accountSecurityCutoff"));
-        if (!streams.getFirst().equals(cutoff.get("outboxStreamKey"))
-            || !tuple
-                .get("accountAuthorityGeneration")
-                .equals(cutoff.get("accountAuthorityGeneration"))
-            || sequence(text(cutoff, "outboxSequence")) == 0
-            || sequence < sequence(text(cutoff, "outboxSequence"))) throw invalid();
-      }
-    }
-    if (eventIndex != events.size()) throw invalid();
-  }
-
-  private static long sequence(String text) {
-    if ("0".equals(text)) return 0;
-    return positive(text);
   }
 
   private static Map<?, ?> object(Object value) {
