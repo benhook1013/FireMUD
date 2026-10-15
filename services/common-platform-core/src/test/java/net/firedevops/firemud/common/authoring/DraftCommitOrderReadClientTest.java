@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -35,6 +36,7 @@ import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.parallel.Resources;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class DraftCommitOrderReadClientTest {
   private static final String TLS_RELOAD_PROPERTY = "firemud.grpc.tls-reload.enabled";
@@ -63,6 +65,62 @@ class DraftCommitOrderReadClientTest {
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("not initialized and available");
       verifyNoInteractions(factory);
+    } finally {
+      client.close();
+    }
+  }
+
+  @Test
+  void refusesOwnerReadInsideTransactionOrSynchronizationBeforeRequestValidation(
+      @TempDir Path directory) throws Exception {
+    ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
+    endpoints.setAccountService("account.internal:6565");
+    var factory = mock(GrpcChannelFactory.class);
+    var channel = mock(ManagedChannel.class);
+    when(factory.buildChannel(
+            eq("account.internal:6565"), eq(6565), any(CommonGrpcClientProperties.class), eq(true)))
+        .thenReturn(channel);
+    var client = new DraftCommitOrderReadClient(endpoints, tls(directory), factory, "test");
+    try {
+      client.init();
+      var stub =
+          mock(
+              AccountDraftCommitOrderReadServiceGrpc.AccountDraftCommitOrderReadServiceBlockingStub
+                  .class);
+      when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+      var request = request("test");
+      when(stub.readHeldOriginalCommitOrder(any()))
+          .thenReturn(DraftCommitOrderReadGrpcCodec.toHeldResponse(request));
+      setStub(client, stub);
+
+      TransactionSynchronizationManager.setActualTransactionActive(true);
+      try {
+        assertThatThrownBy(() -> client.read(null))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("outside an active transaction");
+        assertThatThrownBy(() -> client.read(request))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("outside an active transaction");
+      } finally {
+        TransactionSynchronizationManager.setActualTransactionActive(false);
+      }
+
+      TransactionSynchronizationManager.initSynchronization();
+      try {
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+        assertThatThrownBy(() -> client.read(null))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("outside an active transaction");
+        assertThatThrownBy(() -> client.read(request))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("outside an active transaction");
+      } finally {
+        TransactionSynchronizationManager.clearSynchronization();
+      }
+
+      verify(stub, never()).readHeldOriginalCommitOrder(any());
+      assertThat(client.read(request).request()).isEqualTo(request);
+      verify(stub).readHeldOriginalCommitOrder(any());
     } finally {
       client.close();
     }
