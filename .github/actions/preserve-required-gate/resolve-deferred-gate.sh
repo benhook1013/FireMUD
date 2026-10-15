@@ -112,19 +112,25 @@ base_branch="$(jq -er '.base.ref' <<<"${pr_json}")"
 # This phase does not enter the legacy targeted-rerun admission protocol.
 if [[ "${resolution_phase}" == reconcile ]]; then
   latest_barrier() {
-    gh api --method GET "/repos/${GITHUB_REPOSITORY}/commits/${head_sha}/status" \
-      -f per_page=100 --paginate --slurp | jq -c --arg name "${gate_name}" --arg head "${head_sha}" '
-      if type != "array" or length == 0 or any(.[];
-        type != "object" or .sha != $head or (.statuses | type) != "array")
-      then error("malformed status inventory") else . end
-      | .[0].total_count as $total
-      | if ($total | type) != "number" or $total < 0 or ($total | floor) != $total or
-          any(.[]; .total_count != $total) or ([.[].statuses[]] | length) != $total or
-          ([.[].statuses[].id] | unique | length) != $total
-        then error("incomplete status inventory") else . end
-      | [.[].statuses[] | select(.context == $name)]
-      | if length == 0 then null elif length == 1 then .[0]
-        else error("ambiguous latest status") end'
+    local inventory='[]' page rows prefix found
+    # GitHub returns newest first; stop at the first exact context, regardless
+    # of its actor. Exhaust history only to establish absence, never ownership.
+    for page in {1..10}; do
+      rows="$(gh api --method GET "/repos/${GITHUB_REPOSITORY}/statuses/${head_sha}" -f per_page=100 -f page="${page}")" || return 1
+      prefix="$(jq -ce --arg context "${gate_name}" '
+        if type != "array" or length > 100 then error("invalid status page") else . end
+        | (map(if type == "object" then .context == $context else false end) | index(true)) as $index
+        | {found: ($index != null), rows: (if $index == null then . else .[0:($index + 1)] end)}' <<<"${rows}")" || return 1
+      found="$(jq -r .found <<<"${prefix}")"
+      inventory="$(jq -cs '.[0] + .[1].rows' <(printf '%s\n' "${inventory}") <(printf '%s\n' "${prefix}"))" || return 1
+      jq -e --arg url "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${head_sha}" '
+        all(.[]; type == "object" and (.context | type) == "string" and (.context | length) > 0 and
+          (.id | type) == "number" and .id > 0 and (.id | floor) == .id and .url == $url) and
+        ([.[].id] | unique | length) == length' <<<"${inventory}" >/dev/null || return 1
+      if [[ "${found}" == true ]]; then jq -c '.[-1]' <<<"${inventory}"; return 0; fi
+      if [[ "$(jq length <<<"${rows}")" -lt 100 ]]; then printf 'null\n'; return 0; fi
+    done
+    return 1 # Budget exhaustion cannot establish absence.
   }
   barrier="$(latest_barrier)" || fail_closed "Supplementary status inventory is unavailable or ambiguous."
   if [[ "${barrier}" == null ]]; then exit 0; fi
