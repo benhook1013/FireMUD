@@ -70,8 +70,8 @@ Entry format:
   - Reconsideration trigger: revisit when paused Social cross-service work resumes.
 
 - `2026-10-15`: Qualify native Actions callback evidence at the hosted boundary
-  - Context: completed Validation runs [38662647370](https://github.com/benhook1013/FireMUD/actions/runs/38662647370) and [38651777538](https://github.com/benhook1013/FireMUD/actions/runs/38651777538) returned `pull_requests: []` despite canonical PR, base-SHA, and head titles.
-  - Observation: local fixtures cover title/SHA attribution and a separately pinned current-ref write fence, but do not prove native webhook delivery or partial-rerun response shapes.
+  - Context: completed Validation runs [38662647370](https://github.com/benhook1013/FireMUD/actions/runs/38662647370) and [38651777538](https://github.com/benhook1013/FireMUD/actions/runs/38651777538) covered 20 modules and zero modules respectively, and returned `pull_requests: []` despite canonical PR, base-SHA, and head titles.
+  - Observation: association-required fixtures would have passed locally while disabling reporting. The optional summary distinguishes title/SHA attribution from a separately pinned current-ref write fence; local fixtures do not prove historical-ref or required-gate provenance, native webhook delivery, or partial-rerun response shapes.
   - Expected pattern: preserve that proof limit separately from installed consumer code, and retain the required producer/activation and callback qualification in the [platform operations tracker](implementation-tracking/platform-operations-and-delivery.md).
   - Reconsideration trigger: remove after producer activation and hosted webhook plus partial-rerun qualification establish the actual callback boundary.
 
