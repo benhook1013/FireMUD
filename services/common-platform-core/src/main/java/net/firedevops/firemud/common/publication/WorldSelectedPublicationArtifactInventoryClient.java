@@ -24,8 +24,6 @@ public final class WorldSelectedPublicationArtifactInventoryClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public WorldSelectedPublicationArtifactInventoryClient(
       ServiceEndpointsProperties endpoints,
@@ -43,16 +41,10 @@ public final class WorldSelectedPublicationArtifactInventoryClient
     this.workloadNamespace = workloadNamespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException("World selected-publication inventory client is closed");
-    }
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("World selected-publication inventory stub unavailable");
-    }
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "World selected-publication inventory client is closed",
+        "World selected-publication inventory stub unavailable");
   }
 
   /** Returns only the canonical public inventory bound to the exact acknowledged freeze. */
@@ -69,7 +61,8 @@ public final class WorldSelectedPublicationArtifactInventoryClient
           "World selected-publication inventory read must use the configured namespace");
     }
     var response =
-        requireStub()
+        requireInitializedStub(
+                "World selected-publication inventory client is not initialized and available")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .readSelectedPublicationArtifactInventory(
                 WorldSelectedPublicationArtifactInventoryGrpcCodec.toRequest(freezeEvidence));
@@ -102,25 +95,5 @@ public final class WorldSelectedPublicationArtifactInventoryClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private WorldSelectedDraftPublicationFreezeServiceGrpc
-          .WorldSelectedDraftPublicationFreezeServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "World selected-publication inventory client is not initialized and available");
-    }
-    return currentStub;
   }
 }

@@ -22,6 +22,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
   private volatile TStub stub;
   private TlsCertificateWatcher watcher;
   private boolean closed;
+  private boolean explicitlyInitialized;
 
   protected AbstractReloadingBlockingGrpcClient(
       ServiceEndpointsProperties endpoints,
@@ -64,6 +65,28 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
       cleanupAfterInitialisationFailure(e);
       throw e;
     }
+  }
+
+  protected final synchronized void initOnce(String closedMessage, String unavailableMessage)
+      throws SSLException, IOException {
+    if (closed) {
+      throw new IllegalStateException(closedMessage);
+    }
+    if (explicitlyInitialized) {
+      return;
+    }
+    initReloadingClient();
+    if (stub == null) {
+      throw new IllegalStateException(unavailableMessage);
+    }
+    explicitlyInitialized = true;
+  }
+
+  protected final synchronized TStub requireInitializedStub(String unavailableMessage) {
+    if (closed || !explicitlyInitialized || stub == null) {
+      throw new IllegalStateException(unavailableMessage);
+    }
+    return stub;
   }
 
   protected final synchronized void reloadChannel() throws SSLException {
@@ -121,6 +144,7 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
     TlsCertificateWatcher watcherToClose;
     synchronized (this) {
       closed = true;
+      explicitlyInitialized = false;
       watcherToClose = watcher;
       watcher = null;
     }

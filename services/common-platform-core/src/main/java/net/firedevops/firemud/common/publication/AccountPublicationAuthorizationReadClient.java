@@ -24,8 +24,6 @@ public final class AccountPublicationAuthorizationReadClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public AccountPublicationAuthorizationReadClient(
       ServiceEndpointsProperties endpoints,
@@ -43,16 +41,10 @@ public final class AccountPublicationAuthorizationReadClient
     this.workloadNamespace = workloadNamespace;
   }
 
-  public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException("Account publication authorization read client is closed");
-    }
-    if (initialized) return;
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("Account publication authorization read stub unavailable");
-    }
-    initialized = true;
+  public void init() throws SSLException, IOException {
+    initOnce(
+        "Account publication authorization read client is closed",
+        "Account publication authorization read stub unavailable");
   }
 
   /** Returns HELD evidence only after exact Account server identity and response verification. */
@@ -69,7 +61,8 @@ public final class AccountPublicationAuthorizationReadClient
           "Account publication authorization read must use the configured workload namespace");
     }
     var response =
-        requireStub()
+        requireInitializedStub(
+                "Account publication authorization read client is not initialized and available")
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .readHeldPublicationAuthorization(
                 AccountPublicationAuthorizationReadGrpcCodec.toRequest(request));
@@ -100,25 +93,5 @@ public final class AccountPublicationAuthorizationReadClient
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
-  }
-
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
-  private AccountPublicationAuthorizationReadServiceGrpc
-          .AccountPublicationAuthorizationReadServiceBlockingStub
-      requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "Account publication authorization read client is not initialized and available");
-    }
-    return currentStub;
   }
 }
