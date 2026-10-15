@@ -732,22 +732,47 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             GameplayRuleSource.SCOPE,
             "effective",
             "0"));
-    // Authored declarations are content only; each real owner independently proves emptiness.
+    String policyPayload =
+        "{\"revisionKind\":\"REALM_ENTRY_POLICY\",\"logicalRevisionId\":\"selected-public-realm\",\"policy\":{"
+            + "\"schemaVersion\":1,\"worldSlug\":\"controlled-selected-world\",\"worldDisplayName\":\"World\","
+            + "\"realmSlug\":\"main\",\"realmDisplayName\":\"Main\",\"visible\":true,"
+            + "\"publicProduction\":true,\"stateScope\":\"SHARED\",\"entryPolicy\":\"PRESEEDED_ONLY\"}}";
     revisions.add(new RevisionPayload(Integer.toString(revisions.size()), UUID.randomUUID(),
-        Owner.GAME_DESIGN_CONTROL_PLANE,
-        net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.ownerInventoryPayload(
-            Owner.ENTITY_MANAGEMENT,
-            net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration.parse(entityInventory()))));
-    revisions.add(new RevisionPayload(Integer.toString(revisions.size()), UUID.randomUUID(),
-        Owner.GAME_DESIGN_CONTROL_PLANE,
-        net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.ownerInventoryPayload(
-            Owner.AUTOMATION_SCRIPTING,
-            net.firedevops.firemud.common.automation.AutomationAuthoredSourceInventoryDeclaration.parse(automationInventory()))));
+        Owner.GAME_DESIGN_CONTROL_PLANE, policyPayload));
     units.add(new AffectedUnit(Owner.GAME_DESIGN_CONTROL_PLANE,
-        net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.SCOPE,
+        net.firedevops.firemud.gamedesign.publication.RealmPolicySource.SCOPE,
         target.canonicalVersionId().toString(),
-        net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.SCOPE,
-        net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.SCOPE_ID, "0"));
+        net.firedevops.firemud.gamedesign.publication.RealmPolicySource.SCOPE, "effective", "0"));
+    // Authored declarations are content only; each real owner independently proves emptiness.
+    revisions.add(
+        new RevisionPayload(
+            Integer.toString(revisions.size()),
+            UUID.randomUUID(),
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            net.firedevops.firemud.gamedesign.publication.TemplateConfigSource
+                .ownerInventoryPayload(
+                    Owner.ENTITY_MANAGEMENT,
+                    net.firedevops.firemud.common.entity.EntityAuthoredSourceInventoryDeclaration
+                        .parse(entityInventory()))));
+    revisions.add(
+        new RevisionPayload(
+            Integer.toString(revisions.size()),
+            UUID.randomUUID(),
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            net.firedevops.firemud.gamedesign.publication.TemplateConfigSource
+                .ownerInventoryPayload(
+                    Owner.AUTOMATION_SCRIPTING,
+                    net.firedevops.firemud.common.automation
+                        .AutomationAuthoredSourceInventoryDeclaration.parse(
+                        automationInventory()))));
+    units.add(
+        new AffectedUnit(
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.SCOPE,
+            target.canonicalVersionId().toString(),
+            net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.SCOPE,
+            net.firedevops.firemud.gamedesign.publication.TemplateConfigSource.SCOPE_ID,
+            "0"));
     for (var mutation : mutations) {
       revisions.add(
           new RevisionPayload(
