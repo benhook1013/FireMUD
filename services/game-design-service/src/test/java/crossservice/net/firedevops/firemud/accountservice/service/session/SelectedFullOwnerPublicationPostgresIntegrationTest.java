@@ -737,12 +737,20 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             + "\"schemaVersion\":1,\"worldSlug\":\"controlled-selected-world\",\"worldDisplayName\":\"World\","
             + "\"realmSlug\":\"main\",\"realmDisplayName\":\"Main\",\"visible\":true,"
             + "\"publicProduction\":true,\"stateScope\":\"SHARED\",\"entryPolicy\":\"PRESEEDED_ONLY\"}}";
-    revisions.add(new RevisionPayload(Integer.toString(revisions.size()), UUID.randomUUID(),
-        Owner.GAME_DESIGN_CONTROL_PLANE, policyPayload));
-    units.add(new AffectedUnit(Owner.GAME_DESIGN_CONTROL_PLANE,
-        net.firedevops.firemud.gamedesign.publication.RealmPolicySource.SCOPE,
-        target.canonicalVersionId().toString(),
-        net.firedevops.firemud.gamedesign.publication.RealmPolicySource.SCOPE, "effective", "0"));
+    revisions.add(
+        new RevisionPayload(
+            Integer.toString(revisions.size()),
+            UUID.randomUUID(),
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            policyPayload));
+    units.add(
+        new AffectedUnit(
+            Owner.GAME_DESIGN_CONTROL_PLANE,
+            net.firedevops.firemud.gamedesign.publication.RealmPolicySource.SCOPE,
+            target.canonicalVersionId().toString(),
+            net.firedevops.firemud.gamedesign.publication.RealmPolicySource.SCOPE,
+            "effective",
+            "0"));
     // Authored declarations are content only; each real owner independently proves emptiness.
     revisions.add(
         new RevisionPayload(

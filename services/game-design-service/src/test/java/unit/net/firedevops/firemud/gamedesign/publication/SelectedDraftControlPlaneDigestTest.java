@@ -145,13 +145,20 @@ class SelectedDraftControlPlaneDigestTest {
   private static DraftCommitBinding selectedBinding() throws Exception {
     var selected = operation().account().input().selection().selectedCommit();
     // Payload JSON is stored as text in the binding; normalize unordered fixture maps first.
-    var revisions = selected.revisions().stream().map(revision ->
-        new DraftCommitBinding.RevisionPayload(revision.revisionOrder(), revision.revisionId(),
-            revision.owner(), new String(
-                net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(revision.payload()),
-                java.nio.charset.StandardCharsets.UTF_8))).toList();
-    return DraftCommitBinding.create(selected.target(), selected.requestId(), selected.commitId(),
-        selected.baseCommitId(), revisions, selected.affectedUnits());
+    var revisions = new java.util.ArrayList<DraftCommitBinding.RevisionPayload>();
+    for (var revision : selected.revisions()) {
+      revisions.add(new DraftCommitBinding.RevisionPayload(
+          revision.revisionOrder(), revision.revisionId(), revision.owner(),
+          new String(net.firedevops.firemud.common.json.Rfc8785CanonicalJson.canonicalizeUtf8(
+              revision.payload()), java.nio.charset.StandardCharsets.UTF_8)));
+    }
+    return DraftCommitBinding.create(
+        selected.target(),
+        selected.requestId(),
+        selected.commitId(),
+        selected.baseCommitId(),
+        revisions,
+        selected.affectedUnits());
   }
 
   private static GameDesignSourceRepository.SynchronizedSources sources(
