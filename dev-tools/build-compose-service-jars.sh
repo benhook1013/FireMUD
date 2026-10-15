@@ -19,7 +19,8 @@ GRADLE_TASKS=(
 
 echo "Building current boot jars for source-built Docker compose services."
 # Bound compiler memory for this all-module image build and avoid protobuf task cache-serialization failures.
-bash "$ROOT_DIR/dev-tools/validation/run-locked-gradle.sh" \
+bash "$ROOT_DIR/dev-tools/validation/run-gradle-with-dependency-recovery.sh" \
+  --runner "$ROOT_DIR/dev-tools/validation/run-locked-gradle.sh" -- \
   --no-configuration-cache \
   --max-workers=1 \
   --no-parallel \
