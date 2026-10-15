@@ -318,10 +318,10 @@ if len(preserve_steps) != 1 or preserve_steps[0].get("id") != "preserved_gate":
     raise SystemExit(f"{workflow} must bind the preservation output")
 if "assessment-mode" in preserve_steps[0].get("with", {}):
     raise SystemExit(f"{workflow} must use canonical assessment without a mode opt-in")
-if len(deferred_steps) != 1 or deferred_steps[0].get("if") != "${{ steps.preserved_gate.outputs.assessment == 'dependency-deferred' }}":
-    raise SystemExit(f"{workflow} must fail distinctly for dependency deferral")
+if len(deferred_steps) != 1 or deferred_steps[0].get("if") != preserve_steps[0]["if"].replace("${{ ", "${{ !cancelled() && ", 1):
+    raise SystemExit(f"{workflow} must guard every metadata assessment and publication outcome")
 if "exit 1" not in deferred_steps[0].get("run", ""):
-    raise SystemExit(f"{workflow} deferral must never report success")
+    raise SystemExit(f"{workflow} must fail distinctly for unacknowledged dependency deferral")
 
 if job.get("if") != expected_job_if[job_id]:
     raise SystemExit(
@@ -1454,7 +1454,7 @@ def run(run_id):
             "created_at": "2026-07-30T01:00:00Z" if run_id == 100 else "2026-07-30T02:00:00Z",
             "display_title": title.replace(base, "c" * 40) if scenario.startswith("bridge-cross-") and run_id == 200 else title, "head_sha": head, "head_branch": "proof-branch",
             "repository": {"full_name": "example/firemud"}, "head_repository": {"full_name": repository},
-            "event": "pull_request", "status": "completed", "conclusion": "failure" if run_id in {target_id, 200, 201} else "success",
+            "event": "pull_request", "status": "completed", "conclusion": "cancelled" if scenario == "publisher-cancelled" and run_id == target_id else "failure" if run_id in {target_id, 200, 201} else "success",
             "run_attempt": state.get("attempt", 1), "pull_requests": [] if scenario == "fork-empty" else [{"number": 123}]}
 
 def resolver_run(run_id):
@@ -1765,10 +1765,18 @@ elif endpoint.endswith(f"/actions/runs/{target_id}/attempts/1/jobs") or (admissi
     requested_target = int(endpoint.split("/")[-4])
     assert "--paginate" in args and "--slurp" in args
     steps = [{"name": "Preserve successful required gate on metadata-only edit", "status": "completed", "conclusion": "success"}]
+    if scenario.startswith("publisher-"):
+        if scenario == "publisher-unassessed":
+            steps[0]["conclusion"] = "failure"
+        steps.append({"name": "Publish pending required gate status", "status": "completed",
+                      "conclusion": "cancelled" if scenario == "publisher-cancelled" else "skipped" if scenario == "publisher-unassessed" else "failure"})
     if scenario != "ordinary-failure":
-        steps.append({"name": "Report dependency-deferred required gate", "status": "completed", "conclusion": "failure"})
+        steps.append({"name": "Report dependency-deferred required gate", "status": "completed",
+                      "conclusion": "skipped" if scenario == "publisher-cancelled" else "failure"})
     result = [{"total_count": 1, "jobs": [{"id": 2001 if requested_target == 201 else 2000, "run_id": requested_target, "head_sha": head, "status": "completed", "conclusion": "failure",
                          "name": "Validation Gate", "steps": steps}]}]
+    if scenario == "publisher-cancelled":
+        result[0]["jobs"][0]["conclusion"] = "cancelled"
     if scenario.startswith("target-jobs-"):
         gate = result[0]["jobs"][0]
         if scenario == "target-jobs-truncated":
@@ -2079,6 +2087,18 @@ run_resolver chronology-before-target 200 no-local-workflow-file admit 9001
   echo "target's later callback did not resolve a target refused by the earlier queued resolver" >&2; exit 1;
 }
 
+# A denied or ambiguous publisher stays failed, but the non-cancelled guard
+# exposes existing legacy recovery after independent original success.
+for scenario in publisher-denied publisher-ambiguous publisher-cancelled publisher-unassessed; do
+  printf '{"scenario":"%s"}\n' "$scenario" >"$tmp_dir/resolver-state-$scenario"
+  run_resolver "$scenario" 200 pending-predecessor
+  [[ "$(resolver_posts "$scenario")" == 0 ]] || { echo "publisher failure bypassed pending original proof: $scenario" >&2; exit 1; }
+  run_resolver "$scenario"
+  expected_posts=1
+  [[ "$scenario" != publisher-cancelled && "$scenario" != publisher-unassessed ]] || expected_posts=0
+  [[ "$(resolver_posts "$scenario")" == "$expected_posts" ]] || { echo "publisher legacy recovery violated native outcome: $scenario" >&2; exit 1; }
+done
+
 run_resolver success
 run_resolver success
 [[ "$(resolver_posts success)" == 1 ]] || { echo "duplicate completion replayed a targeted rerun" >&2; exit 1; }
@@ -2307,10 +2327,12 @@ done
 
 echo "PR required-gate context contract checks passed"
 
-# The new producer is inert: none of the five callers activates it in support.
+# Activated callers preserve native proof and require acknowledged pending barriers.
 PUBLISH_SCRIPT="$ROOT_DIR/.github/actions/publish-required-gate-status/publish-required-gate-status.sh"
 python3 - "$ROOT_DIR" <<'PY_PUBLISH'
 from pathlib import Path
+import os
+import subprocess
 import sys
 import yaml
 root = Path(sys.argv[1])
@@ -2318,10 +2340,50 @@ action = yaml.load((root / ".github/actions/publish-required-gate-status/action.
 assert set(action["inputs"]) == {"assessment", "gate-name", "workflow-name", "workflow-file", "workflow-path"}
 assert all(value["required"] == "true" for value in action["inputs"].values())
 assert action["outputs"]["publication"]["value"] == "${{ steps.publish.outputs.publication }}"
-for filename in ("ci.yml", "security.yml", "codeql.yml", "license-scan.yml", "smoke.yml"):
-    text = (root / ".github/workflows" / filename).read_text()
-    assert "publish-required-gate-status" not in text
-    assert "Report dependency-deferred required gate" in text
+callers = (
+    ("ci.yml", "validation-gate", "Validation Gate", "CI — Validation"),
+    ("security.yml", "security-gate", "Security Gate", "Security Gate"),
+    ("codeql.yml", "codeql-gate", "CodeQL Gate", "CodeQL Analysis"),
+    ("license-scan.yml", "license-gate", "License Gate", "License Gate"),
+    ("smoke.yml", "smoke-gate", "Smoke Gate", "PR Smoke Gate"),
+)
+for filename, job_id, gate, workflow_name in callers:
+    data = yaml.load((root / ".github/workflows" / filename).read_text(), Loader=yaml.BaseLoader)
+    job = data["jobs"][job_id]
+    assert job["permissions"] == {"contents": "read", "checks": "read", "actions": "read", "pull-requests": "read", "statuses": "write"}
+    # The new write permission is confined to the required gate job.
+    assert "statuses" not in data.get("permissions", {})
+    assert all("statuses" not in value.get("permissions", {}) for key, value in data["jobs"].items() if key != job_id)
+    steps = job["steps"]
+    preserve = next(step for step in steps if step.get("id") == "preserved_gate")
+    publishers = [step for step in steps if step.get("uses") == "./.github/actions/publish-required-gate-status"]
+    assert len(publishers) == 1
+    publisher = publishers[0]
+    assert publisher["name"] == "Publish pending required gate status"
+    assert publisher["id"] == "publish-pending-status"
+    assert publisher["if"] == preserve["if"]
+    assert publisher["with"] == {
+        "assessment": "${{ steps.preserved_gate.outputs.assessment }}", "gate-name": gate,
+        "workflow-name": workflow_name, "workflow-file": filename, "workflow-path": f".github/workflows/{filename}",
+    }
+    guard = next(step for step in steps if step.get("name") == "Report dependency-deferred required gate")
+    assert guard["if"] == preserve["if"].replace("${{ ", "${{ !cancelled() && ", 1)
+    assert guard["env"] == {"PUBLISHER_OUTCOME": "${{ steps.publish-pending-status.outcome }}", "ASSESSMENT": "${{ steps.preserved_gate.outputs.assessment }}", "PUBLICATION": "${{ steps.publish-pending-status.outputs.publication }}"}
+    assert steps.index(publisher) == steps.index(preserve) + 1
+    assert steps.index(guard) == steps.index(publisher) + 1
+    assert not any("continue-on-error" in step for step in (preserve, publisher, guard))
+    # Execute each actual caller guard: only these complete outcome pairs pass.
+    allowed = {("dependency-deferred", "pending-acknowledged"), ("success", "unchanged"),
+               ("success", "success-acknowledged"), ("success", "pending-acknowledged")}
+    for outcome in ("success", "failure", "skipped", "cancelled", ""):
+        for assessment in ("dependency-deferred", "success", "failure", "", "unknown"):
+            for publication in ("pending-acknowledged", "success-acknowledged", "unchanged", "", "unknown"):
+                result = subprocess.run(["bash", "-e", "-c", guard["run"]],
+                                        env={**os.environ, "PUBLISHER_OUTCOME": outcome, "ASSESSMENT": assessment, "PUBLICATION": publication},
+                                        capture_output=True, text=True, check=False)
+                expected = 0 if outcome == "success" and (assessment, publication) in allowed else 1
+                assert result.returncode == expected, (filename, outcome, assessment, publication, result)
+
 PY_PUBLISH
 mkdir "$tmp_dir/producer-bin"
 cat >"$tmp_dir/producer-bin/gh" <<'EOF_PRODUCER_GH'
@@ -2520,4 +2582,4 @@ assert len(state.get("posts", [])) == (1 if sys.argv[2].startswith("ack-") else 
 PY_PUBLISH
 done
 
-echo "Inert required-gate status producer contract checks passed"
+echo "Required-gate status producer contract checks passed"
