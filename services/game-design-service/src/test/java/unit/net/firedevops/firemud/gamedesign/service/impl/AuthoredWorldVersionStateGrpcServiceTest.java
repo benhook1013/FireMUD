@@ -196,6 +196,34 @@ class AuthoredWorldVersionStateGrpcServiceTest {
     assertStorageFailure(callRead(handler), Status.Code.UNAVAILABLE);
   }
 
+  @Test
+  void retriesOnlyConnectionAndTimeoutTransactions() {
+    AuthoredWorldVersionStateService service = mock(AuthoredWorldVersionStateService.class);
+    when(service.read(request()))
+        .thenThrow(
+            new org.springframework.transaction.CannotCreateTransactionException(
+                "connection unavailable"))
+        .thenThrow(new org.springframework.transaction.TransactionTimedOutException("timed out"))
+        .thenThrow(
+            new org.springframework.transaction.IllegalTransactionStateException(
+                "propagation mismatch"))
+        .thenThrow(new org.springframework.transaction.UnexpectedRollbackException("rollback only"))
+        .thenThrow(
+            new org.springframework.transaction.NestedTransactionNotSupportedException(
+                "nested unsupported"))
+        .thenThrow(
+            new org.springframework.transaction.InvalidIsolationLevelException(
+                "isolation unsupported"));
+    var handler = new AuthoredWorldVersionStateGrpcService(service, NAMESPACE);
+
+    assertTransactionFailure(callRead(handler), Status.Code.UNAVAILABLE);
+    assertTransactionFailure(callRead(handler), Status.Code.UNAVAILABLE);
+    assertTransactionFailure(callRead(handler), Status.Code.INTERNAL);
+    assertTransactionFailure(callRead(handler), Status.Code.INTERNAL);
+    assertTransactionFailure(callRead(handler), Status.Code.INTERNAL);
+    assertTransactionFailure(callRead(handler), Status.Code.INTERNAL);
+  }
+
   private static TestObserver<GetAuthoredWorldVersionStateResponse> callRead(
       AuthoredWorldVersionStateGrpcService handler) {
     TestObserver<GetAuthoredWorldVersionStateResponse> observer = new TestObserver<>();
@@ -205,6 +233,18 @@ class AuthoredWorldVersionStateGrpcServiceTest {
             handler.getAuthoredWorldVersionState(
                 AuthoredWorldVersionStateGrpcCodec.toRequest(request()), observer));
     return observer;
+  }
+
+  private static void assertTransactionFailure(TestObserver<?> observer, Status.Code expectedCode) {
+    assertStatus(observer, expectedCode);
+    assertThat(observer.value).isNull();
+    assertThat(observer.completed).isFalse();
+    assertThat(observer.failureDescription)
+        .isEqualTo(
+            expectedCode == Status.Code.UNAVAILABLE
+                ? "Game Design owner snapshot is temporarily unavailable"
+                : "Game Design owner snapshot could not be read");
+    assertThat(observer.failureTrailersPresent).isFalse();
   }
 
   private static void assertStorageFailure(TestObserver<?> observer, Status.Code expectedCode) {

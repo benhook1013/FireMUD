@@ -10,8 +10,8 @@ import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementEventV1Codec;
 import net.firedevops.firemud.accountservice.dto.DemoTenantEntitlementRequest;
-import net.firedevops.firemud.accountservice.dto.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.TenantAuthorityEventV1Codec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.junit.jupiter.api.Test;
@@ -217,6 +217,24 @@ public class AccountSelectedGameplayAuthorityProjectionTest {
             true,
             new DemoTenantEntitlementRequest.Quotas(1L, 1L, 1L));
     var billing = DemoTenantEntitlementEventV1Codec.seal(request, source, 1L, 2L, 2L, 1L);
-    return TenantAuthorityEventV1Codec.seal(request, source, 2L, 2L, 1L, billing);
+    return TenantAuthorityEventV1Codec.seal(
+        new TenantAuthorityEventV1Codec.AuthorityRequest(
+            request.requestId(),
+            request.requestDigest(),
+            request.canonicalTenantId(),
+            request.tenantCreationRequestId(),
+            request.tenantCreationRequestDigest()),
+        source,
+        2L,
+        2L,
+        1L,
+        new TenantAuthorityEventV1Codec.BillingReceipt(
+            billing.canonicalTenantId(),
+            billing.requestId(),
+            billing.requestDigest(),
+            billing.outboxStreamKey(),
+            billing.tenantBillingSequence(),
+            billing.eventId(),
+            billing.eventDigest()));
   }
 }
