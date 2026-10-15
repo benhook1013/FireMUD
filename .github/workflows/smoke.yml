@@ -107,6 +107,7 @@ jobs:
               "config/python/smoke-requirements.txt",
               "config/python/smoke-requirements.in",
               "dev-tools/build-compose-service-jars.sh",
+              "dev-tools/validation/run-gradle-with-dependency-recovery.sh",
               "dev-tools/validation/run-locked-gradle.sh",
               "dev-tools/validation/gradle-run-supervisor.py",
               "dev-tools/build-local-smoke-images.sh",
@@ -599,7 +600,7 @@ jobs:
             }
 
             // One canonical producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "c4bd569e46902970ce1844a68b127dfcc5f78f22648028799f8297e113d8ce7b";
+            const canonicalRuntimeWorkflowSha256 = "8b49b5e26ac37a1b6c1d098ee0d8c9716d850eb0ea7e43491b6c6b6f191fca1a";
             const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
             const workflowPath = ".github/workflows/runtime-images.yml";
             const repositoryName = `${owner}/${repo}`;
