@@ -76,7 +76,7 @@ class TemplateReferencePhasePostgresIntegrationTest {
     var currentReference =
         fixture
             .dsl()
-            .fetchOne(
+            .fetchSingle(
                 "SELECT canonical_version_id, source_commit_id, source_revision_id "
                     + "FROM game_template_version_ref WHERE canonical_tenant_id = ?",
                 fixture.target().canonicalTenantId());
@@ -147,7 +147,7 @@ class TemplateReferencePhasePostgresIntegrationTest {
     var currentReference =
         fixture
             .dsl()
-            .fetchOne(
+            .fetchSingle(
                 "SELECT template_id, canonical_version_id, source_commit_id, source_revision_id "
                     + "FROM game_template_version_ref WHERE canonical_tenant_id = ?",
                 fixture.target().canonicalTenantId());
