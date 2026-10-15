@@ -352,3 +352,8 @@ Entry format:
   - Observation: an older CLI checkpoint retained a different parent and its reconciliation bound the preceding child head. Both new channel requests refused before quota use; compact status identified the historical evidence and exact reconciliation was initiated.
   - Expected pattern: admission diagnostics should identify the offending channel/checkpoint and the required reconciliation action.
   - Current status: reported to Overseer; this establishes diagnostic friction, not a policy defect.
+
+- `2026-10-15`: Verify the complete absolute patch destination after the first write
+  - Context: Gameplay’s World digest-guard helper verified its checkout but mistyped the absolute migration path, creating a file in a similarly named sibling directory outside Git. This is distinct from the earlier relative-path incident: an absolute path alone does not identify the intended checkout.
+  - Outcome: The helper reported the mistake. Main verified the misplaced and intended files were byte-identical, deleted only the confirmed new duplicate, and preserved the sibling directories. The intended migration and its proof remain under review; no misplaced file was published.
+  - Expected pattern: Compare every patch target with the pinned worktree path and verify the first written file there before continuing.
