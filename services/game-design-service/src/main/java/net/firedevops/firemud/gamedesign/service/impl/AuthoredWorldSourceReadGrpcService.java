@@ -13,8 +13,10 @@ import net.firedevops.firemud.gamedesign.v1.AuthoredWorldSourceReadServiceGrpc;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessException;
+import org.springframework.transaction.TransactionException;
 
 /** Standalone exact authored-source owner read; deliberately not registered as a gRPC service. */
 public final class AuthoredWorldSourceReadGrpcService
@@ -70,40 +72,13 @@ public final class AuthoredWorldSourceReadGrpcService
               .withDescription("Authored-world source evidence is incomplete or inconsistent")
               .asRuntimeException());
       return;
-    } catch (DataAccessResourceFailureException
-        | TransientDataAccessException
-        | org.springframework.transaction.TransactionException exception) {
-      responseObserver.onError(
-          Status.UNAVAILABLE
-              .withDescription("Authored-world source evidence is temporarily unavailable")
-              .asRuntimeException());
-      return;
-    } catch (org.springframework.dao.DataAccessException exception) {
-      Status.Code code =
-          hasConnectionFailureSqlState(exception) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
-      responseObserver.onError(
-          Status.fromCode(code)
-              .withDescription(
-                  code == Status.Code.UNAVAILABLE
-                      ? "Authored-world source evidence is temporarily unavailable"
-                      : "Authored-world source evidence could not be read")
-              .asRuntimeException());
-      return;
-    } catch (org.jooq.exception.DataAccessException exception) {
-      Status.Code code =
-          hasConnectionFailureSqlState(exception) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
-      responseObserver.onError(
-          Status.fromCode(code)
-              .withDescription(
-                  code == Status.Code.UNAVAILABLE
-                      ? "Authored-world source evidence is temporarily unavailable"
-                      : "Authored-world source evidence could not be read")
-              .asRuntimeException());
-      return;
     } catch (RuntimeException exception) {
+      Status storageStatus = storageFailureStatus(exception);
       responseObserver.onError(
-          Status.INTERNAL
-              .withDescription("Authored-world source evidence could not be read")
+          (storageStatus == null
+                  ? Status.INTERNAL.withDescription(
+                      "Authored-world source evidence could not be read")
+                  : storageStatus)
               .asRuntimeException());
       return;
     }
@@ -129,6 +104,38 @@ public final class AuthoredWorldSourceReadGrpcService
     responseObserver.onCompleted();
   }
 
+  /** Returns the existing owner storage classification, or {@code null} for non-storage errors. */
+  static Status storageFailureStatus(Throwable failure) {
+    if (failure instanceof TransactionException) {
+      boolean retryable =
+          (failure instanceof org.springframework.transaction.CannotCreateTransactionException
+                  && !(failure
+                      instanceof
+                      org.springframework.transaction.NestedTransactionNotSupportedException))
+              || failure instanceof org.springframework.transaction.TransactionTimedOutException;
+      return Status.fromCode(retryable ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL)
+          .withDescription(
+              retryable
+                  ? "Authored-world source evidence is temporarily unavailable"
+                  : "Authored-world source evidence could not be read");
+    }
+    if (failure instanceof DataAccessResourceFailureException
+        || failure instanceof TransientDataAccessException) {
+      return Status.UNAVAILABLE.withDescription(
+          "Authored-world source evidence is temporarily unavailable");
+    }
+    if (failure instanceof DataAccessException
+        || failure instanceof org.jooq.exception.DataAccessException) {
+      boolean connectionFailure = hasConnectionFailureSqlState(failure);
+      return Status.fromCode(connectionFailure ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL)
+          .withDescription(
+              connectionFailure
+                  ? "Authored-world source evidence is temporarily unavailable"
+                  : "Authored-world source evidence could not be read");
+    }
+    return null;
+  }
+
   private boolean isWorldManagementPeer() {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     return peer != null
@@ -137,7 +144,7 @@ public final class AuthoredWorldSourceReadGrpcService
             .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/world-management-service");
   }
 
-  private static boolean hasConnectionFailureSqlState(Throwable failure) {
+  static boolean hasConnectionFailureSqlState(Throwable failure) {
     for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
       if (cause instanceof SQLException exception) {
         String sqlState = exception.getSQLState();
