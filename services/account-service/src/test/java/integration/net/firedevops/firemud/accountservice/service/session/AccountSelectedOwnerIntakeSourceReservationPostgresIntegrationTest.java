@@ -14,10 +14,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
-/** PostgreSQL installation proof for V1006's additive selected-owner source reservations. */
+/** PostgreSQL installation proof for V1007's additive selected-owner source reservations. */
 class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
   @Test
-  void installsV1006OverCombinedV1005ParentGuardsAndRejectsMalformedReservationWithoutSourceRows() {
+  void installsV1007OverCombinedV1006ParentGuardsAndRejectsMalformedReservationWithoutSourceRows() {
     var fixture = new AccountPostgresIntegrationFixture();
     try {
       fixture.start();
@@ -28,12 +28,12 @@ class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
         DriverManagerDataSource source = fixture.dataSource(schema);
         JdbcTemplate jdbc = new JdbcTemplate(source);
 
-        migration(source, schema, "1005").migrate();
-        assertVersionApplied(jdbc, schema, "1005");
-        for (String version : List.of("137", "159", "160.1", "1000", "1001", "1002", "1003")) {
+        migration(source, schema, "1006").migrate();
+        assertVersionApplied(jdbc, schema, "1006");
+        for (String version : List.of("137", "159", "160.1", "1000", "1001", "1002", "1003", "1004", "1004.1", "1004.2", "1004.3", "1005")) {
           assertVersionApplied(jdbc, schema, version);
         }
-        assertVersionNotApplied(jdbc, schema, "1006");
+        assertVersionNotApplied(jdbc, schema, "1007");
         var ownerDsl = org.jooq.impl.DSL.using(
             new org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy(source),
             org.jooq.SQLDialect.POSTGRES);
@@ -47,28 +47,41 @@ class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
         account.setRole("player");
         var accounts = new net.firedevops.firemud.accountservice.repository.AccountRepository(ownerDsl);
         assertThat(ownerTransaction.execute(status -> accounts.save(account))).isNotNull();
+        seedRetainedCombinedParentRows(jdbc);
         var retainedParent = retainedParentRows(jdbc);
-        String historyQuery = "SELECT installed_rank || ':' || version || ':' || script || ':' "
-            + "|| checksum || ':' || success FROM flyway_schema_history "
-            + "WHERE version IS NOT NULL AND version <> '1006' ORDER BY installed_rank";
+        assertThat(retainedParent.values()).allSatisfy(rows -> assertThat(rows).isNotEmpty());
+        String historyQuery =
+            "SELECT jsonb_build_object('row', to_jsonb(h), 'xmin', h.xmin::TEXT)::TEXT "
+                + "FROM flyway_schema_history h WHERE version IS NULL OR version <> '1007' "
+                + "ORDER BY installed_rank";
         var retainedHistory = jdbc.queryForList(historyQuery, String.class);
         var protectionsGuard = functionDefinition(jdbc, "account_ss_admission_assert_no_pending(text[])");
         var disposalGuard = functionDefinition(jdbc, "account_initial_gameplay_login_disposal_immutable()");
+        var disposalWriterGuard = functionDefinition(jdbc, "account_initial_gameplay_login_writer_guard()");
+        var alignmentGuard = functionDefinition(jdbc, "account_ss_activation_settlement_insert_guard()");
+        assertThat(alignmentGuard).contains(
+            "terminal->>'activationResultSha256' IS DISTINCT FROM 'sha256:' || encode(sha256(result_bytes), 'hex')");
         assertThat(protectionsGuard).contains("account_start_session_admission_protections", "account_start_session_activation_protections");
         assertWorldSourceExclusionGuards(
             functionDefinition(jdbc, "account_control_ui_hold_required_sources(text[])"),
             functionDefinition(jdbc, "account_draft_authorization_source_change_guard()"),
             functionDefinition(jdbc, "account_hosted_terms_disclosure_handoff_guard()"));
 
-        migration(source, schema, "1006").migrate();
-        assertVersionApplied(jdbc, schema, "1005");
+        Flyway upgrade = migration(source, schema, "1007");
+        assertThat(upgrade.migrate().migrationsExecuted).isEqualTo(1);
+        upgrade.validate();
         assertVersionApplied(jdbc, schema, "1006");
+        assertVersionApplied(jdbc, schema, "1007");
         assertThat(jdbc.queryForList(historyQuery, String.class)).isEqualTo(retainedHistory);
         assertThat(retainedParentRows(jdbc)).isEqualTo(retainedParent);
         assertThat(functionDefinition(jdbc, "account_ss_admission_assert_no_pending(text[])"))
             .isEqualTo(protectionsGuard);
         assertThat(functionDefinition(jdbc, "account_initial_gameplay_login_disposal_immutable()"))
             .isEqualTo(disposalGuard);
+        assertThat(functionDefinition(jdbc, "account_initial_gameplay_login_writer_guard()"))
+            .isEqualTo(disposalWriterGuard);
+        assertThat(functionDefinition(jdbc, "account_ss_activation_settlement_insert_guard()"))
+            .isEqualTo(alignmentGuard);
         assertInstalledOwnerReservationSchema(jdbc, schema);
 
         String holdGuard =
@@ -114,10 +127,26 @@ class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
         .load();
   }
 
-  /** Exact physical parent Account and its real source baselines; no credential authority implied. */
+  private static void seedRetainedCombinedParentRows(JdbcTemplate jdbc) {
+    Long sagaId = jdbc.queryForObject(
+        "INSERT INTO saga_instance(saga_name, state) VALUES (?, ?) RETURNING id",
+        Long.class, "retained-selected-source-upgrade", "PENDING");
+    jdbc.update(
+        "INSERT INTO saga_step(instance_id, name, status, attempt) VALUES (?, ?, ?, ?)",
+        sagaId, "retained-step", "PENDING", 3);
+    jdbc.update(
+        "INSERT INTO account_initial_gameplay_login_disposals(request_id, disposal_operation_id, "
+            + "caller_workload, caller_context_id, disposal_digest, witness_canonical_bytes) "
+            + "VALUES (?, ?, ?, ?, ?, ?)",
+        UUID.randomUUID(), UUID.randomUUID(),
+        "spiffe://firemud/ns/test/sa/game-session-service", UUID.randomUUID(),
+        "a".repeat(64), "retained parent disposal witness".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+  }
+
+  /** Exact parent Account/source, disposal and Saga rows; no credential authority implied. */
   private static Map<String, List<String>> retainedParentRows(JdbcTemplate jdbc) {
     Map<String, List<String>> rows = new java.util.LinkedHashMap<>();
-    for (String table : List.of("accounts", "account_authority_source_records")) {
+    for (String table : List.of("accounts", "account_authority_source_records", "account_initial_gameplay_login_disposals", "saga_instance", "saga_step")) {
       rows.put(table, jdbc.queryForList("SELECT jsonb_build_object('row', to_jsonb(t), 'xmin', t.xmin::TEXT)::TEXT FROM "
           + table + " t ORDER BY to_jsonb(t)::TEXT", String.class));
     }
