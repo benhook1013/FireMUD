@@ -324,10 +324,21 @@ class AccountSelectedDraftPublicationSettlementServiceTest {
     CodecOutputs(GameDesignPublicationTerminalEvidence.Outcome outcome) {
       var world = mock(WorldPublishedStartLocationEvidence.class);
       // Stipulated codec outputs include identities required by the current read correlation.
-      var account = mock(net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding.class);
-      var input = mock(net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding.PreallocationInput.class);
-      var selection = mock(net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.class);
-      var intent = mock(net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.PublishIntent.class);
+      var account =
+          mock(
+              net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding
+                  .class);
+      var input =
+          mock(
+              net.firedevops.firemud.common.publication.AccountPublicationAuthorizationBinding
+                  .PreallocationInput.class);
+      var selection =
+          mock(
+              net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding.class);
+      var intent =
+          mock(
+              net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding
+                  .PublishIntent.class);
       when(operation.account()).thenReturn(account);
       when(account.operationId()).thenReturn(UUID.randomUUID());
       when(account.fenceId()).thenReturn(UUID.randomUUID());
