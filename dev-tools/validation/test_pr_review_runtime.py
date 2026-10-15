@@ -5970,7 +5970,7 @@ class RuntimeTest(unittest.TestCase):
             "unresolved_findings": [],
         }
 
-        def audit_for(cli_history):
+        def audit_for(cli_history, source_channel="cli"):
             with (
                 patch.object(github, "fetch_pull_request", return_value=payload),
                 patch.object(observer.live, "pull_request", return_value=snapshot),
@@ -5980,7 +5980,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(
                     observer,
                     "history",
-                    side_effect=lambda _pr, channel, **_kwargs: cli_history if channel == "cli" else [],
+                    side_effect=lambda _pr, channel, **_kwargs: cli_history if channel == source_channel else [],
                 ),
             ):
                 return observer.review_stop_audit(42, anchor)
@@ -6052,6 +6052,20 @@ class RuntimeTest(unittest.TestCase):
                     source_audit["unknown_review_evidence"],
                     [] if status in ("finding_pending", "resolved") else [label],
                 )
+
+        for source_channel, peer in (("cli", "hosted"), ("hosted", "cli")):
+            for changes, allowed in (({}, True), ({"anchored": False}, False), ({"held": True}, False)):
+                with self.subTest(source_channel=source_channel, changes=changes):
+                    source = {
+                        "pr": 42, "head": HEAD, "checkpoint": "durable-source", "completed": True,
+                        "attributable": True, "anchored": True, "accepted": 1,
+                        "source_resolution_status": "finding_pending", **changes,
+                    }
+                    result = audit_for([source], source_channel)
+                    self.assertTrue(result["unresolved_findings"])
+                    self.assertTrue(result["finding_only_findings"])
+                    self.assertTrue(result["admission_finding_only_findings"][source_channel])
+                    self.assertEqual(not result["admission_finding_only_findings"][peer], allowed)
 
     def test_review_stop_audit_checks_retained_base_and_effective_parent_separately(self) -> None:
         retained_base = BASE
