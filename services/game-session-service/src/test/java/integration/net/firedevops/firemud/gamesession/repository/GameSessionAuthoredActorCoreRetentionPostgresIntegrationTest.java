@@ -493,8 +493,7 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
                       .dsl()
                       .execute("TRUNCATE game_session_start_session_template_association_pin"))
           .isInstanceOf(org.jooq.exception.DataAccessException.class)
-          .hasStackTraceContaining(
-              "cannot truncate a table referenced in a foreign key constraint")
+          .hasStackTraceContaining("cannot truncate a table referenced in a foreign key constraint")
           .hasStackTraceContaining("game_session_start_session_launch_descriptor_pin")
           .hasStackTraceContaining("game_session_start_session_template_association_pin");
       assertThatThrownBy(
