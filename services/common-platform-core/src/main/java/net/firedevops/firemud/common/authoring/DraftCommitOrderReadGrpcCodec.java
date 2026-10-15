@@ -10,6 +10,8 @@ import net.firedevops.firemud.account.v1.ReadHeldOriginalCommitOrderResponse;
 
 /** Closed wire mapping and exact request-echo validation for the Account held-order read. */
 public final class DraftCommitOrderReadGrpcCodec {
+  public static final int MAX_RESPONSE_WIRE_BYTES =
+      WorldOriginalDraftGraphApplyEvidence.MAX_BINDING_BYTES + 1024;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private DraftCommitOrderReadGrpcCodec() {}
