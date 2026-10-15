@@ -340,6 +340,51 @@ class AccountGameplayAuthenticateReceiverTest {
     verifyNoInteractions(owner, verifier);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"null", "request", "context"})
+  void disposalRejectsInvalidOwnerResultAsInternal(String invalidIdentity) {
+    var disposal =
+        mock(
+            net.firedevops.firemud.accountservice.service.session
+                .AccountInitialGameplayLoginDisposalOwner.class);
+    var adapter = new AccountGameplayAuthenticateReceiver(owner, verifier, "test", disposal);
+    var request =
+        net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest.newBuilder()
+            .setRequestId(REQUEST_ID.toString())
+            .setCallerContextId(CONTEXT_ID.toString())
+            .build();
+    var result =
+        switch (invalidIdentity) {
+          case "null" -> null;
+          case "request" ->
+              new net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalResult(
+                  UUID.randomUUID(),
+                  CONTEXT_ID,
+                  UUID.randomUUID(),
+                  net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalResult
+                      .Disposition.PENDING);
+          case "context" ->
+              new net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalResult(
+                  REQUEST_ID,
+                  UUID.randomUUID(),
+                  UUID.randomUUID(),
+                  net.firedevops.firemud.accountservice.dto.InitialGameplayLoginDisposalResult
+                      .Disposition.PENDING);
+          default -> throw new AssertionError("Unexpected invalid identity case");
+        };
+    when(disposal.retire(any(), eq(WORKLOAD))).thenReturn(result);
+    var observed = new DisposalObserved();
+    Context.current()
+        .withValue(GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(WORKLOAD).orElseThrow())
+        .run(() -> adapter.retireInitialGameplayLogin(request, observed));
+
+    assertThat(Status.fromThrowable(observed.failure).getCode()).isEqualTo(Status.Code.INTERNAL);
+    assertThat(observed.failure.getMessage())
+        .doesNotContain(REQUEST_ID.toString(), CONTEXT_ID.toString());
+    assertThat(observed.response).isNull();
+    assertThat(observed.completed).isFalse();
+  }
+
   @Test
   void disposalRejectsIncompleteWitnessAndRedactsOwnerFailure() {
     var disposal =
