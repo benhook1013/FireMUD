@@ -208,8 +208,21 @@ class LaunchDescriptorServiceIntegrationTest {
     newDraft.setNotes("new mutable template default");
     newDraft.setUpdatedAt(LocalDateTime.now());
     newDraft = versionRepository.save(newDraft);
-    fixture.template().setDefaultVersionId(newDraft.getId());
+    fixture.template().setDefaultRuntimeFlagsJson("{\"changed\":true}");
     gameTemplateRepository.save(fixture.template());
+    fixture.template().setDefaultVersionId(newDraft.getId());
+    assertThatThrownBy(() -> gameTemplateRepository.save(fixture.template()))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasStackTraceContaining(
+            "unqualified template cannot be reassigned into managed source target");
+    GameTemplate retainedTemplate =
+        gameTemplateRepository
+            .findByTenantIdAndId(
+                fixture.privateSourceTenantKey(), fixture.template().getId())
+            .orElseThrow();
+    assertThat(retainedTemplate.getDefaultVersionId()).isEqualTo(fixture.version().getId());
+    assertThat(retainedTemplate.getDefaultRuntimeFlagsJson()).isEqualTo("{\"changed\":true}");
+    fixture.template().setDefaultVersionId(fixture.version().getId());
     fixture.version().setVersionState(VersionLifecycleState.RETIRED);
     fixture.version().setVersionStateEpoch(2L);
     versionRepository.save(fixture.version());
