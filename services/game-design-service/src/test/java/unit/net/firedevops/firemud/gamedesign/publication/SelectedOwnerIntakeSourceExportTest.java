@@ -43,7 +43,8 @@ class SelectedOwnerIntakeSourceExportTest {
     frameFamily(expected, "COMMAND", sources.command().canonicalBytes());
     frameFamily(expected, "REALM_POLICY", sources.policy().canonicalBytes());
     frameFamily(expected, "ASSET", sources.asset().canonicalBytes());
-    frameFamily(expected, "GAMEPLAY_RULE", sources.gameplayEvidence().orElseThrow().canonicalBytes());
+    frameFamily(
+        expected, "GAMEPLAY_RULE", sources.gameplayEvidence().orElseThrow().canonicalBytes());
     frameFamily(expected, "BRANDING", sources.branding().orElseThrow().canonicalBytes());
     frameFamily(
         expected, "TEMPLATE_CONFIG", sources.templateConfig().orElseThrow().canonicalBytes());

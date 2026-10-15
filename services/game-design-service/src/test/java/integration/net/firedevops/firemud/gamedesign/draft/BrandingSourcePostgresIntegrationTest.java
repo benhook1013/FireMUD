@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import net.firedevops.firemud.common.authoring.DraftBaseReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.gamedesign.AssetSource;
 import net.firedevops.firemud.common.gamedesign.BrandingSource;
@@ -52,20 +53,7 @@ class BrandingSourcePostgresIntegrationTest {
     var f = fixture(null);
     var logo = asset(f, "logo.png");
     var ordinary = asset(f, "ordinary.png");
-    // Borrow only typed policy input; the fixture is not Account publication authorization.
-    var policy =
-        net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures.fresh(
-                f.target)
-            .account()
-            .input()
-            .selection()
-            .selectedCommit()
-            .revisions()
-            .stream()
-            .map(DraftCommitBinding.RevisionPayload::payload)
-            .filter(p -> p.contains("REALM_ENTRY_POLICY"))
-            .findFirst()
-            .orElseThrow();
+    var policy = policyPayload();
     var first =
         binding(
             f,
@@ -95,7 +83,8 @@ class BrandingSourcePostgresIntegrationTest {
         .containsEntry("THEME", "EMPTY");
     assertThat(
             synchronizedSources
-                .gameplayEvidence().orElseThrow()
+                .gameplayEvidence()
+                .orElseThrow()
                 .manifest()
                 .families()
                 .get(GameplayRuleManifest.Family.ADMISSION_TAGS))
@@ -143,18 +132,31 @@ class BrandingSourcePostgresIntegrationTest {
   }
 
   @Test
-  void retainedVersionCannotAcquireMissingBrandingGenesis() {
-    var f = fixture("58");
+  void v1025RetainedVersionPreservesFiveOwnerHistoryWithoutAcquiringBrandingGenesis() {
+    var f = fixture("1025");
     var original = binding(f, "0", CommandSource.SCOPE, commandUpsert("BRANDING_HISTORICAL"));
     f.tx.executeWithoutResult(
         ignored -> {
           var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
           coordinator.claim(original);
+          var policyGenesis =
+              new net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository(f.dsl)
+                  .readGenesis(f.target)
+                  .orElseThrow();
+          var commands =
+              new net.firedevops.firemud.gamedesign.publication.CommandSourceRepository(f.dsl);
+          var commandGenesis = commands.readNewDraftGenesis(f.target).orElseThrow();
+          byte[] reviewedEvidence =
+              historicalReviewedGenesisBytes(f.target, policyGenesis, commandGenesis);
+          insertReviewedBaseV1(
+              f.dsl,
+              original,
+              reviewedEvidence,
+              net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.digest(
+                  reviewedEvidence));
           coordinator.claimApplicationSlot(original);
           coordinator.markOwnerInProgress(
               original, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
-          var commands =
-              new net.firedevops.firemud.gamedesign.publication.CommandSourceRepository(f.dsl);
           var applied = commands.apply(original).orElseThrow();
           var out = new java.io.ByteArrayOutputStream();
           net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
@@ -183,62 +185,124 @@ class BrandingSourcePostgresIntegrationTest {
               .captureSynchronized(original);
           new net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository(f.dsl)
               .captureSynchronized(original);
+          new net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository(f.dsl)
+              .captureSynchronized(original);
           coordinator.releaseApplicationSlot(original);
         });
-    var originalBytes =
-        f.dsl
-            .fetchSingle(
-                "SELECT result_bytes FROM game_design_draft_commit_owner_result WHERE canonical_version_id = ?",
-                f.target.canonicalVersionId())
-            .get(0, byte[].class);
     var originalSources =
-        List.of("command_source", "realm_policy", "asset_source", "gameplay_rule");
-    var sourceJson =
+        List.of(
+            "command_source",
+            "realm_policy",
+            "asset_source",
+            "gameplay_rule",
+            "template_config_source");
+    var originalSourceRows =
         originalSources.stream()
             .map(
                 name ->
                     f.dsl
                         .fetchSingle(
-                            "SELECT snapshot_json FROM game_design_"
+                            "SELECT snapshot_json, xmin::text AS row_xmin FROM game_design_"
                                 + name
                                 + "_snapshot WHERE canonical_version_id = ?",
-                            f.target.canonicalVersionId())
-                        .get(0, String.class))
+                            f.target.canonicalVersionId()))
             .toList();
-    var fenceJson =
+    var sourceJson =
+        originalSourceRows.stream().map(row -> row.get("snapshot_json", String.class)).toList();
+    var sourceXmins =
+        originalSourceRows.stream().map(row -> row.get("row_xmin", String.class)).toList();
+    var originalFence =
+        f.dsl.fetchSingle(
+            "SELECT to_jsonb(f)::text AS row_json, xmin::text AS row_xmin "
+                + "FROM game_design_draft_commit_visibility_fence f WHERE canonical_version_id = ?",
+            f.target.canonicalVersionId());
+    var originalResult =
+        f.dsl.fetchSingle(
+            "SELECT result_bytes, xmin::text AS row_xmin "
+                + "FROM game_design_draft_commit_owner_result WHERE canonical_version_id = ?",
+            f.target.canonicalVersionId());
+    var originalCommit =
+        f.dsl.fetchSingle(
+            "SELECT binding_json, input_digest, xmin::text AS row_xmin "
+                + "FROM game_design_draft_commit WHERE canonical_version_id = ? AND commit_id = ?",
+            f.target.canonicalVersionId(),
+            original.commitId());
+    var v1025MigrationHistory =
         f.dsl
-            .fetchSingle(
-                "SELECT to_jsonb(f)::text FROM game_design_draft_commit_visibility_fence f WHERE canonical_version_id = ?",
-                f.target.canonicalVersionId())
-            .get(0, String.class);
+            .fetch(
+                "SELECT version || ':' || script || ':' || checksum || ':' || success AS history_entry "
+                    + "FROM flyway_schema_history_game_design_service "
+                    + "WHERE version IS NOT NULL ORDER BY installed_rank")
+            .getValues("history_entry", String.class);
+
     f.migrate();
+    assertThat(
+            f.dsl
+                .fetch(
+                    "SELECT version || ':' || script || ':' || checksum || ':' || success AS history_entry "
+                        + "FROM flyway_schema_history_game_design_service "
+                        + "WHERE version IS NOT NULL ORDER BY installed_rank LIMIT ?",
+                    v1025MigrationHistory.size())
+                .getValues("history_entry", String.class))
+        .containsExactlyElementsOf(v1025MigrationHistory);
     var historical =
         new GameDesignSourceRepository(f.dsl)
             .readSynchronized(f.target, original.commitId())
             .orElseThrow();
     assertThat(historical.branding()).isEmpty();
     assertThat(historical.command().binding()).isEqualTo(original);
+    assertThat(historical.templateConfig()).isPresent();
     assertThat(
             List.of(
                 historical.command().canonicalJson(),
                 historical.policy().canonicalJson(),
                 historical.asset().canonicalJson(),
-                historical.gameplayEvidence().orElseThrow().canonicalJson()))
+                historical.gameplayEvidence().orElseThrow().canonicalJson(),
+                historical.templateConfig().orElseThrow().canonicalJson()))
         .isEqualTo(sourceJson);
     assertThat(
-            f.dsl
-                .fetchSingle(
-                    "SELECT to_jsonb(f)::text FROM game_design_draft_commit_visibility_fence f WHERE canonical_version_id = ?",
-                    f.target.canonicalVersionId())
-                .get(0, String.class))
-        .isEqualTo(fenceJson);
-    assertThat(
-            f.dsl
-                .fetchSingle(
-                    "SELECT result_bytes FROM game_design_draft_commit_owner_result WHERE canonical_version_id = ?",
-                    f.target.canonicalVersionId())
-                .get(0, byte[].class))
-        .isEqualTo(originalBytes);
+            originalSources.stream()
+                .map(
+                    name ->
+                        f.dsl
+                            .fetchSingle(
+                                "SELECT xmin::text AS row_xmin FROM game_design_"
+                                    + name
+                                    + "_snapshot WHERE canonical_version_id = ?",
+                                f.target.canonicalVersionId())
+                            .get("row_xmin", String.class))
+                .toList())
+        .isEqualTo(sourceXmins);
+    var migratedFence =
+        f.dsl.fetchSingle(
+            "SELECT to_jsonb(f)::text AS row_json, xmin::text AS row_xmin "
+                + "FROM game_design_draft_commit_visibility_fence f WHERE canonical_version_id = ?",
+            f.target.canonicalVersionId());
+    assertThat(migratedFence.get("row_json", String.class))
+        .isEqualTo(originalFence.get("row_json", String.class));
+    assertThat(migratedFence.get("row_xmin", String.class))
+        .isEqualTo(originalFence.get("row_xmin", String.class));
+    var migratedResult =
+        f.dsl.fetchSingle(
+            "SELECT result_bytes, xmin::text AS row_xmin "
+                + "FROM game_design_draft_commit_owner_result WHERE canonical_version_id = ?",
+            f.target.canonicalVersionId());
+    assertThat(migratedResult.get("result_bytes", byte[].class))
+        .isEqualTo(originalResult.get("result_bytes", byte[].class));
+    assertThat(migratedResult.get("row_xmin", String.class))
+        .isEqualTo(originalResult.get("row_xmin", String.class));
+    var migratedCommit =
+        f.dsl.fetchSingle(
+            "SELECT binding_json, input_digest, xmin::text AS row_xmin "
+                + "FROM game_design_draft_commit WHERE canonical_version_id = ? AND commit_id = ?",
+            f.target.canonicalVersionId(),
+            original.commitId());
+    assertThat(migratedCommit.get("binding_json", String.class))
+        .isEqualTo(originalCommit.get("binding_json", String.class));
+    assertThat(migratedCommit.get("input_digest", String.class))
+        .isEqualTo(originalCommit.get("input_digest", String.class));
+    assertThat(migratedCommit.get("row_xmin", String.class))
+        .isEqualTo(originalCommit.get("row_xmin", String.class));
     assertThatThrownBy(
             () ->
                 f.tx.execute(
@@ -252,6 +316,12 @@ class BrandingSourcePostgresIntegrationTest {
                     ignored -> new BrandingSourceRepository(f.dsl).enrollFreshDraft(f.target)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("BRANDING_SOURCE_FRESH_INSERT_UNAVAILABLE");
+    assertThatThrownBy(
+            () ->
+                f.tx.execute(
+                    ignored -> new BrandingSourceRepository(f.dsl).captureSynchronized(original)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("BRANDING_SOURCE_GENESIS_UNAVAILABLE");
     assertThatThrownBy(() -> new GameDesignSourceRepository(f.dsl).readGenesis(f.target))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("GAME_DESIGN_SOURCE_GENESIS_INCOMPLETE");
@@ -288,15 +358,82 @@ class BrandingSourcePostgresIntegrationTest {
         .isEmpty();
   }
 
+  private static byte[] historicalReviewedGenesisBytes(
+      DraftCommitBinding.TargetProof target,
+      net.firedevops.firemud.gamedesign.publication.RealmPolicyGenesis policyGenesis,
+      CommandSource.NewDraftGenesisReceipt commandGenesis) {
+    var ownerEvidence = new java.io.ByteArrayOutputStream();
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        ownerEvidence, "shared-policy-command-genesis/v1");
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        ownerEvidence, policyGenesis.creationTransactionId());
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        ownerEvidence, policyGenesis.canonicalBytes());
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        ownerEvidence, commandGenesis.canonicalBytes());
+
+    var evidence = new java.io.ByteArrayOutputStream();
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        evidence, GameDesignReviewedBaseEvidence.HISTORICAL_SCHEMA);
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        evidence, DraftBaseReference.SCHEMA);
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        evidence, DraftBaseReference.Kind.GENESIS.name());
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        evidence, "genesis:" + policyGenesis.receiptId());
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        evidence, target.canonicalTenantId().toString());
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        evidence, target.canonicalVersionId().toString());
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        evidence, Long.toString(target.gameDesignVersionRowId()));
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        evidence, target.gameDesignVersionTenantKey());
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        evidence, Long.toString(target.sourceGameRowId()));
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        evidence, target.sourceGameTenantKey());
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        evidence, target.sourceProvenanceKind());
+    net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.frame(
+        evidence, ownerEvidence.toByteArray());
+    return evidence.toByteArray();
+  }
+
+  private static void insertReviewedBaseV1(
+      DSLContext dsl, DraftCommitBinding binding, byte[] evidenceBytes, String evidenceDigest) {
+    var reference = DraftBaseReference.parse(binding.baseCommitId());
+    dsl.execute(
+        "INSERT INTO game_design_reviewed_draft_base "
+            + "(canonical_tenant_id, canonical_version_id, request_id, commit_id, input_digest, "
+            + "binding_json, base_kind, base_identity, base_reference, evidence_schema, "
+            + "evidence_bytes, evidence_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        binding.target().canonicalTenantId(),
+        binding.target().canonicalVersionId(),
+        binding.requestId(),
+        binding.commitId(),
+        binding.digest(),
+        binding.canonicalJson(),
+        reference.kind().name(),
+        reference.identity(),
+        reference.canonicalValue(),
+        GameDesignReviewedBaseEvidence.HISTORICAL_SCHEMA,
+        evidenceBytes,
+        evidenceDigest);
+  }
+
   private void apply(Fixture f, DraftCommitBinding binding) {
     f.tx.executeWithoutResult(
         ignored -> {
+          var sources = new GameDesignSourceRepository(f.dsl);
+          sources.claimReviewed(
+              binding,
+              new GameDesignReviewedBaseRepository(f.dsl)
+                  .resolve(f.target, DraftBaseReference.parse(binding.baseCommitId())));
           var coordinator = new DraftCommitCoordinatorRepository(f.dsl);
-          coordinator.claim(binding);
           coordinator.claimApplicationSlot(binding);
           coordinator.markOwnerInProgress(
               binding, DraftCommitBinding.Owner.GAME_DESIGN_CONTROL_PLANE);
-          var sources = new GameDesignSourceRepository(f.dsl);
           var applied = sources.apply(binding);
           coordinator.advanceSourceVisibilityFence(
               binding,
@@ -351,7 +488,40 @@ class BrandingSourcePostgresIntegrationTest {
                         scope.equals(primaryScope) ? epoch : "0"))
             .toList();
     return DraftCommitBinding.create(
-        f.target, UUID.randomUUID(), UUID.randomUUID(), "base-commit-0", revisions, units);
+        f.target,
+        UUID.randomUUID(),
+        UUID.randomUUID(),
+        currentBaseReference(f),
+        revisions,
+        units);
+  }
+
+  private static String currentBaseReference(Fixture f) {
+    UUID visibleCommit =
+        f.dsl
+            .fetchSingle(
+                "SELECT visible_commit_id FROM game_design_realm_policy_source "
+                    + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                f.target.canonicalTenantId(),
+                f.target.canonicalVersionId())
+            .get("visible_commit_id", UUID.class);
+    if (visibleCommit != null) return visibleCommit.toString();
+    UUID genesisReceipt =
+        new net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository(f.dsl)
+            .readGenesis(f.target)
+            .orElseThrow()
+            .receiptId();
+    return "genesis:" + genesisReceipt;
+  }
+
+  private static String policyPayload() {
+    return "{\"revisionKind\":\"REALM_ENTRY_POLICY\","
+        + "\"logicalRevisionId\":\"isolated-finalizer-main\","
+        + "\"policy\":{\"schemaVersion\":1,\"worldSlug\":\"world\","
+        + "\"worldDisplayName\":\"World\",\"realmSlug\":\"main\","
+        + "\"realmDisplayName\":\"Main\",\"visible\":true,"
+        + "\"publicProduction\":true,\"stateScope\":\"SHARED\","
+        + "\"entryPolicy\":\"PRESEEDED_ONLY\"}}";
   }
 
   private GameAsset asset(Fixture f, String name) {
@@ -398,8 +568,8 @@ class BrandingSourcePostgresIntegrationTest {
             tx.execute(
                 ignored -> {
                   if (maximumMigration == null) return new VersionRepository(dsl).save(version);
-                  // Retained fixture intentionally uses the pre-branding producer, in its actual
-                  // insert transaction.
+                  // Retained fixture uses the V1025 producer transaction, with every then-current
+                  // source genesis except Branding deliberately enrolled.
                   long id =
                       dsl.fetchSingle(
                               "INSERT INTO version (tenant_id, canonical_tenant_id, canonical_version_id, identity_source_game_row_id, identity_source_game_tenant_key, identity_source_provenance_kind, version_number, version_state, version_state_epoch, is_script_only, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'NEW_GAME_ROW', 1, 'DRAFT', 1, FALSE, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) RETURNING id",
@@ -430,6 +600,9 @@ class BrandingSourcePostgresIntegrationTest {
                   new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(dsl)
                       .enrollFreshDraft(oldTarget);
                   new net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository(
+                          dsl)
+                      .enrollFreshDraft(oldTarget);
+                  new net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository(
                           dsl)
                       .enrollFreshDraft(oldTarget);
                   return retained;
