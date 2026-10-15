@@ -447,7 +447,7 @@ class WorldLifecycleCommandServiceImplTest {
       verify(entityManagementClient, never())
           .cleanupRuntimeInstance(anyLong(), anyLong(), anyString());
     } finally {
-      TransactionSynchronizationManager.setActualTransactionActive(false);
+      TransactionSynchronizationManager.clear();
     }
   }
 
