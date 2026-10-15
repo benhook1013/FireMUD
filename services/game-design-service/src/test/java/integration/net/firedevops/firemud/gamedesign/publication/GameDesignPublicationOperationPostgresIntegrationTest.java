@@ -1433,7 +1433,9 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
             .schemas(schema)
             .defaultSchema(schema)
             .placeholders(java.util.Map.of("serviceSchema", schema))
-            .locations("classpath:db/migration")
+            .locations(
+                "filesystem:"
+                    + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
             .table("flyway_schema_history_game_design_service");
     if (migrationTarget != null) {
       flyway.target(migrationTarget);
@@ -1579,7 +1581,9 @@ class GameDesignPublicationOperationPostgresIntegrationTest {
                 .schemas(schema)
                 .defaultSchema(schema)
                 .placeholders(java.util.Map.of("serviceSchema", schema))
-                .locations("classpath:db/migration")
+                .locations(
+                    "filesystem:"
+                        + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize())
                 .table("flyway_schema_history_game_design_service")
                 .load()
                 .migrate());

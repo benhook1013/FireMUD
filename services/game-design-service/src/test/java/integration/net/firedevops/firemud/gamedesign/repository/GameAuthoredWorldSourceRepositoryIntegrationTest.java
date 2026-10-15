@@ -545,7 +545,11 @@ class GameAuthoredWorldSourceRepositoryIntegrationTest {
             .defaultSchema(schema)
             .table(FLYWAY_TABLE)
             .placeholders(Map.of("serviceSchema", schema))
-            .locations("classpath:db/migration");
+            .locations(
+                "filesystem:"
+                    + java.nio.file.Path.of("src/main/resources/db/migration")
+                        .toAbsolutePath()
+                        .normalize());
     if (target != null) {
       configuration.target(target);
     }

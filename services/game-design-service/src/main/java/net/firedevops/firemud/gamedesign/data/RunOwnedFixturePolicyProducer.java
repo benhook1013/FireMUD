@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamedesign.data;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -29,7 +30,11 @@ public final class RunOwnedFixturePolicyProducer {
   private final TransactionTemplate write;
   private final TransactionTemplate read;
 
-  RunOwnedFixturePolicyProducer(
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification =
+          "Framework-managed SQL and JSON collaborators are retained for owner operations.")
+  public RunOwnedFixturePolicyProducer(
       DSLContext dsl,
       RunOwnedFixtureLaunchReadback readback,
       ObjectMapper json,
@@ -47,6 +52,85 @@ public final class RunOwnedFixturePolicyProducer {
   }
 
   RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal sealAndRead(
+      TestDataSeeder.FixtureCapability trusted,
+      FreshTenantCreationEvidence creation,
+      RunOwnedFixtureLaunchReadback.Snapshot snapshot,
+      ResolvedLaunchDescriptorDto descriptor) {
+    PolicyFrame frame = frame(trusted, creation, snapshot, descriptor);
+    var source = snapshot.sourceEvidence();
+    byte[] request = frame.request();
+    String requestDigest = frame.requestDigest();
+    String bindingJson = frame.bindingJson();
+    String policyJson = frame.policyJson();
+    write.executeWithoutResult(
+        ignored -> {
+          dsl.fetchSingle(
+              "SELECT id FROM game WHERE id=? AND tenant_id=? FOR UPDATE",
+              creation.sourceGameRowId(),
+              creation.sourceGameTenantKey());
+          dsl.fetchSingle(
+              "SELECT id FROM version WHERE id=? AND tenant_id=? FOR UPDATE",
+              snapshot.version().id(),
+              creation.sourceGameTenantKey());
+          UUID operationId = trusted.operationId();
+          String evidenceDigest =
+              RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
+                  operationId, requestDigest);
+          dsl.execute(
+              "INSERT INTO game_design_published_realm_policy_set "
+                  + "(canonical_tenant_id, canonical_version_id, game_design_version_row_id, version_number, sealed, "
+                  + "fixture_operation_id, fixture_request_bytes, fixture_request_digest, fixture_evidence_digest, "
+                  + "fixture_binding_json, fixture_policy_json) VALUES (?, ?, ?, ?, TRUE, ?, ?, ?, ?, ?::jsonb, ?::jsonb) "
+                  + "ON CONFLICT (canonical_tenant_id, canonical_version_id) DO NOTHING",
+              source.canonicalTenantId(),
+              snapshot.version().canonicalVersionId(),
+              snapshot.version().id(),
+              snapshot.version().versionNumber(),
+              operationId,
+              request,
+              requestDigest,
+              evidenceDigest,
+              bindingJson,
+              policyJson);
+          requireExactRow(snapshot, request, requestDigest, bindingJson, policyJson);
+        });
+    var seal =
+        Objects.requireNonNull(
+            read.execute(
+                ignored ->
+                    requireExactRow(snapshot, request, requestDigest, bindingJson, policyJson)));
+    // Independent owner read after seal commit; changing upstream rows cannot publish a receipt.
+    readback.readCommittedCreation(creation);
+    var committedSnapshot = readback.readCommittedOutcome(snapshot);
+    var committedDescriptor =
+        readback.resolveAndReadLaunchDescriptor(descriptor.authoredWorldBinding().request());
+    if (!descriptor.equals(committedDescriptor)) {
+      throw new IllegalStateException("Fixture descriptor changed after policy seal commit");
+    }
+    readback.requireDescriptorMatchesSnapshot(
+        committedDescriptor, descriptor.authoredWorldBinding().request(), committedSnapshot);
+    return seal;
+  }
+
+  /** Reads only an already sealed fixture owner; never invokes the producer write transaction. */
+  RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal readExisting(
+      TestDataSeeder.FixtureCapability trusted,
+      FreshTenantCreationEvidence creation,
+      RunOwnedFixtureLaunchReadback.Snapshot snapshot,
+      ResolvedLaunchDescriptorDto descriptor) {
+    PolicyFrame frame = frame(trusted, creation, snapshot, descriptor);
+    return Objects.requireNonNull(
+        read.execute(
+            ignored ->
+                requireExactRow(
+                    snapshot,
+                    frame.request(),
+                    frame.requestDigest(),
+                    frame.bindingJson(),
+                    frame.policyJson())));
+  }
+
+  private PolicyFrame frame(
       TestDataSeeder.FixtureCapability trusted,
       FreshTenantCreationEvidence creation,
       RunOwnedFixtureLaunchReadback.Snapshot snapshot,
@@ -110,54 +194,19 @@ public final class RunOwnedFixturePolicyProducer {
             Map.entry("ownerAccountId", capability.ownerAccountId()));
     String bindingJson = serialize(binding);
     String policyJson = serialize(policy);
-    write.executeWithoutResult(
-        ignored -> {
-          dsl.fetchSingle(
-              "SELECT id FROM game WHERE id=? AND tenant_id=? FOR UPDATE",
-              creation.sourceGameRowId(),
-              creation.sourceGameTenantKey());
-          dsl.fetchSingle(
-              "SELECT id FROM version WHERE id=? AND tenant_id=? FOR UPDATE",
-              snapshot.version().id(),
-              creation.sourceGameTenantKey());
-          UUID operationId = trusted.operationId();
-          String evidenceDigest =
-              RunOwnedInitialAdmissionFixtureWireCodec.fixturePolicyEvidenceDigest(
-                  operationId, requestDigest);
-          dsl.execute(
-              "INSERT INTO game_design_published_realm_policy_set "
-                  + "(canonical_tenant_id, canonical_version_id, game_design_version_row_id, version_number, sealed, "
-                  + "fixture_operation_id, fixture_request_bytes, fixture_request_digest, fixture_evidence_digest, "
-                  + "fixture_binding_json, fixture_policy_json) VALUES (?, ?, ?, ?, TRUE, ?, ?, ?, ?, ?::jsonb, ?::jsonb) "
-                  + "ON CONFLICT (canonical_tenant_id, canonical_version_id) DO NOTHING",
-              source.canonicalTenantId(),
-              snapshot.version().canonicalVersionId(),
-              snapshot.version().id(),
-              snapshot.version().versionNumber(),
-              operationId,
-              request,
-              requestDigest,
-              evidenceDigest,
-              bindingJson,
-              policyJson);
-          requireExactRow(snapshot, request, requestDigest, bindingJson, policyJson);
-        });
-    var seal =
-        Objects.requireNonNull(
-            read.execute(
-                ignored ->
-                    requireExactRow(snapshot, request, requestDigest, bindingJson, policyJson)));
-    // Independent owner read after seal commit; changing upstream rows cannot publish a receipt.
-    readback.readCommittedCreation(creation);
-    var committedSnapshot = readback.readCommittedOutcome(snapshot);
-    var committedDescriptor =
-        readback.resolveAndReadLaunchDescriptor(descriptor.authoredWorldBinding().request());
-    if (!descriptor.equals(committedDescriptor)) {
-      throw new IllegalStateException("Fixture descriptor changed after policy seal commit");
+    return new PolicyFrame(request, requestDigest, bindingJson, policyJson);
+  }
+
+  private record PolicyFrame(
+      byte[] request, String requestDigest, String bindingJson, String policyJson) {
+    private PolicyFrame {
+      request = request.clone();
     }
-    readback.requireDescriptorMatchesSnapshot(
-        committedDescriptor, descriptor.authoredWorldBinding().request(), committedSnapshot);
-    return seal;
+
+    @Override
+    public byte[] request() {
+      return request.clone();
+    }
   }
 
   private RunOwnedInitialAdmissionFixtureWireCodec.FixturePolicySeal requireExactRow(
@@ -173,6 +222,9 @@ public final class RunOwnedFixturePolicyProducer {
             snapshot.sourceEvidence().canonicalTenantId(),
             snapshot.version().canonicalVersionId());
     if (row == null
+        || !snapshot.version().id().equals(row.get("game_design_version_row_id", Long.class))
+        || !Integer.toString(snapshot.version().versionNumber())
+            .equals(row.get("version_number", String.class))
         || !Boolean.TRUE.equals(row.get("sealed", Boolean.class))
         || row.get("fixture_operation_id", UUID.class) == null
         || !Arrays.equals(request, row.get("fixture_request_bytes", byte[].class))
@@ -181,6 +233,26 @@ public final class RunOwnedFixturePolicyProducer {
         || !sameJson(policyJson, row.get("fixture_policy_json", String.class))) {
       throw new IllegalStateException(
           "Fixture policy seal differs from its exact original evidence");
+    }
+    for (String humanField :
+        java.util.List.of(
+            "source_commit_id",
+            "source_epoch",
+            "target_proof_json",
+            "operation_bytes",
+            "capture_bytes",
+            "terminal_evidence_bytes",
+            "release_content_bytes",
+            "published_release_bundle_ref",
+            "published_release_bundle_digest",
+            "publish_workflow_id",
+            "manifest_hash",
+            "publication_version_state_epoch",
+            "policy_count",
+            "policy_set_digest")) {
+      if (row.get(humanField) != null) {
+        throw new IllegalStateException("Fixture policy owner contains mixed Human evidence");
+      }
     }
     UUID operation = row.get("fixture_operation_id", UUID.class);
     if (!operation

@@ -72,7 +72,9 @@ class TenantIdentityGrpcAuthWiringTest {
           POLICY_LIST_METHOD,
           RESOLVE_LAUNCH_DESCRIPTOR_METHOD,
           GET_LAUNCH_DESCRIPTOR_METHOD,
-          GET_COMPLETE_LAUNCH_BINDING_METHOD);
+          GET_COMPLETE_LAUNCH_BINDING_METHOD,
+          "gamedesign.v1.AuthoredWorldSourceReadService/ResolveAuthoredWorldSource",
+          "gamedesign.v1.AuthoredWorldVersionStateService/GetAuthoredWorldVersionState");
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
   private static final String GAME_SESSION_URI = "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String SOURCE_KEY = "fresh-owner-key-91";
