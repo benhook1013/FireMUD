@@ -82,6 +82,8 @@ class AccountPublicationAuthorizationReadClientTest {
     try {
       client.init();
       AbstractStub<?> initialized = initializedStub(client);
+      assertThat(initialized.getCallOptions().getMaxInboundMessageSize())
+          .isEqualTo(AccountPublicationAuthorizationReadGrpcCodec.MAX_MESSAGE_BYTES);
       assertThat(initialized.getCallOptions().getCredentials())
           .isInstanceOf(GrpcServerPeerIdentityCallCredentials.class);
       assertThat(readField(initialized.getCallOptions().getCredentials(), "expectedPeerUri"))
