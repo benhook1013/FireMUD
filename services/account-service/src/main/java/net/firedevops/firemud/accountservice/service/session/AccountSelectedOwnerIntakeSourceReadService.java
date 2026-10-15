@@ -24,7 +24,8 @@ public final class AccountSelectedOwnerIntakeSourceReadService {
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
-      justification = "The injected owner repository is intentionally shared across owner operations")
+      justification =
+          "The injected owner repository is intentionally shared across owner operations")
   public AccountSelectedOwnerIntakeSourceReadService(
       AccountSelectedOwnerIntakeSourceReservationRepository repository,
       AccountControlUiCoordination registry,
