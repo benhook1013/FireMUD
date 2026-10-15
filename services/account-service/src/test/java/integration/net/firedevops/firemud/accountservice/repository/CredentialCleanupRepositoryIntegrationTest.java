@@ -11,6 +11,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -50,8 +51,16 @@ class CredentialCleanupRepositoryIntegrationTest {
 
   @BeforeAll
   void setUpRepositories() {
-    dataSource = newDataSource();
-    Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
+    DriverManagerDataSource source = newDataSource();
+    dataSource = source;
+    Flyway.configure()
+        .dataSource(source)
+        .schemas(source.getSchema())
+        .defaultSchema(source.getSchema())
+        .placeholders(Map.of("serviceSchema", source.getSchema()))
+        .locations(MIGRATION_LOCATION, "classpath:db/migration/saga")
+        .load()
+        .migrate();
     dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
     passwordResetTokenRepository = new PasswordResetTokenRepository(dsl);
     emailVerificationTokenRepository = new EmailVerificationTokenRepository(dsl);
@@ -262,12 +271,13 @@ class CredentialCleanupRepositoryIntegrationTest {
     int deleteExpired(DSLContext cleanupDsl, LocalDateTime capturedNow);
   }
 
-  private DataSource newDataSource() {
+  private DriverManagerDataSource newDataSource() {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
     dataSource.setDriverClassName(postgres.getDriverClassName());
     dataSource.setUrl(postgres.getJdbcUrl());
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
+    dataSource.setSchema("public");
     return dataSource;
   }
 
