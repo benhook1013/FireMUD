@@ -35,4 +35,20 @@ class FirstPartyConnectContextResolutionTest {
     assertThat(resolution.invalid()).isTrue();
     assertThat(resolution.connectContext()).isEmpty();
   }
+
+  @Test
+  void validatedRegistryResultIsNotImmediatelyRevalidated() {
+    var fixture = new FirstPartyReceivingFixture();
+    var context = fixture.context();
+    var registry = mock(FirstPartyConnectContextRegistry.class);
+    when(registry.find(1L))
+        .thenAnswer(invocation -> Optional.of(fixture.service.requireRetained(context)));
+
+    var resolution = FirstPartyConnectContextResolution.resolve(1L, null, registry);
+
+    assertThat(resolution.invalid()).isFalse();
+    assertThat(resolution.connectContext()).contains(context);
+    verify(registry).find(1L);
+    verify(registry, never()).requireRetained(any());
+  }
 }

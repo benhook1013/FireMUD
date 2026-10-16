@@ -1837,13 +1837,15 @@ class PlayCommandHandlerTest {
   void firstPartyPlayRereadsCanonicalOwnerThenDeniesBeforeLegacyAdmissionEffects() {
     var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
     FirstPartyConnectContext context = fixture.context();
-    when(firstPartyConnectContextRegistry.find(1L)).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.requireRetained(context))
-        .thenAnswer(invocation -> fixture.service.requireRetained(invocation.getArgument(0)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenAnswer(invocation -> Optional.of(fixture.service.requireRetained(context)));
     PlayCommandHandlingResult result =
         handler.handle(
             "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "hero"), "PLAY demo hero"));
     assertThat(result.commandResult().errorCode()).isEqualTo("FIRST_PARTY_AUTHORITY_UNAVAILABLE");
+    Mockito.verify(firstPartyConnectContextRegistry).find(1L);
+    Mockito.verify(firstPartyConnectContextRegistry, never())
+        .requireRetained(Mockito.any());
     Mockito.verify(fixture.routes, Mockito.atLeast(2))
         .readCurrentTarget(
             net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture.TENANT);
@@ -1860,9 +1862,8 @@ class PlayCommandHandlerTest {
   void changedFirstPartyOwnerDeniesPlayBeforeLegacyAdmissionEffects() {
     var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
     FirstPartyConnectContext context = fixture.context();
-    when(firstPartyConnectContextRegistry.find(1L)).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.requireRetained(context))
-        .thenAnswer(invocation -> fixture.service.requireRetained(invocation.getArgument(0)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenAnswer(invocation -> Optional.of(fixture.service.requireRetained(context)));
     when(fixture.routes.readCurrentTarget(
             net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture.TENANT))
         .thenReturn(null);

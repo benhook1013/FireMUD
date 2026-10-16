@@ -27,8 +27,7 @@ public record FirstPartyConnectContextResolution(
         return new FirstPartyConnectContextResolution(Optional.empty(), true);
       }
       if (registryContext.isPresent()) {
-        FirstPartyConnectContext current =
-            firstPartyConnectContextRegistry.requireRetained(registryContext.orElseThrow());
+        FirstPartyConnectContext current = registryContext.orElseThrow();
         if (persisted.isPresent() && !current.equals(persisted.orElseThrow())) {
           return new FirstPartyConnectContextResolution(Optional.empty(), true);
         }

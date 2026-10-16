@@ -416,6 +416,35 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
         .extracting("reason")
         .isEqualTo(GatewayFirstPartyConnectContextEnvelope.FailureReason.INVALID_LIFETIME);
 
+    var sourceExpiringInTenSeconds =
+        new GatewayFirstPartyConnectContextEnvelope.GameplayConnectSource(
+            source.accountId(),
+            source.tenantId(),
+            source.realmId(),
+            source.worldSlug(),
+            source.realmSlug(),
+            source.playableStateNamespaceId(),
+            source.playableStateScope(),
+            source.gameInstanceId(),
+            source.pointerVersion(),
+            source.catalogRevision(),
+            source.connectScopeId(),
+            source.requestId(),
+            source.authorityTuple(),
+            source.membershipVersion(),
+            source.connectTokenJti(),
+            source.replayAdmissionFence(),
+            source.playtestLifecycleId(),
+            source.playtestStateGeneration(),
+            NOW_MILLIS / 1_000L + 10L);
+    assertThatThrownBy(
+            () ->
+                GatewayFirstPartyConnectContextEnvelope.sign(
+                    sourceExpiringInTenSeconds, metadata(), signingKey))
+        .isInstanceOf(GatewayFirstPartyConnectContextEnvelope.VerificationException.class)
+        .extracting("reason")
+        .isEqualTo(GatewayFirstPartyConnectContextEnvelope.FailureReason.INVALID_LIFETIME);
+
     var tooLongSource =
         new GatewayFirstPartyConnectContextEnvelope.GameplayConnectSource(
             source.accountId(),
@@ -510,6 +539,31 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
                     NOW_MILLIS,
                     NOW_MILLIS,
                     NOW_MILLIS + 30_000L))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void acceptsOnlyJdkCanonicalUncompressedIpv6AddressSpelling() {
+    var metadata =
+        new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
+            "2001:db8:0:0:0:0:0:1",
+            "request-1",
+            NOW_MILLIS,
+            NOW_MILLIS,
+            NOW_MILLIS + 30_000L);
+    String signed =
+        GatewayFirstPartyConnectContextEnvelope.sign(
+            source("1", "1", "1", "1", "1", false), metadata, signingKey);
+
+    var verified =
+        GatewayFirstPartyConnectContextEnvelope.verify(
+            signed, keySource, NOW_MILLIS, 0);
+
+    assertThat(verified.claims().canonicalClientAddress()).isEqualTo("2001:db8:0:0:0:0:0:1");
+    assertThatThrownBy(
+            () ->
+                new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
+                    "2001:db8::1", "request-1", NOW_MILLIS, NOW_MILLIS, NOW_MILLIS + 30_000L))
         .isInstanceOf(IllegalArgumentException.class);
   }
 

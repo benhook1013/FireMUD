@@ -39,6 +39,7 @@ import net.firedevops.firemud.gamesession.service.ReplayableScreenBufferEntries;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -165,6 +166,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       }
       parseNumericSessionId(resolveTransportSessionId(session))
           .ifPresent(sessionId -> activeTransportSessionRegistry.register(sessionId, session));
+    } catch (SessionContextUnavailableException unavailable) {
+      logger.warn(
+          "Unable to read retained session context during WebSocket establishment", unavailable);
+      closeBackendUnavailable(session);
     }
   }
 
@@ -244,6 +249,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       maybeReplayScreenBufferAndRefreshLook(
           session, sessionId, command, interpretation, maybeContext);
       maybeCloseAfterSuccessfulLogout(session, command, interpretation);
+    } catch (SessionContextUnavailableException unavailable) {
+      logger.warn(
+          "Unable to read retained session context while handling WebSocket message", unavailable);
+      closeBackendUnavailable(session);
     }
   }
 
@@ -639,11 +648,16 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     RuntimeLoggingContext runtimeContext =
         RuntimeLoggingContext.open(runtimeIdentity, correlationId);
-    GameplayLoggingContext gameplayContext =
-        resolveNormalizedSessionContext(session, correlationId)
-            .map(GameplayLoggingContext::from)
-            .orElseGet(GameplayLoggingContext::empty);
-    return new CombinedLoggingContext(runtimeContext, gameplayContext);
+    try {
+      GameplayLoggingContext gameplayContext =
+          resolveNormalizedSessionContext(session, correlationId)
+              .map(GameplayLoggingContext::from)
+              .orElseGet(GameplayLoggingContext::empty);
+      return new CombinedLoggingContext(runtimeContext, gameplayContext);
+    } catch (RuntimeException failure) {
+      runtimeContext.close();
+      throw failure;
+    }
   }
 
   private record CombinedLoggingContext(
@@ -775,6 +789,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       firstPartyConnectContextRegistry.register(sessionId, current);
       sessionContextService.save(shell);
       return true;
+    } catch (SessionContextUnavailableException unavailable) {
+      throw unavailable;
     } catch (RuntimeException invalidOrUnavailable) {
       closeInvalidFirstPartyContext(session);
       return false;
@@ -917,6 +933,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       session.close(new CloseStatus(1013, "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE"));
     } catch (IOException ex) {
       logger.warn("Failed to close session while admission pointer authority was unavailable", ex);
+    }
+  }
+
+  private void closeBackendUnavailable(WebSocketSession session) {
+    try {
+      session.close(new CloseStatus(1013, "backend_unavailable"));
+    } catch (IOException ex) {
+      logger.warn("Failed to close session while retained context was unavailable", ex);
     }
   }
 

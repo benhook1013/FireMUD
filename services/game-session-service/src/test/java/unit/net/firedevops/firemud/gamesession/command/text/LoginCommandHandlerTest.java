@@ -1449,16 +1449,14 @@ class LoginCommandHandlerTest {
   void retainedUuidLoginDeniesBeforeLegacyAccountLookupOrSessionWrites() {
     var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
     FirstPartyConnectContext context = fixture.context();
-    when(firstPartyConnectContextRegistry.find(1L)).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.requireRetained(context))
-        .thenAnswer(invocation -> fixture.service.requireRetained(invocation.getArgument(0)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenAnswer(invocation -> Optional.of(fixture.service.requireRetained(context)));
     LoginCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN"), false);
     assertFalse(result.commandResult().accepted());
     assertEquals("FIRST_PARTY_AUTHORITY_UNAVAILABLE", result.commandResult().errorCode());
-    assertEquals(
-        net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture.ACCOUNT.toString(),
-        context.accountId());
+    verify(firstPartyConnectContextRegistry).find(1L);
+    verify(firstPartyConnectContextRegistry, never()).requireRetained(any());
     Mockito.verifyNoInteractions(
         accountClient, gameInstanceRepository, gameplayPresenceLifecycleService);
     verify(sessionContextService, never()).save(any());
