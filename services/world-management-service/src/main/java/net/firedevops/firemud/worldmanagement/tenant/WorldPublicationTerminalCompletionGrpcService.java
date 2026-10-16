@@ -12,6 +12,8 @@ import net.firedevops.firemud.worldmanagement.v1.CompleteVersionPublicationReque
 import net.firedevops.firemud.worldmanagement.v1.CompleteVersionPublicationResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldPublicationTerminalCompletionServiceGrpc;
 import org.jooq.exception.DataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionTimedOutException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -73,7 +75,10 @@ public final class WorldPublicationTerminalCompletionGrpcService
           Status.fromCode(failure.getStatus().getCode()),
           "Game Design publication terminal request failed");
       return;
-    } catch (DataAccessException | org.springframework.dao.DataAccessException unavailable) {
+    } catch (CannotCreateTransactionException
+        | TransactionTimedOutException
+        | DataAccessException
+        | org.springframework.dao.DataAccessException unavailable) {
       fail(observer, Status.UNAVAILABLE, "World publication terminal storage is unavailable");
       return;
     } catch (IllegalArgumentException | IllegalStateException | SecurityException rejected) {

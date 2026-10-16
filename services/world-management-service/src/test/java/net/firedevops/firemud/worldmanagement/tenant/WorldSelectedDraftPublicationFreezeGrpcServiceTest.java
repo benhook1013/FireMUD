@@ -8,11 +8,14 @@ import static org.mockito.Mockito.when;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeEvidence;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeGrpcCodec;
+import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryGrpcCodec;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.v1.BeginVersionPublicationFreezeRequest;
 import net.firedevops.firemud.worldmanagement.v1.BeginVersionPublicationFreezeResponse;
@@ -20,6 +23,8 @@ import net.firedevops.firemud.worldmanagement.v1.ReadSelectedPublicationArtifact
 import net.firedevops.firemud.worldmanagement.v1.ReadSelectedPublicationArtifactInventoryResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionTimedOutException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class WorldSelectedDraftPublicationFreezeGrpcServiceTest {
@@ -108,6 +113,132 @@ class WorldSelectedDraftPublicationFreezeGrpcServiceTest {
     assertThat(observer.error).isNull();
     assertThat(observer.completed).isTrue();
     verify(delegate).begin(fixture.request());
+  }
+
+  @Test
+  void sanitizesUpstreamFreezeStatusAndTrailersForAuthenticatedValidRequests() {
+    var fixture = WorldSelectedDraftPublicationFreezeRequestTest.fixture();
+    var delegate = mock(WorldSelectedDraftPublicationFreezeService.class);
+    var receiver =
+        new WorldSelectedDraftPublicationFreezeGrpcService(
+            delegate, mock(WorldSelectedPublicationArtifactInventoryReadService.class), NAMESPACE);
+    Metadata.Key<String> secretKey =
+        Metadata.Key.of("upstream-secret", Metadata.ASCII_STRING_MARSHALLER);
+    Metadata trailers = new Metadata();
+    trailers.put(secretKey, "secret-upstream-trailer");
+    when(delegate.begin(fixture.request()))
+        .thenThrow(
+            Status.UNAVAILABLE
+                .withDescription("secret unavailable detail")
+                .asRuntimeException(trailers))
+        .thenThrow(
+            Status.DEADLINE_EXCEEDED
+                .withDescription("secret deadline detail")
+                .asRuntimeException(trailers))
+        .thenThrow(
+            Status.PERMISSION_DENIED
+                .withDescription("secret permission detail")
+                .asRuntimeException(trailers));
+
+    var wire = WorldSelectedDraftPublicationFreezeGrpcCodec.toRequest(fixture.request());
+    var unavailable = new RecordingObserver();
+    var deadline = new RecordingObserver();
+    var denied = new RecordingObserver();
+    withPeer(
+        peer(NAMESPACE, "game-design-service"),
+        () -> receiver.beginVersionPublicationFreeze(wire, unavailable));
+    withPeer(
+        peer(NAMESPACE, "game-design-service"),
+        () -> receiver.beginVersionPublicationFreeze(wire, deadline));
+    withPeer(
+        peer(NAMESPACE, "game-design-service"),
+        () -> receiver.beginVersionPublicationFreeze(wire, denied));
+
+    assertSanitizedFailure(
+        unavailable,
+        Status.Code.UNAVAILABLE,
+        "World selected-freeze owner is temporarily unavailable");
+    assertSanitizedFailure(
+        deadline,
+        Status.Code.UNAVAILABLE,
+        "World selected-freeze owner is temporarily unavailable");
+    assertSanitizedFailure(
+        denied,
+        Status.Code.FAILED_PRECONDITION,
+        "World selected-freeze owner did not accept the request");
+    verify(delegate, org.mockito.Mockito.times(3)).begin(fixture.request());
+  }
+
+  @Test
+  void classifiesTransactionCreationAndTimeoutFailuresAsUnavailableForFreezeAndInventory() {
+    var fixture = WorldSelectedDraftPublicationFreezeRequestTest.fixture();
+    var acknowledgement =
+        new WorldSelectedDraftPublicationFreezeEvidence.Acknowledgement(
+            fixture.request(),
+            fixture.owner().intakeRequestId(),
+            fixture.request().expectedVersionStateEpoch(),
+            java.util.UUID.fromString("18181818-1818-4818-8818-181818181818"),
+            WorldSelectedDraftPublicationFreezeEvidence.OwnerFreezePhase.FROZEN,
+            fixture.binding().commitId().toString(),
+            "a".repeat(64),
+            3);
+    var freezeEvidence =
+        new WorldSelectedDraftPublicationFreezeEvidence(fixture.request(), acknowledgement);
+    var inventoryWire =
+        WorldSelectedPublicationArtifactInventoryGrpcCodec.toRequest(freezeEvidence);
+    var freezeWire = WorldSelectedDraftPublicationFreezeGrpcCodec.toRequest(fixture.request());
+
+    for (RuntimeException storageFailure :
+        java.util.List.of(
+            new CannotCreateTransactionException("sensitive transaction setup detail"),
+            new TransactionTimedOutException("sensitive transaction timeout detail"))) {
+      var freezeService = mock(WorldSelectedDraftPublicationFreezeService.class);
+      var inventoryService = mock(WorldSelectedPublicationArtifactInventoryReadService.class);
+      when(freezeService.begin(fixture.request())).thenThrow(storageFailure);
+      when(inventoryService.read(freezeEvidence)).thenThrow(storageFailure);
+      var receiver =
+          new WorldSelectedDraftPublicationFreezeGrpcService(
+              freezeService, inventoryService, NAMESPACE);
+
+      var freezeObserver = new RecordingObserver();
+      var inventoryObserver = new InventoryRecordingObserver();
+      withPeer(
+          peer(NAMESPACE, "game-design-service"),
+          () -> receiver.beginVersionPublicationFreeze(freezeWire, freezeObserver));
+      withPeer(
+          peer(NAMESPACE, "game-design-service"),
+          () ->
+              receiver.readSelectedPublicationArtifactInventory(inventoryWire, inventoryObserver));
+
+      assertSanitizedFailure(
+          freezeObserver,
+          Status.Code.UNAVAILABLE,
+          "World selected-freeze owner storage is unavailable");
+      assertInventorySanitizedFailure(
+          inventoryObserver,
+          Status.Code.UNAVAILABLE,
+          "World selected inventory owner storage is unavailable");
+    }
+  }
+
+  private static void assertSanitizedFailure(
+      RecordingObserver observer, Status.Code code, String description) {
+    assertThat(Status.fromThrowable(observer.error).getCode()).isEqualTo(code);
+    assertThat(Status.fromThrowable(observer.error).getDescription()).isEqualTo(description);
+    assertThat(observer.error).isInstanceOf(StatusRuntimeException.class);
+    assertThat(((StatusRuntimeException) observer.error).getTrailers()).isNull();
+    assertThat(observer.response).isNull();
+    assertThat(observer.completed).isFalse();
+  }
+
+  private static void assertInventorySanitizedFailure(
+      InventoryRecordingObserver observer, Status.Code code, String description) {
+    assertThat(Status.fromThrowable(observer.error).getCode()).isEqualTo(code);
+    assertThat(Status.fromThrowable(observer.error).getDescription()).isEqualTo(description);
+    assertThat(observer.error).isInstanceOf(StatusRuntimeException.class);
+    assertThat(((StatusRuntimeException) observer.error).getTrailers()).isNull();
+    assertThat(observer.response).isNull();
+    assertThat(observer.completed).isFalse();
   }
 
   @Test
