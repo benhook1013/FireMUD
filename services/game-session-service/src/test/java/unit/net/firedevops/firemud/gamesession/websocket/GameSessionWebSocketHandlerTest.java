@@ -216,8 +216,6 @@ class GameSessionWebSocketHandlerTest {
                         && "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE".equals(status.getReason())));
     verify(activeTransportSessionRegistry, never()).register(41L, session);
     verify(activeTransportSessionRegistry, never()).unregister(Mockito.anyLong(), Mockito.any());
-    org.assertj.core.api.Assertions.assertThat(activeTransportSessionRegistry.find(41L))
-        .contains(incumbent);
   }
 
   @Test

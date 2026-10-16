@@ -477,6 +477,9 @@ public final class GatewayFirstPartyConnectContextEnvelope {
       return false;
     }
     if (value.indexOf(':') >= 0) {
+      if (!value.matches("[0-9A-Fa-f:]+")) {
+        return false;
+      }
       try {
         byte[] address = InetAddress.getByName(value).getAddress();
         // InetAddress#getHostAddress emits the JDK's uncompressed IPv6 spelling. That spelling

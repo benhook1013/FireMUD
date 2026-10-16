@@ -262,10 +262,9 @@ public final class LoginCommandHandler {
         sameAuthenticatedAccount
             ? Optional.empty()
             : reusableBootstrapShell(existing, tenantId, bootstrapGameInstanceId);
-    // LOGIN authenticates account identity. Preserve gameplay scope only when both account and
-    // tenant remain unchanged. An unauthenticated shell may retain only a current normalized
-    // bootstrap route; a verified first-party connect context is additionally required to retain
-    // its connect selector. Neither path carries a gameplay binding into LOGIN.
+    // LOGIN authenticates account identity. An unauthenticated generic shell may retain its
+    // current normalized bootstrap route, but no connect selector or gameplay binding. A
+    // first-party connect-context shell is rejected by reusableBootstrapShell.
     SessionContext context =
         reusableBootstrapShell.isPresent()
             ? authenticatedBootstrapContext(
@@ -274,8 +273,7 @@ public final class LoginCommandHandler {
                 accountId,
                 loginName,
                 jwt,
-                reusableBootstrapShell.orElseThrow(),
-                false)
+                reusableBootstrapShell.orElseThrow())
             : !sameAuthenticatedAccount
                 ? new SessionContext(
                     sessionId,
@@ -352,8 +350,7 @@ public final class LoginCommandHandler {
       long accountId,
       String loginName,
       String jwt,
-      SessionContext bootstrapShell,
-      boolean preserveConnectSelector) {
+      SessionContext bootstrapShell) {
     return new SessionContext(
         sessionId,
         tenantId,
@@ -370,8 +367,8 @@ public final class LoginCommandHandler {
         bootstrapShell.realmSlug(),
         bootstrapShell.pointerVersion(),
         bootstrapShell.playableStateScope(),
-        preserveConnectSelector ? bootstrapShell.connectScopeId() : null,
-        preserveConnectSelector ? bootstrapShell.connectRequestId() : null,
+        null,
+        null,
         bootstrapShell.firstPartyConnectContext());
   }
 

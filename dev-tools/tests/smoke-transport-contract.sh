@@ -169,6 +169,103 @@ for status_code, headers, body in (
     else:
         raise AssertionError("missing or unexpected Gateway handshake result was accepted")
 
+gateway_probe_output = (
+    "SMOKE_GATEWAY_TRUST allow=true tls=false cidr0=172.16.0.0/12 extra_indexes=none\n"
+    "SMOKE_GATEWAY_RESULT local_ip=127.0.0.1 remote_ip=127.0.0.1 status=403 "
+    "class=expected class_count=1 body_bytes=0 curl=ok headers=ok downloaded=0\n"
+)
+gateway_trust, gateway_probe = held_admission.parse_gateway_container_probe_output(
+    gateway_probe_output
+)
+held_admission.validate_gateway_container_first_party_result(
+    gateway_trust, gateway_probe
+)
+for invalid_gateway_output in (
+    gateway_probe_output.replace("remote_ip=127.0.0.1", "remote_ip=172.16.0.2"),
+    gateway_probe_output.replace("class=expected", "class=missing"),
+    gateway_probe_output.replace("status=403", "status=101"),
+    gateway_probe_output.replace("class_count=1", "class_count=2"),
+    gateway_probe_output.replace("body_bytes=0", "body_bytes=1"),
+    gateway_probe_output.replace("extra_indexes=none", "extra_indexes=present"),
+    gateway_probe_output.replace("tls=false", "tls=unexpected"),
+    gateway_probe_output.replace("downloaded=0", "downloaded=1"),
+    gateway_probe_output.splitlines()[0] + "\n",
+    "SMOKE_GATEWAY_TRUST allow=true allow=true tls=false cidr0=172.16.0.0/12 extra_indexes=none\n"
+    + gateway_probe_output.splitlines()[1]
+    + "\n",
+    gateway_probe_output + "x" * held_admission.MAX_GATEWAY_PROBE_OUTPUT_BYTES,
+):
+    try:
+        parsed_trust, parsed_probe = held_admission.parse_gateway_container_probe_output(
+            invalid_gateway_output
+        )
+        held_admission.validate_gateway_container_first_party_result(
+            parsed_trust, parsed_probe
+        )
+    except held_admission.QualificationFailure:
+        pass
+    else:
+        raise AssertionError("unexpected Gateway container peer or response evidence was accepted")
+
+
+def successful_gateway_container_probe(command, **options):
+    assert command[:9] == [
+        "docker",
+        "compose",
+        "-f",
+        "compose.yml",
+        "exec",
+        "-T",
+        "gateway",
+        "sh",
+        "-c",
+    ]
+    assert command[-2:] == ["held-admission-gateway-probe", "5"]
+    probe_script = command[9]
+    assert "http://127.0.0.1:8080/ws/game" in probe_script
+    assert "--noproxy '*'" in probe_script
+    assert "--max-time \"$timeout_seconds\"" in probe_script
+    assert "X-Proxy-Client-IP" not in probe_script
+    assert "remote_ip" in probe_script and "local_ip" in probe_script
+    assert options["timeout"] == 5
+    assert options["capture_output"] and options["text"]
+    return subprocess.CompletedProcess(command, 0, stdout=gateway_probe_output, stderr="")
+
+
+with patch.object(held_admission.subprocess, "run", side_effect=successful_gateway_container_probe):
+    with contextlib.redirect_stdout(io.StringIO()) as gateway_probe_log:
+        held_admission._assert_gateway_first_party_denial(["-f", "compose.yml"], 5)
+    assert "does not prove host-published ingress" in gateway_probe_log.getvalue()
+
+trust_mismatch = subprocess.CompletedProcess(
+    ["docker", "compose"],
+    21,
+    stdout=(
+        "SMOKE_GATEWAY_TRUST allow=true tls=false cidr0=unexpected extra_indexes=none\n"
+    ),
+    stderr="",
+)
+with patch.object(held_admission.subprocess, "run", return_value=trust_mismatch):
+    try:
+        held_admission._assert_gateway_first_party_denial(["-f", "compose.yml"], 5)
+    except held_admission.QualificationFailure as exc:
+        assert "trust configuration did not match" in str(exc)
+        assert "cidr0=unexpected" in str(exc)
+    else:
+        raise AssertionError("unexpected Gateway TCP trust inputs were accepted")
+
+with patch.object(
+    held_admission.subprocess,
+    "run",
+    side_effect=subprocess.TimeoutExpired(["docker", "compose"], 5),
+):
+    try:
+        held_admission._assert_gateway_first_party_denial(["-f", "compose.yml"], 5)
+    except held_admission.QualificationFailure as exc:
+        assert "loopback handshake timed out" in str(exc)
+    else:
+        raise AssertionError("a stalled Gateway container probe did not hit its bounded timeout")
+
 held_admission.validate_telnet_denial(
     held_admission.TELNET_HELD_DENIAL.encode("ascii"), closed=True
 )
@@ -1573,7 +1670,8 @@ for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-too
   grep -Fq 'public successful admission remains unproved' "$script"
 done
 grep -Fq 'FIREMUD_SMOKE_ADMISSION_QUALIFICATION: held' "$ROOT_DIR/.github/workflows/runtime-images.yml"
-grep -Fq 'Confirmed first-party Gateway denial:' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
+grep -Fq 'does not prove host-published ingress' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
+grep -Fq 'docker' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
 grep -Fq 'Confirmed Telnet startup_unavailable denial and closed connection.' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
 grep -Fq 'require_run_owned_compose_service gateway 8080 8080' "$ROOT_DIR/dev-tools/smoke/held-admission-qualification.sh"
 grep -Fq 'require_run_owned_compose_service tcp-proxy-service 8080 8089' "$ROOT_DIR/dev-tools/smoke/held-admission-qualification.sh"

@@ -768,27 +768,25 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     // parse has already composed the unique catalog, OPEN proof and RUNNING launch association.
     // The private handles below come from that owner result, never from headers or UUID parsing.
     try {
-      FirstPartyConnectContext current =
-          firstPartyConnectContextService.requireRetained(connectContext);
       SessionContext shell =
           bootstrapShell(
                   sessionId,
-                  current.gameSessionTenantId(),
-                  current.runtimeGameInstanceId(),
-                  current.worldSlug(),
-                  current.realmSlug(),
-                  current.pointerVersion(),
-                  current.resolvedTarget().playableStateScope(),
-                  current.connectScopeId(),
-                  current.connectRequestId(),
+                  connectContext.gameSessionTenantId(),
+                  connectContext.runtimeGameInstanceId(),
+                  connectContext.worldSlug(),
+                  connectContext.realmSlug(),
+                  connectContext.pointerVersion(),
+                  connectContext.resolvedTarget().playableStateScope(),
+                  connectContext.connectScopeId(),
+                  connectContext.connectRequestId(),
                   resolveLocaleTag(session))
-              .withFirstPartyConnectContext(current);
+              .withFirstPartyConnectContext(connectContext);
       Optional<SessionContext> existing = sessionContextService.findBySessionId(sessionId);
       if (existing.isPresent() && !shell.equals(existing.orElseThrow())) {
         closeInvalidFirstPartyContext(session);
         return false;
       }
-      firstPartyConnectContextRegistry.register(sessionId, current);
+      firstPartyConnectContextRegistry.register(sessionId, connectContext);
       sessionContextService.save(shell);
       return true;
     } catch (SessionContextUnavailableException unavailable) {

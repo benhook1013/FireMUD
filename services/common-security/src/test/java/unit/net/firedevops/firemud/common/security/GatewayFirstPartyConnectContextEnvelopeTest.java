@@ -561,6 +561,19 @@ class GatewayFirstPartyConnectContextEnvelopeTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void rejectsNonAsciiCharactersInIpv6Address() {
+    assertThatThrownBy(
+            () ->
+                new GatewayFirstPartyConnectContextEnvelope.GatewayContextMetadata(
+                    "2001:db8:0:0:0:0:0:１",
+                    "request-1",
+                    NOW_MILLIS,
+                    NOW_MILLIS,
+                    NOW_MILLIS + 30_000L))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
   private GatewayFirstPartyConnectContextEnvelope.GameplayConnectSource source(
       String pointerVersion,
       String catalogRevision,
