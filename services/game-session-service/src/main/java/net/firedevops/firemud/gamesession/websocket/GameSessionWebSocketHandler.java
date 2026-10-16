@@ -27,7 +27,6 @@ import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
-import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -39,6 +38,7 @@ import net.firedevops.firemud.gamesession.service.ReplayableScreenBufferEntries;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -165,6 +165,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       }
       parseNumericSessionId(resolveTransportSessionId(session))
           .ifPresent(sessionId -> activeTransportSessionRegistry.register(sessionId, session));
+    } catch (SessionContextUnavailableException unavailable) {
+      logger.warn(
+          "Unable to read retained session context during WebSocket establishment", unavailable);
+      closeBackendUnavailable(session);
     }
   }
 
@@ -204,7 +208,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       if (command.type() == TextCommandType.NOOP) {
         return;
       }
-      ensureBootstrapSessionContextIfMissing(session, sessionId);
+      if (!ensureBootstrapSessionContextIfMissing(session, sessionId)) {
+        return;
+      }
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
       TextCommand resolvedCommand =
@@ -244,6 +250,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       maybeReplayScreenBufferAndRefreshLook(
           session, sessionId, command, interpretation, maybeContext);
       maybeCloseAfterSuccessfulLogout(session, command, interpretation);
+    } catch (SessionContextUnavailableException unavailable) {
+      logger.warn(
+          "Unable to read retained session context while handling WebSocket message", unavailable);
+      closeBackendUnavailable(session);
     }
   }
 
@@ -610,26 +620,25 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if ("first_party_web".equals(resolveConnectionMode(session))) {
       return bootstrapFirstPartySessionContext(session, sessionId.orElseThrow());
     }
-    bootstrapGenericSessionContext(session, sessionId.orElseThrow());
-    return true;
+    return bootstrapGenericSessionContext(session, sessionId.orElseThrow());
   }
 
-  private void ensureBootstrapSessionContextIfMissing(
+  private boolean ensureBootstrapSessionContextIfMissing(
       WebSocketSession session, String transportSessionId) {
     if (!StringUtils.hasText(transportSessionId)) {
-      return;
+      return true;
     }
     Optional<SessionContext> tenantScopedContext =
         resolveNormalizedSessionContext(session, transportSessionId);
     if (tenantScopedContext.isPresent()
         && resolveNormalizedSessionContext(transportSessionId).isPresent()) {
-      return;
+      return true;
     }
     if (tenantScopedContext.isPresent()) {
       sessionContextService.save(tenantScopedContext.orElseThrow());
-      return;
+      return true;
     }
-    bootstrapSessionContext(session);
+    return bootstrapSessionContext(session);
   }
 
   private CombinedLoggingContext openLoggingContext(WebSocketSession session) {
@@ -639,11 +648,16 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     RuntimeLoggingContext runtimeContext =
         RuntimeLoggingContext.open(runtimeIdentity, correlationId);
-    GameplayLoggingContext gameplayContext =
-        resolveNormalizedSessionContext(session, correlationId)
-            .map(GameplayLoggingContext::from)
-            .orElseGet(GameplayLoggingContext::empty);
-    return new CombinedLoggingContext(runtimeContext, gameplayContext);
+    try {
+      GameplayLoggingContext gameplayContext =
+          resolveNormalizedSessionContext(session, correlationId)
+              .map(GameplayLoggingContext::from)
+              .orElseGet(GameplayLoggingContext::empty);
+      return new CombinedLoggingContext(runtimeContext, gameplayContext);
+    } catch (RuntimeException failure) {
+      runtimeContext.close();
+      throw failure;
+    }
   }
 
   private record CombinedLoggingContext(
@@ -698,11 +712,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             .RECONNECT_REFRESH);
   }
 
-  private void bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {
+  private boolean bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {
     Optional<Long> tenantId = resolveTenantId(session);
     Optional<Long> bootstrapGameInstanceId = resolveBootstrapGameInstanceId(session);
     if (tenantId.isEmpty() || bootstrapGameInstanceId.isEmpty()) {
-      return;
+      return true;
     }
     List<GameplayAdmissionPointerSnapshot> currentPointers;
     try {
@@ -712,7 +726,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     } catch (RuntimeException ex) {
       logger.warn("Unable to resolve runtime pointer for generic bootstrap", ex);
       closeAdmissionPointerAuthorityUnavailable(session);
-      return;
+      return false;
     }
     Optional<SessionContext> existing =
         sessionAuthenticationService.resolveUnverifiedSessionContext(tenantId.get(), sessionId);
@@ -736,9 +750,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             currentPointers);
     if (existing.isPresent()) {
       maybeRefreshBootstrapShell(existing.orElseThrow(), incomingShell);
-      return;
+      return true;
     }
     sessionContextService.save(incomingShell);
+    return true;
   }
 
   private boolean bootstrapFirstPartySessionContext(WebSocketSession session, long sessionId) {
@@ -752,29 +767,40 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     // parse has already composed the unique catalog, OPEN proof and RUNNING launch association.
     // The private handles below come from that owner result, never from headers or UUID parsing.
     try {
-      FirstPartyConnectContext current =
-          firstPartyConnectContextService.requireRetained(connectContext);
       SessionContext shell =
           bootstrapShell(
                   sessionId,
-                  current.gameSessionTenantId(),
-                  current.runtimeGameInstanceId(),
-                  current.worldSlug(),
-                  current.realmSlug(),
-                  current.pointerVersion(),
-                  current.resolvedTarget().playableStateScope(),
-                  current.connectScopeId(),
-                  current.connectRequestId(),
+                  connectContext.gameSessionTenantId(),
+                  connectContext.runtimeGameInstanceId(),
+                  connectContext.worldSlug(),
+                  connectContext.realmSlug(),
+                  connectContext.pointerVersion(),
+                  connectContext.resolvedTarget().playableStateScope(),
+                  connectContext.connectScopeId(),
+                  connectContext.connectRequestId(),
                   resolveLocaleTag(session))
-              .withFirstPartyConnectContext(current);
+              .withFirstPartyConnectContext(connectContext);
       Optional<SessionContext> existing = sessionContextService.findBySessionId(sessionId);
       if (existing.isPresent() && !shell.equals(existing.orElseThrow())) {
         closeInvalidFirstPartyContext(session);
         return false;
       }
-      firstPartyConnectContextRegistry.register(sessionId, current);
-      sessionContextService.save(shell);
+      firstPartyConnectContextRegistry.register(sessionId, connectContext);
+      try {
+        sessionContextService.save(shell);
+      } catch (RuntimeException saveFailure) {
+        try {
+          firstPartyConnectContextRegistry.unregister(sessionId);
+        } catch (RuntimeException cleanupFailure) {
+          if (cleanupFailure != saveFailure) {
+            saveFailure.addSuppressed(cleanupFailure);
+          }
+        }
+        throw saveFailure;
+      }
       return true;
+    } catch (SessionContextUnavailableException unavailable) {
+      throw unavailable;
     } catch (RuntimeException invalidOrUnavailable) {
       closeInvalidFirstPartyContext(session);
       return false;
@@ -917,6 +943,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       session.close(new CloseStatus(1013, "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE"));
     } catch (IOException ex) {
       logger.warn("Failed to close session while admission pointer authority was unavailable", ex);
+    }
+  }
+
+  private void closeBackendUnavailable(WebSocketSession session) {
+    try {
+      session.close(new CloseStatus(1013, "backend_unavailable"));
+    } catch (IOException ex) {
+      logger.warn("Failed to close session while retained context was unavailable", ex);
     }
   }
 

@@ -128,6 +128,7 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcCodec {
 
   public static GetCanonicalGameInstanceLaunchAssociationRequest toRequest(Request request) {
     Objects.requireNonNull(request, "request");
+    requireIndependentReadIdentity(request);
     var builder =
         GetCanonicalGameInstanceLaunchAssociationRequest.newBuilder()
             .setReadRequestId(request.readRequestId().toString())

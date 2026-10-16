@@ -135,48 +135,56 @@ class AuthoredWorldReleaseAttestationSelectorTest {
         .contains("worldStartLocationEvidence.canonicalBytesBase64")
         .endsWith(Base64.getEncoder().encodeToString(selector.canonicalBytes()));
 
-    var mixedParticipants =
-        release.participantDigests().stream()
-            .map(
-                participant ->
-                    new AuthoredWorldReleaseAttestationEvidence.Participant(
-                        participant.participantKey(),
-                        participant.scopeValue(),
-                        participant.baseVersionIdPresent(),
-                        participant.baseVersionId(),
-                        participant.appliedCommitId(),
-                        participant.contentDigest(),
-                        "AUTOMATION_SCRIPTING".equals(participant.participantKey())
-                            ? 5
-                            : participant.digestSchemaVersion(),
-                        participant.abilitySchemaDigestPresent(),
-                        participant.abilitySchemaDigest()))
-            .toList();
-    assertThatThrownBy(
-            () ->
-                AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
-                    release.targetNamespace(),
-                    release.descriptorResultDigest(),
-                    release.canonicalTenantId(),
-                    release.canonicalVersionId(),
-                    release.worldSlug(),
-                    release.authoredWorldSourceOperationId(),
-                    release.authoredWorldSourceEvidenceDigest(),
-                    release.launchDescriptorId(),
-                    release.publishedReleaseBundleRef(),
-                    release.versionStateEpoch(),
-                    release.publishWorkflowId(),
-                    release.commitId(),
-                    mixedParticipants,
-                    release.manifestHash(),
-                    release.manifestSchemaVersion(),
-                    release.requiredManifestAssetKeys(),
-                    release.artifactDigests(),
-                    release.commandDefinitions(),
-                    release.generationConfigRevision(),
-                    selector))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("Participant digest schema is unsupported");
+    for (String mixedOwner :
+        List.of(
+            "WORLD_MANAGEMENT",
+            "ENTITY_MANAGEMENT",
+            "AUTOMATION_SCRIPTING",
+            "GAME_DESIGN_CONTROL_PLANE")) {
+      var mixedParticipants =
+          release.participantDigests().stream()
+              .map(
+                  participant ->
+                      new AuthoredWorldReleaseAttestationEvidence.Participant(
+                          participant.participantKey(),
+                          participant.scopeValue(),
+                          participant.baseVersionIdPresent(),
+                          participant.baseVersionId(),
+                          participant.appliedCommitId(),
+                          participant.contentDigest(),
+                          mixedOwner.equals(participant.participantKey())
+                              ? participant.digestSchemaVersion() - 1
+                              : participant.digestSchemaVersion(),
+                          participant.abilitySchemaDigestPresent(),
+                          participant.abilitySchemaDigest()))
+              .toList();
+      assertThatThrownBy(
+              () ->
+                  AuthoredWorldReleaseAttestationEvidence.createSelectedFull(
+                      release.targetNamespace(),
+                      release.descriptorResultDigest(),
+                      release.canonicalTenantId(),
+                      release.canonicalVersionId(),
+                      release.worldSlug(),
+                      release.authoredWorldSourceOperationId(),
+                      release.authoredWorldSourceEvidenceDigest(),
+                      release.launchDescriptorId(),
+                      release.publishedReleaseBundleRef(),
+                      release.versionStateEpoch(),
+                      release.publishWorkflowId(),
+                      release.commitId(),
+                      mixedParticipants,
+                      release.manifestHash(),
+                      release.manifestSchemaVersion(),
+                      release.requiredManifestAssetKeys(),
+                      release.artifactDigests(),
+                      release.commandDefinitions(),
+                      release.generationConfigRevision(),
+                      selector))
+          .as("selected-full refuses retained participant schema for %s", mixedOwner)
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("Participant digest schema is unsupported");
+    }
   }
 
   @Test
@@ -248,6 +256,19 @@ class AuthoredWorldReleaseAttestationSelectorTest {
         attestation.commandDefinitions(),
         attestation.generationConfigRevision(),
         attestation.worldStartLocationEvidence());
+  }
+
+  @Test
+  void retainedV1CanonicalByteVectorKeepsItsOriginalDigest() {
+    var evidence = retainedV1EvidenceVector();
+
+    assertThat(evidence.evidenceDigest())
+        .isEqualTo("sha256:54d38e2af416b25c0c3d05495853124eedd885ed725046052a71e3cc0a6d87e5");
+    assertThat(
+            new String(
+                AuthoredWorldReleaseAttestationEvidence.evidencePreimage(evidence),
+                StandardCharsets.UTF_8))
+        .startsWith("49:game-design-authored-world-release-attestation/v1");
   }
 
   @Test
@@ -380,6 +401,57 @@ class AuthoredWorldReleaseAttestationSelectorTest {
                     selector))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Participant digest schema is unsupported");
+  }
+
+  private static AuthoredWorldReleaseAttestationEvidence retainedV1EvidenceVector() {
+    var participants =
+        List.of(
+            new AuthoredWorldReleaseAttestationEvidence.Participant(
+                "WORLD_MANAGEMENT", "7", false, null, "commit", "1".repeat(64), 3, false, null),
+            new AuthoredWorldReleaseAttestationEvidence.Participant(
+                "ENTITY_MANAGEMENT", "7", false, null, "commit", "2".repeat(64), 2, false, null),
+            new AuthoredWorldReleaseAttestationEvidence.Participant(
+                "GAME_LOGIC",
+                "7",
+                false,
+                null,
+                "commit",
+                "3".repeat(64),
+                1,
+                true,
+                "sha256:" + "c".repeat(64)),
+            new AuthoredWorldReleaseAttestationEvidence.Participant(
+                "AUTOMATION_SCRIPTING", "7", false, null, "commit", "4".repeat(64), 5, false, null),
+            new AuthoredWorldReleaseAttestationEvidence.Participant(
+                "GAME_DESIGN_CONTROL_PLANE",
+                "7",
+                false,
+                null,
+                "commit",
+                "5".repeat(64),
+                1,
+                false,
+                null));
+    return AuthoredWorldReleaseAttestationEvidence.create(
+        "test",
+        "sha256:" + "a".repeat(64),
+        UUID.fromString("11111111-1111-4111-8111-111111111111"),
+        UUID.fromString("22222222-2222-4222-8222-222222222222"),
+        "synthetic-world",
+        UUID.fromString("33333333-3333-4333-8333-333333333333"),
+        "sha256:" + "b".repeat(64),
+        "descriptor",
+        "release",
+        42L,
+        "workflow",
+        "commit",
+        participants,
+        "sha256:" + "d".repeat(64),
+        1,
+        List.of(),
+        List.of(),
+        List.of(),
+        "generation");
   }
 
   private static List<AuthoredWorldReleaseAttestationEvidence.Participant> retainedV1Participants(

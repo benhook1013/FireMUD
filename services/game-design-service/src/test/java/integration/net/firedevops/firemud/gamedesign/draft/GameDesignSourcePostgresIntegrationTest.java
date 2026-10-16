@@ -9,10 +9,14 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
@@ -55,6 +59,215 @@ class GameDesignSourcePostgresIntegrationTest {
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void exactReviewedClaimReplayPreservesAllRetainedRowsAndChangedInputCannotRewriteThem() {
+    var local = fixture();
+    var original = storageBinding(local, "reviewed-claim");
+    local.tx(
+        () -> {
+          claimStorageBinding(local, original);
+          return null;
+        });
+    var retained = reviewedClaimRows(local);
+    local.tx(
+        () -> {
+          claimStorageBinding(local, original);
+          return null;
+        });
+    assertThat(reviewedClaimRows(local)).isEqualTo(retained);
+    var changed = changedClaimInput(original);
+    assertThatThrownBy(
+            () ->
+                local.tx(
+                    () -> {
+                      claimStorageBinding(local, changed);
+                      return null;
+                    }))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("REVIEWED_BASE_STORED_BINDING_CONFLICT");
+    assertThat(reviewedClaimRows(local)).isEqualTo(retained);
+    assertReviewedClaimInventory(local, original);
+  }
+
+  @Test
+  void reviewedClaimAndItsOwnerInventoryRollBackWithoutRetainingReviewEvidence() {
+    var local = fixture();
+    var binding = storageBinding(local, "rolled-back-reviewed-claim");
+    local
+        .write()
+        .executeWithoutResult(
+            status -> {
+              claimStorageBinding(local, binding);
+              status.setRollbackOnly();
+            });
+    assertThat(local.coordinator().read(local.target(), binding.requestId())).isEmpty();
+    assertThat(new GameDesignReviewedBaseRepository(local.dsl()).read(binding)).isEmpty();
+    assertThat(local.coordinator().readApplicationSlot(local.target())).isEmpty();
+    for (String table :
+        List.of(
+            "game_design_draft_commit",
+            "game_design_draft_commit_owner_result",
+            "game_design_reviewed_draft_base")) {
+      assertThat(local.dsl().fetchCount(DSL.table(table))).isZero();
+    }
+  }
+
+  @Test
+  void concurrentExactReviewedClaimsConvergeOnOneBindingAndOwnerInventory() throws Exception {
+    var local = fixture();
+    var binding = storageBinding(local, "concurrent-exact-reviewed");
+    var claims = concurrentReviewedClaims(local, binding, binding);
+    assertThat(claims)
+        .allSatisfy(
+            claim -> {
+              assertThat(claim.failure()).isNull();
+              assertThat(claim.binding()).isEqualTo(binding);
+            });
+    assertReviewedClaimInventory(local, binding);
+  }
+
+  @Test
+  void concurrentRequestsCannotAliasOneReviewedCommitOrRetainLosingOwnerRows() throws Exception {
+    var local = fixture();
+    var first = storageBinding(local, "concurrent-commit-identity");
+    var second =
+        DraftCommitBinding.create(
+            first.target(),
+            UUID.randomUUID(),
+            first.commitId(),
+            first.baseCommitId(),
+            first.revisions(),
+            first.affectedUnits());
+    var claims = concurrentReviewedClaims(local, first, second);
+    var winner = soleReviewedClaimWinner(claims);
+    var losingRequest = winner.equals(first) ? second.requestId() : first.requestId();
+    assertThat(local.coordinator().read(local.target(), losingRequest)).isEmpty();
+    assertReviewedClaimInventory(local, winner);
+  }
+
+  @Test
+  void concurrentChangedReviewedInputCannotShareOneRequestIdentity() throws Exception {
+    var local = fixture();
+    var first = storageBinding(local, "concurrent-request-input");
+    var changed = changedClaimInput(first);
+    assertThat(changed.digest()).isNotEqualTo(first.digest());
+    var claims = concurrentReviewedClaims(local, first, changed);
+    assertReviewedClaimInventory(local, soleReviewedClaimWinner(claims));
+  }
+
+  private static DraftCommitBinding changedClaimInput(DraftCommitBinding original) {
+    var revision = original.revisions().getFirst();
+    // Preserve every request/commit/revision identity while changing a valid command alias.
+    return DraftCommitBinding.create(
+        original.target(),
+        original.requestId(),
+        original.commitId(),
+        original.baseCommitId(),
+        List.of(
+            new RevisionPayload(
+                revision.revisionOrder(),
+                revision.revisionId(),
+                revision.owner(),
+                CommandSource.upsertPayload(command("look", "changed")))),
+        original.affectedUnits());
+  }
+
+  private static List<org.jooq.Result<org.jooq.Record>> reviewedClaimRows(Fixture local) {
+    return List.of(
+        local
+            .dsl()
+            .fetch(
+                "SELECT t.*, t.xmin::text AS retained_xmin FROM game_design_draft_commit t ORDER BY request_id"),
+        local
+            .dsl()
+            .fetch(
+                "SELECT t.*, t.xmin::text AS retained_xmin FROM game_design_draft_commit_owner_result t ORDER BY request_id"),
+        local
+            .dsl()
+            .fetch(
+                "SELECT t.*, t.xmin::text AS retained_xmin FROM game_design_reviewed_draft_base t ORDER BY request_id"));
+  }
+
+  private static void assertReviewedClaimInventory(Fixture local, DraftCommitBinding binding) {
+    var persisted = local.coordinator().read(local.target(), binding.requestId()).orElseThrow();
+    assertThat(persisted.binding().canonicalBytes()).containsExactly(binding.canonicalBytes());
+    assertThat(persisted.ownerStates()).containsOnlyKeys(Owner.GAME_DESIGN_CONTROL_PLANE);
+    assertThat(persisted.ownerStates().values())
+        .allSatisfy(
+            state -> {
+              assertThat(state.status())
+                  .isEqualTo(DraftCommitCoordinatorRepository.OwnerStatus.NOT_ATTEMPTED);
+              assertThat(state.outcome()).isEmpty();
+            });
+    assertThat(new GameDesignReviewedBaseRepository(local.dsl()).read(binding)).isPresent();
+    assertThat(local.coordinator().readApplicationSlot(local.target())).isEmpty();
+    for (String table :
+        List.of(
+            "game_design_draft_commit",
+            "game_design_draft_commit_owner_result",
+            "game_design_reviewed_draft_base")) {
+      assertThat(local.dsl().fetchCount(DSL.table(table))).isEqualTo(1);
+    }
+  }
+
+  private static List<ReviewedClaimAttempt> concurrentReviewedClaims(
+      Fixture local, DraftCommitBinding first, DraftCommitBinding second) throws Exception {
+    var ready = new CountDownLatch(2);
+    var launch = new CountDownLatch(1);
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var left = executor.submit(() -> reviewedClaimAttempt(local, first, ready, launch));
+      var right = executor.submit(() -> reviewedClaimAttempt(local, second, ready, launch));
+      assertThat(ready.await(20, TimeUnit.SECONDS)).isTrue();
+      launch.countDown();
+      return List.of(left.get(20, TimeUnit.SECONDS), right.get(20, TimeUnit.SECONDS));
+    } finally {
+      launch.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  private static ReviewedClaimAttempt reviewedClaimAttempt(
+      Fixture local, DraftCommitBinding binding, CountDownLatch ready, CountDownLatch launch)
+      throws InterruptedException {
+    ready.countDown();
+    if (!launch.await(20, TimeUnit.SECONDS))
+      throw new IllegalStateException("Reviewed claim launch timed out");
+    try {
+      var persisted =
+          local.tx(
+              () -> {
+                claimStorageBinding(local, binding);
+                return local
+                    .coordinator()
+                    .read(local.target(), binding.requestId())
+                    .orElseThrow()
+                    .binding();
+              });
+      return new ReviewedClaimAttempt(persisted, null);
+    } catch (RuntimeException failure) {
+      return new ReviewedClaimAttempt(null, failure);
+    }
+  }
+
+  private static DraftCommitBinding soleReviewedClaimWinner(List<ReviewedClaimAttempt> claims) {
+    assertThat(claims.stream().filter(claim -> claim.failure() == null)).hasSize(1);
+    assertThat(claims.stream().filter(claim -> claim.failure() != null))
+        .singleElement()
+        .satisfies(
+            claim ->
+                assertThat(claim.failure())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("REVIEWED_BASE_STORED_BINDING_CONFLICT"));
+    return claims.stream()
+        .filter(claim -> claim.failure() == null)
+        .findFirst()
+        .orElseThrow()
+        .binding();
+  }
+
+  private record ReviewedClaimAttempt(DraftCommitBinding binding, RuntimeException failure) {}
 
   @Test
   void firstReferenceRejectsStaleOrdinaryByteUpdate() throws Exception {
@@ -955,6 +1168,332 @@ class GameDesignSourcePostgresIntegrationTest {
         + "\"aliases\":[\""
         + alias
         + "\"],\"actionTags\":[\"WORLD_BROWSE\"],\"effects\":[]}";
+  }
+
+  @Test
+  void rawLifecycleFirstRejectsSlotInsertAcrossSupportedIsolationLevels() throws Exception {
+    for (int isolation : storageIsolationLevels()) {
+      var local = fixture();
+      var binding = storageBinding(local, "lifecycle-first");
+      tx(local).executeWithoutResult(ignored -> claimStorageBinding(local, binding));
+      try (var slot = storageConnection(local, isolation);
+          var lifecycle = storageConnection(local, Connection.TRANSACTION_READ_COMMITTED);
+          var worker = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+        var slotSql = DSL.using(slot, SQLDialect.POSTGRES);
+        slotSql.fetch(
+            "SELECT * FROM version WHERE id = ?", local.target().gameDesignVersionRowId());
+        DSL.using(lifecycle, SQLDialect.POSTGRES)
+            .execute(
+                "UPDATE version SET version_state = 'RETIRED', version_state_epoch = version_state_epoch + 1 WHERE id = ?",
+                local.target().gameDesignVersionRowId());
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var inserting =
+            worker.submit(
+                () -> {
+                  started.countDown();
+                  return failedStorageWrite(() -> insertRawSlot(slotSql, binding));
+                });
+        try {
+          assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
+        } finally {
+          lifecycle.commit();
+        }
+        assertThat(inserting.get(20, TimeUnit.SECONDS))
+            .isEqualTo(isolation == Connection.TRANSACTION_READ_COMMITTED ? "23514" : "40001");
+        slot.rollback();
+        assertThat(
+                new DraftCommitCoordinatorRepository(local.dsl())
+                    .readApplicationSlot(local.target()))
+            .isEmpty();
+        assertThat(
+                local
+                    .dsl
+                    .fetchSingle(
+                        "SELECT version_state FROM version WHERE id = ?",
+                        local.target().gameDesignVersionRowId())
+                    .get(0, String.class))
+            .isEqualTo("RETIRED");
+      }
+    }
+  }
+
+  @Test
+  void rawSlotFirstRejectsLifecycleWriteIncludingStaleSnapshotsWithoutChangingVersionFields()
+      throws Exception {
+    for (int isolation : storageIsolationLevels()) {
+      var local = fixture();
+      var binding = storageBinding(local, "slot-first");
+      tx(local).executeWithoutResult(ignored -> claimStorageBinding(local, binding));
+      var before = versionFields(local);
+      try (var slot = storageConnection(local, Connection.TRANSACTION_READ_COMMITTED);
+          var lifecycle = storageConnection(local, isolation);
+          var worker = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+        var lifecycleSql = DSL.using(lifecycle, SQLDialect.POSTGRES);
+        lifecycleSql.fetch(
+            "SELECT * FROM version WHERE id = ?", local.target().gameDesignVersionRowId());
+        insertRawSlot(DSL.using(slot, SQLDialect.POSTGRES), binding);
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var updating =
+            worker.submit(
+                () -> {
+                  started.countDown();
+                  return failedStorageWrite(
+                      () ->
+                          lifecycleSql.execute(
+                              "UPDATE version SET version_state = 'RETIRED', version_state_epoch = version_state_epoch + 1 WHERE id = ?",
+                              local.target().gameDesignVersionRowId()));
+                });
+        try {
+          assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
+        } finally {
+          slot.commit();
+        }
+        assertThat(updating.get(20, TimeUnit.SECONDS))
+            .isEqualTo(isolation == Connection.TRANSACTION_READ_COMMITTED ? "23514" : "40001");
+        lifecycle.rollback();
+        assertThat(versionFields(local)).isEqualTo(before);
+        assertThat(
+                new DraftCommitCoordinatorRepository(local.dsl())
+                    .readApplicationSlot(local.target()))
+            .isPresent();
+      }
+    }
+  }
+
+  @Test
+  void rawSelectionFirstRejectsSlotInsertEvenWhenSlotSnapshotPredatesSelection() throws Exception {
+    for (int isolation : storageIsolationLevels()) {
+      var local = fixture();
+      var selected = synchronizedStorageSelection(local);
+      var later = storageBinding(local, "after-selection");
+      tx(local).executeWithoutResult(ignored -> claimStorageBinding(local, later));
+      var before = versionFields(local);
+      try (var slot = storageConnection(local, isolation);
+          var selection = storageConnection(local, Connection.TRANSACTION_READ_COMMITTED);
+          var worker = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+        var slotSql = DSL.using(slot, SQLDialect.POSTGRES);
+        slotSql.fetch(
+            "SELECT * FROM version WHERE id = ?", local.target().gameDesignVersionRowId());
+        insertRawSelection(DSL.using(selection, SQLDialect.POSTGRES), selected);
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var inserting =
+            worker.submit(
+                () -> {
+                  started.countDown();
+                  return failedStorageWrite(() -> insertRawSlot(slotSql, later));
+                });
+        try {
+          assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
+        } finally {
+          selection.commit();
+        }
+        assertThat(inserting.get(20, TimeUnit.SECONDS))
+            .isEqualTo(isolation == Connection.TRANSACTION_READ_COMMITTED ? "23514" : "40001");
+        slot.rollback();
+        assertThat(versionFields(local)).isEqualTo(before);
+        assertThat(
+                new DraftCommitCoordinatorRepository(local.dsl())
+                    .readApplicationSlot(local.target()))
+            .isEmpty();
+        assertThat(
+                local.dsl().fetchCount(DSL.table("game_design_authored_draft_publish_selection")))
+            .isEqualTo(1);
+      }
+    }
+  }
+
+  @Test
+  void rawSlotFirstRejectsSelectionEvenWhenSelectionSnapshotPredatesSlot() throws Exception {
+    for (int isolation : storageIsolationLevels()) {
+      var local = fixture();
+      var selected = synchronizedStorageSelection(local);
+      var later = storageBinding(local, "slot-before-selection");
+      tx(local).executeWithoutResult(ignored -> claimStorageBinding(local, later));
+      var before = versionFields(local);
+      try (var slot = storageConnection(local, Connection.TRANSACTION_READ_COMMITTED);
+          var selection = storageConnection(local, isolation);
+          var worker = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+        var selectionSql = DSL.using(selection, SQLDialect.POSTGRES);
+        selectionSql.fetch(
+            "SELECT * FROM version WHERE id = ?", local.target().gameDesignVersionRowId());
+        insertRawSlot(DSL.using(slot, SQLDialect.POSTGRES), later);
+        var started = new java.util.concurrent.CountDownLatch(1);
+        var inserting =
+            worker.submit(
+                () -> {
+                  started.countDown();
+                  return failedStorageWrite(() -> insertRawSelection(selectionSql, selected));
+                });
+        try {
+          assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
+        } finally {
+          slot.commit();
+        }
+        assertThat(inserting.get(20, TimeUnit.SECONDS))
+            .isEqualTo(isolation == Connection.TRANSACTION_READ_COMMITTED ? "23514" : "40001");
+        selection.rollback();
+        assertThat(versionFields(local)).isEqualTo(before);
+        assertThat(
+                new DraftCommitCoordinatorRepository(local.dsl())
+                    .readApplicationSlot(local.target()))
+            .isPresent();
+        assertThat(
+                local.dsl().fetchCount(DSL.table("game_design_authored_draft_publish_selection")))
+            .isZero();
+      }
+    }
+  }
+
+  private int[] storageIsolationLevels() {
+    return new int[] {
+      Connection.TRANSACTION_READ_COMMITTED,
+      Connection.TRANSACTION_REPEATABLE_READ,
+      Connection.TRANSACTION_SERIALIZABLE
+    };
+  }
+
+  private Connection storageConnection(Fixture local, int isolation) throws SQLException {
+    var connection =
+        DriverManager.getConnection(
+            POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+    connection.setSchema(local.schema());
+    connection.setTransactionIsolation(isolation);
+    connection.setAutoCommit(false);
+    DSL.using(connection, SQLDialect.POSTGRES).execute("SET LOCAL lock_timeout = '10s'");
+    return connection;
+  }
+
+  private String failedStorageWrite(Runnable action) {
+    try {
+      action.run();
+      throw new AssertionError("Conflicting storage write unexpectedly succeeded");
+    } catch (org.jooq.exception.DataAccessException failure) {
+      Throwable cause = failure;
+      while (cause != null) {
+        if (cause instanceof SQLException sql) return sql.getSQLState();
+        cause = cause.getCause();
+      }
+      throw failure;
+    }
+  }
+
+  private String versionFields(Fixture local) {
+    return local
+        .dsl
+        .fetchSingle(
+            "SELECT to_jsonb(v)::text FROM version v WHERE id = ?",
+            local.target().gameDesignVersionRowId())
+        .get(0, String.class);
+  }
+
+  private void insertRawSlot(DSLContext sql, DraftCommitBinding binding) {
+    sql.execute(
+        "INSERT INTO game_design_draft_commit_application_slot "
+            + "(canonical_tenant_id, canonical_version_id, request_id, commit_id) VALUES (?, ?, ?, ?)",
+        binding.target().canonicalTenantId(),
+        binding.target().canonicalVersionId(),
+        binding.requestId(),
+        binding.commitId());
+  }
+
+  // Storage-only setup uses existing typed source and coordinator owners. It creates no
+  // creator credential, Account order, remote result or publication authority.
+  private static DraftCommitBinding storageBinding(Fixture fixture, String description) {
+    var current = fixture.coordinator().readVisibilityFence(fixture.target());
+    String base =
+        current
+            .map(fence -> fence.commitId().toString())
+            .orElseGet(
+                () ->
+                    "genesis:"
+                        + fixture
+                            .sources()
+                            .readGenesis(fixture.target())
+                            .orElseThrow()
+                            .policy()
+                            .receiptId());
+    String epoch =
+        current
+            .map(
+                fence ->
+                    fixture
+                        .sources()
+                        .readSynchronized(fixture.target(), fence.commitId())
+                        .orElseThrow()
+                        .command()
+                        .sourceEpoch())
+            .orElse("0");
+    return binding(fixture.target(), base, null, epoch, null, false);
+  }
+
+  private static void claimStorageBinding(Fixture fixture, DraftCommitBinding binding) {
+    var reviewed = new GameDesignReviewedBaseRepository(fixture.dsl());
+    fixture
+        .sources()
+        .claimReviewed(
+            binding,
+            reviewed.resolve(
+                fixture.target(),
+                net.firedevops.firemud.common.authoring.DraftBaseReference.parse(
+                    binding.baseCommitId())));
+  }
+
+  private static TransactionTemplate tx(Fixture fixture) {
+    return fixture.write();
+  }
+
+  private static AuthoredDraftPublishSelection synchronizedStorageSelection(Fixture fixture) {
+    var binding = storageBinding(fixture, "storage-selected");
+    var applied = apply(fixture, binding);
+    synchronize(fixture, binding, applied);
+    var intent =
+        new AuthoredDraftPublishSelection.PublishIntent(
+            fixture.target().canonicalTenantId(),
+            fixture.target().canonicalVersionId(),
+            UUID.randomUUID().toString(),
+            "1",
+            "controlled storage race",
+            binding.requestId(),
+            binding.commitId(),
+            binding.digest());
+    return fixture.tx(
+        () ->
+            AuthoredDraftPublishSelection.capture(
+                intent,
+                fixture.target(),
+                fixture
+                    .coordinator()
+                    .requireSynchronizedPublicationEvidence(
+                        fixture.target(),
+                        binding.requestId(),
+                        binding.commitId(),
+                        binding.digest())));
+  }
+
+  private void insertRawSelection(DSLContext sql, AuthoredDraftPublishSelection selected) {
+    var target = selected.target();
+    var intent = selected.intent();
+    sql.execute(
+        "INSERT INTO game_design_authored_draft_publish_selection "
+            + "(canonical_tenant_id, canonical_version_id, game_design_version_row_id, "
+            + "game_design_version_tenant_key, source_game_row_id, source_game_tenant_key, "
+            + "source_provenance_kind, publish_request_id, version_state_epoch, "
+            + "selected_commit_request_id, selected_commit_id, selected_commit_digest, selection_digest, selection_json) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        target.canonicalTenantId(),
+        target.canonicalVersionId(),
+        target.gameDesignVersionRowId(),
+        target.gameDesignVersionTenantKey(),
+        target.sourceGameRowId(),
+        target.sourceGameTenantKey(),
+        target.sourceProvenanceKind(),
+        intent.publishRequestId(),
+        Long.parseLong(intent.expectedVersionStateEpoch()),
+        intent.selectedCommitRequestId(),
+        intent.selectedCommitId(),
+        intent.selectedCommitDigest(),
+        selected.digest(),
+        selected.canonicalJson());
   }
 
   private static Fixture fixture() {

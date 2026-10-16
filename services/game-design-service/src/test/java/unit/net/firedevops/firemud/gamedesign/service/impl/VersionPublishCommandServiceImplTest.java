@@ -461,6 +461,45 @@ class VersionPublishCommandServiceImplTest {
   }
 
   @Test
+  void selectedSucceededReplayWrapsSelectionReadFailureDuringWorldHandoff() throws Exception {
+    var fixture = selectedSucceededReplayFixture(VersionLifecycleState.PUBLISHED);
+    AtomicBoolean handoffStarted = new AtomicBoolean();
+    var readFailure =
+        new org.springframework.dao.TransientDataAccessResourceException(
+            "transient selection storage failure");
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              handoffStarted.set(true);
+              return worldProducer;
+            })
+        .when(worldProducerProvider)
+        .getIfAvailable();
+    when(authoredSelections.readByPublishRequest(
+            fixture.request().intent().canonicalTenantId(), fixture.request().publishRequestId()))
+        .thenAnswer(
+            invocation -> {
+              if (handoffStarted.get()) {
+                throw readFailure;
+              }
+              return Optional.of(fixture.reservation());
+            });
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () -> service.reconcileFullVersionPublish(fixture.request()));
+
+    assertTrue(
+        thrown.getMessage().contains("World publication terminal handoff requires exact retry"));
+    assertTrue(thrown.getCause() == readFailure);
+    verify(worldProducer, never())
+        .reconcile(any(String.class), any(String.class), any(Long.class), any(String.class), any());
+    verify(publishAttemptRepository, never())
+        .sealPublication(any(), org.mockito.ArgumentMatchers.anyBoolean());
+    assertNoPublicationWrites();
+  }
+
+  @Test
   void selectedSucceededReplayRejectsMismatchedCommittedBundle() throws Exception {
     SelectedSucceededReplayFixture fixture =
         selectedSucceededReplayFixture(VersionLifecycleState.ACTIVE);
@@ -2827,7 +2866,7 @@ class VersionPublishCommandServiceImplTest {
     when(versionAssetArtifactService.findState("tenant-1", 10L)).thenReturn(Optional.of(artifact));
     when(versionAssetArtifactService.getExportCandidate("tenant-1", 10L)).thenReturn(manifest);
     return new SelectedSucceededReplayFixture(
-        request, attempt, bundle, participantDigests, artifact);
+        request, reservation, attempt, bundle, participantDigests, artifact);
   }
 
   private void assertNoPublicationWrites() {
@@ -3000,6 +3039,7 @@ class VersionPublishCommandServiceImplTest {
 
   private record SelectedSucceededReplayFixture(
       PublishWorkflowRequest request,
+      SelectionSnapshot reservation,
       PublishAttempt attempt,
       PublishedReleaseBundleDto bundle,
       List<PublishParticipantDigestDto> participantDigests,

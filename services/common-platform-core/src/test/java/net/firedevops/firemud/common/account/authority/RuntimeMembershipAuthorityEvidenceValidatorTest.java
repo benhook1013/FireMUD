@@ -3,7 +3,9 @@ package net.firedevops.firemud.common.account.authority;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -15,6 +17,8 @@ import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class RuntimeMembershipAuthorityEvidenceValidatorTest {
   private static final String ISSUER_ID = "firemud-account-service";
@@ -28,6 +32,285 @@ class RuntimeMembershipAuthorityEvidenceValidatorTest {
   private static final String MEMBERSHIP_STREAM =
       PREFIX + "membership/" + ACCOUNT_ID + "/" + TENANT_ID;
   private static final String LARGE_COUNTER = "9223372036854775807";
+  private static final String HISTORY_GENERATION = "9007199254740999";
+  private static final String HISTORY_SEQUENCE = "9007199254740998";
+
+  @ParameterizedTest
+  @ValueSource(strings = {"PASSWORD_RESET", "LOGOUT_ALL", "ACCOUNT_STATE"})
+  void positiveIssuerAndSupportedAccountSourcesPreserveOriginalHistoricalMembership(String kind) {
+    var baseline = historicalSnapshot();
+    var account = retainedAccountSource(kind, baseline.sourceEvidence().getFirst());
+    var issuer =
+        AccountAuthoritySourceEventV1Codec.sealIssuer(
+            new AccountAuthoritySourceEventV1Codec.IssuerPreimage(
+                "retained-issuer-event",
+                "retained-issuer-event",
+                ISSUER_STREAM,
+                "1",
+                ISSUER_ID,
+                "2",
+                "2",
+                "ISSUER_SECURITY_CHANGE"));
+    var current = baseline.authorityTuple();
+    var tuple =
+        new AuthorityTuple(
+            "2",
+            current.accountAuthorityGeneration(),
+            current.tenantAuthorityGeneration(),
+            current.membershipAuthorityGeneration(),
+            current.privateRealmGrantVersions(),
+            current.accountSecurityCutoff(),
+            current.tenantBillingCutoff());
+    var originalMembership = baseline.sourceEvidence().get(1);
+    var snapshot =
+        new RuntimeMembershipAuthorityEvidenceValidator.Snapshot(
+            baseline.issuerId(),
+            baseline.accountId(),
+            baseline.tenantId(),
+            true,
+            "ACTIVE",
+            true,
+            baseline.membershipVersion(),
+            baseline.membershipAuthorityGeneration(),
+            baseline.roles(),
+            tuple,
+            baseline.issuanceFence(),
+            List.of(
+                baseline.checkpoints().get(0),
+                new RuntimeMembershipAuthorityEvidenceValidator.Checkpoint(ISSUER_STREAM, "1"),
+                baseline.checkpoints().get(2),
+                baseline.checkpoints().get(3)),
+            List.of(
+                account,
+                new RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence(
+                    ISSUER_STREAM,
+                    "1",
+                    issuer.eventId(),
+                    issuer.eventDigest(),
+                    issuer.canonicalJson()),
+                originalMembership));
+
+    var result = RuntimeMembershipAuthorityEvidenceValidator.validate(snapshot).orElseThrow();
+    assertThat(result.canonicalJson()).isEqualTo(originalMembership.canonicalEventJson());
+    assertThat(result.authorityTuple().issuerAuthGeneration()).isEqualTo("1");
+    assertThat(snapshot.authorityTuple().issuerAuthGeneration()).isEqualTo("2");
+    assertThat(result.authorityTuple().accountAuthorityGeneration()).isEqualTo("1");
+    assertThat(snapshot.authorityTuple().accountAuthorityGeneration())
+        .isEqualTo(HISTORY_GENERATION);
+  }
+
+  @Test
+  void missingMembershipStillRequiresItsPositiveCurrentAccountSource() {
+    var baseline = currentSnapshot();
+    var missing =
+        new RuntimeMembershipAuthorityEvidenceValidator.Snapshot(
+            baseline.issuerId(),
+            baseline.accountId(),
+            baseline.tenantId(),
+            false,
+            "MISSING",
+            false,
+            baseline.membershipVersion(),
+            baseline.membershipAuthorityGeneration(),
+            List.of(),
+            baseline.authorityTuple(),
+            baseline.issuanceFence(),
+            List.of(
+                baseline.checkpoints().get(0),
+                baseline.checkpoints().get(1),
+                new RuntimeMembershipAuthorityEvidenceValidator.Checkpoint(MEMBERSHIP_STREAM, "0"),
+                baseline.checkpoints().get(3)),
+            List.of(baseline.sourceEvidence().getFirst()));
+    assertThat(RuntimeMembershipAuthorityEvidenceValidator.validate(missing)).isEmpty();
+    assertThatThrownBy(
+            () ->
+                RuntimeMembershipAuthorityEvidenceValidator.validate(
+                    copyWith(missing, missing.checkpoints(), List.of())))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("one source for each positive checkpoint");
+  }
+
+  @Test
+  void resealedHistoricalMembershipCannotLeadIssuerAccountFenceOrAccountCutoff() throws Exception {
+    var baseline = historicalSnapshot();
+    String earlier = new BigInteger(HISTORY_GENERATION).subtract(BigInteger.ONE).toString();
+    String later = new BigInteger(HISTORY_GENERATION).add(BigInteger.ONE).toString();
+    for (MembershipEvent event :
+        List.of(
+            resealedMembershipSource(baseline, "2", "1", "1", null),
+            resealedMembershipSource(
+                baseline,
+                "1",
+                later,
+                "1",
+                new AccountSecurityCutoff(later, ACCOUNT_STREAM, HISTORY_SEQUENCE)),
+            resealedMembershipSource(baseline, "1", "1", "2", null),
+            resealedMembershipSource(
+                baseline,
+                "1",
+                earlier,
+                "1",
+                new AccountSecurityCutoff(earlier, ACCOUNT_STREAM, later)))) {
+      // The supplied event is freshly sealed and valid independently of current carrier authority.
+      assertThat(MembershipAuthorityEventV1Codec.verify(event.canonicalJson()).eventDigest())
+          .isEqualTo(event.eventDigest());
+      assertThatThrownBy(
+              () ->
+                  RuntimeMembershipAuthorityEvidenceValidator.validate(
+                      copyWithMembershipSource(baseline, event)))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("must not be ahead");
+    }
+    for (AccountSecurityCutoff cutoff :
+        List.of(
+            new AccountSecurityCutoff(
+                earlier,
+                ACCOUNT_STREAM,
+                new BigInteger(HISTORY_SEQUENCE).subtract(BigInteger.ONE).toString()),
+            new AccountSecurityCutoff(HISTORY_GENERATION, ACCOUNT_STREAM, HISTORY_SEQUENCE))) {
+      var event =
+          resealedMembershipSource(baseline, "1", cutoff.accountAuthorityGeneration(), "1", cutoff);
+      assertThat(
+              RuntimeMembershipAuthorityEvidenceValidator.validate(
+                      copyWithMembershipSource(baseline, event))
+                  .orElseThrow()
+                  .canonicalJson())
+          .isEqualTo(event.canonicalJson());
+    }
+  }
+
+  private static RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence retainedAccountSource(
+      String kind, RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence resetSource) {
+    if (kind.equals("PASSWORD_RESET")) return resetSource;
+    String eventId;
+    String digest;
+    String json;
+    if (kind.equals("LOGOUT_ALL")) {
+      String requestId = "55555555-5555-4555-8555-555555555555";
+      var preimage = new HashMap<String, Object>(historicalAccountPreimage());
+      preimage.put("schemaVersion", AccountLogoutAllAuthorityEventV1Codec.SCHEMA_VERSION);
+      preimage.put("eventType", AccountLogoutAllAuthorityEventV1Codec.EVENT_TYPE);
+      preimage.put("requestId", requestId);
+      preimage.put("eventId", AccountLogoutAllAuthorityEventV1Codec.EVENT_ID_PREFIX + requestId);
+      var event = AccountLogoutAllAuthorityEventV1Codec.seal(preimage);
+      eventId = event.eventId();
+      digest = event.eventDigest();
+      json = event.canonicalJson();
+    } else {
+      var event =
+          AccountAuthoritySourceEventV1Codec.sealAccount(
+              new AccountAuthoritySourceEventV1Codec.AccountPreimage(
+                  "retained-account-state",
+                  "retained-account-state",
+                  ACCOUNT_STREAM,
+                  HISTORY_SEQUENCE,
+                  ACCOUNT_ID,
+                  HISTORY_GENERATION,
+                  HISTORY_GENERATION,
+                  HISTORY_GENERATION,
+                  HISTORY_GENERATION,
+                  List.of("GLOBAL_ROLE_CHANGED"),
+                  new AccountAuthoritySourceEventV1Codec.AccountState(
+                      true, List.of("PASSWORD"), "admin", "ACTIVE")));
+      eventId = event.eventId();
+      digest = event.eventDigest();
+      json = event.canonicalJson();
+    }
+    return new RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence(
+        ACCOUNT_STREAM, HISTORY_SEQUENCE, eventId, digest, json);
+  }
+
+  private static Map<String, Object> historicalAccountPreimage() {
+    var preimage = new HashMap<String, Object>(accountSourcePreimage());
+    preimage.put("outboxSequence", HISTORY_SEQUENCE);
+    preimage.put("accountAuthorityGeneration", HISTORY_GENERATION);
+    preimage.put("sourceVersion", HISTORY_GENERATION);
+    preimage.put(
+        "accountSecurityCutoff",
+        Map.of(
+            "accountAuthorityGeneration",
+            HISTORY_GENERATION,
+            "outboxStreamKey",
+            ACCOUNT_STREAM,
+            "outboxSequence",
+            HISTORY_SEQUENCE));
+    return preimage;
+  }
+
+  private static RuntimeMembershipAuthorityEvidenceValidator.Snapshot historicalSnapshot() {
+    var baseline = currentSnapshot();
+    var account = PasswordResetAuthorityEventV1Codec.seal(historicalAccountPreimage());
+    var current = baseline.authorityTuple();
+    var tuple =
+        new AuthorityTuple(
+            current.issuerAuthGeneration(),
+            HISTORY_GENERATION,
+            current.tenantAuthorityGeneration(),
+            current.membershipAuthorityGeneration(),
+            current.privateRealmGrantVersions(),
+            Optional.of(
+                new AccountSecurityCutoff(HISTORY_GENERATION, ACCOUNT_STREAM, HISTORY_SEQUENCE)),
+            current.tenantBillingCutoff());
+    return new RuntimeMembershipAuthorityEvidenceValidator.Snapshot(
+        baseline.issuerId(),
+        baseline.accountId(),
+        baseline.tenantId(),
+        baseline.membershipExists(),
+        baseline.membershipLifecycleState(),
+        baseline.gameplayAdmissionAllowed(),
+        baseline.membershipVersion(),
+        baseline.membershipAuthorityGeneration(),
+        baseline.roles(),
+        tuple,
+        baseline.issuanceFence(),
+        List.of(
+            new RuntimeMembershipAuthorityEvidenceValidator.Checkpoint(
+                ACCOUNT_STREAM, HISTORY_SEQUENCE),
+            baseline.checkpoints().get(1),
+            baseline.checkpoints().get(2),
+            baseline.checkpoints().get(3)),
+        List.of(
+            new RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence(
+                ACCOUNT_STREAM,
+                HISTORY_SEQUENCE,
+                account.eventId(),
+                account.eventDigest(),
+                account.canonicalJson()),
+            baseline.sourceEvidence().get(1)));
+  }
+
+  private static MembershipEvent resealedMembershipSource(
+      RuntimeMembershipAuthorityEvidenceValidator.Snapshot snapshot,
+      String issuerGeneration,
+      String accountGeneration,
+      String issuanceFence,
+      AccountSecurityCutoff cutoff)
+      throws Exception {
+    var json = new tools.jackson.databind.ObjectMapper();
+    var preimage =
+        (tools.jackson.databind.node.ObjectNode)
+            json.readTree(snapshot.sourceEvidence().get(1).canonicalEventJson());
+    preimage.remove("eventDigest");
+    preimage.put("issuanceFence", issuanceFence);
+    var tuple = (tools.jackson.databind.node.ObjectNode) preimage.get("authorityTuple");
+    tuple.put("issuerAuthGeneration", issuerGeneration);
+    tuple.put("accountAuthorityGeneration", accountGeneration);
+    if (cutoff == null) tuple.remove("accountSecurityCutoff");
+    else
+      tuple.set(
+          "accountSecurityCutoff",
+          json.valueToTree(
+              Map.of(
+                  "accountAuthorityGeneration",
+                  cutoff.accountAuthorityGeneration(),
+                  "outboxStreamKey",
+                  cutoff.outboxStreamKey(),
+                  "outboxSequence",
+                  cutoff.outboxSequence())));
+    return MembershipAuthorityEventV1Codec.seal(
+        json.convertValue(
+            preimage, new tools.jackson.core.type.TypeReference<Map<String, Object>>() {}));
+  }
 
   @Test
   void validatesCurrentMembershipAgainstAccountSourceAndLargeDecimalCheckpoints() {

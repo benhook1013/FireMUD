@@ -14,6 +14,8 @@ import net.firedevops.firemud.worldmanagement.v1.BeginVersionPublicationFreezeRe
 import net.firedevops.firemud.worldmanagement.v1.ReadSelectedPublicationArtifactInventoryRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadSelectedPublicationArtifactInventoryResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldSelectedDraftPublicationFreezeServiceGrpc;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionTimedOutException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -80,7 +82,18 @@ public final class WorldSelectedDraftPublicationFreezeGrpcService
       response =
           WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(freezeService.begin(decoded));
     } catch (StatusRuntimeException failure) {
-      responseObserver.onError(failure);
+      Status.Code code = failure.getStatus().getCode();
+      if (code == Status.Code.UNAVAILABLE || code == Status.Code.DEADLINE_EXCEEDED) {
+        responseObserver.onError(
+            Status.UNAVAILABLE
+                .withDescription("World selected-freeze owner is temporarily unavailable")
+                .asRuntimeException());
+      } else {
+        responseObserver.onError(
+            Status.FAILED_PRECONDITION
+                .withDescription("World selected-freeze owner did not accept the request")
+                .asRuntimeException());
+      }
       return;
     } catch (SecurityException denied) {
       responseObserver.onError(
@@ -95,7 +108,9 @@ public final class WorldSelectedDraftPublicationFreezeGrpcService
               .withDescription("Exact World selected-freeze owner evidence is unavailable")
               .asRuntimeException());
       return;
-    } catch (org.springframework.dao.DataAccessException
+    } catch (CannotCreateTransactionException
+        | TransactionTimedOutException
+        | org.springframework.dao.DataAccessException
         | org.jooq.exception.DataAccessException unavailable) {
       responseObserver.onError(
           Status.UNAVAILABLE
@@ -165,7 +180,9 @@ public final class WorldSelectedDraftPublicationFreezeGrpcService
               .withDescription("Exact retained World artifact inventory is unavailable")
               .asRuntimeException());
       return;
-    } catch (org.springframework.dao.DataAccessException
+    } catch (CannotCreateTransactionException
+        | TransactionTimedOutException
+        | org.springframework.dao.DataAccessException
         | org.jooq.exception.DataAccessException unavailable) {
       responseObserver.onError(
           Status.UNAVAILABLE

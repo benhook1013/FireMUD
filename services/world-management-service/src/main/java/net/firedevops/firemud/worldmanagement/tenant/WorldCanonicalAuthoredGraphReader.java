@@ -60,10 +60,7 @@ public final class WorldCanonicalAuthoredGraphReader {
       text(root, "schemaVersion", "3");
       JsonNode retainedClosure = root.get("inboundSourceClosure");
       fields(retainedClosure, Set.of("schemaVersion", "familyCounts"));
-      if (!retainedClosure.equals(
-          JSON.valueToTree(
-              WorldDraftTopologyCommitRepository.inboundSourceClosureContent(
-                  inboundClosure.orElseThrow())))) {
+      if (!retainedClosure.equals(JSON.valueToTree(inboundClosure.orElseThrow().content()))) {
         throw invalid("Canonical graph inbound declaration differs from original source bytes");
       }
     } else {

@@ -11,6 +11,7 @@ import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalReadGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalReadService;
 import net.firedevops.firemud.worldmanagement.v1.ReadPublicationTerminalRequest;
@@ -38,6 +39,21 @@ class WorldPublicationTerminalReadGrpcServiceTest {
     callAs(service, peer("account-service", "other"), malformed, wrongNamespace);
     assertThat(Status.fromThrowable(wrongNamespace.error).getCode())
         .isEqualTo(Status.Code.PERMISSION_DENIED);
+
+    SessionContext.setContext("authenticated-user", java.util.List.of(), java.util.Map.of());
+    try {
+      Collector authenticatedMalformed = new Collector();
+      callAs(service, peer("account-service", "test"), malformed, authenticatedMalformed);
+      assertThat(Status.fromThrowable(authenticatedMalformed.error).getCode())
+          .isEqualTo(Status.Code.PERMISSION_DENIED);
+
+      Collector authenticatedNull = new Collector();
+      callAs(service, peer("account-service", "test"), null, authenticatedNull);
+      assertThat(Status.fromThrowable(authenticatedNull.error).getCode())
+          .isEqualTo(Status.Code.PERMISSION_DENIED);
+    } finally {
+      SessionContext.clear();
+    }
     verifyNoInteractions(owner);
   }
 

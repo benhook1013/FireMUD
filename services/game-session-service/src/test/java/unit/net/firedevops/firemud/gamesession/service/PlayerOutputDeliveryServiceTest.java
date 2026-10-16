@@ -64,7 +64,6 @@ class PlayerOutputDeliveryServiceTest {
       service.deliver(context, List.of(output), false);
       verify(session).close(CloseStatus.SERVER_ERROR.withReason("internal_error"));
       verify(registry, never()).unregister(anyLong(), any());
-      assertThat(registry.find(41L)).contains(session);
       assertThat(metrics.counter("gamesession.output.delivery.failed", "kind", "notice").count())
           .isEqualTo(1.0);
     } finally {

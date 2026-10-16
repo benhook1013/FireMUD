@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.websocket;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -37,8 +38,10 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleServi
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -146,6 +149,199 @@ class GameSessionWebSocketHandlerTest {
                         && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
     verify(firstPartyConnectContextRegistry, never()).register(Mockito.anyLong(), Mockito.any());
     verify(sessionContextService, never()).save(Mockito.any());
+  }
+
+  @Test
+  void messageStopsWhenFirstPartyBootstrapContextCannotBeRestored() throws Exception {
+    var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
+    String token = fixture.token();
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
+                "first_party_web",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
+                token));
+    when(firstPartyConnectContextService.parse(token))
+        .thenAnswer(invocation -> fixture.service.parse(invocation.getArgument(0)))
+        .thenReturn(Optional.empty());
+    when(firstPartyConnectContextService.requireRetained(any()))
+        .thenAnswer(invocation -> fixture.service.requireRetained(invocation.getArgument(0)));
+    when(activeTransportSessionRegistry.find(41L)).thenReturn(Optional.of(session));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
+        .thenReturn(Optional.empty());
+    TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
+    when(parser.parse("LOOK")).thenReturn(command);
+
+    handler.afterConnectionEstablished(session);
+    handler.handleMessage(session, new TextMessage("LOOK"));
+
+    verify(session)
+        .close(
+            argThat(
+                status ->
+                    status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
+                        && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
+    verify(interpreter, never())
+        .interpret(Mockito.anyString(), Mockito.any(TextCommand.class), Mockito.anyBoolean());
+    verify(session, never()).sendMessage(any());
+  }
+
+  @Test
+  void establishmentClosesGenericTransportWithoutReplacingIncumbentWhenPointerReadFails()
+      throws Exception {
+    WebSocketSession incumbent = Mockito.mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
+        .thenReturn(Optional.empty());
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenThrow(new IllegalStateException("pointer store unavailable"));
+    when(activeTransportSessionRegistry.find(41L)).thenReturn(Optional.of(incumbent));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(session)
+        .close(
+            argThat(
+                status ->
+                    status.getCode() == 1013
+                        && "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE".equals(status.getReason())));
+    verify(activeTransportSessionRegistry, never()).register(41L, session);
+    verify(activeTransportSessionRegistry, never()).unregister(Mockito.anyLong(), Mockito.any());
+  }
+
+  @Test
+  void messageStopsWhenGenericBootstrapPointerReadFails() throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
+        .thenReturn(Optional.empty());
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenThrow(new IllegalStateException("pointer store unavailable"));
+    TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
+    when(parser.parse("LOOK")).thenReturn(command);
+
+    handler.handleMessage(session, new TextMessage("LOOK"));
+
+    verify(session)
+        .close(
+            argThat(
+                status ->
+                    status.getCode() == 1013
+                        && "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE".equals(status.getReason())));
+    verify(interpreter, never())
+        .interpret(Mockito.anyString(), Mockito.any(TextCommand.class), Mockito.anyBoolean());
+    verify(session, never()).sendMessage(any());
+  }
+
+  @Test
+  void establishmentClosesUnavailableTransportAndCleansMdcBeforeLaterHealthyConnection()
+      throws Exception {
+    when(runtimeIdentity.service()).thenReturn("game-session-service");
+    when(runtimeIdentity.serviceInstanceId()).thenReturn("instance-1");
+    Map<String, String> originalMdc = org.slf4j.MDC.getCopyOfContextMap();
+    org.slf4j.MDC.put("requestMarker", "prior-value");
+    Map<String, String> priorMdc = org.slf4j.MDC.getCopyOfContextMap();
+    when(session.getAttributes())
+        .thenReturn(Map.of(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenThrow(new SessionContextUnavailableException("retained context unreadable", null))
+        .thenReturn(Optional.empty());
+
+    try {
+      handler.afterConnectionEstablished(session);
+
+      verify(session)
+          .close(
+              argThat(
+                  status ->
+                      status.getCode() == 1013
+                          && "backend_unavailable".equals(status.getReason())));
+      verify(activeTransportSessionRegistry, never()).register(41L, session);
+      verify(activeTransportSessionRegistry, never()).unregister(Mockito.anyLong(), Mockito.any());
+      verify(sessionContextService, never()).save(Mockito.any());
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("service")).isNull();
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("serviceInstanceId")).isNull();
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("correlationId")).isNull();
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.getCopyOfContextMap())
+          .isEqualTo(priorMdc);
+
+      WebSocketSession healthySession = Mockito.mock(WebSocketSession.class);
+      when(healthySession.getAttributes())
+          .thenReturn(Map.of(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "42"));
+      when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+          .thenReturn(Optional.empty());
+      handler.afterConnectionEstablished(healthySession);
+
+      verify(activeTransportSessionRegistry).register(42L, healthySession);
+      verify(healthySession, never()).close(Mockito.any(CloseStatus.class));
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.getCopyOfContextMap())
+          .isEqualTo(priorMdc);
+    } finally {
+      restoreMdc(originalMdc);
+    }
+  }
+
+  @Test
+  void messageClosesTransportWhenRetainedContextCannotBeRead() throws Exception {
+    when(runtimeIdentity.service()).thenReturn("game-session-service");
+    when(runtimeIdentity.serviceInstanceId()).thenReturn("instance-1");
+    Map<String, String> originalMdc = org.slf4j.MDC.getCopyOfContextMap();
+    org.slf4j.MDC.put("requestMarker", "prior-value");
+    Map<String, String> priorMdc = org.slf4j.MDC.getCopyOfContextMap();
+    when(session.getAttributes())
+        .thenReturn(Map.of(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenThrow(new SessionContextUnavailableException("retained context unreadable", null));
+
+    try {
+      handler.handleMessage(session, new TextMessage("LOOK"));
+
+      verify(session)
+          .close(
+              argThat(
+                  status ->
+                      status.getCode() == 1013
+                          && "backend_unavailable".equals(status.getReason())));
+      verify(parser, never()).parse(Mockito.anyString());
+      verify(interpreter, never())
+          .interpret(Mockito.anyString(), Mockito.any(TextCommand.class), Mockito.anyBoolean());
+      verify(sessionContextService, never()).save(Mockito.any());
+      verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), Mockito.any());
+      verify(activeTransportSessionRegistry, never()).unregister(Mockito.anyLong(), Mockito.any());
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("service")).isNull();
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("serviceInstanceId")).isNull();
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("correlationId")).isNull();
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.getCopyOfContextMap())
+          .isEqualTo(priorMdc);
+    } finally {
+      restoreMdc(originalMdc);
+    }
+  }
+
+  private static void restoreMdc(Map<String, String> contextMap) {
+    if (contextMap == null) {
+      org.slf4j.MDC.clear();
+    } else {
+      org.slf4j.MDC.setContextMap(contextMap);
+    }
   }
 
   @Test
@@ -1347,6 +1543,119 @@ class GameSessionWebSocketHandlerTest {
     org.assertj.core.api.Assertions.assertThat(captor.getValue().hasAccountIdentity()).isFalse();
     verify(gameplayAdmissionPointerAuthorityService, never())
         .listByRuntimeTarget(Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  @Test
+  void failedFirstPartyBootstrapSaveUnregistersContextBeforeClosingUnavailableTransport()
+      throws Exception {
+    configureFirstPartyBootstrap();
+    var saveFailure =
+        new SessionContextUnavailableException(
+            "session save unavailable", new IllegalStateException());
+    Mockito.doThrow(saveFailure).when(sessionContextService).save(any(SessionContext.class));
+
+    handler.afterConnectionEstablished(session);
+
+    InOrder order = Mockito.inOrder(firstPartyConnectContextRegistry, session);
+    order.verify(firstPartyConnectContextRegistry).register(Mockito.eq(41L), any());
+    order.verify(firstPartyConnectContextRegistry).unregister(41L);
+    order
+        .verify(session)
+        .close(
+            Mockito.argThat(
+                (CloseStatus status) ->
+                    status.getCode() == 1013 && "backend_unavailable".equals(status.getReason())));
+    verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), any());
+    assertThat(saveFailure.getSuppressed()).isEmpty();
+  }
+
+  @Test
+  void failedFirstPartyBootstrapSaveUnregistersContextBeforeClosingInvalidTransport()
+      throws Exception {
+    configureFirstPartyBootstrap();
+    var saveFailure = new IllegalStateException("session save rejected");
+    Mockito.doThrow(saveFailure).when(sessionContextService).save(any(SessionContext.class));
+
+    handler.afterConnectionEstablished(session);
+
+    InOrder order = Mockito.inOrder(firstPartyConnectContextRegistry, session);
+    order.verify(firstPartyConnectContextRegistry).register(Mockito.eq(41L), any());
+    order.verify(firstPartyConnectContextRegistry).unregister(41L);
+    order
+        .verify(session)
+        .close(
+            Mockito.argThat(
+                (CloseStatus status) ->
+                    status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
+                        && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
+    verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), any());
+    assertThat(saveFailure.getSuppressed()).isEmpty();
+  }
+
+  @Test
+  void failedFirstPartyBootstrapSavePreservesPrimaryFailureWhenUnregisterAlsoFails()
+      throws Exception {
+    configureFirstPartyBootstrap();
+    var saveFailure =
+        new SessionContextUnavailableException(
+            "session save unavailable", new IllegalStateException());
+    var cleanupFailure = new IllegalStateException("context unregister unavailable");
+    Mockito.doThrow(saveFailure).when(sessionContextService).save(any(SessionContext.class));
+    Mockito.doThrow(cleanupFailure).when(firstPartyConnectContextRegistry).unregister(41L);
+
+    handler.afterConnectionEstablished(session);
+
+    assertThat(saveFailure.getSuppressed()).containsExactly(cleanupFailure);
+    verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), any());
+    verify(session).close(Mockito.argThat(status -> status.getCode() == 1013));
+  }
+
+  @Test
+  void failedFirstPartyBootstrapSaveDoesNotSelfSuppressWhenUnregisterThrowsSameFailure()
+      throws Exception {
+    configureFirstPartyBootstrap();
+    var saveFailure =
+        new SessionContextUnavailableException(
+            "session save unavailable", new IllegalStateException());
+    Mockito.doThrow(saveFailure).when(sessionContextService).save(any(SessionContext.class));
+    Mockito.doThrow(saveFailure).when(firstPartyConnectContextRegistry).unregister(41L);
+
+    handler.afterConnectionEstablished(session);
+
+    assertThat(saveFailure.getSuppressed()).isEmpty();
+    verify(firstPartyConnectContextRegistry).unregister(41L);
+    verify(session).close(Mockito.argThat(status -> status.getCode() == 1013));
+  }
+
+  @Test
+  void failedFirstPartyContextRegistrationDoesNotAttemptUnregisterOrSave() throws Exception {
+    configureFirstPartyBootstrap();
+    Mockito.doThrow(new IllegalStateException("context registration rejected"))
+        .when(firstPartyConnectContextRegistry)
+        .register(Mockito.eq(41L), any());
+
+    handler.afterConnectionEstablished(session);
+
+    verify(firstPartyConnectContextRegistry, never()).unregister(Mockito.anyLong());
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), any());
+    verify(session)
+        .close(
+            Mockito.argThat(status -> status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()));
+  }
+
+  private void configureFirstPartyBootstrap() {
+    var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
+    var context = fixture.context();
+    String token = context.compactJws();
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR, token));
+    when(firstPartyConnectContextService.parse(token))
+        .thenAnswer(invocation -> fixture.service.parse(invocation.getArgument(0)));
   }
 
   @Test
