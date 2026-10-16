@@ -91,6 +91,8 @@ class GameDesignDraftTerminalReadClientTest {
               any(CommonGrpcClientProperties.class),
               eq(true));
       AbstractStub<?> stub = initializedStub(client);
+      assertThat(stub.getCallOptions().getMaxInboundMessageSize())
+          .isEqualTo(DraftTerminalReadGrpcLimits.MAX_RESPONSE_WIRE_BYTES);
       assertThat(stub.getCallOptions().getCredentials())
           .isInstanceOf(GrpcServerPeerIdentityCallCredentials.class);
       assertThat(readField(stub.getCallOptions().getCredentials(), "expectedPeerUri"))
