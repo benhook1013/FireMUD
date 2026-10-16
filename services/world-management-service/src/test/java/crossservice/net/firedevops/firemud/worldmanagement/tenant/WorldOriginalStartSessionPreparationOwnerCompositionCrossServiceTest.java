@@ -536,6 +536,19 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                               Empty.getDefaultInstance()))
                   .isInstanceOf(StatusRuntimeException.class);
               assertThat(result.get()).isNull();
+              assertThat(ownerRefusal.get()).isNotNull();
+              if (refusal == Refusal.MISMATCHED_ATTEMPT) {
+                assertThat(ownerRefusal.get())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(
+                        "Original StartSession tuple or owner attempt differs");
+              } else {
+                assertThat(ownerRefusal.get()).isInstanceOf(StatusRuntimeException.class);
+                assertThat(Status.fromThrowable(ownerRefusal.get()).getCode())
+                    .isEqualTo(Status.Code.FAILED_PRECONDITION);
+                assertThat(Status.fromThrowable(ownerRefusal.get()).getDescription())
+                    .isEqualTo("Current Account participation evidence is unavailable");
+              }
               assertThat(rows(world.dsl(), worldBefore.keySet().toArray(String[]::new)))
                   .isEqualTo(worldBefore);
               assertThat(rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new)))

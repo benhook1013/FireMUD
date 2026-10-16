@@ -16,6 +16,10 @@ import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.SettleOriginalStartSessionWorldParticipationRequest;
 import net.firedevops.firemud.account.v1.SettleOriginalStartSessionWorldParticipationResponse;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository
+    .ImmutableBindingConflictException;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository
+    .RetainedEvidenceUnavailableException;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementGrpcService;
 import net.firedevops.firemud.accountservice.service.session.AccountStartSessionWorldParticipationSettlementService;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationSettlementGrpcCodec;
@@ -105,6 +109,59 @@ class AccountStartSessionWorldParticipationSettlementGrpcServiceTest {
 
     assertCode(Status.Code.UNAVAILABLE, invoke(receiver, identity(WORLD_URI), request));
     verify(owner).settle(participationId, 43L);
+  }
+
+  @Test
+  void retainedEvidenceConflictAndUnavailableMapToFailedPrecondition() {
+    UUID participationId = UUID.fromString("5bb41395-a183-4ce5-9343-cd0995ba3b48");
+    var conflictOwner = mock(AccountStartSessionWorldParticipationSettlementService.class);
+    when(conflictOwner.settle(participationId, 43L))
+        .thenThrow(new ImmutableBindingConflictException("immutable binding conflict"));
+    var unavailableOwner = mock(AccountStartSessionWorldParticipationSettlementService.class);
+    when(unavailableOwner.settle(participationId, 43L))
+        .thenThrow(new RetainedEvidenceUnavailableException("retained evidence unavailable"));
+    var request = request(participationId, 43L);
+
+    assertCode(
+        Status.Code.FAILED_PRECONDITION,
+        invoke(
+            new AccountStartSessionWorldParticipationSettlementGrpcService(
+                conflictOwner, NAMESPACE),
+            identity(WORLD_URI),
+            request));
+    assertCode(
+        Status.Code.FAILED_PRECONDITION,
+        invoke(
+            new AccountStartSessionWorldParticipationSettlementGrpcService(
+                unavailableOwner, NAMESPACE),
+            identity(WORLD_URI),
+            request));
+  }
+
+  @Test
+  void transactionContractFailureRemainsUnavailable() {
+    UUID participationId = UUID.fromString("5bb41395-a183-4ce5-9343-cd0995ba3b48");
+    var owner = mock(AccountStartSessionWorldParticipationSettlementService.class);
+    when(owner.settle(participationId, 43L))
+        .thenThrow(
+            new IllegalStateException("Writable Account READ_COMMITTED transaction required"));
+
+    assertCode(
+        Status.Code.UNAVAILABLE,
+        invoke(
+            new AccountStartSessionWorldParticipationSettlementGrpcService(owner, NAMESPACE),
+            identity(WORLD_URI),
+            request(participationId, 43L)));
+  }
+
+  private static SettleOriginalStartSessionWorldParticipationRequest request(
+      UUID participationId, long participationFence) {
+    return AccountStartSessionWorldParticipationSettlementGrpcCodec.toRequest(
+        new AccountStartSessionWorldParticipationSettlementInput(
+            NAMESPACE,
+            UUID.fromString("10d5b75a-7c46-4890-834e-4c6547458d94"),
+            participationId,
+            participationFence));
   }
 
   private static Invocation invoke(
