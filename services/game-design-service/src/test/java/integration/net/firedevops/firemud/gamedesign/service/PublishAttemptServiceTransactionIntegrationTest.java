@@ -671,9 +671,20 @@ class PublishAttemptServiceTransactionIntegrationTest {
     AtomicInteger artifactReadbackCount = new AtomicInteger();
 
     Mockito.when(
-            publishGateService.collectFullVersionParticipantDigests(
+            publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
-                Mockito.eq(publishRequestId),
+                Mockito.eq(
+                    PublicationDigestRequestBinding.full(
+                        fixture
+                            .operation()
+                            .account()
+                            .input()
+                            .selection()
+                            .intent()
+                            .canonicalTenantId()
+                            .toString(),
+                        String.valueOf(fixture.version().getId()),
+                        publishRequestId)),
                 Mockito.eq(publishWorkflowId)))
         .thenAnswer(
             invocation -> {
@@ -795,9 +806,20 @@ class PublishAttemptServiceTransactionIntegrationTest {
     AtomicBoolean finalizationFailureInjected = new AtomicBoolean();
 
     Mockito.when(
-            publishGateService.collectFullVersionParticipantDigests(
+            publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
-                Mockito.eq(publishRequestId),
+                Mockito.eq(
+                    PublicationDigestRequestBinding.full(
+                        fixture
+                            .operation()
+                            .account()
+                            .input()
+                            .selection()
+                            .intent()
+                            .canonicalTenantId()
+                            .toString(),
+                        String.valueOf(fixture.version().getId()),
+                        publishRequestId)),
                 Mockito.eq(publishWorkflowId)))
         .thenAnswer(
             invocation -> {
@@ -964,9 +986,20 @@ class PublishAttemptServiceTransactionIntegrationTest {
     AtomicReference<Throwable> controlPlaneDigestFailure = captureControlPlaneDigestFailure();
 
     Mockito.when(
-            publishGateService.collectFullVersionParticipantDigests(
+            publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
-                Mockito.eq(publishRequestId),
+                Mockito.eq(
+                    PublicationDigestRequestBinding.full(
+                        fixture
+                            .operation()
+                            .account()
+                            .input()
+                            .selection()
+                            .intent()
+                            .canonicalTenantId()
+                            .toString(),
+                        String.valueOf(fixture.version().getId()),
+                        publishRequestId)),
                 Mockito.eq(publishWorkflowId)))
         .thenAnswer(
             invocation -> {
