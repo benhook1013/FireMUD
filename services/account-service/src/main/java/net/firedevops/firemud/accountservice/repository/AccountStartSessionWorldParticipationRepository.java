@@ -462,10 +462,8 @@ public class AccountStartSessionWorldParticipationRepository {
           createdAt,
           sources);
     } catch (RuntimeException malformed) {
-      if (malformed instanceof IllegalStateException state
-          && "Exact StartSession World participation evidence unavailable"
-              .equals(state.getMessage())) {
-        throw state;
+      if (malformed instanceof RetainedEvidenceException evidenceFailure) {
+        throw evidenceFailure;
       }
       throw unavailable();
     }
@@ -949,13 +947,35 @@ public class AccountStartSessionWorldParticipationRepository {
         });
   }
 
-  private static IllegalStateException conflict() {
-    return new IllegalStateException(
+  private static ImmutableBindingConflictException conflict() {
+    return new ImmutableBindingConflictException(
         "StartSession World participation conflicts with its immutable binding");
   }
 
-  private static IllegalStateException unavailable() {
-    return new IllegalStateException("Exact StartSession World participation evidence unavailable");
+  private static RetainedEvidenceUnavailableException unavailable() {
+    return new RetainedEvidenceUnavailableException(
+        "Exact StartSession World participation evidence unavailable");
+  }
+
+  /** Base type for deterministic failures in retained participation evidence. */
+  public abstract static class RetainedEvidenceException extends IllegalStateException {
+    private RetainedEvidenceException(String message) {
+      super(message);
+    }
+  }
+
+  /** The stored participation conflicts with the immutable binding supplied by its caller. */
+  public static final class ImmutableBindingConflictException extends RetainedEvidenceException {
+    public ImmutableBindingConflictException(String message) {
+      super(message);
+    }
+  }
+
+  /** Required retained participation evidence is missing or malformed. */
+  public static final class RetainedEvidenceUnavailableException extends RetainedEvidenceException {
+    public RetainedEvidenceUnavailableException(String message) {
+      super(message);
+    }
   }
 
   public record Candidate(

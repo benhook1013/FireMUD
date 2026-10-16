@@ -379,12 +379,36 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               claim.get().ownerFence());
       var pki = new WorldOriginalStartSessionPreparationProofPki(proofDirectory.resolve("pki"));
       var factory = new GrpcChannelFactory();
+      var currentAttemptRefusal = new AtomicReference<Status>();
+      var currentAttemptReceiver =
+          new OriginalStartSessionCurrentAttemptReadGrpcService(
+              attempts, gs.manager(), NAMESPACE);
+      BindableService capturingCurrentAttemptReceiver =
+          () ->
+              ServerInterceptors.intercept(
+                  currentAttemptReceiver,
+                  new ServerInterceptor() {
+                    @Override
+                    public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+                        ServerCall<ReqT, RespT> call,
+                        Metadata headers,
+                        ServerCallHandler<ReqT, RespT> next) {
+                      var capturingCall =
+                          new ForwardingServerCall.SimpleForwardingServerCall<>(call) {
+                            @Override
+                            public void close(Status status, Metadata trailers) {
+                              if (!status.isOk()) currentAttemptRefusal.set(status);
+                              super.close(status, trailers);
+                            }
+                          };
+                      return next.startCall(capturingCall, headers);
+                    }
+                  });
       Server gsServer =
           server(
               "game-session-service",
               pki,
-              new OriginalStartSessionCurrentAttemptReadGrpcService(
-                  attempts, gs.manager(), NAMESPACE),
+              capturingCurrentAttemptReceiver,
               new HistoricalOriginalStartSessionOwnerEvidenceReadGrpcService(
                   new CanonicalGameInstanceLaunchAssociationRepository(gs.dsl(), NAMESPACE),
                   NAMESPACE),
@@ -668,6 +692,19 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                               Empty.getDefaultInstance()))
                   .isInstanceOf(StatusRuntimeException.class);
               assertThat(result.get()).isNull();
+              assertThat(ownerRefusal.get()).isNotNull();
+              assertThat(ownerRefusal.get()).isInstanceOf(StatusRuntimeException.class);
+              assertThat(Status.fromThrowable(ownerRefusal.get()).getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION);
+              Status originalAttemptRefusal = currentAttemptRefusal.get();
+              assertThat(originalAttemptRefusal).isNotNull();
+              assertThat(originalAttemptRefusal.getCode())
+                  .isEqualTo(Status.Code.FAILED_PRECONDITION);
+              assertThat(originalAttemptRefusal.getDescription())
+                  .isEqualTo(
+                      refusal == Refusal.MISMATCHED_ATTEMPT
+                          ? "Current original-attempt read differs from the stored attempt, mutation, or fence"
+                          : "Game Session owner attempt claim lease is expired and remains non-replayable");
               assertThat(rows(world.dsl(), worldBefore.keySet().toArray(String[]::new)))
                   .isEqualTo(worldBefore);
               assertThat(rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new)))
