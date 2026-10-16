@@ -206,7 +206,13 @@ public final class AuthoredInitialActorCoreReadService {
       throw conflict("Exact selected template entry is missing, duplicated or misbound");
     }
 
-    SelectedGameplayRules selectedRules = requireSelectedGameLogic(operation);
+    SelectedGameplayRules selectedRules =
+        requireSelectedGameLogic(
+            operation,
+            capture
+                .gameplay()
+                .orElseThrow(
+                    () -> conflict("Exact selected gameplay source capture is unavailable")));
     List<SelectedDraftTemplateWorldSourceAssociation.Association> associationRows =
         associations.readExact(operation, templateCapture).stream()
             .filter(value -> value.templateId() == templateId)
@@ -242,7 +248,8 @@ public final class AuthoredInitialActorCoreReadService {
     return new CapturedSources(actorBindings, selectedRules.receiptBinding());
   }
 
-  private SelectedGameplayRules requireSelectedGameLogic(GameDesignPublicationOperation operation) {
+  private SelectedGameplayRules requireSelectedGameLogic(
+      GameDesignPublicationOperation operation, GameplayRuleSnapshot.Capture gameplayCapture) {
     var selection = operation.account().input().selection();
     var target = selection.target();
     var publicationRequest =
@@ -258,7 +265,13 @@ public final class AuthoredInitialActorCoreReadService {
         gameplayRules
             .readSnapshot(target, selection.selectedCommit().commitId())
             .orElseThrow(() -> conflict("Exact selected Game Logic source is unavailable"));
-    if (!Arrays.equals(selection.canonicalBytes(), receipt.selection().canonicalBytes())
+    if (!Arrays.equals(gameplayCapture.operation().canonicalBytes(), operation.canonicalBytes())
+        || !selection.selectedCommit().equals(gameplayCapture.snapshot().binding())
+        || !Arrays.equals(gameplayCapture.snapshot().canonicalBytes(), snapshot.canonicalBytes())
+        || !Arrays.equals(
+            gameplayCapture.snapshot().canonicalBytes(),
+            receipt.authorization().source().canonicalBytes())
+        || !Arrays.equals(selection.canonicalBytes(), receipt.selection().canonicalBytes())
         || !selection.selectedCommit().equals(snapshot.binding())
         || !Arrays.equals(
             snapshot.canonicalBytes(), receipt.authorization().source().canonicalBytes())) {

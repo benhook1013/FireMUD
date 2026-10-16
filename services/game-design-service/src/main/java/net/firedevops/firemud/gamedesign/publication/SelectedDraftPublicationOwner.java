@@ -147,6 +147,13 @@ public final class SelectedDraftPublicationOwner {
     }
 
     var capture = operations.reserveSourceBacked(operation);
+    var gameplayCapture =
+        capture
+            .gameplay()
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "SELECTED_PUBLICATION_GAMEPLAY_SOURCE_CAPTURE_UNAVAILABLE"));
     var templateCapture =
         capture
             .templateConfig()
@@ -174,7 +181,9 @@ public final class SelectedDraftPublicationOwner {
         || !"PENDING".equals(retained.outcome())
         || !Arrays.equals(selection.canonicalBytes(), retainedSelection.canonicalBytes())
         || !capture.command().operation().equals(operation)
-        || !capture.policy().operation().equals(operation)) {
+        || !capture.policy().operation().equals(operation)
+        || !Arrays.equals(gameplayCapture.operation().canonicalBytes(), operation.canonicalBytes())
+        || !selection.selectedCommit().equals(gameplayCapture.snapshot().binding())) {
       throw new IllegalStateException("SELECTED_PUBLICATION_RESERVATION_READBACK_CONFLICT");
     }
     long attemptId =
