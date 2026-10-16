@@ -521,7 +521,8 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             }
             if (refusal == Refusal.NONE) {
               // Exercise lifecycle readback with boxed room IDs outside the Long cache range.
-              world.dsl()
+              world
+                  .dsl()
                   .execute(
                       "SELECT setval((current_schema() || '.room_instance_id_seq')::regclass, GREATEST((SELECT last_value FROM room_instance_id_seq), 127), true)");
             }
