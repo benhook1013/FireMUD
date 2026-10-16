@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.Objects;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -96,6 +97,9 @@ public final class WorldStartSessionExecutionTerminalReadGrpcService
           Status.UNAVAILABLE,
           "World StartSession terminal storage is temporarily unavailable");
       return;
+    } catch (StatusRuntimeException ownerFailure) {
+      failForOwnerRpcFailure(responseObserver, ownerFailure);
+      return;
     } catch (IllegalArgumentException inconsistent) {
       fail(
           responseObserver,
@@ -152,5 +156,32 @@ public final class WorldStartSessionExecutionTerminalReadGrpcService
 
   private static void fail(StreamObserver<?> responseObserver, Status status, String description) {
     responseObserver.onError(status.withDescription(description).asRuntimeException());
+  }
+
+  private static void failForOwnerRpcFailure(
+      StreamObserver<?> responseObserver, StatusRuntimeException ownerFailure) {
+    switch (Status.fromThrowable(ownerFailure).getCode()) {
+      case UNAVAILABLE, DEADLINE_EXCEEDED, RESOURCE_EXHAUSTED ->
+          fail(
+              responseObserver,
+              Status.UNAVAILABLE,
+              "A required original-operation owner read is temporarily unavailable");
+      case PERMISSION_DENIED, UNAUTHENTICATED ->
+          fail(
+              responseObserver,
+              Status.PERMISSION_DENIED,
+              "A required original-operation owner denied the authenticated Account workload");
+      case INVALID_ARGUMENT ->
+          fail(
+              responseObserver,
+              Status.INVALID_ARGUMENT,
+              "A required original-operation owner rejected the recovery selector");
+      case FAILED_PRECONDITION, NOT_FOUND, ALREADY_EXISTS, ABORTED ->
+          fail(
+              responseObserver,
+              Status.FAILED_PRECONDITION,
+              "Required original-operation owner evidence is unavailable or inconsistent");
+      default -> fail(responseObserver, Status.INTERNAL, "Original-operation owner read failed");
+    }
   }
 }
