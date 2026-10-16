@@ -6,6 +6,32 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Retained publication diagnostics migration proof
+
+The existing launch-descriptor native test seeds explicitly historical, unbound Version, release, descriptor, attempt and artifact rows before canonical identity enforcement using the current V34.1 predecessor. After V38, the V39 text widening and the forward migrations through the current default preserve every prior column and PostgreSQL row version in those five rows, together with all prior Flyway history rows. Long UTF-8 failure diagnostics round-trip after widening and remain intact after the forward migrations; a later terminal-attempt rewrite refuses without changing the retained rows or inventing a publication operation.
+
+The single restored migration case freshly passes with zero failures, errors or skips. Canonical formatting, style, Integration Checkstyle and SpotBugs pass; the one passively identified PostgreSQL container is independently absent after completion. This is retained-data migration proof over synthetic historical rows. It does not establish an authenticated source, creator or issuer, currentness, a genuine immutable release, public publication enablement, activation or a Gameplay handoff; the other launch-descriptor cases retain their preceding attribution. No installed migration or production code is changed.
+
+### Draft application-slot storage race proof
+
+The existing Game Design source PostgreSQL owner test exercises both lifecycle-versus-slot orderings and both publication-selection-versus-slot orderings under Read Committed, Repeatable Read and Serializable. A committed lifecycle change or selection prevents a competing slot; a committed slot prevents the competing lifecycle change or selection. Stale snapshots refuse with the expected serialization failure. Logical Version fields remain unchanged where asserted; the winning storage interlock intentionally performs a no-op update, so this proof does not assert unchanged MVCC row versions across the winner.
+
+All sixteen owning native cases freshly pass with zero failures, errors or skips, including the four restored race cases and the twelve existing source-owner cases. Canonical formatting, style, Integration Checkstyle and SpotBugs pass. Passive capture identifies the one run-owned PostgreSQL container, records its lifecycle without endpoint probes and independently confirms its absence after completion. This proves current default-migration storage interlocks with controlled local source setup; it does not establish a creator credential, Account order or currentness, remote owner application, publication enablement, activation or a genuine Gameplay handoff. No production, migration or registration changes are included.
+
+### Template create and tenant-qualified updates
+
+The existing create service rejects a caller-supplied template ID before mapping or repository access. The repository updates only the exact tenant and template ID, never writes a replacement tenant binding and requires exactly one affected row before its tenant-qualified readback. No new public update API, migration, registration or hosted-content authority is introduced.
+
+Fresh old-code proof reproduces both the service accepting a supplied create ID and an actual PostgreSQL row changing from one tenant to another, including its row version. The corrected source freshly passes three service units and one native PostgreSQL case with zero failures, errors or skips; the native case preserves both complete template rows and row versions on foreign or missing identity and permits a normal same-tenant update. The controlled pre-phase fixture uses current default migrations and does not rely on the later reference-phase guard to refuse the mutation. Affected Main, Test and Integration static checks, canonical formatting and style pass. The exact run-owned PostgreSQL container is passively captured and independently absent after teardown.
+
+These are mocked service-collaborator and direct repository SQL checks. They do not execute the REST or authenticated creator flow, establish Account hosted-terms/currentness authority, enable publication or complete a genuine Gameplay handoff. The existing external provisioning hold remains in [Game Templates](../../architecture/microservices/game-design-service/game-templates.md#creating-templates).
+
+### Retained release byte and participant proof
+
+The current Common owner test preserves the historical schema-1 release attestation's fixed canonical digest and domain, alongside the existing exact stored readback and selector non-promotion checks. The selected-full schema-4 case independently refuses each World, Entity, Automation and Game Design participant when that owner alone supplies its retained older digest schema; the complete current vector remains `4/3/1/6/2`.
+
+All eight focused owner cases freshly pass with zero failures, errors or skips. The affected test static analysis, canonical formatting and style checks pass at the same test source. These are structural known-answer and refusal checks with stipulated values; they do not execute owner SQL, authenticate source provenance, produce a release, enable publication or complete a genuine Gameplay handoff. Historical byte retention does not widen an older profile's supported consumers or grant selected-full authority.
+
 ### Selected template publication and original launch reads
 
 The prepared source adds owner-local Template configuration genesis, synchronized revision/application, selected source capture and normalized tenant reference-phase owners over the already guarded tables. `SelectedDraftPublicationOwner` retains the exact selection, pending attempt, complete source capture and immutable template/World relation in one caller-owned writable transaction; existing operation bytes are never upgraded and old descriptor or reference provenance is not backfilled. The original StartSession template-association read authenticates Game Session and independently verifies Account’s exact redeemed operation before its read-only snapshot. It accepts only current selector-bound release-v2 evidence for the configured path and refuses older non-selector releases rather than fabricating later bundles. These components are unregistered and add no migration or runtime enabling flag.
@@ -29,6 +55,12 @@ The prepared caller source connects the original Account claim and held-order ad
 Component qualification passes. The final Game Design gate freshly executes all 136 native cases and all four original-order cross-service cases with zero failures, errors or skips, plus static, formatting, protocol timestamp and documentation checks. Its 558 units retain their preceding fresh attribution; the 20 inherited cross-service cases retain their separate fresh passing execution. Account’s 19 affected native cases and three separately executed held-order cases pass, as do World’s 23 affected native cases and the preceding Common and owner unit gates. The composition uses actual Account claim/held-read handlers, Game Design and World SQL owner writes and required mTLS, with explicitly controlled original creator, environment, reviewed-base, source protection and PKI inputs. The caller first retains Account `COMMIT_ORDER/PENDING`; the terminal continuation below settles the exact original operation. Class-only proof exports preserve each receiving service’s application and migration ownership. This does not establish genuine Account source production, public creator access, physical commit-time currentness protection, publication or runtime activation. All four genuine Gameplay handoffs remain open; broader Unit 1B/corpus remains paused.
 
 The caller also closes its required Game Design gameplay-rule source owner: fresh Draft enrollment retains an explicit empty inventory, coordinated writes preserve ordered rule revisions and exact owner results, and synchronized captures retain inherited rule provenance. The canonical rule grammar remains in the shared `GameplayRuleSource`; current V1005 storage guards remain intact. Focused SQL proof covers hidden staging and exact replay, stale epochs, inherited provenance with explicit deletion, and rollback. These controlled owner cases do not prove an immutable production-selected release.
+
+### Synchronized Draft visibility proof
+
+The existing Common visibility-evidence test retains the complete World and Entity APPLIED result vector, verifies defensive World result bytes and refuses unknown owner status, a substituted affected scope, a non-synchronized workflow state or a changed full-input fence digest. The existing arbitrary-precision exact expected-plus-one counter case remains intact.
+
+The focused visibility and Draft-binding owner classes freshly pass ten cases with zero failures, errors or skips. Test Checkstyle and SpotBugs pass, canonical formatting passes and the final style checks are up to date. This is structural evidence over controlled result vectors; it does not execute a coordinator, SQL owner or authenticated transport, and it supplies no creator, issuer, currentness, publication, activation or genuine handoff authority.
 
 ### Account terminal-settlement continuation
 
@@ -279,6 +311,14 @@ Design-time revoke is explicit through `RevokePluginVersion`. Upload verificatio
 ### World Design Authoring Handoff
 
 Game Design owns revision history, commits, version state, and publish orchestration; World Management owns authoritative Draft and Published world template rows. The `SaveRevision` contract carries typed `worldDesignMutation` payloads, including `WORLD_GENERATION_SUBTREE`, through the canonical World Management API, but the registered WMS handler currently fails closed before applying them. No complete caller path applies the change through this RPC; the owner-local mutation algorithm remains present but is not reached through registered ingress. The design contract permits only Draft version writes, while the current registered seam rejects all requests pending complete caller/tenant authorization and owner publication proof. Publication freeze and terminal handoff are target-only owner operations; their exact fields and current absent implementation/proof are maintained by the [World Management owner contract](../../architecture/microservices/world-management-service/api-contracts.md#publication-freeze-and-terminal-handoff-target-state), rather than repeated in this tracker.
+
+### Legacy gameplay-rule write exclusion
+
+The legacy revision service rejects `GAMEPLAY_RULE` before any Game, Version or revision repository access and before the optional World client call. Rule authoring retains its existing coordinated source boundary; the guard enables no new authoring route, registration or source authority.
+
+Both restored refusal vectors reproduce the old source defect with controlled collaborators: an ordinary request is accepted by the mocked revision save, while the variant carrying a World mutation first reads owner mocks and then fails the later World-kind check. Neither old case demonstrates an actual SQL or remote World mutation. The restored donor guard freshly passes all fourteen owning service cases with zero failures, errors or skips, including existing ordinary, command and World-call behavior. Affected Main and Test static analysis, canonical formatting and style checks pass at the same source.
+
+This is service-level mock proof. It does not establish authenticated creator access, Account hosted-terms/currentness protection, coordinated gameplay-rule production, an immutable release or a genuine Gameplay handoff. The separate source-owner and publication holds remain unchanged.
 
 ### Validation and Proof
 

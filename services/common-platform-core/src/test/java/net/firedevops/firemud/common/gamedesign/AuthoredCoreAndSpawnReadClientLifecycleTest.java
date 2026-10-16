@@ -21,14 +21,26 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import net.firedevops.firemud.common.account.StartSessionRedeemedOperationProjectionClient;
+import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationHistoricalReadClient;
+import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionAcquisitionClient;
+import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionActivationProtectionSettlementClient;
+import net.firedevops.firemud.common.account.startsession.GrpcAccountStartSessionWorldParticipationSettlementClient;
+import net.firedevops.firemud.common.authoring.WorldAuthoredVersionIdentityClient;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
+import net.firedevops.firemud.common.gamesession.GrpcOriginalStartSessionCurrentAttemptClient;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import net.firedevops.firemud.common.publication.WorldSelectedDraftPublicationFreezeClient;
 import net.firedevops.firemud.common.publication.WorldSelectedPublicationArtifactInventoryClient;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceClient;
+import net.firedevops.firemud.common.tenant.WorldAuthoredSourceIntakeClient;
+import net.firedevops.firemud.common.world.GrpcWorldOriginalStartSessionActivationTerminalReadClient;
+import net.firedevops.firemud.common.world.GrpcWorldOriginalStartSessionProtectedActivationClient;
 import net.firedevops.firemud.common.world.WorldPublishedSpawnRequirementsClient;
+import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminalReadClient;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
@@ -37,9 +49,10 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 /**
- * Real file-watcher lifecycle proof with mocked channels, not a TLS handshake. The controlled
- * self-signed Entity certificate satisfies only the spawn client's local constructor URI check; key
- * and CA files are readable placeholders, never production credentials.
+ * Real file-watcher lifecycle proof for authored-source, publication and StartSession clients with
+ * mocked channels, not a TLS handshake. The controlled self-signed Entity certificate satisfies
+ * only the spawn client's local constructor URI check; key and CA files are readable placeholders,
+ * never production credentials.
  */
 class AuthoredCoreAndSpawnReadClientLifecycleTest {
   private static final String TLS_RELOAD_PROPERTY = "firemud.grpc.tls-reload.enabled";
@@ -180,7 +193,22 @@ class AuthoredCoreAndSpawnReadClientLifecycleTest {
     AUTHORED_CORE,
     SPAWN_REQUIREMENTS,
     WORLD_SELECTED_FREEZE,
-    WORLD_SELECTED_INVENTORY;
+    WORLD_SELECTED_INVENTORY,
+    STARTSESSIONREDEEMEDOPERATIONPROJECTION,
+    ACCOUNTSTARTSESSIONWORLDPARTICIPATIONHISTORICALREAD,
+    GRPCACCOUNTSTARTSESSIONACTIVATIONPROTECTIONACQUISITION,
+    GRPCACCOUNTSTARTSESSIONACTIVATIONPROTECTIONSETTLEMENT,
+    GRPCACCOUNTSTARTSESSIONWORLDPARTICIPATIONSETTLEMENT,
+    WORLDAUTHOREDVERSIONIDENTITY,
+    AUTHOREDWORLDVERSIONSTATE,
+    STARTSESSIONLAUNCHDESCRIPTORREAD,
+    STARTSESSIONTEMPLATEASSOCIATIONREAD,
+    GRPCORIGINALSTARTSESSIONCURRENTATTEMPT,
+    AUTHOREDWORLDSOURCE,
+    WORLDAUTHOREDSOURCEINTAKE,
+    GRPCWORLDORIGINALSTARTSESSIONACTIVATIONTERMINALREAD,
+    GRPCWORLDORIGINALSTARTSESSIONPROTECTEDACTIVATION,
+    WORLDSTARTSESSIONEXECUTIONTERMINALREAD;
 
     ClientHandle create(
         ServiceEndpointsProperties endpoints,
@@ -203,6 +231,82 @@ class AuthoredCoreAndSpawnReadClientLifecycleTest {
         case WORLD_SELECTED_INVENTORY -> {
           var client =
               new WorldSelectedPublicationArtifactInventoryClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case STARTSESSIONREDEEMEDOPERATIONPROJECTION -> {
+          var client =
+              new StartSessionRedeemedOperationProjectionClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case ACCOUNTSTARTSESSIONWORLDPARTICIPATIONHISTORICALREAD -> {
+          var client =
+              new AccountStartSessionWorldParticipationHistoricalReadClient(
+                  endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GRPCACCOUNTSTARTSESSIONACTIVATIONPROTECTIONACQUISITION -> {
+          var client =
+              new GrpcAccountStartSessionActivationProtectionAcquisitionClient(
+                  endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GRPCACCOUNTSTARTSESSIONACTIVATIONPROTECTIONSETTLEMENT -> {
+          var client =
+              new GrpcAccountStartSessionActivationProtectionSettlementClient(
+                  endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GRPCACCOUNTSTARTSESSIONWORLDPARTICIPATIONSETTLEMENT -> {
+          var client =
+              new GrpcAccountStartSessionWorldParticipationSettlementClient(
+                  endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case WORLDAUTHOREDVERSIONIDENTITY -> {
+          var client = new WorldAuthoredVersionIdentityClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case AUTHOREDWORLDVERSIONSTATE -> {
+          var client = new AuthoredWorldVersionStateClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case STARTSESSIONLAUNCHDESCRIPTORREAD -> {
+          var client = new StartSessionLaunchDescriptorReadClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case STARTSESSIONTEMPLATEASSOCIATIONREAD -> {
+          var client =
+              new StartSessionTemplateAssociationReadClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GRPCORIGINALSTARTSESSIONCURRENTATTEMPT -> {
+          var client =
+              new GrpcOriginalStartSessionCurrentAttemptClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case AUTHOREDWORLDSOURCE -> {
+          var client = new AuthoredWorldSourceClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case WORLDAUTHOREDSOURCEINTAKE -> {
+          var client = new WorldAuthoredSourceIntakeClient(endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GRPCWORLDORIGINALSTARTSESSIONACTIVATIONTERMINALREAD -> {
+          var client =
+              new GrpcWorldOriginalStartSessionActivationTerminalReadClient(
+                  endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case GRPCWORLDORIGINALSTARTSESSIONPROTECTEDACTIVATION -> {
+          var client =
+              new GrpcWorldOriginalStartSessionProtectedActivationClient(
+                  endpoints, tls, factory, "test");
+          yield new ClientHandle(client, client::init);
+        }
+        case WORLDSTARTSESSIONEXECUTIONTERMINALREAD -> {
+          var client =
+              new WorldStartSessionExecutionTerminalReadClient(endpoints, tls, factory, "test");
           yield new ClientHandle(client, client::init);
         }
       };
