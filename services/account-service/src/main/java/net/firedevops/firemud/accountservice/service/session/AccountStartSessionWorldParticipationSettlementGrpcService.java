@@ -7,6 +7,7 @@ import java.util.Objects;
 import net.firedevops.firemud.account.v1.AccountStartSessionWorldParticipationSettlementServiceGrpc;
 import net.firedevops.firemud.account.v1.SettleOriginalStartSessionWorldParticipationRequest;
 import net.firedevops.firemud.account.v1.SettleOriginalStartSessionWorldParticipationResponse;
+import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository.RetainedEvidenceException;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationSettlementEvidence;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationSettlementGrpcCodec;
 import net.firedevops.firemud.common.account.startsession.AccountStartSessionWorldParticipationSettlementInput;
@@ -99,6 +100,8 @@ public final class AccountStartSessionWorldParticipationSettlementGrpcService
       }
       observer.onError(Status.fromCode(code).asRuntimeException());
     } catch (IllegalArgumentException invalidEvidence) {
+      observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
+    } catch (RetainedEvidenceException invalidRetainedEvidence) {
       observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
     } catch (RuntimeException unavailable) {
       observer.onError(Status.UNAVAILABLE.asRuntimeException());
