@@ -6,6 +6,20 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Template create and tenant-qualified updates
+
+The existing create service rejects a caller-supplied template ID before mapping or repository access. The repository updates only the exact tenant and template ID, never writes a replacement tenant binding and requires exactly one affected row before its tenant-qualified readback. No new public update API, migration, registration or hosted-content authority is introduced.
+
+Fresh old-code proof reproduces both the service accepting a supplied create ID and an actual PostgreSQL row changing from one tenant to another, including its row version. The corrected source freshly passes three service units and one native PostgreSQL case with zero failures, errors or skips; the native case preserves both complete template rows and row versions on foreign or missing identity and permits a normal same-tenant update. The controlled pre-phase fixture uses current default migrations and does not rely on the later reference-phase guard to refuse the mutation. Affected Main, Test and Integration static checks, canonical formatting and style pass. The exact run-owned PostgreSQL container is passively captured and independently absent after teardown.
+
+These are mocked service-collaborator and direct repository SQL checks. They do not execute the REST or authenticated creator flow, establish Account hosted-terms/currentness authority, enable publication or complete a genuine Gameplay handoff. The existing external provisioning hold remains in [Game Templates](../../architecture/microservices/game-design-service/game-templates.md#creating-templates).
+
+### Retained release byte and participant proof
+
+The current Common owner test preserves the historical schema-1 release attestation's fixed canonical digest and domain, alongside the existing exact stored readback and selector non-promotion checks. The selected-full schema-4 case independently refuses each World, Entity, Automation and Game Design participant when that owner alone supplies its retained older digest schema; the complete current vector remains `4/3/1/6/2`.
+
+All eight focused owner cases freshly pass with zero failures, errors or skips. The affected test static analysis, canonical formatting and style checks pass at the same test source. These are structural known-answer and refusal checks with stipulated values; they do not execute owner SQL, authenticate source provenance, produce a release, enable publication or complete a genuine Gameplay handoff. Historical byte retention does not widen an older profile's supported consumers or grant selected-full authority.
+
 ### Selected template publication and original launch reads
 
 The prepared source adds owner-local Template configuration genesis, synchronized revision/application, selected source capture and normalized tenant reference-phase owners over the already guarded tables. `SelectedDraftPublicationOwner` retains the exact selection, pending attempt, complete source capture and immutable template/World relation in one caller-owned writable transaction; existing operation bytes are never upgraded and old descriptor or reference provenance is not backfilled. The original StartSession template-association read authenticates Game Session and independently verifies Account’s exact redeemed operation before its read-only snapshot. It accepts only current selector-bound release-v2 evidence for the configured path and refuses older non-selector releases rather than fabricating later bundles. These components are unregistered and add no migration or runtime enabling flag.
