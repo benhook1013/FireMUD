@@ -196,6 +196,52 @@ class WorldStartSessionExecutionTerminalReadGrpcServiceTest {
   }
 
   @Test
+  void mapsHistoricalOwnerRpcStatusesWithoutHidingRetryableFailures() {
+    var repository = mock(WorldCanonicalInstancePreparationRepository.class);
+    for (var mapping :
+        Map.of(
+                Status.Code.RESOURCE_EXHAUSTED,
+                Status.Code.UNAVAILABLE,
+                Status.Code.DEADLINE_EXCEEDED,
+                Status.Code.UNAVAILABLE,
+                Status.Code.PERMISSION_DENIED,
+                Status.Code.PERMISSION_DENIED,
+                Status.Code.UNAUTHENTICATED,
+                Status.Code.PERMISSION_DENIED,
+                Status.Code.INVALID_ARGUMENT,
+                Status.Code.INVALID_ARGUMENT,
+                Status.Code.FAILED_PRECONDITION,
+                Status.Code.FAILED_PRECONDITION,
+                Status.Code.NOT_FOUND,
+                Status.Code.FAILED_PRECONDITION,
+                Status.Code.ALREADY_EXISTS,
+                Status.Code.FAILED_PRECONDITION,
+                Status.Code.ABORTED,
+                Status.Code.FAILED_PRECONDITION,
+                Status.Code.UNKNOWN,
+                Status.Code.INTERNAL)
+            .entrySet()) {
+      var grpc =
+          new WorldStartSessionExecutionTerminalReadGrpcService(
+              service(
+                  repository,
+                  ignored -> {
+                    throw Status.fromCode(mapping.getKey()).asRuntimeException();
+                  }),
+              NAMESPACE);
+      Collector collector = new Collector();
+      callAs(
+          grpc,
+          peer("account-service", NAMESPACE),
+          WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request()),
+          collector);
+
+      assertCode(collector, mapping.getValue());
+    }
+    verifyNoInteractions(repository);
+  }
+
+  @Test
   void returnsOnlyExactCommittedOrAbortedTerminalAfterSyntheticOriginalVerification() {
     for (ExecutionState state : List.of(ExecutionState.COMMITTED, ExecutionState.ABORTED)) {
       var repository = mock(WorldCanonicalInstancePreparationRepository.class);

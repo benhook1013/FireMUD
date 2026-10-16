@@ -27,8 +27,6 @@ public final class CanonicalWorldInstancePreparationClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public CanonicalWorldInstancePreparationClient(
       ServiceEndpointsProperties endpoints,
@@ -48,17 +46,9 @@ public final class CanonicalWorldInstancePreparationClient
 
   /** Initializes only when an owning service explicitly starts this client. */
   public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException("Canonical World preparation client is closed");
-    }
-    if (initialized) {
-      return;
-    }
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException("Canonical World preparation client has no gRPC stub");
-    }
-    initialized = true;
+    initOnce(
+        "Canonical World preparation client is closed",
+        "Canonical World preparation client has no gRPC stub");
   }
 
   /** Sends the exact owner operation outside SQL and validates the full request/readback echo. */
@@ -117,24 +107,11 @@ public final class CanonicalWorldInstancePreparationClient
         .withCompression("gzip");
   }
 
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
   private WorldCanonicalInstancePreparationServiceGrpc
           .WorldCanonicalInstancePreparationServiceBlockingStub
       requireStub() {
-    var currentStub = stub();
-    if (closed || !initialized || currentStub == null) {
-      throw new IllegalStateException(
-          "Canonical World preparation client is not initialized and available");
-    }
-    return currentStub;
+    return requireInitializedStub(
+        "Canonical World preparation client is not initialized and available");
   }
 
   private static void requireSameSelector(
