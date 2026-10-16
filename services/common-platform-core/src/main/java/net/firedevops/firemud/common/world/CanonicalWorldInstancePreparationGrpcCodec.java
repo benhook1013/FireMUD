@@ -200,7 +200,8 @@ public final class CanonicalWorldInstancePreparationGrpcCodec {
         long gameSessionOwnerFence) {
       Objects.requireNonNull(originalPostAuthorizationTuple, "originalPostAuthorizationTuple");
       if (originalPostAuthorizationTuple.length == 0
-          || originalPostAuthorizationTuple.length > 262_144) {
+          || originalPostAuthorizationTuple.length
+              > StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES) {
         throw new IllegalArgumentException("Original StartSession tuple is empty or oversized");
       }
       var decoded =

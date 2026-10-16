@@ -137,6 +137,22 @@ class AccountStartSessionWorldParticipationSettlementGrpcCodecTest {
                 AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequestWireBytes(
                     noncanonicalWire, NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
+
+    byte[] outOfOrderWire =
+        concatenate(
+            request.toBuilder()
+                .clear()
+                .addAllAccountWorldParticipationFence(
+                    request.getAccountWorldParticipationFenceList())
+                .build()
+                .toByteArray(),
+            request.toBuilder().clearAccountWorldParticipationFence().build().toByteArray());
+    assertThatThrownBy(
+            () ->
+                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromRequestWireBytes(
+                    outOfOrderWire, NAMESPACE))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("not canonical");
   }
 
   @Test
@@ -217,6 +233,32 @@ class AccountStartSessionWorldParticipationSettlementGrpcCodecTest {
                         .setTerminalEvidenceCanonicalBytes(0, ByteString.copyFromUtf8("{}"))
                         .build()))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void responseWireBytesMustUseCanonicalFieldOrder() {
+    var input = input();
+    var response =
+        response(
+            input,
+            terminal(NAMESPACE, PARTICIPATION_ID, 31L, Outcome.ABORTED),
+            "2026-10-11T00:00:00.000001Z");
+    byte[] outOfOrderWire =
+        concatenate(
+            response.toBuilder()
+                .clear()
+                .addAllTerminalEvidenceCanonicalBytes(
+                    response.getTerminalEvidenceCanonicalBytesList())
+                .build()
+                .toByteArray(),
+            response.toBuilder().clearTerminalEvidenceCanonicalBytes().build().toByteArray());
+
+    assertThatThrownBy(
+            () ->
+                AccountStartSessionWorldParticipationSettlementGrpcCodec.fromResponseWireBytes(
+                    input, outOfOrderWire))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("not canonical");
   }
 
   @Test
@@ -406,5 +448,11 @@ class AccountStartSessionWorldParticipationSettlementGrpcCodecTest {
 
   private static UUID uuid(String value) {
     return UUID.fromString(value);
+  }
+
+  private static byte[] concatenate(byte[] first, byte[] second) {
+    byte[] result = java.util.Arrays.copyOf(first, first.length + second.length);
+    System.arraycopy(second, 0, result, first.length, second.length);
+    return result;
   }
 }
