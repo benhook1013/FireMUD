@@ -126,6 +126,17 @@ class AccountSelectedPublicationSettlementGrpcCodecTest {
     byte[] wrongTerminal = receipt(operation, changedTerminal, null, null, null, null);
     byte[] wrongWorldTerminal =
         receipt(operation, terminal, null, null, null, sameOperationOtherOutcome.canonicalBytes());
+    byte[] missingWorldTerminal = receipt(operation, terminal, null, null, null, new byte[0]);
+    byte[] noncanonicalWorldTerminal =
+        receipt(
+            operation,
+            terminal,
+            null,
+            null,
+            null,
+            ByteString.copyFrom(terminal.canonicalBytes())
+                .concat(ByteString.copyFrom(new byte[] {0}))
+                .toByteArray());
     for (var invalid :
         List.of(
             response.toBuilder().setUnknownFields(unknown()).build(),
@@ -142,6 +153,12 @@ class AccountSelectedPublicationSettlementGrpcCodecTest {
             response.toBuilder().setSettlementReceipt(ByteString.copyFrom(wrongTerminal)).build(),
             response.toBuilder()
                 .setSettlementReceipt(ByteString.copyFrom(wrongWorldTerminal))
+                .build(),
+            response.toBuilder()
+                .setSettlementReceipt(ByteString.copyFrom(missingWorldTerminal))
+                .build(),
+            response.toBuilder()
+                .setSettlementReceipt(ByteString.copyFrom(noncanonicalWorldTerminal))
                 .build(),
             response.toBuilder()
                 .setSettlementReceipt(

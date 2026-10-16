@@ -197,18 +197,19 @@ public final class AccountPublicationAuthorizationRepository {
     requireTransaction();
     Objects.requireNonNull(operation, "operation");
     Objects.requireNonNull(gameDesign, "gameDesign");
-    var world = GameDesignPublicationTerminalEvidence.fromStored(worldTerminalEvidence);
+    byte[] retainedWorldTerminal =
+        Objects.requireNonNull(worldTerminalEvidence, "worldTerminalEvidence").clone();
     String expectedPhase =
         gameDesign.outcome() == GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED
             ? "PUBLISHED"
             : "ABORTED";
     if (!expectedPhase.equals(worldOutcome)
         || !Arrays.equals(operation.canonicalBytes(), gameDesign.operationBytes())
-        || !Arrays.equals(gameDesign.canonicalBytes(), world.canonicalBytes())) {
+        || !Arrays.equals(gameDesign.canonicalBytes(), retainedWorldTerminal)) {
       throw new IllegalArgumentException("Exact publication owner outcomes disagree");
     }
     readOriginal(operation.account());
-    byte[] receipt = settlementReceipt(operation, gameDesign, worldOutcome, worldTerminalEvidence);
+    byte[] receipt = settlementReceipt(operation, gameDesign, worldOutcome, retainedWorldTerminal);
     Record prior =
         dsl.fetchOne(
             "SELECT receipt FROM account_selected_publication_settlements WHERE operation_id = ?",
@@ -231,7 +232,7 @@ public final class AccountPublicationAuthorizationRepository {
         gameDesign.outcome().name(),
         gameDesign.canonicalBytes(),
         worldOutcome,
-        worldTerminalEvidence,
+        retainedWorldTerminal,
         receipt);
     Record retained =
         dsl.fetchOne(

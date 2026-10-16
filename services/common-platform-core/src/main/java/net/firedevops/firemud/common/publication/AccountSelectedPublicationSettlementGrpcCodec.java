@@ -122,7 +122,6 @@ public final class AccountSelectedPublicationSettlementGrpcCodec {
     try {
       operation = GameDesignPublicationOperationBinding.fromStored(request.originalOperation());
       terminal = GameDesignPublicationTerminalEvidence.fromStored(gameDesignTerminalBytes);
-      GameDesignPublicationTerminalEvidence.fromStored(worldTerminalBytes);
     } catch (RuntimeException malformed) {
       throw new IllegalArgumentException(
           "Account receipt lacks complete canonical publication evidence", malformed);
