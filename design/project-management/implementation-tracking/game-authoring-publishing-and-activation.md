@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Immutable Draft fence and closed carrier proof
+
+The restored dedicated Draft authorization-fence codec test retains the fixed v1 producer bytes and digest, v2 required-owner mapping and ordering, exact owner-readback bytes, and malformed framing, identity, counter, digest and source-vector rejection. These local byte-format cases supplement the existing transport tests. The World terminal codec also rejects string or unsupported closure schemas, opaque inventories, negative counts and unsupported entry members on both original and applied closure paths, plus null and opaque whole closures. The StartSession authority bundle rejects an unsupported bundle version and an issuance fence beyond the supported signed range while preserving its distinct projection and issuance counters.
+
+All thirty-seven selected structural tests freshly pass in three XML suites with zero failures, errors or skips: twelve Draft fence codec cases, seventeen World terminal codec cases and eight authority bundle cases. Canonical formatting, style, Test Checkstyle and SpotBugs pass. These tests use locally constructed carrier bytes; they do not establish an authenticated owner, durable source application, Account currentness, a genuine immutable release, live settlement, activation or a Gameplay handoff. No production code, wire contract, service registration or installed migration is changed.
+
 ### Retained publication diagnostics migration proof
 
 The existing launch-descriptor native test seeds explicitly historical, unbound Version, release, descriptor, attempt and artifact rows before canonical identity enforcement using the current V34.1 predecessor. After V38, the V39 text widening and the forward migrations through the current default preserve every prior column and PostgreSQL row version in those five rows, together with all prior Flyway history rows. Long UTF-8 failure diagnostics round-trip after widening and remain intact after the forward migrations; a later terminal-attempt rewrite refuses without changing the retained rows or inventing a publication operation.
