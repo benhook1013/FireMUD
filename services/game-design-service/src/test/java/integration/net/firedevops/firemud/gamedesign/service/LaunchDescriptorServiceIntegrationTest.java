@@ -528,6 +528,241 @@ class LaunchDescriptorServiceIntegrationTest {
   }
 
   @Test
+  void v39MigrationPreservesRetainedPublicationEvidenceAndStoresLongDiagnostics() {
+    String schema = "game_design_publication_text_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = isolatedDataSource(schema);
+    migrate(dataSource, schema, MigrationVersion.fromVersion("34.1"));
+    DSLContext isolatedDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+
+    String tenantId = privateTenantKey();
+    String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+    // Synthetic pre-identity rows seed migration preservation only; no source identity is inferred.
+    long versionId =
+        requiredId(
+            isolatedDsl
+                .resultQuery(
+                    "INSERT INTO version "
+                        + "(tenant_id, version_number, version_state, version_state_epoch) "
+                        + "VALUES (?, 1, 'PUBLISHED', 7) RETURNING id",
+                    tenantId)
+                .fetchOne(0, Long.class),
+            "retained Version");
+    long templateId =
+        requiredId(
+            isolatedDsl
+                .resultQuery(
+                    "INSERT INTO game_templates (tenant_id, name, config) "
+                        + "VALUES (?, ?, '{}'::jsonb) RETURNING id",
+                    tenantId,
+                    "Retained Publication Template " + suffix)
+                .fetchOne(0, Long.class),
+            "retained Game Template");
+    String generationRevision = "retained-generation-rév-🧭-" + suffix;
+    long bundleId =
+        requiredId(
+            isolatedDsl
+                .resultQuery(
+                    "INSERT INTO published_release_bundle "
+                        + "(tenant_id, version_id, version_number, attestation_schema_version, "
+                        + "publish_workflow_id, manifest_hash, required_manifest_asset_keys_json, "
+                        + "participant_digests_json, generation_config_revision) "
+                        + "VALUES (?, ?, 1, 'v1', ?, ?, '[]', '[]', ?) RETURNING id",
+                    tenantId,
+                    versionId,
+                    "v38-retained-bundle-" + suffix,
+                    "sha256:" + "f".repeat(64),
+                    generationRevision)
+                .fetchOne(0, Long.class),
+            "retained release bundle");
+    long descriptorId =
+        requiredId(
+            isolatedDsl
+                .resultQuery(
+                    "INSERT INTO launch_descriptor "
+                        + "(launch_descriptor_id, tenant_id, game_template_id, "
+                        + "control_plane_request_id, request_hash, version_id, runtime_flags_json, "
+                        + "generation_config_revision, version_state_epoch, release_bundle_id, "
+                        + "published_release_bundle_ref) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, '{}', ?, 7, ?, ?) RETURNING id",
+                    "ld-v38-retained-" + suffix,
+                    tenantId,
+                    templateId,
+                    "v38-retained-request-" + suffix,
+                    "retained-request-hash-" + suffix,
+                    versionId,
+                    generationRevision,
+                    bundleId,
+                    "retained-release-ref-" + suffix)
+                .fetchOne(0, Long.class),
+            "retained launch descriptor");
+
+    migrate(dataSource, schema, MigrationVersion.fromVersion("38"));
+    String retainedFailure = "retained-failure-雪-" + suffix;
+    String retainedArtifactError = "retained-artifact-error-🧭-" + suffix;
+    String attemptWorkflowId = "v38-retained-attempt-" + suffix;
+    long attemptId =
+        requiredId(
+            isolatedDsl
+                .resultQuery(
+                    "INSERT INTO publish_attempt "
+                        + "(tenant_id, publish_workflow_id, publish_type, status, version_id, "
+                        + "version_number, failure_code, failure_message, completed_at) "
+                        + "VALUES (?, ?, 'FULL_VERSION', 'FAILED', ?, 1, 'PUBLISH_FAILED', ?, "
+                        + "TIMESTAMP '2026-09-30 12:34:56') RETURNING id",
+                    tenantId,
+                    attemptWorkflowId,
+                    versionId,
+                    retainedFailure)
+                .fetchOne(0, Long.class),
+            "retained publish attempt");
+    long artifactId =
+        requiredId(
+            isolatedDsl
+                .resultQuery(
+                    "INSERT INTO version_asset_artifact "
+                        + "(tenant_id, version_id, artifact_state, state_epoch, "
+                        + "exported_version_number, manifest_hash, last_workflow_id, "
+                        + "last_error_code, last_error_message) "
+                        + "VALUES (?, ?, 'FAILED', 11, 1, ?, ?, 'PUBLISH_FAILED', ?) RETURNING id",
+                    tenantId,
+                    versionId,
+                    "sha256:" + "a".repeat(64),
+                    "v38-retained-artifact-" + suffix,
+                    retainedArtifactError)
+                .fetchOne(0, Long.class),
+            "retained version asset artifact");
+
+    Map<String, Map<String, Object>> retainedRows =
+        publicationEvidenceRows(
+            isolatedDsl, versionId, bundleId, descriptorId, attemptId, artifactId);
+    var retainedHistory = migrationHistoryRows(isolatedDsl);
+    migrate(dataSource, schema, MigrationVersion.fromVersion("39"));
+    assertRetainedMigrationHistory(isolatedDsl, retainedHistory);
+    Map<String, Map<String, Object>> v39Rows =
+        publicationEvidenceRows(
+            isolatedDsl, versionId, bundleId, descriptorId, attemptId, artifactId);
+    assertThat(priorPublicationEvidenceColumns(v39Rows, retainedRows)).isEqualTo(retainedRows);
+    assertThat(
+            requiredSnapshot(retainedRows, "published_release_bundle")
+                .get("generation_config_revision"))
+        .isEqualTo(generationRevision);
+    assertThat(
+            requiredSnapshot(retainedRows, "launch_descriptor").get("generation_config_revision"))
+        .isEqualTo(generationRevision);
+    assertThat(requiredSnapshot(retainedRows, "publish_attempt").get("failure_message"))
+        .isEqualTo(retainedFailure);
+    assertThat(requiredSnapshot(retainedRows, "version_asset_artifact").get("last_error_message"))
+        .isEqualTo(retainedArtifactError);
+
+    String longFailure = "complete-failure-雪-" + "f".repeat(540);
+    String longArtifactError = "complete-artifact-error-🧭-" + "e".repeat(540);
+    isolatedDsl.execute(
+        "UPDATE publish_attempt SET failure_message = ? WHERE id = ?", longFailure, attemptId);
+    isolatedDsl.execute(
+        "UPDATE version_asset_artifact SET last_error_message = ? WHERE id = ?",
+        longArtifactError,
+        artifactId);
+    Map<String, Map<String, Object>> v39LongDiagnosticsRows =
+        publicationEvidenceRows(
+            isolatedDsl, versionId, bundleId, descriptorId, attemptId, artifactId);
+    assertThat(requiredSnapshot(v39LongDiagnosticsRows, "publish_attempt").get("failure_message"))
+        .isEqualTo(longFailure);
+    assertThat(
+            requiredSnapshot(v39LongDiagnosticsRows, "version_asset_artifact")
+                .get("last_error_message"))
+        .isEqualTo(longArtifactError);
+    assertThat(
+            requiredRow(
+                    isolatedDsl,
+                    "SELECT failure_message FROM publish_attempt WHERE id = ?",
+                    attemptId,
+                    "long publish-attempt failure readback")
+                .get("failure_message"))
+        .isEqualTo(longFailure);
+    assertThat(
+            requiredRow(
+                    isolatedDsl,
+                    "SELECT last_error_message FROM version_asset_artifact WHERE id = ?",
+                    artifactId,
+                    "long artifact-error readback")
+                .get("last_error_message"))
+        .isEqualTo(longArtifactError);
+    assertThat(
+            requiredRow(
+                isolatedDsl,
+                "SELECT status, version_number FROM publish_attempt WHERE id = ?",
+                attemptId,
+                "publish-attempt state readback"))
+        .containsEntry("status", "FAILED")
+        .containsEntry("version_number", 1);
+    assertThat(
+            requiredRow(
+                isolatedDsl,
+                "SELECT artifact_state, state_epoch FROM version_asset_artifact WHERE id = ?",
+                artifactId,
+                "artifact state readback"))
+        .containsEntry("artifact_state", "FAILED")
+        .containsEntry("state_epoch", 11L);
+
+    var v39History = migrationHistoryRows(isolatedDsl);
+    migrate(dataSource, schema, null);
+    assertRetainedMigrationHistory(isolatedDsl, v39History);
+    Map<String, Map<String, Object>> migratedRows =
+        publicationEvidenceRows(
+            isolatedDsl, versionId, bundleId, descriptorId, attemptId, artifactId);
+    assertThat(priorPublicationEvidenceColumns(migratedRows, v39LongDiagnosticsRows))
+        .isEqualTo(v39LongDiagnosticsRows);
+    assertThat(requiredSnapshot(migratedRows, "publish_attempt").get("revision")).isEqualTo(1L);
+    assertThat(
+            requiredSnapshot(migratedRows, "published_release_bundle")
+                .get("world_published_start_location_evidence_json"))
+        .isNull();
+    var publicationOperationCount =
+        isolatedDsl.fetchOne(
+            "SELECT count(*) FROM game_design_publication_operation WHERE publish_workflow_id = ?",
+            attemptWorkflowId);
+    if (publicationOperationCount == null) {
+      throw new IllegalStateException("Publication operation count query returned no row");
+    }
+    Long publicationOperationCountValue = publicationOperationCount.get(0, Long.class);
+    if (publicationOperationCountValue == null) {
+      throw new IllegalStateException("Publication operation count query returned no count");
+    }
+    assertThat(publicationOperationCountValue).isZero();
+    assertThat(requiredSnapshot(migratedRows, "publish_attempt").get("failure_message"))
+        .isEqualTo(longFailure);
+    assertThat(requiredSnapshot(migratedRows, "version_asset_artifact").get("last_error_message"))
+        .isEqualTo(longArtifactError);
+
+    assertThatThrownBy(
+            () ->
+                isolatedDsl.execute(
+                    "UPDATE publish_attempt SET failure_message = ? WHERE id = ?",
+                    "forbidden-terminal-rewrite-" + suffix,
+                    attemptId))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class)
+        .hasStackTraceContaining("publish attempt is stale or terminal");
+    Map<String, Map<String, Object>> afterRejectedTerminalRewrite =
+        publicationEvidenceRows(
+            isolatedDsl, versionId, bundleId, descriptorId, attemptId, artifactId);
+    assertThat(afterRejectedTerminalRewrite).isEqualTo(migratedRows);
+    var publicationOperationCountAfterRejectedRewrite =
+        isolatedDsl.fetchOne(
+            "SELECT count(*) FROM game_design_publication_operation WHERE publish_workflow_id = ?",
+            attemptWorkflowId);
+    if (publicationOperationCountAfterRejectedRewrite == null) {
+      throw new IllegalStateException("Publication operation count query returned no row");
+    }
+    Long publicationOperationCountAfterRejectedRewriteValue =
+        publicationOperationCountAfterRejectedRewrite.get(0, Long.class);
+    if (publicationOperationCountAfterRejectedRewriteValue == null) {
+      throw new IllegalStateException("Publication operation count query returned no count");
+    }
+    assertThat(publicationOperationCountAfterRejectedRewriteValue).isZero();
+  }
+
+  @Test
   void v35AndV36MigrationsPreserveRetainedBundleAndUnboundDescriptorWithoutBackfill() {
     String schema = "game_design_launch_history_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = isolatedDataSource(schema);
@@ -1093,6 +1328,97 @@ class LaunchDescriptorServiceIntegrationTest {
       throw new IllegalStateException("Retained V34 release bundle fixture is missing");
     }
     return record.intoMap();
+  }
+
+  private Map<String, Map<String, Object>> publicationEvidenceRows(
+      DSLContext isolatedDsl,
+      long versionId,
+      long bundleId,
+      long descriptorId,
+      long attemptId,
+      long artifactId) {
+    return Map.of(
+        "version",
+        requiredRow(
+            isolatedDsl,
+            "SELECT *, xmin::text AS xmin FROM version WHERE id = ?",
+            versionId,
+            "Version"),
+        "published_release_bundle",
+        requiredRow(
+            isolatedDsl,
+            "SELECT *, xmin::text AS xmin FROM published_release_bundle WHERE id = ?",
+            bundleId,
+            "published release bundle"),
+        "launch_descriptor",
+        requiredRow(
+            isolatedDsl,
+            "SELECT *, xmin::text AS xmin FROM launch_descriptor WHERE id = ?",
+            descriptorId,
+            "launch descriptor"),
+        "publish_attempt",
+        requiredRow(
+            isolatedDsl,
+            "SELECT *, xmin::text AS xmin FROM publish_attempt WHERE id = ?",
+            attemptId,
+            "publish attempt"),
+        "version_asset_artifact",
+        requiredRow(
+            isolatedDsl,
+            "SELECT *, xmin::text AS xmin FROM version_asset_artifact WHERE id = ?",
+            artifactId,
+            "version asset artifact"));
+  }
+
+  // Compare every column that existed before the migration, including xmin. New columns
+  // remain separate facts and are never interpreted as manufactured historical authority.
+  private Map<String, Map<String, Object>> priorPublicationEvidenceColumns(
+      Map<String, Map<String, Object>> snapshots, Map<String, Map<String, Object>> prior) {
+    Map<String, Map<String, Object>> projected = new java.util.LinkedHashMap<>();
+    prior.forEach(
+        (table, before) -> {
+          var after = requiredSnapshot(snapshots, table);
+          assertThat(after.keySet()).containsAll(before.keySet());
+          Map<String, Object> columns = new java.util.LinkedHashMap<>();
+          before.keySet().forEach(column -> columns.put(column, after.get(column)));
+          projected.put(table, columns);
+        });
+    return projected;
+  }
+
+  private java.util.List<Map<String, Object>> migrationHistoryRows(DSLContext sql) {
+    return sql.fetch("SELECT * FROM " + FLYWAY_TABLE + " ORDER BY installed_rank").intoMaps();
+  }
+
+  private void assertRetainedMigrationHistory(
+      DSLContext sql, java.util.List<Map<String, Object>> prior) {
+    var current = migrationHistoryRows(sql);
+    assertThat(current).containsAll(prior);
+  }
+
+  private Map<String, Object> requiredRow(
+      DSLContext isolatedDsl, String query, long rowId, String description) {
+    var row = isolatedDsl.fetchOne(query, rowId);
+    if (row == null) {
+      throw new IllegalStateException(description + " readback is absent");
+    }
+    return row.intoMap();
+  }
+
+  private Map<String, Object> requiredSnapshot(
+      Map<String, Map<String, Object>> snapshots, String description) {
+    Map<String, Object> snapshot = snapshots.get(description);
+    if (snapshot == null) {
+      throw new IllegalStateException(description + " snapshot is absent");
+    }
+    return snapshot;
+  }
+
+  private long requiredId(Long id, String description) {
+    if (id == null) {
+      throw new IllegalStateException(description + " insert returned no identity");
+    }
+    return id;
   }
 
   private String privateTenantKey() {

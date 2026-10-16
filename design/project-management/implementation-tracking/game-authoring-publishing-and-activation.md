@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Retained publication diagnostics migration proof
+
+The existing launch-descriptor native test seeds explicitly historical, unbound Version, release, descriptor, attempt and artifact rows before canonical identity enforcement using the current V34.1 predecessor. After V38, the V39 text widening and the forward migrations through the current default preserve every prior column and PostgreSQL row version in those five rows, together with all prior Flyway history rows. Long UTF-8 failure diagnostics round-trip after widening and remain intact after the forward migrations; a later terminal-attempt rewrite refuses without changing the retained rows or inventing a publication operation.
+
+The single restored migration case freshly passes with zero failures, errors or skips. Canonical formatting, style, Integration Checkstyle and SpotBugs pass; the one passively identified PostgreSQL container is independently absent after completion. This is retained-data migration proof over synthetic historical rows. It does not establish an authenticated source, creator or issuer, currentness, a genuine immutable release, public publication enablement, activation or a Gameplay handoff; the other launch-descriptor cases retain their preceding attribution. No installed migration or production code is changed.
+
 ### Template create and tenant-qualified updates
 
 The existing create service rejects a caller-supplied template ID before mapping or repository access. The repository updates only the exact tenant and template ID, never writes a replacement tenant binding and requires exactly one affected row before its tenant-qualified readback. No new public update API, migration, registration or hosted-content authority is introduced.
