@@ -1014,7 +1014,9 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-cicd.md",
     [
-        "builds pull-request images locally and runs applicable full-stack smoke without a registry-write token",
+        "builds pull-request images locally and runs the explicit held-admission qualification without a registry-write token",
+        "This proves direct backend `LOGIN` -> `PLAY` -> `LOOK` and Gateway/Telnet fail-closed behavior",
+        "it does not establish successful public admission",
         "publish-pr-runtime-images.yml",
         "pr-merge-<merge SHA>",
         "never checks out or executes PR source",
