@@ -133,3 +133,8 @@ Entry format:
   - Reconsideration trigger: a subsequent canonical attempt completes with terminal capture, or bounded process evidence identifies why the previous owner ended.
 
 - `2026-10-16`: Qualify tenant mutation predicates before relying on filtered readback or later owner guards. The template repository's global-ID update could rewrite a retained row's tenant before returning it under the supplied tenant; a tenant-filtered readback did not protect the original row. Test controlled pre-phase rows as well as later guarded owners: the native counterexample changed the complete row and `xmin`, while the restored exact tenant predicate preserves both owner rows and their versions. Keep the create-only ID refusal before mapper/repository access, and separate this owner-local SQL proof from authenticated creator or hosted-content readiness.
+
+- `2026-10-16`: Derive focused Gradle selectors from declared Java packages
+  - Context: a Gameplay capture proof supplied `integration.net...` from the categorized source directory, while the actual class declared `net...`; Gradle executed no tests and failed discovery.
+  - Expected pattern: read the source package and class declaration before constructing `--tests`, and verify fresh testcase counts before crediting proof. A categorized source root is not necessarily part of the Java package. Archive completed full-suite reports before a filtered rerun replaces the task output.
+  - Recovery: the corrected declared-package selector executed all sixteen owning native cases successfully; the zero-test attempt remains a separate failed discovery attempt with no native proof credit.
