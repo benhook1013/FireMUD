@@ -991,8 +991,8 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    # Account, World, Game Session and Game Design proofs can run close to 20 minutes before Gradle post-job cleanup.
-    timeout-minutes: ${{ (matrix.module == 'account-service' || matrix.module == 'world-management-service' || matrix.module == 'game-session-service' || matrix.module == 'game-design-service') && 30 || 20 }}
+    # Account needs 35 minutes for full checks; World, Game Session and Game Design retain 30 minutes including post-job cleanup.
+    timeout-minutes: ${{ matrix.module == 'account-service' && 35 || (matrix.module == 'world-management-service' || matrix.module == 'game-session-service' || matrix.module == 'game-design-service') && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
