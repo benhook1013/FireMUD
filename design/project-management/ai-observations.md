@@ -165,3 +165,7 @@ Entry format:
 - 2026-10-17 — Repeated Hosted capture can reject a previously finalized provider comment.
   - Observation: Admission of #3231’s second Hosted review reported a nonblocking `predecessor_terminal_capture` warning for its already-finalized first review: `Hosted finding comment contains unmarked content after its final cr-comment:v1 marker`. The original seven findings, accepted-fix records and checkpoint 6214527024 had already been recorded; the next request posted successfully as trigger 6214841384. The exact trailing-content cause remains unverified.
   - Expected pattern: Preserve completed review evidence and surface the exact capture incompatibility without silently replacing counts or requiring a quota reset. Overseer received the retained diagnostic; Gameplay made no database or installed-runtime bypass.
+
+- 2026-10-17 — A validation allowance of NONE includes whitespace checks.
+  - Observation: A historical-test receiving helper ran `git diff --check` despite an explicit validation allowance of NONE. It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
+  - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
