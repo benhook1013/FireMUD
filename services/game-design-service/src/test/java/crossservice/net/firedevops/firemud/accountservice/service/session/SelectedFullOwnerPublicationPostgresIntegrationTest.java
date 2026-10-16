@@ -41,7 +41,6 @@ import net.firedevops.firemud.common.authoring.DraftCommitBinding.RevisionPayloa
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.entity.sourceintake.EntityEmptySelectedSourceIntakeReceipt;
-import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeSettlementEvidence;
 import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeOperation;
@@ -290,7 +289,15 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         new GameDesignSourceRepository(gds.dsl())
             .readSynchronized(draft.target(), commit.commitId())
             .orElseThrow();
+    assertThat(synchronizedSources.command().definitions()).isEmpty();
     var gameplaySnapshot = synchronizedSources.gameplayEvidence().orElseThrow();
+    assertThat(
+            gameplaySnapshot
+                .manifest()
+                .families()
+                .get(GameplayRuleManifest.Family.COMMANDS))
+        .extracting(GameplayRuleManifest.Definition::key)
+        .containsExactly("LOOK");
     var gameplaySource = new GameplayRuleSelectedSource(gameplaySnapshot.canonicalJson());
     var glAuthorization =
         new GameLogicIntakeAuthorizationBinding(
@@ -796,41 +803,56 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
 
     var revisions = new ArrayList<RevisionPayload>();
     var units = new ArrayList<AffectedUnit>();
-    String commandJson =
-        "{\"schemaVersion\":1,\"commandId\":\"LOOK\",\"semanticOwner\":\"WORLD\","
-            + "\"executionDiscipline\":\"DURABLE_GAMEPLAY\",\"stageRequirement\":\"GAMEPLAY\","
-            + "\"promptPolicy\":\"NEVER\",\"actionCategory\":\"GAMEPLAY\","
-            + "\"historyRecordable\":true,\"aliases\":[],\"actionTags\":[\"WORLD_BROWSE\"],"
-            + "\"effects\":[]}";
+    var selectedWorldAction =
+        new GameplayRuleManifest.Action(
+            "selected-world-look",
+            "Look",
+            List.of("selected-world-admission"),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of(),
+            List.of());
+    var selectedWorldCommand =
+        new GameplayRuleManifest.Command(
+            "LOOK",
+            "selected-world-look",
+            "WORLD",
+            GameplayRuleManifest.ExecutionDiscipline.DURABLE_GAMEPLAY,
+            GameplayRuleManifest.Stage.GAMEPLAY,
+            GameplayRuleManifest.PromptPolicy.NEVER,
+            GameplayRuleManifest.ActionCategory.GAMEPLAY,
+            true,
+            List.of(),
+            List.of(GameplayRuleManifest.ActionTag.WORLD_BROWSE),
+            List.of("selected-world-admission"));
     revisions.add(
         new RevisionPayload(
             "0",
             UUID.randomUUID(),
             Owner.GAME_DESIGN_CONTROL_PLANE,
-            CommandSource.upsertPayload(commandJson)));
+            GameplayRuleSource.upsertPayload(selectedWorldAction)));
     units.add(
         new AffectedUnit(
             Owner.GAME_DESIGN_CONTROL_PLANE,
-            CommandSource.SCOPE,
+            GameplayRuleSource.SCOPE,
             target.canonicalVersionId().toString(),
-            CommandSource.SCOPE,
-            CommandSource.SCOPE_ID,
+            GameplayRuleSource.SCOPE,
+            GameplayRuleSource.SCOPE_ID,
             "0"));
     revisions.add(
         new RevisionPayload(
             "1",
             UUID.randomUUID(),
             Owner.GAME_DESIGN_CONTROL_PLANE,
+            GameplayRuleSource.upsertPayload(selectedWorldCommand)));
+    revisions.add(
+        new RevisionPayload(
+            "2",
+            UUID.randomUUID(),
+            Owner.GAME_DESIGN_CONTROL_PLANE,
             GameplayRuleSource.upsertPayload(
                 new GameplayRuleManifest.AdmissionTag("selected-world-admission"))));
-    units.add(
-        new AffectedUnit(
-            Owner.GAME_DESIGN_CONTROL_PLANE,
-            GameplayRuleSource.SCOPE,
-            target.canonicalVersionId().toString(),
-            GameplayRuleSource.SCOPE,
-            "effective",
-            "0"));
     String policyPayload =
         "{\"revisionKind\":\"REALM_ENTRY_POLICY\",\"logicalRevisionId\":\"selected-public-realm\",\"policy\":{"
             + "\"schemaVersion\":1,\"worldSlug\":\"controlled-selected-world\",\"worldDisplayName\":\"World\","
