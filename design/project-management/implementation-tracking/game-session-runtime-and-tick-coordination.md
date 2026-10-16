@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for Game Session runtime and tick
 
 ## Current Status
 
+### Exact fresh-tenant receipt client validation
+
+At receiving HEAD `846933486cea8d626103c73f767f9c607530734c`, the actual gate freshly ran all seven cases in the focused [GameDesignFreshTenantCreationClientTest](../../../services/game-session-service/src/test/java/unit/net/firedevops/firemud/gamesession/client/GameDesignFreshTenantCreationClientTest.java), with zero failures, errors or skips. This includes the four existing cases and three restored cases for complete receipt/request/deadline binding, malformed or independently valid foreign receipt rejection, and selector or active-transaction rejection before the owner stub call. The focused unit task, affected test static analysis and formatting, and documentation-link/Markdown checks all passed in the canonical gate. The donor's first invocation selected the wrong test package, ran zero tests and remains failed donor evidence; the receiving gate used the correct selector.
+
+The added cases use placeholder certificate files and a replaced blocking stub, so they prove client validation and call ordering only. They do not prove actual TLS, SQL, Game Design creation or issuer authority, handoff, currentness, activation or admission; the existing physical mTLS cases were not rerun.
+
 ### Original V25 fresh-tenant association history
 
 The focused [fresh-tenant history test](../../../services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/GameSessionFreshTenantHistoryPostgresIntegrationTest.java) creates an original V25 reservation, canonical claim and fresh association before complete creation evidence exists, then upgrades through V40, V1003, V1004 and the current migration frontier. One freshly executed PostgreSQL case passes, with affected integration Checkstyle, SpotBugs and formatting. It compares every original column and row `xmin` in all three tables, plus every original Flyway row, across each upgrade. The new `complete_source_evidence` remains null; the actual current repository refuses that incomplete historical association without calling Game Design, and installed SQL refuses late evidence attachment. No runtime instance is created.
