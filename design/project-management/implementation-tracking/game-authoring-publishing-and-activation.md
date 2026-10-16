@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Gameplay source catalog and legacy handoff proof
+
+The existing Game Design gameplay source PostgreSQL owner test now retains a nonempty action, ability, effect, resource and admission-tag catalog beside an ordinary asset in one owner outcome. Exact retry and independent repository reads preserve the original source bytes. A disjoint asset change inherits the gameplay epoch and original binding; explicit ability and action deletion advances the gameplay epoch while preserving the prior snapshot. Additional cases deny legacy effective commands and generic gameplay-rule history before or after the typed snapshot, including an explicitly emptied rule inventory. Generic history under a different private tenant or Version does not contaminate the exact selected source.
+
+All eleven owning native invocations freshly pass with zero failures, errors or skips. Canonical formatting, Integration Checkstyle and SpotBugs pass; style checks remain up to date against the formatted source. Passive capture identifies one run-owned PostgreSQL container and independently confirms its absence after completion. The donor's earlier absent-command deletion fixture failure and the subsequent boxing-only static failure are retained separately from the passing run. This is controlled current-default storage and handoff-refusal proof; it does not establish Game Logic intake, an authenticated creator or issuer, currentness, publication enablement, a genuine immutable release, activation or a Gameplay handoff. No production, migration or registration changes are included.
+
 ### Publish-attempt revision and terminal retention proof
 
 The restored publish-attempt native regression reads two independent copies of a pending attempt, advances the winning revision from one to two and refuses the stale writer with the current CAS conflict code. A legal failure transition advances the revision to three; a later terminal rewrite is refused. Both refusals preserve the complete persisted attempt row and PostgreSQL row version. The existing transaction-boundary case separately confirms an actual writable Read Committed owner transaction.
