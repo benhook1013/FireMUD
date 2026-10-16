@@ -7,7 +7,10 @@ import java.util.Objects;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadEvidence;
+import net.firedevops.firemud.common.security.SessionContext;
 import org.springframework.dao.DataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionTimedOutException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Standalone World owner read of its exact persisted publication terminal and phase. */
@@ -82,7 +85,10 @@ public final class WorldPublicationTerminalReadService {
       throw Status.FAILED_PRECONDITION
           .withDescription("Exact World publication terminal owner evidence is unavailable")
           .asRuntimeException();
-    } catch (DataAccessException | org.jooq.exception.DataAccessException unavailable) {
+    } catch (CannotCreateTransactionException
+        | TransactionTimedOutException
+        | DataAccessException
+        | org.jooq.exception.DataAccessException unavailable) {
       throw Status.UNAVAILABLE
           .withDescription("World publication terminal owner read is unavailable")
           .asRuntimeException();
@@ -107,9 +113,11 @@ public final class WorldPublicationTerminalReadService {
     String expected = "spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service";
     if (!expected.equals(peer.uri())
         || !peer.isService("account-service")
-        || !peer.isInNamespace(workloadNamespace)) {
+        || !peer.isInNamespace(workloadNamespace)
+        || SessionContext.hasAuthenticatedCallerContext()) {
       throw Status.PERMISSION_DENIED
-          .withDescription("Exact same-namespace Account workload required")
+          .withDescription(
+              "Exact same-namespace Account workload without end-user context required")
           .asRuntimeException();
     }
   }

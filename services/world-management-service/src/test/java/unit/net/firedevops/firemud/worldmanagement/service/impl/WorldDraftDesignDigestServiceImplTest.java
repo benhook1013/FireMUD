@@ -286,19 +286,19 @@ class WorldDraftDesignDigestServiceImplTest {
 
   private String selectedEmptyDigestVector() throws Exception {
     String familyCounts =
-        "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT\",\"count\":0},"
-            + "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT\",\"count\":0},"
-            + "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION\",\"count\":0},"
-            + "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING\",\"count\":0},"
-            + "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK\",\"count\":0},"
-            + "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE\",\"count\":0},"
-            + "{\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING\",\"count\":0}";
+        "{\"count\":0,\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ROOT\"},"
+            + "{\"count\":0,\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_LOOT_REFERENCE_ATTACHMENT\"},"
+            + "{\"count\":0,\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_SELECTION\"},"
+            + "{\"count\":0,\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_BEHAVIOR_BINDING\"},"
+            + "{\"count\":0,\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_HOOK\"},"
+            + "{\"count\":0,\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_SCRIPT_REFERENCE\"},"
+            + "{\"count\":0,\"family\":\"WORLD_INBOUND_SOURCE_FAMILY_AUTOMATION_TARGET_BINDING\"}";
     return digestJson(
         "{\"regions\":[],\"zones\":[],\"rooms\":[],\"roomExits\":[],"
             + "\"generationRules\":[],\"worldEntitySpawnBindings\":[],"
-            + "\"inboundSourceClosure\":{\"schemaVersion\":1,\"familyCounts\":["
+            + "\"inboundSourceClosure\":{\"familyCounts\":["
             + familyCounts
-            + "]}}");
+            + "],\"schemaVersion\":1}}");
   }
 
   private String vector(String entityReference) throws Exception {
