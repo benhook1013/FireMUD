@@ -18,6 +18,12 @@ R38 freshly passes 178 Common Security units and 23 native PostgreSQL cases: Ent
 
 Upstream Account authorization, source/provenance inputs, creator, issuer, environment and PKI remain explicitly controlled where used. Empty asset manifest metadata and the candidate delivery origin are controlled; no object-store write or public delivery is proved. These standalone unregistered owner components do not establish genuine authority, current or continuous protection, runtime activation, actor placement or operational delivery. Historical release bytes retain their original scoped read/retry meaning. All four genuine Gameplay handoffs remain open and broader Unit 1B/corpus stays paused.
 
+### Selected-full release service refusal proof
+
+The existing release-bundle service test independently substitutes each of the five participant digest schemas and verifies that the service refuses the mixed vector before saving a release. The current full `4/3/1/6/2` positive, immutable selected retry, source-capture and command validation cases remain intact; historical schema-3 consumer support is not widened.
+
+The focused release service, release contract, complete-binding and descriptor owner classes freshly pass 72 unit cases with zero failures, errors or skips. Canonical formatting, style, Test Checkstyle and SpotBugs pass. These tests use controlled evidence and mocked owner repositories or services; they do not execute SQL or establish a genuine immutable release, creator or issuer authority, currentness, publication enablement, activation or a Gameplay handoff.
+
 ### Selected template publication and original launch reads
 
 The prepared source adds owner-local Template configuration genesis, synchronized revision/application, selected source capture and normalized tenant reference-phase owners over the already guarded tables. `SelectedDraftPublicationOwner` retains the exact selection, pending attempt, complete source capture and immutable template/World relation in one caller-owned writable transaction; existing operation bytes are never upgraded and old descriptor or reference provenance is not backfilled. The original StartSession template-association read authenticates Game Session and independently verifies Account’s exact redeemed operation before its read-only snapshot. It accepts only current selector-bound release-v2 evidence for the configured path and refuses older non-selector releases rather than fabricating later bundles. These components are unregistered and add no migration or runtime enabling flag.

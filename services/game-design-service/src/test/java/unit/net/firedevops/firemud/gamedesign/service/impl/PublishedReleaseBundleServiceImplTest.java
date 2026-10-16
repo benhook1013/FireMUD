@@ -237,6 +237,42 @@ class PublishedReleaseBundleServiceImplTest {
   }
 
   @Test
+  void selectedFullV4RejectsEveryMixedParticipantSchemaBeforeWrite() throws Exception {
+    var evidence = selectorEvidence();
+    var participants =
+        PublishedWorldSelectorFixtures.participants(
+            7L, evidence, AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+    for (int index = 0; index < participants.size(); index++) {
+      var mixed = new java.util.ArrayList<>(participants);
+      var participant = mixed.get(index);
+      mixed.set(
+          index,
+          new PublishParticipantDigestDto(
+              participant.participantKey(),
+              participant.scopeValue(),
+              participant.baseVersionId(),
+              participant.appliedCommitId(),
+              participant.contentDigest(),
+              participant.digestSchemaVersion() == 1 ? 2 : participant.digestSchemaVersion() - 1,
+              participant.abilitySchemaDigest(),
+              participant.errorCode(),
+              participant.errorMessage()));
+      assertThatThrownBy(
+              () ->
+                  service.createFullVersionBundle(
+                      selectorVersion(),
+                      "publish-workflow",
+                      emptyManifest(),
+                      "genrev-1",
+                      mixed,
+                      evidence))
+          .as("mixed profile for %s", participant.participantKey())
+          .isInstanceOf(IllegalArgumentException.class);
+    }
+    org.mockito.Mockito.verify(repository, org.mockito.Mockito.never()).save(any());
+  }
+
+  @Test
   void selectedFullV4RequiresSelectedSourceCaptureBeforeBundleWrite() throws Exception {
     var evidence = selectorEvidence();
     when(repository.requireSelectedCommandDefinitions(any(), any(), any(), any()))
