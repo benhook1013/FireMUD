@@ -145,3 +145,8 @@ Entry format:
   - Context: fresh signed and committed-JTI creator callbacks must retain their original key identity.
   - Observation: an immutable source pin, historical committed-signer receipt and still-fresh signature cache do not independently establish that the original key remains in the current protected public snapshot.
   - Expected pattern: load the existing trusted source outside SQL and synchronization, compare the original key ID and RFC 7638 fingerprint, preserve accepted retiring-key membership and historical exact recovery, and state the per-invocation snapshot limit beside the proof.
+
+- `2026-10-16`: Bound child waits in standalone receiver PKI fixtures
+  - Context: The standalone activation and World participation receiver PKI fixtures had the same output-before-wait pattern, leaving child execution unbounded.
+  - Observation: Both use the existing purpose-specific bounded-child pattern; four actual stalled-JDK-child timeout/interruption cases and all eight consuming receiver cases pass.
+  - Expected pattern: Compare each remaining fixture owner independently; an earlier Logging fixture pass does not prove these locations, and controlled socket proof does not establish real Account settlement or genuine PKI.
