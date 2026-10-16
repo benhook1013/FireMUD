@@ -94,8 +94,20 @@ for invalid_status_output in ("", "not-json", '{"Service":"gateway"}'):
         )
 
 
+expected_compose_command = [
+    "docker",
+    "compose",
+    "-f",
+    "compose.yml",
+    "ps",
+    "--all",
+    "--format",
+    "json",
+]
+
+
 def timeout_compose_status(command, **options):
-    assert command[:3] == ["docker", "compose", "-f"]
+    assert command == expected_compose_command
     assert 0 < options["timeout"] <= 10
     raise subprocess.TimeoutExpired(command, options["timeout"])
 
@@ -107,6 +119,31 @@ with patch.object(held_admission.subprocess, "run", side_effect=timeout_compose_
         assert "Timed out inspecting run-owned Compose status" in str(exc)
     else:
         raise AssertionError("a stalled Compose status command did not hit its bounded timeout")
+
+exited_services = dict(held_services)
+exited_services[held_admission.REQUIRED_SERVICES[0]] = {
+    **exited_services[held_admission.REQUIRED_SERVICES[0]],
+    "State": "exited",
+}
+
+
+def exited_compose_status(command, **options):
+    assert command == expected_compose_command
+    return subprocess.CompletedProcess(
+        command,
+        0,
+        stdout=json.dumps(list(exited_services.values())),
+        stderr="",
+    )
+
+
+with patch.object(held_admission.subprocess, "run", side_effect=exited_compose_status):
+    try:
+        held_admission.wait_for_compose_state(["-f", "compose.yml"], 10, 5)
+    except held_admission.QualificationFailure as exc:
+        assert f"{held_admission.REQUIRED_SERVICES[0]} is not running: exited" in str(exc)
+    else:
+        raise AssertionError("an exited required Compose service was not rejected immediately")
 
 for service in held_admission.HELD_ADMISSION_SERVICES:
     unexpectedly_ready_services = dict(held_services)
