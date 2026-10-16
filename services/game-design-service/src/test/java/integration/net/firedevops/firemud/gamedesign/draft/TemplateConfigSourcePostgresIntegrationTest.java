@@ -29,6 +29,7 @@ import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.IsolatedPublicationOperationFixtures;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
 import net.firedevops.firemud.gamedesign.publication.SelectedDraftPublicationOwner;
@@ -961,18 +962,31 @@ class TemplateConfigSourcePostgresIntegrationTest {
     // Account or World producer authority.
     var inputs =
         selectedPublicationInputs(f, selectedCommit, "selected inherited template association");
-    var operation =
+    var reservation =
         Objects.requireNonNull(
-                f.tx.execute(
-                    ignored ->
-                        new SelectedDraftPublicationOwner(f.dsl)
-                            .reserve(
-                                inputs.intent(),
-                                inputs.operation().account(),
-                                inputs.operation().world(),
-                                inputs.operation().inventory(),
-                                inputs.firstRead())))
-            .operation();
+            f.tx.execute(
+                ignored ->
+                    new SelectedDraftPublicationOwner(f.dsl)
+                        .reserve(
+                            inputs.intent(),
+                            inputs.operation().account(),
+                            inputs.operation().world(),
+                            inputs.operation().inventory(),
+                            inputs.firstRead())));
+    var operation = reservation.operation();
+    var returnedGameplayCapture = reservation.sourceCapture().gameplay();
+    assertThat(returnedGameplayCapture).isPresent();
+    var gameplayCapture = returnedGameplayCapture.orElseThrow();
+    var selectedGameplay =
+        new GameplayRuleSourceRepository(f.dsl)
+            .readSnapshot(f.target, selectedCommit.commitId())
+            .orElseThrow();
+    assertThat(gameplayCapture.operation().canonicalBytes())
+        .containsExactly(operation.canonicalBytes());
+    assertThat(gameplayCapture.snapshot().binding()).isEqualTo(selectedCommit);
+    assertThat(gameplayCapture.snapshot().canonicalBytes())
+        .containsExactly(selectedGameplay.canonicalBytes());
+
     var sourceCapture = new GameDesignSourceRepository(f.dsl).readCapture(operation).orElseThrow();
     var templateCapture = sourceCapture.templateConfig().orElseThrow();
     assertThat(templateCapture.snapshot().entries()).hasSize(1);
