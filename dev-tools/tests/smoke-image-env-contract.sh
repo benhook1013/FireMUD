@@ -109,6 +109,10 @@ bash() {
     verify-compose-health.sh)
       return 0
       ;;
+    held-admission-qualification.sh)
+      printf 'MOCK_HELD_ADMISSION_PROBE\n'
+      return "${SMOKE_TEST_HELD_ADMISSION_STATUS:-0}"
+      ;;
     websocket-login-look-smoke.sh)
       printf 'MOCK_WEBSOCKET_PROBE\n'
       return "${SMOKE_TEST_PROBE_STATUS:-0}"
@@ -156,6 +160,7 @@ run_diagnostic_smoke_case() {
   local probe_status="$3"
   local logs_fail="$4"
   local expected_status="$5"
+  local admission_mode="${7:-baseline}"
   local run_id="${TEST_RUN_ID}-${suffix}"
   local actual_status=0
   local keep_args=()
@@ -172,6 +177,7 @@ run_diagnostic_smoke_case() {
     SMOKE_IMAGE_TAG=contract-smoke-tag \
     SMOKE_COMPOSE_CONFIG_ONLY="$config_only" \
     SMOKE_TEST_DIAGNOSTICS_MODE=true \
+    FIREMUD_SMOKE_ADMISSION_QUALIFICATION="$admission_mode" \
     SMOKE_TEST_PROBE_STATUS="$probe_status" \
     SMOKE_TEST_LOG_CAPTURE_FAIL="$logs_fail" \
     bash "$ROOT_DIR/dev-tools/verify-smoke-images.sh" "${keep_args[@]}" >"$OUT_FILE" 2>"$ERR_FILE"
@@ -209,6 +215,37 @@ run_failure_diagnostic_regressions() {
   run_diagnostic_smoke_case probe-success false 0 false 0
   if grep -Fq 'MOCK_LOG service=' "$OUT_FILE" || grep -Fq 'Capturing bounded' "$ERR_FILE"; then
     echo "successful smoke unexpectedly printed failure diagnostics" >&2
+    cat "$OUT_FILE" >&2
+    cat "$ERR_FILE" >&2
+    return 1
+  fi
+  if ! grep -Fq 'MOCK_WEBSOCKET_PROBE' "$OUT_FILE" || ! grep -Fq 'MOCK_TELNET_PROBE' "$OUT_FILE"; then
+    echo "baseline image smoke did not preserve both positive transport probes" >&2
+    cat "$OUT_FILE" >&2
+    cat "$ERR_FILE" >&2
+    return 1
+  fi
+
+  run_diagnostic_smoke_case held-success false 0 false 0 "" held
+  if ! grep -Fq 'MOCK_HELD_ADMISSION_PROBE' "$OUT_FILE" ||
+    ! grep -Fq 'MOCK_WEBSOCKET_PROBE' "$OUT_FILE" ||
+    grep -Fq 'MOCK_TELNET_PROBE' "$OUT_FILE" ||
+    ! grep -Fq 'public successful admission remains unproved' "$OUT_FILE"; then
+    echo "held-admission image smoke did not retain truthful qualification and backend proof" >&2
+    cat "$OUT_FILE" >&2
+    cat "$ERR_FILE" >&2
+    return 1
+  fi
+
+  SMOKE_TEST_HELD_ADMISSION_STATUS=37 run_diagnostic_smoke_case held-probe-failure false 0 false 37 "" held
+  if [[ -e "$TEST_OWNERSHIP_DIR/${TEST_RUN_ID}-held-probe-failure.resources" ]]; then
+    echo "held-admission probe failure did not clean up its run-owned Compose project" >&2
+    cat "$OUT_FILE" >&2
+    cat "$ERR_FILE" >&2
+    return 1
+  fi
+  if grep -Fq 'MOCK_WEBSOCKET_PROBE' "$OUT_FILE"; then
+    echo "held-admission image smoke continued to positive backend proof after a failed edge assertion" >&2
     cat "$OUT_FILE" >&2
     cat "$ERR_FILE" >&2
     return 1

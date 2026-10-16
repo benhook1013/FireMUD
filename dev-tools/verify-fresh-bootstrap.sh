@@ -10,6 +10,7 @@ COMPOSE_FILES=(
 TCP_SMOKE_SCRIPT="$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"
 WS_SMOKE_SCRIPT="$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
 HEALTH_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
+HELD_ADMISSION_QUALIFICATION_SCRIPT="$ROOT_DIR/dev-tools/smoke/held-admission-qualification.sh"
 BUILD_JARS_SCRIPT="$ROOT_DIR/dev-tools/build-compose-service-jars.sh"
 ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 ENSURE_ENV_SCRIPT="$ROOT_DIR/dev-tools/ensure-local-compose-env.sh"
@@ -39,6 +40,17 @@ case "$SMOKE_MUTATION_EXTENSION" in
     ;;
   *)
     echo "SMOKE_MUTATION_EXTENSION must be boolean true/false (or 1/0); refusing to run." >&2
+    exit 1
+    ;;
+esac
+
+FIREMUD_SMOKE_ADMISSION_QUALIFICATION="${FIREMUD_SMOKE_ADMISSION_QUALIFICATION:-baseline}"
+case "$FIREMUD_SMOKE_ADMISSION_QUALIFICATION" in
+  baseline|held)
+    export FIREMUD_SMOKE_ADMISSION_QUALIFICATION
+    ;;
+  *)
+    echo "FIREMUD_SMOKE_ADMISSION_QUALIFICATION must be baseline or held; refusing to run." >&2
     exit 1
     ;;
 esac
@@ -88,7 +100,11 @@ if [[ -n "$FIREMUD_SMOKE_NO_CACHE_SERVICES" ]]; then
   done
 fi
 
-echo "Fresh bootstrap proof: destroy this run-owned compose project's containers, networks, and named volumes, then rebuild and run WebSocket/Telnet LOGIN -> PLAY -> LOOK baseline proofs."
+if [[ "$FIREMUD_SMOKE_ADMISSION_QUALIFICATION" == "baseline" ]]; then
+  echo "Fresh bootstrap proof: destroy this run-owned compose project's containers, networks, and named volumes, then rebuild and run WebSocket/Telnet LOGIN -> PLAY -> LOOK baseline proofs."
+else
+  echo "Fresh bootstrap proof: destroy this run-owned compose project's containers, networks, and named volumes, then rebuild and run held-admission edge checks plus the isolated backend LOGIN -> PLAY -> LOOK proof."
+fi
 echo "Destroyed named volumes: postgres-data, redis-coord-data, minio-data"
 if [[ -n "$FIREMUD_SMOKE_NO_CACHE_SERVICES" ]]; then
   echo "Forcing no-cache compose rebuild for: ${FIREMUD_SMOKE_NO_CACHE_SERVICES//,/ }"
@@ -130,8 +146,17 @@ else
 fi
 docker compose "${COMPOSE_FILES[@]}" up -d --remove-orphans
 
-bash "$HEALTH_SCRIPT" "${COMPOSE_FILES[@]}"
-# Both transport legs are baseline-only; mutation parity requires independent
-# transport identities/state and is rejected by this wrapper above.
-bash "$WS_SMOKE_SCRIPT"
-bash "$TCP_SMOKE_SCRIPT"
+if [[ "$FIREMUD_SMOKE_ADMISSION_QUALIFICATION" == "baseline" ]]; then
+  bash "$HEALTH_SCRIPT" "${COMPOSE_FILES[@]}"
+  # Both transport legs are baseline-only; mutation parity requires independent
+  # transport identities/state and is rejected by this wrapper above.
+  bash "$WS_SMOKE_SCRIPT"
+  bash "$TCP_SMOKE_SCRIPT"
+else
+  echo "Smoke admission qualification: held (direct backend LOGIN -> PLAY -> LOOK plus Gateway/Telnet fail-closed proof)."
+  bash "$HELD_ADMISSION_QUALIFICATION_SCRIPT" "${COMPOSE_FILES[@]}"
+  # This is the existing isolated backend positive proof. Public successful
+  # admission remains a separate runtime obligation.
+  bash "$WS_SMOKE_SCRIPT"
+  echo "Held-admission smoke qualification passed; public successful admission remains unproved."
+fi

@@ -48,12 +48,144 @@ root = Path(sys.argv[1])
 sys.path.insert(0, str(root / "dev-tools" / "smoke"))
 
 import smoke_common
+import held_admission_qualification as held_admission
 from smoke_common import (
     open_telnet_socket,
     run_telnet_smoke_session,
     run_transport_session,
     run_websocket_smoke_session,
 )
+
+
+held_services = {
+    service: {
+        "Service": service,
+        "State": "running",
+        "Health": (
+            "unhealthy"
+            if service in held_admission.HELD_ADMISSION_SERVICES
+            else "healthy"
+        ),
+    }
+    for service in held_admission.REQUIRED_SERVICES
+}
+assert held_admission.classify_compose_status(held_services)[0] == "ready"
+pending_services = dict(held_services)
+pending_services.pop("world-management-service")
+assert held_admission.classify_compose_status(pending_services)[0] == "pending"
+
+assert held_admission.parse_compose_status(
+    json.dumps(list(held_services.values()))
+)["gateway"]["Health"] == "unhealthy"
+for invalid_status_output in ("", "not-json", '{"Service":"gateway"}'):
+    try:
+        held_admission.parse_compose_status(invalid_status_output)
+    except held_admission.QualificationFailure:
+        pass
+    else:
+        raise AssertionError(
+            f"malformed Compose status was accepted: {invalid_status_output!r}"
+        )
+for service in held_admission.HELD_ADMISSION_SERVICES:
+    unexpectedly_ready_services = dict(held_services)
+    unexpectedly_ready_services[service] = {
+        **held_services[service],
+        "Health": "healthy",
+    }
+    try:
+        held_admission.classify_compose_status(unexpectedly_ready_services)
+    except held_admission.QualificationFailure:
+        pass
+    else:
+        raise AssertionError(f"held admission must fail when {service} reports healthy")
+
+held_admission.validate_out_of_service_response(
+    503,
+    b'{"status":"OUT_OF_SERVICE"}',
+    "Gateway",
+    "gameplayRouteReadiness",
+)
+for status_code, body in (
+    (200, b'{"status":"UP"}'),
+    (503, b""),
+    (503, b"not-json"),
+    (503, b'{"status":"DOWN"}'),
+):
+    try:
+        held_admission.validate_out_of_service_response(
+            status_code, body, "Gateway", "gameplayRouteReadiness"
+        )
+    except held_admission.QualificationFailure:
+        pass
+    else:
+        raise AssertionError("malformed or unexpected readiness result was accepted")
+
+held_admission.validate_gateway_first_party_denial(
+    403,
+    {held_admission.GATEWAY_ERROR_CLASS_HEADER: held_admission.GATEWAY_HELD_ERROR_CLASS},
+    b"",
+)
+for status_code, headers, body in (
+    (101, {}, b""),
+    (403, {}, b""),
+    (403, {held_admission.GATEWAY_ERROR_CLASS_HEADER: "CONNECT_TOKEN_MISSING"}, b""),
+    (
+        403,
+        {
+            held_admission.GATEWAY_ERROR_CLASS_HEADER:
+            held_admission.GATEWAY_HELD_ERROR_CLASS
+        },
+        b"unexpected",
+    ),
+):
+    try:
+        held_admission.validate_gateway_first_party_denial(
+            status_code, headers, body
+        )
+    except held_admission.QualificationFailure:
+        pass
+    else:
+        raise AssertionError("missing or unexpected Gateway handshake result was accepted")
+
+held_admission.validate_telnet_denial(
+    held_admission.TELNET_HELD_DENIAL.encode("ascii"), closed=True
+)
+for response, closed in (
+    (b"", True),
+    (b"", False),
+    (b"DISCONNECT other reason\n", True),
+):
+    try:
+        held_admission.validate_telnet_denial(response, closed)
+    except held_admission.QualificationFailure:
+        pass
+    else:
+        raise AssertionError("missing, silent, or unexpected Telnet result was accepted")
+
+silent_listener = socket.socket()
+silent_listener.bind(("127.0.0.1", 0))
+silent_listener.listen(1)
+silent_port = silent_listener.getsockname()[1]
+
+
+def hold_telnet_connection_silent():
+    peer, _ = silent_listener.accept()
+    with peer:
+        time.sleep(0.2)
+
+
+silent_peer = threading.Thread(target=hold_telnet_connection_silent, daemon=True)
+silent_peer.start()
+try:
+    held_admission._assert_telnet_denial("127.0.0.1", silent_port, 0.05)
+except held_admission.QualificationFailure as exc:
+    assert "timed out" in str(exc)
+else:
+    raise AssertionError("a silent Telnet connection did not fail on its bounded timeout")
+finally:
+    silent_listener.close()
+    silent_peer.join(timeout=1)
+assert not silent_peer.is_alive()
 
 
 for local_host in (
@@ -1401,6 +1533,18 @@ for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-too
     fi
   done
 done
+
+for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-tools/verify-smoke-images.sh"; do
+  grep -Fq 'FIREMUD_SMOKE_ADMISSION_QUALIFICATION="${FIREMUD_SMOKE_ADMISSION_QUALIFICATION:-baseline}"' "$script"
+  grep -Fq 'baseline|held)' "$script"
+  grep -Fq 'bash "$HELD_ADMISSION_QUALIFICATION_SCRIPT" "${COMPOSE_FILES[@]}"' "$script"
+  grep -Fq 'bash "$WS_SMOKE_SCRIPT"' "$script"
+  grep -Fq 'public successful admission remains unproved' "$script"
+done
+grep -Fq 'FIREMUD_SMOKE_ADMISSION_QUALIFICATION: held' "$ROOT_DIR/.github/workflows/runtime-images.yml"
+grep -Fq 'Confirmed first-party Gateway denial:' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
+grep -Fq 'Confirmed Telnet startup_unavailable denial and closed connection.' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
+grep -Fq 'successful public Gateway/Telnet admission remains unproved.' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
 
 restart_script="$ROOT_DIR/dev-tools/verify-restart-state.sh"
 grep -q 'run-owned-compose.sh' "$restart_script"
