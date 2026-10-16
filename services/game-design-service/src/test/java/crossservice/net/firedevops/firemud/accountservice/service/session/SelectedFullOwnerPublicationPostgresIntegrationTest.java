@@ -22,10 +22,13 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HexFormat;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationEmptySelectedSourceIntakeRepository;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationSelectedEmptyPublicationDigestGrpcReceiver;
 import net.firedevops.firemud.automationscripting.sourceintake.AutomationSelectedEmptyPublicationDigestService;
@@ -124,7 +127,9 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -211,6 +216,13 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
   @Test
   void actualSelectedWorldFourAndParticipantOwnersProduceAndReadBackCompleteSchemaFourBundle()
       throws Exception {
+    var diagnostics = new SettlementDiagnostics();
+    diagnostics.logPostgres("game-design", GDS_POSTGRES);
+    diagnostics.logPostgres("world-management", WORLD_POSTGRES);
+    diagnostics.logPostgres("entity-management", ENTITY_POSTGRES);
+    diagnostics.logPostgres("automation-scripting", AUTOMATION_POSTGRES);
+    diagnostics.logPostgres("game-logic", GAME_LOGIC_POSTGRES);
+    diagnostics.logPostgres("account", ACCOUNT_POSTGRES);
     Store gds = store("game-design", "selected_full_gds", GDS_POSTGRES, false);
     Store world = store("world-management", "selected_full_world", WORLD_POSTGRES, false);
     Store entity = store("entity-management", "selected_full_entity", ENTITY_POSTGRES, true);
@@ -805,7 +817,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
               accountSources.dsl,
               accountSources.manager,
               pki,
-              selectedOwnerReservation.operation());
+              selectedOwnerReservation.operation(),
+              diagnostics);
           assertThat(bundleOwnerRow(gds, draft.version())).isEqualTo(committedBundleRow);
         }
       } finally {
@@ -1135,7 +1148,8 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       org.jooq.DSLContext accountDsl,
       org.springframework.transaction.PlatformTransactionManager accountTransactions,
       ProofPki pki,
-      net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation operation)
+      net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation operation,
+      SettlementDiagnostics diagnostics)
       throws Exception {
     requireAccountClosureInventoryRefusals(accountDsl, operation);
     var gdsOwner =
@@ -1147,8 +1161,10 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         ownerServer(
             pki,
             "game-design-service",
-            new net.firedevops.firemud.gamedesign.publication
-                .GameDesignPublicationTerminalReadGrpcService(gdsOwner, NAMESPACE));
+            diagnostics.timedGrpc(
+                "gds-terminal-read",
+                new net.firedevops.firemud.gamedesign.publication
+                    .GameDesignPublicationTerminalReadGrpcService(gdsOwner, NAMESPACE)));
     Server worldTerminalServer = null;
     Server accountSettlementServer = null;
     var endpoints = new ServiceEndpointsProperties();
@@ -1170,11 +1186,13 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
               "world-management-service",
               new net.firedevops.firemud.worldmanagement.tenant
                   .WorldPublicationTerminalCompletionGrpcService(worldOwner, NAMESPACE),
-              new net.firedevops.firemud.worldmanagement.tenant
-                  .WorldPublicationTerminalReadGrpcService(
+              diagnostics.timedGrpc(
+                  "world-terminal-read",
                   new net.firedevops.firemud.worldmanagement.tenant
-                      .WorldPublicationTerminalReadService(worldRepository, NAMESPACE),
-                  NAMESPACE));
+                      .WorldPublicationTerminalReadGrpcService(
+                      new net.firedevops.firemud.worldmanagement.tenant
+                          .WorldPublicationTerminalReadService(worldRepository, NAMESPACE),
+                      NAMESPACE)));
       endpoints.setWorldManagementService(loopback(worldTerminalServer));
       try (var accountGdsRead =
               new net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalClient(
@@ -1193,7 +1211,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                 new AccountPublicationAuthorizationRepository(accountDsl),
                 accountGdsRead,
                 accountWorldRead,
-                accountTransactions,
+                diagnostics.timeTransactions(accountTransactions),
                 NAMESPACE);
         var binding =
             net.firedevops.firemud.common.publication.GameDesignPublicationOperationBinding
@@ -1202,7 +1220,9 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             ownerServer(
                 pki,
                 "account-service",
-                new AccountSelectedPublicationSettlementGrpcService(accountOwner, NAMESPACE));
+                diagnostics.timedGrpc(
+                    "account-settlement",
+                    new AccountSelectedPublicationSettlementGrpcService(accountOwner, NAMESPACE)));
         endpoints.setAccountService(loopback(accountSettlementServer));
         try (var settlementClient =
             new net.firedevops.firemud.common.publication
@@ -1225,13 +1245,18 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                         assertThat(io.grpc.Status.fromThrowable(error).getCode())
                             .isEqualTo(io.grpc.Status.Code.PERMISSION_DENIED));
           }
-          assertThatThrownBy(
-                  () ->
-                      settlementClient.settle(
-                          net.firedevops.firemud.common.publication
-                              .AccountSelectedPublicationSettlementGrpcCodec.Request.create(
-                              NAMESPACE, operation.canonicalBytes())))
-              .isInstanceOf(RuntimeException.class);
+          diagnostics.phase(
+              "account-settlement-before-world-terminal",
+              () -> {
+                assertThatThrownBy(
+                        () ->
+                            settlementClient.settle(
+                                net.firedevops.firemud.common.publication
+                                    .AccountSelectedPublicationSettlementGrpcCodec.Request.create(
+                                    NAMESPACE, operation.canonicalBytes())))
+                    .isInstanceOf(RuntimeException.class);
+                return null;
+              });
           assertThat(
                   accountDsl
                       .fetchSingle(
@@ -1240,29 +1265,38 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                       .get(0, Long.class))
               .isZero();
           var published =
-              producer.reconcile(
-                  operation.tenantKey(),
-                  operation.workflowId(),
-                  operation.versionId(),
-                  operation.selectionDigest(),
-                  net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence
-                      .Outcome.PUBLISHED);
-          assertThat(published.operationBytes()).containsExactly(operation.canonicalBytes());
-          assertThat(
-                  producer
-                      .reconcile(
+              diagnostics.phase(
+                  "world-producer-reconcile",
+                  () ->
+                      producer.reconcile(
                           operation.tenantKey(),
                           operation.workflowId(),
                           operation.versionId(),
                           operation.selectionDigest(),
-                          published.outcome())
-                      .canonicalBytes())
+                          net.firedevops.firemud.common.gamedesign
+                              .GameDesignPublicationTerminalEvidence.Outcome.PUBLISHED));
+          assertThat(published.operationBytes()).containsExactly(operation.canonicalBytes());
+          assertThat(
+                  diagnostics.phase(
+                      "world-producer-exact-retry",
+                      () ->
+                          producer
+                              .reconcile(
+                                  operation.tenantKey(),
+                                  operation.workflowId(),
+                                  operation.versionId(),
+                                  operation.selectionDigest(),
+                                  published.outcome())
+                              .canonicalBytes()))
               .containsExactly(published.canonicalBytes());
           byte[] receipt =
-              settlementClient.settle(
-                  net.firedevops.firemud.common.publication
-                      .AccountSelectedPublicationSettlementGrpcCodec.Request.create(
-                      NAMESPACE, operation.canonicalBytes()));
+              diagnostics.phase(
+                  "account-settlement-positive",
+                  () ->
+                      settlementClient.settle(
+                          net.firedevops.firemud.common.publication
+                              .AccountSelectedPublicationSettlementGrpcCodec.Request.create(
+                              NAMESPACE, operation.canonicalBytes())));
           assertThat(receipt).isNotEmpty();
           String retained =
               accountDsl
@@ -1271,10 +1305,13 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                       binding.account().operationId())
                   .get(0, String.class);
           assertThat(
-                  settlementClient.settle(
-                      net.firedevops.firemud.common.publication
-                          .AccountSelectedPublicationSettlementGrpcCodec.Request.create(
-                          NAMESPACE, operation.canonicalBytes())))
+                  diagnostics.phase(
+                      "account-settlement-exact-retry",
+                      () ->
+                          settlementClient.settle(
+                              net.firedevops.firemud.common.publication
+                                  .AccountSelectedPublicationSettlementGrpcCodec.Request.create(
+                                  NAMESPACE, operation.canonicalBytes()))))
               .containsExactly(receipt);
           assertThat(
                   accountDsl
@@ -1813,6 +1850,175 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
 
   private static String loopback(Server server) {
     return "127.0.0.1:" + server.getPort();
+  }
+
+  private static final class SettlementDiagnostics {
+    private final AtomicLong sequence = new AtomicLong();
+
+    void logPostgres(String role, PostgreSQLContainer<?> postgres) {
+      try {
+        System.out.printf(
+            "SETTLEMENT_DIAGNOSTIC event=postgres-container role=%s container=%s host=%s mapped_port=%d running=%s%n",
+            role,
+            postgres.getContainerId(),
+            postgres.getHost(),
+            postgres.getMappedPort(5432),
+            postgres.isRunning());
+      } catch (RuntimeException unavailable) {
+        System.out.printf(
+            "SETTLEMENT_DIAGNOSTIC event=postgres-container role=%s status=unavailable error=%s%n",
+            role, unavailable.getClass().getSimpleName());
+      }
+    }
+
+    <T> T phase(String stage, Supplier<T> action) {
+      long call = sequence.incrementAndGet();
+      long started = System.nanoTime();
+      event(call, stage, "start", 0L, "none");
+      try {
+        T result = action.get();
+        event(call, stage, "complete", System.nanoTime() - started, "OK");
+        return result;
+      } catch (RuntimeException | Error failure) {
+        event(
+            call,
+            stage,
+            "failed",
+            System.nanoTime() - started,
+            failure.getClass().getSimpleName());
+        throw failure;
+      }
+    }
+
+    io.grpc.BindableService timedGrpc(String stage, io.grpc.BindableService owner) {
+      return () ->
+          ServerInterceptors.intercept(
+              owner,
+              new io.grpc.ServerInterceptor() {
+                @Override
+                public <RequestT, ResponseT> io.grpc.ServerCall.Listener<RequestT> interceptCall(
+                    io.grpc.ServerCall<RequestT, ResponseT> call,
+                    io.grpc.Metadata headers,
+                    io.grpc.ServerCallHandler<RequestT, ResponseT> next) {
+                  long callSequence = sequence.incrementAndGet();
+                  long started = System.nanoTime();
+                  String method = call.getMethodDescriptor().getFullMethodName();
+                  var recorded = new java.util.concurrent.atomic.AtomicBoolean();
+                  var timedCall =
+                      new io.grpc.ForwardingServerCall.SimpleForwardingServerCall<>(call) {
+                        @Override
+                        public void close(io.grpc.Status status, io.grpc.Metadata trailers) {
+                          if (recorded.compareAndSet(false, true)) {
+                            event(
+                                callSequence,
+                                stage + "/" + method,
+                                "closed",
+                                System.nanoTime() - started,
+                                status.getCode().name());
+                          }
+                          super.close(status, trailers);
+                        }
+                      };
+                  event(callSequence, stage + "/" + method, "start", 0L, "STARTED");
+                  var listener = next.startCall(timedCall, headers);
+                  return new io.grpc.ForwardingServerCallListener
+                      .SimpleForwardingServerCallListener<>(listener) {
+                    @Override
+                    public void onCancel() {
+                      if (recorded.compareAndSet(false, true)) {
+                        event(
+                            callSequence,
+                            stage + "/" + method,
+                            "cancelled",
+                            System.nanoTime() - started,
+                            "CANCELLED");
+                      }
+                      super.onCancel();
+                    }
+                  };
+                }
+              });
+    }
+
+    PlatformTransactionManager timeTransactions(PlatformTransactionManager delegate) {
+      return new PlatformTransactionManager() {
+        private final Map<TransactionStatus, TransactionTiming> active = new IdentityHashMap<>();
+
+        @Override
+        public TransactionStatus getTransaction(TransactionDefinition definition) {
+          long call = sequence.incrementAndGet();
+          long started = System.nanoTime();
+          event(call, "account-transaction", "acquire-start", 0L, "STARTED");
+          try {
+            TransactionStatus status = delegate.getTransaction(definition);
+            synchronized (active) {
+              active.put(status, new TransactionTiming(call, started));
+            }
+            event(call, "account-transaction", "acquired", System.nanoTime() - started, "OK");
+            return status;
+          } catch (RuntimeException | Error failure) {
+            event(
+                call,
+                "account-transaction",
+                "acquire-failed",
+                System.nanoTime() - started,
+                failure.getClass().getSimpleName());
+            throw failure;
+          }
+        }
+
+        @Override
+        public void commit(TransactionStatus status) {
+          finish(status, true);
+        }
+
+        @Override
+        public void rollback(TransactionStatus status) {
+          finish(status, false);
+        }
+
+        private void finish(TransactionStatus status, boolean commit) {
+          TransactionTiming timing;
+          synchronized (active) {
+            timing = active.remove(status);
+          }
+          long completionStarted = System.nanoTime();
+          try {
+            if (commit) {
+              delegate.commit(status);
+            } else {
+              delegate.rollback(status);
+            }
+            if (timing != null) {
+              event(
+                  timing.sequence(),
+                  "account-transaction",
+                  commit ? "committed" : "rolled-back",
+                  System.nanoTime() - timing.startedNanos(),
+                  "completion_ns=" + (System.nanoTime() - completionStarted));
+            }
+          } catch (RuntimeException | Error failure) {
+            if (timing != null) {
+              event(
+                  timing.sequence(),
+                  "account-transaction",
+                  commit ? "commit-failed" : "rollback-failed",
+                  System.nanoTime() - timing.startedNanos(),
+                  failure.getClass().getSimpleName());
+            }
+            throw failure;
+          }
+        }
+      };
+    }
+
+    private void event(long call, String stage, String event, long elapsedNanos, String result) {
+      System.out.printf(
+          "SETTLEMENT_DIAGNOSTIC call=%d stage=%s event=%s elapsed_nanos=%d result=%s%n",
+          call, stage, event, elapsedNanos, result);
+    }
+
+    private record TransactionTiming(long sequence, long startedNanos) {}
   }
 
   private static Server ownerServer(
