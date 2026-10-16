@@ -43,6 +43,19 @@ public final class PublishedWorldSelectorFixtures {
     return new PublishedWorldSelectorFixtures(target).build();
   }
 
+  /**
+   * Stipulated fresh selected-full World input; schema 4 is present from its first construction.
+   * This fixture does not claim that a live World producer computed or authorized the evidence.
+   */
+  public static WorldPublishedStartLocationEvidence selectedFullSeed(
+      TargetProof target, String baseReference) throws Exception {
+    net.firedevops.firemud.common.authoring.DraftBaseReference.parse(baseReference);
+    var fixture = new PublishedWorldSelectorFixtures(target, baseReference);
+    return fixture.build(
+        fixture.freshGraphBinding(),
+        AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+  }
+
   public static WorldPublishedStartLocationEvidence evidence(
       TargetProof target, String baseReference) throws Exception {
     net.firedevops.firemud.common.authoring.DraftBaseReference.parse(baseReference);
@@ -117,6 +130,11 @@ public final class PublishedWorldSelectorFixtures {
   }
 
   private WorldPublishedStartLocationEvidence build(DraftCommitBinding draft) throws Exception {
+    return build(draft, 3);
+  }
+
+  private WorldPublishedStartLocationEvidence build(
+      DraftCommitBinding draft, int attestationSchemaVersion) throws Exception {
     var terminal = WorldDraftTerminalReadEvidence.Request.create("test", accountBinding(draft));
     var result = committedReadback(terminal, true);
     var applied = JSON.readTree(result.result());
@@ -152,7 +170,7 @@ public final class PublishedWorldSelectorFixtures {
             "publish-workflow",
             draft.commitId().toString(),
             "b".repeat(64),
-            3,
+            attestationSchemaVersion,
             tuples);
     return new WorldPublishedStartLocationEvidence(
         request,

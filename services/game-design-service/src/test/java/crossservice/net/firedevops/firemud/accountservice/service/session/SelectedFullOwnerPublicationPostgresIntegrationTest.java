@@ -1854,20 +1854,22 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
 
   private static final class SettlementDiagnostics {
     private final AtomicLong sequence = new AtomicLong();
+    private final long diagnosticOriginNanos = System.nanoTime();
 
     void logPostgres(String role, PostgreSQLContainer<?> postgres) {
       try {
         System.out.printf(
-            "SETTLEMENT_DIAGNOSTIC event=postgres-container role=%s container=%s host=%s mapped_port=%d running=%s%n",
+            "SETTLEMENT_DIAGNOSTIC event=postgres-container role=%s elapsed_since_diagnostic_start_nanos=%d container=%s host=%s mapped_port=%d running=%s%n",
             role,
+            System.nanoTime() - diagnosticOriginNanos,
             postgres.getContainerId(),
             postgres.getHost(),
             postgres.getMappedPort(5432),
             postgres.isRunning());
       } catch (RuntimeException unavailable) {
         System.out.printf(
-            "SETTLEMENT_DIAGNOSTIC event=postgres-container role=%s status=unavailable error=%s%n",
-            role, unavailable.getClass().getSimpleName());
+            "SETTLEMENT_DIAGNOSTIC event=postgres-container role=%s elapsed_since_diagnostic_start_nanos=%d status=unavailable error=%s%n",
+            role, System.nanoTime() - diagnosticOriginNanos, unavailable.getClass().getSimpleName());
       }
     }
 
@@ -1903,6 +1905,43 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                   var timedCall =
                       new io.grpc.ForwardingServerCall.SimpleForwardingServerCall<>(call) {
                         @Override
+                        public void sendMessage(ResponseT message) {
+                          long sendStarted = System.nanoTime();
+                          String serializedSize = serializedSize(message);
+                          event(
+                              callSequence,
+                              stage + "/" + method,
+                              "send-message-before",
+                              sendStarted - started,
+                              serializedSize);
+                          try {
+                            super.sendMessage(message);
+                            long sendFinished = System.nanoTime();
+                            event(
+                                callSequence,
+                                stage + "/" + method,
+                                "send-message-after",
+                                sendFinished - started,
+                                serializedSize
+                                    + ",delegate_elapsed_nanos="
+                                    + (sendFinished - sendStarted));
+                          } catch (RuntimeException | Error failure) {
+                            long sendFailed = System.nanoTime();
+                            event(
+                                callSequence,
+                                stage + "/" + method,
+                                "send-message-failed",
+                                sendFailed - started,
+                                serializedSize
+                                    + ",delegate_elapsed_nanos="
+                                    + (sendFailed - sendStarted)
+                                    + ",failure="
+                                    + failure.getClass().getSimpleName());
+                            throw failure;
+                          }
+                        }
+
+                        @Override
                         public void close(io.grpc.Status status, io.grpc.Metadata trailers) {
                           if (recorded.compareAndSet(false, true)) {
                             event(
@@ -1919,6 +1958,50 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
                   var listener = next.startCall(timedCall, headers);
                   return new io.grpc.ForwardingServerCallListener
                       .SimpleForwardingServerCallListener<>(listener) {
+                    @Override
+                    public void onMessage(RequestT message) {
+                      event(
+                          callSequence,
+                          stage + "/" + method,
+                          "request-message",
+                          System.nanoTime() - started,
+                          serializedSize(message));
+                      super.onMessage(message);
+                    }
+
+                    @Override
+                    public void onHalfClose() {
+                      long handlerStarted = System.nanoTime();
+                      event(
+                          callSequence,
+                          stage + "/" + method,
+                          "handler-enter",
+                          handlerStarted - started,
+                          "ENTERED");
+                      try {
+                        super.onHalfClose();
+                        long handlerFinished = System.nanoTime();
+                        event(
+                            callSequence,
+                            stage + "/" + method,
+                            "handler-return",
+                            handlerFinished - started,
+                            "handler_elapsed_nanos=" + (handlerFinished - handlerStarted));
+                      } catch (RuntimeException | Error failure) {
+                        long handlerFailed = System.nanoTime();
+                        event(
+                            callSequence,
+                            stage + "/" + method,
+                            "handler-failed",
+                            handlerFailed - started,
+                            "handler_elapsed_nanos="
+                                + (handlerFailed - handlerStarted)
+                                + ",failure="
+                                + failure.getClass().getSimpleName());
+                        throw failure;
+                      }
+                    }
+
                     @Override
                     public void onCancel() {
                       if (recorded.compareAndSet(false, true)) {
@@ -2008,10 +2091,22 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       };
     }
 
+    private String serializedSize(Object message) {
+      if (message instanceof com.google.protobuf.MessageLite protobufMessage) {
+        try {
+          return "serialized_size_bytes=" + protobufMessage.getSerializedSize();
+        } catch (RuntimeException unavailable) {
+          return "serialized_size_bytes=unavailable";
+        }
+      }
+      return "serialized_size_bytes=unavailable";
+    }
+
     private void event(long call, String stage, String event, long elapsedNanos, String result) {
+      long elapsedSinceDiagnosticStartNanos = System.nanoTime() - diagnosticOriginNanos;
       System.out.printf(
-          "SETTLEMENT_DIAGNOSTIC call=%d stage=%s event=%s elapsed_nanos=%d result=%s%n",
-          call, stage, event, elapsedNanos, result);
+          "SETTLEMENT_DIAGNOSTIC call=%d stage=%s event=%s elapsed_nanos=%d elapsed_since_diagnostic_start_nanos=%d result=%s%n",
+          call, stage, event, elapsedNanos, elapsedSinceDiagnosticStartNanos, result);
     }
 
     private record TransactionTiming(long sequence, long startedNanos) {}
