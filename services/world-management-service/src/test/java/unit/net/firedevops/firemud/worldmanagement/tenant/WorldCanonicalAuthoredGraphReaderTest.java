@@ -44,10 +44,11 @@ class WorldCanonicalAuthoredGraphReaderTest {
   @Test
   void rejectsUnknownMissingDuplicateTrailingAndWrongRepresentations() throws Exception {
     String good = graphJson();
-    for (String bad : List.of(
-        good.replace(
-            "\"schemaVersion\":\"2\"", "\"schemaVersion\":\"2\",\"schemaVersion\":\"2\""),
-        good + " {}")) {
+    for (String bad :
+        List.of(
+            good.replace(
+                "\"schemaVersion\":\"2\"", "\"schemaVersion\":\"2\",\"schemaVersion\":\"2\""),
+            good + " {}")) {
       assertThat(bad).isNotEqualTo(good);
       assertThatThrownBy(() -> new WorldCanonicalAuthoredGraphReader().read(plan(), bytes(bad)))
           .isInstanceOf(tools.jackson.core.JacksonException.class);
