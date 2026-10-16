@@ -129,3 +129,8 @@ Entry format:
   - Expected pattern: keep the foreground command and its native session supervised through terminal completion, preserve the raw capture and report missing terminal evidence explicitly. An interrupted attempt and successful cleanup cannot count as runtime qualification. Supply command arguments as an explicit array when delegating; a sentence-ending period was separately mistaken for an argument and caused an avoidable pre-execution failure.
   - Recovery: the next foreground canonical attempt on `3c71c8c24379af623ca66550a4f4acaadd0ffd81` completed at 05:27:42 UTC with exit zero, full terminal capture, held-edge and backend proof, authenticated teardown and independently absent project resources. This does not establish why the earlier owner ended.
   - Reconsideration trigger: a subsequent canonical attempt completes with terminal capture, or bounded process evidence identifies why the previous owner ended.
+
+- `2026-10-16`: Derive focused Gradle selectors from declared Java packages
+  - Context: a Gameplay capture proof supplied `integration.net...` from the categorized source directory, while the actual class declared `net...`; Gradle executed no tests and failed discovery.
+  - Expected pattern: read the source package and class declaration before constructing `--tests`, and verify fresh testcase counts before crediting proof. A categorized source root is not necessarily part of the Java package. Archive completed full-suite reports before a filtered rerun replaces the task output.
+  - Recovery: the corrected declared-package selector executed all sixteen owning native cases successfully; the zero-test attempt remains a separate failed discovery attempt with no native proof credit.
