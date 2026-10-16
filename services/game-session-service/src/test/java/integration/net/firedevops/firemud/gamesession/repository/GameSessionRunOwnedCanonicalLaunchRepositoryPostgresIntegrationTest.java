@@ -407,6 +407,75 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
   }
 
   @Test
+  void originalV1003CatalogRetainsPhysicalOwnerRowsWithoutAcquiringMissingPublishedPolicy() {
+    Fixture fixture = fixture("1003");
+    var source = source(SOURCE_GAME_ROW_ID);
+    var evidence = launchEvidence(source, OWNER_ACCOUNT_ID);
+    var receipt = registerAndAssociate(fixture, source, evidence);
+    insertHistoricalCatalog(fixture, receipt, uuid(1101));
+    var columns = historicalOwnerColumns(fixture);
+    var before = originalOwnerRows(fixture, columns);
+    assertThat(before.values()).allSatisfy(rows -> assertThat(rows).hasSize(1));
+    assertThat(columns.get("game_session_fresh_tenant_association"))
+        .contains("complete_source_evidence");
+    assertThat(columns.get("game_session_canonical_realm_catalog"))
+        .doesNotContain("complete_policy_set_evidence");
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT complete_source_evidence FROM "
+                        + "game_session_fresh_tenant_association")
+                .get("complete_source_evidence"))
+        .isNotNull();
+    int rank =
+        Objects.requireNonNull(
+            fixture
+                .dsl
+                .fetchSingle("SELECT max(installed_rank) AS rank FROM flyway_schema_history")
+                .get("rank", Integer.class));
+    var historyBefore = originalHistoryRows(fixture, rank);
+
+    for (String target : java.util.List.of("1004", "1005")) {
+      migrate(fixture, target).load().migrate();
+      assertThat(originalOwnerRows(fixture, columns))
+          .as("original owner rows at V%s", target)
+          .isEqualTo(before);
+      assertThat(originalHistoryRows(fixture, rank)).isEqualTo(historyBefore);
+    }
+    migrate(fixture, null).load().migrate();
+    assertThat(originalOwnerRows(fixture, columns)).isEqualTo(before);
+    assertThat(originalHistoryRows(fixture, rank)).isEqualTo(historyBefore);
+    assertThat(
+            fixture
+                .dsl
+                .fetchSingle(
+                    "SELECT complete_policy_set_evidence IS NULL "
+                        + "AND fixture_policy_request_bytes IS NULL AND fixture_policy_seal_operation_id IS NULL "
+                        + "AND fixture_policy_seal_request_digest IS NULL "
+                        + "AND fixture_policy_seal_evidence_digest IS NULL AS unqualified "
+                        + "FROM game_session_canonical_realm_catalog")
+                .get("unqualified", Boolean.class))
+        .isTrue();
+
+    var catalogs = new GameSessionCanonicalRealmCatalogRepository(fixture.dsl);
+    assertThatThrownBy(() -> catalogs.readByRequest(NAMESPACE, uuid(1105)))
+        .isInstanceOf(
+            GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException.class)
+        .hasMessageContaining("Exactly one complete catalog policy provenance required");
+    assertThat(catalogs.readVisiblePublicProductionSnapshots(NAMESPACE)).isEmpty();
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "UPDATE game_session_canonical_realm_catalog "
+                        + "SET complete_policy_set_evidence = decode('0102', 'hex')"))
+        .isInstanceOf(org.jooq.exception.DataAccessException.class);
+    assertThat(originalOwnerRows(fixture, columns)).isEqualTo(before);
+    assertThat(originalHistoryRows(fixture, rank)).isEqualTo(historyBefore);
+    assertThat(fixture.dsl.fetchCount(DSL.table(DSL.name("game_instances")))).isZero();
+  }
+
+  @Test
   void forwardHumanPolicyGuardPreservesActualV1011HistoryAndRejectsLegacyCatalogReuse() {
     Fixture fixture = fixture("1003");
     var source = source(SOURCE_GAME_ROW_ID);
@@ -477,6 +546,68 @@ class GameSessionRunOwnedCanonicalLaunchRepositoryPostgresIntegrationTest {
     assertThat(
             fixture.dsl.fetchCount(DSL.table(DSL.name("game_session_canonical_instance_launch"))))
         .isEqualTo(1);
+  }
+
+  private static java.util.Map<String, java.util.List<String>> historicalOwnerColumns(
+      Fixture fixture) {
+    var columns = new java.util.LinkedHashMap<String, java.util.List<String>>();
+    for (String table :
+        java.util.List.of(
+            "game_session_tenant_scope_reservation",
+            "game_session_tenant_canonical_claim",
+            "game_session_fresh_tenant_association",
+            "game_session_authored_world_tenant_source_binding",
+            "game_session_authored_world_source_intake",
+            "gameplay_tenant_shared_playable_state_namespace",
+            "game_session_canonical_realm_catalog")) {
+      columns.put(
+          table,
+          fixture
+              .dsl
+              .fetch(
+                  "SELECT column_name FROM information_schema.columns "
+                      + "WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position",
+                  fixture.schema,
+                  table)
+              .getValues("column_name", String.class));
+    }
+    return columns;
+  }
+
+  private static java.util.Map<String, java.util.List<java.util.Map<String, Object>>>
+      originalOwnerRows(Fixture fixture, java.util.Map<String, java.util.List<String>> columns) {
+    var rows = new java.util.LinkedHashMap<String, java.util.List<java.util.Map<String, Object>>>();
+    columns.forEach(
+        (table, names) -> {
+          String projection =
+              names.stream()
+                  .map(name -> "\"" + name.replace("\"", "\"\"") + "\"")
+                  .collect(java.util.stream.Collectors.joining(", "));
+          rows.put(
+              table,
+              fixture
+                  .dsl
+                  .fetch(
+                      "SELECT jsonb_build_array("
+                          + projection
+                          + ")::text AS original_bytes, xmin::text AS physical_version FROM \""
+                          + table
+                          + "\" ORDER BY original_bytes")
+                  .intoMaps());
+        });
+    return rows;
+  }
+
+  private static java.util.List<java.util.Map<String, Object>> originalHistoryRows(
+      Fixture fixture, int rank) {
+    return fixture
+        .dsl
+        .fetch(
+            "SELECT row_to_json(history)::text AS original_bytes, "
+                + "xmin::text AS physical_version FROM flyway_schema_history history "
+                + "WHERE installed_rank <= ? ORDER BY installed_rank",
+            rank)
+        .intoMaps();
   }
 
   private static IntakeReceipt registerAndAssociate(
