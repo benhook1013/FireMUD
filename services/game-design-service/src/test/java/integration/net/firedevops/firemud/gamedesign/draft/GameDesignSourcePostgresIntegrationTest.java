@@ -28,6 +28,7 @@ import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.Version;
+import net.firedevops.firemud.gamedesign.model.PublishAttemptStatus;
 import net.firedevops.firemud.gamedesign.model.PublishGateFailureCode;
 import net.firedevops.firemud.gamedesign.publication.CommandSource;
 import net.firedevops.firemud.gamedesign.publication.CommandSourceRepository;
@@ -39,6 +40,7 @@ import net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepositor
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.test.TestContainerImages;
@@ -1004,6 +1006,12 @@ class GameDesignSourcePostgresIntegrationTest {
           new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
           new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(fixture.dsl())
               .freeze(operation);
+          var attempts = new PublishAttemptRepository(fixture.dsl());
+          var attempt =
+              attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
+          attempt.setStatus(PublishAttemptStatus.FAILED);
+          attempt.setFailureCode("ISOLATED_PRE_GAMEPLAY_STORAGE_DENIAL");
+          attempts.save(attempt);
           new GameDesignPublicationOperationRepository(fixture.dsl())
               .seal(
                   operation.tenantKey(),
