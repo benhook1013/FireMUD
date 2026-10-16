@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for Game Session runtime and tick
 
 ## Current Status
 
+### Original V25 fresh-tenant association history
+
+The focused [fresh-tenant history test](../../../services/game-session-service/src/test/java/integration/net/firedevops/firemud/gamesession/repository/GameSessionFreshTenantHistoryPostgresIntegrationTest.java) creates an original V25 reservation, canonical claim and fresh association before complete creation evidence exists, then upgrades through V40, V1003, V1004 and the current migration frontier. One freshly executed PostgreSQL case passes, with affected integration Checkstyle, SpotBugs and formatting. It compares every original column and row `xmin` in all three tables, plus every original Flyway row, across each upgrade. The new `complete_source_evidence` remains null; the actual current repository refuses that incomplete historical association without calling Game Design, and installed SQL refuses late evidence attachment. No runtime instance is created.
+
+This proves preservation and current denial for the original V25 boundary. The preceding V40 catalog/association and V1011 launch-history tests retain their separate scope and execution attribution. It does not establish a genuine Game Design creation receipt, authenticated producer handoff, current authorization, runtime registration, activation, admission or broader GS owner completion. The four genuine Gameplay handoffs and broader Unit 1B hold remain open.
+
 ### Human original StartSession launch association read
 
 The prepared `CanonicalGameInstanceLaunchAssociationReadGrpcService` is a standalone, unregistered adapter over the existing Game Session repository’s original Human StartSession association read. It accepts only the exact same-namespace World workload with no authenticated caller context, rejects ambient owner transactions or synchronization, and returns the exact current STARTING association with its retained pending owner attempt/fence and complete descriptor/release binding. Fixture association evidence remains a distinct path and is not promoted to Human authority. This is a point-in-time owner observation; it performs no mutation, lease renewal, execution admission, activation or pointer update.
