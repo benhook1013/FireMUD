@@ -44,6 +44,12 @@ Component qualification passes. The final Game Design gate freshly executes all 
 
 The caller also closes its required Game Design gameplay-rule source owner: fresh Draft enrollment retains an explicit empty inventory, coordinated writes preserve ordered rule revisions and exact owner results, and synchronized captures retain inherited rule provenance. The canonical rule grammar remains in the shared `GameplayRuleSource`; current V1005 storage guards remain intact. Focused SQL proof covers hidden staging and exact replay, stale epochs, inherited provenance with explicit deletion, and rollback. These controlled owner cases do not prove an immutable production-selected release.
 
+### Synchronized Draft visibility proof
+
+The existing Common visibility-evidence test retains the complete World and Entity APPLIED result vector, verifies defensive World result bytes and refuses unknown owner status, a substituted affected scope, a non-synchronized workflow state or a changed full-input fence digest. The existing arbitrary-precision exact expected-plus-one counter case remains intact.
+
+The focused visibility and Draft-binding owner classes freshly pass ten cases with zero failures, errors or skips. Test Checkstyle and SpotBugs pass, canonical formatting passes and the final style checks are up to date. This is structural evidence over controlled result vectors; it does not execute a coordinator, SQL owner or authenticated transport, and it supplies no creator, issuer, currentness, publication, activation or genuine handoff authority.
+
 ### Account terminal-settlement continuation
 
 The prepared continuation adds unregistered Account reconciliation and exact Game Design/World terminal-read adapters. Account reads missing required-owner evidence outside its transactions, rechecks the immutable original binding and ordering, retains exact readbacks through the existing repository, and derives settlement through that repository's complete-owner predicate. Unsupported required v2 participants stay pending. World preserves current APPLIED graph and inbound-closure decoding and uses the inherited definitive-abort owner history; Game Design reads its existing durable terminal owner. No migration, service registration, source authority, publication or runtime permission is added.
