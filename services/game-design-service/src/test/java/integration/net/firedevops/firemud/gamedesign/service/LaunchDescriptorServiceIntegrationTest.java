@@ -848,7 +848,92 @@ class LaunchDescriptorServiceIntegrationTest {
     Map<String, Object> retainedBundleSnapshot =
         retainedReleaseBundleSnapshot(isolatedDsl, bundleId);
 
+    long retainedVersionId = requiredId(versionId, "retained Version");
+    long retainedDescriptorId =
+        requiredId((Long) retainedV34Snapshot.get("id"), "retained launch descriptor");
+    java.util.function.Supplier<Map<String, Map<String, Object>>> readRetainedRows =
+        () ->
+            Map.of(
+                "version",
+                requiredRow(
+                    isolatedDsl,
+                    "SELECT *, xmin::text AS xmin FROM version WHERE id = ?",
+                    retainedVersionId,
+                    "retained Version"),
+                "published_release_bundle",
+                requiredRow(
+                    isolatedDsl,
+                    "SELECT *, xmin::text AS xmin FROM published_release_bundle WHERE id = ?",
+                    bundleId,
+                    "retained release bundle"),
+                "launch_descriptor",
+                requiredRow(
+                    isolatedDsl,
+                    "SELECT *, xmin::text AS xmin FROM launch_descriptor WHERE id = ?",
+                    retainedDescriptorId,
+                    "retained launch descriptor"));
+    var priorRows = readRetainedRows.get();
+    var priorHistory = migrationHistoryRows(isolatedDsl);
+    for (String target : java.util.List.of("35", "35.1", "35.2", "36", "38")) {
+      MigrationVersion targetVersion = MigrationVersion.fromVersion(target);
+      migrate(dataSource, schema, targetVersion);
+      var after = readRetainedRows.get();
+      assertThat(priorPublicationEvidenceColumns(after, priorRows))
+          .as("retained columns and xmin through V%s", target)
+          .isEqualTo(priorRows);
+      assertRetainedMigrationHistory(isolatedDsl, priorHistory);
+      for (String column :
+          java.util.List.of(
+              "descriptor_schema_version",
+              "target_namespace",
+              "canonical_tenant_id",
+              "authored_world_source_tenant_slug",
+              "world_slug",
+              "authored_world_source_operation_id",
+              "authored_world_source_game_row_id",
+              "authored_world_source_game_tenant_key",
+              "authored_world_source_provenance_kind",
+              "authored_world_source_evidence_digest",
+              "request_digest",
+              "result_digest",
+              "original_request_json",
+              "source_evidence_json",
+              "failure_code",
+              "failure_message")) {
+        assertThat(requiredSnapshot(after, "launch_descriptor")).containsEntry(column, null);
+      }
+      assertThat(requiredSnapshot(after, "launch_descriptor"))
+          .containsEntry("outcome_status", "SUCCESS");
+      if (targetVersion.compareTo(MigrationVersion.fromVersion("35.1")) >= 0) {
+        assertThat(requiredSnapshot(after, "version"))
+            .containsEntry("canonical_version_id", null)
+            .containsEntry("canonical_tenant_id", null)
+            .containsEntry("identity_source_game_row_id", null)
+            .containsEntry("identity_source_game_tenant_key", null)
+            .containsEntry("identity_source_provenance_kind", null);
+      }
+      if (targetVersion.compareTo(MigrationVersion.fromVersion("35.2")) >= 0) {
+        assertThat(requiredSnapshot(after, "published_release_bundle"))
+            .containsEntry("canonical_version_id", null)
+            .containsEntry("canonical_tenant_id", null);
+      }
+      if (targetVersion.compareTo(MigrationVersion.fromVersion("36")) >= 0) {
+        assertThat(requiredSnapshot(after, "published_release_bundle"))
+            .containsEntry("published_release_bundle_ref", null);
+      }
+      if (targetVersion.compareTo(MigrationVersion.fromVersion("38")) >= 0) {
+        assertThat(requiredSnapshot(after, "published_release_bundle"))
+            .containsEntry("manifest_schema_version", null)
+            .containsEntry("artifact_digests_json", null);
+      }
+      priorRows = after;
+      priorHistory = migrationHistoryRows(isolatedDsl);
+    }
     migrate(dataSource, schema, null);
+    var retainedCurrentRows = readRetainedRows.get();
+    assertThat(priorPublicationEvidenceColumns(retainedCurrentRows, priorRows))
+        .isEqualTo(priorRows);
+    assertRetainedMigrationHistory(isolatedDsl, priorHistory);
     LaunchDescriptorRepository launchRepository = new LaunchDescriptorRepository(isolatedDsl);
     var retainedBundleReference =
         isolatedDsl.fetchOne(
@@ -912,6 +997,7 @@ class LaunchDescriptorServiceIntegrationTest {
         .isEmpty();
     assertRetainedRowUnchanged(
         before, launchRepository.findByPrivateRequest(privateTenantKey, requestId).orElseThrow());
+    assertThat(readRetainedRows.get()).isEqualTo(retainedCurrentRows);
 
     assertThatThrownBy(
             () ->
@@ -923,6 +1009,7 @@ class LaunchDescriptorServiceIntegrationTest {
         .hasStackTraceContaining("launch descriptors are immutable");
     assertRetainedRowUnchanged(
         before, launchRepository.findByPrivateRequest(privateTenantKey, requestId).orElseThrow());
+    assertThat(readRetainedRows.get()).isEqualTo(retainedCurrentRows);
   }
 
   private Fixture fixture(String controlPlaneRequestId) {
