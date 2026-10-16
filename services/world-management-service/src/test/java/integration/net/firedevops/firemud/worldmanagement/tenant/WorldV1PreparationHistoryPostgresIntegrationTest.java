@@ -54,7 +54,7 @@ import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -77,9 +77,9 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
       new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @ParameterizedTest
-  @ValueSource(ints = {1, 2})
-  void originalLegacyPreparationRetainsExactIdentityAcrossCurrentMigrations(int inputSchema)
-      throws Exception {
+  @CsvSource({"1,false", "2,false", "2,true"})
+  void originalLegacyPreparationRetainsExactIdentityAcrossCurrentMigrations(
+      int inputSchema, boolean retainLegacyActivation) throws Exception {
     String schema = "world_v1_history_" + UUID.randomUUID().toString().replace("-", "");
     var source =
         new DriverManagerDataSource(
@@ -125,15 +125,59 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
     assertThat(sql.fetchSingle("SELECT status FROM world_instance").get(0, String.class))
         .isEqualTo("PREPARING");
     var queries = originalQueries(sql, inputSchema == 2);
+    var preparationBefore = rows(sql, queries);
+    assertThat(prepare(sql, write, exactInput)).isEqualTo(original);
+    assertThat(rows(sql, queries)).isEqualTo(preparationBefore);
+    net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation.Result legacy = null;
+    Map<String, Object> activationGuardBefore = null;
+    if (retainLegacyActivation) {
+      assertThat(inputSchema).isEqualTo(2);
+      var priorHistory = history(sql);
+      migration(source, schema, "1025").migrate();
+      assertThat(rows(sql, queries)).isEqualTo(preparationBefore);
+      assertThat(history(sql)).containsAll(priorHistory);
+      legacy = retainEvolvedLegacyActivation(sql, write, input, selector);
+      queries.putAll(
+          originalQueries(sql, List.of("world_canonical_instance_activation_operation")));
+      activationGuardBefore = activationGuard(sql);
+    }
     var before = rows(sql, queries);
     var historyBeforeUpgrade = history(sql);
-    assertThat(prepare(sql, write, exactInput)).isEqualTo(original);
-    assertThat(rows(sql, queries)).isEqualTo(before);
 
     migration(source, schema, inputSchema == 1 ? "1015" : "1037").migrate();
     assertThat(rows(sql, queries)).isEqualTo(before);
     assertThat(history(sql)).containsAll(historyBeforeUpgrade);
-    if (inputSchema == 1) assertThat(prepare(sql, write, exactInput)).isEqualTo(original);
+    if (inputSchema == 1) {
+      assertThat(prepare(sql, write, exactInput)).isEqualTo(original);
+      // Read the original frozen graph's actual selector after V1015. Supplying it now cannot
+      // reinterpret the already retained selector-null schema-1 preparation as schema 2.
+      var originalSelector =
+          publishedEvidence(
+              new WorldPublishedStartLocationRepository(
+                      sql, captures, new WorldDraftGraphApplicationRepository(sql, fence, mapper))
+                  .readCommitted(captureRequest)
+                  .orElseThrow());
+      var changed = (tools.jackson.databind.node.ObjectNode) mapper.readTree(exactInput);
+      changed.put("schemaVersion", 2);
+      changed.put(
+          "worldStartLocationEvidenceBase64",
+          java.util.Base64.getEncoder().encodeToString(originalSelector.canonicalBytes()));
+      String promoted = mapper.writeValueAsString(changed);
+      assertThatThrownBy(
+              () ->
+                  write.executeWithoutResult(
+                      ignored ->
+                          sql.fetchSingle(
+                              "SELECT * FROM world_prepare_canonical_instance(?,?)",
+                              promoted,
+                              DraftAuthorizationFenceBinding.digest(
+                                  promoted.getBytes(StandardCharsets.UTF_8)))))
+          .isInstanceOf(DataAccessException.class)
+          .hasMessageContaining(
+              "V2 preparation requires original complete World selector evidence");
+      assertThat(rows(sql, queries)).isEqualTo(before);
+      assertSelector(sql, null);
+    }
     assertThat(rows(sql, queries)).isEqualTo(before);
     assertSelector(sql, selector);
     var historyAfterUpgrade = history(sql);
@@ -143,6 +187,7 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
       assertThat(history(sql)).containsAll(historyAfterUpgrade);
       assertSelector(sql, selector);
       historyAfterUpgrade = history(sql);
+      if (retainLegacyActivation) assertThat(activationGuard(sql)).isEqualTo(activationGuardBefore);
     }
 
     var current = migration(source, schema, null);
@@ -168,6 +213,171 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
                     "SELECT canonical_realm_id IS NULL AND catalog_revision IS NULL FROM world_instance")
                 .get(0, Boolean.class))
         .isTrue();
+    if (retainLegacyActivation) {
+      assertThat(activationGuard(sql)).isEqualTo(activationGuardBefore);
+      var manager = new DataSourceTransactionManager(source);
+      var association =
+          new WorldCanonicalInstanceAssociationRepository(
+              sql,
+              new WorldCompleteLaunchBindingRepository(sql),
+              new WorldAuthoredSourceIntakeRepository(sql),
+              new WorldAuthoredVersionIdentityRepository(sql));
+      var repository =
+          new WorldCanonicalInstanceActivationRepository(
+              sql,
+              manager,
+              new WorldCanonicalInstanceLifecycleReadRepository(sql, manager, association));
+      var service = new WorldCanonicalInstanceActivationService(repository);
+      var request = Objects.requireNonNull(legacy).request();
+      assertThat(repository.readResult(request).orElseThrow().canonicalBytes())
+          .containsExactly(legacy.canonicalBytes());
+      assertThat(service.activate(request).canonicalBytes())
+          .containsExactly(legacy.canonicalBytes());
+      var fresh =
+          new net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation.Request(
+              UUID.randomUUID(), request.preparing());
+      assertThatThrownBy(() -> service.activate(fresh))
+          .isInstanceOf(WorldCanonicalInstanceActivationService.ActivationDeniedException.class);
+      assertThat(sql.fetchCount(DSL.table("world_canonical_instance_activation_fence"))).isZero();
+      assertThat(sql.fetchCount(DSL.table("world_canonical_activation_execution_manifest")))
+          .isZero();
+      assertThatThrownBy(
+              () ->
+                  sql.execute(
+                      "UPDATE world_canonical_instance_activation_operation SET result_bytes=result_bytes"))
+          .isInstanceOf(DataAccessException.class);
+      assertThat(rows(sql, queries)).isEqualTo(before);
+    }
+  }
+
+  private static Map<String, Object> activationGuard(DSLContext sql) {
+    return sql.fetchSingle(
+            "SELECT p.oid::bigint AS function_oid,p.proacl::text AS function_acl "
+                + "FROM pg_proc p WHERE p.oid=to_regprocedure "
+                + "(current_schema() || '.world_validate_canonical_activation_operation()')")
+        .intoMap();
+  }
+
+  /** Original V1025 evolved twelve-field carrier; no Account protection is invented. */
+  private static net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation.Result
+      retainEvolvedLegacyActivation(
+          DSLContext sql,
+          TransactionTemplate write,
+          WorldCanonicalInstancePreparation.Input input,
+          WorldPublishedStartLocationEvidence selector) {
+    var owner = input.gameSessionReadEvidence();
+    var descriptor = input.completeLaunchBinding().descriptor();
+    var release = input.completeLaunchBinding().evidence().releaseAttestation();
+    var request =
+        new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence.Request(
+            1,
+            UUID.randomUUID(),
+            owner.targetNamespace(),
+            owner.canonicalTenantId(),
+            owner.worldSlug(),
+            owner.canonicalGameInstanceId(),
+            owner.playableStateNamespaceId(),
+            owner.playableStateScope(),
+            owner.publicProduction(),
+            owner.controlPlaneRequestId(),
+            release.canonicalVersionId(),
+            descriptor.requestDigest(),
+            descriptor.resultDigest(),
+            release.evidenceDigest());
+    var retained =
+        sql.fetchSingle(
+            "SELECT wi.id,wi.status,wi.lifecycle_epoch,wi.row_version,p.capture_id,p.graph_sha256,p.input_digest,"
+                + "s.runtime_room_instance_id FROM world_instance wi "
+                + "JOIN world_canonical_instance_preparation p USING(canonical_game_instance_id) "
+                + "JOIN world_canonical_preparation_start_location s USING(canonical_game_instance_id)");
+    assertThat(retained.get("status", String.class)).isEqualTo("PREPARING");
+    var regions = new LinkedHashMap<UUID, UUID>();
+    for (var region :
+        sql.fetch(
+            "SELECT m.runtime_identity,r.operational_region_id FROM world_canonical_instance_topology_identity m "
+                + "JOIN region_instance r ON r.id=m.runtime_row_id WHERE m.family='REGION' ORDER BY m.runtime_identity")) {
+      assertThat(
+              regions.put(
+                  region.get("runtime_identity", UUID.class),
+                  region.get("operational_region_id", UUID.class)))
+          .isNull();
+    }
+    assertThat(regions).isNotEmpty();
+    var start =
+        net.firedevops.firemud.common.world.WorldDraftStartLocationEvidence.fromStored(
+                Objects.requireNonNull(selector).selectorReceiptBytes())
+            .startLocation();
+    var preparing =
+        new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence(
+            request,
+            input.completeLaunchBinding().evidence(),
+            start,
+            retained.get("runtime_room_instance_id", Long.class),
+            "PREPARING",
+            retained.get("lifecycle_epoch", Long.class),
+            retained.get("row_version", Long.class),
+            retained.get("capture_id", UUID.class),
+            retained.get("graph_sha256", String.class),
+            retained.get("input_digest", String.class),
+            regions);
+    var activation =
+        new net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation.Request(
+            UUID.randomUUID(), preparing);
+    var active =
+        new net.firedevops.firemud.common.world.WorldCanonicalInstanceLifecycleEvidence(
+            request,
+            preparing.launchBinding(),
+            start,
+            preparing.runtimeRoomInstanceId(),
+            "ACTIVE",
+            preparing.lifecycleEpoch() + 1,
+            preparing.rowVersion() + 1,
+            preparing.captureId(),
+            preparing.graphSha256(),
+            preparing.preparationInputDigest(),
+            regions);
+    var result =
+        new net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation.Result(
+            activation,
+            net.firedevops.firemud.common.world.WorldCanonicalInstanceActivation.Outcome.COMMITTED,
+            null,
+            active);
+    write.executeWithoutResult(
+        ignored -> {
+          sql.execute(
+              "INSERT INTO world_canonical_instance_activation_operation "
+                  + "(activation_request_id,request_digest,request_bytes,preparing_evidence_bytes,"
+                  + "canonical_game_instance_id,world_instance_id,expected_lifecycle_epoch,expected_row_version,"
+                  + "outcome,terminal_code,result_lifecycle_epoch,result_row_version,result_bytes,result_digest) "
+                  + "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+              activation.activationRequestId(),
+              activation.requestDigest(),
+              activation.canonicalRequestBytes(),
+              activation.preparingEvidenceBytes(),
+              activation.canonicalGameInstanceId(),
+              retained.get("id", Long.class),
+              activation.expectedLifecycleEpoch(),
+              activation.expectedRowVersion(),
+              "COMMITTED",
+              null,
+              active.lifecycleEpoch(),
+              active.rowVersion(),
+              result.canonicalBytes(),
+              DraftAuthorizationFenceBinding.digest(result.canonicalBytes()));
+          assertThat(
+                  sql.execute(
+                      "UPDATE world_instance SET status='ACTIVE',lifecycle_epoch=lifecycle_epoch+1,"
+                          + "row_version=row_version+1,updated_at=CURRENT_TIMESTAMP "
+                          + "WHERE id=? AND status='PREPARING' AND lifecycle_epoch=? AND row_version=?",
+                      retained.get("id", Long.class),
+                      activation.expectedLifecycleEpoch(),
+                      activation.expectedRowVersion()))
+              .isEqualTo(1);
+        });
+    assertThat(sql.fetchCount(DSL.table("world_canonical_activation_execution_manifest"))).isZero();
+    assertThat(sql.fetchSingle("SELECT status FROM world_instance").get(0, String.class))
+        .isEqualTo("ACTIVE");
+    return result;
   }
 
   @org.junit.jupiter.api.Test
