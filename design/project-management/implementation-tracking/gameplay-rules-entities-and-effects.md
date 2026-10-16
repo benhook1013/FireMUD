@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for gameplay rules, entities, and
 
 ## Current Status
 
+### Canonical actor repository read isolation
+
+One focused case in [RetainedActorIdentityIntegrationTest](../../../services/entity-management-service/src/test/java/integration/net/firedevops/firemud/entitymanagement/RetainedActorIdentityIntegrationTest.java) freshly passes against PostgreSQL with affected integration static and formatting checks. It calls the actual `ActorIdentityRepository` roster and exact-actor readers against populated tenant, account and namespace decoys, wrong scope and a quarantined actor. All five controlled actor rows share the same private numeric keys; canonical reads select only the exact UUID tuple and preserve the original row values and `xmin`. This restores focused reader coverage beyond the preceding raw-SQL tuple checks. Other cases retain their earlier execution attribution; the initial observer command-guard failure occurred before Gradle/test execution and receives no proof credit.
+
+These stored SQL identities prove bounded storage/read isolation, not genuine owner issuance, Account/tenant provenance, authenticated caller composition, canonical player admission or runtime quarantine activation. Existing passive owner and registration holds remain unchanged.
+
 ### Selected gameplay-rule retention and receipt composition
 
 The prepared standalone Game Logic intake owner requires the exact Account HELD authorization and selected synchronized Game Design source before retaining an immutable terminal. The Game Design selected-intake command and receipt owners compose that retention with Account-owned terminal settlement and persist the exact receipt under existing GDS V1009. New Game Logic V1003 follows the empty owned V1 baseline and the shared Saga V1000–V1002 history; existing Account and GDS migration history stays unchanged. None of these owners or read adapters is registered, and the current legacy digest receiver and runtime rule consumption remain separate.
