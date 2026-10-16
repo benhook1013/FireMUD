@@ -8,6 +8,8 @@ import static net.firedevops.firemud.worldmanagement.WorldPostgresMigrationTestS
 import static net.firedevops.firemud.worldmanagement.WorldPostgresMigrationTestSupport.worldMigrations;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.google.protobuf.util.JsonFormat;
 import java.nio.charset.StandardCharsets;
@@ -45,6 +47,7 @@ import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldEntitySpawnBindingRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
+import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import net.firedevops.firemud.worldmanagement.service.impl.WorldDraftDesignDigestServiceImpl;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.v1.EntityTemplateReferenceType;
@@ -387,7 +390,6 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       String publicationRequest = "retained-schema2-repository";
       String requestDigest = "b".repeat(64);
       String contentDigest = "c".repeat(64);
-      String captureRequestDigest = "d".repeat(64);
       String legacyCheckpoint = "version:" + version.localVersionKey();
       String workflow =
           PublicationDigestRequestBinding.full(
@@ -461,6 +463,7 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       assertThat(WorldAuthoredGraph.decode(graphBytes, graphMapper).encode(graphMapper))
           .isEqualTo(graphBytes);
       var snapshotRepository = new WorldAuthoredGraphSnapshotRepository(dsl);
+      String captureRequestDigest = retainedCaptureRequestDigest(request, intake, version);
       WorldAuthoredGraphSnapshot stored =
           Objects.requireNonNull(
               write.execute(
@@ -531,6 +534,54 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       assertThat(retained.graphSha256()).isEqualTo(stored.graphSha256());
       assertThat(retained.ownerCommitProofStatus())
           .isEqualTo(WorldAuthoredGraphSnapshot.OwnerCommitProofStatus.CAPTURED_UNVERIFIED);
+
+      // Retry only the already retained predecessor result. No new capture, V19 APPLIED row,
+      // Account permission or source producer is supplied by this historical repository fixture.
+      List<String> retainedTables =
+          List.of(
+              "world_authored_graph_snapshot",
+              "world_authored_source_intake",
+              "world_authored_version_identity",
+              "world_design_publication_fence_owner",
+              "world_design_publication_fence_attempt");
+      Map<String, List<String>> beforeRetry = retainedTableSnapshot(dsl, schema, retainedTables);
+      assertThat(
+              dsl.fetchSingle("SELECT count(*) FROM world_design_revision_ledger")
+                  .get(0, Long.class))
+          .isZero();
+      var unusedDigest = mock(WorldDraftDesignDigestService.class);
+      var capture = new WorldAuthoredGraphSnapshotCapture(dsl, unusedDigest, snapshotRepository);
+      WorldAuthoredGraphSnapshot retried =
+          Objects.requireNonNull(write.execute(status -> capture.capture(request)));
+      assertThat(retried).usingRecursiveComparison().isEqualTo(stored);
+      assertThat(retainedTableSnapshot(dsl, schema, retainedTables)).isEqualTo(beforeRetry);
+
+      var changedTuples =
+          new WorldAuthoredGraphSnapshot.CaptureRequest(
+              request.targetNamespace(),
+              request.canonicalTenantId(),
+              request.canonicalVersionId(),
+              request.intakeRequestId(),
+              request.publicationFence(),
+              request.publicationRequestId(),
+              request.requestDigest(),
+              request.versionStateEpoch(),
+              request.publishWorkflowId(),
+              request.appliedCommitId(),
+              request.contentDigest(),
+              request.digestSchemaVersion(),
+              List.of(
+                  new WorldAuthoredGraphSnapshot.OwnedAffectedTuple(
+                      "WORLD_MANAGEMENT", "REGION", "changed", "AGGREGATE", "changed", "0")));
+      assertThatThrownBy(() -> write.execute(status -> capture.capture(changedTuples)))
+          .isInstanceOf(WorldAuthoredGraphSnapshotRepository.SnapshotConflictException.class)
+          .hasMessageContaining("changed source or request binding");
+      assertThat(retainedTableSnapshot(dsl, schema, retainedTables)).isEqualTo(beforeRetry);
+      assertThat(
+              dsl.fetchSingle("SELECT count(*) FROM world_design_revision_ledger")
+                  .get(0, Long.class))
+          .isZero();
+      verifyNoInteractions(unusedDigest);
     } finally {
       dsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
     }
@@ -1323,6 +1374,343 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
     } finally {
       dsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
     }
+  }
+
+  @Test
+  void currentTopologyLateFailureRollsBackEveryOwnerRowBeforeExactRetry() throws Exception {
+    withCurrentStorageOwner(
+        fixture -> {
+          var dsl = fixture.dsl();
+          var topology = fixture.topology();
+          var plan = fixture.plan();
+          Map<String, List<String>> before =
+              retainedTableSnapshot(dsl, fixture.schema(), currentStorageTables());
+          assertThatThrownBy(
+                  () ->
+                      fixture
+                          .write()
+                          .execute(
+                              status -> {
+                                topology.store(plan);
+                                throw new IllegalStateException("late controlled storage failure");
+                              }))
+              .isInstanceOf(IllegalStateException.class)
+              .hasMessage("late controlled storage failure");
+          assertThat(retainedTableSnapshot(dsl, fixture.schema(), currentStorageTables()))
+              .isEqualTo(before);
+          assertThat(topology.readCommitted(plan)).isEmpty();
+
+          var stored =
+              Objects.requireNonNull(fixture.write().execute(status -> topology.store(plan)));
+          assertThat(stored.status()).isEqualTo("STORED_PERMISSION_UNVERIFIED");
+          assertCompleteCurrentStorage(fixture);
+          Map<String, List<String>> committed =
+              retainedTableSnapshot(dsl, fixture.schema(), currentStorageTables());
+          var retried =
+              Objects.requireNonNull(fixture.write().execute(status -> topology.store(plan)));
+          var readback = topology.readCommitted(plan).orElseThrow();
+          assertThat(retried.graphBytes()).containsExactly(stored.graphBytes());
+          assertThat(retried.resultBytes()).containsExactly(stored.resultBytes());
+          assertThat(readback.graphBytes()).containsExactly(stored.graphBytes());
+          assertThat(readback.resultBytes()).containsExactly(stored.resultBytes());
+          assertThat(retainedTableSnapshot(dsl, fixture.schema(), currentStorageTables()))
+              .isEqualTo(committed);
+        });
+  }
+
+  @Test
+  void currentTopologyConcurrentExactFirstClaimsReturnOneOriginalStoredResult() throws Exception {
+    withCurrentStorageOwner(
+        fixture -> {
+          CountDownLatch begin = new CountDownLatch(1);
+          ExecutorService executor = Executors.newFixedThreadPool(2);
+          try {
+            Future<WorldDraftTopologyCommitEvidence> one =
+                executor.submit(
+                    () -> {
+                      await(begin);
+                      return fixture
+                          .write()
+                          .execute(status -> fixture.topology().store(fixture.plan()));
+                    });
+            Future<WorldDraftTopologyCommitEvidence> two =
+                executor.submit(
+                    () -> {
+                      await(begin);
+                      return fixture
+                          .write()
+                          .execute(status -> fixture.topology().store(fixture.plan()));
+                    });
+            begin.countDown();
+            var first = Objects.requireNonNull(one.get(20, TimeUnit.SECONDS));
+            var second = Objects.requireNonNull(two.get(20, TimeUnit.SECONDS));
+            assertThat(first.status()).isEqualTo("STORED_PERMISSION_UNVERIFIED");
+            assertThat(second.graphBytes()).containsExactly(first.graphBytes());
+            assertThat(second.resultBytes()).containsExactly(first.resultBytes());
+            assertCompleteCurrentStorage(fixture);
+            var original = fixture.topology().readCommitted(fixture.plan()).orElseThrow();
+            assertThat(original.graphBytes()).containsExactly(first.graphBytes());
+            assertThat(original.resultBytes()).containsExactly(first.resultBytes());
+          } finally {
+            begin.countDown();
+            executor.shutdownNow();
+          }
+        });
+  }
+
+  @Test
+  void currentTopologyReplayRejectsChangedOriginalBindingAndSourceWithoutMutatingRows()
+      throws Exception {
+    withCurrentStorageOwner(
+        fixture -> {
+          var topology = fixture.topology();
+          var original = fixture.plan();
+          fixture.write().execute(status -> topology.store(original));
+          var binding = original.binding();
+          List<WorldDraftTopologyCommitPlan> changed = new ArrayList<>();
+          changed.add(
+              WorldDraftTopologyCommitPlan.create(
+                  DraftCommitBinding.create(
+                      binding.target(),
+                      binding.requestId(),
+                      binding.commitId(),
+                      binding.baseCommitId() + "-changed",
+                      binding.revisions(),
+                      binding.affectedUnits()),
+                  original.ownerBinding()));
+
+          var payloads = new ArrayList<>(binding.revisions());
+          var first = payloads.getFirst();
+          var region = WorldDesignMutationRevision.newBuilder();
+          JsonFormat.parser().merge(first.payload(), region);
+          region.setRegion(region.getRegion().toBuilder().setName("changed original region"));
+          payloads.set(
+              0,
+              new RevisionPayload(
+                  first.revisionOrder(),
+                  first.revisionId(),
+                  first.owner(),
+                  JsonFormat.printer().omittingInsignificantWhitespace().print(region)));
+          changed.add(
+              WorldDraftTopologyCommitPlan.create(
+                  DraftCommitBinding.create(
+                      binding.target(),
+                      binding.requestId(),
+                      binding.commitId(),
+                      binding.baseCommitId(),
+                      payloads,
+                      binding.affectedUnits()),
+                  original.ownerBinding()));
+
+          var mixedRevisions = new ArrayList<>(binding.revisions());
+          mixedRevisions.add(
+              new RevisionPayload(
+                  Integer.toString(mixedRevisions.size()),
+                  UUID.randomUUID(),
+                  Owner.GAME_LOGIC,
+                  "opaque other-owner revision, never applied by World"));
+          var mixedUnits = new ArrayList<>(binding.affectedUnits());
+          mixedUnits.add(
+              new AffectedUnit(Owner.GAME_LOGIC, "COMMAND", "other", "AGGREGATE", "other", "0"));
+          changed.add(
+              WorldDraftTopologyCommitPlan.create(
+                  DraftCommitBinding.create(
+                      binding.target(),
+                      binding.requestId(),
+                      binding.commitId(),
+                      binding.baseCommitId(),
+                      mixedRevisions,
+                      mixedUnits),
+                  original.ownerBinding()));
+
+          var owner = original.ownerBinding();
+          changed.add(
+              WorldDraftTopologyCommitPlan.create(
+                  binding,
+                  new OwnerBinding(
+                      owner.targetNamespace(),
+                      owner.canonicalTenantId(),
+                      owner.canonicalVersionId(),
+                      owner.versionIdentityOperationId(),
+                      owner.gameDesignVersionId(),
+                      owner.intakeRequestId(),
+                      owner.intakeOperationId(),
+                      owner.intakeRequestDigest(),
+                      UUID.randomUUID(),
+                      owner.sourceEvidenceDigest(),
+                      owner.intakeReceiptDigest())));
+          Map<String, List<String>> before =
+              retainedTableSnapshot(fixture.dsl(), fixture.schema(), currentStorageTables());
+          for (var candidate : changed) {
+            assertThatThrownBy(() -> fixture.write().execute(status -> topology.store(candidate)))
+                .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+                .hasMessageContaining("changed full input or source");
+            assertThatThrownBy(() -> topology.readCommitted(candidate))
+                .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+                .hasMessageContaining("changed full input or source");
+            assertThat(
+                    retainedTableSnapshot(fixture.dsl(), fixture.schema(), currentStorageTables()))
+                .isEqualTo(before);
+          }
+          assertCompleteCurrentStorage(fixture);
+        });
+  }
+
+  private static List<String> currentStorageTables() {
+    return List.of(
+        "region",
+        "zone",
+        "room",
+        "room_exit",
+        "generation_rule",
+        "world_entity_spawn_binding",
+        "world_authored_topology_identity",
+        "world_design_aggregate_epoch",
+        "world_design_scope_epoch",
+        "world_topology_draft_commit",
+        "world_authored_source_intake",
+        "world_authored_version_identity",
+        "world_authored_source_tenant_association",
+        "world_authored_source_tenant_key_reservation",
+        "world_design_publication_fence_owner",
+        "world_design_publication_fence_attempt",
+        "world_authored_graph_snapshot",
+        "world_design_revision_ledger",
+        "world_draft_graph_application",
+        "world_canonical_frozen_topology",
+        "world_region_draft_execution_manifest");
+  }
+
+  private static void assertCompleteCurrentStorage(CurrentStorageOwner fixture) {
+    Map<String, Long> expected = new LinkedHashMap<>();
+    expected.put("region", 1L);
+    expected.put("zone", 1L);
+    expected.put("room", 2L);
+    expected.put("room_exit", 1L);
+    expected.put("generation_rule", 1L);
+    expected.put("world_entity_spawn_binding", 1L);
+    expected.put("world_authored_topology_identity", 7L);
+    expected.put("world_design_aggregate_epoch", 7L);
+    expected.put("world_design_scope_epoch", 1L);
+    expected.put("world_topology_draft_commit", 1L);
+    expected.put("world_design_revision_ledger", 0L);
+    expected.put("world_authored_graph_snapshot", 0L);
+    expected.put("world_draft_graph_application", 0L);
+    expected.put("world_canonical_frozen_topology", 0L);
+    expected.put("world_region_draft_execution_manifest", 0L);
+    for (var entry : expected.entrySet()) {
+      assertThat(
+              fixture
+                  .dsl()
+                  .fetchSingle("SELECT count(*) FROM " + entry.getKey())
+                  .get(0, Long.class))
+          .as("permission-unverified storage table %s", entry.getKey())
+          .isEqualTo(entry.getValue());
+    }
+  }
+
+  private static void withCurrentStorageOwner(CurrentStorageProof proof) throws Exception {
+    String schema = "world_current_storage_" + UUID.randomUUID().toString().replace("-", "");
+    var source =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    source.setSchema(schema);
+    var dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    var write = new TransactionTemplate(new DataSourceTransactionManager(source));
+    write.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    Path root = repositoryRoot();
+    try {
+      flyway(source, schema, null, worldMigrations(root), sagaMigrations(root)).migrate();
+      var upstream = controlledSource();
+      var intake =
+          Objects.requireNonNull(
+              write.execute(
+                  status ->
+                      new WorldAuthoredSourceIntakeRepository(dsl)
+                          .acceptFresh(NAMESPACE, UUID.randomUUID(), upstream)));
+      var state =
+          AuthoredWorldVersionStateEvidence.create(
+              new AuthoredWorldVersionStateEvidence.Request(
+                  1,
+                  NAMESPACE,
+                  UUID.randomUUID(),
+                  upstream.canonicalTenantId(),
+                  upstream.worldSlug(),
+                  upstream.operationId(),
+                  upstream.evidenceDigest(),
+                  42L),
+              upstream,
+              UUID.randomUUID(),
+              VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+              1L);
+      var version =
+          Objects.requireNonNull(
+              write.execute(
+                  status ->
+                      new WorldAuthoredVersionIdentityRepository(dsl).acceptFresh(intake, state)));
+      var fence =
+          new WorldDesignPublicationFenceRepository(
+              dsl, new WorldAuthoredSourceIntakeRepository(dsl));
+      var topology =
+          new WorldDraftTopologyCommitRepository(
+              dsl, fence, new tools.jackson.databind.ObjectMapper());
+      // Actual current storage only: these controlled Source/Version inputs grant no Account
+      // COMMIT_ORDER or APPLIED authority, and no storage guard is disabled or substituted.
+      proof.verify(
+          new CurrentStorageOwner(schema, dsl, write, topology, topologyPlan(intake, version)));
+    } finally {
+      dsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+    }
+  }
+
+  @FunctionalInterface
+  private interface CurrentStorageProof {
+    void verify(CurrentStorageOwner fixture) throws Exception;
+  }
+
+  private record CurrentStorageOwner(
+      String schema,
+      DSLContext dsl,
+      TransactionTemplate write,
+      WorldDraftTopologyCommitRepository topology,
+      WorldDraftTopologyCommitPlan plan) {}
+
+  private static String retainedCaptureRequestDigest(
+      WorldAuthoredGraphSnapshot.CaptureRequest request,
+      WorldAuthoredSourceIntakeReceipt intake,
+      WorldAuthoredVersionIdentityReceipt version)
+      throws Exception {
+    // Independent ordered predecessor request preimage, built from the fixture's actual receipts.
+    // This stipulates retained representation identity, not preceding producer authorization.
+    Map<String, Object> fields = new LinkedHashMap<>();
+    fields.put("targetNamespace", request.targetNamespace());
+    fields.put("canonicalTenantId", request.canonicalTenantId().toString());
+    fields.put("canonicalVersionId", request.canonicalVersionId().toString());
+    fields.put("versionIdentityOperationId", version.operationId().toString());
+    fields.put("worldSlug", intake.source().worldSlug());
+    fields.put("gameDesignVersionId", version.gameDesignVersionId());
+    fields.put("localVersionKey", version.localVersionKey());
+    fields.put("localTenantKey", intake.localTenantKey());
+    fields.put("intakeOperationId", intake.operationId().toString());
+    fields.put("intakeRequestId", request.intakeRequestId().toString());
+    fields.put("intakeRequestDigest", intake.requestDigest());
+    fields.put("sourceOperationId", intake.sourceOperationId().toString());
+    fields.put("sourceEvidenceDigest", intake.sourceEvidenceDigest());
+    fields.put("intakeReceiptDigest", intake.receiptDigest());
+    fields.put("publicationFence", request.publicationFence().toString());
+    fields.put("publicationRequestId", request.publicationRequestId());
+    fields.put("requestDigest", request.requestDigest());
+    fields.put("versionStateEpoch", request.versionStateEpoch());
+    fields.put("publishWorkflowId", request.publishWorkflowId());
+    fields.put("appliedCommitId", request.appliedCommitId());
+    fields.put("contentDigest", request.contentDigest());
+    fields.put("digestSchemaVersion", request.digestSchemaVersion());
+    fields.put("suppliedOwnedAffectedTuplesJson", "[]");
+    return HexFormat.of()
+        .formatHex(
+            MessageDigest.getInstance("SHA-256")
+                .digest(new tools.jackson.databind.ObjectMapper().writeValueAsBytes(fields)));
   }
 
   private static void assertCanonicalFrozenMutationTriggerBindings(DSLContext dsl, String schema) {
