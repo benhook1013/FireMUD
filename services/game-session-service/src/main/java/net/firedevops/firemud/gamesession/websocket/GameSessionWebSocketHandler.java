@@ -621,8 +621,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     if ("first_party_web".equals(resolveConnectionMode(session))) {
       return bootstrapFirstPartySessionContext(session, sessionId.orElseThrow());
     }
-    bootstrapGenericSessionContext(session, sessionId.orElseThrow());
-    return true;
+    return bootstrapGenericSessionContext(session, sessionId.orElseThrow());
   }
 
   private boolean ensureBootstrapSessionContextIfMissing(
@@ -714,11 +713,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             .RECONNECT_REFRESH);
   }
 
-  private void bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {
+  private boolean bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {
     Optional<Long> tenantId = resolveTenantId(session);
     Optional<Long> bootstrapGameInstanceId = resolveBootstrapGameInstanceId(session);
     if (tenantId.isEmpty() || bootstrapGameInstanceId.isEmpty()) {
-      return;
+      return true;
     }
     List<GameplayAdmissionPointerSnapshot> currentPointers;
     try {
@@ -728,7 +727,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     } catch (RuntimeException ex) {
       logger.warn("Unable to resolve runtime pointer for generic bootstrap", ex);
       closeAdmissionPointerAuthorityUnavailable(session);
-      return;
+      return false;
     }
     Optional<SessionContext> existing =
         sessionAuthenticationService.resolveUnverifiedSessionContext(tenantId.get(), sessionId);
@@ -752,9 +751,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             currentPointers);
     if (existing.isPresent()) {
       maybeRefreshBootstrapShell(existing.orElseThrow(), incomingShell);
-      return;
+      return true;
     }
     sessionContextService.save(incomingShell);
+    return true;
   }
 
   private boolean bootstrapFirstPartySessionContext(WebSocketSession session, long sessionId) {

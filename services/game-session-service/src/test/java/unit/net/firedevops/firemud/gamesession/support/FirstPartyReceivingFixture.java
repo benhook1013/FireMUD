@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.support;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPublicKey;
@@ -32,6 +33,7 @@ public final class FirstPartyReceivingFixture {
       Mockito.mock(CanonicalPlayerRouteReadService.class);
   public final FirstPartyConnectContextProperties properties =
       new FirstPartyConnectContextProperties();
+  public final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   public final GatewayVerificationKeySource keySource;
   public final FirstPartyConnectContextService service;
 
@@ -47,7 +49,11 @@ public final class FirstPartyReceivingFixture {
     Mockito.when(routes.readCurrentTarget(TENANT)).thenReturn(target());
     service =
         new FirstPartyConnectContextService(
-            properties, keySource, routes, Clock.fixed(Instant.ofEpochMilli(NOW), ZoneOffset.UTC));
+            properties,
+            keySource,
+            routes,
+            Clock.fixed(Instant.ofEpochMilli(NOW), ZoneOffset.UTC),
+            meterRegistry);
   }
 
   public CanonicalPlayableTarget target() {

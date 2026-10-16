@@ -45,7 +45,8 @@ class FirstPartyConnectContextResolutionTest {
             fixture.keySource,
             fixture.routes,
             Clock.fixed(
-                Instant.ofEpochMilli(FirstPartyReceivingFixture.NOW + 31_000L), ZoneOffset.UTC));
+                Instant.ofEpochMilli(FirstPartyReceivingFixture.NOW + 31_000L), ZoneOffset.UTC),
+            fixture.meterRegistry);
     when(registry.requireRetained(context))
         .thenAnswer(invocation -> expiredService.requireRetained(invocation.getArgument(0)));
 
