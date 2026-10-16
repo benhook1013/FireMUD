@@ -36,47 +36,126 @@ from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteSt
 from pr_review.state import FindingRoute, StateError, StateLockTimeout
 
 
-def corrected_native_fixture(records, *, initial=("accepted", "accepted"), correction=(1, "rejected")):
+def corrected_native_fixture(records, *, initial=("accepted", "accepted"), correction=(1, "rejected"), target_pr=None):
     """Retain a real publication intent and subsequent exact native adjudication correction."""
     run_id, head, repo, pr = "run.Corrected123", "b" * 40, "owner/repo", 42
-    metadata = {"repository": repo, "pull_request": pr, "run_id": run_id, "kind": "cli",
-                "candidate_sha": head, "candidate_files": 1, "parent_pr": None, "parent_ref": "develop",
-                "child_head_sha": head, "parent_sha": "a" * 40, "merge_base": "a" * 40,
-                "patch_identity": "c" * 64}
-    records.start_attempt(attempt_id=run_id, source_pr=pr, channel="cli", candidate_sha=head,
-                          started_at="2026-10-01T00:00:00Z", metadata=metadata)
-    events = [{"type": "finding", "codegenInstructions": f"Review @a.py:1\nFinding {i}"}
-              for i in range(1, len(initial) + 1)]
-    findings = [FindingObservation(
-        source_finding_key=f"cli-run:{run_id}:finding:{i}",
-        title=sqlite_provider_imports._cli_finding_title(item["codegenInstructions"], f"CodeRabbit CLI finding {i}"),
-        detail=_safe_finding_detail(sqlite_provider_imports._cli_detail(item["codegenInstructions"])),
-    ) for i, item in enumerate(events, 1)]
-    events.append({"type": "complete", "status": "review_completed", "findings": len(initial),
-                   "reviewedFiles": ["a.py"]})
-    metadata.update(duration_seconds=9, exit_status=0, capture_completion_marker="capture-complete",
-                    capture_terminal_at="2026-10-01T00:00:09Z", capture_terminal_basis="provider_process_exit")
-    records.complete_attempt_run(run_id, finish={"state": "completed", "duration_seconds": 9,
-        "exit_status": 0, "finished_at": "2026-10-01T00:00:09Z",
-        "artifacts": {"metadata": json.dumps(metadata), "cli_events": "\n".join(map(json.dumps, events))}},
-        run={"run_id": run_id, "source_pr": pr, "channel": "cli", "source_head": head,
-             "reviewer": "CodeRabbit CLI", "scope": "broad", "findings": findings,
-             "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:09Z"})
+    metadata = {
+        "repository": repo,
+        "pull_request": pr,
+        "run_id": run_id,
+        "kind": "cli",
+        "candidate_sha": head,
+        "candidate_files": 1,
+        "parent_pr": None,
+        "parent_ref": "develop",
+        "child_head_sha": head,
+        "parent_sha": "a" * 40,
+        "merge_base": "a" * 40,
+        "patch_identity": "c" * 64,
+    }
+    records.start_attempt(
+        attempt_id=run_id,
+        source_pr=pr,
+        channel="cli",
+        candidate_sha=head,
+        started_at="2026-10-01T00:00:00Z",
+        metadata=metadata,
+    )
+    events = [
+        {"type": "finding", "codegenInstructions": f"Review @a.py:1\nFinding {i}"} for i in range(1, len(initial) + 1)
+    ]
+    findings = [
+        FindingObservation(
+            source_finding_key=f"cli-run:{run_id}:finding:{i}",
+            title=sqlite_provider_imports._cli_finding_title(
+                item["codegenInstructions"], f"CodeRabbit CLI finding {i}"
+            ),
+            detail=_safe_finding_detail(sqlite_provider_imports._cli_detail(item["codegenInstructions"])),
+        )
+        for i, item in enumerate(events, 1)
+    ]
+    events.append(
+        {"type": "complete", "status": "review_completed", "findings": len(initial), "reviewedFiles": ["a.py"]}
+    )
+    metadata.update(
+        duration_seconds=9,
+        exit_status=0,
+        capture_completion_marker="capture-complete",
+        capture_terminal_at="2026-10-01T00:00:09Z",
+        capture_terminal_basis="provider_process_exit",
+    )
+    records.complete_attempt_run(
+        run_id,
+        finish={
+            "state": "completed",
+            "duration_seconds": 9,
+            "exit_status": 0,
+            "finished_at": "2026-10-01T00:00:09Z",
+            "artifacts": {"metadata": json.dumps(metadata), "cli_events": "\n".join(map(json.dumps, events))},
+        },
+        run={
+            "run_id": run_id,
+            "source_pr": pr,
+            "channel": "cli",
+            "source_head": head,
+            "reviewer": "CodeRabbit CLI",
+            "scope": "broad",
+            "findings": findings,
+            "started_at": "2026-10-01T00:00:00Z",
+            "finished_at": "2026-10-01T00:00:09Z",
+        },
+    )
     for i, decision in enumerate(initial, 1):
-        records.record_source_decision(run_id, f"cli-run:{run_id}:finding:{i}", decision_id=f"initial-{i}",
-            decision=decision, actor="owner", reason="Original adjudication", decided_at="2026-10-01T00:00:10Z")
+        records.record_source_decision(
+            run_id,
+            f"cli-run:{run_id}:finding:{i}",
+            decision_id=f"initial-{i}",
+            decision=decision,
+            actor="owner",
+            reason="Original adjudication",
+            decided_at="2026-10-01T00:00:10Z",
+        )
     records.finalize_run(run_id, finalized_at="2026-10-01T00:00:11Z")
-    body = (f"CLI: {len(initial)} Found / {initial.count('accepted')} Accepted / 0 Routed · {head} · 1 files · 9s\n"
-            f"<!-- firemud-cli-run: {run_id} -->\n<!-- firemud-review-duration-seconds: 9 -->")
-    records.reserve_checkpoint_publication(run_id, json.dumps({"repository": repo, "repository_id": 123,
-        "source_pr": pr, "run_id": run_id, "actor_id": 456, "actor_login": "owner", "body": body}))
-    comment = {"id": 789, "body": body, "created_at": "2026-10-01T00:00:12Z",
-               "updated_at": "2026-10-01T00:00:12Z", "author_login": "owner"}
+    body = (
+        f"CLI: {len(initial)} Found / {initial.count('accepted')} Accepted / 0 Routed · {head} · 1 files · 9s\n"
+        f"<!-- firemud-cli-run: {run_id} -->\n<!-- firemud-review-duration-seconds: 9 -->"
+    )
+    records.reserve_checkpoint_publication(
+        run_id,
+        json.dumps(
+            {
+                "repository": repo,
+                "repository_id": 123,
+                "source_pr": pr,
+                "run_id": run_id,
+                "actor_id": 456,
+                "actor_login": "owner",
+                "body": body,
+            }
+        ),
+    )
+    comment = {
+        "id": 789,
+        "body": body,
+        "created_at": "2026-10-01T00:00:12Z",
+        "updated_at": "2026-10-01T00:00:12Z",
+        "author_login": "owner",
+    }
     checkpoint = evidence.parse_checkpoint_comments([comment])[0][0]
+    if correction is None:
+        return run_id, checkpoint, comment
     i, decision = correction
-    records.correct_source_decision(run_id, f"cli-run:{run_id}:finding:{i}", supersedes_id=f"initial-{i}",
-        correction_id="corrected-1", decision=decision, actor="owner", reason="Audited correction",
-        decided_at="2026-10-01T00:00:13Z")
+    records.correct_source_decision(
+        run_id,
+        f"cli-run:{run_id}:finding:{i}",
+        supersedes_id=f"initial-{i}",
+        correction_id="corrected-1",
+        decision=decision,
+        actor="owner",
+        reason="Audited correction",
+        target_pr=target_pr,
+        decided_at="2026-10-01T00:00:13Z",
+    )
     return run_id, checkpoint, comment
 
 
@@ -85,7 +164,11 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.bootstrap()
         for index in range(30):
             self.records.import_completed_run(
-                run_id=f"curated-scan-{index}", source_pr=3163, channel="subagent", findings=(), source_decisions=(),
+                run_id=f"curated-scan-{index}",
+                source_pr=3163,
+                channel="subagent",
+                findings=(),
+                source_decisions=(),
             )
         for attempt_id, pr, run_id in (
             ("local-linked", 3163, "curated-scan-0"),
@@ -93,7 +176,9 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             ("curated-scan-2", 3164, None),
             ("cross-pr-malformed", 3164, "curated-scan-3"),
         ):
-            self.records.start_attempt(attempt_id=attempt_id, source_pr=pr, channel="subagent", metadata={"model": "gpt-test"})
+            self.records.start_attempt(
+                attempt_id=attempt_id, source_pr=pr, channel="subagent", metadata={"model": "gpt-test"}
+            )
             if run_id:
                 self.records.finish_attempt(attempt_id, state="completed")
                 if pr == 3163:
@@ -102,7 +187,9 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                     # Deliberately corrupt only this isolated fixture: the public
                     # API rejects a cross-PR explicit link, but old reads excluded it.
                     with sqlite3.connect(self.database) as connection:
-                        connection.execute("UPDATE review_attempts SET run_id = ? WHERE attempt_id = ?", (run_id, attempt_id))
+                        connection.execute(
+                            "UPDATE review_attempts SET run_id = ? WHERE attempt_id = ?", (run_id, attempt_id)
+                        )
         statements = []
         original_connect = self.records._connect
 
@@ -134,7 +221,9 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_provider_and_native_only_history_need_no_association_fallback(self):
         self.bootstrap()
         self.records.record_run(run_id="provider-no-scan", source_pr=3163, channel="hosted", findings=())
-        self.records.start_attempt(attempt_id="native-no-scan", source_pr=3164, channel="subagent", metadata={"model": "gpt-test"})
+        self.records.start_attempt(
+            attempt_id="native-no-scan", source_pr=3164, channel="subagent", metadata={"model": "gpt-test"}
+        )
         self.records.record_run(run_id="native-no-scan", source_pr=3164, channel="subagent", findings=())
         original_connect = self.records._connect
         for pr in (3163, 3164):
@@ -158,12 +247,18 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         known_finish = "2026-10-11T15:30:00Z"
         cases = ((None, None), (known_start, None), (None, known_finish), (known_start, known_finish))
         for index, (started, finished) in enumerate(cases):
-            with self.subTest(started=started, finished=finished), patch.object(
-                sqlite_review_records, "_now", return_value=recorded_at
+            with (
+                self.subTest(started=started, finished=finished),
+                patch.object(sqlite_review_records, "_now", return_value=recorded_at),
             ):
                 arguments = {
-                    "run_id": f"curated-{index}", "source_pr": 3163, "channel": "subagent", "findings": (),
-                    "source_decisions": (), "started_at": started, "finished_at": finished,
+                    "run_id": f"curated-{index}",
+                    "source_pr": 3163,
+                    "channel": "subagent",
+                    "findings": (),
+                    "source_decisions": (),
+                    "started_at": started,
+                    "finished_at": finished,
                 }
                 self.records.import_completed_run(**arguments)
                 before = self.records.history(3163, include_display=False)
@@ -177,11 +272,17 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 self.assertEqual(run["finalized_at"], recorded_at)
                 self.assertEqual(run["counts"], {"found": 0, "accepted": 0, "routed": 0})
                 for field, supplied in (("started_at", started), ("finished_at", finished)):
-                    self.assertEqual(run["storage_timestamps"][field], {
-                        "value": supplied or recorded_at, "source": "supplied" if supplied else "generated",
-                    })
+                    self.assertEqual(
+                        run["storage_timestamps"][field],
+                        {
+                            "value": supplied or recorded_at,
+                            "source": "supplied" if supplied else "generated",
+                        },
+                    )
         history = self.records.history(3163, include_display=False)
-        self.assertEqual([run["run_id"] for run in history["runs"]], ["curated-1", "curated-3", "curated-0", "curated-2"])
+        self.assertEqual(
+            [run["run_id"] for run in history["runs"]], ["curated-1", "curated-3", "curated-0", "curated-2"]
+        )
         self.assertEqual(history, self.records.history_batch([3163], include_display=False)[3163])
         self.assertEqual(self.records.history(3163), self.records.history_batch([3163])[3163])
         self.assertEqual(history["attempts"], [])
@@ -196,12 +297,36 @@ class SqliteReviewRecordsTest(unittest.TestCase):
 
     def test_review_chronology_does_not_infer_unknown_from_unusable_or_absent_provenance(self):
         stored = "2026-10-11T15:49:59Z"
-        base = ["legacy", 3163, "manual", None, "reviewer", "broad", "[]", "completed", 1,
-                stored, stored, 0, 0, 0, 1, stored, None, 0]
-        for payload in (None, "invalid-json", "[]", "{}", '{"started_at":null}',
-                        '{"started_at":false,"finished_at":null}',
-                        '{"started_at":"invalid","finished_at":null}',
-                        '{"started_at":"2026-10-11T15:00:00Z","finished_at":null}'):
+        base = [
+            "legacy",
+            3163,
+            "manual",
+            None,
+            "reviewer",
+            "broad",
+            "[]",
+            "completed",
+            1,
+            stored,
+            stored,
+            0,
+            0,
+            0,
+            1,
+            stored,
+            None,
+            0,
+        ]
+        for payload in (
+            None,
+            "invalid-json",
+            "[]",
+            "{}",
+            '{"started_at":null}',
+            '{"started_at":false,"finished_at":null}',
+            '{"started_at":"invalid","finished_at":null}',
+            '{"started_at":"2026-10-11T15:00:00Z","finished_at":null}',
+        ):
             with self.subTest(payload=payload):
                 row = [*base[:16], payload, 0]
                 run = self.records._run_record(row)
@@ -216,9 +341,12 @@ class SqliteReviewRecordsTest(unittest.TestCase):
 
     def test_native_subagent_chronology_keeps_its_attempt_times(self):
         self.bootstrap()
-        self.records.start_attempt(attempt_id="native-chronology", source_pr=3163, channel="subagent", metadata={"model": "gpt-test"})
+        self.records.start_attempt(
+            attempt_id="native-chronology", source_pr=3163, channel="subagent", metadata={"model": "gpt-test"}
+        )
         self.records.complete_attempt_run(
-            "native-chronology", finish={"state": "completed"},
+            "native-chronology",
+            finish={"state": "completed"},
             run={"run_id": "native-chronology", "source_pr": 3163, "channel": "subagent", "findings": ()},
             finalize_empty=True,
         )
@@ -2202,54 +2330,269 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewRecordsError, "rejected subagent"):
             self.records.history(2890)
 
+    def test_native_routed_correction_preserves_publication_and_creates_unassigned_route(self):
+        self.bootstrap()
+        run_id, checkpoint, _ = corrected_native_fixture(self.records, initial=("accepted",), correction=None)
+        with sqlite3.connect(self.database) as connection:
+            original = connection.execute("SELECT * FROM decisions").fetchall()
+            attempt = connection.execute("SELECT * FROM review_attempts").fetchall()
+            artifacts = connection.execute("SELECT * FROM review_artifacts").fetchall()
+            payload = connection.execute("SELECT import_payload_json FROM review_runs").fetchall()
+        args = {
+            "supersedes_id": "initial-1",
+            "correction_id": "routed-correction",
+            "decision": "routed",
+            "actor": "root",
+            "reason": "Owned outside source scope",
+            "decided_at": "2026-10-01T00:00:13Z",
+        }
+        key = f"cli-run:{run_id}:finding:1"
+        with self.assertRaisesRegex(ReviewRecordsError, "latest exact"):
+            self.records.correct_source_decision(run_id, key, **{**args, "supersedes_id": "wrong"})
+        result = self.records.correct_source_decision(run_id, key, **args)
+        self.assertEqual(result["counts"], {"found": 1, "accepted": 0, "routed": 1})
+        routes = self.records.list_routes(source_pr=42)
+        self.assertEqual(len(routes), 1)
+        self.assertEqual(
+            (routes[0]["route_id"], routes[0]["target_pr"], routes[0]["status"]), (result["route_id"], None, "open")
+        )
+        capture = evidence.load_cli_capture(
+            checkpoint, "owner/repo", 42, Path(self.temporary_directory.name), records=self.records
+        )
+        self.assertEqual(capture.decisions[1], ("routed", "Owned outside source scope"))
+        self.assertEqual(capture.checkpoint_decisions[1][0], "accepted")
+        self.assertEqual(checkpoint.accepted, 1)
+        self.assertEqual(
+            self.records.source_resolution_status(
+                run_id,
+                source_pr=42,
+                source_channel="cli",
+                source_head="b" * 40,
+                accepted_count=1,
+                source_checkpoint=checkpoint,
+                source_repository="owner/repo",
+                classify_pending=True,
+            ),
+            "resolved",
+        )
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT * FROM decisions").fetchall(), original)
+            self.assertEqual(connection.execute("SELECT * FROM review_attempts").fetchall(), attempt)
+            self.assertEqual(connection.execute("SELECT * FROM review_artifacts").fetchall(), artifacts)
+            self.assertEqual(connection.execute("SELECT import_payload_json FROM review_runs").fetchall(), payload)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT supersedes_id, decision, target_pr, actor, reason, decided_at FROM source_decision_corrections"
+                ).fetchone(),
+                ("initial-1", "routed", None, "root", "Owned outside source scope", "2026-10-01T00:00:13Z"),
+            )
+            self.assertEqual(
+                connection.execute("SELECT route_id FROM finding_observations").fetchone()[0], result["route_id"]
+            )
+        # The existing correction API refuses replays, including an exact replay.
+        with self.assertRaises(ReviewRecordsError):
+            self.records.correct_source_decision(run_id, key, **args)
+        self.assertEqual(len(self.records.list_routes(source_pr=42)), 1)
+
+    def test_native_routed_correction_target_validation_and_existing_route_safety(self):
+        self.bootstrap()
+        run_id, _, _ = corrected_native_fixture(self.records, initial=("accepted",), correction=None)
+        key = f"cli-run:{run_id}:finding:1"
+        args = {
+            "supersedes_id": "initial-1",
+            "correction_id": "routed-correction",
+            "decision": "routed",
+            "actor": "root",
+            "reason": "Owned outside source scope",
+            "decided_at": "2026-10-01T00:00:13Z",
+        }
+        for changes in ({"target_pr": 0}, {"target_pr": -1}, {"decision": "rejected", "target_pr": 99}):
+            with self.subTest(changes=changes), self.assertRaises(ReviewRecordsError):
+                self.records.correct_source_decision(run_id, key, **{**args, **changes})
+        with sqlite3.connect(self.database) as connection:
+            finding_id = connection.execute("SELECT finding_id FROM finding_observations").fetchone()[0]
+            route_id = sqlite_review_records._stable_id("route", 42, "cli", key)
+            self.records._record_route_observation(
+                connection,
+                route_id=route_id,
+                finding_id=finding_id,
+                source_pr=42,
+                channel="cli",
+                target_pr=99,
+                observed_at="2026-10-01T00:00:10Z",
+            )
+        for column, value, message in (
+            ("source_pr", 43, "conflicts"),
+            ("status", "rejected", "terminal"),
+            ("status", "accepted_fixed", "terminal"),
+        ):
+            with sqlite3.connect(self.database) as connection:
+                original = connection.execute(f"SELECT {column} FROM routes").fetchone()[0]
+                connection.execute(f"UPDATE routes SET {column} = ?", (value,))
+            with self.subTest(column=column, value=value), self.assertRaisesRegex(ReviewRecordsError, message):
+                self.records.correct_source_decision(run_id, key, **args)
+            with sqlite3.connect(self.database) as connection:
+                self.assertEqual(
+                    connection.execute("SELECT COUNT(*) FROM source_decision_corrections").fetchone()[0], 0
+                )
+                connection.execute(f"UPDATE routes SET {column} = ?", (original,))
+        with self.assertRaisesRegex(ReviewRecordsError, "retargeted"):
+            self.records.correct_source_decision(run_id, key, **args, target_pr=100)
+        result = self.records.correct_source_decision(run_id, key, **args)
+        self.assertEqual(result["route_id"], route_id)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT target_pr FROM routes").fetchone()[0], None)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT target_pr, actor, reason FROM route_target_history ORDER BY sequence"
+                ).fetchall(),
+                [(99, "source-review", "source finding was routed"), (None, "root", "Owned outside source scope")],
+            )
+
+    def test_native_routed_correction_route_write_failure_rolls_back_every_write(self):
+        self.bootstrap()
+        run_id, _, _ = corrected_native_fixture(self.records, initial=("accepted",), correction=None)
+        tables = (
+            "source_decision_corrections",
+            "finding_observations",
+            "review_runs",
+            "routes",
+            "route_target_history",
+        )
+        with sqlite3.connect(self.database) as connection:
+            before = {table: connection.execute(f"SELECT * FROM {table}").fetchall() for table in tables}
+        original = self.records._record_route_observation
+
+        def fail_after_route_write(*args, **kwargs):
+            original(*args, **kwargs)
+            raise sqlite3.OperationalError("injected route failure")
+
+        with (
+            patch.object(self.records, "_record_route_observation", side_effect=fail_after_route_write),
+            self.assertRaisesRegex(ReviewRecordsError, "cannot record SQLite source decision"),
+        ):
+            self.records.correct_source_decision(
+                run_id,
+                f"cli-run:{run_id}:finding:1",
+                supersedes_id="initial-1",
+                correction_id="routed-correction",
+                decision="routed",
+                actor="root",
+                reason="Owned elsewhere",
+            )
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                {table: connection.execute(f"SELECT * FROM {table}").fetchall() for table in tables}, before
+            )
+
+    def test_native_routed_correction_with_explicit_target(self):
+        self.bootstrap()
+        _run_id, checkpoint, _ = corrected_native_fixture(
+            self.records, initial=("accepted",), correction=(1, "routed"), target_pr=99
+        )
+        capture = evidence.load_cli_capture(
+            checkpoint, "owner/repo", 42, Path(self.temporary_directory.name), records=self.records
+        )
+        self.assertEqual(capture.decisions[1][0], "routed")
+        self.assertEqual(self.records.list_routes(source_pr=42)[0]["target_pr"], 99)
+
     def test_native_correction_binds_original_counts_and_resolves_effective_obligations(self):
         self.bootstrap()
         run_id, checkpoint, _ = corrected_native_fixture(self.records)
-        capture = evidence.load_cli_capture(checkpoint, "owner/repo", 42, Path(self.temporary_directory.name), records=self.records)
+        capture = evidence.load_cli_capture(
+            checkpoint, "owner/repo", 42, Path(self.temporary_directory.name), records=self.records
+        )
         self.assertEqual([decision for decision, _ in capture.decisions.values()], ["rejected", "accepted"])
         self.assertEqual([decision for decision, _ in capture.checkpoint_decisions.values()], ["accepted", "accepted"])
-        kwargs = {"source_pr": 42, "source_channel": "cli", "source_head": "b" * 40, "accepted_count": 2,
-                  "source_checkpoint": checkpoint, "source_repository": "owner/repo", "classify_pending": True}
+        kwargs = {
+            "source_pr": 42,
+            "source_channel": "cli",
+            "source_head": "b" * 40,
+            "accepted_count": 2,
+            "source_checkpoint": checkpoint,
+            "source_repository": "owner/repo",
+            "classify_pending": True,
+        }
         self.assertEqual(self.records.source_resolution_status(run_id, **kwargs), "finding_pending")
-        self.records.record_source_resolution(run_id, f"cli-run:{run_id}:finding:2", source_pr=42,
-            resolution_id="verified-2", fix_sha="d" * 40, actor="owner", proof_note="Verified focused fix")
+        self.records.record_source_resolution(
+            run_id,
+            f"cli-run:{run_id}:finding:2",
+            source_pr=42,
+            resolution_id="verified-2",
+            fix_sha="d" * 40,
+            actor="owner",
+            proof_note="Verified focused fix",
+        )
         self.assertEqual(self.records.source_resolution_status(run_id, **kwargs), "resolved")
         self.assertEqual(checkpoint.accepted, 2)
         self.assertEqual(self.records.history(42)["runs"][0]["counts"]["accepted"], 1)
 
     def test_native_correction_zero_original_requires_new_effective_fix(self):
         self.bootstrap()
-        run_id, checkpoint, _ = corrected_native_fixture(self.records, initial=("rejected",), correction=(1, "accepted"))
-        kwargs = {"source_pr": 42, "source_channel": "cli", "source_head": "b" * 40, "accepted_count": 0,
-                  "source_checkpoint": checkpoint, "source_repository": "owner/repo", "classify_pending": True}
+        run_id, checkpoint, _ = corrected_native_fixture(
+            self.records, initial=("rejected",), correction=(1, "accepted")
+        )
+        kwargs = {
+            "source_pr": 42,
+            "source_channel": "cli",
+            "source_head": "b" * 40,
+            "accepted_count": 0,
+            "source_checkpoint": checkpoint,
+            "source_repository": "owner/repo",
+            "classify_pending": True,
+        }
         self.assertEqual(self.records.source_resolution_status(run_id, **kwargs), "finding_pending")
-        self.records.record_source_resolution(run_id, f"cli-run:{run_id}:finding:1", source_pr=42,
-            resolution_id="new-verified-1", fix_sha="d" * 40, actor="owner", proof_note="New obligation fixed")
+        self.records.record_source_resolution(
+            run_id,
+            f"cli-run:{run_id}:finding:1",
+            source_pr=42,
+            resolution_id="new-verified-1",
+            fix_sha="d" * 40,
+            actor="owner",
+            proof_note="New obligation fixed",
+        )
         self.assertEqual(self.records.source_resolution_status(run_id, **kwargs), "resolved")
 
     def test_native_correction_refuses_original_publication_conflicts(self):
         self.bootstrap()
         run_id, checkpoint, _ = corrected_native_fixture(self.records)
-        for changed in (dataclasses.replace(checkpoint, accepted=1), dataclasses.replace(checkpoint, author_login="other"),
-                        dataclasses.replace(checkpoint, raw_found=3), dataclasses.replace(checkpoint, duration_seconds=10),
-                        dataclasses.replace(checkpoint, created_at="2026-10-01T00:00:09Z")):
+        for changed in (
+            dataclasses.replace(checkpoint, accepted=1),
+            dataclasses.replace(checkpoint, author_login="other"),
+            dataclasses.replace(checkpoint, raw_found=3),
+            dataclasses.replace(checkpoint, duration_seconds=10),
+            dataclasses.replace(checkpoint, created_at="2026-10-01T00:00:09Z"),
+        ):
             with self.subTest(checkpoint=changed), self.assertRaises(evidence.CaptureInvalid):
-                evidence.load_cli_capture(changed, "owner/repo", 42, Path(self.temporary_directory.name), records=self.records)
+                evidence.load_cli_capture(
+                    changed, "owner/repo", 42, Path(self.temporary_directory.name), records=self.records
+                )
         with sqlite3.connect(self.database) as connection:
-            metadata = json.loads(connection.execute("SELECT metadata_json FROM review_attempts WHERE attempt_id = ?",
-                                                     (run_id,)).fetchone()[0])
+            metadata = json.loads(
+                connection.execute(
+                    "SELECT metadata_json FROM review_attempts WHERE attempt_id = ?", (run_id,)
+                ).fetchone()[0]
+            )
             del metadata["checkpoint_publication_intent"]
-            connection.execute("UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
-                               (json.dumps(metadata), run_id))
+            connection.execute(
+                "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?", (json.dumps(metadata), run_id)
+            )
         with self.assertRaises(evidence.CaptureInvalid):
-            evidence.load_cli_capture(checkpoint, "owner/repo", 42, Path(self.temporary_directory.name), records=self.records)
+            evidence.load_cli_capture(
+                checkpoint, "owner/repo", 42, Path(self.temporary_directory.name), records=self.records
+            )
 
     def test_native_correction_refuses_corrupt_audit_and_effective_projections(self):
         self.bootstrap()
         run_id, _, _ = corrected_native_fixture(self.records)
-        for column, corrupt in (("actor", ""), ("reason", ""), ("decided_at", "not-a-time"),
-                                ("decided_at", "2026-09-01T00:00:00Z"), ("supersedes_id", "initial-2"),
-                                ("correction_id", "initial-1")):
+        for column, corrupt in (
+            ("actor", ""),
+            ("reason", ""),
+            ("decided_at", "not-a-time"),
+            ("decided_at", "2026-09-01T00:00:00Z"),
+            ("supersedes_id", "initial-2"),
+            ("correction_id", "initial-1"),
+        ):
             with self.subTest(column=column, value=corrupt):
                 with sqlite3.connect(self.database) as connection:
                     original = connection.execute(f"SELECT {column} FROM source_decision_corrections").fetchone()[0]
@@ -2266,24 +2609,43 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_native_correction_rejecting_all_original_acceptances_clears_only_audited_source(self):
         self.bootstrap()
         run_id, checkpoint, _ = corrected_native_fixture(self.records, initial=("accepted",))
-        self.assertEqual(self.records.source_resolution_status(run_id, source_pr=42, source_channel="cli",
-            source_head="b" * 40, accepted_count=1, source_checkpoint=checkpoint,
-            source_repository="owner/repo", classify_pending=True), "resolved")
+        self.assertEqual(
+            self.records.source_resolution_status(
+                run_id,
+                source_pr=42,
+                source_channel="cli",
+                source_head="b" * 40,
+                accepted_count=1,
+                source_checkpoint=checkpoint,
+                source_repository="owner/repo",
+                classify_pending=True,
+            ),
+            "resolved",
+        )
         self.assertEqual(checkpoint.accepted, 1)
         self.assertEqual(self.records.history(42)["source_resolutions"], [])
 
     def test_native_correction_replays_every_supersedes_transition(self):
         self.bootstrap()
         run_id, checkpoint, _ = corrected_native_fixture(self.records)
-        self.records.correct_source_decision(run_id, f"cli-run:{run_id}:finding:1", supersedes_id="corrected-1",
-            correction_id="corrected-2", decision="accepted", actor="owner", reason="Second correction",
-            decided_at="2026-10-01T00:00:14Z")
+        self.records.correct_source_decision(
+            run_id,
+            f"cli-run:{run_id}:finding:1",
+            supersedes_id="corrected-1",
+            correction_id="corrected-2",
+            decision="accepted",
+            actor="owner",
+            reason="Second correction",
+            decided_at="2026-10-01T00:00:14Z",
+        )
         snapshot = self.records.cli_capture_snapshot(run_id, source_pr=42)
         self.assertEqual(len(snapshot["decision_history"][1]), 3)
         evidence._cli_capture_from_sql(snapshot, "owner/repo", 42, checkpoint)
         with sqlite3.connect(self.database) as connection:
-            connection.execute("UPDATE source_decision_corrections SET supersedes_id = 'different-finding' "
-                               "WHERE correction_id = 'corrected-1'")
+            connection.execute(
+                "UPDATE source_decision_corrections SET supersedes_id = 'different-finding' "
+                "WHERE correction_id = 'corrected-1'"
+            )
         with self.assertRaisesRegex(ReviewRecordsError, "exact prior"):
             self.records.cli_capture_snapshot(run_id, source_pr=42)
 
@@ -2643,8 +3005,13 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         snapshot["run"]["finished_at"] = "2026-10-12T00:00:00Z"
         capture = evidence._cli_capture_from_sql(snapshot, "owner/repo", 42)
         self.assertNotIn("completed_at", capture.metadata)
-        self.records.start_attempt(attempt_id="unknown-time", source_pr=42, channel="cli",
-            candidate_sha="a" * 40, started_at="2026-10-01T00:00:00Z")
+        self.records.start_attempt(
+            attempt_id="unknown-time",
+            source_pr=42,
+            channel="cli",
+            candidate_sha="a" * 40,
+            started_at="2026-10-01T00:00:00Z",
+        )
         self.records.finish_attempt("unknown-time", state="completed", finished_at="2026-10-01T00:00:01Z")
         self.assertIsNone(self.records.native_completion_time("unknown-time", source_pr=42))
 
