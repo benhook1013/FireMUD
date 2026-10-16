@@ -345,8 +345,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
       var factory = new GrpcChannelFactory();
       var currentAttemptRefusal = new AtomicReference<Status>();
       var currentAttemptReceiver =
-          new OriginalStartSessionCurrentAttemptReadGrpcService(
-              attempts, gs.manager(), NAMESPACE);
+          new OriginalStartSessionCurrentAttemptReadGrpcService(attempts, gs.manager(), NAMESPACE);
       BindableService capturingCurrentAttemptReceiver =
           () ->
               ServerInterceptors.intercept(
