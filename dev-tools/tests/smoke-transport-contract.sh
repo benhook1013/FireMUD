@@ -56,6 +56,12 @@ from smoke_common import (
     run_websocket_smoke_session,
 )
 
+assert held_admission.format_success_message() == (
+    "Held-admission edge qualification passed. It proves Gateway/Telnet denial only; "
+    "the direct backend positive proof is separate. Successful public Gateway/Telnet "
+    "admission remains unproved."
+)
+
 
 held_services = {
     service: {
@@ -86,6 +92,22 @@ for invalid_status_output in ("", "not-json", '{"Service":"gateway"}'):
         raise AssertionError(
             f"malformed Compose status was accepted: {invalid_status_output!r}"
         )
+
+
+def timeout_compose_status(command, **options):
+    assert command[:3] == ["docker", "compose", "-f"]
+    assert 0 < options["timeout"] <= 10
+    raise subprocess.TimeoutExpired(command, options["timeout"])
+
+
+with patch.object(held_admission.subprocess, "run", side_effect=timeout_compose_status):
+    try:
+        held_admission.wait_for_compose_state(["-f", "compose.yml"], 10, 5)
+    except held_admission.QualificationFailure as exc:
+        assert "Timed out inspecting run-owned Compose status" in str(exc)
+    else:
+        raise AssertionError("a stalled Compose status command did not hit its bounded timeout")
+
 for service in held_admission.HELD_ADMISSION_SERVICES:
     unexpectedly_ready_services = dict(held_services)
     unexpectedly_ready_services[service] = {
@@ -1423,6 +1445,13 @@ assert_command_rejects() {
   fi
 }
 
+assert_command_rejects \
+  "must be invoked by sourcing it from the run-owned smoke wrapper" \
+  bash "$ROOT_DIR/dev-tools/smoke/held-admission-qualification.sh"
+assert_command_rejects \
+  "must be invoked by the run-owned smoke wrapper" \
+  python3 "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
+
 for script in \
   "$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh" \
   "$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"; do
@@ -1537,14 +1566,17 @@ done
 for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-tools/verify-smoke-images.sh"; do
   grep -Fq 'FIREMUD_SMOKE_ADMISSION_QUALIFICATION="${FIREMUD_SMOKE_ADMISSION_QUALIFICATION:-baseline}"' "$script"
   grep -Fq 'baseline|held)' "$script"
-  grep -Fq 'bash "$HELD_ADMISSION_QUALIFICATION_SCRIPT" "${COMPOSE_FILES[@]}"' "$script"
+  grep -Fq 'source "$HELD_ADMISSION_QUALIFICATION_SCRIPT"' "$script"
+  grep -Fq 'run_held_admission_qualification "${COMPOSE_FILES[@]}"' "$script"
   grep -Fq 'bash "$WS_SMOKE_SCRIPT"' "$script"
   grep -Fq 'public successful admission remains unproved' "$script"
 done
 grep -Fq 'FIREMUD_SMOKE_ADMISSION_QUALIFICATION: held' "$ROOT_DIR/.github/workflows/runtime-images.yml"
 grep -Fq 'Confirmed first-party Gateway denial:' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
 grep -Fq 'Confirmed Telnet startup_unavailable denial and closed connection.' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
-grep -Fq 'successful public Gateway/Telnet admission remains unproved.' "$ROOT_DIR/dev-tools/smoke/held_admission_qualification.py"
+grep -Fq 'require_run_owned_compose_service gateway 8080 8080' "$ROOT_DIR/dev-tools/smoke/held-admission-qualification.sh"
+grep -Fq 'require_run_owned_compose_service tcp-proxy-service 8080 8089' "$ROOT_DIR/dev-tools/smoke/held-admission-qualification.sh"
+grep -Fq 'require_run_owned_compose_service tcp-proxy-service 2323 2323' "$ROOT_DIR/dev-tools/smoke/held-admission-qualification.sh"
 
 restart_script="$ROOT_DIR/dev-tools/verify-restart-state.sh"
 grep -q 'run-owned-compose.sh' "$restart_script"

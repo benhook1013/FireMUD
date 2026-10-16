@@ -306,8 +306,21 @@ def wait_for_compose_state(compose_args: list[str], timeout_seconds: int, poll_s
     last_pending = "Compose status has not been read"
     command = ["docker", "compose", *compose_args, "ps", "--format", "json"]
     while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         try:
-            result = subprocess.run(command, check=False, capture_output=True, text=True)
+            result = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=remaining,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise QualificationFailure(
+                "Timed out inspecting run-owned Compose status before the health deadline"
+            ) from exc
         except OSError as exc:
             raise QualificationFailure(f"Could not inspect run-owned Compose status: {exc}") from exc
         if result.returncode != 0:
@@ -340,8 +353,15 @@ def _compose_file_args_are_valid(compose_args: list[str]) -> bool:
     return True
 
 
-def main(argv: list[str] | None = None) -> int:
-    compose_args = list(sys.argv[1:] if argv is None else argv)
+def format_success_message() -> str:
+    return (
+        "Held-admission edge qualification passed. It proves Gateway/Telnet denial only; "
+        "the direct backend positive proof is separate. Successful public Gateway/Telnet "
+        "admission remains unproved."
+    )
+
+
+def run_qualification(compose_args: list[str]) -> int:
     try:
         if os.environ.get("FIREMUD_SMOKE_ADMISSION_QUALIFICATION") != "held":
             raise QualificationFailure(
@@ -376,13 +396,13 @@ def main(argv: list[str] | None = None) -> int:
     except QualificationFailure as exc:
         print(f"Held-admission qualification failed: {exc}", file=sys.stderr)
         return 1
-    print(
-        "Held-admission edge qualification passed. It proves Gateway/Telnet denial only; "
-        "the direct backend positive proof is separate. Successful public Gateway/Telnet "
-        "admission remains unproved."
-    )
+    print(format_success_message())
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    print(
+        "Held-admission checks must be invoked by the run-owned smoke wrapper.",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)

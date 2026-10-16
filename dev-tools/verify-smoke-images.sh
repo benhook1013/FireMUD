@@ -24,6 +24,8 @@ SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS="${SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS:-5}
 COMPOSE_START_ATTEMPTED=false
 # shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
+source "$HELD_ADMISSION_QUALIFICATION_SCRIPT"
 export FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false
 export FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH=/app/run-owned-initial-admission-capability.json
 unset FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH
@@ -295,7 +297,7 @@ if [[ "$FIREMUD_SMOKE_ADMISSION_QUALIFICATION" == "baseline" ]]; then
   bash "$WS_SMOKE_SCRIPT"
   bash "$TCP_SMOKE_SCRIPT"
 else
-  bash "$HELD_ADMISSION_QUALIFICATION_SCRIPT" "${COMPOSE_FILES[@]}"
+  run_held_admission_qualification "${COMPOSE_FILES[@]}"
   # This is the existing isolated backend positive proof. Public successful
   # admission remains a separate runtime obligation.
   bash "$WS_SMOKE_SCRIPT"

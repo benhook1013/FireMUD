@@ -16,6 +16,8 @@ ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 ENSURE_ENV_SCRIPT="$ROOT_DIR/dev-tools/ensure-local-compose-env.sh"
 # shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
+# shellcheck disable=SC1091 # The repository root is resolved at runtime.
+source "$HELD_ADMISSION_QUALIFICATION_SCRIPT"
 export FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false
 export FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH=/app/run-owned-initial-admission-capability.json
 unset FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH
@@ -154,7 +156,7 @@ if [[ "$FIREMUD_SMOKE_ADMISSION_QUALIFICATION" == "baseline" ]]; then
   bash "$TCP_SMOKE_SCRIPT"
 else
   echo "Smoke admission qualification: held (direct backend LOGIN -> PLAY -> LOOK plus Gateway/Telnet fail-closed proof)."
-  bash "$HELD_ADMISSION_QUALIFICATION_SCRIPT" "${COMPOSE_FILES[@]}"
+  run_held_admission_qualification "${COMPOSE_FILES[@]}"
   # This is the existing isolated backend positive proof. Public successful
   # admission remains a separate runtime obligation.
   bash "$WS_SMOKE_SCRIPT"
