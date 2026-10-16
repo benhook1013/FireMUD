@@ -416,7 +416,13 @@ public final class StartSessionLaunchDescriptorProducer {
     if (entries.size() != 1) {
       throw conflict("Exact selected template is missing or duplicated in the committed capture");
     }
-    SelectedGameplayRules selectedGameplayRules = requireSelectedGameLogicReceipt(operation);
+    SelectedGameplayRules selectedGameplayRules =
+        requireSelectedGameLogicReceipt(
+            operation,
+            capture
+                .gameplay()
+                .orElseThrow(
+                    () -> conflict("Exact selected gameplay source capture is unavailable")));
     TemplateConfigSource.Entry entry = entries.getFirst();
     if (!entry.config().baseVersionId().equals(exact.association().canonicalVersionId())) {
       throw conflict("Original captured template base differs from the pinned selected Version");
@@ -515,7 +521,7 @@ public final class StartSessionLaunchDescriptorProducer {
    * Exact Game Logic receipt/source join already required by the selected-publication inventory.
    */
   private SelectedGameplayRules requireSelectedGameLogicReceipt(
-      GameDesignPublicationOperation operation) {
+      GameDesignPublicationOperation operation, GameplayRuleSnapshot.Capture gameplayCapture) {
     var selection = operation.account().input().selection();
     var target = selection.target();
     var publicationRequest =
@@ -532,7 +538,14 @@ public final class StartSessionLaunchDescriptorProducer {
             .readSnapshot(target, selection.selectedCommit().commitId())
             .orElseThrow(
                 () -> conflict("Exact selected Game Logic source snapshot is unavailable"));
-    if (!Arrays.equals(selection.canonicalBytes(), receipt.selection().canonicalBytes())
+    if (!Arrays.equals(gameplayCapture.operation().canonicalBytes(), operation.canonicalBytes())
+        || !selection.selectedCommit().equals(gameplayCapture.snapshot().binding())
+        || !Arrays.equals(
+            gameplayCapture.snapshot().canonicalBytes(), selectedRules.canonicalBytes())
+        || !Arrays.equals(
+            gameplayCapture.snapshot().canonicalBytes(),
+            receipt.authorization().source().canonicalBytes())
+        || !Arrays.equals(selection.canonicalBytes(), receipt.selection().canonicalBytes())
         || !selection.selectedCommit().equals(selectedRules.binding())
         || !Arrays.equals(
             selectedRules.canonicalBytes(), receipt.authorization().source().canonicalBytes())) {
