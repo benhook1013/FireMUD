@@ -213,6 +213,14 @@ public final class SelectedDraftPublicationDigestReadService {
                       new IllegalStateException(
                           "Complete frozen templateConfig source capture unavailable"))
               .operation()
+              .canonicalBytes(),
+          capture
+              .gameplay()
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Complete frozen gameplay source capture unavailable"))
+              .operation()
               .canonicalBytes()
         }) {
       if (!Arrays.equals(operationBytes, retainedOperation)) {
@@ -237,15 +245,15 @@ public final class SelectedDraftPublicationDigestReadService {
                 () ->
                     new IllegalStateException(
                         "Selected template-config source snapshot unavailable"));
+    GameplayRuleSnapshot gameplay =
+        synchronizedSources
+            .gameplayEvidence()
+            .orElseThrow(
+                () -> new IllegalStateException("Selected gameplay source unavailable"));
     if (!selected.equals(synchronizedSources.command().binding())
         || !selected.equals(synchronizedSources.policy().binding())
         || !selected.equals(synchronizedSources.asset().binding())
-        || !selected.equals(
-            synchronizedSources
-                .gameplayEvidence()
-                .orElseThrow(
-                    () -> new IllegalStateException("Selected gameplay source unavailable"))
-                .binding())
+        || !selected.equals(gameplay.binding())
         || !selected.equals(branding.binding())
         || !selected.equals(templateConfig.binding())
         || !Arrays.equals(
@@ -283,7 +291,17 @@ public final class SelectedDraftPublicationDigestReadService {
                             "Complete frozen templateConfig source capture unavailable"))
                 .snapshot()
                 .canonicalBytes(),
-            templateConfig.canonicalBytes())) {
+            templateConfig.canonicalBytes())
+        || !Arrays.equals(
+            frozen
+                .gameplay()
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "Complete frozen gameplay source capture unavailable"))
+                .snapshot()
+                .canonicalBytes(),
+            gameplay.canonicalBytes())) {
       throw new IllegalStateException(
           "Frozen and synchronized source snapshots differ from the complete selected commit");
     }
