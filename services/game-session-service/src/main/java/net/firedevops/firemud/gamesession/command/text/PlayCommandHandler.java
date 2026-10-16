@@ -26,7 +26,6 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
-import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
@@ -140,15 +139,23 @@ public class PlayCommandHandler {
           return failure(
               "FIRST_PARTY_AUTHORITY_UNAVAILABLE",
               "First-party gameplay is unavailable",
-              "error.play.connect-context-invalid",
+              null,
               Map.of(),
               "unknown",
               null,
               null,
               null);
         }
-      } catch (RuntimeException invalidOrUnavailable) {
-        return connectContextInvalidFailure("unknown", null);
+      } catch (RuntimeException unavailable) {
+        return failure(
+            GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
+            GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
+            "error.play.authority-unavailable",
+            Map.of(),
+            "unknown",
+            null,
+            null,
+            null);
       }
     }
     Optional<SessionContext> maybeContext =
@@ -215,6 +222,7 @@ public class PlayCommandHandler {
       }
 
       GameplayWorldCatalog.WorldView selectedWorld = maybeWorld.get();
+      // Registry or session state can change between the top-level check and this reread.
       FirstPartyConnectContextResolution connectContextResolution =
           FirstPartyConnectContextResolution.resolve(
               context.sessionId(), context, firstPartyConnectContextRegistry);
@@ -229,7 +237,7 @@ public class PlayCommandHandler {
         return failure(
             "FIRST_PARTY_AUTHORITY_UNAVAILABLE",
             "First-party gameplay is unavailable",
-            "error.play.connect-context-invalid",
+            null,
             Map.of(),
             tenantTag,
             null,
@@ -240,7 +248,7 @@ public class PlayCommandHandler {
           selection.explicitRealmSelector() != null
               ? gameplayWorldCatalog.resolveRealmForAdmission(
                   selectedWorld, selection.explicitRealmSelector())
-              : selectDefaultRealm(selectedWorld, connectContextResolution.connectContext());
+              : selectDefaultRealm(selectedWorld);
       if (maybeRealm.isEmpty()) {
         return failure(
             GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
@@ -981,17 +989,7 @@ public class PlayCommandHandler {
   }
 
   private Optional<GameplayWorldCatalog.RealmView> selectDefaultRealm(
-      GameplayWorldCatalog.WorldView selectedWorld,
-      Optional<FirstPartyConnectContext> connectContext) {
-    if (connectContext.isPresent()
-        && StringUtils.hasText(connectContext.orElseThrow().realmSlug())) {
-      Optional<GameplayWorldCatalog.RealmView> hintedRealm =
-          gameplayWorldCatalog.resolveRealmForAdmission(
-              selectedWorld, connectContext.orElseThrow().realmSlug());
-      if (hintedRealm.isPresent()) {
-        return hintedRealm;
-      }
-    }
+      GameplayWorldCatalog.WorldView selectedWorld) {
     if (gameplayWorldCatalog.requiresExplicitRealmSelection(selectedWorld)) {
       return Optional.empty();
     }

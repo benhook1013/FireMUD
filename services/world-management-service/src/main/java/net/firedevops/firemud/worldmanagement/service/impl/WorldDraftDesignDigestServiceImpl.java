@@ -162,7 +162,7 @@ public final class WorldDraftDesignDigestServiceImpl implements WorldDraftDesign
                   .toList());
       int schemaVersion = DIGEST_SCHEMA_VERSION;
       if (inboundSourceClosure != null) {
-        digestInput.put("inboundSourceClosure", inboundSourceClosureContent(inboundSourceClosure));
+        digestInput.put("inboundSourceClosure", canonical(inboundSourceClosure.content()));
         schemaVersion = SELECTED_DIGEST_SCHEMA_VERSION;
       }
       String canonicalJson = objectMapper.writeValueAsString(digestInput);
@@ -171,24 +171,6 @@ public final class WorldDraftDesignDigestServiceImpl implements WorldDraftDesign
     } catch (Exception ex) {
       throw new IllegalStateException("failed to compute world draft design digest", ex);
     }
-  }
-
-  private Map<String, Object> inboundSourceClosureContent(
-      InboundSourceClosureDeclaration declaration) {
-    Map<String, Object> content = new LinkedHashMap<>();
-    content.put("schemaVersion", declaration.schemaVersion());
-    content.put(
-        "familyCounts",
-        declaration.familyCounts().stream()
-            .map(
-                family -> {
-                  Map<String, Object> entry = new LinkedHashMap<>();
-                  entry.put("family", family.family().name());
-                  entry.put("count", family.count());
-                  return entry;
-                })
-            .toList());
-    return content;
   }
 
   private String value(String value) {

@@ -19,9 +19,19 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Owner-local immutable terminal receipt and exact FROZEN-to-terminal phase transition. */
 public final class WorldPublicationTerminalRepository {
+  private static final JsonMapper JSON =
+      JsonMapper.builder()
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
   private static final String TERMINAL_WITH_OWNER_READ =
       "SELECT t.*, o.owner_freeze_phase AS joined_owner_phase, "
           + "o.current_publication_fence AS joined_owner_current_fence, "
@@ -396,7 +406,8 @@ public final class WorldPublicationTerminalRepository {
         || !Arrays.equals(request.operationBytes(), required(row, "operation_bytes", byte[].class))
         || !Arrays.equals(
             request.worldEvidenceBytes(), required(row, "world_evidence_bytes", byte[].class))
-        || !request.worldRequestJson().equals(required(row, "world_request_json", String.class))
+        || !sameWorldRequestJson(
+            request.worldRequestJson(), required(row, "world_request_json", String.class))
         || !Arrays.equals(
             request.selectorReceiptBytes(), required(row, "selector_receipt_bytes", byte[].class))
         || !Arrays.equals(
@@ -410,6 +421,20 @@ public final class WorldPublicationTerminalRepository {
           "Retained World publication terminal columns differ from their canonical producer evidence");
     }
     return GameDesignPublicationTerminalEvidence.fromStored(stored);
+  }
+
+  static boolean sameWorldRequestJson(String expected, String stored) {
+    try {
+      JsonNode expectedNode = JSON.readTree(expected);
+      JsonNode storedNode = JSON.readTree(stored);
+      return expectedNode != null
+          && expectedNode.isObject()
+          && storedNode != null
+          && storedNode.isObject()
+          && expectedNode.equals(storedNode);
+    } catch (JacksonException invalidJson) {
+      return false;
+    }
   }
 
   private static String digest(byte[] bytes) {
