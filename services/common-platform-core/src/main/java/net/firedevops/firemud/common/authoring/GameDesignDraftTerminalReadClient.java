@@ -95,6 +95,7 @@ public final class GameDesignDraftTerminalReadClient
     return GameDesignDraftTerminalReadServiceGrpc.newBlockingStub(channel)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
+        .withMaxInboundMessageSize(DraftTerminalReadGrpcLimits.MAX_RESPONSE_WIRE_BYTES)
         .withCompression("gzip");
   }
 

@@ -145,6 +145,58 @@ public class WorldDraftTerminalReadGrpcCodecTest {
   }
 
   @Test
+  void terminalReadbackAllowsMoreThanBindingLimitAndEnforcesProducerAndConsumerBounds() {
+    var request = request();
+    var binding = request.accountBinding();
+    byte[] result = new byte[DraftTerminalReadGrpcLimits.MAX_BINDING_BYTES + 1];
+    var largeReadback =
+        new DraftAuthorizationFenceBinding.OwnerReadback(
+            Owner.WORLD,
+            Outcome.DEFINITIVELY_ABORTED,
+            binding.operationId(),
+            binding.commitId(),
+            binding.fenceId(),
+            binding.inputDigest(),
+            request.originalAccountBinding(),
+            result);
+
+    var response = WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(largeReadback));
+    assertThat(response.getOwnerReadbackBytes().size())
+        .isGreaterThan(DraftTerminalReadGrpcLimits.MAX_BINDING_BYTES);
+    assertThat(
+            WorldDraftTerminalReadGrpcCodec.fromResponse(request, response)
+                .ownerReadback()
+                .orElseThrow()
+                .result())
+        .containsExactly(result);
+
+    var oversizedReadback =
+        new DraftAuthorizationFenceBinding.OwnerReadback(
+            Owner.WORLD,
+            Outcome.DEFINITIVELY_ABORTED,
+            binding.operationId(),
+            binding.commitId(),
+            binding.fenceId(),
+            binding.inputDigest(),
+            request.originalAccountBinding(),
+            new byte[DraftTerminalReadGrpcLimits.MAX_OWNER_READBACK_BYTES]);
+    assertThatThrownBy(
+            () -> WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(oversizedReadback)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("owner readback");
+
+    var oversizedWire =
+        response.toBuilder()
+            .setOwnerReadbackBytes(
+                com.google.protobuf.ByteString.copyFrom(
+                    new byte[DraftTerminalReadGrpcLimits.MAX_OWNER_READBACK_BYTES + 1]))
+            .build();
+    assertThatThrownBy(() -> WorldDraftTerminalReadGrpcCodec.fromResponse(request, oversizedWire))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("owner readback");
+  }
+
+  @Test
   void exactAbortMustBeWorldAndMustEchoEveryRequestFieldAndOriginalBinding() {
     var request = request();
     var binding = request.accountBinding();

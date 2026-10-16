@@ -20,19 +20,28 @@ public final class GameDesignDraftTerminalReadGrpcCodec {
   public static ReadGameDesignDraftTerminalOutcomeRequest toRequest(
       GameDesignDraftTerminalReadEvidence.Request request) {
     Objects.requireNonNull(request, "request");
-    return ReadGameDesignDraftTerminalOutcomeRequest.newBuilder()
+    byte[] binding = request.originalAccountBinding();
+    requireBytes(binding.length, DraftTerminalReadGrpcLimits.MAX_BINDING_BYTES, "binding");
+    var wire = ReadGameDesignDraftTerminalOutcomeRequest.newBuilder()
         .setSchemaVersion(request.schemaVersion())
         .setTargetNamespace(request.targetNamespace())
         .setReadRequestId(request.readRequestId().toString())
         .setOriginalAccountBinding(
-            com.google.protobuf.ByteString.copyFrom(request.originalAccountBinding()))
+            com.google.protobuf.ByteString.copyFrom(binding))
         .build();
+    requireMessageSize(wire, DraftTerminalReadGrpcLimits.MAX_REQUEST_WIRE_BYTES, "request");
+    return wire;
   }
 
   /** Decodes only after the receiver has authenticated its exact same-namespace Account peer. */
   public static GameDesignDraftTerminalReadEvidence.Request fromRequest(
       ReadGameDesignDraftTerminalOutcomeRequest request) {
     Objects.requireNonNull(request, "request");
+    requireMessageSize(request, DraftTerminalReadGrpcLimits.MAX_REQUEST_WIRE_BYTES, "request");
+    requireBytes(
+        request.getOriginalAccountBinding().size(),
+        DraftTerminalReadGrpcLimits.MAX_BINDING_BYTES,
+        "binding");
     requireNoUnknownFields(request, "ReadGameDesignDraftTerminalOutcomeRequest");
     try {
       return new GameDesignDraftTerminalReadEvidence.Request(
@@ -51,30 +60,42 @@ public final class GameDesignDraftTerminalReadGrpcCodec {
       Optional<DraftAuthorizationFenceBinding.OwnerReadback> ownerReadback) {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(ownerReadback, "ownerReadback");
+    byte[] binding = request.originalAccountBinding();
+    requireBytes(binding.length, DraftTerminalReadGrpcLimits.MAX_BINDING_BYTES, "binding");
     var builder =
         ReadGameDesignDraftTerminalOutcomeResponse.newBuilder()
             .setSchemaVersion(request.schemaVersion())
             .setTargetNamespace(request.targetNamespace())
             .setReadRequestId(request.readRequestId().toString())
             .setOriginalAccountBinding(
-                com.google.protobuf.ByteString.copyFrom(request.originalAccountBinding()));
+                com.google.protobuf.ByteString.copyFrom(binding));
     if (ownerReadback.isEmpty()) {
-      return builder
+      var response = builder
           .setStatus(
               GameDesignDraftTerminalReadStatus.GAME_DESIGN_DRAFT_TERMINAL_READ_STATUS_UNKNOWN)
           .build();
+      requireMessageSize(
+          response, DraftTerminalReadGrpcLimits.MAX_RESPONSE_WIRE_BYTES, "response");
+      return response;
     }
     var readback = ownerReadback.orElseThrow();
+    byte[] ownerReadbackBytes = readback.canonicalBytes();
+    requireBytes(
+        ownerReadbackBytes.length,
+        DraftTerminalReadGrpcLimits.MAX_OWNER_READBACK_BYTES,
+        "owner readback");
     requireExactOwnerReadback(request, readback);
     var status =
         readback.outcome() == Outcome.COMMITTED
             ? GameDesignDraftTerminalReadStatus.GAME_DESIGN_DRAFT_TERMINAL_READ_STATUS_COMMITTED
             : GameDesignDraftTerminalReadStatus
                 .GAME_DESIGN_DRAFT_TERMINAL_READ_STATUS_DEFINITIVELY_ABORTED;
-    return builder
+    var response = builder
         .setStatus(status)
-        .setOwnerReadbackBytes(com.google.protobuf.ByteString.copyFrom(readback.canonicalBytes()))
+        .setOwnerReadbackBytes(com.google.protobuf.ByteString.copyFrom(ownerReadbackBytes))
         .build();
+    requireMessageSize(response, DraftTerminalReadGrpcLimits.MAX_RESPONSE_WIRE_BYTES, "response");
+    return response;
   }
 
   /** Validates the complete echo and independently framed Game Design owner result. */
@@ -83,6 +104,15 @@ public final class GameDesignDraftTerminalReadGrpcCodec {
       ReadGameDesignDraftTerminalOutcomeResponse response) {
     Objects.requireNonNull(request, "request");
     Objects.requireNonNull(response, "response");
+    requireMessageSize(response, DraftTerminalReadGrpcLimits.MAX_RESPONSE_WIRE_BYTES, "response");
+    requireBytes(
+        response.getOriginalAccountBinding().size(),
+        DraftTerminalReadGrpcLimits.MAX_BINDING_BYTES,
+        "binding");
+    requireBytes(
+        response.getOwnerReadbackBytes().size(),
+        DraftTerminalReadGrpcLimits.MAX_OWNER_READBACK_BYTES,
+        "owner readback");
     requireNoUnknownFields(response, "ReadGameDesignDraftTerminalOutcomeResponse");
     if (response.getSchemaVersion() != request.schemaVersion()
         || !response.getTargetNamespace().equals(request.targetNamespace())
@@ -164,6 +194,20 @@ public final class GameDesignDraftTerminalReadGrpcCodec {
       return parsed;
     } catch (IllegalArgumentException exception) {
       throw new IllegalArgumentException("Canonical non-nil " + label + " is required", exception);
+    }
+  }
+
+  private static void requireMessageSize(Message message, int maximum, String label) {
+    if (message.getSerializedSize() > maximum) {
+      throw new IllegalArgumentException(
+          "Game Design terminal " + label + " exceeds its wire bound");
+    }
+  }
+
+  private static void requireBytes(int size, int maximum, String label) {
+    if (size > maximum) {
+      throw new IllegalArgumentException(
+          "Game Design terminal " + label + " exceeds its byte bound");
     }
   }
 }
