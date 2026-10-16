@@ -89,6 +89,215 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
     var sql = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
     var write = new TransactionTemplate(new DataSourceTransactionManager(source));
     write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    var mapper = new ObjectMapper();
+    var fence =
+        new WorldDesignPublicationFenceRepository(
+            sql, new WorldAuthoredSourceIntakeRepository(sql));
+    var historyFixture = frozenHistory(sql, write);
+    var f = historyFixture.fixture();
+    var frozen = historyFixture.frozen();
+    var captures = historyFixture.captures();
+    var captureRequest = frozen.request().freeze();
+    var selection = historyFixture.selection();
+    var selector =
+        inputSchema == 1
+            ? null
+            : publishedEvidence(
+                new WorldPublishedStartLocationRepository(
+                        sql, captures, new WorldDraftGraphApplicationRepository(sql, fence, mapper))
+                    .readCommitted(captureRequest)
+                    .orElseThrow());
+    var input = preparationInput(sql, write, f, frozen, selector);
+    if (inputSchema == 2) retainHistoricalPublicationTerminal(sql, write, input, selection);
+    var historicalJson =
+        (tools.jackson.databind.node.ObjectNode)
+            mapper.readTree(WorldCanonicalInstancePreparationRepository.inputJson(input));
+    historicalJson.put("schemaVersion", inputSchema);
+    ((tools.jackson.databind.node.ObjectNode) historicalJson.get("identity"))
+        .remove(List.of("canonicalRealmId", "catalogRevision"));
+    ((tools.jackson.databind.node.ObjectNode) historicalJson.get("gameSessionReadEvidence"))
+        .remove(List.of("canonicalRealmId", "catalogRevision"));
+    String exactInput = mapper.writeValueAsString(historicalJson);
+    if (inputSchema == 1) assertThat(exactInput).doesNotContain("worldStartLocationEvidence");
+    else assertThat(exactInput).contains("worldStartLocationEvidenceBase64");
+    var original = prepare(sql, write, exactInput);
+    assertThat(original).containsKeys("world_instance_id", "private_game_instance_key");
+    assertThat(sql.fetchSingle("SELECT status FROM world_instance").get(0, String.class))
+        .isEqualTo("PREPARING");
+    var queries = originalQueries(sql, inputSchema == 2);
+    var before = rows(sql, queries);
+    var historyBeforeUpgrade = history(sql);
+    assertThat(prepare(sql, write, exactInput)).isEqualTo(original);
+    assertThat(rows(sql, queries)).isEqualTo(before);
+
+    migration(source, schema, inputSchema == 1 ? "1015" : "1037").migrate();
+    assertThat(rows(sql, queries)).isEqualTo(before);
+    assertThat(history(sql)).containsAll(historyBeforeUpgrade);
+    if (inputSchema == 1) assertThat(prepare(sql, write, exactInput)).isEqualTo(original);
+    assertThat(rows(sql, queries)).isEqualTo(before);
+    assertSelector(sql, selector);
+    var historyAfterUpgrade = history(sql);
+    if (inputSchema == 2) {
+      migration(source, schema, "1039").migrate();
+      assertThat(rows(sql, queries)).isEqualTo(before);
+      assertThat(history(sql)).containsAll(historyAfterUpgrade);
+      assertSelector(sql, selector);
+      historyAfterUpgrade = history(sql);
+    }
+
+    var current = migration(source, schema, null);
+    current.migrate();
+    current.validate();
+    assertThat(rows(sql, queries)).isEqualTo(before);
+    assertThat(history(sql)).containsAll(historyAfterUpgrade);
+    assertSelector(sql, selector);
+    assertThat(
+            sql.fetchSingle("SELECT input_json FROM world_canonical_instance_preparation")
+                .get(0, String.class))
+        .isEqualTo(exactInput);
+    assertThatThrownBy(
+            () ->
+                sql.execute(
+                    "UPDATE world_canonical_instance_preparation SET input_json = ?",
+                    exactInput + " "))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(rows(sql, queries)).isEqualTo(before);
+    assertThat(sql.fetchCount(DSL.table(DSL.name("world_canonical_instance_execution")))).isZero();
+    assertThat(
+            sql.fetchSingle(
+                    "SELECT canonical_realm_id IS NULL AND catalog_revision IS NULL FROM world_instance")
+                .get(0, Boolean.class))
+        .isTrue();
+  }
+
+  @org.junit.jupiter.api.Test
+  void unqualifiedFrozenHistoryCannotGainAccountOrderOrCompleteInventory() throws Exception {
+    String schema = "world_unqualified_history_" + UUID.randomUUID().toString().replace("-", "");
+    var source =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    source.setSchema(schema);
+    migration(source, schema, "1025").migrate();
+    var sql = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    var write = new TransactionTemplate(new DataSourceTransactionManager(source));
+    write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    var fixture = frozenHistory(sql, write);
+    var queries =
+        originalQueries(
+            sql,
+            List.of(
+                "world_authored_source_intake",
+                "world_authored_version_identity",
+                "world_topology_draft_commit",
+                "world_draft_graph_application",
+                "world_draft_start_location_receipt",
+                "world_canonical_frozen_topology",
+                "world_design_publication_fence_owner",
+                "world_design_publication_fence_attempt",
+                "world_authored_topology_identity",
+                "world_design_aggregate_epoch",
+                "world_design_scope_epoch",
+                "world_design_revision_ledger",
+                "region",
+                "zone",
+                "room",
+                "room_exit",
+                "generation_rule",
+                "world_entity_spawn_binding"));
+    var before = rows(sql, queries);
+    assertThat(before).hasSize(18);
+    for (String table :
+        List.of(
+            "world_authored_source_intake",
+            "world_authored_version_identity",
+            "world_topology_draft_commit",
+            "world_draft_graph_application",
+            "world_draft_start_location_receipt",
+            "world_canonical_frozen_topology",
+            "world_design_publication_fence_owner",
+            "world_design_publication_fence_attempt",
+            "region",
+            "zone",
+            "room",
+            "room_exit")) {
+      assertThat(before.get(table)).as(table).isNotEmpty();
+    }
+    assertThat(before.get("generation_rule")).isEmpty();
+    assertThat(before.get("world_entity_spawn_binding")).isEmpty();
+    var priorHistory = history(sql);
+    for (String target : new String[] {"1026", "1028", "1035", null}) {
+      var upgrade = migration(source, schema, target);
+      upgrade.migrate();
+      upgrade.validate();
+      assertThat(rows(sql, queries)).isEqualTo(before);
+      assertThat(history(sql)).containsAll(priorHistory);
+      priorHistory = history(sql);
+      assertUnqualifiedFreeze(sql, fixture);
+      if (target == null || !target.equals("1026")) {
+        var account =
+            isolatedPublicationAccountBinding(
+                application(fixture.plan()).operation().accountBindingBytes(),
+                fixture.selection(),
+                fixture.attempt().request().publicationRequestId());
+        assertThatThrownBy(
+                () ->
+                    new WorldSelectedPublicationArtifactInventoryRepository(sql)
+                        .readCommitted(fixture.attempt(), account))
+            .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+            .hasMessage("Exact frozen World publication has no complete artifact inventory");
+        assertThat(sql.fetchCount(DSL.table("world_selected_publication_artifact_inventory")))
+            .isZero();
+      }
+      assertThat(rows(sql, queries)).isEqualTo(before);
+    }
+    var account =
+        isolatedPublicationAccountBinding(
+            application(fixture.plan()).operation().accountBindingBytes(),
+            fixture.selection(),
+            fixture.attempt().request().publicationRequestId());
+    // A plausible distinct Account order supplied now is not the missing original order.
+    // Keep all installed triggers enabled and attempt the forbidden late attachment directly.
+    assertThatThrownBy(
+            () ->
+                write.executeWithoutResult(
+                    ignored ->
+                        sql.execute(
+                            "INSERT INTO world_design_publication_account_binding "
+                                + "(publication_fence,account_operation_id,account_fence_id,account_binding_bytes,account_binding_digest) "
+                                + "VALUES (?,?,?,?,?)",
+                            fixture.attempt().publicationFence(),
+                            account.operationId(),
+                            account.fenceId(),
+                            account.canonicalBytes(),
+                            DraftAuthorizationFenceBinding.digest(account.canonicalBytes()))))
+        .isInstanceOf(DataAccessException.class);
+    assertUnqualifiedFreeze(sql, fixture);
+    assertThat(rows(sql, queries)).isEqualTo(before);
+    assertThat(sql.fetchCount(DSL.table("world_design_publication_terminal"))).isZero();
+    assertThat(sql.fetchCount(DSL.table("world_instance"))).isZero();
+    assertThat(sql.fetchValue("SHOW session_replication_role", String.class)).isEqualTo("origin");
+  }
+
+  private static void assertUnqualifiedFreeze(DSLContext sql, FrozenHistoryFixture fixture) {
+    assertThat(
+            sql.fetchSingle(
+                    "SELECT attempt_created_full_xid IS NULL FROM world_design_publication_fence_attempt")
+                .get(0, Boolean.class))
+        .isTrue();
+    assertThat(sql.fetchCount(DSL.table("world_design_publication_account_binding"))).isZero();
+    assertThat(
+            sql.fetchSingle(
+                "SELECT owner_freeze_phase,current_publication_fence FROM world_design_publication_fence_owner"))
+        .satisfies(
+            row -> {
+              assertThat(row.get("owner_freeze_phase", String.class)).isEqualTo("FROZEN");
+              assertThat(row.get("current_publication_fence", UUID.class))
+                  .isEqualTo(fixture.attempt().publicationFence());
+            });
+  }
+
+  private static FrozenHistoryFixture frozenHistory(DSLContext sql, TransactionTemplate write)
+      throws Exception {
     var intake = new WorldAuthoredSourceIntakeRepository(sql);
     Fixture f = fixture(sql, write, intake);
     var plan = historicalPlan(f);
@@ -204,76 +413,16 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
                 ignored ->
                     captures.capture(
                         new WorldCanonicalFrozenTopology.Request(plan, captureRequest))));
-    var selector =
-        inputSchema == 1
-            ? null
-            : publishedEvidence(
-                new WorldPublishedStartLocationRepository(
-                        sql, captures, new WorldDraftGraphApplicationRepository(sql, fence, mapper))
-                    .readCommitted(captureRequest)
-                    .orElseThrow());
-    var input = preparationInput(sql, write, f, frozen, selector);
-    if (inputSchema == 2) retainHistoricalPublicationTerminal(sql, write, input, selection);
-    var historicalJson =
-        (tools.jackson.databind.node.ObjectNode)
-            mapper.readTree(WorldCanonicalInstancePreparationRepository.inputJson(input));
-    historicalJson.put("schemaVersion", inputSchema);
-    ((tools.jackson.databind.node.ObjectNode) historicalJson.get("identity"))
-        .remove(List.of("canonicalRealmId", "catalogRevision"));
-    ((tools.jackson.databind.node.ObjectNode) historicalJson.get("gameSessionReadEvidence"))
-        .remove(List.of("canonicalRealmId", "catalogRevision"));
-    String exactInput = mapper.writeValueAsString(historicalJson);
-    if (inputSchema == 1) assertThat(exactInput).doesNotContain("worldStartLocationEvidence");
-    else assertThat(exactInput).contains("worldStartLocationEvidenceBase64");
-    var original = prepare(sql, write, exactInput);
-    assertThat(original).containsKeys("world_instance_id", "private_game_instance_key");
-    assertThat(sql.fetchSingle("SELECT status FROM world_instance").get(0, String.class))
-        .isEqualTo("PREPARING");
-    var queries = originalQueries(sql, inputSchema == 2);
-    var before = rows(sql, queries);
-    var historyBeforeUpgrade = history(sql);
-    assertThat(prepare(sql, write, exactInput)).isEqualTo(original);
-    assertThat(rows(sql, queries)).isEqualTo(before);
-
-    migration(source, schema, inputSchema == 1 ? "1015" : "1037").migrate();
-    assertThat(rows(sql, queries)).isEqualTo(before);
-    assertThat(history(sql)).containsAll(historyBeforeUpgrade);
-    if (inputSchema == 1) assertThat(prepare(sql, write, exactInput)).isEqualTo(original);
-    assertThat(rows(sql, queries)).isEqualTo(before);
-    assertSelector(sql, selector);
-    var historyAfterUpgrade = history(sql);
-    if (inputSchema == 2) {
-      migration(source, schema, "1039").migrate();
-      assertThat(rows(sql, queries)).isEqualTo(before);
-      assertThat(history(sql)).containsAll(historyAfterUpgrade);
-      assertSelector(sql, selector);
-      historyAfterUpgrade = history(sql);
-    }
-
-    var current = migration(source, schema, null);
-    current.migrate();
-    current.validate();
-    assertThat(rows(sql, queries)).isEqualTo(before);
-    assertThat(history(sql)).containsAll(historyAfterUpgrade);
-    assertSelector(sql, selector);
-    assertThat(
-            sql.fetchSingle("SELECT input_json FROM world_canonical_instance_preparation")
-                .get(0, String.class))
-        .isEqualTo(exactInput);
-    assertThatThrownBy(
-            () ->
-                sql.execute(
-                    "UPDATE world_canonical_instance_preparation SET input_json = ?",
-                    exactInput + " "))
-        .isInstanceOf(DataAccessException.class);
-    assertThat(rows(sql, queries)).isEqualTo(before);
-    assertThat(sql.fetchCount(DSL.table(DSL.name("world_canonical_instance_execution")))).isZero();
-    assertThat(
-            sql.fetchSingle(
-                    "SELECT canonical_realm_id IS NULL AND catalog_revision IS NULL FROM world_instance")
-                .get(0, Boolean.class))
-        .isTrue();
+    return new FrozenHistoryFixture(f, plan, selection, attempt, captures, frozen);
   }
+
+  private record FrozenHistoryFixture(
+      Fixture fixture,
+      WorldDraftTopologyCommitPlan plan,
+      AuthoredDraftPublishSelectionBinding selection,
+      WorldDesignPublicationFenceEvidence.FrozenAttempt attempt,
+      WorldCanonicalFrozenTopologyRepository captures,
+      WorldCanonicalFrozenTopology frozen) {}
 
   private static Map<String, Object> prepare(
       DSLContext sql, TransactionTemplate write, String input) throws Exception {
@@ -782,7 +931,6 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
   }
 
   private static Map<String, String> originalQueries(DSLContext sql, boolean withSelector) {
-    var result = new LinkedHashMap<String, String>();
     var tables =
         new ArrayList<>(
             List.of(
@@ -809,6 +957,11 @@ class WorldV1PreparationHistoryPostgresIntegrationTest {
               "world_design_publication_fence_attempt",
               "world_design_publication_terminal"));
     }
+    return originalQueries(sql, tables);
+  }
+
+  private static Map<String, String> originalQueries(DSLContext sql, List<String> tables) {
+    var result = new LinkedHashMap<String, String>();
     for (String table : tables) {
       var columns =
           sql.fetch(
