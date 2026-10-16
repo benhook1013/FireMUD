@@ -595,7 +595,7 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
               original.attempt(),
               UUID.randomUUID(),
               original.ownerFence());
-      Instant lease = Instant.now().truncatedTo(ChronoUnit.MICROS).plusSeconds(240);
+      Instant lease = Instant.now().truncatedTo(ChronoUnit.MICROS).plus(Duration.ofMinutes(30));
       byte[] scalar = predecessorScalarProjection(original.tuple());
       var observation =
           new OriginalStartSessionCurrentAttemptEvidence.Result(request, lease, scalar);
@@ -859,7 +859,7 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
             new SecureRandom(),
             LOGGING_PEER_URI,
             GAME_SESSION_PEER_URI,
-            Duration.ofMinutes(5),
+            Duration.ofMinutes(30),
             Duration.ofSeconds(30));
     var issued =
         withPeer(

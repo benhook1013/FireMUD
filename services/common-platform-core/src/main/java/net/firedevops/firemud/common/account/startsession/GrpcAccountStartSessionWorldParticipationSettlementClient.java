@@ -26,8 +26,6 @@ public final class GrpcAccountStartSessionWorldParticipationSettlementClient
   private static final long CALL_DEADLINE_SECONDS = 180L;
 
   private final String workloadNamespace;
-  private volatile boolean initialized;
-  private volatile boolean closed;
 
   public GrpcAccountStartSessionWorldParticipationSettlementClient(
       ServiceEndpointsProperties endpoints,
@@ -48,18 +46,9 @@ public final class GrpcAccountStartSessionWorldParticipationSettlementClient
 
   /** Initializes this explicit dependency only when an owning World service starts it. */
   public synchronized void init() throws SSLException, IOException {
-    if (closed) {
-      throw new IllegalStateException("Account World participation settlement client is closed");
-    }
-    if (initialized) {
-      return;
-    }
-    initReloadingClient();
-    if (stub() == null) {
-      throw new IllegalStateException(
-          "Account World participation settlement client has no gRPC stub");
-    }
-    initialized = true;
+    initOnce(
+        "Account World participation settlement client is closed",
+        "Account World participation settlement client has no gRPC stub");
   }
 
   @Override
@@ -112,24 +101,11 @@ public final class GrpcAccountStartSessionWorldParticipationSettlementClient
         .withCompression("gzip");
   }
 
-  @Override
-  public void close() throws IOException {
-    synchronized (this) {
-      closed = true;
-      initialized = false;
-    }
-    super.close();
-  }
-
   private AccountStartSessionWorldParticipationSettlementServiceGrpc
           .AccountStartSessionWorldParticipationSettlementServiceBlockingStub
       requireStub() {
-    var current = stub();
-    if (closed || !initialized || current == null) {
-      throw new IllegalStateException(
-          "Account World participation settlement client is not initialized and available");
-    }
-    return current;
+    return requireInitializedStub(
+        "Account World participation settlement client is not initialized and available");
   }
 
   private static CommonGrpcClientProperties requireFileBackedMtls(
