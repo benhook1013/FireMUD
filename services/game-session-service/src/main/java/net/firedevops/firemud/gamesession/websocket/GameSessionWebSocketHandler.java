@@ -209,7 +209,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       if (command.type() == TextCommandType.NOOP) {
         return;
       }
-      ensureBootstrapSessionContextIfMissing(session, sessionId);
+      if (!ensureBootstrapSessionContextIfMissing(session, sessionId)) {
+        return;
+      }
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
       TextCommand resolvedCommand =
@@ -623,22 +625,22 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return true;
   }
 
-  private void ensureBootstrapSessionContextIfMissing(
+  private boolean ensureBootstrapSessionContextIfMissing(
       WebSocketSession session, String transportSessionId) {
     if (!StringUtils.hasText(transportSessionId)) {
-      return;
+      return true;
     }
     Optional<SessionContext> tenantScopedContext =
         resolveNormalizedSessionContext(session, transportSessionId);
     if (tenantScopedContext.isPresent()
         && resolveNormalizedSessionContext(transportSessionId).isPresent()) {
-      return;
+      return true;
     }
     if (tenantScopedContext.isPresent()) {
       sessionContextService.save(tenantScopedContext.orElseThrow());
-      return;
+      return true;
     }
-    bootstrapSessionContext(session);
+    return bootstrapSessionContext(session);
   }
 
   private CombinedLoggingContext openLoggingContext(WebSocketSession session) {
