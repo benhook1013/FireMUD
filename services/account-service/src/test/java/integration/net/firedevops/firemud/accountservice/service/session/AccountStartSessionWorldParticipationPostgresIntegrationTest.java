@@ -855,11 +855,12 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
             responseCryptography(temporary),
             account.terms,
             account.manager,
-            Clock.systemUTC(),
+            // Reference expiry is not under test; migration runtime must not expire this fixture.
+            Clock.fixed(Instant.now(), java.time.ZoneOffset.UTC),
             new SecureRandom(),
             LOGGING_PEER_URI,
             GAME_SESSION_PEER_URI,
-            Duration.ofMinutes(30),
+            Duration.ofMinutes(5),
             Duration.ofSeconds(30));
     var issued =
         withPeer(
