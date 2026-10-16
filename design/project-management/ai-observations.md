@@ -140,3 +140,8 @@ Entry format:
   - Context: original creator callbacks can wait for Account owner locks after initial token verification.
   - Observation: an expiry-only final check misses a clock observation before the original not-before bound; registry cleanup retention and authorization-reference expiry do not define the original token's full interval.
   - Expected pattern: use one existing-clock observation for the canonical original `issuedAt <= now < expiresAt` interval, test both denial bounds and exact lower-bound equality, preserve immutable evidence, and keep historical exact-order recovery separate from fresh authorization.
+
+- `2026-10-16`: Separate original signer provenance from present public-key acceptance
+  - Context: fresh signed and committed-JTI creator callbacks must retain their original key identity.
+  - Observation: an immutable source pin, historical committed-signer receipt and still-fresh signature cache do not independently establish that the original key remains in the current protected public snapshot.
+  - Expected pattern: load the existing trusted source outside SQL and synchronization, compare the original key ID and RFC 7638 fingerprint, preserve accepted retiring-key membership and historical exact recovery, and state the per-invocation snapshot limit beside the proof.

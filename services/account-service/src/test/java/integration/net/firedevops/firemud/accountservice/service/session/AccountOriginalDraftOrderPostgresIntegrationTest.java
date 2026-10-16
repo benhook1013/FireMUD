@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.accountservice.authordraft.AccountControlUiAuthority;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderCredentials;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCodec;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
@@ -27,6 +28,7 @@ import org.jooq.impl.DefaultExecuteListenerProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
@@ -230,6 +232,202 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
             .isEqualTo(before);
       } finally {
         f.dsl.configuration().set(originalListeners);
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "true, ABSENT", "false, ABSENT", "true, REPLACED", "false, REPLACED",
+    "true, RETAINED", "false, RETAINED", "true, UNTRUSTED", "false, UNTRUSTED",
+    "true, SOURCE_FAILURE", "false, SOURCE_FAILURE", "true, SQL", "false, SQL",
+    "true, SYNCHRONIZATION", "false, SYNCHRONIZATION"
+  })
+  void originalCreatorRequiresExactKeyInCurrentProtectedSnapshot(
+      boolean signedCredential, String keyState, @TempDir Path proofDirectory) throws Exception {
+    var clock = new ActorClock();
+    try (var fixture =
+        new AccountControlUiOriginalOrderFixture(
+            postgres.getJdbcUrl(),
+            postgres.getUsername(),
+            postgres.getPassword(),
+            redis.getHost(),
+            redis.getMappedPort(6379),
+            proofDirectory,
+            UUID.randomUUID(),
+            clock)) {
+      var issued = fixture.issueCreator();
+      var f = issued.sources();
+      clock.freezeAt(clock.instant());
+      var originalSnapshot = fixture.publicSource.load();
+      var pin = fixture.publicSource.sourceIdentity();
+      String tokenHash =
+          AccountControlUiCoordination.digest(
+              "SHA-256", issued.compact().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+      var original =
+          f.tx(
+              () ->
+                  f.dsl.fetchSingle(
+                      "SELECT token_jti, signer_receipt, row_to_json(a)::TEXT AS payload, "
+                          + "a.xmin::TEXT AS row_version FROM account_control_ui_issuance_operations a "
+                          + "WHERE token_hash=? AND status='COMMITTED'",
+                      tokenHash));
+      UUID jti = original.get("token_jti", UUID.class);
+      var receipt =
+          AccountControlUiIssuanceRepository.object(original.get("signer_receipt", byte[].class));
+      String originalKid = (String) receipt.get("kid");
+      assertThat(
+              AccountJwtJwksTrustedSource.publicKeyFingerprint(originalSnapshot, pin, originalKid))
+          .contains((String) receipt.get("publicKeyFingerprint"));
+      byte[] changed = originalSnapshot.jwksBytes();
+      if (java.util.Set.of("ABSENT", "REPLACED", "RETAINED").contains(keyState)) {
+        var generator = java.security.KeyPairGenerator.getInstance("RSA");
+        generator.initialize(3072);
+        var replacement =
+            AccountControlUiSignerFixture.publicJwk(
+                "REPLACED".equals(keyState) ? originalKid : "other-accepted-key",
+                (java.security.interfaces.RSAPublicKey) generator.generateKeyPair().getPublic());
+        var keys = new java.util.ArrayList<Object>();
+        keys.add(
+            AccountControlUiIssuanceRepository.object(
+                replacement.json().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        if ("RETAINED".equals(keyState)) {
+          // Controlled retiring-key membership: another current key precedes the accepted original.
+          // This is not a real signer-rotation or publication proof.
+          var originalKeys =
+              (List<?>)
+                  AccountControlUiIssuanceRepository.object(originalSnapshot.jwksBytes())
+                      .get("keys");
+          keys.addAll(originalKeys);
+        }
+        changed = AccountControlUiAuthority.canonical(java.util.Map.of("keys", keys));
+      }
+      var observedPin =
+          "UNTRUSTED".equals(keyState)
+              ? new net.firedevops.firemud.common.security.AccountPublicJwksCache.SourceIdentity(
+                  pin.environmentId(),
+                  pin.clusterId(),
+                  pin.clusterIncarnationUid(),
+                  pin.namespace(),
+                  pin.namespaceUid(),
+                  UUID.randomUUID().toString(),
+                  pin.bindingRevision(),
+                  pin.apiServerOrigin(),
+                  pin.servingCaSha256())
+              : pin;
+      var controlledCurrent =
+          new net.firedevops.firemud.common.security.AccountPublicJwksCache.PublicJwksSnapshot(
+              observedPin, changed);
+      var protectedFailures = new java.util.concurrent.atomic.AtomicInteger();
+      if ("SOURCE_FAILURE".equals(keyState)) {
+        org.mockito.Mockito.doAnswer(
+                invocation -> {
+                  assertThat(
+                          org.springframework.transaction.support.TransactionSynchronizationManager
+                              .isActualTransactionActive())
+                      .isFalse();
+                  assertThat(
+                          org.springframework.transaction.support.TransactionSynchronizationManager
+                              .isSynchronizationActive())
+                      .isFalse();
+                  protectedFailures.incrementAndGet();
+                  throw new IllegalStateException("controlled protected-source transport failure");
+                })
+            .when(fixture.signerFixture.client)
+            .observe();
+      }
+      var reads = new java.util.concurrent.atomic.AtomicInteger();
+      // Current snapshot membership is an explicit upstream stipulation here; this does not prove
+      // a production key withdrawal or publication. Original issuance, SQL and Redis remain real.
+      org.mockito.Mockito.doAnswer(
+              invocation -> {
+                assertThat(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isActualTransactionActive())
+                    .isFalse();
+                assertThat(
+                        org.springframework.transaction.support.TransactionSynchronizationManager
+                            .isSynchronizationActive())
+                    .isFalse();
+                reads.incrementAndGet();
+                if ("SOURCE_FAILURE".equals(keyState)
+                    || "SQL".equals(keyState)
+                    || "SYNCHRONIZATION".equals(keyState)) {
+                  return invocation.callRealMethod();
+                }
+                return controlledCurrent;
+              })
+          .when(fixture.publicSource)
+          .load();
+      var callback = new AtomicBoolean();
+      java.util.function.Supplier<String> action =
+          () -> {
+            if (signedCredential) {
+              return issued
+                  .actors()
+                  .withCurrent(
+                      issued.compact(),
+                      f.tenant,
+                      issued.environment(),
+                      current -> {
+                        callback.set(true);
+                        return "callback invoked";
+                      });
+            }
+            return issued
+                .actors()
+                .withCurrentCommitted(
+                    f.account.getAccountUuid(),
+                    f.tenant,
+                    jti,
+                    issued.environment(),
+                    current -> {
+                      callback.set(true);
+                      return "callback invoked";
+                    });
+          };
+      Throwable failure =
+          catchThrowable(
+              () -> {
+                if ("SQL".equals(keyState)) {
+                  f.tx(action::get);
+                } else if ("SYNCHRONIZATION".equals(keyState)) {
+                  org.springframework.transaction.support.TransactionSynchronizationManager
+                      .initSynchronization();
+                  try {
+                    action.get();
+                  } finally {
+                    org.springframework.transaction.support.TransactionSynchronizationManager
+                        .clearSynchronization();
+                  }
+                } else {
+                  action.get();
+                }
+              });
+      var after =
+          f.tx(
+              () ->
+                  f.dsl.fetchSingle(
+                      "SELECT row_to_json(a)::TEXT AS payload, a.xmin::TEXT AS row_version "
+                          + "FROM account_control_ui_issuance_operations a WHERE token_hash=?",
+                      tokenHash));
+      assertThat(after.get("payload", String.class))
+          .isEqualTo(original.get("payload", String.class));
+      assertThat(after.get("row_version", String.class))
+          .isEqualTo(original.get("row_version", String.class));
+      assertThat(callback.get()).isEqualTo("RETAINED".equals(keyState));
+      if ("RETAINED".equals(keyState)) {
+        assertThat(failure).isNull();
+      } else {
+        assertThat(failure).isInstanceOf(RuntimeException.class);
+      }
+      if ("SQL".equals(keyState) || "SYNCHRONIZATION".equals(keyState)) {
+        assertThat(reads.get()).isZero();
+      } else {
+        assertThat(reads.get()).isGreaterThanOrEqualTo(1);
+      }
+      if ("SOURCE_FAILURE".equals(keyState)) {
+        assertThat(protectedFailures.get()).isGreaterThanOrEqualTo(1);
       }
     }
   }

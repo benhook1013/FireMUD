@@ -144,6 +144,7 @@ public final class AccountControlUiActorService {
       Function<Current, T> action) {
     outsideSql();
     var signed = verifySigned(compactJwt);
+    var acceptedKey = readAcceptedSignerKey(signed.claims.keyId());
     String tokenHash =
         AccountControlUiIssuanceRepository.hash(compactJwt.getBytes(StandardCharsets.US_ASCII));
     byte[] exactRegistry = registry.readActive(tokenHash);
@@ -159,6 +160,7 @@ public final class AccountControlUiActorService {
             throw denied();
           }
           requireSignerIdentity(stored, signed);
+          requireAcceptedSignerKey(stored, acceptedKey);
           signers.requireOriginal(stored.signerReceipt);
           var current = authority.capture(stored.accountId, selectedTenant, environment);
           if (!Arrays.equals(current.evidence(), stored.sources)) {
@@ -203,6 +205,13 @@ public final class AccountControlUiActorService {
       throw denied();
     }
 
+    Object receiptKeyId =
+        AccountControlUiIssuanceRepository.object(original.signerReceipt).get("kid");
+    if (!(receiptKeyId instanceof String keyId)) {
+      throw denied();
+    }
+    var acceptedKey = readAcceptedSignerKey(keyId);
+    requireAcceptedSignerKey(original, acceptedKey);
     byte[] exactRegistry = registry.readActive(original.tokenHash);
     return transaction.execute(
         ignored -> {
@@ -228,6 +237,29 @@ public final class AccountControlUiActorService {
           return action.apply(new Current(committed, current));
         });
   }
+
+  /**
+   * One protected snapshot per fresh call; this does not promise acceptance through later locks.
+   */
+  private AcceptedSignerKey readAcceptedSignerKey(String keyId) {
+    outsideSql();
+    String fingerprint =
+        AccountJwtJwksTrustedSource.publicKeyFingerprint(
+                publicSource.load(), publicSourcePin, keyId)
+            .orElseThrow(AccountControlUiActorService::denied);
+    return new AcceptedSignerKey(keyId, fingerprint);
+  }
+
+  private static void requireAcceptedSignerKey(
+      AccountControlUiIssuanceRepository.Stored original, AcceptedSignerKey accepted) {
+    var receipt = AccountControlUiIssuanceRepository.object(original.signerReceipt);
+    if (!accepted.keyId().equals(receipt.get("kid"))
+        || !accepted.fingerprint().equals(receipt.get("publicKeyFingerprint"))) {
+      throw denied();
+    }
+  }
+
+  private record AcceptedSignerKey(String keyId, String fingerprint) {}
 
   private void requireCurrentOriginalToken(AccountControlUiIssuanceRepository.Stored original) {
     var now = clock.instant();
@@ -377,8 +409,9 @@ public final class AccountControlUiActorService {
   }
 
   private static void outsideSql() {
-    if (TransactionSynchronizationManager.isActualTransactionActive()) {
-      throw new IllegalStateException("Signature/registry reads must precede owner SQL locks");
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException("Signature/registry/JWKS reads must precede owner SQL locks");
     }
   }
 
