@@ -15,7 +15,6 @@ from urllib.parse import urlsplit
 
 from smoke_common import is_localhost_equivalent
 
-
 REQUIRED_SERVICES = (
     "account-service",
     "automation-scripting-service",
