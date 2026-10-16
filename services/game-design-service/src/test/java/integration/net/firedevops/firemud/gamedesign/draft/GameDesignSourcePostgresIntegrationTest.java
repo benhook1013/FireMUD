@@ -42,7 +42,6 @@ import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperat
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.GameplayRuleSnapshot;
 import net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository;
-import net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository;
 import net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository;

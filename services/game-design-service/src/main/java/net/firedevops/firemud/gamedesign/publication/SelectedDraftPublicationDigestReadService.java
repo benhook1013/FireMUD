@@ -248,8 +248,7 @@ public final class SelectedDraftPublicationDigestReadService {
     GameplayRuleSnapshot gameplay =
         synchronizedSources
             .gameplayEvidence()
-            .orElseThrow(
-                () -> new IllegalStateException("Selected gameplay source unavailable"));
+            .orElseThrow(() -> new IllegalStateException("Selected gameplay source unavailable"));
     if (!selected.equals(synchronizedSources.command().binding())
         || !selected.equals(synchronizedSources.policy().binding())
         || !selected.equals(synchronizedSources.asset().binding())
