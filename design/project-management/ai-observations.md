@@ -195,3 +195,11 @@ Entry format:
   - Observation: the command returned no message body after 9.95 seconds and reported only `SQLite inbox write failed`. The error did not identify the failed write, contention state or safe retry boundary; its underlying cause remains unknown.
   - Expected pattern: make message delivery and seen-state recording failures distinguishable, with enough operation context to choose a safe canonical retry without inspecting or mutating the database directly.
   - Recovery: one canonical retry returned the full message after 6.30 seconds. Gameplay reported the evidence to Overseer for the User-requested Controller improvements; no database or Controller change was made by this lane.
+
+- 2026-10-17 — Distinguish queued source CI from early metadata runs.
+  - Observation: The Gameplay observer initially reported that six newly published heads had no source validation because only their early metadata jobs were inspectable. Their original source workflows subsequently completed change detection and started the build/test matrices. No missing-source CI defect or cancellation was established; the premature report sent unnecessary investigation to Overseer.
+  - Expected pattern: Retain each original run and classify source selection as pending or unknown while discovery or queue admission is incomplete. A completed metadata gate establishes neither source success nor source absence. The report and observer guidance were corrected with the exact source run identities.
+
+- 2026-10-17 — Targeted Controller status can exhaust its deadline on older queue history.
+  - Observation: `firemud-controller --worker-identity Gameplay reviews status --pr 3224 --json` failed at its 120-second deadline during `target_history_pr_2846_cli`, after eighty prior phases consumed 119.6 seconds. It returned no JSON, delaying current front readiness readback even though publication and direct head/base verification succeeded.
+  - Expected pattern: Keep current-target status bounded while retaining historical review evidence. Overseer received the exact diagnostic; no state deletion, quota reset or installed-runtime bypass was used. The subsequent exact-checkpoint ancestry reconciliations succeeded; the failed status invocation itself remains unavailable evidence.
