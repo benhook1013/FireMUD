@@ -87,6 +87,8 @@ public final class GrpcGameLogicIntakeAuthorizationClient
     var current = stub();
     if (closed || !initialized || current == null)
       throw new IllegalStateException("Account intake authorization client unavailable");
+    var credentials = credentials(originalCreatorCredential, operation);
+    var wireRequest = GameLogicIntakeAuthorizationGrpcCodec.toRequest(request);
     try {
       var secured =
           current
@@ -94,9 +96,8 @@ public final class GrpcGameLogicIntakeAuthorizationClient
                   new CompositeCallCredentials(
                       new GrpcServerPeerIdentityCallCredentials(
                           "spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service"),
-                      credentials(originalCreatorCredential, operation)))
+                      credentials))
               .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
-      var wireRequest = GameLogicIntakeAuthorizationGrpcCodec.toRequest(request);
       var response =
           switch (operation) {
             case AUTHORIZE -> secured.authorizeIntake(wireRequest);
