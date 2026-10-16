@@ -382,6 +382,187 @@ class RetainedActorIdentityIntegrationTest {
   }
 
   @Test
+  void canonicalOwnerRepositoryReadsExactScopedActorsAndExcludesQuarantine() {
+    // These stored identities are controlled SQL inputs, not owner issuance or player admission.
+    var shared = PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+    var isolated = PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+    UUID otherAccount = UUID.randomUUID();
+    UUID otherTenant = UUID.randomUUID();
+    UUID otherNamespace = UUID.randomUUID();
+    UUID targetActor = UUID.randomUUID();
+    UUID accountActor = UUID.randomUUID();
+    UUID tenantActor = UUID.randomUUID();
+    UUID namespaceActor = UUID.randomUUID();
+    UUID quarantinedActor = UUID.randomUUID();
+    insertNamespace(tenantUuid, namespaceUuid, shared);
+    insertNamespace(tenantUuid, otherNamespace, isolated);
+    insertNamespace(otherTenant, namespaceUuid, shared);
+    // Identical private numeric keys deliberately do not grant canonical tuple equivalence.
+    insertActor(
+        "reader-target",
+        targetActor,
+        accountUuid,
+        tenantUuid,
+        namespaceUuid,
+        shared,
+        "shared-live",
+        "OWNER_RESOLVED",
+        null,
+        accountId,
+        tenantId);
+    insertActor(
+        "reader-account",
+        accountActor,
+        otherAccount,
+        tenantUuid,
+        namespaceUuid,
+        shared,
+        "shared-live",
+        "OWNER_RESOLVED",
+        null,
+        accountId,
+        tenantId);
+    insertActor(
+        "reader-tenant",
+        tenantActor,
+        accountUuid,
+        otherTenant,
+        namespaceUuid,
+        shared,
+        "shared-live",
+        "OWNER_RESOLVED",
+        null,
+        accountId,
+        tenantId);
+    insertActor(
+        "reader-namespace",
+        namespaceActor,
+        accountUuid,
+        tenantUuid,
+        otherNamespace,
+        isolated,
+        "shared-live",
+        "OWNER_RESOLVED",
+        null,
+        accountId,
+        tenantId);
+    insertActor(
+        "reader-quarantine",
+        quarantinedActor,
+        accountUuid,
+        tenantUuid,
+        namespaceUuid,
+        shared,
+        "shared-live",
+        "QUARANTINED",
+        "TEST_ONLY_UNQUALIFIED",
+        accountId,
+        tenantId);
+    var originalRows =
+        jdbcTemplate.queryForList(
+            "SELECT to_jsonb(actor)::text || ':' || xmin::text FROM characters actor "
+                + "WHERE id IN (SELECT id FROM characters WHERE tenant_id = ? AND account_id = ?) "
+                + "ORDER BY character_uuid",
+            String.class,
+            tenantId,
+            accountId);
+    assertThat(originalRows).hasSize(5);
+
+    assertThat(
+            actorIdentityRepository.findOwnerResolvedRoster(
+                tenantUuid.toString(), accountUuid.toString(), namespaceUuid.toString(), shared))
+        .extracting(identity -> identity.characterUuid())
+        .containsExactly(targetActor);
+    assertThat(
+            actorIdentityRepository.findOwnerResolvedRoster(
+                tenantUuid.toString(), otherAccount.toString(), namespaceUuid.toString(), shared))
+        .extracting(identity -> identity.characterUuid())
+        .containsExactly(accountActor);
+    assertThat(
+            actorIdentityRepository.findOwnerResolvedRoster(
+                otherTenant.toString(), accountUuid.toString(), namespaceUuid.toString(), shared))
+        .extracting(identity -> identity.characterUuid())
+        .containsExactly(tenantActor);
+    assertThat(
+            actorIdentityRepository.findOwnerResolvedRoster(
+                tenantUuid.toString(), accountUuid.toString(), otherNamespace.toString(), isolated))
+        .extracting(identity -> identity.characterUuid())
+        .containsExactly(namespaceActor);
+    assertThat(
+            actorIdentityRepository.findOwnerResolvedRoster(
+                tenantUuid.toString(), accountUuid.toString(), namespaceUuid.toString(), isolated))
+        .isEmpty();
+    assertThat(
+            actorIdentityRepository.findOwnerResolvedActor(
+                tenantUuid.toString(),
+                accountUuid.toString(),
+                namespaceUuid.toString(),
+                shared,
+                targetActor.toString()))
+        .get()
+        .satisfies(
+            identity -> {
+              assertThat(identity.characterUuid()).isEqualTo(targetActor);
+              assertThat(identity.accountUuid()).isEqualTo(accountUuid);
+              assertThat(identity.tenantUuid()).isEqualTo(tenantUuid);
+              assertThat(identity.playableStateNamespaceId()).isEqualTo(namespaceUuid);
+              assertThat(identity.playableStateScope()).isEqualTo(shared);
+              assertThat(identity.status().name()).isEqualTo("OWNER_RESOLVED");
+            });
+    for (UUID excluded : List.of(accountActor, tenantActor, namespaceActor, quarantinedActor)) {
+      assertThat(
+              actorIdentityRepository.findOwnerResolvedActor(
+                  tenantUuid.toString(),
+                  accountUuid.toString(),
+                  namespaceUuid.toString(),
+                  shared,
+                  excluded.toString()))
+          .isEmpty();
+    }
+    assertThat(
+            actorIdentityRepository.findOwnerResolvedActor(
+                tenantUuid.toString(),
+                otherAccount.toString(),
+                namespaceUuid.toString(),
+                shared,
+                targetActor.toString()))
+        .isEmpty();
+    assertThat(
+            actorIdentityRepository.findOwnerResolvedActor(
+                otherTenant.toString(),
+                accountUuid.toString(),
+                namespaceUuid.toString(),
+                shared,
+                targetActor.toString()))
+        .isEmpty();
+    assertThat(
+            actorIdentityRepository.findOwnerResolvedActor(
+                tenantUuid.toString(),
+                accountUuid.toString(),
+                otherNamespace.toString(),
+                isolated,
+                targetActor.toString()))
+        .isEmpty();
+    assertThat(
+            actorIdentityRepository.findOwnerResolvedActor(
+                tenantUuid.toString(),
+                accountUuid.toString(),
+                namespaceUuid.toString(),
+                isolated,
+                targetActor.toString()))
+        .isEmpty();
+    assertThat(
+            jdbcTemplate.queryForList(
+                "SELECT to_jsonb(actor)::text || ':' || xmin::text FROM characters actor "
+                    + "WHERE id IN (SELECT id FROM characters WHERE tenant_id = ? AND account_id = ?) "
+                    + "ORDER BY character_uuid",
+                String.class,
+                tenantId,
+                accountId))
+        .isEqualTo(originalRows);
+  }
+
+  @Test
   void namespaceIdentityAndScopeAreImmutableWithoutActorReferences() {
     for (PlayableStateScope scope :
         new PlayableStateScope[] {

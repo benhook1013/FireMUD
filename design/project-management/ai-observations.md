@@ -166,12 +166,14 @@ Entry format:
   - Observation: The observer reported that the heads had no source validation. Their original source workflows later completed change detection and started the build/test matrices. No missing-source CI defect or cancellation was established; the premature report sent unnecessary investigation to Overseer.
   - Expected pattern: Retain each original run and classify source selection as pending or unknown while discovery or queue admission is incomplete. A completed metadata gate establishes neither source success nor source absence. The report and observer guidance were corrected with the exact source run identities.
 
-- 2026-10-17 — Targeted Controller status can exhaust its deadline on older queue history.
-  - Observation: `firemud-controller --worker-identity Gameplay reviews status --pr 3224 --json` failed at its 120-second deadline during `target_history_pr_2846_cli`, after eighty prior phases consumed 119.6 seconds. It returned no JSON, delaying current front readiness readback even though publication and direct head/base verification succeeded.
+- `2026-10-17`: Targeted Controller status can exhaust its deadline on older queue history
+  - Context: Current-front readiness readback followed publication and successful direct head/base verification.
+  - Observation: `firemud-controller --worker-identity Gameplay reviews status --pr 3224 --json` failed at its 120-second deadline during `target_history_pr_2846_cli`, after eighty prior phases consumed 119.6 seconds. It returned no JSON, delaying current-front readiness readback.
   - Expected pattern: Keep current-target status bounded while retaining historical review evidence. Overseer received the exact diagnostic; no state deletion, quota reset or installed-runtime bypass was used. The subsequent exact-checkpoint ancestry reconciliations succeeded; the failed status invocation itself remains unavailable evidence.
 
-- 2026-10-17 — Repeated Hosted capture can reject a previously finalized provider comment.
-  - Observation: Admission of #3231’s second Hosted review reported a nonblocking `predecessor_terminal_capture` warning for its already-finalized first review: `Hosted finding comment contains unmarked content after its final cr-comment:v1 marker`. The original seven findings, accepted-fix records and checkpoint 6214527024 had already been recorded; the next request posted successfully as trigger 6214841384. The exact trailing-content cause remains unverified.
+- `2026-10-17`: Repeated Hosted capture can reject a previously finalized provider comment
+  - Context: #3231’s second Hosted review was admitted after the first review had been finalized.
+  - Observation: Admission reported a nonblocking `predecessor_terminal_capture` warning for the finalized first review: `Hosted finding comment contains unmarked content after its final cr-comment:v1 marker`. The original seven findings, accepted-fix records and checkpoint 6214527024 had already been recorded; the next request posted successfully as trigger 6214841384. The exact trailing-content cause remains unverified.
   - Expected pattern: Preserve completed review evidence and surface the exact capture incompatibility without silently replacing counts or requiring a quota reset. Overseer received the retained diagnostic; Gameplay made no database or installed-runtime bypass.
 
 - 2026-10-17 — A validation allowance of NONE includes whitespace checks.

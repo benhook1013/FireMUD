@@ -52,9 +52,10 @@ import org.junit.jupiter.api.io.TempDir;
 /** Structural and actual loopback-mTLS proof for the closed Account settlement transport. */
 class AccountGameLogicIntakeSettlementReadGrpcTest {
   private static final String NAMESPACE = "test";
-  private static final String GL_URI = "spiffe://firemud/ns/test/sa/account-service";
-  private static final String WRONG_GL_URI = "spiffe://firemud/ns/test/sa/game-design-service";
-  private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/game-design-service";
+  private static final String ACCOUNT_SERVER_URI = "spiffe://firemud/ns/test/sa/account-service";
+  private static final String WRONG_SERVER_URI = "spiffe://firemud/ns/test/sa/game-logic-service";
+  private static final String GAME_DESIGN_CLIENT_URI =
+      "spiffe://firemud/ns/test/sa/game-design-service";
   private static final String STORE_PASSWORD = "test-only-store-password";
   private static final int LARGE_SOURCE_ENTRIES = 1800;
 
@@ -239,7 +240,7 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
     client =
         new GrpcAccountGameLogicIntakeSettlementReadClient(
             endpoints,
-            pki.clientProperties(tempDirectory, pki.accountClient()),
+            pki.clientProperties(tempDirectory, pki.gameDesignClient()),
             new GrpcChannelFactory(),
             NAMESPACE);
     var evidence = evidence("test", 1, Outcome.ABORTED);
@@ -277,8 +278,8 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
       throws Exception {
     var large = evidence("test", LARGE_SOURCE_ENTRIES, Outcome.RETAINED);
     assertThat(large.receipt().canonicalBytes().length).isGreaterThan(4 * 1024 * 1024);
-    startServer(pki.gameLogicServer(), large);
-    client = newClient(server, pki.accountClient());
+    startServer(pki.accountServer(), large);
+    client = newClient(server, pki.gameDesignClient());
     client.init();
     var actual = client.read(large.request());
     assertThat(actual.receipt().canonicalBytes()).isEqualTo(large.receipt().canonicalBytes());
@@ -286,7 +287,7 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
     assertThat(bodies).hasValue(1);
     stopTransport();
     startServer(pki.wrongServer(), large);
-    client = newClient(server, pki.accountClient());
+    client = newClient(server, pki.gameDesignClient());
     client.init();
     assertThatThrownBy(() -> client.read(large.request()))
         .isInstanceOf(StatusRuntimeException.class)
@@ -316,7 +317,7 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
               SettleGameLogicIntakeRequest wire,
               StreamObserver<SettleGameLogicIntakeResponse> observer) {
             bodies.incrementAndGet();
-            assertThat(GrpcPeerIdentity.current().uri()).isEqualTo(ACCOUNT_URI);
+            assertThat(GrpcPeerIdentity.current().uri()).isEqualTo(GAME_DESIGN_CLIENT_URI);
             var request = AccountGameLogicIntakeSettlementProtoCodec.fromRequest(wire);
             var response =
                 AccountGameLogicIntakeSettlementProtoCodec.toResponse(
@@ -490,9 +491,9 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
 
   private record TestPki(
       X509Certificate caCertificate,
-      TestIdentity gameLogicServer,
+      TestIdentity accountServer,
       TestIdentity wrongServer,
-      TestIdentity accountClient) {
+      TestIdentity gameDesignClient) {
     private static TestPki create(Path directory) throws Exception {
       Path caStore = directory.resolve("terminal-test-ca.p12");
       runKeytool(
@@ -536,21 +537,22 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
       var caCertificate = readCertificate(caFile);
       return new TestPki(
           caCertificate,
-          issueIdentity(directory, caStore, caFile, "game-logic-server", GL_URI, true),
-          issueIdentity(directory, caStore, caFile, "wrong-server", WRONG_GL_URI, true),
-          issueIdentity(directory, caStore, caFile, "account-client", ACCOUNT_URI, false));
+          issueIdentity(directory, caStore, caFile, "account-server", ACCOUNT_SERVER_URI, true),
+          issueIdentity(directory, caStore, caFile, "wrong-server", WRONG_SERVER_URI, true),
+          issueIdentity(
+              directory, caStore, caFile, "game-design-client", GAME_DESIGN_CLIENT_URI, false));
     }
 
     private CommonGrpcClientProperties clientProperties(Path directory, TestIdentity identity)
         throws Exception {
       Path certificate =
           writePem(
-              directory.resolve("account-client.crt"),
+              directory.resolve("game-design-client.crt"),
               "CERTIFICATE",
               identity.certificate().getEncoded());
       Path privateKey =
           writePem(
-              directory.resolve("account-client.key"),
+              directory.resolve("game-design-client.key"),
               "PRIVATE KEY",
               identity.privateKey().getEncoded());
       Path caFile =
