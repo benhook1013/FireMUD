@@ -515,7 +515,7 @@ def wait_for_compose_state(compose_args: list[str], timeout_seconds: int, poll_s
     deadline = time.monotonic() + timeout_seconds
     last_output = ""
     last_pending = "Compose status has not been read"
-    command = ["docker", "compose", *compose_args, "ps", "--format", "json"]
+    command = ["docker", "compose", *compose_args, "ps", "--all", "--format", "json"]
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
