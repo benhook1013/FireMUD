@@ -257,8 +257,7 @@ public final class GameDesignSourceRepository {
     CommandSnapshot.Capture command = commands.freeze(operation);
     AssetSnapshot.Capture asset = assets.freeze(operation);
     GameplayRuleSnapshot.Capture gameplayCapture = gameplay.freeze(operation);
-    Capture result =
-        new Capture(command, policy, Optional.of(asset), Optional.of(gameplayCapture));
+    Capture result = new Capture(command, policy, Optional.of(asset), Optional.of(gameplayCapture));
     Capture retained =
         readCapture(operation)
             .orElseThrow(
@@ -295,8 +294,7 @@ public final class GameDesignSourceRepository {
           .requireRetained(operation.account().input().selection().selectedCommit());
     }
     boolean historical =
-        historicalOperation
-            || (gameplayCapture.isEmpty() && operationIsTerminal(operation));
+        historicalOperation || (gameplayCapture.isEmpty() && operationIsTerminal(operation));
     if (command.isEmpty()
         || policy.isEmpty()
         || (asset.isEmpty() && !historical)
@@ -567,10 +565,7 @@ public final class GameDesignSourceRepository {
               && (!Arrays.equals(
                       command.operation().canonicalBytes(),
                       asset.orElseThrow().operation().canonicalBytes())
-                  || !command
-                      .snapshot()
-                      .binding()
-                      .equals(asset.orElseThrow().snapshot().binding()))
+                  || !command.snapshot().binding().equals(asset.orElseThrow().snapshot().binding()))
           || gameplay.isPresent()
               && (!Arrays.equals(
                       command.operation().canonicalBytes(),

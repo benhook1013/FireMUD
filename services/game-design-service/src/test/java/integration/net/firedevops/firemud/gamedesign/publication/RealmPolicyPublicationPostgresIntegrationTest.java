@@ -24,6 +24,8 @@ import net.firedevops.firemud.gamedesign.entity.Game;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.entity.Version;
 import net.firedevops.firemud.gamedesign.model.VersionLifecycleState;
+import net.firedevops.firemud.gamedesign.publication.AssetSourceRepository;
+import net.firedevops.firemud.gamedesign.publication.CommandSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperation;
 import net.firedevops.firemud.gamedesign.publication.GameDesignPublicationOperationRepository;
 import net.firedevops.firemud.gamedesign.publication.GameDesignSourceRepository;
@@ -94,7 +96,7 @@ class RealmPolicyPublicationPostgresIntegrationTest {
     // Account and remote-owner authority remain the existing ISOLATED test inputs; capture,
     // publication, header and policy children are produced by the actual Game Design owners.
     Fixture fixture = fixture(true, "1026");
-    GameDesignPublicationOperation operation = fixture.prepare(true);
+    GameDesignPublicationOperation operation = fixture.preparePreGameplayCaptures();
     fixture.writePublish(operation, false);
     var original = fixture.publicationReads().readPublishedSet(fixture.target()).orElseThrow();
     var originalRows = retainedPolicyOwnerRows(fixture);
@@ -909,6 +911,30 @@ class RealmPolicyPublicationPostgresIntegrationTest {
               if (capturePolicySource) {
                 sources.freeze(operation);
               }
+              return operation;
+            } catch (Exception failure) {
+              throw new IllegalStateException(failure);
+            }
+          });
+    }
+
+    /** Retains command, policy, and asset captures as the predecessor operation did. */
+    GameDesignPublicationOperation preparePreGameplayCaptures() throws Exception {
+      return tx(
+          () -> {
+            try {
+              var sources = new GameDesignSourceRepository(dsl);
+              String sourceBaseReference = currentSourceHead(target, dsl, sources).baseReference();
+              var operation =
+                  IsolatedPublicationOwnerSetup.retainSourceBacked(
+                      dsl,
+                      target,
+                      1,
+                      "ISOLATED remote owner transaction proof",
+                      sourceBaseReference);
+              new CommandSourceRepository(dsl).freeze(operation);
+              policySource.freeze(operation);
+              new AssetSourceRepository(dsl).freeze(operation);
               return operation;
             } catch (Exception failure) {
               throw new IllegalStateException(failure);

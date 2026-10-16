@@ -13,6 +13,7 @@ import java.sql.DriverManager;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -805,11 +806,7 @@ class GameDesignSourcePostgresIntegrationTest {
     byte[] changedSnapshot = gameplayCapture.canonicalBytes();
     changedSnapshot[changedSnapshot.length - 1] ^= 1;
     assertInvalidGameplayCaptureInsert(
-        fixture,
-        operation,
-        operation.canonicalBytes(),
-        changedSnapshot,
-        gameplayCapture.digest());
+        fixture, operation, operation.canonicalBytes(), changedSnapshot, gameplayCapture.digest());
     assertInvalidGameplayCaptureInsert(
         fixture,
         operation,
@@ -866,11 +863,11 @@ class GameDesignSourcePostgresIntegrationTest {
   void nonemptySelectedGameplaySnapshotIsFrozenWithItsOriginalOperation() {
     Fixture fixture = fixture();
     String genesisBase =
-        "genesis:" + fixture.sources().readGenesis(fixture.target()).orElseThrow().policy().receiptId();
+        "genesis:"
+            + fixture.sources().readGenesis(fixture.target()).orElseThrow().policy().receiptId();
     DraftCommitBinding authored =
         withGameplay(
-            binding(fixture.target(), genesisBase, "0", null, "main", true),
-            gameplayUpsert());
+            binding(fixture.target(), genesisBase, "0", null, "main", true), gameplayUpsert());
     synchronize(fixture, authored, apply(fixture, authored));
     var operation =
         fixture.tx(
@@ -971,6 +968,21 @@ class GameDesignSourcePostgresIntegrationTest {
   @Test
   void preGameplayTerminalCaptureStaysUnknownAndCannotBeExtendedAfterV1032() throws Exception {
     Fixture fixture = fixture(false, "1031");
+    var authored =
+        binding(
+            fixture.target(),
+            "genesis:"
+                + fixture
+                    .sources()
+                    .readGenesis(fixture.target())
+                    .orElseThrow()
+                    .policy()
+                    .receiptId(),
+            "0",
+            null,
+            "main",
+            true);
+    synchronize(fixture, authored, apply(fixture, authored));
     var operation =
         fixture.tx(
             () -> {
@@ -1003,12 +1015,14 @@ class GameDesignSourcePostgresIntegrationTest {
         });
 
     var operationBefore =
-        fixture
-            .dsl()
-            .fetchOne(
-                "SELECT request_bytes, xmin::TEXT AS row_xmin FROM game_design_publication_operation "
-                    + "WHERE publish_workflow_id = ?",
-                operation.workflowId());
+        Objects.requireNonNull(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT request_bytes, xmin::TEXT AS row_xmin FROM game_design_publication_operation "
+                        + "WHERE publish_workflow_id = ?",
+                    operation.workflowId()),
+            "Expected retained publication operation row before V1032 migration");
     byte[] operationBytesBefore = operationBefore.get("request_bytes", byte[].class);
     String operationXminBefore = operationBefore.get("row_xmin", String.class);
     var commandBefore = retainedCapture(fixture, "game_design_command_source_capture");
@@ -1034,13 +1048,16 @@ class GameDesignSourcePostgresIntegrationTest {
         .migrate();
 
     var operationAfter =
-        fixture
-            .dsl()
-            .fetchOne(
-                "SELECT request_bytes, xmin::TEXT AS row_xmin FROM game_design_publication_operation "
-                    + "WHERE publish_workflow_id = ?",
-                operation.workflowId());
-    assertThat(operationAfter.get("request_bytes", byte[].class)).containsExactly(operationBytesBefore);
+        Objects.requireNonNull(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT request_bytes, xmin::TEXT AS row_xmin FROM game_design_publication_operation "
+                        + "WHERE publish_workflow_id = ?",
+                    operation.workflowId()),
+            "Expected retained publication operation row after V1032 migration");
+    assertThat(operationAfter.get("request_bytes", byte[].class))
+        .containsExactly(operationBytesBefore);
     assertThat(operationAfter.get("row_xmin", String.class)).isEqualTo(operationXminBefore);
     assertCaptureRetained(fixture, "game_design_command_source_capture", commandBefore);
     assertCaptureRetained(fixture, "game_design_realm_policy_capture", policyBefore);
@@ -1053,14 +1070,10 @@ class GameDesignSourcePostgresIntegrationTest {
         .hasMessage("GAMEPLAY_RULE_PUBLICATION_OPERATION_SEALED");
     assertThatThrownBy(
             () ->
-                fixture.tx(
-                    () -> new GameplayRuleSourceRepository(fixture.dsl()).freeze(operation)))
+                fixture.tx(() -> new GameplayRuleSourceRepository(fixture.dsl()).freeze(operation)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("GAMEPLAY_RULE_PUBLICATION_OPERATION_SEALED");
-    assertThat(
-            fixture
-                .dsl()
-                .fetchCount(DSL.table("game_design_gameplay_rule_source_capture")))
+    assertThat(fixture.dsl().fetchCount(DSL.table("game_design_gameplay_rule_source_capture")))
         .isZero();
     assertCaptureRetained(fixture, "game_design_command_source_capture", commandBefore);
     assertCaptureRetained(fixture, "game_design_realm_policy_capture", policyBefore);
@@ -1112,14 +1125,16 @@ class GameDesignSourcePostgresIntegrationTest {
 
   private static CaptureRow retainedCapture(Fixture fixture, String table) {
     var row =
-        fixture
-            .dsl()
-            .fetchOne(
-                "SELECT operation_bytes, capture_bytes, xmin::TEXT AS row_xmin FROM "
-                    + table
-                    + " WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
-                fixture.target().canonicalTenantId(),
-                fixture.target().canonicalVersionId());
+        Objects.requireNonNull(
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT operation_bytes, capture_bytes, xmin::TEXT AS row_xmin FROM "
+                        + table
+                        + " WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+                    fixture.target().canonicalTenantId(),
+                    fixture.target().canonicalVersionId()),
+            "Expected retained source capture row in " + table);
     return new CaptureRow(
         row.get("operation_bytes", byte[].class),
         row.get("capture_bytes", byte[].class),

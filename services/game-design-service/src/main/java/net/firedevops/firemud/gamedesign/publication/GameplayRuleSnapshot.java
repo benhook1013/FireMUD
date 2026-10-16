@@ -82,8 +82,7 @@ public record GameplayRuleSnapshot(
 
     public byte[] canonicalBytes() {
       var out = new java.io.ByteArrayOutputStream();
-      DraftAuthorizationFenceBinding.frame(
-          out, "game-design-gameplay-rule-source-capture/v1");
+      DraftAuthorizationFenceBinding.frame(out, "game-design-gameplay-rule-source-capture/v1");
       DraftAuthorizationFenceBinding.frame(out, operation.canonicalBytes());
       DraftAuthorizationFenceBinding.frame(out, snapshot.canonicalBytes());
       return out.toByteArray();

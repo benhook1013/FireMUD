@@ -237,7 +237,9 @@ public final class GameplayRuleSourceRepository {
     return readSnapshot(binding.target(), binding.commitId()).orElseThrow();
   }
 
-  /** Freeze only a complete gameplay snapshot selected by the exact current publication operation. */
+  /**
+   * Freeze only a complete gameplay snapshot selected by the exact current publication operation.
+   */
   public GameplayRuleSnapshot.Capture freeze(GameDesignPublicationOperation operation) {
     write();
     Objects.requireNonNull(operation, "operation");
@@ -277,8 +279,7 @@ public final class GameplayRuleSourceRepository {
 
     DraftCommitBinding selectedCommit = selection.selectedCommit();
     requireFence(selectedCommit);
-    GameplayRuleSnapshot snapshot =
-        requireCompleteForGameLogic(target, selectedCommit.commitId());
+    GameplayRuleSnapshot snapshot = requireCompleteForGameLogic(target, selectedCommit.commitId());
     Record head = head(target);
     if (!selectedCommit.equals(snapshot.binding())
         || !selectedCommit.commitId().equals(head.get("visible_commit_id", UUID.class))
