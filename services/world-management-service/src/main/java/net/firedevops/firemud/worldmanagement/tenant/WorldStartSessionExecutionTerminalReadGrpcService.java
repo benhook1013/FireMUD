@@ -100,7 +100,7 @@ public final class WorldStartSessionExecutionTerminalReadGrpcService
     } catch (StatusRuntimeException ownerFailure) {
       failForOwnerRpcFailure(responseObserver, ownerFailure);
       return;
-    } catch (IllegalArgumentException inconsistent) {
+    } catch (IllegalArgumentException | IllegalStateException inconsistent) {
       fail(
           responseObserver,
           Status.FAILED_PRECONDITION,

@@ -157,3 +157,8 @@ Entry format:
 - 2026-10-17 — A validation allowance of NONE includes whitespace checks.
   - Observation: A historical-test receiving helper ran `git diff --check` despite an explicit validation allowance of NONE. It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
+
+- `2026-10-17`: Verify every requested test class when combining Gradle selectors
+  - Context: the #3231 review-fix gate requested two World classes, but one selector incorrectly included the categorized `unit` source-root segment in its Java package.
+  - Observation: the matching selector executed nine terminal-read cases, so the task succeeded while the launch-binding comparator class remained unrun. A successful task does not establish coverage of every supplied pattern.
+  - Expected pattern: derive each selector from its declared package and verify each expected class in fresh XML. Preserve the completed reports before a corrected filtered run replaces task output; count the missed class only after its own execution.

@@ -15,6 +15,8 @@ import net.firedevops.firemud.gamesession.v1.GameSessionControlPlaneServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameInstanceLaunchAssociationRequest;
 import net.firedevops.firemud.gamesession.v1.GetCanonicalGameInstanceLaunchAssociationResponse;
 import org.jooq.exception.DataAccessException;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -135,7 +137,9 @@ public final class CanonicalGameInstanceLaunchAssociationReadGrpcService
               original.catalogRevision(),
               association.launchBindingEvidence());
       response = CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toResponse(result);
-    } catch (DataAccessException unavailable) {
+    } catch (DataAccessException
+        | TransientDataAccessException
+        | DataAccessResourceFailureException unavailable) {
       observer.onError(
           Status.UNAVAILABLE
               .withDescription("Game Session launch owner storage unavailable")
