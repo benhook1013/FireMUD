@@ -183,7 +183,9 @@ class WorldSelectedDraftPublicationFreezeGrpcServiceTest {
             "a".repeat(64),
             3);
     var freezeEvidence =
-        new WorldSelectedDraftPublicationFreezeEvidence(fixture.request(), acknowledgement);
+        WorldSelectedDraftPublicationFreezeGrpcCodec.fromResponse(
+            fixture.request(),
+            WorldSelectedDraftPublicationFreezeGrpcCodec.toResponse(acknowledgement));
     var inventoryWire =
         WorldSelectedPublicationArtifactInventoryGrpcCodec.toRequest(freezeEvidence);
     var freezeWire = WorldSelectedDraftPublicationFreezeGrpcCodec.toRequest(fixture.request());

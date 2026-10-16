@@ -452,36 +452,40 @@ class WorldSelectedPublicationPostgresIntegrationTest {
       String expectedWorldRequest =
           WorldPublicationTerminal.request(terminal.canonicalBytes()).worldRequestJson();
       String reformattedWorldRequest =
-          dsl.fetchValue("SELECT jsonb_pretty(?::jsonb)", String.class, expectedWorldRequest);
-      assertThat(WorldPublicationTerminalRepository.sameWorldRequestJson(
-              expectedWorldRequest, reformattedWorldRequest))
+          dsl.fetchOne("SELECT jsonb_pretty(?::jsonb)", expectedWorldRequest)
+              .get(0, String.class);
+      assertThat(
+              WorldPublicationTerminalRepository.sameWorldRequestJson(
+                  expectedWorldRequest, reformattedWorldRequest))
           .isTrue();
       String changedWorldRequest =
           expectedWorldRequest.replace(
-              "\"versionStateEpoch\":\""
-                  + worldEvidence.request().versionStateEpoch()
-                  + "\"",
+              "\"versionStateEpoch\":\"" + worldEvidence.request().versionStateEpoch() + "\"",
               "\"versionStateEpoch\":\""
                   + (worldEvidence.request().versionStateEpoch() + 1L)
                   + "\"");
       assertThat(changedWorldRequest).isNotEqualTo(expectedWorldRequest);
-      assertThat(WorldPublicationTerminalRepository.sameWorldRequestJson(
-              expectedWorldRequest, changedWorldRequest))
+      assertThat(
+              WorldPublicationTerminalRepository.sameWorldRequestJson(
+                  expectedWorldRequest, changedWorldRequest))
           .isFalse();
-      assertThat(WorldPublicationTerminalRepository.sameWorldRequestJson(
-              expectedWorldRequest, "{malformed"))
+      assertThat(
+              WorldPublicationTerminalRepository.sameWorldRequestJson(
+                  expectedWorldRequest, "{malformed"))
           .isFalse();
-      assertThat(WorldPublicationTerminalRepository.sameWorldRequestJson(
-              expectedWorldRequest, "{}"))
+      assertThat(
+              WorldPublicationTerminalRepository.sameWorldRequestJson(expectedWorldRequest, "{}"))
           .isFalse();
-      assertThat(WorldPublicationTerminalRepository.sameWorldRequestJson(
-              expectedWorldRequest, "[]"))
+      assertThat(
+              WorldPublicationTerminalRepository.sameWorldRequestJson(expectedWorldRequest, "[]"))
           .isFalse();
-      assertThat(WorldPublicationTerminalRepository.sameWorldRequestJson(
-              expectedWorldRequest, "{\"value\":1,\"value\":1}"))
+      assertThat(
+              WorldPublicationTerminalRepository.sameWorldRequestJson(
+                  expectedWorldRequest, "{\"value\":1,\"value\":1}"))
           .isFalse();
-      assertThat(WorldPublicationTerminalRepository.sameWorldRequestJson(
-              expectedWorldRequest, expectedWorldRequest + " {}"))
+      assertThat(
+              WorldPublicationTerminalRepository.sameWorldRequestJson(
+                  expectedWorldRequest, expectedWorldRequest + " {}"))
           .isFalse();
       var terminalReadRequests =
           org.mockito.ArgumentCaptor.forClass(
