@@ -153,3 +153,8 @@ Entry format:
 - 2026-10-17 — Repeated Hosted capture can reject a previously finalized provider comment.
   - Observation: Admission of #3231’s second Hosted review reported a nonblocking `predecessor_terminal_capture` warning for its already-finalized first review: `Hosted finding comment contains unmarked content after its final cr-comment:v1 marker`. The original seven findings, accepted-fix records and checkpoint 6214527024 had already been recorded; the next request posted successfully as trigger 6214841384. The exact trailing-content cause remains unverified.
   - Expected pattern: Preserve completed review evidence and surface the exact capture incompatibility without silently replacing counts or requiring a quota reset. Overseer received the retained diagnostic; Gameplay made no database or installed-runtime bypass.
+
+- `2026-10-17`: Verify every requested test class when combining Gradle selectors
+  - Context: the #3231 review-fix gate requested two World classes, but one selector incorrectly included the categorized `unit` source-root segment in its Java package.
+  - Observation: the matching selector executed nine terminal-read cases, so the task succeeded while the launch-binding comparator class remained unrun. A successful task does not establish coverage of every supplied pattern.
+  - Expected pattern: derive each selector from its declared package and verify each expected class in fresh XML. Preserve the completed reports before a corrected filtered run replaces task output; count the missed class only after its own execution.
