@@ -13,8 +13,7 @@ import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredGraphSnapshot.
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedStartLocationRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldPublishedStartLocationResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldPublishedStartLocationReadServiceGrpc;
-import org.jooq.exception.DataAccessException;
-import org.springframework.dao.TransientDataAccessException;
+import org.springframework.dao.DataAccessException;
 
 /** Standalone authenticated read-only adapter; intentionally not registered as a runtime RPC. */
 public final class WorldPublishedStartLocationReadGrpcService
@@ -65,7 +64,7 @@ public final class WorldPublishedStartLocationReadGrpcService
               .withDescription("World selector conflicts with exact frozen or APPLIED evidence")
               .asRuntimeException());
       return;
-    } catch (TransientDataAccessException | DataAccessException unavailable) {
+    } catch (DataAccessException | org.jooq.exception.DataAccessException unavailable) {
       responseObserver.onError(
           Status.UNAVAILABLE
               .withDescription("World published selector storage is temporarily unavailable")

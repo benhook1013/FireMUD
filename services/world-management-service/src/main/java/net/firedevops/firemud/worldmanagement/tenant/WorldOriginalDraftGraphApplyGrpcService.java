@@ -1,6 +1,7 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -14,6 +15,8 @@ import net.firedevops.firemud.worldmanagement.v1.ApplyOriginalDraftGraphResponse
 import net.firedevops.firemud.worldmanagement.v1.WorldOriginalDraftGraphApplyServiceGrpc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.transaction.CannotCreateTransactionException;
+import org.springframework.transaction.TransactionTimedOutException;
 
 /** Unregistered Game Design-only original graph apply/recovery construction adapter. */
 public final class WorldOriginalDraftGraphApplyGrpcService
@@ -70,9 +73,21 @@ public final class WorldOriginalDraftGraphApplyGrpcService
           observer,
           Status.FAILED_PRECONDITION,
           "World original apply conflicts with retained evidence");
-    } catch (org.springframework.dao.DataAccessException
+    } catch (CannotCreateTransactionException
+        | TransactionTimedOutException
+        | org.springframework.dao.DataAccessException
         | org.jooq.exception.DataAccessException unavailable) {
       deny(observer, Status.UNAVAILABLE, "World original apply storage unavailable");
+    } catch (StatusRuntimeException transportFailure) {
+      Status.Code code = transportFailure.getStatus().getCode();
+      if (code == Status.Code.UNAVAILABLE || code == Status.Code.DEADLINE_EXCEEDED) {
+        deny(observer, Status.UNAVAILABLE, "World original apply owner is temporarily unavailable");
+      } else {
+        deny(
+            observer,
+            Status.FAILED_PRECONDITION,
+            "World original apply owner did not accept the request");
+      }
     } catch (RuntimeException failure) {
       LOGGER.error(
           "World original graph application failed to establish committed evidence; "
