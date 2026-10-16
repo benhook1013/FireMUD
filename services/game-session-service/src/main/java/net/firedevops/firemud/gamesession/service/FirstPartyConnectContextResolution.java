@@ -10,6 +10,10 @@ public record FirstPartyConnectContextResolution(
     connectContext = Objects.requireNonNull(connectContext, "connectContext must not be null");
   }
 
+  /**
+   * Resolves live registry or persisted first-party context. Persisted recovery still requires its
+   * compact JWS to be valid; losing the registry entry does not extend the signed expiry.
+   */
   public static FirstPartyConnectContextResolution resolve(
       long sessionId,
       SessionContext sessionContext,

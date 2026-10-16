@@ -3,6 +3,9 @@ package net.firedevops.firemud.gamesession.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture;
 import org.junit.jupiter.api.Test;
@@ -25,6 +28,31 @@ class FirstPartyConnectContextResolutionTest {
     when(fixture.routes.readCurrentTarget(FirstPartyReceivingFixture.TENANT)).thenReturn(null);
     assertThat(FirstPartyConnectContextResolution.resolve(1L, session, registry).invalid())
         .isTrue();
+  }
+
+  @Test
+  void registryLossDoesNotExtendPersistedConnectContextExpiry() {
+    var fixture = new FirstPartyReceivingFixture();
+    var context = fixture.context();
+    var session =
+        new SessionContext(1L, 22L, null, 0L, 0L, (String) null)
+            .withFirstPartyConnectContext(context);
+    var registry = mock(FirstPartyConnectContextRegistry.class);
+    when(registry.find(1L)).thenReturn(Optional.empty());
+    var expiredService =
+        new FirstPartyConnectContextService(
+            fixture.properties,
+            fixture.keySource,
+            fixture.routes,
+            Clock.fixed(
+                Instant.ofEpochMilli(FirstPartyReceivingFixture.NOW + 31_000L), ZoneOffset.UTC));
+    when(registry.requireRetained(context))
+        .thenAnswer(invocation -> expiredService.requireRetained(invocation.getArgument(0)));
+
+    var resolution = FirstPartyConnectContextResolution.resolve(1L, session, registry);
+
+    assertThat(resolution.invalid()).isTrue();
+    assertThat(resolution.connectContext()).isEmpty();
   }
 
   @Test
