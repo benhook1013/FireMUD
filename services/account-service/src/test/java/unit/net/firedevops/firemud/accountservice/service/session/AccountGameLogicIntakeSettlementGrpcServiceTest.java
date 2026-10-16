@@ -114,7 +114,7 @@ class AccountGameLogicIntakeSettlementGrpcServiceTest {
   }
 
   @Test
-  void substitutedOwnerReceiptAndOwnerFailureDenyWithoutLeakingDiagnostics() {
+  void substitutedReceiptAndOwnerFailuresDenyWithoutLeakingDiagnostics() {
     var evidence = evidence("test", 1, Outcome.RETAINED);
     var request = AccountGameLogicIntakeSettlementProtoCodec.toRequest(evidence.request());
     when(owner.settle(any()))
@@ -122,6 +122,14 @@ class AccountGameLogicIntakeSettlementGrpcServiceTest {
             new AccountGameLogicIntakeSettlement(
                 evidence("test", 1, Outcome.RETAINED).receipt().terminal()));
     assertThat(authorized(() -> invoke(request)).code()).isEqualTo(Status.Code.UNAVAILABLE);
+    when(owner.settle(any())).thenThrow(new IllegalArgumentException("private-stale-precondition"));
+    var stalePrecondition = authorized(() -> invoke(request));
+    assertThat(stalePrecondition.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(stalePrecondition.error().toString()).doesNotContain("private-stale-precondition");
+    when(owner.settle(any())).thenThrow(new IllegalStateException("private-storage-failure"));
+    var storageFailure = authorized(() -> invoke(request));
+    assertThat(storageFailure.code()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(storageFailure.error().toString()).doesNotContain("private-storage-failure");
     when(owner.settle(any()))
         .thenThrow(
             Status.FAILED_PRECONDITION
