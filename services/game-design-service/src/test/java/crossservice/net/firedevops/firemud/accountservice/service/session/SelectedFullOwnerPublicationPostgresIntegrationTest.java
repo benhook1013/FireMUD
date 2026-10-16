@@ -1869,7 +1869,9 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
       } catch (RuntimeException unavailable) {
         System.out.printf(
             "SETTLEMENT_DIAGNOSTIC event=postgres-container role=%s elapsed_since_diagnostic_start_nanos=%d status=unavailable error=%s%n",
-            role, System.nanoTime() - diagnosticOriginNanos, unavailable.getClass().getSimpleName());
+            role,
+            System.nanoTime() - diagnosticOriginNanos,
+            unavailable.getClass().getSimpleName());
       }
     }
 

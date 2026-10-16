@@ -133,8 +133,7 @@ public final class IsolatedPublicationOperationFixtures {
 
   public static GameDesignPublicationOperation forSelection(
       AuthoredDraftPublishSelectionBinding selected, WorldPublishedStartLocationEvidence seed) {
-    return selection(
-        selected, seed, false, 3);
+    return selection(selected, seed, false, 3);
   }
 
   /** Builds a fresh selected-full operation without reinterpreting retained schema-3 history. */
@@ -153,8 +152,7 @@ public final class IsolatedPublicationOperationFixtures {
    */
   public static GameDesignPublicationOperation historicalV1ForSelection(
       AuthoredDraftPublishSelectionBinding selected, WorldPublishedStartLocationEvidence seed) {
-    return selection(
-        selected, seed, true, 3);
+    return selection(selected, seed, true, 3);
   }
 
   private static GameDesignPublicationOperation selection(
