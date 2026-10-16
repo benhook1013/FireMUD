@@ -14,6 +14,8 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
@@ -57,6 +59,215 @@ class GameDesignSourcePostgresIntegrationTest {
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
       new PostgreSQLContainer<>(TestContainerImages.postgres());
+
+  @Test
+  void exactReviewedClaimReplayPreservesAllRetainedRowsAndChangedInputCannotRewriteThem() {
+    var local = fixture();
+    var original = storageBinding(local, "reviewed-claim");
+    local.tx(
+        () -> {
+          claimStorageBinding(local, original);
+          return null;
+        });
+    var retained = reviewedClaimRows(local);
+    local.tx(
+        () -> {
+          claimStorageBinding(local, original);
+          return null;
+        });
+    assertThat(reviewedClaimRows(local)).isEqualTo(retained);
+    var changed = changedClaimInput(original);
+    assertThatThrownBy(
+            () ->
+                local.tx(
+                    () -> {
+                      claimStorageBinding(local, changed);
+                      return null;
+                    }))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("REVIEWED_BASE_STORED_BINDING_CONFLICT");
+    assertThat(reviewedClaimRows(local)).isEqualTo(retained);
+    assertReviewedClaimInventory(local, original);
+  }
+
+  @Test
+  void reviewedClaimAndItsOwnerInventoryRollBackWithoutRetainingReviewEvidence() {
+    var local = fixture();
+    var binding = storageBinding(local, "rolled-back-reviewed-claim");
+    local
+        .write()
+        .executeWithoutResult(
+            status -> {
+              claimStorageBinding(local, binding);
+              status.setRollbackOnly();
+            });
+    assertThat(local.coordinator().read(local.target(), binding.requestId())).isEmpty();
+    assertThat(new GameDesignReviewedBaseRepository(local.dsl()).read(binding)).isEmpty();
+    assertThat(local.coordinator().readApplicationSlot(local.target())).isEmpty();
+    for (String table :
+        List.of(
+            "game_design_draft_commit",
+            "game_design_draft_commit_owner_result",
+            "game_design_reviewed_draft_base")) {
+      assertThat(local.dsl().fetchCount(DSL.table(table))).isZero();
+    }
+  }
+
+  @Test
+  void concurrentExactReviewedClaimsConvergeOnOneBindingAndOwnerInventory() throws Exception {
+    var local = fixture();
+    var binding = storageBinding(local, "concurrent-exact-reviewed");
+    var claims = concurrentReviewedClaims(local, binding, binding);
+    assertThat(claims)
+        .allSatisfy(
+            claim -> {
+              assertThat(claim.failure()).isNull();
+              assertThat(claim.binding()).isEqualTo(binding);
+            });
+    assertReviewedClaimInventory(local, binding);
+  }
+
+  @Test
+  void concurrentRequestsCannotAliasOneReviewedCommitOrRetainLosingOwnerRows() throws Exception {
+    var local = fixture();
+    var first = storageBinding(local, "concurrent-commit-identity");
+    var second =
+        DraftCommitBinding.create(
+            first.target(),
+            UUID.randomUUID(),
+            first.commitId(),
+            first.baseCommitId(),
+            first.revisions(),
+            first.affectedUnits());
+    var claims = concurrentReviewedClaims(local, first, second);
+    var winner = soleReviewedClaimWinner(claims);
+    var losingRequest = winner.equals(first) ? second.requestId() : first.requestId();
+    assertThat(local.coordinator().read(local.target(), losingRequest)).isEmpty();
+    assertReviewedClaimInventory(local, winner);
+  }
+
+  @Test
+  void concurrentChangedReviewedInputCannotShareOneRequestIdentity() throws Exception {
+    var local = fixture();
+    var first = storageBinding(local, "concurrent-request-input");
+    var changed = changedClaimInput(first);
+    assertThat(changed.digest()).isNotEqualTo(first.digest());
+    var claims = concurrentReviewedClaims(local, first, changed);
+    assertReviewedClaimInventory(local, soleReviewedClaimWinner(claims));
+  }
+
+  private static DraftCommitBinding changedClaimInput(DraftCommitBinding original) {
+    var revision = original.revisions().getFirst();
+    // Preserve every request/commit/revision identity while changing a valid command alias.
+    return DraftCommitBinding.create(
+        original.target(),
+        original.requestId(),
+        original.commitId(),
+        original.baseCommitId(),
+        List.of(
+            new RevisionPayload(
+                revision.revisionOrder(),
+                revision.revisionId(),
+                revision.owner(),
+                CommandSource.upsertPayload(command("look", "changed")))),
+        original.affectedUnits());
+  }
+
+  private static List<org.jooq.Result<org.jooq.Record>> reviewedClaimRows(Fixture local) {
+    return List.of(
+        local
+            .dsl()
+            .fetch(
+                "SELECT t.*, t.xmin::text AS retained_xmin FROM game_design_draft_commit t ORDER BY request_id"),
+        local
+            .dsl()
+            .fetch(
+                "SELECT t.*, t.xmin::text AS retained_xmin FROM game_design_draft_commit_owner_result t ORDER BY request_id"),
+        local
+            .dsl()
+            .fetch(
+                "SELECT t.*, t.xmin::text AS retained_xmin FROM game_design_reviewed_draft_base t ORDER BY request_id"));
+  }
+
+  private static void assertReviewedClaimInventory(Fixture local, DraftCommitBinding binding) {
+    var persisted = local.coordinator().read(local.target(), binding.requestId()).orElseThrow();
+    assertThat(persisted.binding().canonicalBytes()).containsExactly(binding.canonicalBytes());
+    assertThat(persisted.ownerStates()).containsOnlyKeys(Owner.GAME_DESIGN_CONTROL_PLANE);
+    assertThat(persisted.ownerStates().values())
+        .allSatisfy(
+            state -> {
+              assertThat(state.status())
+                  .isEqualTo(DraftCommitCoordinatorRepository.OwnerStatus.NOT_ATTEMPTED);
+              assertThat(state.outcome()).isEmpty();
+            });
+    assertThat(new GameDesignReviewedBaseRepository(local.dsl()).read(binding)).isPresent();
+    assertThat(local.coordinator().readApplicationSlot(local.target())).isEmpty();
+    for (String table :
+        List.of(
+            "game_design_draft_commit",
+            "game_design_draft_commit_owner_result",
+            "game_design_reviewed_draft_base")) {
+      assertThat(local.dsl().fetchCount(DSL.table(table))).isEqualTo(1);
+    }
+  }
+
+  private static List<ReviewedClaimAttempt> concurrentReviewedClaims(
+      Fixture local, DraftCommitBinding first, DraftCommitBinding second) throws Exception {
+    var ready = new CountDownLatch(2);
+    var launch = new CountDownLatch(1);
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var left = executor.submit(() -> reviewedClaimAttempt(local, first, ready, launch));
+      var right = executor.submit(() -> reviewedClaimAttempt(local, second, ready, launch));
+      assertThat(ready.await(20, TimeUnit.SECONDS)).isTrue();
+      launch.countDown();
+      return List.of(left.get(20, TimeUnit.SECONDS), right.get(20, TimeUnit.SECONDS));
+    } finally {
+      launch.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  private static ReviewedClaimAttempt reviewedClaimAttempt(
+      Fixture local, DraftCommitBinding binding, CountDownLatch ready, CountDownLatch launch)
+      throws InterruptedException {
+    ready.countDown();
+    if (!launch.await(20, TimeUnit.SECONDS))
+      throw new IllegalStateException("Reviewed claim launch timed out");
+    try {
+      var persisted =
+          local.tx(
+              () -> {
+                claimStorageBinding(local, binding);
+                return local
+                    .coordinator()
+                    .read(local.target(), binding.requestId())
+                    .orElseThrow()
+                    .binding();
+              });
+      return new ReviewedClaimAttempt(persisted, null);
+    } catch (RuntimeException failure) {
+      return new ReviewedClaimAttempt(null, failure);
+    }
+  }
+
+  private static DraftCommitBinding soleReviewedClaimWinner(List<ReviewedClaimAttempt> claims) {
+    assertThat(claims.stream().filter(claim -> claim.failure() == null)).hasSize(1);
+    assertThat(claims.stream().filter(claim -> claim.failure() != null))
+        .singleElement()
+        .satisfies(
+            claim ->
+                assertThat(claim.failure())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("REVIEWED_BASE_STORED_BINDING_CONFLICT"));
+    return claims.stream()
+        .filter(claim -> claim.failure() == null)
+        .findFirst()
+        .orElseThrow()
+        .binding();
+  }
+
+  private record ReviewedClaimAttempt(DraftCommitBinding binding, RuntimeException failure) {}
 
   @Test
   void firstReferenceRejectsStaleOrdinaryByteUpdate() throws Exception {

@@ -174,8 +174,8 @@ public class VersionPublishCommandServiceImpl {
     var producer = worldTerminalProducer.getIfAvailable();
     if (producer == null)
       throw pendingReconciliation("World publication terminal producer unavailable");
-    var selection = requireSelectedIntent(request);
     try {
+      var selection = requireSelectedIntent(request);
       producer.reconcile(
           request.tenantId(),
           request.publishWorkflowId(),

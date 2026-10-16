@@ -1304,27 +1304,6 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private RuntimeRealmTarget requireAdmissibleRealm(
-      BootstrapContext bootstrapContext,
-      Long expectedTenantId,
-      String worldSlug,
-      String realmSlug) {
-    RuntimeRealmTarget realm = requireRealmTarget(expectedTenantId, worldSlug, realmSlug);
-    if (!hasRealmAdmissionAccess(bootstrapContext, realm)) {
-      throw new AuthenticationException(
-          "ADMISSION_POINTER_UNAVAILABLE",
-          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
-    }
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(realm.tenantId(), "bootstrap-selected-target");
-    if (!entitlements.gameplayAvailable()) {
-      throw new AuthenticationException(
-          "ADMISSION_POINTER_UNAVAILABLE",
-          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
-    }
-    return realm;
-  }
-
   private RuntimeRealmTarget requireRealmTarget(
       Long expectedTenantId, String worldSlug, String realmSlug) {
     try {

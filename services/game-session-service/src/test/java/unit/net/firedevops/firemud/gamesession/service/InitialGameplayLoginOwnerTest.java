@@ -182,6 +182,49 @@ class InitialGameplayLoginOwnerTest {
   }
 
   @Test
+  void callerCancellationWhileCredentialCustodyIsCurrentRemainsCancelled() {
+    var fixture = new Fixture();
+    var credentials = presentation("transient-secret".toCharArray());
+    when(fixture.contexts.createPending(any()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
+    when(fixture.account.authenticate(any(AuthenticateRequest.class), any()))
+        .thenThrow(Status.CANCELLED.asRuntimeException());
+    when(fixture.cleanup.abandonAndRetire(any()))
+        .thenAnswer(invocation -> held(invocation.getArgument(0)));
+
+    var outcome = fixture.owner.receive(credentials);
+
+    assertThat(outcome.failureCode()).contains("CANCELLED");
+    assertThat(credentials.isCurrent()).isFalse();
+    verify(fixture.cleanup).abandonAndRetire(outcome.coordinates());
+  }
+
+  @Test
+  void cancelledAccountCallAfterCredentialCustodyLossReportsCustodyLost() {
+    var fixture = new Fixture();
+    var credentials = presentation("transient-secret".toCharArray());
+    when(fixture.contexts.createPending(any()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(InitialGameplayLoginContextState.pending(invocation.getArgument(0))));
+    when(fixture.account.authenticate(any(AuthenticateRequest.class), any()))
+        .thenAnswer(
+            invocation -> {
+              credentials.close();
+              throw Status.CANCELLED.asRuntimeException();
+            });
+    when(fixture.cleanup.abandonAndRetire(any()))
+        .thenAnswer(invocation -> held(invocation.getArgument(0)));
+
+    var outcome = fixture.owner.receive(credentials);
+
+    assertThat(outcome.failureCode()).contains("CUSTODY_LOST");
+    verify(fixture.cleanup).abandonAndRetire(outcome.coordinates());
+  }
+
+  @Test
   void lostCustodyAfterVerifiedAccountResponseRecordsWitnessThenCleansWithoutInstall() {
     var fixture = new Fixture();
     var secret = "transient-secret".toCharArray();
