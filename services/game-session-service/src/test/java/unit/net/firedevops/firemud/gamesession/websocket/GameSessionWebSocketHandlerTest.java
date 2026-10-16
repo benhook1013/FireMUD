@@ -41,6 +41,7 @@ import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -1555,15 +1556,15 @@ class GameSessionWebSocketHandlerTest {
 
     handler.afterConnectionEstablished(session);
 
-    Mockito.InOrder order = Mockito.inOrder(firstPartyConnectContextRegistry, session);
+    InOrder order = Mockito.inOrder(firstPartyConnectContextRegistry, session);
     order.verify(firstPartyConnectContextRegistry).register(Mockito.eq(41L), any());
     order.verify(firstPartyConnectContextRegistry).unregister(41L);
-    order.verify(session)
+    order
+        .verify(session)
         .close(
             Mockito.argThat(
-                status ->
-                    status.getCode() == 1013
-                        && "backend_unavailable".equals(status.getReason())));
+                (CloseStatus status) ->
+                    status.getCode() == 1013 && "backend_unavailable".equals(status.getReason())));
     verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), any());
     assertThat(saveFailure.getSuppressed()).isEmpty();
   }
@@ -1577,13 +1578,14 @@ class GameSessionWebSocketHandlerTest {
 
     handler.afterConnectionEstablished(session);
 
-    Mockito.InOrder order = Mockito.inOrder(firstPartyConnectContextRegistry, session);
+    InOrder order = Mockito.inOrder(firstPartyConnectContextRegistry, session);
     order.verify(firstPartyConnectContextRegistry).register(Mockito.eq(41L), any());
     order.verify(firstPartyConnectContextRegistry).unregister(41L);
-    order.verify(session)
+    order
+        .verify(session)
         .close(
             Mockito.argThat(
-                status ->
+                (CloseStatus status) ->
                     status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
                         && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
     verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), any());
@@ -1639,8 +1641,7 @@ class GameSessionWebSocketHandlerTest {
     verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), any());
     verify(session)
         .close(
-            Mockito.argThat(
-                status -> status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()));
+            Mockito.argThat(status -> status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()));
   }
 
   private void configureFirstPartyBootstrap() {
