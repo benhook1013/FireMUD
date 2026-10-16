@@ -396,9 +396,7 @@ def _validate_import_source_decisions(
             "route_id",
             "route_status",
         }
-        if set(item) - allowed or not {"source_finding_key", "decision_id", "decision", "actor", "reason"} <= set(
-            item
-        ):
+        if set(item) - allowed or not {"source_finding_key", "decision_id", "decision", "actor", "reason"} <= set(item):
             raise ReviewRecordsError("source decision has missing or unsupported fields")
         source_finding_key = _safe_identifier(item["source_finding_key"], "source_finding_key", maximum=200)
         if source_finding_key not in observation_keys:
@@ -1028,8 +1026,10 @@ class SqliteReviewRecords:
                     raise ReviewRecordsError("checkpoint publication intent conflicts with prior attribution")
                 return False
             metadata["checkpoint_publication_intent"] = intent
-            connection.execute("UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
-                               (json.dumps(metadata, sort_keys=True), attempt_id))
+            connection.execute(
+                "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
+                (json.dumps(metadata, sort_keys=True), attempt_id),
+            )
             return True
 
     @_translate_database_errors
@@ -1936,13 +1936,19 @@ class SqliteReviewRecords:
                     raise ReviewRecordsError("CLI original decision conflicts with its source")
                 if decision != "routed" and target is not None:
                     raise ReviewRecordsError("CLI original decision has conflicting route evidence")
-            elif (prior != history[-1]["decision_id"] or decision not in {"accepted", "rejected"}
-                  or history[-1]["decision"] not in {"accepted", "rejected"} or target is not None
-                  or datetime.fromisoformat(at.replace("Z", "+00:00"))
-                  < datetime.fromisoformat(history[-1]["decided_at"].replace("Z", "+00:00"))):
+            elif (
+                prior != history[-1]["decision_id"]
+                or decision not in {"accepted", "routed", "rejected"}
+                or history[-1]["decision"] not in {"accepted", "rejected"}
+                or (decision == "routed" and history[-1]["decision"] != "accepted")
+                or (decision != "routed" and target is not None)
+                or datetime.fromisoformat(at.replace("Z", "+00:00"))
+                < datetime.fromisoformat(history[-1]["decided_at"].replace("Z", "+00:00"))
+            ):
                 raise ReviewRecordsError("CLI source correction does not reproduce its exact prior decision")
-            history.append({"decision_id": identifier, "decision": decision, "reason": reason,
-                            "decided_at": at})
+            if target is not None:
+                _positive_pr(target, "source decision target PR")
+            history.append({"decision_id": identifier, "decision": decision, "reason": reason, "decided_at": at})
         return history
 
     @staticmethod
@@ -2038,7 +2044,18 @@ class SqliteReviewRecords:
         decision_history: dict[int, list[dict[str, Any]]] = {}
         decisions: dict[int, tuple[str, str]] = {}
         prefix = f"cli-run:{attempt_id}:finding:"
-        for key, disposition, decision, reason, correction, correction_reason, title, detail, decision_count, finding_id in rows:
+        for (
+            key,
+            disposition,
+            decision,
+            reason,
+            correction,
+            correction_reason,
+            title,
+            detail,
+            decision_count,
+            finding_id,
+        ) in rows:
             if not isinstance(key, str) or not key.startswith(prefix) or not key[len(prefix) :].isdigit():
                 raise ReviewRecordsError("CLI source finding has an invalid finding key")
             suffix = key[len(prefix) :]
@@ -2084,7 +2101,8 @@ class SqliteReviewRecords:
         if len(observations) != run[7] or sorted(item["index"] for item in observations) != list(range(1, run[7] + 1)):
             raise ReviewRecordsError("CLI SQL source findings do not match the stored run count")
         correction_count = connection.execute(
-            "SELECT COUNT(*) FROM source_decision_corrections WHERE run_id = ?", (attempt_id,),
+            "SELECT COUNT(*) FROM source_decision_corrections WHERE run_id = ?",
+            (attempt_id,),
         ).fetchone()[0]
         if correction_count != sum(max(0, len(events) - 1) for events in decision_history.values()):
             raise ReviewRecordsError("CLI source corrections have no exact observed finding association")
@@ -2474,14 +2492,15 @@ class SqliteReviewRecords:
         *,
         supersedes_id: str,
         correction_id: str,
-        decision: Literal["accepted", "rejected"],
+        decision: Literal["accepted", "routed", "rejected"],
         actor: str,
         reason: str,
+        target_pr: int | None = None,
         decided_at: str | None = None,
     ) -> dict[str, Any]:
         """Append an exact-prior decision correction without deleting evidence.
 
-        Route changes use the dedicated route commands. Changing a routed
+        Routing an accepted finding creates or reuses its native route. Changing a routed
         source finding requires separate owner adjudication and is refused here.
         """
 
@@ -2489,15 +2508,21 @@ class SqliteReviewRecords:
         source_finding_key = _safe_identifier(source_finding_key, "finding key", maximum=200)
         supersedes_id = _safe_identifier(supersedes_id, "prior decision ID", maximum=200)
         correction_id = _safe_identifier(correction_id, "correction ID", maximum=200)
-        if decision not in {"accepted", "rejected"}:
-            raise ReviewRecordsError("source correction must be accepted or rejected")
+        if decision not in {"accepted", "routed", "rejected"}:
+            raise ReviewRecordsError("source correction must be accepted, routed, or rejected")
+        if target_pr is not None:
+            target_pr = _positive_pr(target_pr, "target PR")
+        if decision != "routed" and target_pr is not None:
+            raise ReviewRecordsError("only routed source corrections may set a target PR")
         actor = _bounded_text(actor, "actor", maximum=100)
         reason = _bounded_text(reason, "correction reason", maximum=300)
         decided_at = _timestamp(decided_at, "correction time")
+        route_id: str | None = None
         try:
             with self._write_connection() as connection:
                 row = connection.execute(
-                    "SELECT o.finding_id, o.disposition, r.finalized FROM finding_observations o "
+                    "SELECT o.finding_id, o.disposition, r.finalized, o.source_pr, o.source_channel "
+                    "FROM finding_observations o "
                     "JOIN findings f USING (finding_id) JOIN review_runs r USING (run_id) "
                     "WHERE o.run_id = ? AND f.source_finding_key = ?",
                     (run_id, source_finding_key),
@@ -2509,9 +2534,11 @@ class SqliteReviewRecords:
                     for item in self._subagent_record_corrections(connection, run_id)
                 ):
                     raise ReviewRecordsError("a retained non-finding note cannot change its source decision")
-                finding_id, old_decision, finalized = row
+                finding_id, old_decision, finalized, source_pr, channel = row
                 if old_decision not in {"accepted", "rejected"}:
                     raise ReviewRecordsError("routed and unresolved source findings need owner adjudication")
+                if decision == "routed" and old_decision != "accepted":
+                    raise ReviewRecordsError("only accepted source findings can be corrected to routed")
                 initial = connection.execute(
                     "SELECT decision_id FROM decisions WHERE decision_scope = 'source' "
                     "AND run_id = ? AND finding_id = ?",
@@ -2540,13 +2567,45 @@ class SqliteReviewRecords:
                 connection.execute(
                     "INSERT INTO source_decision_corrections "
                     "(correction_id, supersedes_id, run_id, finding_id, decision, target_pr, actor, reason, decided_at) "
-                    "VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)",
-                    (correction_id, supersedes_id, run_id, finding_id, decision, actor, reason, decided_at),
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (correction_id, supersedes_id, run_id, finding_id, decision, target_pr, actor, reason, decided_at),
                 )
-                connection.execute(
-                    "UPDATE finding_observations SET disposition = ? WHERE run_id = ? AND finding_id = ?",
-                    (decision, run_id, finding_id),
-                )
+                if decision == "routed":
+                    route_id = _stable_id("route", source_pr, channel, source_finding_key)
+                    existing = connection.execute(
+                        "SELECT status, target_pr FROM routes WHERE route_id = ?", (route_id,)
+                    ).fetchone()
+                    if existing is not None and existing[0] != "open":
+                        raise ReviewRecordsError("a terminal source route cannot be reused by a correction")
+                    self._record_route_observation(
+                        connection,
+                        route_id=route_id,
+                        finding_id=finding_id,
+                        source_pr=source_pr,
+                        channel=channel,
+                        target_pr=target_pr,
+                        observed_at=decided_at,
+                    )
+                    if existing is not None and target_pr is None and existing[1] is not None:
+                        connection.execute(
+                            "UPDATE routes SET target_pr = NULL, updated_at = ? WHERE route_id = ?",
+                            (decided_at, route_id),
+                        )
+                        connection.execute(
+                            "INSERT INTO route_target_history (route_id, target_pr, changed_at, actor, reason) "
+                            "VALUES (?, NULL, ?, ?, ?)",
+                            (route_id, decided_at, actor, reason),
+                        )
+                if decision == "routed":
+                    connection.execute(
+                        "UPDATE finding_observations SET disposition = ?, route_id = ? WHERE run_id = ? AND finding_id = ?",
+                        (decision, route_id, run_id, finding_id),
+                    )
+                else:
+                    connection.execute(
+                        "UPDATE finding_observations SET disposition = ? WHERE run_id = ? AND finding_id = ?",
+                        (decision, run_id, finding_id),
+                    )
                 counts = self._current_run_counts(connection, run_id)
                 connection.execute(
                     "UPDATE review_runs SET found_count = ?, accepted_count = ?, routed_count = ? WHERE run_id = ?",
@@ -2563,6 +2622,7 @@ class SqliteReviewRecords:
             "run_id": run_id,
             "prior_decision_id": supersedes_id,
             "decision": decision,
+            "route_id": route_id,
             "counts": {"found": counts[0], "accepted": counts[1], "routed": counts[2]},
             "public_checkpoint_correction_required": bool(finalized),
         }
@@ -3253,12 +3313,12 @@ class SqliteReviewRecords:
                 ).fetchone()
                 if associated is None:
                     return None
-            if (source_channel == "cli" and source_checkpoint is not None
-                    and run is not None and not origins):
+            if source_channel == "cli" and source_checkpoint is not None and run is not None and not origins:
                 # Native publication counts remain immutable; audited corrections
                 # determine today's obligations only after the original binding proves.
                 try:
                     from .evidence import _cli_capture_from_sql
+
                     snapshot = self._cli_capture_snapshot(connection, run_id, source_pr=source_pr)
                     if snapshot is not None:
                         _cli_capture_from_sql(snapshot, source_repository, source_pr, source_checkpoint)
@@ -3913,14 +3973,18 @@ class SqliteReviewRecords:
         from . import evidence, hosted
         from .sqlite_hosted_capture import _terminal_event
 
-        with (contextlib.closing(self._connect(read_only=True)) if _connection is None
-              else contextlib.nullcontext(_connection)) as connection:
+        with (
+            contextlib.closing(self._connect(read_only=True))
+            if _connection is None
+            else contextlib.nullcontext(_connection)
+        ) as connection:
             if _connection is None:
                 connection.execute("BEGIN")
             self._require_compatible(connection)
             row = connection.execute(
                 "SELECT channel, candidate_sha, state, finished_at, provider_review_id, metadata_json "
-                "FROM review_attempts WHERE attempt_id = ? AND source_pr = ?", (attempt_id, source_pr)
+                "FROM review_attempts WHERE attempt_id = ? AND source_pr = ?",
+                (attempt_id, source_pr),
             ).fetchone()
             if row is None or row[2] != "completed":
                 return None
@@ -3935,10 +3999,13 @@ class SqliteReviewRecords:
                     metadata = json.loads(artifacts["metadata"])
                     record = metadata["trigger_record"]
                     comments = json.loads(artifacts["hosted_comments"])
-                    pull = {"number": source_pr, "headRefOid": row[1],
-                            "reviews": {"nodes": json.loads(artifacts["hosted_review"])},
-                            "comments": {"nodes": comments["comments"]},
-                            "reviewThreads": {"nodes": comments["review_threads"]}}
+                    pull = {
+                        "number": source_pr,
+                        "headRefOid": row[1],
+                        "reviews": {"nodes": json.loads(artifacts["hosted_review"])},
+                        "comments": {"nodes": comments["comments"]},
+                        "reviewThreads": {"nodes": comments["review_threads"]},
+                    }
                     payload = {"data": {"repository": {"pullRequest": pull}}}
                     result = hosted.trigger_state(metadata["repository"], source_pr, payload, record)
                     if result.state != "completed" or not result.attributed or str(result.response_id) != row[4]:
@@ -5269,6 +5336,7 @@ class SqliteReviewRecords:
     ) -> int:
         deadline = self._effective_deadline(deadline)
         try:
+
             def query(statement: str) -> sqlite3.Cursor:
                 return self._compatibility_query(connection, statement, deadline=deadline)
 
