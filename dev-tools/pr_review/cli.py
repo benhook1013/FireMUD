@@ -353,9 +353,7 @@ def _parser() -> argparse.ArgumentParser:
     source_decide.add_argument("--decision-id", required=True)
     source_decide.add_argument("--decision", required=True, choices=("accepted", "routed", "rejected"))
     source_decide.add_argument("--actor", required=True)
-    source_decide.add_argument(
-        "--reason", required=True, help="source decision reason (maximum 300 characters)"
-    )
+    source_decide.add_argument("--reason", required=True, help="source decision reason (maximum 300 characters)")
     source_decide.add_argument("--target-pr", type=_positive_int)
     source_decide.add_argument("--decided-at")
     records_database(source_decide)
@@ -373,9 +371,7 @@ def _parser() -> argparse.ArgumentParser:
     source_resolve.add_argument("--resolution-id", required=True)
     source_resolve.add_argument("--fix-sha", required=True, type=_source_fix_sha)
     source_resolve.add_argument("--actor", required=True)
-    source_resolve.add_argument(
-        "--proof-note", required=True, help="accepted-fix proof note (maximum 300 characters)"
-    )
+    source_resolve.add_argument("--proof-note", required=True, help="accepted-fix proof note (maximum 300 characters)")
     source_resolve.add_argument("--resolved-at")
     records_database(source_resolve)
 
@@ -424,7 +420,10 @@ def _parser() -> argparse.ArgumentParser:
     cli_correction.add_argument("--finding", required=True, type=_positive_int)
     cli_correction.add_argument("--supersedes-id", required=True)
     cli_correction.add_argument("--correction-id", required=True)
-    cli_correction.add_argument("--decision", required=True, choices=("accepted", "rejected"))
+    cli_correction.add_argument("--decision", required=True, choices=("accepted", "routed", "rejected"))
+    cli_correction.add_argument(
+        "--target-pr", type=_positive_int, help="routed destination; omit for an open unassigned route"
+    )
     cli_correction.add_argument("--actor", required=True)
     cli_correction.add_argument("--reason", required=True)
     records_database(cli_correction)
@@ -638,8 +637,8 @@ def _parser() -> argparse.ArgumentParser:
         "period",
         help="record an explicit new default review-budget/taper period",
         description=(
-        "Reset one PR/channel using retained completed native SQLite results. "
-        "The supplied head is audit metadata; reset performs no Git or provider refresh. "
+            "Reset one PR/channel using retained completed native SQLite results. "
+            "The supplied head is audit metadata; reset performs no Git or provider refresh. "
             "Prior review and finding history remains intact. An existing User stop requires --replace-stop."
         ),
     )
@@ -822,8 +821,11 @@ def _local_administrative_store(args: argparse.Namespace) -> SqliteStateStore:
                 raise CliError("local Git directory pointer is malformed")
             git_dir = (parent / pointer.removeprefix("gitdir: ")).resolve()
             common_pointer = git_dir / "commondir"
-            common = ((git_dir / common_pointer.read_text(encoding="utf-8").strip()).resolve()
-                      if common_pointer.is_file() else git_dir)
+            common = (
+                (git_dir / common_pointer.read_text(encoding="utf-8").strip()).resolve()
+                if common_pointer.is_file()
+                else git_dir
+            )
             break
     else:
         raise CliError("cannot resolve local review state; pass --database explicitly")
@@ -1508,6 +1510,7 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
             decision=args.decision,
             actor=args.actor,
             reason=args.reason,
+            target_pr=args.target_pr,
         )
         return {"api_version": 1, "result": result}, 0
     if args.records_command == "subagent":
@@ -1698,9 +1701,7 @@ def _selected_pr_status_summary(report: Mapping[str, Any], pr: int) -> dict[str,
     ci_summary = {
         "aggregate": ci.get("aggregate"),
         "required_checks": {
-            key: required.get(key)
-            for key in ("available", "status", "reason", "reason_code")
-            if key in required
+            key: required.get(key) for key in ("available", "status", "reason", "reason_code") if key in required
         },
         "pending": [item.get("name") for item in ci.get("pending", []) if isinstance(item, Mapping)],
         "failed": [item.get("name") for item in ci.get("failed", []) if isinstance(item, Mapping)],
