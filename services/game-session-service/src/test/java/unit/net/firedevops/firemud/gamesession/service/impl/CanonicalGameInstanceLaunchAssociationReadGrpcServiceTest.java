@@ -40,6 +40,8 @@ import net.firedevops.firemud.gamesession.v1.GetCanonicalGameInstanceLaunchAssoc
 import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -221,6 +223,28 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcServiceTest {
     Fixture fixture = fixture();
     when(repository.readOriginalStartSessionAssociation(fixture.request()))
         .thenThrow(new DataAccessException("test-only unavailable storage"));
+
+    assertDenied(invokeWorld(fixture.wireRequest()), Status.Code.UNAVAILABLE);
+    verify(repository).readOriginalStartSessionAssociation(fixture.request());
+    verifyNoMoreInteractions(repository);
+  }
+
+  @Test
+  void transientSpringStorageFailureRemainsRetryableWithoutReturningEvidence() {
+    Fixture fixture = fixture();
+    when(repository.readOriginalStartSessionAssociation(fixture.request()))
+        .thenThrow(new TransientDataAccessResourceException("test-only transient storage failure"));
+
+    assertDenied(invokeWorld(fixture.wireRequest()), Status.Code.UNAVAILABLE);
+    verify(repository).readOriginalStartSessionAssociation(fixture.request());
+    verifyNoMoreInteractions(repository);
+  }
+
+  @Test
+  void springStorageResourceFailureRemainsRetryableWithoutReturningEvidence() {
+    Fixture fixture = fixture();
+    when(repository.readOriginalStartSessionAssociation(fixture.request()))
+        .thenThrow(new DataAccessResourceFailureException("test-only storage resource failure"));
 
     assertDenied(invokeWorld(fixture.wireRequest()), Status.Code.UNAVAILABLE);
     verify(repository).readOriginalStartSessionAssociation(fixture.request());

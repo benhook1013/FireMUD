@@ -196,6 +196,39 @@ class WorldStartSessionExecutionTerminalReadGrpcServiceTest {
   }
 
   @Test
+  void mapsRetainedWorldEvidenceConflictsToFailedPreconditionAndUnexpectedRuntimeToInternal() {
+    for (RuntimeException failure :
+        List.of(
+            new WorldCanonicalInstancePreparationRepository.ConflictingPreparationException(
+                "retained execution conflicts with original identity"),
+            new WorldCanonicalInstancePreparationRepository.InvalidPreparationEvidenceException(
+                "retained execution evidence is invalid"),
+            new RuntimeException("unexpected recovery failure"))) {
+      var repository = mock(WorldCanonicalInstancePreparationRepository.class);
+      when(repository.readExactExecution(any(WorldCanonicalInstanceExecutionIdentity.class)))
+          .thenThrow(failure);
+      var grpc =
+          new WorldStartSessionExecutionTerminalReadGrpcService(
+              service(repository, ignored -> {}), NAMESPACE);
+      Collector collector = new Collector();
+      callAs(
+          grpc,
+          peer("account-service", NAMESPACE),
+          WorldStartSessionExecutionTerminalReadGrpcCodec.toRequest(request()),
+          collector);
+
+      boolean retainedEvidenceConflict =
+          failure instanceof WorldCanonicalInstancePreparationRepository
+                  .ConflictingPreparationException
+              || failure instanceof WorldCanonicalInstancePreparationRepository
+                  .InvalidPreparationEvidenceException;
+      Status.Code expectedCode =
+          retainedEvidenceConflict ? Status.Code.FAILED_PRECONDITION : Status.Code.INTERNAL;
+      assertCode(collector, expectedCode);
+    }
+  }
+
+  @Test
   void mapsHistoricalOwnerRpcStatusesWithoutHidingRetryableFailures() {
     var repository = mock(WorldCanonicalInstancePreparationRepository.class);
     for (var mapping :

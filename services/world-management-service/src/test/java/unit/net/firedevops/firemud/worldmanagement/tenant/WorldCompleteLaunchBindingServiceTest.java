@@ -120,6 +120,27 @@ class WorldCompleteLaunchBindingServiceTest {
             WorldCompleteLaunchBindingService.hasExactGameSessionBinding(
                 fixture.request(), null, fixture.evidence()))
         .isFalse();
+
+    var isolatedScope = mock(CanonicalGameInstanceLaunchAssociationReadEvidence.Result.class);
+    when(isolatedScope.request()).thenReturn(fixture.request());
+    when(isolatedScope.playableStateScope()).thenReturn(RealmEntryPolicy.StateScope.ISOLATED);
+    when(isolatedScope.publicProduction()).thenReturn(true);
+    when(isolatedScope.launchBindingEvidence()).thenReturn(fixture.evidence());
+    assertThat(
+            WorldCompleteLaunchBindingService.hasExactGameSessionBinding(
+                fixture.request(), isolatedScope, fixture.evidence()))
+        .isFalse();
+
+    var nonPublicProduction =
+        mock(CanonicalGameInstanceLaunchAssociationReadEvidence.Result.class);
+    when(nonPublicProduction.request()).thenReturn(fixture.request());
+    when(nonPublicProduction.playableStateScope()).thenReturn(RealmEntryPolicy.StateScope.SHARED);
+    when(nonPublicProduction.publicProduction()).thenReturn(false);
+    when(nonPublicProduction.launchBindingEvidence()).thenReturn(fixture.evidence());
+    assertThat(
+            WorldCompleteLaunchBindingService.hasExactGameSessionBinding(
+                fixture.request(), nonPublicProduction, fixture.evidence()))
+        .isFalse();
   }
 
   @Test
