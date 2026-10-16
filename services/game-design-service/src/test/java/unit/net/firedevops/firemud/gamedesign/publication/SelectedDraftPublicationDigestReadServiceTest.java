@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -237,6 +238,37 @@ class SelectedDraftPublicationDigestReadServiceTest {
                 new GameDesignPublicationOperationRepository.Readback(
                     fixture.operation(), "PENDING", new byte[] {1})));
     when(owner.readSourceCapture(fixture.operation())).thenReturn(Optional.of(fixture.capture()));
+    var changedGameplay =
+        new GameplayRuleSnapshot(
+            fixture.binding(),
+            "0",
+            null,
+            UUID.fromString("88888888-8888-4888-8888-888888888888"),
+            List.of());
+    assertThat(
+            Arrays.equals(
+                changedGameplay.canonicalBytes(),
+                fixture.sources().gameplayEvidence().orElseThrow().canonicalBytes()))
+        .isFalse();
+    var changedGameplaySources =
+        new GameDesignSourceRepository.SynchronizedSources(
+            fixture.sources().command(),
+            fixture.sources().policy(),
+            fixture.sources().assetEvidence(),
+            Optional.of(changedGameplay),
+            fixture.sources().branding(),
+            fixture.sources().templateConfig());
+    when(owner.readSynchronized(fixture.binding().target(), fixture.binding().commitId()))
+        .thenReturn(Optional.of(changedGameplaySources));
+    assertCode(Status.Code.FAILED_PRECONDITION, () -> service.read(NAMESPACE, request));
+
+    org.mockito.Mockito.reset(owner);
+    when(owner.read(request.derivedWorkflowIdentity()))
+        .thenReturn(
+            Optional.of(
+                new GameDesignPublicationOperationRepository.Readback(
+                    fixture.operation(), "PENDING", new byte[] {1})));
+    when(owner.readSourceCapture(fixture.operation())).thenReturn(Optional.of(fixture.capture()));
     var anotherCommit =
         DraftCommitBinding.create(
             fixture.binding().target(),
@@ -267,6 +299,7 @@ class SelectedDraftPublicationDigestReadServiceTest {
                 complete.command(),
                 complete.policy(),
                 Optional.empty(),
+                complete.gameplay(),
                 complete.branding(),
                 complete.templateConfig()),
             new GameDesignSourceRepository.Capture(
@@ -274,11 +307,20 @@ class SelectedDraftPublicationDigestReadServiceTest {
                 complete.policy(),
                 complete.asset(),
                 Optional.empty(),
+                complete.branding(),
                 complete.templateConfig()),
             new GameDesignSourceRepository.Capture(
                 complete.command(),
                 complete.policy(),
                 complete.asset(),
+                complete.gameplay(),
+                Optional.empty(),
+                complete.templateConfig()),
+            new GameDesignSourceRepository.Capture(
+                complete.command(),
+                complete.policy(),
+                complete.asset(),
+                complete.gameplay(),
                 complete.branding(),
                 Optional.empty()));
     var service = new SelectedDraftPublicationDigestReadService(owner, transactions, NAMESPACE);
@@ -315,6 +357,9 @@ class SelectedDraftPublicationDigestReadServiceTest {
             new CommandSnapshot.Capture(operation, sources.command()),
             new RealmPolicySnapshot.Capture(operation, sources.policy()),
             Optional.of(new AssetSnapshot.Capture(operation, sources.asset())),
+            Optional.of(
+                new GameplayRuleSnapshot.Capture(
+                    operation, sources.gameplayEvidence().orElseThrow())),
             Optional.of(
                 new BrandingSourceSnapshot.Capture(operation, sources.branding().orElseThrow())),
             Optional.of(
