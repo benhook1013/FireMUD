@@ -91,7 +91,10 @@ Entry format:
   - Expected pattern: preserve that proof limit separately from installed consumer code, and retain the required producer/activation and callback qualification in the [platform operations tracker](implementation-tracking/platform-operations-and-delivery.md).
   - Reconsideration trigger: remove after producer activation and hosted webhook plus partial-rerun qualification establish the actual callback boundary.
 
-- `2026-10-15`: A failed SpotBugs task may have no enabled diagnostic report. The Document preparation gate returned only exit code 1 with no finding or report; explicitly enabling XML through a temporary init script exposed one unused fixture local. Scope that temporary script through `findProject` because Gradle also applies initialization scripts to `buildSrc`. The ordinary corrected World gate then passed. Enabling a useful report in the existing build task configuration is a tooling opportunity; no canonical build configuration was changed in this lane.
+- `2026-10-15`: Make failed SpotBugs tasks expose actionable diagnostics
+  - Context: the Document preparation gate returned exit code 1 without a finding or report; a temporary init script enabled XML output and exposed one unused fixture local.
+  - Observation: Gradle also applies initialization scripts to `buildSrc`, so an unscoped script can affect projects outside the intended service.
+  - Expected pattern: scope temporary report configuration through `findProject`, then use the ordinary corrected service gate; consider enabling useful reports in canonical task configuration when the opportunity is justified. No canonical build configuration changed in this lane.
 
 - `2026-10-15`: Keep the shared local Gradle heap qualification explicit
   - Context: repeated 1.4 GiB heap thrashing led to a shared 3 GiB local daemon setting for serialized work.
@@ -158,8 +161,9 @@ Entry format:
   - Expected pattern: make message delivery and seen-state recording failures distinguishable, with enough operation context to choose a safe canonical retry without inspecting or mutating the database directly.
   - Recovery: one canonical retry returned the full message after 6.30 seconds. Gameplay reported the evidence to Overseer for the User-requested Controller improvements; no database or Controller change was made by this lane.
 
-- 2026-10-17 — Distinguish queued source CI from early metadata runs.
-  - Observation: The Gameplay observer initially reported that six newly published heads had no source validation because only their early metadata jobs were inspectable. Their original source workflows subsequently completed change detection and started the build/test matrices. No missing-source CI defect or cancellation was established; the premature report sent unnecessary investigation to Overseer.
+- `2026-10-17`: Distinguish queued source CI from early metadata runs
+  - Context: Six newly published Gameplay heads initially had only early metadata jobs inspectable; Pacific/Auckland date is 2026-10-17.
+  - Observation: The observer reported that the heads had no source validation. Their original source workflows later completed change detection and started the build/test matrices. No missing-source CI defect or cancellation was established; the premature report sent unnecessary investigation to Overseer.
   - Expected pattern: Retain each original run and classify source selection as pending or unknown while discovery or queue admission is incomplete. A completed metadata gate establishes neither source success nor source absence. The report and observer guidance were corrected with the exact source run identities.
 
 - 2026-10-17 — Targeted Controller status can exhaust its deadline on older queue history.
