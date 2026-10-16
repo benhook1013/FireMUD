@@ -803,36 +803,7 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
           || number(sourceIntake, "schemaVersion", true) != 1L) {
         throw denied("Unsupported World preparation subdocument schema");
       }
-      JsonNode sourceEvidence = requiredSourceEvidence();
-      AuthoredWorldSourceEvidence source =
-          new AuthoredWorldSourceEvidence(
-              Math.toIntExact(number(sourceEvidence, "schemaVersion", true)),
-              text(sourceIntake, "targetNamespace"),
-              uuid(sourceEvidence, "registrationRequestId"),
-              uuid(sourceEvidence, "sourceOperationId"),
-              text(sourceEvidence, "requestDigest"),
-              uuid(sourceEvidence, "canonicalTenantId"),
-              text(sourceEvidence, "tenantSlug"),
-              text(sourceEvidence, "worldSlug"),
-              text(sourceEvidence, "worldDisplayName"),
-              number(sourceEvidence, "sourceGameRowId", true),
-              text(sourceEvidence, "sourceGameTenantKey"),
-              text(sourceEvidence, "provenanceKind"),
-              text(sourceEvidence, "evidenceDigest"));
-      WorldAuthoredSourceIntakeReceipt receipt =
-          new WorldAuthoredSourceIntakeReceipt(
-              Math.toIntExact(number(sourceIntake, "schemaVersion", true)),
-              text(sourceIntake, "targetNamespace"),
-              uuid(sourceIntake, "intakeRequestId"),
-              uuid(sourceIntake, "operationId"),
-              uuid(sourceIntake, "canonicalTenantId"),
-              text(sourceIntake, "worldSlug"),
-              uuid(sourceIntake, "sourceOperationId"),
-              text(sourceIntake, "sourceEvidenceDigest"),
-              text(sourceIntake, "requestDigest"),
-              text(sourceIntake, "receiptDigest"),
-              number(sourceIntake, "localTenantKey", true),
-              source);
+      WorldAuthoredSourceIntakeReceipt receipt = sourceReceipt();
 
       UUID versionId = uuid(versionIdentity, "canonicalVersionId");
       if (!versionId.equals(uuid(launchBinding, "canonicalVersionId"))
@@ -841,8 +812,7 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
               .equals(uuid(topology, "versionIdentityOperationId"))) {
         throw denied("Retained World version identity differs from its frozen topology");
       }
-      if (!uuid(versionIdentity, "operationId").equals(uuid(topology, "versionIdentityOperationId"))
-          || !text(this.identity, "targetNamespace").equals(text(topology, "targetNamespace"))
+      if (!text(this.identity, "targetNamespace").equals(text(topology, "targetNamespace"))
           || !uuid(this.identity, "canonicalTenantId").equals(uuid(topology, "canonicalTenantId"))
           || !text(identity, "canonicalGameInstanceId")
               .equals(text(gameSessionReadRequest, "canonicalGameInstanceId"))) {
