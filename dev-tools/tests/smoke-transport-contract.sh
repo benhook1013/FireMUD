@@ -1563,6 +1563,7 @@ for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-too
   done
 done
 
+# shellcheck disable=SC2016 # Assert literal shell source rather than expanded values.
 for script in "$ROOT_DIR/dev-tools/verify-fresh-bootstrap.sh" "$ROOT_DIR/dev-tools/verify-smoke-images.sh"; do
   grep -Fq 'FIREMUD_SMOKE_ADMISSION_QUALIFICATION="${FIREMUD_SMOKE_ADMISSION_QUALIFICATION:-baseline}"' "$script"
   grep -Fq 'baseline|held)' "$script"
