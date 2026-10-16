@@ -16,6 +16,7 @@ COMPOSE_CONFIG_FILE=""
 TCP_SMOKE_SCRIPT="$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"
 WS_SMOKE_SCRIPT="$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
 HEALTH_CHECK_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
+HELD_ADMISSION_QUALIFICATION_SCRIPT="$ROOT_DIR/dev-tools/smoke/held-admission-qualification.sh"
 ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 COMPOSE_UP_ARGS=(up -d --remove-orphans)
 SMOKE_COMPOSE_UP_ATTEMPTS="${SMOKE_COMPOSE_UP_ATTEMPTS:-3}"
@@ -23,6 +24,8 @@ SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS="${SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS:-5}
 COMPOSE_START_ATTEMPTED=false
 # shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
+# shellcheck source=dev-tools/smoke/held-admission-qualification.sh
+source "$HELD_ADMISSION_QUALIFICATION_SCRIPT"
 export FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false
 export FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH=/app/run-owned-initial-admission-capability.json
 unset FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH
@@ -82,6 +85,17 @@ case "$SMOKE_MINIO_LOCAL_ONLY" in
     exit 1
     ;;
   esac
+
+FIREMUD_SMOKE_ADMISSION_QUALIFICATION="${FIREMUD_SMOKE_ADMISSION_QUALIFICATION:-baseline}"
+case "$FIREMUD_SMOKE_ADMISSION_QUALIFICATION" in
+  baseline|held)
+    export FIREMUD_SMOKE_ADMISSION_QUALIFICATION
+    ;;
+  *)
+    echo "FIREMUD_SMOKE_ADMISSION_QUALIFICATION must be baseline or held; refusing to run." >&2
+    exit 1
+    ;;
+esac
 
 # The proof's mTLS profile must be last so it supersedes the ordinary local
 # plaintext override and all image/MinIO-specific overlays.
@@ -262,12 +276,30 @@ fi
 if [[ "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" == "true" ]]; then
   exit 0
 fi
+
+case "$FIREMUD_SMOKE_ADMISSION_QUALIFICATION" in
+  baseline)
+    echo "Smoke admission qualification: baseline (both transports must complete LOGIN -> PLAY -> LOOK)."
+    ;;
+  held)
+    echo "Smoke admission qualification: held (direct backend LOGIN -> PLAY -> LOOK plus Gateway/Telnet fail-closed proof)."
+    ;;
+esac
+
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
 COMPOSE_START_ATTEMPTED=true
 compose_up_with_retry
-bash "$HEALTH_CHECK_SCRIPT" "${COMPOSE_FILES[@]}"
 
-# Both transport legs are baseline-only; mutation parity requires independent
-# transport identities/state and is rejected by this wrapper above.
-bash "$WS_SMOKE_SCRIPT"
-bash "$TCP_SMOKE_SCRIPT"
+if [[ "$FIREMUD_SMOKE_ADMISSION_QUALIFICATION" == "baseline" ]]; then
+  bash "$HEALTH_CHECK_SCRIPT" "${COMPOSE_FILES[@]}"
+  # Both transport legs are baseline-only; mutation parity requires independent
+  # transport identities/state and is rejected by this wrapper above.
+  bash "$WS_SMOKE_SCRIPT"
+  bash "$TCP_SMOKE_SCRIPT"
+else
+  run_held_admission_qualification "${COMPOSE_FILES[@]}"
+  # This is the existing isolated backend positive proof. Public successful
+  # admission remains a separate runtime obligation.
+  bash "$WS_SMOKE_SCRIPT"
+  echo "Held-admission smoke qualification passed; public successful admission remains unproved."
+fi

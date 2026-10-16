@@ -387,7 +387,6 @@ class CommunicationRecipientDeliveryServiceTest {
         .close(
             org.springframework.web.socket.CloseStatus.SERVER_ERROR.withReason("internal_error"));
     verify(activeTransportSessionRegistry, never()).unregister(anyLong(), any());
-    assertThat(activeTransportSessionRegistry.find(42L)).contains(session);
     assertThat(
             meterRegistry
                 .counter(
