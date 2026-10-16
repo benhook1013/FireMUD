@@ -1881,11 +1881,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
         return result;
       } catch (RuntimeException | Error failure) {
         event(
-            call,
-            stage,
-            "failed",
-            System.nanoTime() - started,
-            failure.getClass().getSimpleName());
+            call, stage, "failed", System.nanoTime() - started, failure.getClass().getSimpleName());
         throw failure;
       }
     }
