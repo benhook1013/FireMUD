@@ -122,7 +122,7 @@ class WorldDraftTerminalOutcomePostgresIntegrationTest {
 
   @Container
   static GenericContainer<?> redis =
-      new GenericContainer<>("redis:7.2-alpine").withExposedPorts(6379);
+      new GenericContainer<>(TestContainerImages.redis()).withExposedPorts(6379);
 
   @DynamicPropertySource
   static void configure(DynamicPropertyRegistry registry) {
