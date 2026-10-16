@@ -37,6 +37,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleServi
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -146,6 +147,99 @@ class GameSessionWebSocketHandlerTest {
                         && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
     verify(firstPartyConnectContextRegistry, never()).register(Mockito.anyLong(), Mockito.any());
     verify(sessionContextService, never()).save(Mockito.any());
+  }
+
+  @Test
+  void establishmentClosesUnavailableTransportAndCleansMdcBeforeLaterHealthyConnection()
+      throws Exception {
+    when(runtimeIdentity.service()).thenReturn("game-session-service");
+    when(runtimeIdentity.serviceInstanceId()).thenReturn("instance-1");
+    Map<String, String> originalMdc = org.slf4j.MDC.getCopyOfContextMap();
+    org.slf4j.MDC.put("requestMarker", "prior-value");
+    Map<String, String> priorMdc = org.slf4j.MDC.getCopyOfContextMap();
+    when(session.getAttributes())
+        .thenReturn(Map.of(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenThrow(new SessionContextUnavailableException("retained context unreadable", null))
+        .thenReturn(Optional.empty());
+
+    try {
+      handler.afterConnectionEstablished(session);
+
+      verify(session)
+          .close(
+              argThat(
+                  status ->
+                      status.getCode() == 1013
+                          && "backend_unavailable".equals(status.getReason())));
+      verify(activeTransportSessionRegistry, never()).register(41L, session);
+      verify(activeTransportSessionRegistry, never()).unregister(Mockito.anyLong(), Mockito.any());
+      verify(sessionContextService, never()).save(Mockito.any());
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("service")).isNull();
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("serviceInstanceId")).isNull();
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("correlationId")).isNull();
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.getCopyOfContextMap())
+          .isEqualTo(priorMdc);
+
+      WebSocketSession healthySession = Mockito.mock(WebSocketSession.class);
+      when(healthySession.getAttributes())
+          .thenReturn(Map.of(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "42"));
+      when(sessionAuthenticationService.resolveUnverifiedSessionContext("42"))
+          .thenReturn(Optional.empty());
+      handler.afterConnectionEstablished(healthySession);
+
+      verify(activeTransportSessionRegistry).register(42L, healthySession);
+      verify(healthySession, never()).close(Mockito.any(CloseStatus.class));
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.getCopyOfContextMap())
+          .isEqualTo(priorMdc);
+    } finally {
+      restoreMdc(originalMdc);
+    }
+  }
+
+  @Test
+  void messageClosesTransportWhenRetainedContextCannotBeRead() throws Exception {
+    when(runtimeIdentity.service()).thenReturn("game-session-service");
+    when(runtimeIdentity.serviceInstanceId()).thenReturn("instance-1");
+    Map<String, String> originalMdc = org.slf4j.MDC.getCopyOfContextMap();
+    org.slf4j.MDC.put("requestMarker", "prior-value");
+    Map<String, String> priorMdc = org.slf4j.MDC.getCopyOfContextMap();
+    when(session.getAttributes())
+        .thenReturn(Map.of(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
+        .thenThrow(new SessionContextUnavailableException("retained context unreadable", null));
+
+    try {
+      handler.handleMessage(session, new TextMessage("LOOK"));
+
+      verify(session)
+          .close(
+              argThat(
+                  status ->
+                      status.getCode() == 1013
+                          && "backend_unavailable".equals(status.getReason())));
+      verify(parser, never()).parse(Mockito.anyString());
+      verify(interpreter, never())
+          .interpret(Mockito.anyString(), Mockito.any(TextCommand.class), Mockito.anyBoolean());
+      verify(sessionContextService, never()).save(Mockito.any());
+      verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), Mockito.any());
+      verify(activeTransportSessionRegistry, never()).unregister(Mockito.anyLong(), Mockito.any());
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("service")).isNull();
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("serviceInstanceId")).isNull();
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("correlationId")).isNull();
+      org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.getCopyOfContextMap())
+          .isEqualTo(priorMdc);
+    } finally {
+      restoreMdc(originalMdc);
+    }
+  }
+
+  private static void restoreMdc(Map<String, String> contextMap) {
+    if (contextMap == null) {
+      org.slf4j.MDC.clear();
+    } else {
+      org.slf4j.MDC.setContextMap(contextMap);
+    }
   }
 
   @Test

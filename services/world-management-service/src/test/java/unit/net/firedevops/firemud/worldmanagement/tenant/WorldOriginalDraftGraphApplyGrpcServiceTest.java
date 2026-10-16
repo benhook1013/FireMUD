@@ -121,6 +121,31 @@ class WorldOriginalDraftGraphApplyGrpcServiceTest {
   }
 
   @Test
+  void classifiesTransactionCreationAndTimeoutFailuresAsUnavailable() {
+    var request = request("test");
+    var wire = WorldOriginalDraftGraphApplyGrpcCodec.toRequest(request);
+    for (RuntimeException storageFailure :
+        List.of(
+            new org.springframework.transaction.CannotCreateTransactionException(
+                "sensitive transaction setup detail"),
+            new org.springframework.transaction.TransactionTimedOutException(
+                "sensitive transaction timeout detail"))) {
+      var owner = mock(WorldOriginalDraftGraphApplicationService.class);
+      when(owner.apply(eq("test"), any(byte[].class))).thenThrow(storageFailure);
+      var grpc = new WorldOriginalDraftGraphApplyGrpcService(owner, "test");
+
+      var response = call(grpc, wire, peer("game-design-service", "test"));
+
+      assertThat(response.code()).isEqualTo(Status.Code.UNAVAILABLE);
+      assertThat(response.errorDescription)
+          .isEqualTo("World original apply storage unavailable")
+          .doesNotContain("sensitive");
+      assertThat(response.value).isNull();
+      assertThat(response.completed).isFalse();
+    }
+  }
+
+  @Test
   void mapsUpstreamTransportStatusToRetryableOrSafePreconditionStatus() {
     var owner = mock(WorldOriginalDraftGraphApplicationService.class);
     var request = request("test");

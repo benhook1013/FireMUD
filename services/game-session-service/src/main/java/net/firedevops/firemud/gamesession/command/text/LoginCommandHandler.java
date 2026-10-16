@@ -108,8 +108,8 @@ public final class LoginCommandHandler {
           }
           return failure("FIRST_PARTY_AUTHORITY_UNAVAILABLE", "First-party login is unavailable");
         }
-      } catch (RuntimeException invalidOrUnavailable) {
-        return failure("CONNECT_CONTEXT_INVALID", "Connect context invalid");
+      } catch (RuntimeException unavailable) {
+        return failure(AUTHENTICATION_UNAVAILABLE_CODE, "Authentication service unavailable");
       }
     }
     Optional<TextCommandPayload.EmailLoginChallengeRequest> maybeChallengeRequest =

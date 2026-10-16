@@ -12,6 +12,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -161,7 +162,8 @@ class RedisSessionContextServiceTest {
     when(valueOperations.get(retainedKey))
         .thenThrow(new SerializationException("old SessionContext record shape"));
 
-    assertThrows(IllegalStateException.class, () -> service.findByTenantAndSessionId(10L, 1L));
+    assertThrows(
+        SessionContextUnavailableException.class, () -> service.findByTenantAndSessionId(10L, 1L));
     assertThrows(
         SerializationException.class,
         () -> service.deleteBySessionId(10L, 1L),

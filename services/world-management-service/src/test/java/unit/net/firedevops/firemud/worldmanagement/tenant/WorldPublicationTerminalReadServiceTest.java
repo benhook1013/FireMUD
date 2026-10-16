@@ -1,13 +1,19 @@
 package unit.net.firedevops.firemud.worldmanagement.tenant;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
 import io.grpc.Status;
+import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence.Outcome;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.worldmanagement.tenant.WorldGameDesignPublicationTerminalVerifierTest;
 import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalReadService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldPublicationTerminalRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -64,6 +70,45 @@ class WorldPublicationTerminalReadServiceTest {
     }
 
     verifyNoInteractions(repository);
+  }
+
+  @Test
+  void classifiesTransactionCreationAndTimeoutFailuresAsUnavailable() throws Exception {
+    var operation = WorldGameDesignPublicationTerminalVerifierTest.operation();
+    var terminal =
+        WorldGameDesignPublicationTerminalVerifierTest.terminal(operation, Outcome.PUBLISHED);
+    var request =
+        WorldPublicationTerminalReadEvidence.Request.create(
+            "test", operation.canonicalBytes(), terminal.canonicalBytes());
+
+    for (RuntimeException storageFailure :
+        java.util.List.of(
+            new org.springframework.transaction.CannotCreateTransactionException(
+                "sensitive transaction setup detail"),
+            new org.springframework.transaction.TransactionTimedOutException(
+                "sensitive transaction timeout detail"))) {
+      var repository = mock(WorldPublicationTerminalRepository.class);
+      when(repository.readCommitted(any())).thenThrow(storageFailure);
+      var service = new WorldPublicationTerminalReadService(repository, "test");
+      var context =
+          Context.current()
+              .withValue(GrpcPeerIdentity.CONTEXT_KEY, peer("account-service", "test"));
+      var previous = context.attach();
+      try {
+        assertThatThrownBy(() -> service.read(request))
+            .isInstanceOf(io.grpc.StatusRuntimeException.class)
+            .satisfies(
+                failure -> {
+                  var status = Status.fromThrowable(failure);
+                  assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+                  assertThat(status.getDescription())
+                      .isEqualTo("World publication terminal owner read is unavailable")
+                      .doesNotContain("sensitive");
+                });
+      } finally {
+        context.detach(previous);
+      }
+    }
   }
 
   private static GrpcPeerIdentity peer(String service, String namespace) {
