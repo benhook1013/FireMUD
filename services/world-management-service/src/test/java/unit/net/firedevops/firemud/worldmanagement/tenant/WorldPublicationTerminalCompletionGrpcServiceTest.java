@@ -121,6 +121,38 @@ class WorldPublicationTerminalCompletionGrpcServiceTest {
     verify(owner).complete(any(), any());
   }
 
+  @Test
+  void classifiesTransactionCreationAndTimeoutFailuresAsUnavailable() throws Exception {
+    GameDesignPublicationOperationBinding operation =
+        WorldGameDesignPublicationTerminalVerifierTest.operation();
+    var terminal =
+        WorldGameDesignPublicationTerminalVerifierTest.terminal(operation, Outcome.PUBLISHED);
+    var request =
+        WorldPublicationTerminalCompletionGrpcCodec.Request.create(
+            "test", operation.canonicalBytes(), terminal.canonicalBytes());
+    var wire = WorldPublicationTerminalCompletionGrpcCodec.toRequest(request);
+
+    for (RuntimeException storageFailure :
+        java.util.List.of(
+            new org.springframework.transaction.CannotCreateTransactionException(
+                "sensitive transaction setup detail"),
+            new org.springframework.transaction.TransactionTimedOutException(
+                "sensitive transaction timeout detail"))) {
+      var owner = mock(WorldPublicationTerminalService.class);
+      when(owner.complete(any(), any())).thenThrow(storageFailure);
+      var service = new WorldPublicationTerminalCompletionGrpcService(owner, "test");
+
+      Observation observation = invoke(service, peer("test", "game-design-service"), wire);
+
+      assertThat(observation.code()).isEqualTo(Status.Code.UNAVAILABLE);
+      assertThat(Status.fromThrowable(observation.failure()).getDescription())
+          .isEqualTo("World publication terminal storage is unavailable")
+          .doesNotContain("sensitive");
+      assertThat(observation.response()).isNull();
+      assertThat(observation.completed()).isFalse();
+    }
+  }
+
   private static void assertFailure(Status.Code expected, Observation observation) {
     assertThat(observation.code()).isEqualTo(expected);
     assertThat(observation.response()).isNull();
