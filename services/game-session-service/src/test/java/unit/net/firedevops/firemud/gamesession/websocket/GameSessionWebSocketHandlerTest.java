@@ -220,8 +220,7 @@ class GameSessionWebSocketHandlerTest {
                           && "backend_unavailable".equals(status.getReason())));
       verify(parser, never()).parse(Mockito.anyString());
       verify(interpreter, never())
-          .interpret(
-              Mockito.anyString(), Mockito.any(TextCommand.class), Mockito.anyBoolean());
+          .interpret(Mockito.anyString(), Mockito.any(TextCommand.class), Mockito.anyBoolean());
       verify(sessionContextService, never()).save(Mockito.any());
       verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), Mockito.any());
       verify(activeTransportSessionRegistry, never()).unregister(Mockito.anyLong(), Mockito.any());
