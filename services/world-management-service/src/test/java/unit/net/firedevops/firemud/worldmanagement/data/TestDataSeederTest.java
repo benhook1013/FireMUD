@@ -4,9 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -19,6 +22,7 @@ import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -31,6 +35,7 @@ class TestDataSeederTest {
   @Mock ZoneRepository zoneRepository;
   @Mock RoomRepository roomRepository;
   @Mock RoomExitRepository roomExitRepository;
+  @Mock WorldAuthoredSourceIntakeRepository sourceIntakeRepository;
 
   private TestDataSeeder seeder;
 
@@ -38,7 +43,12 @@ class TestDataSeederTest {
   void setup() {
     MockitoAnnotations.openMocks(this);
     seeder =
-        new TestDataSeeder(regionRepository, zoneRepository, roomRepository, roomExitRepository);
+        new TestDataSeeder(
+            regionRepository,
+            zoneRepository,
+            roomRepository,
+            roomExitRepository,
+            sourceIntakeRepository);
   }
 
   @Test
@@ -72,6 +82,11 @@ class TestDataSeederTest {
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
+    var order = inOrder(sourceIntakeRepository, regionRepository);
+    order.verify(sourceIntakeRepository).claimLegacyDemoTenant();
+    order
+        .verify(regionRepository)
+        .findFirstByTenantIdAndVersionIdAndShardIdAndName(1L, 1L, 0, "Demo Region");
     verify(regionRepository).save(any());
     verify(zoneRepository).save(any());
     ArgumentCaptor<Room> roomCaptor = ArgumentCaptor.forClass(Room.class);
@@ -145,6 +160,11 @@ class TestDataSeederTest {
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
+    var order = inOrder(sourceIntakeRepository, regionRepository);
+    order.verify(sourceIntakeRepository).claimLegacyDemoTenant();
+    order
+        .verify(regionRepository)
+        .findFirstByTenantIdAndVersionIdAndShardIdAndName(1L, 1L, 0, "Demo Region");
     verify(regionRepository).save(any());
     verify(zoneRepository).save(any());
     verify(roomRepository, times(2)).saveSeededWithExplicitId(any());
@@ -191,6 +211,22 @@ class TestDataSeederTest {
     assertTrue(exception.getMessage().startsWith("DEMO_TEMPLATE_ROOM_ID_MISMATCH:"));
     verify(roomRepository, never()).saveSeededWithExplicitId(any());
     verify(roomExitRepository, never()).save(any());
+  }
+
+  @Test
+  void unavailableLegacyClaimDeniesSeedingBeforeTopologyReadOrWrite() {
+    doThrow(
+            new WorldAuthoredSourceIntakeRepository.RegistrationConflictException(
+                "Owner unavailable"))
+        .when(sourceIntakeRepository)
+        .claimLegacyDemoTenant();
+
+    var exception =
+        assertThrows(
+            IllegalStateException.class,
+            () -> seeder.run(new DefaultApplicationArguments(new String[] {})));
+    assertTrue(exception.getMessage().startsWith("DEMO_WORLD_SEEDING_UNAVAILABLE:"));
+    verifyNoInteractions(regionRepository, zoneRepository, roomRepository, roomExitRepository);
   }
 
   private RoomExit existingExit(long id) {

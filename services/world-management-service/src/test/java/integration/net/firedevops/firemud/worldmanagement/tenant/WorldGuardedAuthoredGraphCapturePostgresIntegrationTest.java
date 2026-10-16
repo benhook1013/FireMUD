@@ -21,6 +21,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
@@ -524,6 +531,270 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
       assertThat(retained.graphSha256()).isEqualTo(stored.graphSha256());
       assertThat(retained.ownerCommitProofStatus())
           .isEqualTo(WorldAuthoredGraphSnapshot.OwnerCommitProofStatus.CAPTURED_UNVERIFIED);
+    } finally {
+      dsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
+    }
+  }
+
+  @Test
+  void currentTopologyWriterCommitsBeforeFreezeCheckpointAndFrozenRetryRetainsRows()
+      throws Exception {
+    String schema = "world_current_draft_fence_" + UUID.randomUUID().toString().replace("-", "");
+    var source =
+        new DriverManagerDataSource(
+            postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword());
+    source.setSchema(schema);
+    var dsl = DSL.using(new TransactionAwareDataSourceProxy(source), SQLDialect.POSTGRES);
+    var write = new TransactionTemplate(new DataSourceTransactionManager(source));
+    write.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    write.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    Path root = repositoryRoot();
+    try {
+      flyway(
+              source,
+              schema,
+              null,
+              "filesystem:"
+                  + root.resolve(
+                      "services/world-management-service/src/main/resources/db/migration"),
+              "filesystem:"
+                  + root.resolve("services/common-saga/src/main/resources/db/migration/saga"))
+          .migrate();
+
+      var upstream = controlledSource();
+      var intake =
+          Objects.requireNonNull(
+              write.execute(
+                  status ->
+                      new WorldAuthoredSourceIntakeRepository(dsl)
+                          .acceptFresh(NAMESPACE, UUID.randomUUID(), upstream)));
+      var state =
+          AuthoredWorldVersionStateEvidence.create(
+              new AuthoredWorldVersionStateEvidence.Request(
+                  1,
+                  NAMESPACE,
+                  UUID.randomUUID(),
+                  upstream.canonicalTenantId(),
+                  upstream.worldSlug(),
+                  upstream.operationId(),
+                  upstream.evidenceDigest(),
+                  42L),
+              upstream,
+              UUID.randomUUID(),
+              VersionLifecycleState.VERSION_LIFECYCLE_STATE_DRAFT,
+              1L);
+      var version =
+          Objects.requireNonNull(
+              write.execute(
+                  status ->
+                      new WorldAuthoredVersionIdentityRepository(dsl).acceptFresh(intake, state)));
+      var fence =
+          new WorldDesignPublicationFenceRepository(
+              dsl, new WorldAuthoredSourceIntakeRepository(dsl));
+      var topology =
+          new WorldDraftTopologyCommitRepository(
+              dsl, fence, JsonMapper.builder().enable(SerializationFeature.INDENT_OUTPUT).build());
+      // This current guarded storage result remains permission-unverified and supplies no APPLIED
+      // commit or upstream publication authority.
+      var plan = topologyPlan(intake, version);
+      Map<String, Long> expectedFamilyCounts =
+          Map.of(
+              "region", 1L,
+              "zone", 1L,
+              "room", 2L,
+              "room_exit", 1L,
+              "generation_rule", 1L,
+              "world_entity_spawn_binding", 1L);
+      var digest =
+          new WorldDraftDesignDigestServiceImpl(
+              new RegionRepository(dsl),
+              new ZoneRepository(dsl),
+              new RoomRepository(dsl),
+              new RoomExitRepository(dsl),
+              new GenerationRuleRepository(dsl),
+              new WorldEntitySpawnBindingRepository(dsl));
+      String publicationRequest = "writer-first-current";
+      var publicationBinding =
+          PublicationDigestRequestBinding.full(
+              upstream.canonicalTenantId().toString(), "42", publicationRequest);
+      var owner = plan.ownerBinding();
+      var publication =
+          new WorldDesignPublicationFenceEvidence(
+              NAMESPACE,
+              owner.canonicalTenantId(),
+              owner.canonicalVersionId(),
+              owner.versionIdentityOperationId(),
+              owner.gameDesignVersionId(),
+              owner.intakeRequestId(),
+              owner.intakeOperationId(),
+              owner.intakeRequestDigest(),
+              owner.sourceOperationId(),
+              owner.sourceEvidenceDigest(),
+              owner.intakeReceiptDigest(),
+              publicationRequest,
+              publicationBinding.requestDigest(),
+              1L,
+              publicationBinding.derivedWorkflowIdentity());
+
+      CountDownLatch writerStored = new CountDownLatch(1);
+      CountDownLatch releaseWriter = new CountDownLatch(1);
+      CountDownLatch freezeStarted = new CountDownLatch(1);
+      AtomicBoolean checkpointCaptured = new AtomicBoolean();
+      AtomicReference<Integer> writerBackendPid = new AtomicReference<>();
+      AtomicReference<Integer> freezeBackendPid = new AtomicReference<>();
+      AtomicReference<WorldDraftTopologyCommitEvidence> storedReference = new AtomicReference<>();
+      AtomicReference<WorldDesignPublicationFenceEvidence.Checkpoint> checkpointReference =
+          new AtomicReference<>();
+      ExecutorService executor = Executors.newFixedThreadPool(2);
+      WorldDesignPublicationFenceEvidence.FrozenAttempt frozen;
+      try {
+        Future<WorldDraftTopologyCommitEvidence> writer =
+            executor.submit(
+                () ->
+                    write.execute(
+                        status -> {
+                          writerBackendPid.set(
+                              dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                          var stored = topology.store(plan);
+                          storedReference.set(stored);
+                          writerStored.countDown();
+                          await(releaseWriter);
+                          return stored;
+                        }));
+        await(writerStored);
+
+        Future<WorldDesignPublicationFenceEvidence.FrozenAttempt> freeze =
+            executor.submit(
+                () ->
+                    write.execute(
+                        status -> {
+                          freezeBackendPid.set(
+                              dsl.fetchSingle("SELECT pg_backend_pid()").get(0, Integer.class));
+                          freezeStarted.countDown();
+                          return fence.claimFreeze(
+                              publication,
+                              () -> {
+                                checkpointCaptured.set(true);
+                                var committed =
+                                    Objects.requireNonNull(storedReference.get(), "writer result");
+                                var committedRow =
+                                    dsl.fetchOne(
+                                        "SELECT graph_bytes, graph_sha256, result_bytes "
+                                            + "FROM world_topology_draft_commit WHERE request_id=?",
+                                        plan.binding().requestId());
+                                assertThat(committedRow)
+                                    .as("writer topology must be committed before checkpoint read")
+                                    .isNotNull();
+                                assertThat(committedRow.get("graph_bytes", byte[].class))
+                                    .containsExactly(committed.graphBytes());
+                                assertThat(committedRow.get("result_bytes", byte[].class))
+                                    .containsExactly(committed.resultBytes());
+                                assertThat(committedRow.get("graph_sha256", String.class))
+                                    .isEqualTo(
+                                        WorldAuthoredGraphSnapshotCapture.sha256(
+                                            committed.graphBytes()));
+                                for (var familyAndCount : expectedFamilyCounts.entrySet()) {
+                                  String family = familyAndCount.getKey();
+                                  assertThat(
+                                          dsl.fetchSingle(
+                                                  "SELECT count(*) FROM "
+                                                      + family
+                                                      + " WHERE tenant_id=? AND version_id=?",
+                                                  intake.localTenantKey(),
+                                                  version.localVersionKey())
+                                              .get(0, Long.class))
+                                      .as("committed authored family %s", family)
+                                      .isEqualTo(familyAndCount.getValue());
+                                }
+                                var observed =
+                                    digest.getDraftDesignDigest(
+                                        Long.toString(intake.localTenantKey()),
+                                        Long.toString(version.localVersionKey()));
+                                var checkpoint =
+                                    new WorldDesignPublicationFenceEvidence.Checkpoint(
+                                        observed.appliedCommitId(),
+                                        observed.contentDigest(),
+                                        observed.digestSchemaVersion());
+                                checkpointReference.set(checkpoint);
+                                return checkpoint;
+                              });
+                        }));
+        await(freezeStarted);
+        awaitOwnerRowLockWait(
+            dsl,
+            Objects.requireNonNull(freezeBackendPid.get(), "freeze backend pid"),
+            Objects.requireNonNull(writerBackendPid.get(), "writer backend pid"));
+        assertThat(checkpointCaptured).isFalse();
+        releaseWriter.countDown();
+
+        assertThat(writer.get(10, TimeUnit.SECONDS)).isEqualTo(storedReference.get());
+        frozen = freeze.get(10, TimeUnit.SECONDS);
+      } finally {
+        releaseWriter.countDown();
+        executor.shutdownNow();
+      }
+
+      assertThat(checkpointCaptured).isTrue();
+      assertThat(frozen.checkpoint()).isEqualTo(checkpointReference.get());
+      assertThat(frozen.checkpoint().appliedCommitId())
+          .isEqualTo("version:" + version.localVersionKey());
+      assertThat(fence.readAttempt(publication)).contains(frozen);
+      assertThat(topology.readCommitted(plan)).isPresent();
+
+      List<String> retainedTables =
+          List.of(
+              "region",
+              "zone",
+              "room",
+              "room_exit",
+              "generation_rule",
+              "world_entity_spawn_binding",
+              "world_design_aggregate_epoch",
+              "world_design_scope_epoch",
+              "world_authored_topology_identity",
+              "world_topology_draft_commit",
+              "world_authored_source_intake",
+              "world_authored_version_identity",
+              "world_design_publication_fence_owner",
+              "world_design_publication_fence_attempt",
+              "world_authored_graph_snapshot");
+      Map<String, List<String>> retainedBeforeDeniedWrite =
+          retainedTableSnapshot(dsl, schema, retainedTables);
+      assertThat(
+              dsl.fetchSingle("SELECT count(*) FROM world_authored_graph_snapshot")
+                  .get(0, Long.class))
+          .as("owner-local storage does not mint a frozen graph capture")
+          .isZero();
+      var retryWithChangedRows = topologyPlan(intake, version);
+      assertThatThrownBy(() -> write.execute(status -> topology.store(retryWithChangedRows)))
+          .isInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class)
+          .hasMessageContaining("not open");
+
+      assertThat(retainedTableSnapshot(dsl, schema, retainedTables))
+          .isEqualTo(retainedBeforeDeniedWrite);
+      assertThat(fence.readAttempt(publication)).contains(frozen);
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT count(*) FROM world_design_publication_fence_owner "
+                          + "WHERE target_namespace=? AND canonical_tenant_id=? "
+                          + "AND local_tenant_key=? AND version_id=? "
+                          + "AND owner_freeze_phase='FROZEN' "
+                          + "AND current_publication_fence=?",
+                      NAMESPACE,
+                      owner.canonicalTenantId(),
+                      intake.localTenantKey(),
+                      version.localVersionKey(),
+                      frozen.publicationFence())
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+      assertThat(
+              dsl.fetchSingle("SELECT count(*) FROM world_design_publication_fence_attempt")
+                  .get(0, Long.class))
+          .isEqualTo(1L);
+      assertThat(
+              dsl.fetchSingle("SELECT count(*) FROM world_authored_graph_snapshot")
+                  .get(0, Long.class))
+          .isZero();
     } finally {
       dsl.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE");
     }
@@ -1350,5 +1621,52 @@ class WorldGuardedAuthoredGraphCapturePostgresIntegrationTest {
                 + table
                 + ") retained ORDER BY to_jsonb(retained)::text")
         .getValues(0, String.class);
+  }
+
+  private static Map<String, List<String>> retainedTableSnapshot(
+      DSLContext dsl, String schema, List<String> tables) {
+    Map<String, List<String>> snapshot = new LinkedHashMap<>();
+    for (String table : tables) {
+      List<String> columns =
+          dsl.fetch(
+                  "SELECT column_name FROM information_schema.columns "
+                      + "WHERE table_schema=? AND table_name=? ORDER BY ordinal_position",
+                  schema,
+                  table)
+              .getValues(0, String.class);
+      assertThat(columns).as("retained table %s must exist", table).isNotEmpty();
+      snapshot.put(table, retainedRows(dsl, table, columns));
+    }
+    return snapshot;
+  }
+
+  private static void awaitOwnerRowLockWait(
+      DSLContext dsl, int freezeBackendPid, int writerBackendPid) {
+    long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadlineNanos) {
+      var waiterRow =
+          dsl.fetchOne(
+              "SELECT waiter.pid FROM pg_stat_activity waiter WHERE waiter.pid=? "
+                  + "AND waiter.wait_event_type='Lock' "
+                  + "AND ? = ANY(pg_blocking_pids(waiter.pid)) "
+                  + "AND lower(waiter.query) LIKE '%world_design_publication_fence_owner%'",
+              freezeBackendPid, writerBackendPid);
+      if (waiterRow != null) {
+        return;
+      }
+      Thread.onSpinWait();
+    }
+    throw new IllegalStateException("No PostgreSQL waiter was observed on the World owner row");
+  }
+
+  private static void await(CountDownLatch latch) {
+    try {
+      if (!latch.await(10, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Timed out waiting for the World draft mutation gate");
+      }
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("World draft mutation test was interrupted", exception);
+    }
   }
 }

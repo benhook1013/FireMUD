@@ -137,6 +137,35 @@ public class WorldDesignPublicationFenceRepository {
     lockOpenAndResolve(binding);
   }
 
+  /**
+   * Serializes an existing private-key writer with publication without inventing source identity.
+   * This check grants no Account authorization or execution-manifest permission.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void lockExistingOpenByPrivateKeys(Long localTenantKey, Long localVersionKey) {
+    if (localTenantKey == null
+        || localTenantKey <= 0L
+        || localVersionKey == null
+        || localVersionKey <= 0L) {
+      throw new ConflictException(
+          "World Draft mutation requires positive private tenant and Version keys");
+    }
+    requireWritableReadCommittedOwnerTransaction();
+    Record owner =
+        dsl.selectFrom(OWNER)
+            .where(LOCAL_TENANT_KEY.eq(localTenantKey).and(VERSION_ID.eq(localVersionKey)))
+            .forUpdate()
+            .fetchOne();
+    if (owner == null) {
+      throw new ConflictException(
+          "World Draft mutation requires an existing publication owner row");
+    }
+    if (!OPEN.equals(owner.get(OWNER_FREEZE_PHASE, String.class))
+        || owner.get(CURRENT_PUBLICATION_FENCE, UUID.class) != null) {
+      throw new ConflictException("World version is not open for an ordinary Draft mutation");
+    }
+  }
+
   /** Exact retained source and private keys, available only after the OPEN owner lock is held. */
   record OpenOwner(
       OwnerBinding binding, WorldAuthoredSourceIntakeReceipt receipt, long localVersionKey) {

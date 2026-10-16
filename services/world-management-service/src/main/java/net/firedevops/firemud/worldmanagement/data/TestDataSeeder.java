@@ -9,6 +9,7 @@ import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomExitRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeRepository;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -41,10 +42,17 @@ public class TestDataSeeder implements ApplicationRunner {
   private final ZoneRepository zoneRepository;
   private final RoomRepository roomRepository;
   private final RoomExitRepository roomExitRepository;
+  private final WorldAuthoredSourceIntakeRepository sourceIntakeRepository;
 
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
+    try {
+      sourceIntakeRepository.claimLegacyDemoTenant();
+    } catch (WorldAuthoredSourceIntakeRepository.RegistrationConflictException exception) {
+      throw new IllegalStateException(
+          "DEMO_WORLD_SEEDING_UNAVAILABLE: " + exception.getMessage(), exception);
+    }
     ensureDemoTopology();
   }
 

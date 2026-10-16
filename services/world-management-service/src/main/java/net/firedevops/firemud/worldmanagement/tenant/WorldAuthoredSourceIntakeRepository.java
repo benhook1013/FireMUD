@@ -19,12 +19,11 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/**
- * World-owned immutable copy of authenticated, fresh Game Design authored-world source evidence.
- */
+/** World-owned authored-source retention and tenant-selector claim repository. */
 @Repository
 public class WorldAuthoredSourceIntakeRepository {
   private static final int SCHEMA_VERSION = 1;
+  private static final long LEGACY_DEMO_TENANT_KEY = 1L;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
   private static final Table<?> TENANT_ASSOCIATION =
       DSL.table(DSL.name("world_authored_source_tenant_association"));
@@ -189,6 +188,45 @@ public class WorldAuthoredSourceIntakeRepository {
     return receipt;
   }
 
+  /**
+   * Establishes or verifies the immutable legacy-numeric claim used by the opt-in local demo seeder
+   * before it reads or writes topology.
+   *
+   * <p>The caller must hold a writable READ COMMITTED owner transaction through the seeding
+   * operation. This shares the source allocator lock so a canonical tenant cannot be allocated
+   * against the same numeric key before the demo transaction commits.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void claimLegacyDemoTenant() {
+    requireActiveOwnerTransaction();
+    requireWritableReadCommittedOwnerTransaction();
+
+    lockTenantAssociationAllocator();
+    if (findTenantAssociationByLocalKey(LEGACY_DEMO_TENANT_KEY) != null) {
+      throw new RegistrationConflictException(
+          "World local tenant selector is already allocated to a canonical authored source");
+    }
+
+    dsl.insertInto(TENANT_KEY_RESERVATION)
+        .set(RESERVED_TENANT_KEY, LEGACY_DEMO_TENANT_KEY)
+        .set(RESERVATION_CLAIM_KIND, "LEGACY_NUMERIC")
+        .onConflictDoNothing()
+        .execute();
+
+    Record reservation = findTenantKeyReservation(LEGACY_DEMO_TENANT_KEY);
+    if (reservation == null
+        || !Objects.equals(reservation.get(RESERVATION_CLAIM_KIND, String.class), "LEGACY_NUMERIC")
+        || reservation.get(RESERVATION_NAMESPACE, String.class) != null
+        || reservation.get(RESERVATION_CANONICAL_TENANT_ID, UUID.class) != null) {
+      throw new RegistrationConflictException(
+          "World local tenant selector is reserved by a canonical or unresolved owner claim");
+    }
+    if (findTenantAssociationByLocalKey(LEGACY_DEMO_TENANT_KEY) != null) {
+      throw new RegistrationConflictException(
+          "World legacy numeric tenant claim conflicts with a canonical authored-source association");
+    }
+  }
+
   /** Reads a committed World intake by its exact namespace and stable request identity. */
   @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
   public Optional<WorldAuthoredSourceIntakeReceipt> read(String namespace, UUID intakeRequestId) {
@@ -268,11 +306,15 @@ public class WorldAuthoredSourceIntakeRepository {
 
   private void lockFreshIntakeAndExistingTenantRows() {
     // Serialize allocator owners, then keep every current tenant-bearing table stable while the
-    // candidate is checked. Legacy writers do not take this association lock; their database
-    // reservation trigger rejects selectors already claimed by a canonical source.
+    // candidate is checked. Demo preclaims share this association lock; other legacy writers rely
+    // on their reservation trigger to reject selectors already claimed by a canonical source.
+    lockTenantAssociationAllocator();
+    dsl.execute(LOCK_LEGACY_TENANT_TABLES);
+  }
+
+  private void lockTenantAssociationAllocator() {
     dsl.fetchOne(SET_FRESH_INTAKE_LOCK_TIMEOUT);
     dsl.execute("LOCK TABLE world_authored_source_tenant_association IN SHARE ROW EXCLUSIVE MODE");
-    dsl.execute(LOCK_LEGACY_TENANT_TABLES);
   }
 
   private void requireUnclaimedSourceAndWorld(
@@ -615,6 +657,10 @@ public class WorldAuthoredSourceIntakeRepository {
     return dsl.selectFrom(TENANT_ASSOCIATION)
         .where(TARGET_NAMESPACE.eq(namespace).and(CANONICAL_TENANT_ID.eq(canonicalTenantId)))
         .fetchOne();
+  }
+
+  private Record findTenantAssociationByLocalKey(long localTenantKey) {
+    return dsl.selectFrom(TENANT_ASSOCIATION).where(LOCAL_TENANT_KEY.eq(localTenantKey)).fetchOne();
   }
 
   private Record findTenantSlugAssociation(String namespace, String tenantSlug) {
