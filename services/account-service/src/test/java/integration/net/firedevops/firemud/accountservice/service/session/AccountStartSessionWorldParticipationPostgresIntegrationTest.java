@@ -856,7 +856,7 @@ class AccountStartSessionWorldParticipationPostgresIntegrationTest {
             account.terms,
             account.manager,
             // Reference expiry is not under test; migration runtime must not expire this fixture.
-            Clock.fixed(Instant.now(), java.time.ZoneOffset.UTC),
+            Clock.fixed(Instant.now().truncatedTo(ChronoUnit.MICROS), java.time.ZoneOffset.UTC),
             new SecureRandom(),
             LOGGING_PEER_URI,
             GAME_SESSION_PEER_URI,
