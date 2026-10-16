@@ -237,6 +237,94 @@ public final class GameplayRuleSourceRepository {
     return readSnapshot(binding.target(), binding.commitId()).orElseThrow();
   }
 
+  /** Freeze only a complete gameplay snapshot selected by the exact current publication operation. */
+  public GameplayRuleSnapshot.Capture freeze(GameDesignPublicationOperation operation) {
+    write();
+    Objects.requireNonNull(operation, "operation");
+    var selection = operation.account().input().selection();
+    TargetProof target = selection.target();
+    lock(target);
+    var prior = readCapture(operation);
+    if (prior.isPresent()) return prior.orElseThrow();
+
+    var retainedOperation =
+        new GameDesignPublicationOperationRepository(dsl)
+            .read(operation.workflowId())
+            .orElseThrow(
+                () -> new IllegalStateException("GAMEPLAY_RULE_PUBLICATION_OPERATION_UNAVAILABLE"));
+    GameDesignPublicationOperationRepository.exact(retainedOperation.operation(), operation);
+    if (!"PENDING".equals(retainedOperation.outcome()))
+      throw new IllegalStateException("GAMEPLAY_RULE_PUBLICATION_OPERATION_SEALED");
+    var selected =
+        dsl.fetchOne(
+            "SELECT selection_json, selection_digest FROM game_design_authored_draft_publish_selection "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+            target.canonicalTenantId(),
+            target.canonicalVersionId());
+    if (selected == null
+        || !selection.canonicalJson().equals(selected.get("selection_json", String.class))
+        || !selection.digest().equals(selected.get("selection_digest", String.class)))
+      throw new IllegalStateException("GAMEPLAY_RULE_PUBLICATION_SELECTION_CHANGED");
+    var version =
+        dsl.fetchOne(
+            "SELECT version_state_epoch FROM version WHERE id = ? AND tenant_id = ?",
+            target.gameDesignVersionRowId(),
+            target.gameDesignVersionTenantKey());
+    Long versionEpoch = version == null ? null : version.get("version_state_epoch", Long.class);
+    if (versionEpoch == null
+        || !selection.intent().expectedVersionStateEpoch().equals(Long.toString(versionEpoch)))
+      throw new IllegalStateException("GAMEPLAY_RULE_PUBLICATION_VERSION_EPOCH_CHANGED");
+
+    DraftCommitBinding selectedCommit = selection.selectedCommit();
+    requireFence(selectedCommit);
+    GameplayRuleSnapshot snapshot =
+        requireCompleteForGameLogic(target, selectedCommit.commitId());
+    Record head = head(target);
+    if (!selectedCommit.equals(snapshot.binding())
+        || !selectedCommit.commitId().equals(head.get("visible_commit_id", UUID.class))
+        || !snapshot.sourceEpoch().equals(head.get("source_epoch", String.class)))
+      throw new IllegalStateException("GAMEPLAY_RULE_SELECTED_SOURCE_NOT_SYNCHRONIZED");
+
+    var capture = new GameplayRuleSnapshot.Capture(operation, snapshot);
+    dsl.execute(
+        "INSERT INTO game_design_gameplay_rule_source_capture "
+            + "(canonical_tenant_id, canonical_version_id, publish_workflow_id, commit_id, "
+            + "operation_bytes, capture_bytes, capture_digest) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        target.canonicalTenantId(),
+        target.canonicalVersionId(),
+        operation.workflowId(),
+        selectedCommit.commitId(),
+        operation.canonicalBytes(),
+        capture.canonicalBytes(),
+        capture.digest());
+    return readCapture(operation)
+        .orElseThrow(() -> new IllegalStateException("GAMEPLAY_RULE_CAPTURE_READBACK_FAILED"));
+  }
+
+  /** Rebuilds capture bytes from the retained operation and original immutable snapshot row. */
+  public Optional<GameplayRuleSnapshot.Capture> readCapture(
+      GameDesignPublicationOperation operation) {
+    Objects.requireNonNull(operation, "operation");
+    var selection = operation.account().input().selection();
+    TargetProof target = selection.target();
+    var row =
+        dsl.fetchOne(
+            "SELECT * FROM game_design_gameplay_rule_source_capture "
+                + "WHERE canonical_tenant_id = ? AND canonical_version_id = ?",
+            target.canonicalTenantId(),
+            target.canonicalVersionId());
+    if (row == null) return Optional.empty();
+    GameplayRuleSnapshot snapshot =
+        requireCompleteForGameLogic(target, row.get("commit_id", UUID.class));
+    var capture = new GameplayRuleSnapshot.Capture(operation, snapshot);
+    if (!operation.workflowId().equals(row.get("publish_workflow_id", String.class))
+        || !Arrays.equals(operation.canonicalBytes(), row.get("operation_bytes", byte[].class))
+        || !Arrays.equals(capture.canonicalBytes(), row.get("capture_bytes", byte[].class))
+        || !capture.digest().equals(row.get("capture_digest", String.class)))
+      throw new IllegalStateException("GAMEPLAY_RULE_CAPTURE_READBACK_CONFLICT");
+    return Optional.of(capture);
+  }
+
   public Optional<GameplayRuleSnapshot> readSnapshot(TargetProof target, UUID commitId) {
     var row =
         dsl.fetchOne(

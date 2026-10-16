@@ -26,7 +26,7 @@ import org.jooq.DSLContext;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Joins command, policy, and ordinary asset sources under one coordinator transaction. */
+/** Joins authored source families under one coordinator transaction. */
 public final class GameDesignSourceRepository {
   private static final Comparator<AppliedEpoch> APPLIED_EPOCH_ORDER =
       Comparator.comparing(AppliedEpoch::aggregateType)
@@ -256,7 +256,9 @@ public final class GameDesignSourceRepository {
     }
     CommandSnapshot.Capture command = commands.freeze(operation);
     AssetSnapshot.Capture asset = assets.freeze(operation);
-    Capture result = new Capture(command, policy, Optional.of(asset));
+    GameplayRuleSnapshot.Capture gameplayCapture = gameplay.freeze(operation);
+    Capture result =
+        new Capture(command, policy, Optional.of(asset), Optional.of(gameplayCapture));
     Capture retained =
         readCapture(operation)
             .orElseThrow(
@@ -266,7 +268,11 @@ public final class GameDesignSourceRepository {
         || retained.asset().isEmpty()
         || !Arrays.equals(
             result.asset().orElseThrow().canonicalBytes(),
-            retained.asset().orElseThrow().canonicalBytes())) {
+            retained.asset().orElseThrow().canonicalBytes())
+        || retained.gameplay().isEmpty()
+        || !Arrays.equals(
+            result.gameplay().orElseThrow().canonicalBytes(),
+            retained.gameplay().orElseThrow().canonicalBytes())) {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_CAPTURE_READBACK_CONFLICT");
     }
     return retained;
@@ -275,20 +281,30 @@ public final class GameDesignSourceRepository {
   /** Exact stored captures for a bundle producer; partial capture cannot authorize publication. */
   public Optional<Capture> readCapture(GameDesignPublicationOperation operation) {
     Objects.requireNonNull(operation, "operation");
-    boolean historical = isHistoricalOperation(operation);
-    if (!historical) requireReviewed(operation.account().input().selection().selectedCommit());
+    boolean historicalOperation = isHistoricalOperation(operation);
+    if (!historicalOperation)
+      requireReviewed(operation.account().input().selection().selectedCommit());
     var command = commands.readCapture(operation);
     var policy = policies.readCapture(operation);
     var asset = assets.readCapture(operation);
-    if (command.isEmpty() && policy.isEmpty() && asset.isEmpty()) return Optional.empty();
-    if (historical) {
+    var gameplayCapture = gameplay.readCapture(operation);
+    if (command.isEmpty() && policy.isEmpty() && asset.isEmpty() && gameplayCapture.isEmpty())
+      return Optional.empty();
+    if (historicalOperation) {
       new GameDesignReviewedBaseRepository(dsl)
           .requireRetained(operation.account().input().selection().selectedCommit());
     }
-    if (command.isEmpty() || policy.isEmpty() || (asset.isEmpty() && !historical)) {
+    boolean historical =
+        historicalOperation
+            || (gameplayCapture.isEmpty() && operationIsTerminal(operation));
+    if (command.isEmpty()
+        || policy.isEmpty()
+        || (asset.isEmpty() && !historical)
+        || (gameplayCapture.isEmpty() && !historical)) {
       throw new IllegalStateException("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
     }
-    return Optional.of(new Capture(command.orElseThrow(), policy.orElseThrow(), asset));
+    return Optional.of(
+        new Capture(command.orElseThrow(), policy.orElseThrow(), asset, gameplayCapture));
   }
 
   public Optional<SynchronizedSources> readSynchronized(TargetProof target, UUID commitId) {
@@ -334,6 +350,16 @@ public final class GameDesignSourceRepository {
   private static boolean isHistoricalOperation(GameDesignPublicationOperation operation) {
     return "game-design-publication-operation/v1"
         .equals(new DraftAuthorizationFenceBinding.FrameReader(operation.canonicalBytes()).text());
+  }
+
+  private boolean operationIsTerminal(GameDesignPublicationOperation operation) {
+    var retained =
+        new GameDesignPublicationOperationRepository(dsl)
+            .read(operation.workflowId())
+            .orElseThrow(
+                () -> new IllegalStateException("GAME_DESIGN_PUBLICATION_OPERATION_UNAVAILABLE"));
+    GameDesignPublicationOperationRepository.exact(retained.operation(), operation);
+    return !"PENDING".equals(retained.outcome());
   }
 
   private static OwnerOutcome commandOnlyOutcome(
@@ -528,11 +554,13 @@ public final class GameDesignSourceRepository {
   public record Capture(
       CommandSnapshot.Capture command,
       RealmPolicySnapshot.Capture policy,
-      Optional<AssetSnapshot.Capture> asset) {
+      Optional<AssetSnapshot.Capture> asset,
+      Optional<GameplayRuleSnapshot.Capture> gameplay) {
     public Capture {
       Objects.requireNonNull(command, "command");
       Objects.requireNonNull(policy, "policy");
       asset = Objects.requireNonNull(asset, "asset");
+      gameplay = Objects.requireNonNull(gameplay, "gameplay");
       if (!Arrays.equals(command.operation().canonicalBytes(), policy.operation().canonicalBytes())
           || !command.snapshot().binding().equals(policy.snapshot().binding())
           || asset.isPresent()
@@ -542,7 +570,15 @@ public final class GameDesignSourceRepository {
                   || !command
                       .snapshot()
                       .binding()
-                      .equals(asset.orElseThrow().snapshot().binding()))) {
+                      .equals(asset.orElseThrow().snapshot().binding()))
+          || gameplay.isPresent()
+              && (!Arrays.equals(
+                      command.operation().canonicalBytes(),
+                      gameplay.orElseThrow().operation().canonicalBytes())
+                  || !command
+                      .snapshot()
+                      .binding()
+                      .equals(gameplay.orElseThrow().snapshot().binding()))) {
         throw new IllegalStateException("GAME_DESIGN_SOURCE_CAPTURE_BINDING_CONFLICT");
       }
     }

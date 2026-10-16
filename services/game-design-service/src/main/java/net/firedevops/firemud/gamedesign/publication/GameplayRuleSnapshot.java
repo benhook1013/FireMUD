@@ -10,6 +10,7 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.TargetProof;
+import net.firedevops.firemud.common.gamedesign.CommandSource;
 import net.firedevops.firemud.common.gamedesign.GameplayRuleSource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Family;
@@ -67,6 +68,30 @@ public record GameplayRuleSnapshot(
 
   public String digest() {
     return GameplayRuleManifest.sha256(canonicalBytes());
+  }
+
+  /** Frozen authored rules paired with their exact selected commit and original operation. */
+  public record Capture(GameDesignPublicationOperation operation, GameplayRuleSnapshot snapshot) {
+    public Capture {
+      Objects.requireNonNull(operation, "operation");
+      Objects.requireNonNull(snapshot, "snapshot");
+      if (!operation.account().input().selection().selectedCommit().equals(snapshot.binding()))
+        throw new IllegalArgumentException(
+            "Gameplay-rule capture differs from the exact selected synchronized commit");
+    }
+
+    public byte[] canonicalBytes() {
+      var out = new java.io.ByteArrayOutputStream();
+      DraftAuthorizationFenceBinding.frame(
+          out, "game-design-gameplay-rule-source-capture/v1");
+      DraftAuthorizationFenceBinding.frame(out, operation.canonicalBytes());
+      DraftAuthorizationFenceBinding.frame(out, snapshot.canonicalBytes());
+      return out.toByteArray();
+    }
+
+    public String digest() {
+      return CommandSource.sha256(canonicalBytes());
+    }
   }
 
   public static GameplayRuleSnapshot fromStored(String json) {
