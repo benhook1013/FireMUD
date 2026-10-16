@@ -22,7 +22,8 @@ public final class AccountSelectedPublicationSettlementClient
     extends AbstractReloadingBlockingGrpcClient<
         AccountSelectedPublicationSettlementServiceGrpc
             .AccountSelectedPublicationSettlementServiceBlockingStub> {
-  private static final long CALL_DEADLINE_SECONDS = 5L;
+  // Covers both bounded owner reads plus Account persistence, receipt construction, and readback.
+  private static final long CALL_DEADLINE_SECONDS = 30L;
 
   private final String workloadNamespace;
   private volatile boolean initialized;
