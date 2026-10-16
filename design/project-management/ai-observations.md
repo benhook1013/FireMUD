@@ -139,3 +139,9 @@ Entry format:
   - Observation: `integration` came from the categorized source root, while the class declared `net...`; a categorized source root is not necessarily part of the Java package, and a zero-test discovery failure establishes no test proof.
   - Expected pattern: read the source package and class declaration before constructing `--tests`, and verify fresh testcase counts before crediting proof. A categorized source root is not necessarily part of the Java package. Archive completed full-suite reports before a filtered rerun replaces the task output.
   - Recovery: the declared-package selector then passed all sixteen owning native cases; the zero-test attempt retains no proof credit.
+
+- `2026-10-17`: Explain inbox read failures during SQLite writes
+  - Context: Gameplay used the canonical `inbox read` command for an Overseer message at 11:01 UTC on 2026-10-16.
+  - Observation: the command returned no message body after 9.95 seconds and reported only `SQLite inbox write failed`. The error did not identify the failed write, contention state or safe retry boundary; its underlying cause remains unknown.
+  - Expected pattern: make message delivery and seen-state recording failures distinguishable, with enough operation context to choose a safe canonical retry without inspecting or mutating the database directly.
+  - Recovery: one canonical retry returned the full message after 6.30 seconds. Gameplay reported the evidence to Overseer for the User-requested Controller improvements; no database or Controller change was made by this lane.
