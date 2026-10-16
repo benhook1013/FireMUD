@@ -112,7 +112,7 @@ class AccountControlUiPositiveOwnerPostgresIntegrationTest {
 
   @Container
   static final PostgreSQLContainer<?> postgres =
-      AccountControlUiOwnerWorkflowPostgresIntegrationTest.postgres;
+      new PostgreSQLContainer<>(TestContainerImages.postgres());
 
   @Container
   static final GenericContainer<?> redis =
