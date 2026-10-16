@@ -125,12 +125,22 @@ class CommonSecurityAutoConfigurationTest {
               ServerCallHandler next = Mockito.mock(ServerCallHandler.class);
               MethodDescriptor<Empty, Empty> methodDescriptor = unaryMethod("demo.Service/Ping");
               Mockito.when(call.getMethodDescriptor()).thenReturn(methodDescriptor);
-              Mockito.when(next.startCall(Mockito.eq(call), Mockito.any(Metadata.class)))
+              Mockito.when(
+                      next.startCall(Mockito.any(ServerCall.class), Mockito.any(Metadata.class)))
                   .thenReturn(new ServerCall.Listener<>() {});
 
               interceptor.interceptCall(call, new Metadata(), next);
 
-              Mockito.verify(next).startCall(Mockito.eq(call), Mockito.any(Metadata.class));
+              ArgumentCaptor<ServerCall> forwardedCallCaptor =
+                  ArgumentCaptor.forClass(ServerCall.class);
+              Mockito.verify(next)
+                  .startCall(forwardedCallCaptor.capture(), Mockito.any(Metadata.class));
+              ServerCall forwardedCall = forwardedCallCaptor.getValue();
+              assertThat(forwardedCall).isNotSameAs(call);
+              assertThat(forwardedCall.getMethodDescriptor()).isSameAs(methodDescriptor);
+
+              forwardedCall.close(Status.OK, new Metadata());
+              Mockito.verify(call).close(Mockito.eq(Status.OK), Mockito.any(Metadata.class));
             });
   }
 
