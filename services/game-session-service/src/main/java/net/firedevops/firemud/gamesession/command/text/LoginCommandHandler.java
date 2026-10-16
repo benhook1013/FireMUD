@@ -261,7 +261,7 @@ public final class LoginCommandHandler {
     Optional<SessionContext> reusableBootstrapShell =
         sameAuthenticatedAccount
             ? Optional.empty()
-            : reusableBootstrapShell(existing, tenantId, accountId, bootstrapGameInstanceId);
+            : reusableBootstrapShell(existing, tenantId, bootstrapGameInstanceId);
     // LOGIN authenticates account identity. Preserve gameplay scope only when both account and
     // tenant remain unchanged. An unauthenticated shell may retain only a current normalized
     // bootstrap route; a verified first-party connect context is additionally required to retain
@@ -327,7 +327,7 @@ public final class LoginCommandHandler {
   }
 
   private Optional<SessionContext> reusableBootstrapShell(
-      SessionContext existing, long tenantId, long accountId, long bootstrapGameInstanceId) {
+      SessionContext existing, long tenantId, long bootstrapGameInstanceId) {
     if (existing == null
         || existing.hasAccountIdentity()
         || existing.tenantId() != tenantId
