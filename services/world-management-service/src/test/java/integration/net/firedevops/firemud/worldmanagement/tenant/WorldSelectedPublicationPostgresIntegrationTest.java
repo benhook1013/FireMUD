@@ -452,7 +452,7 @@ class WorldSelectedPublicationPostgresIntegrationTest {
       String expectedWorldRequest =
           WorldPublicationTerminal.request(terminal.canonicalBytes()).worldRequestJson();
       String reformattedWorldRequest =
-          dsl.fetchOne("SELECT jsonb_pretty(?::jsonb)", expectedWorldRequest)
+          dsl.fetchSingle("SELECT jsonb_pretty(?::jsonb)", expectedWorldRequest)
               .get(0, String.class);
       assertThat(
               WorldPublicationTerminalRepository.sameWorldRequestJson(
