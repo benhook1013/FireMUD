@@ -129,6 +129,7 @@ Entry format:
   - Reconsideration trigger: a subsequent canonical attempt completes with terminal capture, or bounded process evidence identifies why the previous owner ended.
 
 - `2026-10-16`: Derive focused Gradle selectors from declared Java packages
-  - Context: a Gameplay capture proof supplied `integration.net...` from the categorized source directory, while the actual class declared `net...`; Gradle executed no tests and failed discovery.
+  - Context: a Gameplay capture proof supplied `integration.net...` as the selector, and Gradle executed no tests before failing discovery.
+  - Observation: `integration` came from the categorized source root, while the class declared `net...`; a categorized source root is not necessarily part of the Java package, and a zero-test discovery failure establishes no test proof.
   - Expected pattern: read the source package and class declaration before constructing `--tests`, and verify fresh testcase counts before crediting proof. A categorized source root is not necessarily part of the Java package. Archive completed full-suite reports before a filtered rerun replaces the task output.
-  - Recovery: the corrected declared-package selector executed all sixteen owning native cases successfully; the zero-test attempt remains a separate failed discovery attempt with no native proof credit.
+  - Recovery: the declared-package selector then passed all sixteen owning native cases; the zero-test attempt retains no proof credit.
