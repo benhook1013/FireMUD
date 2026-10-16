@@ -519,6 +519,12 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                                   claim.get().ownerAttemptId())
                               .get(0, Boolean.class));
             }
+            if (refusal == Refusal.NONE) {
+              // Exercise lifecycle readback with boxed room IDs outside the Long cache range.
+              world.dsl()
+                  .execute(
+                      "SELECT setval((current_schema() || '.room_instance_id_seq')::regclass, GREATEST((SELECT last_value FROM room_instance_id_seq), 127), true)");
+            }
             if (refusal != Refusal.NONE) {
               assertThatThrownBy(
                       () ->
@@ -561,6 +567,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                         .orElseThrow()
                         .startLocation());
             assertThat(prepared.runtimeRoomInstanceId()).isPositive();
+            assertThat(prepared.runtimeRoomInstanceId()).isGreaterThan(127L);
             var after = rows(world.dsl(), worldBefore.keySet().toArray(String[]::new));
             var protectedAccount =
                 rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new));
