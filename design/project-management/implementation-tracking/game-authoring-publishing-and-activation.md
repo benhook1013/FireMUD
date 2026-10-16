@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Retained publication diagnostics migration proof
+
+The existing launch-descriptor native test seeds explicitly historical, unbound Version, release, descriptor, attempt and artifact rows before canonical identity enforcement using the current V34.1 predecessor. After V38, the V39 text widening and the forward migrations through the current default preserve every prior column and PostgreSQL row version in those five rows, together with all prior Flyway history rows. Long UTF-8 failure diagnostics round-trip after widening and remain intact after the forward migrations; a later terminal-attempt rewrite refuses without changing the retained rows or inventing a publication operation.
+
+The single restored migration case freshly passes with zero failures, errors or skips. Canonical formatting, style, Integration Checkstyle and SpotBugs pass; the one passively identified PostgreSQL container is independently absent after completion. This is retained-data migration proof over synthetic historical rows. It does not establish an authenticated source, creator or issuer, currentness, a genuine immutable release, public publication enablement, activation or a Gameplay handoff; the other launch-descriptor cases retain their preceding attribution. No installed migration or production code is changed.
+
 ### Draft application-slot storage race proof
 
 The existing Game Design source PostgreSQL owner test exercises both lifecycle-versus-slot orderings and both publication-selection-versus-slot orderings under Read Committed, Repeatable Read and Serializable. A committed lifecycle change or selection prevents a competing slot; a committed slot prevents the competing lifecycle change or selection. Stale snapshots refuse with the expected serialization failure. Logical Version fields remain unchanged where asserted; the winning storage interlock intentionally performs a no-op update, so this proof does not assert unchanged MVCC row versions across the winner.
