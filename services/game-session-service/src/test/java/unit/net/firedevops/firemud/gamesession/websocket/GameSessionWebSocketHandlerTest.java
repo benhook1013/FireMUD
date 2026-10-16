@@ -188,6 +188,70 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
+  void establishmentClosesGenericTransportWithoutReplacingIncumbentWhenPointerReadFails()
+      throws Exception {
+    WebSocketSession incumbent = Mockito.mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
+        .thenReturn(Optional.empty());
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenThrow(new IllegalStateException("pointer store unavailable"));
+    when(activeTransportSessionRegistry.find(41L)).thenReturn(Optional.of(incumbent));
+
+    handler.afterConnectionEstablished(session);
+
+    verify(session)
+        .close(
+            argThat(
+                status ->
+                    status.getCode() == 1013
+                        && "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE".equals(status.getReason())));
+    verify(activeTransportSessionRegistry, never()).register(41L, session);
+    verify(activeTransportSessionRegistry, never()).unregister(Mockito.anyLong(), Mockito.any());
+    org.assertj.core.api.Assertions.assertThat(activeTransportSessionRegistry.find(41L))
+        .contains(incumbent);
+  }
+
+  @Test
+  void messageStopsWhenGenericBootstrapPointerReadFails() throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.TENANT_ID_ATTR,
+                "22",
+                GameSessionWebSocketHandshakeInterceptor.BOOTSTRAP_GAME_INSTANCE_ATTR,
+                "7"));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
+        .thenReturn(Optional.empty());
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenThrow(new IllegalStateException("pointer store unavailable"));
+    TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
+    when(parser.parse("LOOK")).thenReturn(command);
+
+    handler.handleMessage(session, new TextMessage("LOOK"));
+
+    verify(session)
+        .close(
+            argThat(
+                status ->
+                    status.getCode() == 1013
+                        && "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE".equals(status.getReason())));
+    verify(interpreter, never())
+        .interpret(Mockito.anyString(), Mockito.any(TextCommand.class), Mockito.anyBoolean());
+    verify(session, never()).sendMessage(any());
+  }
+
+  @Test
   void establishmentClosesUnavailableTransportAndCleansMdcBeforeLaterHealthyConnection()
       throws Exception {
     when(runtimeIdentity.service()).thenReturn("game-session-service");
