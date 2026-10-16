@@ -94,6 +94,24 @@ class WorldPublishedStartLocationReadGrpcServiceTest {
     verify(repository, org.mockito.Mockito.times(2)).readCommitted(any());
   }
 
+  @Test
+  void mapsNonTransientSpringDataAccessFailureToUnavailableWithoutLeakingDetails() {
+    var repository = mock(WorldPublishedStartLocationRepository.class);
+    when(repository.readCommitted(any()))
+        .thenThrow(
+            new org.springframework.dao.InvalidDataAccessApiUsageException(
+                "selector-database-sensitive"));
+    var service = new WorldPublishedStartLocationReadGrpcService(repository, "test");
+
+    Collector response = callAsGameDesign(service, request("test"));
+
+    assertThat(response.error).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(response.errorDescription)
+        .isEqualTo("World published selector storage is temporarily unavailable")
+        .doesNotContain("selector-database-sensitive");
+    verify(repository).readCommitted(any());
+  }
+
   private static Collector callAsGameDesign(
       WorldPublishedStartLocationReadGrpcService service,
       ReadWorldPublishedStartLocationRequest request) {
@@ -137,6 +155,7 @@ class WorldPublishedStartLocationReadGrpcServiceTest {
       implements StreamObserver<ReadWorldPublishedStartLocationResponse> {
     private ReadWorldPublishedStartLocationResponse value;
     private Status.Code error;
+    private String errorDescription;
     private boolean completed;
 
     @Override
@@ -148,7 +167,9 @@ class WorldPublishedStartLocationReadGrpcServiceTest {
     public void onError(Throwable failure) {
       assertThat(value).isNull();
       assertThat(completed).isFalse();
-      error = Status.fromThrowable(failure).getCode();
+      Status status = Status.fromThrowable(failure);
+      error = status.getCode();
+      errorDescription = status.getDescription();
     }
 
     @Override

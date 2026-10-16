@@ -11,7 +11,7 @@ for service_dir in "$ROOT_DIR"/services/*/; do
 done
 cp "$ROOT_DIR/dev-tools/validation/"{run-locked-gradle.sh,gradle-run-supervisor.py,inspect-test-results.sh} "$FIXTURE_ROOT/dev-tools/validation/"
 cp "$ROOT_DIR/dev-tools/"{verify-fresh-bootstrap.sh,ensure-local-compose-env.sh} "$FIXTURE_ROOT/dev-tools/"
-cp "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh" "$FIXTURE_ROOT/dev-tools/smoke/"
+cp "$ROOT_DIR/dev-tools/smoke/"{run-owned-compose.sh,held-admission-qualification.sh} "$FIXTURE_ROOT/dev-tools/smoke/"
 cp "$ROOT_DIR/.env.sample" "$FIXTURE_ROOT/.env.sample"
 LOCKED_RUNNER="$FIXTURE_ROOT/dev-tools/validation/run-locked-gradle.sh"
 INSPECTOR="$FIXTURE_ROOT/dev-tools/validation/inspect-test-results.sh"

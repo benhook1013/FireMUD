@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamesession.service.CommunicationRecipientDelivery
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -63,7 +64,22 @@ public class CommunicationCommandHandler {
       meterRegistry.counter(COMMUNICATION_INVOCATIONS_METRIC, "type", typeTag).increment();
       meterRegistry.counter(metricPrefix(command.type()) + ".invocations").increment();
 
-      ParsedCommunication parsed = parseCommunication(context, command);
+      ParsedCommunication parsed;
+      try {
+        parsed = parseCommunication(context, command);
+      } catch (SessionContextUnavailableException unavailable) {
+        logFailure(
+            "UNAVAILABLE",
+            "Recipient session unavailable",
+            context,
+            tenantTag,
+            command.type(),
+            unavailable);
+        return new CommunicationCommandHandlingResult(
+            CommandEnqueueResult.failure(
+                "COMMUNICATION_NOT_DELIVERED", "Recipient session unavailable"),
+            List.of());
+      }
       if (!parsed.valid()) {
         logFailure(
             "INVALID_ARGUMENT", parsed.errorMessage(), context, tenantTag, command.type(), null);

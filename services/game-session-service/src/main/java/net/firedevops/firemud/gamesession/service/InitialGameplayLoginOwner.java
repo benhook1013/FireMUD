@@ -59,7 +59,7 @@ public final class InitialGameplayLoginOwner {
         if (pending.isEmpty()
             || pending.orElseThrow().state() != InitialGameplayLoginContextState.State.PENDING
             || !coordinates.equals(pending.orElseThrow().coordinates())) {
-          return cleanup(coordinates, null);
+          return cleanup(coordinates, null, credentials);
         }
 
         requireCurrent(credentials);
@@ -81,28 +81,33 @@ public final class InitialGameplayLoginOwner {
           if (installed.isEmpty()
               || installed.orElseThrow().state() != InitialGameplayLoginContextState.State.INSTALLED
               || !coordinates.equals(installed.orElseThrow().coordinates())) {
-            return cleanup(coordinates, null);
+            return cleanup(coordinates, null, credentials);
           }
           if (!credentials.isCurrent()) {
             return cleanup(
-                coordinates, new InitialGameplayLoginCredentialPresentation.CustodyLostException());
+                coordinates,
+                new InitialGameplayLoginCredentialPresentation.CustodyLostException(),
+                credentials);
           }
           Outcome outcome = Outcome.installed(coordinates, verified, cleanup);
           transferred = true;
           return outcome;
         } catch (RuntimeException failure) {
-          return cleanup(coordinates, failure);
+          return cleanup(coordinates, failure, credentials);
         } finally {
           if (!transferred) verified.close();
         }
       } catch (RuntimeException failure) {
-        return cleanup(coordinates, failure);
+        return cleanup(coordinates, failure, credentials);
       }
     }
   }
 
   private Outcome cleanup(
-      InitialGameplayLoginAttemptCoordinates coordinates, RuntimeException failure) {
+      InitialGameplayLoginAttemptCoordinates coordinates,
+      RuntimeException failure,
+      InitialGameplayLoginCredentialPresentation credentials) {
+    boolean custodyCurrent = credentials.isCurrent();
     InitialGameplayLoginCleanupOwner.CleanupObservation observation;
     try {
       requireNoTransaction();
@@ -113,7 +118,7 @@ public final class InitialGameplayLoginOwner {
       return Outcome.cleanup(
           coordinates,
           Status.CLEANUP_HELD,
-          failureCode(failure),
+          failureCode(failure, custodyCurrent),
           InitialGameplayLoginCleanupOwner.Status.HELD,
           cleanup);
     }
@@ -125,7 +130,7 @@ public final class InitialGameplayLoginOwner {
           case ACCOUNT_NO_TOKEN -> Status.CLEANUP_ACCOUNT_NO_TOKEN;
         };
     return Outcome.cleanup(
-        coordinates, status, failureCode(failure), observation.status(), cleanup);
+        coordinates, status, failureCode(failure, custodyCurrent), observation.status(), cleanup);
   }
 
   private static InitialGameplayLoginAttemptCoordinates newOriginalCoordinates() {
@@ -183,12 +188,12 @@ public final class InitialGameplayLoginOwner {
     if (TransactionSynchronizationManager.isActualTransactionActive()) throw unavailable();
   }
 
-  private static Optional<String> failureCode(RuntimeException failure) {
+  private static Optional<String> failureCode(RuntimeException failure, boolean custodyCurrent) {
     if (failure instanceof CanonicalGameplayLoginResult.CredentialDecisionException decision) {
       return Optional.of(decision.code());
     }
     if (failure instanceof io.grpc.StatusRuntimeException transport) {
-      if (transport.getStatus().getCode() == io.grpc.Status.Code.CANCELLED) {
+      if (!custodyCurrent && transport.getStatus().getCode() == io.grpc.Status.Code.CANCELLED) {
         return Optional.of("CUSTODY_LOST");
       }
       return Optional.of(transport.getStatus().getCode().name());
