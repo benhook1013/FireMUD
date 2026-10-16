@@ -265,16 +265,7 @@ public final class AuthoredInitialActorCoreReadService {
         gameplayRules
             .readSnapshot(target, selection.selectedCommit().commitId())
             .orElseThrow(() -> conflict("Exact selected Game Logic source is unavailable"));
-    if (!Arrays.equals(gameplayCapture.operation().canonicalBytes(), operation.canonicalBytes())
-        || !selection.selectedCommit().equals(gameplayCapture.snapshot().binding())
-        || !Arrays.equals(gameplayCapture.snapshot().canonicalBytes(), snapshot.canonicalBytes())
-        || !Arrays.equals(
-            gameplayCapture.snapshot().canonicalBytes(),
-            receipt.authorization().source().canonicalBytes())
-        || !Arrays.equals(selection.canonicalBytes(), receipt.selection().canonicalBytes())
-        || !selection.selectedCommit().equals(snapshot.binding())
-        || !Arrays.equals(
-            snapshot.canonicalBytes(), receipt.authorization().source().canonicalBytes())) {
+    if (!SelectedGameplayRuleSourceJoin.matches(operation, gameplayCapture, snapshot, receipt)) {
       throw conflict("Retained Game Logic receipt differs from the selected source");
     }
     return new SelectedGameplayRules(
