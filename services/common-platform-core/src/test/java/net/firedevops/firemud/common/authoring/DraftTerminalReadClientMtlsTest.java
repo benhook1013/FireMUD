@@ -50,8 +50,7 @@ class DraftTerminalReadClientMtlsTest {
   private static final long KEYTOOL_TIMEOUT_SECONDS = 30L;
   private static final long KEYTOOL_TERMINATION_TIMEOUT_SECONDS = 2L;
   private static final String NAMESPACE = "test";
-  private static final String GAME_DESIGN_URI =
-      "spiffe://firemud/ns/test/sa/game-design-service";
+  private static final String GAME_DESIGN_URI = "spiffe://firemud/ns/test/sa/game-design-service";
   private static final String WORLD_URI = "spiffe://firemud/ns/test/sa/world-management-service";
   private static final String ACCOUNT_URI = "spiffe://firemud/ns/test/sa/account-service";
   private static final String STORE_PASSWORD = "test-only-store-password";
@@ -73,7 +72,8 @@ class DraftTerminalReadClientMtlsTest {
             NAMESPACE,
             UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
             base.originalAccountBinding());
-    var readback = largeAbort(request.accountBinding(), Owner.GAME_DESIGN, request.originalAccountBinding());
+    var readback =
+        largeAbort(request.accountBinding(), Owner.GAME_DESIGN, request.originalAccountBinding());
     var response = GameDesignDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(readback));
     AtomicReference<ReadGameDesignDraftTerminalOutcomeRequest> received = new AtomicReference<>();
 
@@ -106,7 +106,8 @@ class DraftTerminalReadClientMtlsTest {
   @Test
   void worldClientAcceptsBoundedResponseAboveOldFourMiBTransportLimit() throws Exception {
     var request = AuthoringFixtures.freshGraphRequest();
-    var readback = largeAbort(request.accountBinding(), Owner.WORLD, request.originalAccountBinding());
+    var readback =
+        largeAbort(request.accountBinding(), Owner.WORLD, request.originalAccountBinding());
     var response = WorldDraftTerminalReadGrpcCodec.toResponse(request, Optional.of(readback));
     AtomicReference<ReadWorldDraftTerminalOutcomeRequest> received = new AtomicReference<>();
 
@@ -185,8 +186,8 @@ class DraftTerminalReadClientMtlsTest {
     return startServer(pki.worldServer(), service);
   }
 
-  private static TransportServer startServer(
-      TestIdentity identity, io.grpc.BindableService service) throws Exception {
+  private static TransportServer startServer(TestIdentity identity, io.grpc.BindableService service)
+      throws Exception {
     Server server =
         NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
             .sslContext(
@@ -205,23 +206,18 @@ class DraftTerminalReadClientMtlsTest {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setGameDesignService("127.0.0.1:" + port);
     return new GameDesignDraftTerminalReadClient(
-        endpoints,
-        pki.clientProperties(temporaryDirectory),
-        new GrpcChannelFactory(),
-        NAMESPACE);
+        endpoints, pki.clientProperties(temporaryDirectory), new GrpcChannelFactory(), NAMESPACE);
   }
 
   private static WorldDraftTerminalReadClient worldClient(int port) throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setWorldManagementService("127.0.0.1:" + port);
     return new WorldDraftTerminalReadClient(
-        endpoints,
-        pki.clientProperties(temporaryDirectory),
-        new GrpcChannelFactory(),
-        NAMESPACE);
+        endpoints, pki.clientProperties(temporaryDirectory), new GrpcChannelFactory(), NAMESPACE);
   }
 
-  private static GameDesignDraftTerminalReadServiceGrpc.GameDesignDraftTerminalReadServiceBlockingStub
+  private static GameDesignDraftTerminalReadServiceGrpc
+          .GameDesignDraftTerminalReadServiceBlockingStub
       gameDesignStub(GameDesignDraftTerminalReadClient client) throws ReflectiveOperationException {
     var field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
     field.setAccessible(true);
@@ -251,8 +247,7 @@ class DraftTerminalReadClientMtlsTest {
     }
   }
 
-  private record TestIdentity(
-      String alias, PrivateKey privateKey, X509Certificate certificate) {}
+  private record TestIdentity(String alias, PrivateKey privateKey, X509Certificate certificate) {}
 
   private record TestPki(
       X509Certificate caCertificate,
@@ -262,14 +257,43 @@ class DraftTerminalReadClientMtlsTest {
     private static TestPki create(Path directory) throws Exception {
       Path caStore = directory.resolve("test-ca.p12");
       runKeytool(
-          "-genkeypair", "-alias", "test-ca", "-keyalg", "RSA", "-keysize", "2048",
-          "-dname", "CN=FireMUD Draft terminal read test CA", "-validity", "30", "-ext",
-          "BC=ca:true", "-ext", "KU=keyCertSign,cRLSign", "-storetype", "PKCS12",
-          "-keystore", caStore.toString(), "-storepass", STORE_PASSWORD, "-keypass", STORE_PASSWORD);
+          "-genkeypair",
+          "-alias",
+          "test-ca",
+          "-keyalg",
+          "RSA",
+          "-keysize",
+          "2048",
+          "-dname",
+          "CN=FireMUD Draft terminal read test CA",
+          "-validity",
+          "30",
+          "-ext",
+          "BC=ca:true",
+          "-ext",
+          "KU=keyCertSign,cRLSign",
+          "-storetype",
+          "PKCS12",
+          "-keystore",
+          caStore.toString(),
+          "-storepass",
+          STORE_PASSWORD,
+          "-keypass",
+          STORE_PASSWORD);
       Path caFile = directory.resolve("test-ca.crt");
       runKeytool(
-          "-exportcert", "-alias", "test-ca", "-keystore", caStore.toString(), "-storetype",
-          "PKCS12", "-storepass", STORE_PASSWORD, "-file", caFile.toString(), "-rfc");
+          "-exportcert",
+          "-alias",
+          "test-ca",
+          "-keystore",
+          caStore.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          STORE_PASSWORD,
+          "-file",
+          caFile.toString(),
+          "-rfc");
       X509Certificate caCertificate = readCertificate(caFile);
       return new TestPki(
           caCertificate,
@@ -279,9 +303,19 @@ class DraftTerminalReadClientMtlsTest {
     }
 
     private CommonGrpcClientProperties clientProperties(Path directory) throws Exception {
-      Path certificate = writePem(directory.resolve("account-client.crt"), "CERTIFICATE", accountClient.certificate().getEncoded());
-      Path privateKey = writePem(directory.resolve("account-client.key"), "PRIVATE KEY", accountClient.privateKey().getEncoded());
-      Path caFile = writePem(directory.resolve("client-trust-ca.crt"), "CERTIFICATE", caCertificate.getEncoded());
+      Path certificate =
+          writePem(
+              directory.resolve("account-client.crt"),
+              "CERTIFICATE",
+              accountClient.certificate().getEncoded());
+      Path privateKey =
+          writePem(
+              directory.resolve("account-client.key"),
+              "PRIVATE KEY",
+              accountClient.privateKey().getEncoded());
+      Path caFile =
+          writePem(
+              directory.resolve("client-trust-ca.crt"), "CERTIFICATE", caCertificate.getEncoded());
       var properties = new CommonGrpcClientProperties();
       properties.setCertChain(certificate.toString());
       properties.setPrivateKey(privateKey.toString());
@@ -298,24 +332,96 @@ class DraftTerminalReadClientMtlsTest {
       String san = "URI:" + uri + ",DNS:localhost,IP:127.0.0.1";
       String usage = server ? "serverAuth" : "clientAuth";
       runKeytool(
-          "-genkeypair", "-alias", alias, "-keyalg", "RSA", "-keysize", "2048", "-dname",
-          "CN=" + alias, "-validity", "30", "-ext", "KU=digitalSignature,keyEncipherment",
-          "-ext", "EKU=" + usage, "-ext", "SAN=" + san, "-storetype", "PKCS12", "-keystore",
-          store.toString(), "-storepass", STORE_PASSWORD, "-keypass", STORE_PASSWORD);
+          "-genkeypair",
+          "-alias",
+          alias,
+          "-keyalg",
+          "RSA",
+          "-keysize",
+          "2048",
+          "-dname",
+          "CN=" + alias,
+          "-validity",
+          "30",
+          "-ext",
+          "KU=digitalSignature,keyEncipherment",
+          "-ext",
+          "EKU=" + usage,
+          "-ext",
+          "SAN=" + san,
+          "-storetype",
+          "PKCS12",
+          "-keystore",
+          store.toString(),
+          "-storepass",
+          STORE_PASSWORD,
+          "-keypass",
+          STORE_PASSWORD);
       runKeytool(
-          "-certreq", "-alias", alias, "-keystore", store.toString(), "-storetype", "PKCS12",
-          "-storepass", STORE_PASSWORD, "-file", request.toString(), "-ext", "SAN=" + san);
+          "-certreq",
+          "-alias",
+          alias,
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          STORE_PASSWORD,
+          "-file",
+          request.toString(),
+          "-ext",
+          "SAN=" + san);
       runKeytool(
-          "-gencert", "-alias", "test-ca", "-keystore", caStore.toString(), "-storetype",
-          "PKCS12", "-storepass", STORE_PASSWORD, "-infile", request.toString(), "-outfile",
-          certificate.toString(), "-validity", "30", "-rfc", "-ext", "BC=ca:false", "-ext",
-          "KU=digitalSignature,keyEncipherment", "-ext", "EKU=" + usage, "-ext", "SAN=" + san);
+          "-gencert",
+          "-alias",
+          "test-ca",
+          "-keystore",
+          caStore.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          STORE_PASSWORD,
+          "-infile",
+          request.toString(),
+          "-outfile",
+          certificate.toString(),
+          "-validity",
+          "30",
+          "-rfc",
+          "-ext",
+          "BC=ca:false",
+          "-ext",
+          "KU=digitalSignature,keyEncipherment",
+          "-ext",
+          "EKU=" + usage,
+          "-ext",
+          "SAN=" + san);
       runKeytool(
-          "-importcert", "-alias", "test-ca", "-keystore", store.toString(), "-storetype",
-          "PKCS12", "-storepass", STORE_PASSWORD, "-file", caFile.toString(), "-noprompt");
+          "-importcert",
+          "-alias",
+          "test-ca",
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          STORE_PASSWORD,
+          "-file",
+          caFile.toString(),
+          "-noprompt");
       runKeytool(
-          "-importcert", "-alias", alias, "-keystore", store.toString(), "-storetype", "PKCS12",
-          "-storepass", STORE_PASSWORD, "-file", certificate.toString(), "-noprompt");
+          "-importcert",
+          "-alias",
+          alias,
+          "-keystore",
+          store.toString(),
+          "-storetype",
+          "PKCS12",
+          "-storepass",
+          STORE_PASSWORD,
+          "-file",
+          certificate.toString(),
+          "-noprompt");
       KeyStore keyStore = KeyStore.getInstance("PKCS12");
       try (var input = Files.newInputStream(store)) {
         keyStore.load(input, STORE_PASSWORD.toCharArray());
@@ -367,10 +473,7 @@ class DraftTerminalReadClientMtlsTest {
         if (!completed) {
           boolean reaped = terminateAndReap(process);
           throw new IllegalStateException(
-              "keytool timed out; process reaped="
-                  + reaped
-                  + "; "
-                  + readFailureOutput(outputFile));
+              "keytool timed out; process reaped=" + reaped + "; " + readFailureOutput(outputFile));
         }
         String output = readFailureOutput(outputFile);
         if (process.exitValue() != 0) {
@@ -403,8 +506,7 @@ class DraftTerminalReadClientMtlsTest {
       return !process.isAlive();
     }
 
-    private static boolean waitUntilDeadline(
-        Process process, long deadline, boolean interrupted) {
+    private static boolean waitUntilDeadline(Process process, long deadline, boolean interrupted) {
       while (process.isAlive()) {
         long remainingNanos = deadline - System.nanoTime();
         if (remainingNanos <= 0) {

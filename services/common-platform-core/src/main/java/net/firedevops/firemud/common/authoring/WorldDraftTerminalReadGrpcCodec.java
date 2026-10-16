@@ -135,13 +135,13 @@ public final class WorldDraftTerminalReadGrpcCodec {
     Objects.requireNonNull(request, "request");
     byte[] binding = request.originalAccountBinding();
     requireBytes(binding.length, DraftTerminalReadGrpcLimits.MAX_BINDING_BYTES, "binding");
-    var wire = ReadWorldDraftTerminalOutcomeRequest.newBuilder()
-        .setSchemaVersion(request.schemaVersion())
-        .setTargetNamespace(request.targetNamespace())
-        .setReadRequestId(request.readRequestId().toString())
-        .setOriginalAccountBinding(
-            com.google.protobuf.ByteString.copyFrom(binding))
-        .build();
+    var wire =
+        ReadWorldDraftTerminalOutcomeRequest.newBuilder()
+            .setSchemaVersion(request.schemaVersion())
+            .setTargetNamespace(request.targetNamespace())
+            .setReadRequestId(request.readRequestId().toString())
+            .setOriginalAccountBinding(com.google.protobuf.ByteString.copyFrom(binding))
+            .build();
     requireMessageSize(wire, DraftTerminalReadGrpcLimits.MAX_REQUEST_WIRE_BYTES, "request");
     return wire;
   }
@@ -180,14 +180,13 @@ public final class WorldDraftTerminalReadGrpcCodec {
             .setSchemaVersion(request.schemaVersion())
             .setTargetNamespace(request.targetNamespace())
             .setReadRequestId(request.readRequestId().toString())
-            .setOriginalAccountBinding(
-                com.google.protobuf.ByteString.copyFrom(binding));
+            .setOriginalAccountBinding(com.google.protobuf.ByteString.copyFrom(binding));
     if (ownerReadback.isEmpty()) {
-      var response = builder
-          .setStatus(WorldDraftTerminalReadStatus.WORLD_DRAFT_TERMINAL_READ_STATUS_UNKNOWN)
-          .build();
-      requireMessageSize(
-          response, DraftTerminalReadGrpcLimits.MAX_RESPONSE_WIRE_BYTES, "response");
+      var response =
+          builder
+              .setStatus(WorldDraftTerminalReadStatus.WORLD_DRAFT_TERMINAL_READ_STATUS_UNKNOWN)
+              .build();
+      requireMessageSize(response, DraftTerminalReadGrpcLimits.MAX_RESPONSE_WIRE_BYTES, "response");
       return response;
     }
     var readback = ownerReadback.orElseThrow();
@@ -197,14 +196,15 @@ public final class WorldDraftTerminalReadGrpcCodec {
         DraftTerminalReadGrpcLimits.MAX_OWNER_READBACK_BYTES,
         "owner readback");
     requireExactOwnerReadback(request, readback);
-    var response = builder
-        .setStatus(
-            readback.outcome() == Outcome.COMMITTED
-                ? WorldDraftTerminalReadStatus.WORLD_DRAFT_TERMINAL_READ_STATUS_COMMITTED
-                : WorldDraftTerminalReadStatus
-                    .WORLD_DRAFT_TERMINAL_READ_STATUS_DEFINITIVELY_ABORTED)
-        .setOwnerReadbackBytes(com.google.protobuf.ByteString.copyFrom(ownerReadbackBytes))
-        .build();
+    var response =
+        builder
+            .setStatus(
+                readback.outcome() == Outcome.COMMITTED
+                    ? WorldDraftTerminalReadStatus.WORLD_DRAFT_TERMINAL_READ_STATUS_COMMITTED
+                    : WorldDraftTerminalReadStatus
+                        .WORLD_DRAFT_TERMINAL_READ_STATUS_DEFINITIVELY_ABORTED)
+            .setOwnerReadbackBytes(com.google.protobuf.ByteString.copyFrom(ownerReadbackBytes))
+            .build();
     requireMessageSize(response, DraftTerminalReadGrpcLimits.MAX_RESPONSE_WIRE_BYTES, "response");
     return response;
   }
