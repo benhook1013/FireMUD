@@ -477,7 +477,7 @@ public final class GatewayFirstPartyConnectContextEnvelope {
       return false;
     }
     if (value.indexOf(':') >= 0) {
-      if (!value.matches("[0-9A-Fa-f:]+")) {
+      if (!value.matches("[0-9a-f:]+")) {
         return false;
       }
       try {

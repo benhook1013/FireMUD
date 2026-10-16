@@ -786,7 +786,18 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         return false;
       }
       firstPartyConnectContextRegistry.register(sessionId, connectContext);
-      sessionContextService.save(shell);
+      try {
+        sessionContextService.save(shell);
+      } catch (RuntimeException saveFailure) {
+        try {
+          firstPartyConnectContextRegistry.unregister(sessionId);
+        } catch (RuntimeException cleanupFailure) {
+          if (cleanupFailure != saveFailure) {
+            saveFailure.addSuppressed(cleanupFailure);
+          }
+        }
+        throw saveFailure;
+      }
       return true;
     } catch (SessionContextUnavailableException unavailable) {
       throw unavailable;
