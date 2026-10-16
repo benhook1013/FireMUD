@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import base64
 import http.client
+import ipaddress
 import json
 import os
 import socket
@@ -39,6 +39,57 @@ TELNET_HELD_DENIAL = (
     "DISCONNECT startup_unavailable Gameplay path starting; please reconnect\n"
 )
 MAX_HTTP_RESPONSE_BYTES = 64 * 1024
+MAX_GATEWAY_PROBE_OUTPUT_BYTES = 4096
+
+GATEWAY_CONTAINER_PROBE_SCRIPT = r"""set -eu
+timeout_seconds="${1:?bounded probe timeout is required}"
+allow_value="${FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_ALLOW_INSECURE_HEADERS_FROM_TRUSTED_CIDRS:-false}"
+tls_value="${FIREMUD_GATEWAY_TCP_PROXY_TLS_ENABLED:-false}"
+cidr_zero="${FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_INSECURE_TRUSTED_CIDRS_0:-}"
+if [ "$allow_value" = true ]; then allow_state=true; else allow_state=unexpected; fi
+if [ "$tls_value" = false ]; then tls_state=false; else tls_state=unexpected; fi
+if [ "$cidr_zero" = 172.16.0.0/12 ]; then cidr_state=172.16.0.0/12; else cidr_state=unexpected; fi
+extra_indexes="$(env | awk -F= '$1 ~ /^FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_INSECURE_TRUSTED_CIDRS_[0-9]+$/ && $1 != "FIREMUD_GATEWAY_HEADER_TRUST_TCP_PROXY_INSECURE_TRUSTED_CIDRS_0" { found=1 } END { print found ? "present" : "none" }')"
+printf 'SMOKE_GATEWAY_TRUST allow=%s tls=%s cidr0=%s extra_indexes=%s\n' "$allow_state" "$tls_state" "$cidr_state" "$extra_indexes"
+if [ "$allow_state" != true ] || [ "$tls_state" != false ] || [ "$cidr_state" != 172.16.0.0/12 ] || [ "$extra_indexes" != none ]; then
+  exit 21
+fi
+probe_tmp="$(mktemp -d /tmp/firemud-held-admission.XXXXXX)"
+trap 'rm -rf "$probe_tmp"' EXIT
+trap 'exit 130' HUP INT TERM
+if curl --silent --show-error --noproxy '*' --http1.1 --connect-timeout "$timeout_seconds" --max-time "$timeout_seconds" --max-filesize 65536 \
+  --dump-header "$probe_tmp/headers" --output "$probe_tmp/body" \
+  --write-out '%{local_ip}\t%{remote_ip}\t%{http_code}\t%{size_download}\n' \
+  -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Key: MDEyMzQ1Njc4OWFiY2RlZg==' -H 'Sec-WebSocket-Version: 13' \
+  -H 'Cookie: Firemud-Connect-Token=held-admission-probe.invalid' \
+  http://127.0.0.1:8080/ws/game >"$probe_tmp/metrics"; then
+  curl_state=ok
+else
+  curl_state=failed
+fi
+header_bytes="$(wc -c < "$probe_tmp/headers" | tr -d '[:space:]')"
+body_bytes="$(wc -c < "$probe_tmp/body" | tr -d '[:space:]')"
+if [ "$header_bytes" -le 32768 ]; then
+  class_pair="$(awk -F: 'tolower($1) == "x-firemud-handshake-error-class" { count++; value=$2; sub(/^[[:space:]]+/, "", value); sub(/\r$/, "", value) } END { printf "%d\t%s", count, value }' "$probe_tmp/headers")"
+  class_count="${class_pair%%$(printf '\t')*}"
+  class_value="${class_pair#*$(printf '\t')}"
+  headers_state=ok
+else
+  class_count=oversized
+  class_value=
+  headers_state=oversized
+fi
+case "$class_count:$class_value" in
+  1:CONNECT_REPLAY_PROTECTION_UNAVAILABLE) class_state=expected ;;
+  0:*) class_state=missing ;;
+  *) class_state=unexpected ;;
+esac
+IFS="$(printf '\t')" read -r local_ip remote_ip http_status download_bytes < "$probe_tmp/metrics" || true
+printf 'SMOKE_GATEWAY_RESULT local_ip=%s remote_ip=%s status=%s class=%s class_count=%s body_bytes=%s curl=%s headers=%s downloaded=%s\n' \
+  "${local_ip:-missing}" "${remote_ip:-missing}" "${http_status:-missing}" "$class_state" \
+  "$class_count" "$body_bytes" "$curl_state" "$headers_state" "${download_bytes:-missing}"
+"""
 
 
 class QualificationFailure(RuntimeError):
@@ -236,21 +287,182 @@ def _assert_readiness_out_of_service(
     print(f"Confirmed {service_name} public readiness is OUT_OF_SERVICE.")
 
 
-def _assert_gateway_first_party_denial(base_url: str, timeout_seconds: int) -> None:
-    host, port = _local_http_endpoint(base_url, "Gateway")
-    headers = {
-        "Connection": "Upgrade",
-        "Upgrade": "websocket",
-        "Sec-WebSocket-Key": base64.b64encode(b"0123456789abcdef").decode("ascii"),
-        "Sec-WebSocket-Version": "13",
-        # This sentinel is deliberately not a credential and carries no authority.
-        "Cookie": "Firemud-Connect-Token=held-admission-probe.invalid",
-    }
-    status, response_headers, body = _http_request(
-        host, port, "GET", "/ws/game", timeout_seconds, headers
+def _parse_probe_record(line: str, prefix: str, keys: set[str]) -> dict[str, str]:
+    if not line.startswith(f"{prefix} "):
+        raise QualificationFailure(f"Gateway container probe omitted its {prefix} record")
+    fields: dict[str, str] = {}
+    for item in line[len(prefix) + 1 :].split(" "):
+        if "=" not in item:
+            raise QualificationFailure(f"Gateway container probe had a malformed {prefix} record")
+        name, value = item.split("=", 1)
+        if name not in keys or name in fields or not value:
+            raise QualificationFailure(f"Gateway container probe had an unexpected {prefix} field")
+        fields[name] = value
+    if fields.keys() != keys:
+        raise QualificationFailure(f"Gateway container probe had an incomplete {prefix} record")
+    return fields
+
+
+def parse_gateway_container_probe_output(
+    output: str,
+) -> tuple[dict[str, str], dict[str, str]]:
+    if len(output.encode("utf-8")) > MAX_GATEWAY_PROBE_OUTPUT_BYTES:
+        raise QualificationFailure("Gateway container probe output exceeded its 4 KiB bound")
+    lines = output.splitlines()
+    if len(lines) != 2:
+        raise QualificationFailure("Gateway container probe output was missing or malformed")
+    trust = _parse_probe_record(
+        lines[0],
+        "SMOKE_GATEWAY_TRUST",
+        {"allow", "tls", "cidr0", "extra_indexes"},
     )
-    validate_gateway_first_party_denial(status, response_headers, body)
-    print(f"Confirmed first-party Gateway denial: {GATEWAY_HELD_ERROR_CLASS}.")
+    result = _parse_probe_record(
+        lines[1],
+        "SMOKE_GATEWAY_RESULT",
+        {
+            "local_ip",
+            "remote_ip",
+            "status",
+            "class",
+            "class_count",
+            "body_bytes",
+            "curl",
+            "headers",
+            "downloaded",
+        },
+    )
+    return trust, result
+
+
+def validate_gateway_container_first_party_result(
+    trust: dict[str, str], result: dict[str, str]
+) -> None:
+    expected_trust = {
+        "allow": "true",
+        "tls": "false",
+        "cidr0": "172.16.0.0/12",
+        "extra_indexes": "none",
+    }
+    if trust != expected_trust:
+        raise QualificationFailure(
+            "Gateway runtime trust configuration did not match the local Compose contract: "
+            f"allow={trust.get('allow', 'missing')}, tls={trust.get('tls', 'missing')}, "
+            f"cidr0={trust.get('cidr0', 'missing')}, "
+            f"extra_indexes={trust.get('extra_indexes', 'missing')}"
+        )
+
+    observed_addresses = {}
+    for field in ("local_ip", "remote_ip"):
+        try:
+            observed_ip = ipaddress.ip_address(result[field])
+        except (KeyError, ValueError) as exc:
+            raise QualificationFailure(
+                f"Gateway container probe had an invalid {field} socket address"
+            ) from exc
+        if observed_ip != ipaddress.IPv4Address("127.0.0.1"):
+            raise QualificationFailure(
+                f"Gateway container probe {field} was {observed_ip}; expected loopback 127.0.0.1"
+            )
+        observed_addresses[field] = observed_ip
+    try:
+        configured_trust_cidr = ipaddress.ip_network(trust["cidr0"], strict=True)
+    except (KeyError, ValueError) as exc:
+        raise QualificationFailure("Gateway runtime trust CIDR was malformed") from exc
+    if observed_addresses["remote_ip"] in configured_trust_cidr:
+        raise QualificationFailure(
+            "Gateway loopback peer falls inside the configured insecure TCP trust CIDR"
+        )
+
+    expected_result = {
+        "status": "403",
+        "class": "expected",
+        "class_count": "1",
+        "body_bytes": "0",
+        "curl": "ok",
+        "headers": "ok",
+        "downloaded": "0",
+    }
+    for field, expected in expected_result.items():
+        if result.get(field) != expected:
+            raise QualificationFailure(
+                "Gateway container loopback handshake had an unexpected result: "
+                f"{field}={result.get(field, 'missing')}, expected {expected}"
+            )
+    # HeaderTrustFilter(-4) short-circuits trusted session traffic without a
+    # proxy client IP; this later handshake class proves the observed loopback
+    # request continued as an untrusted peer.
+
+
+def _assert_gateway_first_party_denial(
+    compose_args: list[str], timeout_seconds: int
+) -> None:
+    command = [
+        "docker",
+        "compose",
+        *compose_args,
+        "exec",
+        "-T",
+        "gateway",
+        "sh",
+        "-c",
+        GATEWAY_CONTAINER_PROBE_SCRIPT,
+        "held-admission-gateway-probe",
+        str(timeout_seconds),
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="ascii",
+            errors="replace",
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise QualificationFailure(
+            "Gateway container loopback handshake timed out within its bounded request time"
+        ) from exc
+    except OSError as exc:
+        raise QualificationFailure("Could not execute the run-owned Gateway container probe") from exc
+
+    if len(result.stdout.encode("utf-8")) > MAX_GATEWAY_PROBE_OUTPUT_BYTES:
+        raise QualificationFailure("Gateway container probe output exceeded its 4 KiB bound")
+    lines = result.stdout.splitlines()
+    if result.returncode != 0:
+        if lines and lines[0].startswith("SMOKE_GATEWAY_TRUST "):
+            trust = _parse_probe_record(
+                lines[0],
+                "SMOKE_GATEWAY_TRUST",
+                {"allow", "tls", "cidr0", "extra_indexes"},
+            )
+            expected_trust = {
+                "allow": "true",
+                "tls": "false",
+                "cidr0": "172.16.0.0/12",
+                "extra_indexes": "none",
+            }
+            if trust != expected_trust:
+                raise QualificationFailure(
+                    "Gateway runtime trust configuration did not match the local Compose contract: "
+                    f"allow={trust['allow']}, tls={trust['tls']}, cidr0={trust['cidr0']}, "
+                    f"extra_indexes={trust['extra_indexes']}"
+                )
+        raise QualificationFailure(
+            f"Run-owned Gateway container probe exited with status {result.returncode}"
+        )
+
+    trust, probe = parse_gateway_container_probe_output(result.stdout)
+    validate_gateway_container_first_party_result(trust, probe)
+    print(
+        "Observed run-owned Gateway TCP trust inputs: insecure=true, TLS=false, "
+        "environment CIDR[0]=172.16.0.0/12, higher environment indexes=none."
+    )
+    print(
+        "Confirmed the run-owned Gateway container's public listener received the first-party "
+        f"loopback handshake at {probe['remote_ip']} and denied it with "
+        f"{GATEWAY_HELD_ERROR_CLASS}; this does not prove host-published ingress."
+    )
 
 
 def _assert_telnet_denial(host: str, port: int, timeout_seconds: int) -> None:
@@ -379,10 +591,7 @@ def run_qualification(compose_args: list[str]) -> int:
             "Gateway",
             "gameplayRouteReadiness",
         )
-        _assert_gateway_first_party_denial(
-            os.environ.get("SMOKE_GATEWAY_API_BASE", "http://localhost:8080"),
-            request_timeout,
-        )
+        _assert_gateway_first_party_denial(compose_args, request_timeout)
         _assert_readiness_out_of_service(
             os.environ.get("SMOKE_TCP_PROXY_API_BASE", "http://localhost:8089"),
             request_timeout,

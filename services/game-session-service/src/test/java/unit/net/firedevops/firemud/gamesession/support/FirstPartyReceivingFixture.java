@@ -28,6 +28,21 @@ public final class FirstPartyReceivingFixture {
   public static final UUID REALM = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
   public static final UUID NAMESPACE = UUID.fromString("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
   public static final UUID INSTANCE = UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+
+  private static final class KeyPairHolder {
+    private static final KeyPair KEY_PAIR = generateKeyPair();
+
+    private static KeyPair generateKeyPair() {
+      try {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        return generator.generateKeyPair();
+      } catch (Exception failure) {
+        throw new IllegalStateException(failure);
+      }
+    }
+  }
+
   public final KeyPair keys;
   public final CanonicalPlayerRouteReadService routes =
       Mockito.mock(CanonicalPlayerRouteReadService.class);
@@ -38,13 +53,7 @@ public final class FirstPartyReceivingFixture {
   public final FirstPartyConnectContextService service;
 
   public FirstPartyReceivingFixture() {
-    try {
-      KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-      generator.initialize(2048);
-      keys = generator.generateKeyPair();
-    } catch (Exception failure) {
-      throw new IllegalStateException(failure);
-    }
+    keys = KeyPairHolder.KEY_PAIR;
     keySource = kid -> "gateway-test".equals(kid) ? (RSAPublicKey) keys.getPublic() : null;
     Mockito.when(routes.readCurrentTarget(TENANT)).thenReturn(target());
     service =

@@ -27,7 +27,6 @@ import net.firedevops.firemud.gamesession.presentation.PromptBurstCoordinator;
 import net.firedevops.firemud.gamesession.presentation.PromptComposer;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.ActiveTransportSessionRegistry;
-import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -768,28 +767,37 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     // parse has already composed the unique catalog, OPEN proof and RUNNING launch association.
     // The private handles below come from that owner result, never from headers or UUID parsing.
     try {
-      FirstPartyConnectContext current =
-          firstPartyConnectContextService.requireRetained(connectContext);
       SessionContext shell =
           bootstrapShell(
                   sessionId,
-                  current.gameSessionTenantId(),
-                  current.runtimeGameInstanceId(),
-                  current.worldSlug(),
-                  current.realmSlug(),
-                  current.pointerVersion(),
-                  current.resolvedTarget().playableStateScope(),
-                  current.connectScopeId(),
-                  current.connectRequestId(),
+                  connectContext.gameSessionTenantId(),
+                  connectContext.runtimeGameInstanceId(),
+                  connectContext.worldSlug(),
+                  connectContext.realmSlug(),
+                  connectContext.pointerVersion(),
+                  connectContext.resolvedTarget().playableStateScope(),
+                  connectContext.connectScopeId(),
+                  connectContext.connectRequestId(),
                   resolveLocaleTag(session))
-              .withFirstPartyConnectContext(current);
+              .withFirstPartyConnectContext(connectContext);
       Optional<SessionContext> existing = sessionContextService.findBySessionId(sessionId);
       if (existing.isPresent() && !shell.equals(existing.orElseThrow())) {
         closeInvalidFirstPartyContext(session);
         return false;
       }
-      firstPartyConnectContextRegistry.register(sessionId, current);
-      sessionContextService.save(shell);
+      firstPartyConnectContextRegistry.register(sessionId, connectContext);
+      try {
+        sessionContextService.save(shell);
+      } catch (RuntimeException saveFailure) {
+        try {
+          firstPartyConnectContextRegistry.unregister(sessionId);
+        } catch (RuntimeException cleanupFailure) {
+          if (cleanupFailure != saveFailure) {
+            saveFailure.addSuppressed(cleanupFailure);
+          }
+        }
+        throw saveFailure;
+      }
       return true;
     } catch (SessionContextUnavailableException unavailable) {
       throw unavailable;
