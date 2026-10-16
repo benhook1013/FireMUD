@@ -123,9 +123,7 @@ class AccountGameLogicIntakeSettlementGrpcServiceTest {
             new AccountGameLogicIntakeSettlement(
                 evidence("test", 1, Outcome.RETAINED).receipt().terminal()));
     assertThat(authorized(() -> invoke(request)).code()).isEqualTo(Status.Code.UNAVAILABLE);
-    doThrow(new IllegalArgumentException("private-stale-precondition"))
-        .when(owner)
-        .settle(any());
+    doThrow(new IllegalArgumentException("private-stale-precondition")).when(owner).settle(any());
     var stalePrecondition = authorized(() -> invoke(request));
     assertThat(stalePrecondition.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
     assertThat(stalePrecondition.error().toString()).doesNotContain("private-stale-precondition");
