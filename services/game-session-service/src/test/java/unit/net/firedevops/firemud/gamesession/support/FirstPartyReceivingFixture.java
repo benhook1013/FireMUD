@@ -28,6 +28,7 @@ public final class FirstPartyReceivingFixture {
   public static final UUID REALM = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
   public static final UUID NAMESPACE = UUID.fromString("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
   public static final UUID INSTANCE = UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+
   private static final class KeyPairHolder {
     private static final KeyPair KEY_PAIR = generateKeyPair();
 
