@@ -160,8 +160,7 @@ class GameSessionWebSocketHandlerTest {
     when(session.getAttributes())
         .thenReturn(Map.of(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41"));
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
-        .thenThrow(
-            new SessionContextUnavailableException("retained context unreadable", null))
+        .thenThrow(new SessionContextUnavailableException("retained context unreadable", null))
         .thenReturn(Optional.empty());
 
     try {
@@ -208,8 +207,7 @@ class GameSessionWebSocketHandlerTest {
     when(session.getAttributes())
         .thenReturn(Map.of(GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR, "41"));
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("41"))
-        .thenThrow(
-            new SessionContextUnavailableException("retained context unreadable", null));
+        .thenThrow(new SessionContextUnavailableException("retained context unreadable", null));
 
     try {
       handler.handleMessage(session, new TextMessage("LOOK"));
@@ -222,12 +220,11 @@ class GameSessionWebSocketHandlerTest {
                           && "backend_unavailable".equals(status.getReason())));
       verify(parser, never()).parse(Mockito.anyString());
       verify(interpreter, never())
-          .interpret(Mockito.anyString(), Mockito.any(), Mockito.anyBoolean());
+          .interpret(
+              Mockito.anyString(), Mockito.any(TextCommand.class), Mockito.anyBoolean());
       verify(sessionContextService, never()).save(Mockito.any());
-      verify(activeTransportSessionRegistry, never())
-          .register(Mockito.anyLong(), Mockito.any());
-      verify(activeTransportSessionRegistry, never())
-          .unregister(Mockito.anyLong(), Mockito.any());
+      verify(activeTransportSessionRegistry, never()).register(Mockito.anyLong(), Mockito.any());
+      verify(activeTransportSessionRegistry, never()).unregister(Mockito.anyLong(), Mockito.any());
       org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("service")).isNull();
       org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("serviceInstanceId")).isNull();
       org.assertj.core.api.Assertions.assertThat(org.slf4j.MDC.get("correlationId")).isNull();

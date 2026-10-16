@@ -163,8 +163,7 @@ class RedisSessionContextServiceTest {
         .thenThrow(new SerializationException("old SessionContext record shape"));
 
     assertThrows(
-        SessionContextUnavailableException.class,
-        () -> service.findByTenantAndSessionId(10L, 1L));
+        SessionContextUnavailableException.class, () -> service.findByTenantAndSessionId(10L, 1L));
     assertThrows(
         SerializationException.class,
         () -> service.deleteBySessionId(10L, 1L),

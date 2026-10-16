@@ -102,17 +102,7 @@ class CommunicationRecipientDeliveryServiceTest {
             41L, 22L, "123", "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
     SessionContext healthyRecipient =
         new SessionContext(
-            43L,
-            22L,
-            "789",
-            "friend@example.com",
-            789L,
-            "Sora",
-            1L,
-            "R-1",
-            "jwt",
-            "en-NZ",
-            1L);
+            43L, 22L, "789", "friend@example.com", 789L, "Sora", 1L, "R-1", "jwt", "en-NZ", 1L);
     CommunicationRecipientView unreadableView =
         CommunicationRecipientView.newBuilder()
             .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)

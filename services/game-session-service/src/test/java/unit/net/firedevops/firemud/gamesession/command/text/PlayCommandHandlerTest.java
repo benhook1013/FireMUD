@@ -1844,8 +1844,7 @@ class PlayCommandHandlerTest {
             "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "hero"), "PLAY demo hero"));
     assertThat(result.commandResult().errorCode()).isEqualTo("FIRST_PARTY_AUTHORITY_UNAVAILABLE");
     Mockito.verify(firstPartyConnectContextRegistry).find(1L);
-    Mockito.verify(firstPartyConnectContextRegistry, never())
-        .requireRetained(Mockito.any());
+    Mockito.verify(firstPartyConnectContextRegistry, never()).requireRetained(Mockito.any());
     Mockito.verify(fixture.routes, Mockito.atLeast(2))
         .readCurrentTarget(
             net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture.TENANT);
