@@ -137,3 +137,11 @@ Entry format:
   - Observation: `integration` came from the categorized source root, while the class declared `net...`; a categorized source root is not necessarily part of the Java package, and a zero-test discovery failure establishes no test proof.
   - Expected pattern: read the source package and class declaration before constructing `--tests`, and verify fresh testcase counts before crediting proof. A categorized source root is not necessarily part of the Java package. Archive completed full-suite reports before a filtered rerun replaces the task output.
   - Recovery: the declared-package selector then passed all sixteen owning native cases; the zero-test attempt retains no proof credit.
+
+- 2026-10-17 — Distinguish queued source CI from early metadata runs.
+  - Observation: The Gameplay observer initially reported that six newly published heads had no source validation because only their early metadata jobs were inspectable. Their original source workflows subsequently completed change detection and started the build/test matrices. No missing-source CI defect or cancellation was established; the premature report sent unnecessary investigation to Overseer.
+  - Expected pattern: Retain each original run and classify source selection as pending or unknown while discovery or queue admission is incomplete. A completed metadata gate establishes neither source success nor source absence. The report and observer guidance were corrected with the exact source run identities.
+
+- 2026-10-17 — Targeted Controller status can exhaust its deadline on older queue history.
+  - Observation: `firemud-controller --worker-identity Gameplay reviews status --pr 3224 --json` failed at its 120-second deadline during `target_history_pr_2846_cli`, after eighty prior phases consumed 119.6 seconds. It returned no JSON, delaying current front readiness readback even though publication and direct head/base verification succeeded.
+  - Expected pattern: Keep current-target status bounded while retaining historical review evidence. Overseer received the exact diagnostic; no state deletion, quota reset or installed-runtime bypass was used. The subsequent exact-checkpoint ancestry reconciliations succeeded; the failed status invocation itself remains unavailable evidence.

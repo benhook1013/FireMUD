@@ -11,8 +11,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.grpc.ManagedChannel;
-import java.lang.reflect.Field;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -31,9 +31,9 @@ import net.firedevops.firemud.common.grpc.TlsCertificateWatcher;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.ResourceLock;
 import org.junit.jupiter.api.parallel.Resources;
-import org.junit.jupiter.api.io.TempDir;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Construction and local boundary denials; no authenticated Account transport proof. */
@@ -296,7 +296,8 @@ class GrpcAccountStartSessionWorldParticipationSettlementClientTest {
         Files.writeString(directory.resolve("client.pem"), "certificate").toString());
     properties.setPrivateKey(
         Files.writeString(directory.resolve("client-key.pem"), "private key").toString());
-    properties.setCaCert(Files.writeString(directory.resolve("ca.pem"), "CA certificate").toString());
+    properties.setCaCert(
+        Files.writeString(directory.resolve("ca.pem"), "CA certificate").toString());
     return properties;
   }
 
