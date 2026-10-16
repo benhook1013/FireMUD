@@ -21,6 +21,7 @@ import net.firedevops.firemud.gamesession.service.CommunicationRecipientDelivery
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -197,6 +198,45 @@ class CommunicationCommandHandlerTest {
             Mockito.nullable(String.class));
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorMessage()).contains("Target is not available");
+  }
+
+  @Test
+  void tellReturnsUnavailableWithoutPublishingOrCallingGameLogicWhenTargetSessionIsUnreadable() {
+    when(entityManagementClient.findCharacterByName(
+            sessionContext, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Sora"))
+        .thenReturn(
+            Optional.of(
+                Character.newBuilder()
+                    .setId("300")
+                    .setTenantId("22")
+                    .setAccountId("700")
+                    .setName("Sora")
+                    .build()));
+    when(sessionAuthenticationService.resolveByGameplayName(22L, 1L, "Sora"))
+        .thenThrow(new SessionContextUnavailableException("retained session unavailable", null));
+
+    CommunicationCommandHandlingResult result =
+        handler.handle(
+            sessionContext,
+            new TextCommand(
+                TextCommandType.TELL, List.of("Sora", "Meet me later"), "TELL Sora Meet me later"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("COMMUNICATION_NOT_DELIVERED");
+    assertThat(result.commandResult().errorMessage()).isEqualTo("Recipient session unavailable");
+    Mockito.verify(gameLogicClient, Mockito.never())
+        .sendCommunication(
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.nullable(String.class));
+    Mockito.verify(scriptEventPublisher, Mockito.never())
+        .publishCommandEvent(Mockito.any(), Mockito.any());
+    Mockito.verifyNoInteractions(recipientDeliveryService);
   }
 
   @Test

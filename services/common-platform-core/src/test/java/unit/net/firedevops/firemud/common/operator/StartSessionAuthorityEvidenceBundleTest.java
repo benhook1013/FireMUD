@@ -211,6 +211,19 @@ class StartSessionAuthorityEvidenceBundleTest {
     assertThatThrownBy(
             () ->
                 new StartSessionAuthorityEvidenceBundle.BundleReference(
+                    "authorityEvidenceBundle/v2", "17", "23", "17"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new StartSessionAuthorityEvidenceBundle.BundleReference(
+                    StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
+                    "17",
+                    "9223372036854775808",
+                    "17"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                new StartSessionAuthorityEvidenceBundle.BundleReference(
                     StartSessionAuthorityEvidenceBundle.BUNDLE_VERSION,
                     "9223372036854775808",
                     "23",

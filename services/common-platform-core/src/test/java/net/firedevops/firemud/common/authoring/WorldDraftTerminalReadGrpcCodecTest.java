@@ -476,6 +476,15 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     List<Consumer<tools.jackson.databind.node.ObjectNode>> invalidClosures =
         List.of(
             closure -> closure.put("schemaVersion", 2),
+            closure -> closure.put("schemaVersion", "1"),
+            closure -> closure.put("unsupported", "opaque"),
+            closure -> closure.put("familyCounts", "opaque"),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) familyCounts(closure).get(0))
+                    .put("count", -1),
+            closure ->
+                ((tools.jackson.databind.node.ObjectNode) familyCounts(closure).get(0))
+                    .put("members", "opaque"),
             closure -> familyCounts(closure).remove(6),
             closure ->
                 ((tools.jackson.databind.node.ObjectNode) familyCounts(closure).get(1))
@@ -498,6 +507,31 @@ public class WorldDraftTerminalReadGrpcCodecTest {
     for (Consumer<tools.jackson.databind.node.ObjectNode> change : invalidClosures) {
       assertGraph3Rejected(graph3Fixture(change, ignored -> {}, "3", true, true));
       assertGraph3Rejected(graph3Fixture(ignored -> {}, change, "3", true, true));
+    }
+  }
+
+  @Test
+  void graph3RejectsNullAndOpaqueClosureValuesInOriginalAndAppliedEvidence() throws Exception {
+    for (tools.jackson.databind.JsonNode closure :
+        List.of(JSON.getNodeFactory().nullNode(), JSON.getNodeFactory().textNode("opaque"))) {
+      assertGraph3Rejected(
+          graph3Fixture(
+              ignored -> {},
+              ignored -> {},
+              declaration -> declaration.set("inboundSourceClosure", closure),
+              ignored -> {},
+              "3",
+              true,
+              true));
+      assertGraph3Rejected(
+          graph3Fixture(
+              ignored -> {},
+              ignored -> {},
+              ignored -> {},
+              graph -> graph.set("inboundSourceClosure", closure),
+              "3",
+              true,
+              true));
     }
   }
 

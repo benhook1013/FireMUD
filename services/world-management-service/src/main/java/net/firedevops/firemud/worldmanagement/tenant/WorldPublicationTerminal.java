@@ -1,16 +1,24 @@
 package net.firedevops.firemud.worldmanagement.tenant;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Objects;
 import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvidence;
+import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import net.firedevops.firemud.common.world.WorldPublishedStartLocationEvidence;
 import tools.jackson.core.JacksonException;
+import tools.jackson.core.StreamReadFeature;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 /** Closed, immutable World handoff to the exact Game Design publication terminal result. */
 public final class WorldPublicationTerminal {
-  private static final JsonMapper JSON = JsonMapper.builder().build();
+  private static final JsonMapper JSON =
+      JsonMapper.builder()
+          .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
+          .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+          .build();
 
   private WorldPublicationTerminal() {}
 
@@ -50,8 +58,9 @@ public final class WorldPublicationTerminal {
         if (request == null || !request.isObject()) {
           throw new IllegalArgumentException("Terminal evidence has no exact World request");
         }
-        return request.toString();
-      } catch (JacksonException invalid) {
+        byte[] canonical = Rfc8785CanonicalJson.canonicalizeUtf8(JSON.writeValueAsString(request));
+        return new String(canonical, java.nio.charset.StandardCharsets.UTF_8);
+      } catch (IOException | JacksonException invalid) {
         throw new IllegalArgumentException(
             "Terminal evidence has an invalid World request", invalid);
       }
