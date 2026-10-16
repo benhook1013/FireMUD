@@ -662,11 +662,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
   void selectedMechanicsRetainsCandidatePendingCompletePublicationReadback() {
     String tenantId = isolatedTenantId();
     SelectedPublicationFixture fixture =
-        selectedPublicationFixture(tenantId, "pending-readback-proof-game", false);
+        selectedFullPublicationFixture(tenantId, "pending-readback-proof-game", false);
     String publishRequestId =
         fixture.operation().account().input().selection().intent().publishRequestId();
     String publishWorkflowId = fixture.operation().workflowId();
-    PublicationDigestRequestBinding expectedDigestBinding =
+    PublicationDigestRequestBinding expectedBinding =
         PublicationDigestRequestBinding.full(
             fixture
                 .operation()
@@ -686,11 +686,15 @@ class PublishAttemptServiceTransactionIntegrationTest {
             publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
                 Mockito.argThat(
-                    actualBinding ->
-                        actualBinding != null
-                            && expectedDigestBinding
+                    binding ->
+                        binding != null
+                            && binding
                                 .canonicalPreimageHex()
-                                .equals(actualBinding.canonicalPreimageHex())),
+                                .equals(expectedBinding.canonicalPreimageHex())
+                            && binding.requestDigest().equals(expectedBinding.requestDigest())
+                            && binding
+                                .derivedWorkflowIdentity()
+                                .equals(expectedBinding.derivedWorkflowIdentity())),
                 Mockito.eq(publishWorkflowId)))
         .thenAnswer(
             invocation -> {
@@ -698,7 +702,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
               return PublishedWorldSelectorFixtures.participants(
                   selectedVersion.id(),
                   fixture.operation().world(),
-                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+                  AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
             });
     Mockito.doAnswer(
             invocation -> {
@@ -793,11 +797,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
   void fullVersionMechanicsLeavesPostExportFinalizationFailurePendingWithCandidateAndRemap() {
     String tenantId = isolatedTenantId();
     SelectedPublicationFixture fixture =
-        selectedPublicationFixture(tenantId, "failed-remap-proof-game", true);
+        selectedFullPublicationFixture(tenantId, "failed-remap-proof-game", true);
     String publishRequestId =
         fixture.operation().account().input().selection().intent().publishRequestId();
     String publishWorkflowId = fixture.operation().workflowId();
-    PublicationDigestRequestBinding expectedDigestBinding =
+    PublicationDigestRequestBinding expectedBinding =
         PublicationDigestRequestBinding.full(
             fixture
                 .operation()
@@ -827,11 +831,15 @@ class PublishAttemptServiceTransactionIntegrationTest {
             publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
                 Mockito.argThat(
-                    actualBinding ->
-                        actualBinding != null
-                            && expectedDigestBinding
+                    binding ->
+                        binding != null
+                            && binding
                                 .canonicalPreimageHex()
-                                .equals(actualBinding.canonicalPreimageHex())),
+                                .equals(expectedBinding.canonicalPreimageHex())
+                            && binding.requestDigest().equals(expectedBinding.requestDigest())
+                            && binding
+                                .derivedWorkflowIdentity()
+                                .equals(expectedBinding.derivedWorkflowIdentity())),
                 Mockito.eq(publishWorkflowId)))
         .thenAnswer(
             invocation -> {
@@ -841,7 +849,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
               return PublishedWorldSelectorFixtures.participants(
                   candidate.id(),
                   fixture.operation().world(),
-                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+                  AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
             });
     Mockito.doAnswer(
             invocation -> {
@@ -991,11 +999,11 @@ class PublishAttemptServiceTransactionIntegrationTest {
   void privateMechanicsCommitsGdsOwnerButRemainsPendingWithoutWorldProducer() {
     String tenantId = "9002";
     SelectedPublicationFixture fixture =
-        selectedPublicationFixture(tenantId, "successful-transaction-proof-game", false);
+        selectedFullPublicationFixture(tenantId, "successful-transaction-proof-game", false);
     String publishRequestId =
         fixture.operation().account().input().selection().intent().publishRequestId();
     String publishWorkflowId = fixture.operation().workflowId();
-    PublicationDigestRequestBinding expectedDigestBinding =
+    PublicationDigestRequestBinding expectedBinding =
         PublicationDigestRequestBinding.full(
             fixture
                 .operation()
@@ -1013,11 +1021,15 @@ class PublishAttemptServiceTransactionIntegrationTest {
             publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
                 Mockito.argThat(
-                    actualBinding ->
-                        actualBinding != null
-                            && expectedDigestBinding
+                    binding ->
+                        binding != null
+                            && binding
                                 .canonicalPreimageHex()
-                                .equals(actualBinding.canonicalPreimageHex())),
+                                .equals(expectedBinding.canonicalPreimageHex())
+                            && binding.requestDigest().equals(expectedBinding.requestDigest())
+                            && binding
+                                .derivedWorkflowIdentity()
+                                .equals(expectedBinding.derivedWorkflowIdentity())),
                 Mockito.eq(publishWorkflowId)))
         .thenAnswer(
             invocation -> {
@@ -1025,7 +1037,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
               return PublishedWorldSelectorFixtures.participants(
                   version.id(),
                   fixture.operation().world(),
-                  AuthoredWorldReleaseAttestationEvidence.SELECTOR_SCHEMA_VERSION);
+                  AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
             });
     Mockito.when(assetExportService.exportAssets(tenantId, fixture.version().getVersionNumber()))
         .thenAnswer(invocation -> recordFixtureCandidate(fixture));
@@ -1138,7 +1150,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   }
 
   /** Fixture-only Account/World inputs; this exercises GD's actual selected owner transaction. */
-  private SelectedPublicationFixture selectedPublicationFixture(
+  private SelectedPublicationFixture selectedFullPublicationFixture(
       String tenantId, String gameName, boolean includePublishedSource) {
     TransactionTemplate sourceTransaction = new TransactionTemplate(transactionManager);
     sourceTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
@@ -1183,7 +1195,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
           GameAsset persistedAsset = gameAssetRepository.save(asset);
           try {
             GameDesignPublicationOperation operation =
-                IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
+                IsolatedPublicationOwnerSetup.retainFrozenSourceBackedSelectedFull(
                     dsl,
                     target,
                     persisted.getVersionStateEpoch(),
