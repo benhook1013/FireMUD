@@ -228,8 +228,7 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
 
     String sensitive = "sensitive-malformed-account-evidence";
     authorizeResponseOverride =
-        response(request, "AuthorizeIntake")
-            .toBuilder()
+        response(request, "AuthorizeIntake").toBuilder()
             .setFinalizedIntakeAuthorization(ByteString.copyFromUtf8(sensitive))
             .build();
     assertThatThrownBy(() -> client.authorize(request, CREDENTIAL))

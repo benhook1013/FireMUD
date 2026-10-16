@@ -43,6 +43,7 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
 
   @TempDir static Path tempDirectory;
   private static GameLogicIntakeSourceReadTransportTest.TestPki pki;
+  private static GameLogicIntakeSourceReadTransportTest.TestIdentity gameLogicClientIdentity;
   private Server server;
   private GameLogicIntakeAuthorizationReadClient client;
   private GameLogicIntakeAuthorizationReadEvidence.Request expectedRequest;
@@ -51,6 +52,7 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
   @BeforeAll
   static void certificates() throws Exception {
     pki = GameLogicIntakeSourceReadTransportTest.TestPki.create(tempDirectory);
+    gameLogicClientIdentity = issueIdentity("game-logic-client", GAME_LOGIC_URI);
   }
 
   @AfterEach
@@ -102,8 +104,7 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
     client = newClient(gameLogicClient());
     client.init();
     var request =
-        GameLogicIntakeAuthorizationReadEvidence.Request.create(
-            NAMESPACE, authorizationBinding());
+        GameLogicIntakeAuthorizationReadEvidence.Request.create(NAMESPACE, authorizationBinding());
     assertThatThrownBy(() -> client.read(request)).isInstanceOf(StatusRuntimeException.class);
     assertThat(calls).hasValue(0);
     close();
@@ -166,12 +167,17 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
   }
 
   private GameLogicIntakeSourceReadTransportTest.TestIdentity gameLogicClient() throws Exception {
+    return gameLogicClientIdentity;
+  }
+
+  private static GameLogicIntakeSourceReadTransportTest.TestIdentity issueIdentity(
+      String alias, String workloadUri) throws Exception {
     return GameLogicIntakeSourceReadTransportTest.TestPki.issueIdentity(
         tempDirectory,
         tempDirectory.resolve("terminal-test-ca.p12"),
         tempDirectory.resolve("terminal-test-ca.crt"),
-        "game-logic-client",
-        GAME_LOGIC_URI,
+        alias,
+        workloadUri,
         false);
   }
 

@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -122,19 +123,22 @@ class AccountGameLogicIntakeSettlementGrpcServiceTest {
             new AccountGameLogicIntakeSettlement(
                 evidence("test", 1, Outcome.RETAINED).receipt().terminal()));
     assertThat(authorized(() -> invoke(request)).code()).isEqualTo(Status.Code.UNAVAILABLE);
-    when(owner.settle(any())).thenThrow(new IllegalArgumentException("private-stale-precondition"));
+    doThrow(new IllegalArgumentException("private-stale-precondition"))
+        .when(owner)
+        .settle(any());
     var stalePrecondition = authorized(() -> invoke(request));
     assertThat(stalePrecondition.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
     assertThat(stalePrecondition.error().toString()).doesNotContain("private-stale-precondition");
-    when(owner.settle(any())).thenThrow(new IllegalStateException("private-storage-failure"));
+    doThrow(new IllegalStateException("private-storage-failure")).when(owner).settle(any());
     var storageFailure = authorized(() -> invoke(request));
     assertThat(storageFailure.code()).isEqualTo(Status.Code.UNAVAILABLE);
     assertThat(storageFailure.error().toString()).doesNotContain("private-storage-failure");
-    when(owner.settle(any()))
-        .thenThrow(
+    doThrow(
             Status.FAILED_PRECONDITION
                 .withDescription("private-owner-evidence")
-                .asRuntimeException());
+                .asRuntimeException())
+        .when(owner)
+        .settle(any());
     var failed = authorized(() -> invoke(request));
     assertThat(failed.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
     assertThat(failed.error().toString()).doesNotContain("private-owner-evidence");
