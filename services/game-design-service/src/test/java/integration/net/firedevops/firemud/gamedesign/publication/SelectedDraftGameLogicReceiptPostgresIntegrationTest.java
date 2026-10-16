@@ -19,6 +19,11 @@ import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.publication.AuthoredDraftPublishSelectionBinding;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.draft.AuthoredDraftPublishSelection;
+import net.firedevops.firemud.gamedesign.draft.IsolatedPublicationOwnerSetup;
+import net.firedevops.firemud.gamedesign.entity.Game;
+import net.firedevops.firemud.gamedesign.entity.Version;
+import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.VersionRepository;
 import net.firedevops.firemud.test.TestContainerImages;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -35,8 +40,9 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * V1009 PostgreSQL storage proof definitions. The predecessor selection table and upstream
- * authority are explicit fixtures; this is not composed authoring or authenticated intake proof.
+ * V1009 predecessor storage proof and current selected Gameplay capture/receipt source-join proof.
+ * The predecessor selection table and upstream authority remain explicit fixtures; the new join
+ * cases use current owner captures and receipt storage with controlled upstream receipt inputs.
  */
 @Testcontainers(disabledWithoutDocker = true)
 class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
@@ -253,6 +259,172 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
         .isZero();
   }
 
+  @Test
+  void currentCapturedGameplayAndImmutableReceiptJoinRequiresExactCanonicalBytes()
+      throws Exception {
+    assertCurrentCaptureReceiptJoin(false);
+    assertCurrentCaptureReceiptJoin(true);
+  }
+
+  private static void assertCurrentCaptureReceiptJoin(boolean changeReceiptSource)
+      throws Exception {
+    var fixture = currentCaptureFixture();
+    var capture = fixture.sources().readCapture(fixture.operation()).orElseThrow();
+    var gameplayCapture = capture.gameplay().orElseThrow();
+    var selectedCommit = fixture.operation().account().input().selection().selectedCommit();
+    var selectedSnapshot =
+        new GameplayRuleSourceRepository(fixture.dsl())
+            .readSnapshot(fixture.target(), selectedCommit.commitId())
+            .orElseThrow();
+    assertThat(gameplayCapture.operation().canonicalBytes())
+        .containsExactly(fixture.operation().canonicalBytes());
+    assertThat(gameplayCapture.snapshot().canonicalBytes())
+        .containsExactly(selectedSnapshot.canonicalBytes());
+
+    String receiptSourceEpoch =
+        changeReceiptSource
+            ? new java.math.BigInteger(selectedSnapshot.sourceEpoch()).add(java.math.BigInteger.ONE)
+                .toString()
+            : selectedSnapshot.sourceEpoch();
+    var controlledReceiptSnapshot =
+        new GameplayRuleSnapshot(
+            selectedSnapshot.binding(),
+            receiptSourceEpoch,
+            selectedSnapshot.inheritedCommitId(),
+            selectedSnapshot.genesisReceiptId(),
+            selectedSnapshot.entries());
+    var receiptSource = new GameplayRuleSelectedSource(controlledReceiptSnapshot.canonicalJson());
+    assertThat(receiptSource.binding()).isEqualTo(selectedCommit);
+    if (changeReceiptSource) {
+      assertThat(receiptSource.canonicalBytes())
+          .isNotEqualTo(gameplayCapture.snapshot().canonicalBytes());
+    } else {
+      assertThat(receiptSource.canonicalBytes())
+          .containsExactly(gameplayCapture.snapshot().canonicalBytes());
+    }
+
+    var retained =
+        retainCurrentFixtureReceipt(fixture.operation(), fixture.dsl(), fixture.tx(), receiptSource);
+    var receiptRepository = new SelectedDraftGameLogicReceiptRepository(fixture.dsl());
+    var readback =
+        receiptRepository
+            .readForPublication(publicationBinding(retained))
+            .orElseThrow();
+    assertThat(readback.receipt().canonicalBytes())
+        .containsExactly(retained.receipt().canonicalBytes());
+    assertThat(readback.authorization().source().canonicalBytes())
+        .containsExactly(receiptSource.canonicalBytes());
+
+    var operationReadback =
+        new GameDesignPublicationOperationRepository(fixture.dsl())
+            .read(fixture.operation().workflowId())
+            .orElseThrow();
+    assertThat(operationReadback.outcome()).isEqualTo("PENDING");
+    assertThat(
+            SelectedGameplayRuleSourceJoin.matches(
+                operationReadback.operation(), gameplayCapture, selectedSnapshot, readback))
+        .isEqualTo(!changeReceiptSource);
+  }
+
+  private static SelectedDraftGameLogicReceipt retainCurrentFixtureReceipt(
+      GameDesignPublicationOperation operation,
+      DSLContext dsl,
+      TransactionTemplate tx,
+      GameplayRuleSelectedSource source) {
+    var selection = operation.account().input().selection();
+    UUID actor = UUID.randomUUID();
+    var authorization =
+        new GameLogicIntakeAuthorizationBinding(
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            UUID.randomUUID(),
+            actor,
+            source,
+            List.of(
+                new DraftAuthorizationFenceBinding.SourceEvidence(
+                    DraftAuthorizationFenceBinding.SourceKind.ACCOUNT,
+                    actor.toString(),
+                    "1",
+                    "1",
+                    null,
+                    null,
+                    new byte[] {1})));
+    var terminal =
+        GameLogicGameplayRuleIntakeTerminal.retained(
+            new GameLogicGameplayRuleIntakeOperation("controlled-game-logic", authorization),
+            source.canonicalBytes(),
+            source.manifest().canonicalJson().getBytes(StandardCharsets.UTF_8));
+    var candidate =
+        new SelectedDraftGameLogicReceipt(
+            selection, authorization, new AccountGameLogicIntakeSettlementEvidence(terminal));
+    var repository = new SelectedDraftGameLogicReceiptRepository(dsl);
+    tx.executeWithoutResult(ignored -> repository.retain(candidate));
+    return candidate;
+  }
+
+  private static CurrentCaptureFixture currentCaptureFixture() throws Exception {
+    String schema = "gd_gameplay_join_" + UUID.randomUUID().toString().replace("-", "");
+    var dataSource =
+        new DriverManagerDataSource(
+            POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+    dataSource.setSchema(schema);
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations(
+            "filesystem:"
+                + java.nio.file.Path.of("src/main/resources/db/migration")
+                    .toAbsolutePath()
+                    .normalize())
+        .table("flyway_schema_history_game_design_service")
+        .load()
+        .migrate();
+    var dsl = DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    var tx = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    tx.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+
+    DraftCommitBinding.TargetProof target =
+        tx.execute(
+            ignored -> {
+              var game = new Game();
+              game.setTenantId("ISOLATED-" + UUID.randomUUID().toString().substring(0, 8));
+              game.setName("ISOLATED captured Gameplay join");
+              game = new GameRepository(dsl).save(game);
+              var version = new Version();
+              version.setTenantId(game.getTenantId());
+              version.setVersionNumber(1);
+              version = new VersionRepository(dsl).save(version);
+              var proof =
+                  new DraftCommitBinding.TargetProof(
+                      version.getCanonicalTenantId(),
+                      version.getCanonicalVersionId(),
+                      version.getId(),
+                      version.getTenantId(),
+                      version.getIdentitySourceGameRowId(),
+                      version.getIdentitySourceGameTenantKey(),
+                      version.getIdentitySourceProvenanceKind());
+              new GameDesignSourceRepository(dsl).enrollFreshDraft(proof);
+              return proof;
+            });
+    var sources = new GameDesignSourceRepository(dsl);
+    GameDesignPublicationOperation operation =
+        tx.execute(
+            ignored -> {
+              try {
+                var retained =
+                    IsolatedPublicationOwnerSetup.retainFrozenSourceBacked(
+                        dsl, target, 1L, "controlled exact Gameplay receipt join");
+                sources.freeze(retained);
+                return retained;
+              } catch (Exception failure) {
+                throw new IllegalStateException("Unable to retain controlled source capture", failure);
+              }
+            });
+    return new CurrentCaptureFixture(dsl, tx, target, sources, operation);
+  }
+
   private static Fixture fixture(SelectedDraftGameLogicReceipt value) {
     String schema = "receipt_" + UUID.randomUUID().toString().replace("-", "");
     var data =
@@ -442,4 +614,11 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
   }
 
   private record Fixture(DSLContext dsl, TransactionTemplate tx) {}
+
+  private record CurrentCaptureFixture(
+      DSLContext dsl,
+      TransactionTemplate tx,
+      DraftCommitBinding.TargetProof target,
+      GameDesignSourceRepository sources,
+      GameDesignPublicationOperation operation) {}
 }

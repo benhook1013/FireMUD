@@ -538,17 +538,7 @@ public final class StartSessionLaunchDescriptorProducer {
             .readSnapshot(target, selection.selectedCommit().commitId())
             .orElseThrow(
                 () -> conflict("Exact selected Game Logic source snapshot is unavailable"));
-    if (!Arrays.equals(gameplayCapture.operation().canonicalBytes(), operation.canonicalBytes())
-        || !selection.selectedCommit().equals(gameplayCapture.snapshot().binding())
-        || !Arrays.equals(
-            gameplayCapture.snapshot().canonicalBytes(), selectedRules.canonicalBytes())
-        || !Arrays.equals(
-            gameplayCapture.snapshot().canonicalBytes(),
-            receipt.authorization().source().canonicalBytes())
-        || !Arrays.equals(selection.canonicalBytes(), receipt.selection().canonicalBytes())
-        || !selection.selectedCommit().equals(selectedRules.binding())
-        || !Arrays.equals(
-            selectedRules.canonicalBytes(), receipt.authorization().source().canonicalBytes())) {
+    if (!SelectedGameplayRuleSourceJoin.matches(operation, gameplayCapture, selectedRules, receipt)) {
       throw conflict("Retained Game Logic receipt differs from the exact selected source");
     }
     return new SelectedGameplayRules(
