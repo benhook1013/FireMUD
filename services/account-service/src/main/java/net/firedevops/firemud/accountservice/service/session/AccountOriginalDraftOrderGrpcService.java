@@ -25,9 +25,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * Standalone, unregistered producer; Account obtains environment authority internally.
  *
- * <p>Any Account receiving server that registers this service must configure its inbound metadata
- * allowance to at least {@link AccountOriginalDraftOrderGrpcCodec#MAX_METADATA_BYTES}. Binding this
- * service does not configure the server limit.
+ * <p>Any Account receiving server that registers this service must allow inbound metadata of at
+ * least {@link AccountOriginalDraftOrderGrpcCodec#MAX_METADATA_BYTES} and inbound request messages
+ * of at least {@link AccountOriginalDraftOrderGrpcCodec#MAX_WIRE_BYTES}. Binding this service
+ * configures neither server limit.
  */
 public final class AccountOriginalDraftOrderGrpcService implements BindableService {
   private final AccountOriginalDraftOrderService owner;
