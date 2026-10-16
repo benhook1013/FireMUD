@@ -22,7 +22,13 @@ import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderGrpcCode
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-/** Standalone, unregistered producer; Account obtains environment authority internally. */
+/**
+ * Standalone, unregistered producer; Account obtains environment authority internally.
+ *
+ * <p>Any Account receiving server that registers this service must configure its inbound metadata
+ * allowance to at least {@link AccountOriginalDraftOrderGrpcCodec#MAX_METADATA_BYTES}. Binding this
+ * service does not configure the server limit.
+ */
 public final class AccountOriginalDraftOrderGrpcService implements BindableService {
   private final AccountOriginalDraftOrderService owner;
   private final AccountHostedTermsService terms;
