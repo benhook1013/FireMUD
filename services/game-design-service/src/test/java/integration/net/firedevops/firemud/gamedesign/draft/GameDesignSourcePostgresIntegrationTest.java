@@ -39,6 +39,7 @@ import net.firedevops.firemud.gamedesign.publication.GameplayRuleSnapshot;
 import net.firedevops.firemud.gamedesign.publication.GameplayRuleSourceRepository;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySource;
 import net.firedevops.firemud.gamedesign.publication.RealmPolicySourceRepository;
+import net.firedevops.firemud.gamedesign.publication.TemplateConfigSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.PublishAttemptRepository;
 import net.firedevops.firemud.gamedesign.repository.VersionRepository;
@@ -1006,6 +1007,7 @@ class GameDesignSourcePostgresIntegrationTest {
           new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
           new net.firedevops.firemud.gamedesign.publication.AssetSourceRepository(fixture.dsl())
               .freeze(operation);
+          new TemplateConfigSourceRepository(fixture.dsl()).freeze(operation);
           var attempts = new PublishAttemptRepository(fixture.dsl());
           var attempt =
               attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
@@ -1036,6 +1038,8 @@ class GameDesignSourcePostgresIntegrationTest {
     var commandBefore = retainedCapture(fixture, "game_design_command_source_capture");
     var policyBefore = retainedCapture(fixture, "game_design_realm_policy_capture");
     var assetBefore = retainedCapture(fixture, "game_design_asset_source_capture");
+    var templateConfigBefore =
+        retainedCapture(fixture, "game_design_template_config_source_capture");
 
     var migrationDataSource =
         new DriverManagerDataSource(
@@ -1070,6 +1074,8 @@ class GameDesignSourcePostgresIntegrationTest {
     assertCaptureRetained(fixture, "game_design_command_source_capture", commandBefore);
     assertCaptureRetained(fixture, "game_design_realm_policy_capture", policyBefore);
     assertCaptureRetained(fixture, "game_design_asset_source_capture", assetBefore);
+    assertCaptureRetained(
+        fixture, "game_design_template_config_source_capture", templateConfigBefore);
 
     var historical = fixture.sources().readCapture(operation).orElseThrow();
     assertThat(historical.gameplay()).isEmpty();
@@ -1086,6 +1092,8 @@ class GameDesignSourcePostgresIntegrationTest {
     assertCaptureRetained(fixture, "game_design_command_source_capture", commandBefore);
     assertCaptureRetained(fixture, "game_design_realm_policy_capture", policyBefore);
     assertCaptureRetained(fixture, "game_design_asset_source_capture", assetBefore);
+    assertCaptureRetained(
+        fixture, "game_design_template_config_source_capture", templateConfigBefore);
   }
 
   private static void assertInvalidGameplayCaptureInsert(
