@@ -127,7 +127,11 @@ public record WorldAuthoredGraphSnapshot(
     }
   }
 
-  /** Exact external binding. All private World keys are resolved from immutable owner records. */
+  /**
+   * Exact external binding. Schema 4 is reserved for selected-frozen-topology capture; ordinary
+   * snapshot capture accepts only schema 3, while stored snapshots retain schema 2 or 3. All
+   * private World keys are resolved from immutable owner records.
+   */
   public record CaptureRequest(
       String targetNamespace,
       UUID canonicalTenantId,
@@ -154,9 +158,9 @@ public record WorldAuthoredGraphSnapshot(
       requireText(publishWorkflowId, "publishWorkflowId");
       requireText(appliedCommitId, "appliedCommitId");
       requireSha256(contentDigest, "contentDigest");
-      if (digestSchemaVersion != 2 && digestSchemaVersion != 3) {
+      if (digestSchemaVersion != 2 && digestSchemaVersion != 3 && digestSchemaVersion != 4) {
         throw new IllegalArgumentException(
-            "World graph capture request requires retained schema 2 or current schema 3");
+            "World graph capture request requires retained schema 2, schema 3 or selected schema 4");
       }
       Objects.requireNonNull(suppliedOwnedAffectedTuples, "suppliedOwnedAffectedTuples");
       List<OwnedAffectedTuple> ordered = new ArrayList<>(suppliedOwnedAffectedTuples);

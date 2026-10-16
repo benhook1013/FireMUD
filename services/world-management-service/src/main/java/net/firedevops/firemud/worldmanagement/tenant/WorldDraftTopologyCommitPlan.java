@@ -14,15 +14,21 @@ import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.AffectedUnit;
 import net.firedevops.firemud.common.authoring.DraftCommitBinding.Owner;
+import net.firedevops.firemud.common.world.RoomTemplateRef;
 import net.firedevops.firemud.gamedesign.v1.WorldDesignMutationRevision;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDesignPublicationFenceEvidence.OwnerBinding;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.EntityTemplateReference;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.FamilyCount;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.FreshGraphDeclaration;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.InboundSourceClosureDeclaration;
+import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.InboundSourceFamilyCount;
 import net.firedevops.firemud.worldmanagement.tenant.WorldDraftTopologyInputGraph.Node;
 import net.firedevops.firemud.worldmanagement.v1.EntityTemplateReferenceType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeMutationPolicy;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
+import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.ObjectMapper;
@@ -33,10 +39,12 @@ import tools.jackson.databind.json.JsonMapper;
  *
  * <p>This does not authenticate source or Entity evidence, authorize Account commits, allocate or
  * read storage, report APPLIED, expose a public handler, capture released content, or establish
- * lifecycle/runtime readiness. No selected-inbound, start-location or APPLIED authority is derived
- * from this component. Free-text and localized JSON fields are preserved, not semantically
- * validated. Zero spacing, exit cost and spawn count preserve the existing owner-default input
- * convention; a future writer must apply those defaults without changing the original binding.
+ * lifecycle/runtime readiness. Existing numeric REGION plans and historical graph bytes are
+ * separate. A present selected-inbound closure must be the exact version-1 seven-family empty-only
+ * vector; absence remains legacy input and does not qualify new APPLIED or selected inventory.
+ * Free-text and localized JSON fields are preserved, not semantically validated. Zero spacing, exit
+ * cost and spawn count preserve the existing owner-default input convention; a future writer must
+ * apply those defaults without changing the original binding.
  */
 public final class WorldDraftTopologyCommitPlan {
   private static final ObjectMapper STRICT_JSON =
@@ -46,6 +54,16 @@ public final class WorldDraftTopologyCommitPlan {
           .build();
   private static final String TYPE_PREFIX = "WORLD_DESIGN_AGGREGATE_TYPE_";
   private static final String SCOPE_PREFIX = "WORLD_DESIGN_SCOPE_TYPE_";
+  private static final List<WorldDesignAggregateType> FRESH_FAMILY_ORDER =
+      List.of(
+          WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_REGION,
+          WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ZONE,
+          WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM,
+          WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT,
+          WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE,
+          WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING);
+  static final List<WorldInboundSourceFamily> INBOUND_SOURCE_FAMILY_ORDER =
+      WorldDraftTopologyInputGraph.INBOUND_SOURCE_FAMILY_ORDER;
 
   private record ObjectReference(WorldDesignAggregateType kind, UUID templateId) {}
 
@@ -79,6 +97,7 @@ public final class WorldDraftTopologyCommitPlan {
     Map<ObjectReference, Node> nodes = new LinkedHashMap<>();
     Set<UUID> revisionIds = new HashSet<>();
     List<AffectedUnit> expected = new ArrayList<>();
+    FreshGraphDeclaration freshGraphDeclaration = null;
     for (var revision : binding.revisions()) {
       if (revision.owner() != Owner.WORLD_MANAGEMENT) {
         continue;
@@ -90,6 +109,16 @@ public final class WorldDraftTopologyCommitPlan {
         throw invalid("World payload commit/revision identity differs from its complete input");
       }
       validateShape(mutation);
+      if (mutation.hasFreshGraphDeclaration()) {
+        if (freshGraphDeclaration != null) {
+          throw invalid("Fresh World input has multiple complete graph declarations");
+        }
+        freshGraphDeclaration =
+            parseFreshGraphDeclaration(
+                mutation.getFreshGraphDeclaration(),
+                target.canonicalTenantId(),
+                target.canonicalVersionId());
+      }
       UUID id = uuid(mutation.getAggregateId());
       UUID scope = uuid(mutation.getScopeId());
       EntityTemplateReference entity = null;
@@ -122,6 +151,9 @@ public final class WorldDraftTopologyCommitPlan {
       throw invalid("Fresh graph requires World input; an empty binding is not topology");
     }
     validateClosure(nodes);
+    if (freshGraphDeclaration != null) {
+      validateDeclaredFamilies(freshGraphDeclaration, nodes);
+    }
     List<AffectedUnit> actual = binding.affectedUnits(Owner.WORLD_MANAGEMENT);
     if (actual.size() != expected.size()
         || !new HashSet<>(actual).equals(new HashSet<>(expected))) {
@@ -133,7 +165,8 @@ public final class WorldDraftTopologyCommitPlan {
         new WorldDraftTopologyInputGraph(
             target.canonicalTenantId(),
             target.canonicalVersionId(),
-            new ArrayList<>(nodes.values())));
+            new ArrayList<>(nodes.values()),
+            freshGraphDeclaration));
   }
 
   /** Exact immutable enclosing binding, including other owners and original payload bytes. */
@@ -311,6 +344,93 @@ public final class WorldDraftTopologyCommitPlan {
         }
         default -> throw invalid("Unsupported World family");
       }
+    }
+  }
+
+  private static FreshGraphDeclaration parseFreshGraphDeclaration(
+      net.firedevops.firemud.worldmanagement.v1.WorldFreshGraphDeclaration declaration,
+      UUID tenantId,
+      UUID versionId) {
+    if (!uuid(declaration.getTenantId()).equals(tenantId)
+        || !uuid(declaration.getVersionId()).equals(versionId)
+        || !declaration.hasStartLocation()) {
+      throw invalid("Fresh World declaration differs from its exact canonical tenant/Version");
+    }
+    var ref = declaration.getStartLocation();
+    RoomTemplateRef startLocation =
+        new RoomTemplateRef(
+            uuid(ref.getTenantId()), uuid(ref.getVersionId()), uuid(ref.getRoomTemplateId()));
+    if (!startLocation.tenantId().equals(tenantId)
+        || !startLocation.versionId().equals(versionId)) {
+      throw invalid("World start-location reference differs from its graph tenant/Version");
+    }
+    if (declaration.getFamilyCountsCount() != FRESH_FAMILY_ORDER.size()) {
+      throw invalid("Fresh World declaration requires exactly six ordered family counts");
+    }
+    List<FamilyCount> counts = new ArrayList<>();
+    for (int index = 0; index < FRESH_FAMILY_ORDER.size(); index++) {
+      var entry = declaration.getFamilyCounts(index);
+      if (entry.getFamily() != FRESH_FAMILY_ORDER.get(index)
+          || !entry.hasCount()
+          || entry.getCount() < 0) {
+        throw invalid("Fresh World family counts must be present, nonnegative and canonical");
+      }
+      counts.add(new FamilyCount(entry.getFamily(), entry.getCount()));
+    }
+    return new FreshGraphDeclaration(
+        tenantId,
+        versionId,
+        startLocation,
+        counts,
+        declaration.hasInboundSourceClosure()
+            ? java.util.Optional.of(
+                parseInboundSourceClosure(declaration.getInboundSourceClosure()))
+            : java.util.Optional.empty());
+  }
+
+  private static InboundSourceClosureDeclaration parseInboundSourceClosure(
+      net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceClosureDeclaration declaration) {
+    if (declaration.getSchemaVersion() != 1
+        || declaration.getFamilyCountsCount() != INBOUND_SOURCE_FAMILY_ORDER.size()) {
+      throw invalid(
+          "Fresh World source closure requires the complete supported version-1 family vector");
+    }
+    List<InboundSourceFamilyCount> counts = new ArrayList<>();
+    for (int index = 0; index < INBOUND_SOURCE_FAMILY_ORDER.size(); index++) {
+      var entry = declaration.getFamilyCounts(index);
+      if (entry.getFamily() != INBOUND_SOURCE_FAMILY_ORDER.get(index)
+          || !entry.hasCount()
+          || entry.getCount() != 0) {
+        throw invalid(
+            "Fresh World source closure must be canonical, explicit and empty-only; nonempty families are unsupported");
+      }
+      counts.add(new InboundSourceFamilyCount(entry.getFamily(), entry.getCount()));
+    }
+    return new InboundSourceClosureDeclaration(declaration.getSchemaVersion(), counts);
+  }
+
+  private static void validateDeclaredFamilies(
+      FreshGraphDeclaration declaration, Map<ObjectReference, Node> nodes) {
+    if (!declaration.tenantId().equals(declaration.startLocation().tenantId())
+        || !declaration.versionId().equals(declaration.startLocation().versionId())) {
+      throw invalid("World start-location selector has another canonical scope");
+    }
+    for (FamilyCount count : declaration.familyCounts()) {
+      long actual =
+          nodes.values().stream()
+              .filter(node -> node.mutation().getAggregateType() == count.family())
+              .count();
+      if (actual != count.count()) {
+        throw invalid("Declared fresh World family count differs from complete original nodes");
+      }
+    }
+    Node selectedRoom =
+        nodes.get(
+            new ObjectReference(
+                WorldDesignAggregateType.WORLD_DESIGN_AGGREGATE_TYPE_ROOM,
+                declaration.startLocation().roomTemplateId()));
+    if (selectedRoom == null) {
+      throw invalid("World start location must name a ROOM in this complete graph and scope");
     }
   }
 
