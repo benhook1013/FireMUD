@@ -218,10 +218,12 @@ class WorldStartSessionExecutionTerminalReadGrpcServiceTest {
           collector);
 
       boolean retainedEvidenceConflict =
-          failure instanceof WorldCanonicalInstancePreparationRepository
-                  .ConflictingPreparationException
-              || failure instanceof WorldCanonicalInstancePreparationRepository
-                  .InvalidPreparationEvidenceException;
+          failure
+                  instanceof
+                  WorldCanonicalInstancePreparationRepository.ConflictingPreparationException
+              || failure
+                  instanceof
+                  WorldCanonicalInstancePreparationRepository.InvalidPreparationEvidenceException;
       Status.Code expectedCode =
           retainedEvidenceConflict ? Status.Code.FAILED_PRECONDITION : Status.Code.INTERNAL;
       assertCode(collector, expectedCode);

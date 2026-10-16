@@ -143,3 +143,8 @@ Entry format:
   - Context: Six newly published Gameplay heads initially had only early metadata jobs inspectable; Pacific/Auckland date is 2026-10-17.
   - Observation: The observer reported that the heads had no source validation. Their original source workflows later completed change detection and started the build/test matrices. No missing-source CI defect or cancellation was established; the premature report sent unnecessary investigation to Overseer.
   - Expected pattern: Retain each original run and classify source selection as pending or unknown while discovery or queue admission is incomplete. A completed metadata gate establishes neither source success nor source absence. The report and observer guidance were corrected with the exact source run identities.
+
+- `2026-10-17`: Verify every requested test class when combining Gradle selectors
+  - Context: the #3231 review-fix gate requested two World classes, but one selector incorrectly included the categorized `unit` source-root segment in its Java package.
+  - Observation: the matching selector executed nine terminal-read cases, so the task succeeded while the launch-binding comparator class remained unrun. A successful task does not establish coverage of every supplied pattern.
+  - Expected pattern: derive each selector from its declared package and verify each expected class in fresh XML. Preserve the completed reports before a corrected filtered run replaces task output; count the missed class only after its own execution.

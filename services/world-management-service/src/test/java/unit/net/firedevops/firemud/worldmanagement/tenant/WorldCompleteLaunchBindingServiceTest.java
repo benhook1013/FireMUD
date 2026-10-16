@@ -131,8 +131,7 @@ class WorldCompleteLaunchBindingServiceTest {
                 fixture.request(), isolatedScope, fixture.evidence()))
         .isFalse();
 
-    var nonPublicProduction =
-        mock(CanonicalGameInstanceLaunchAssociationReadEvidence.Result.class);
+    var nonPublicProduction = mock(CanonicalGameInstanceLaunchAssociationReadEvidence.Result.class);
     when(nonPublicProduction.request()).thenReturn(fixture.request());
     when(nonPublicProduction.playableStateScope()).thenReturn(RealmEntryPolicy.StateScope.SHARED);
     when(nonPublicProduction.publicProduction()).thenReturn(false);
