@@ -666,6 +666,18 @@ class PublishAttemptServiceTransactionIntegrationTest {
     String publishRequestId =
         fixture.operation().account().input().selection().intent().publishRequestId();
     String publishWorkflowId = fixture.operation().workflowId();
+    PublicationDigestRequestBinding expectedDigestBinding =
+        PublicationDigestRequestBinding.full(
+            fixture
+                .operation()
+                .account()
+                .input()
+                .selection()
+                .intent()
+                .canonicalTenantId()
+                .toString(),
+            String.valueOf(fixture.version().getId()),
+            publishRequestId);
     ExportedAssetManifest candidate = recordFixtureCandidate(fixture);
     AtomicReference<Throwable> recordedDigestFailure = new AtomicReference<>();
     AtomicInteger artifactReadbackCount = new AtomicInteger();
@@ -673,18 +685,12 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Mockito.when(
             publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
-                Mockito.eq(
-                    PublicationDigestRequestBinding.full(
-                        fixture
-                            .operation()
-                            .account()
-                            .input()
-                            .selection()
-                            .intent()
-                            .canonicalTenantId()
-                            .toString(),
-                        String.valueOf(fixture.version().getId()),
-                        publishRequestId)),
+                Mockito.argThat(
+                    actualBinding ->
+                        actualBinding != null
+                            && expectedDigestBinding
+                                .canonicalPreimageHex()
+                                .equals(actualBinding.canonicalPreimageHex())),
                 Mockito.eq(publishWorkflowId)))
         .thenAnswer(
             invocation -> {
@@ -791,6 +797,18 @@ class PublishAttemptServiceTransactionIntegrationTest {
     String publishRequestId =
         fixture.operation().account().input().selection().intent().publishRequestId();
     String publishWorkflowId = fixture.operation().workflowId();
+    PublicationDigestRequestBinding expectedDigestBinding =
+        PublicationDigestRequestBinding.full(
+            fixture
+                .operation()
+                .account()
+                .input()
+                .selection()
+                .intent()
+                .canonicalTenantId()
+                .toString(),
+            String.valueOf(fixture.version().getId()),
+            publishRequestId);
     Version sourceVersion =
         versionRepository.findByTenantIdAndVersionNumber(tenantId, 1).orElseThrow();
     long sourceVersionId = sourceVersion.getId();
@@ -808,18 +826,12 @@ class PublishAttemptServiceTransactionIntegrationTest {
     Mockito.when(
             publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
-                Mockito.eq(
-                    PublicationDigestRequestBinding.full(
-                        fixture
-                            .operation()
-                            .account()
-                            .input()
-                            .selection()
-                            .intent()
-                            .canonicalTenantId()
-                            .toString(),
-                        String.valueOf(fixture.version().getId()),
-                        publishRequestId)),
+                Mockito.argThat(
+                    actualBinding ->
+                        actualBinding != null
+                            && expectedDigestBinding
+                                .canonicalPreimageHex()
+                                .equals(actualBinding.canonicalPreimageHex())),
                 Mockito.eq(publishWorkflowId)))
         .thenAnswer(
             invocation -> {
@@ -983,23 +995,29 @@ class PublishAttemptServiceTransactionIntegrationTest {
     String publishRequestId =
         fixture.operation().account().input().selection().intent().publishRequestId();
     String publishWorkflowId = fixture.operation().workflowId();
+    PublicationDigestRequestBinding expectedDigestBinding =
+        PublicationDigestRequestBinding.full(
+            fixture
+                .operation()
+                .account()
+                .input()
+                .selection()
+                .intent()
+                .canonicalTenantId()
+                .toString(),
+            String.valueOf(fixture.version().getId()),
+            publishRequestId);
     AtomicReference<Throwable> controlPlaneDigestFailure = captureControlPlaneDigestFailure();
 
     Mockito.when(
             publishGateService.collectSelectedFullVersionParticipantDigests(
                 Mockito.any(VersionDto.class),
-                Mockito.eq(
-                    PublicationDigestRequestBinding.full(
-                        fixture
-                            .operation()
-                            .account()
-                            .input()
-                            .selection()
-                            .intent()
-                            .canonicalTenantId()
-                            .toString(),
-                        String.valueOf(fixture.version().getId()),
-                        publishRequestId)),
+                Mockito.argThat(
+                    actualBinding ->
+                        actualBinding != null
+                            && expectedDigestBinding
+                                .canonicalPreimageHex()
+                                .equals(actualBinding.canonicalPreimageHex())),
                 Mockito.eq(publishWorkflowId)))
         .thenAnswer(
             invocation -> {
