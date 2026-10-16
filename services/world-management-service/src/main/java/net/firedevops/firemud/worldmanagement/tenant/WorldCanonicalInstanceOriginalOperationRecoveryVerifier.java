@@ -803,6 +803,7 @@ public final class WorldCanonicalInstanceOriginalOperationRecoveryVerifier
           || number(sourceIntake, "schemaVersion", true) != 1L) {
         throw denied("Unsupported World preparation subdocument schema");
       }
+      JsonNode sourceEvidence = requiredSourceEvidence();
       WorldAuthoredSourceIntakeReceipt receipt = sourceReceipt();
 
       UUID versionId = uuid(versionIdentity, "canonicalVersionId");
