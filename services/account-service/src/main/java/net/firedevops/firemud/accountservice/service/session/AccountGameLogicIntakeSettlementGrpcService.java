@@ -60,9 +60,21 @@ public final class AccountGameLogicIntakeSettlementGrpcService
       deny(observer, Status.PERMISSION_DENIED);
       return;
     }
+    final AccountGameLogicIntakeSettlement receipt;
+    try {
+      receipt = owner.settle(request.binding());
+    } catch (StatusRuntimeException failure) {
+      deny(observer, Status.fromCode(failure.getStatus().getCode()));
+      return;
+    } catch (IllegalArgumentException changedPrecondition) {
+      deny(observer, Status.FAILED_PRECONDITION);
+      return;
+    } catch (RuntimeException unavailable) {
+      deny(observer, Status.UNAVAILABLE);
+      return;
+    }
     final SettleGameLogicIntakeResponse response;
     try {
-      var receipt = owner.settle(request.binding());
       response =
           AccountGameLogicIntakeSettlementProtoCodec.toResponse(
               new AccountGameLogicIntakeSettlementReadEvidence(
@@ -70,7 +82,7 @@ public final class AccountGameLogicIntakeSettlementGrpcService
     } catch (StatusRuntimeException failure) {
       deny(observer, Status.fromCode(failure.getStatus().getCode()));
       return;
-    } catch (RuntimeException unavailable) {
+    } catch (RuntimeException malformedReceipt) {
       deny(observer, Status.UNAVAILABLE);
       return;
     }
