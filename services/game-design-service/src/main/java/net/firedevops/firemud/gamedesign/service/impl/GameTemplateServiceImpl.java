@@ -27,6 +27,10 @@ public class GameTemplateServiceImpl implements GameTemplateService {
   @Transactional
   @Timed(value = "gamedesign.template.create")
   public GameTemplateDto createTemplate(GameTemplateDto dto) {
+    if (dto.id() != null) {
+      throw new IllegalArgumentException(
+          "INVALID_ARGUMENT: template id must not be supplied on create");
+    }
     logger.info("Creating game template {}", dto.name());
     GameTemplate entity = mapper.toEntity(dto);
     if (entity.getDefaultRuntimeFlagsJson() == null
