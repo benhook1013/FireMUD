@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Draft application-slot storage race proof
+
+The existing Game Design source PostgreSQL owner test exercises both lifecycle-versus-slot orderings and both publication-selection-versus-slot orderings under Read Committed, Repeatable Read and Serializable. A committed lifecycle change or selection prevents a competing slot; a committed slot prevents the competing lifecycle change or selection. Stale snapshots refuse with the expected serialization failure. Logical Version fields remain unchanged where asserted; the winning storage interlock intentionally performs a no-op update, so this proof does not assert unchanged MVCC row versions across the winner.
+
+All sixteen owning native cases freshly pass with zero failures, errors or skips, including the four restored race cases and the twelve existing source-owner cases. Canonical formatting, style, Integration Checkstyle and SpotBugs pass. Passive capture identifies the one run-owned PostgreSQL container, records its lifecycle without endpoint probes and independently confirms its absence after completion. This proves current default-migration storage interlocks with controlled local source setup; it does not establish a creator credential, Account order or currentness, remote owner application, publication enablement, activation or a genuine Gameplay handoff. No production, migration or registration changes are included.
+
 ### Template create and tenant-qualified updates
 
 The existing create service rejects a caller-supplied template ID before mapping or repository access. The repository updates only the exact tenant and template ID, never writes a replacement tenant binding and requires exactly one affected row before its tenant-qualified readback. No new public update API, migration, registration or hosted-content authority is introduced.
