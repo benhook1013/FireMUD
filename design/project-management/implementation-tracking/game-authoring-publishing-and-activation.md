@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Canonical Version identity storage proof
+
+The restored Version identity native owner test preserves the original retained Version fields and row version through the V35.1 identity migration and later default migrations, leaves its canonical identity unmapped and refuses a later identity backfill. Fresh Version creation and update retain the exact persisted Game provenance, including a Game retained through V29. Wrong-tenant, missing, null and nil canonical lookups preserve Version and Game row versions; database guards reject identity replacement, mismatched source, nil identity and canonical truncation, while the explicitly unmapped retained Version remains deletable.
+
+All six native cases freshly pass with zero failures, errors or skips against the canonical PostgreSQL image and owning filesystem migrations. Canonical formatting, style, Integration Checkstyle and SpotBugs pass; passive capture identifies the one run-owned PostgreSQL container and independently confirms its absence after completion. This proves owner-local identity and historical retention mechanics with controlled setup. It does not establish creator or issuer authority, currentness, publication enablement, an immutable production release, activation or a genuine Gameplay handoff. No production, installed migration or registration changes are included.
+
 ### Selected-full owner publication preparation
 
 The source candidate prepares complete selected-owner publication consumption under the [canonical selected-full profile](../../architecture/microservices/game-design-service/version-control.md#selected-full-publication-profile). It reuses the actual parent World closure producer, adds its full-profile consumer mapping, and composes the selected Game Design digest read/collector with independently retained Entity, Automation and Game Logic receipts. The Game Logic adapter reads the exact retained terminal, selected source and manifest through the existing owner repository and returns both manifest and ability projections; its default Spring composition remains denied. Private selected writer mechanics use the exact canonical selection/request binding and selected gate. Public Game Design fresh/PENDING publication remains denied. Existing Game Design V1020 storage is reused; no Game Design migration is added.
