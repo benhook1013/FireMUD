@@ -150,6 +150,44 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
+  void messageStopsWhenFirstPartyBootstrapContextCannotBeRestored() throws Exception {
+    var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
+    String token = fixture.token();
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
+                "first_party_web",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
+                token));
+    when(firstPartyConnectContextService.parse(token))
+        .thenAnswer(invocation -> fixture.service.parse(invocation.getArgument(0)))
+        .thenReturn(Optional.empty());
+    when(firstPartyConnectContextService.requireRetained(any()))
+        .thenAnswer(invocation -> fixture.service.requireRetained(invocation.getArgument(0)));
+    when(activeTransportSessionRegistry.find(41L)).thenReturn(Optional.of(session));
+    when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
+        .thenReturn(Optional.empty());
+    TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
+    when(parser.parse("LOOK")).thenReturn(command);
+
+    handler.afterConnectionEstablished(session);
+    handler.handleMessage(session, new TextMessage("LOOK"));
+
+    verify(session)
+        .close(
+            argThat(
+                status ->
+                    status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
+                        && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
+    verify(interpreter, never())
+        .interpret(Mockito.anyString(), Mockito.any(TextCommand.class), Mockito.anyBoolean());
+    verify(session, never()).sendMessage(any());
+  }
+
+  @Test
   void establishmentClosesUnavailableTransportAndCleansMdcBeforeLaterHealthyConnection()
       throws Exception {
     when(runtimeIdentity.service()).thenReturn("game-session-service");
