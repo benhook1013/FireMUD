@@ -152,6 +152,78 @@ class ReviewRecordsCliTest(unittest.TestCase):
             return result, json.loads(output.getvalue())
         return result, {"error": errors.getvalue()}
 
+    def test_cli_correct_routes_accepted_finding_with_optional_target(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        for index, target in enumerate((None, 99)):
+            run_id = f"run.correction-route-{index}"
+            key = f"cli-run:{run_id}:finding:1"
+            records.record_run(
+                run_id=run_id, source_pr=42, channel="cli", findings=(FindingObservation(key, "Finding"),)
+            )
+            records.record_source_decision(
+                run_id,
+                key,
+                decision_id=f"initial-{index}",
+                decision="accepted",
+                actor="owner",
+                reason="Initial decision",
+            )
+            arguments = [
+                "cli-correct",
+                "--run-id",
+                run_id,
+                "--finding",
+                "1",
+                "--supersedes-id",
+                f"initial-{index}",
+                "--correction-id",
+                f"corrected-{index}",
+                "--decision",
+                "routed",
+                "--actor",
+                "root",
+                "--reason",
+                "Other owner",
+                "--database",
+                str(self.database),
+            ]
+            if target is not None:
+                arguments.extend(["--target-pr", str(target)])
+            code, result = self.invoke(*arguments)
+            self.assertEqual(code, 0, result)
+            self.assertEqual(result["result"]["counts"], {"found": 1, "accepted": 0, "routed": 1})
+            route = next(
+                item for item in records.list_routes(source_pr=42) if item["route_id"] == result["result"]["route_id"]
+            )
+            self.assertEqual((route["target_pr"], route["status"]), (target, "open"))
+            code, _ = self.invoke(*arguments)
+            self.assertEqual(code, 2)
+        invalid = [
+            "cli-correct",
+            "--run-id",
+            run_id,
+            "--finding",
+            "1",
+            "--supersedes-id",
+            "unused",
+            "--correction-id",
+            "bad",
+            "--decision",
+            "accepted",
+            "--target-pr",
+            "99",
+            "--actor",
+            "root",
+            "--reason",
+            "Invalid target",
+            "--database",
+            str(self.database),
+        ]
+        code, result = self.invoke(*invalid)
+        self.assertEqual(code, 2)
+        self.assertIn("only routed", result["error"])
+
     def test_cli_attempt_reconciliation_refuses_while_runner_lock_is_held(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         records = SqliteReviewRecords(self.database)
@@ -2177,24 +2249,32 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.invoke("bootstrap", "--database", str(self.database))
         for explicit_null in (False, True):
             run = {
-                "run_id": f"pr3163-sol-medium-retro-{explicit_null}", "source_pr": 3163,
-                "channel": "subagent", "reviewer": "gpt-5.6-sol (reasoning medium)",
-                "scope": "broad", "coverage_limits": ["Retrospective import; exact review clocks unknown."],
-                "outcome": "completed", "source_head": "2d52d8be43b8563e796151b5959a9050c5152ad9",
+                "run_id": f"pr3163-sol-medium-retro-{explicit_null}",
+                "source_pr": 3163,
+                "channel": "subagent",
+                "reviewer": "gpt-5.6-sol (reasoning medium)",
+                "scope": "broad",
+                "coverage_limits": ["Retrospective import; exact review clocks unknown."],
+                "outcome": "completed",
+                "source_head": "2d52d8be43b8563e796151b5959a9050c5152ad9",
             }
             if explicit_null:
                 run.update(started_at=None, finished_at=None)
             document = {"api_version": 1, "run": run, "findings": []}
             self.import_file.write_text(json.dumps(document), encoding="utf-8")
             with patch.object(sqlite_review_records, "_now", return_value="2026-10-11T15:49:59Z"):
-                code, imported = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
+                code, imported = self.invoke(
+                    "import-run", "--input", str(self.import_file), "--database", str(self.database)
+                )
             self.assertEqual(code, 0)
             self.assertTrue(imported["result"]["finalized"])
             _, history = self.invoke("history", "--pr", "3163", "--database", str(self.database))
             retained = next(item for item in history["result"]["runs"] if item["run_id"] == run["run_id"])
             self.assertIsNone(retained["started_at"])
             self.assertIsNone(retained["finished_at"])
-            self.assertEqual(retained["storage_timestamps"]["started_at"], {"value": "2026-10-11T15:49:59Z", "source": "generated"})
+            self.assertEqual(
+                retained["storage_timestamps"]["started_at"], {"value": "2026-10-11T15:49:59Z", "source": "generated"}
+            )
             self.assertEqual(retained["finalized_at"], "2026-10-11T15:49:59Z")
             self.assertEqual(history["result"]["attempts"], [])
             code, replay = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
@@ -2337,9 +2417,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
             resolved_history["result"]["runs"][0]["counts"],
             {"found": 1, "accepted": 1, "routed": 0},
         )
-        self.assertEqual(
-            resolved_history["result"]["source_resolutions"][0]["fix_sha"], fix_sha
-        )
+        self.assertEqual(resolved_history["result"]["source_resolutions"][0]["fix_sha"], fix_sha)
 
     def test_batch_import_validate_only_reuses_validators_without_touching_database(self) -> None:
         missing_database = self.database.parent / "uncreated" / "controller.sqlite3"
