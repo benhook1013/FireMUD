@@ -283,7 +283,8 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
 
     String receiptSourceEpoch =
         changeReceiptSource
-            ? new java.math.BigInteger(selectedSnapshot.sourceEpoch()).add(java.math.BigInteger.ONE)
+            ? new java.math.BigInteger(selectedSnapshot.sourceEpoch())
+                .add(java.math.BigInteger.ONE)
                 .toString()
             : selectedSnapshot.sourceEpoch();
     var controlledReceiptSnapshot =
@@ -304,12 +305,10 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
     }
 
     var retained =
-        retainCurrentFixtureReceipt(fixture.operation(), fixture.dsl(), fixture.tx(), receiptSource);
+        retainCurrentFixtureReceipt(
+            fixture.operation(), fixture.dsl(), fixture.tx(), receiptSource);
     var receiptRepository = new SelectedDraftGameLogicReceiptRepository(fixture.dsl());
-    var readback =
-        receiptRepository
-            .readForPublication(publicationBinding(retained))
-            .orElseThrow();
+    var readback = receiptRepository.readForPublication(publicationBinding(retained)).orElseThrow();
     assertThat(readback.receipt().canonicalBytes())
         .containsExactly(retained.receipt().canonicalBytes());
     assertThat(readback.authorization().source().canonicalBytes())
@@ -356,7 +355,9 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
             source.manifest().canonicalJson().getBytes(StandardCharsets.UTF_8));
     var candidate =
         new SelectedDraftGameLogicReceipt(
-            selection, authorization, new AccountGameLogicIntakeSettlementEvidence(terminal));
+            AuthoredDraftPublishSelection.fromStored(selection.canonicalJson(), selection.digest()),
+            authorization,
+            new AccountGameLogicIntakeSettlementEvidence(terminal));
     var repository = new SelectedDraftGameLogicReceiptRepository(dsl);
     tx.executeWithoutResult(ignored -> repository.retain(candidate));
     return candidate;
@@ -419,7 +420,8 @@ class SelectedDraftGameLogicReceiptPostgresIntegrationTest {
                 sources.freeze(retained);
                 return retained;
               } catch (Exception failure) {
-                throw new IllegalStateException("Unable to retain controlled source capture", failure);
+                throw new IllegalStateException(
+                    "Unable to retain controlled source capture", failure);
               }
             });
     return new CurrentCaptureFixture(dsl, tx, target, sources, operation);

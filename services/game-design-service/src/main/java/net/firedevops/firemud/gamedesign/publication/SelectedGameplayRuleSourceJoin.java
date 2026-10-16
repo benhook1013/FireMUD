@@ -3,7 +3,9 @@ package net.firedevops.firemud.gamedesign.publication;
 import java.util.Arrays;
 import java.util.Objects;
 
-/** Canonical byte equality for the selected Gameplay capture, source read and Game Logic receipt. */
+/**
+ * Canonical byte equality for the selected Gameplay capture, source read and Game Logic receipt.
+ */
 final class SelectedGameplayRuleSourceJoin {
   private SelectedGameplayRuleSourceJoin() {}
 
@@ -22,8 +24,7 @@ final class SelectedGameplayRuleSourceJoin {
         && selection.selectedCommit().equals(capture.snapshot().binding())
         && Arrays.equals(capture.snapshot().canonicalBytes(), selectedSnapshot.canonicalBytes())
         && Arrays.equals(
-            capture.snapshot().canonicalBytes(),
-            receipt.authorization().source().canonicalBytes())
+            capture.snapshot().canonicalBytes(), receipt.authorization().source().canonicalBytes())
         && Arrays.equals(selection.canonicalBytes(), receipt.selection().canonicalBytes())
         && selection.selectedCommit().equals(selectedSnapshot.binding())
         && Arrays.equals(
