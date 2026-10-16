@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Historical membership and upstream source validation proof
+
+The existing runtime membership validator test now checks three supported Account source event formats alongside a positive issuer source while retaining the original historical membership bytes. It verifies positive upstream evidence before returning an empty missing-membership result. Freshly resealed membership events cannot lead the current issuer generation, Account generation, issuance fence or historical Account cutoff sequence; equal and earlier valid Account cutoffs retain their original bytes. The added source fixtures use representable initialized counters above JavaScript's exact-integer range, while the existing maximum-counter case remains intact. The current exact tenant-generation and billing-cutoff rules retain their preceding tests and attribution.
+
+All seventeen owning structural invocations freshly pass with zero failures, errors or skips, including five added invocations and twelve retained cases. Canonical formatting, Test Checkstyle and SpotBugs pass; final style checks remain up to date against the formatted source. The donor's two earlier fixture range and initialized-counter failures are archived separately from its passing run. These cases construct and seal local event bytes. They do not establish a genuine issuer or Account producer, authenticated currentness, durable runtime projection, admission protection, settlement, activation or a Gameplay handoff. No production validator, wire contract, registration, source schema or installed migration is changed.
+
 ### Immutable Draft fence and closed carrier proof
 
 The restored dedicated Draft authorization-fence codec test retains the fixed v1 producer bytes and digest, v2 required-owner mapping and ordering, exact owner-readback bytes, and malformed framing, identity, counter, digest and source-vector rejection. These local byte-format cases supplement the existing transport tests. The World terminal codec also rejects string or unsupported closure schemas, opaque inventories, negative counts and unsupported entry members on both original and applied closure paths, plus null and opaque whole closures. The StartSession authority bundle rejects an unsupported bundle version and an issuance fence beyond the supported signed range while preserving its distinct projection and issuance counters.
