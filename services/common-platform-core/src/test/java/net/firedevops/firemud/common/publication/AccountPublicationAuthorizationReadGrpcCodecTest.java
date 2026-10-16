@@ -9,6 +9,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.HeldPublicationAuthorizationStatus;
+import net.firedevops.firemud.account.v1.ReadHeldPublicationAuthorizationRequest;
 import net.firedevops.firemud.account.v1.ReadHeldPublicationAuthorizationResponse;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceEvidence;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding.SourceKind;
@@ -24,20 +25,90 @@ class AccountPublicationAuthorizationReadGrpcCodecTest {
   @Test
   void mapsCompleteCanonicalBindingDigestAndStableReadIdentity() {
     var request = request();
+    var wireRequest = AccountPublicationAuthorizationReadGrpcCodec.toRequest(request);
+    var wireResponse = AccountPublicationAuthorizationReadGrpcCodec.toHeldResponse(request);
 
-    var decoded =
-        AccountPublicationAuthorizationReadGrpcCodec.fromRequest(
-            AccountPublicationAuthorizationReadGrpcCodec.toRequest(request));
-    var evidence =
-        AccountPublicationAuthorizationReadGrpcCodec.fromResponse(
-            request, AccountPublicationAuthorizationReadGrpcCodec.toHeldResponse(request));
+    var decoded = AccountPublicationAuthorizationReadGrpcCodec.fromRequest(wireRequest);
+    var evidence = AccountPublicationAuthorizationReadGrpcCodec.fromResponse(request, wireResponse);
 
     assertThat(decoded).isEqualTo(request);
+    assertThat(wireRequest.getSerializedSize())
+        .isLessThanOrEqualTo(AccountPublicationAuthorizationReadGrpcCodec.MAX_MESSAGE_BYTES);
+    assertThat(wireResponse.getSerializedSize())
+        .isLessThanOrEqualTo(AccountPublicationAuthorizationReadGrpcCodec.MAX_MESSAGE_BYTES);
     assertThat(evidence.request()).isEqualTo(request);
     assertThat(evidence.request().binding().canonicalBytes())
         .containsExactly(request.originalPublicationAuthorizationBinding());
     assertThat(evidence.request().binding().operationId())
         .isEqualTo(request.binding().operationId());
+  }
+
+  @Test
+  void rejectsOversizedBindingsAndRequestResponseEnvelopesBeforeDecoding() {
+    var request = request();
+    byte[] oversizedBinding =
+        new byte[AccountPublicationAuthorizationReadEvidence.MAX_BINDING_BYTES + 1];
+
+    assertThatThrownBy(
+            () ->
+                new AccountPublicationAuthorizationReadEvidence.Request(
+                    AccountPublicationAuthorizationReadEvidence.Request.SCHEMA_VERSION,
+                    "test",
+                    UUID.randomUUID(),
+                    oversizedBinding,
+                    request.publicationAuthorizationDigest()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "Complete original Account publication authorization binding exceeds size limit");
+
+    ReadHeldPublicationAuthorizationRequest wireRequest =
+        AccountPublicationAuthorizationReadGrpcCodec.toRequest(request);
+    assertThatThrownBy(
+            () ->
+                AccountPublicationAuthorizationReadGrpcCodec.fromRequest(
+                    wireRequest.toBuilder()
+                        .setOriginalPublicationAuthorizationBinding(
+                            ByteString.copyFrom(oversizedBinding))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "Complete original Account publication authorization binding exceeds size limit");
+
+    var wireResponse = AccountPublicationAuthorizationReadGrpcCodec.toHeldResponse(request);
+    assertThatThrownBy(
+            () ->
+                AccountPublicationAuthorizationReadGrpcCodec.fromResponse(
+                    request,
+                    wireResponse.toBuilder()
+                        .setOriginalPublicationAuthorizationBinding(
+                            ByteString.copyFrom(oversizedBinding))
+                        .build()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage(
+            "Complete original Account publication authorization binding exceeds size limit");
+
+    var oversizedRequestEnvelope =
+        wireRequest.toBuilder()
+            .setTargetNamespace(
+                "x".repeat(AccountPublicationAuthorizationReadGrpcCodec.MAX_MESSAGE_BYTES))
+            .build();
+    assertThatThrownBy(
+            () ->
+                AccountPublicationAuthorizationReadGrpcCodec.fromRequest(oversizedRequestEnvelope))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Account publication authorization read request exceeds size limit");
+
+    var oversizedResponseEnvelope =
+        wireResponse.toBuilder()
+            .setTargetNamespace(
+                "x".repeat(AccountPublicationAuthorizationReadGrpcCodec.MAX_MESSAGE_BYTES))
+            .build();
+    assertThatThrownBy(
+            () ->
+                AccountPublicationAuthorizationReadGrpcCodec.fromResponse(
+                    request, oversizedResponseEnvelope))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Account publication authorization read response exceeds size limit");
   }
 
   @Test

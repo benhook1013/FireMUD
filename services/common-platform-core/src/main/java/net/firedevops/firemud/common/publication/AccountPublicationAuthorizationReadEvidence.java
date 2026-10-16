@@ -4,6 +4,7 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
+import net.firedevops.firemud.common.authoring.WorldOriginalDraftGraphApplyEvidence;
 
 /**
  * Exact HELD read returned by the authenticated Account mTLS client. Constructing the request or
@@ -11,6 +12,9 @@ import net.firedevops.firemud.common.authoring.DraftAuthorizationFenceBinding;
  * AccountPublicationAuthorizationReadClient} after exact peer and response verification.
  */
 public final class AccountPublicationAuthorizationReadEvidence {
+  public static final int MAX_BINDING_BYTES =
+      WorldOriginalDraftGraphApplyEvidence.MAX_BINDING_BYTES;
+
   private final Request request;
 
   AccountPublicationAuthorizationReadEvidence(Request request) {
@@ -46,6 +50,10 @@ public final class AccountPublicationAuthorizationReadEvidence {
           || originalPublicationAuthorizationBinding.length == 0) {
         throw new IllegalArgumentException(
             "Complete original Account publication authorization binding is required");
+      }
+      if (originalPublicationAuthorizationBinding.length > MAX_BINDING_BYTES) {
+        throw new IllegalArgumentException(
+            "Complete original Account publication authorization binding exceeds size limit");
       }
       originalPublicationAuthorizationBinding = originalPublicationAuthorizationBinding.clone();
       AccountPublicationAuthorizationBinding binding =

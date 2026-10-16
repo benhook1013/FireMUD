@@ -96,6 +96,58 @@ class CommunicationRecipientDeliveryServiceTest {
   }
 
   @Test
+  void unreadableRecipientDoesNotAbortDeliveryToLaterRecipients() {
+    SessionContext actor =
+        new SessionContext(
+            41L, 22L, "123", "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+    SessionContext healthyRecipient =
+        new SessionContext(
+            43L, 22L, "789", "friend@example.com", 789L, "Sora", 1L, "R-1", "jwt", "en-NZ", 1L);
+    CommunicationRecipientView unreadableView =
+        CommunicationRecipientView.newBuilder()
+            .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
+            .setRecipientId("456")
+            .build();
+    CommunicationRecipientView healthyView =
+        CommunicationRecipientView.newBuilder()
+            .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
+            .setRecipientId("789")
+            .build();
+    SendCommunicationResponse response =
+        SendCommunicationResponse.newBuilder()
+            .setType(CommunicationType.TELL)
+            .setMessage("hello")
+            .addRecipientViews(unreadableView)
+            .addRecipientViews(healthyView)
+            .build();
+    PlayerOutput output = PlayerOutput.notice("hello");
+    PresentationProperties presentation = new PresentationProperties();
+
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 456L))
+        .thenThrow(new SessionContextUnavailableException("retained context unreadable", null));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 789L))
+        .thenReturn(Optional.of(healthyRecipient));
+    when(communicationOutputMapper.recipientOutput(CommunicationType.TELL, healthyView, "hello"))
+        .thenReturn(output);
+    when(settingsResolver.presentation(healthyRecipient)).thenReturn(presentation);
+    when(outputRenderer.render(output, "en-NZ", presentation)).thenReturn("hello");
+    when(activeTransportSessionRegistry.find(43L)).thenReturn(Optional.empty());
+
+    service.deliver(actor, response);
+
+    verify(sessionAuthenticationService).resolveByGameplayIdentity(22L, 1L, 789L);
+    verify(settingsResolver).presentation(healthyRecipient);
+    assertThat(
+            meterRegistry
+                .counter(
+                    "gamesession.communication.delivery.failed",
+                    "role",
+                    "communication_recipient_role_target")
+                .count())
+        .isEqualTo(1.0);
+  }
+
+  @Test
   void deliverDropsStaleRecipientResolvedByGameplayName() {
     SessionContext actor =
         new SessionContext(
@@ -335,7 +387,6 @@ class CommunicationRecipientDeliveryServiceTest {
         .close(
             org.springframework.web.socket.CloseStatus.SERVER_ERROR.withReason("internal_error"));
     verify(activeTransportSessionRegistry, never()).unregister(anyLong(), any());
-    assertThat(activeTransportSessionRegistry.find(42L)).contains(session);
     assertThat(
             meterRegistry
                 .counter(

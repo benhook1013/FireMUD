@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.support;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.interfaces.RSAPublicKey;
@@ -27,27 +28,41 @@ public final class FirstPartyReceivingFixture {
   public static final UUID REALM = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
   public static final UUID NAMESPACE = UUID.fromString("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
   public static final UUID INSTANCE = UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+
+  private static final class KeyPairHolder {
+    private static final KeyPair KEY_PAIR = generateKeyPair();
+
+    private static KeyPair generateKeyPair() {
+      try {
+        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
+        generator.initialize(2048);
+        return generator.generateKeyPair();
+      } catch (Exception failure) {
+        throw new IllegalStateException(failure);
+      }
+    }
+  }
+
   public final KeyPair keys;
   public final CanonicalPlayerRouteReadService routes =
       Mockito.mock(CanonicalPlayerRouteReadService.class);
   public final FirstPartyConnectContextProperties properties =
       new FirstPartyConnectContextProperties();
+  public final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   public final GatewayVerificationKeySource keySource;
   public final FirstPartyConnectContextService service;
 
   public FirstPartyReceivingFixture() {
-    try {
-      KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
-      generator.initialize(2048);
-      keys = generator.generateKeyPair();
-    } catch (Exception failure) {
-      throw new IllegalStateException(failure);
-    }
+    keys = KeyPairHolder.KEY_PAIR;
     keySource = kid -> "gateway-test".equals(kid) ? (RSAPublicKey) keys.getPublic() : null;
     Mockito.when(routes.readCurrentTarget(TENANT)).thenReturn(target());
     service =
         new FirstPartyConnectContextService(
-            properties, keySource, routes, Clock.fixed(Instant.ofEpochMilli(NOW), ZoneOffset.UTC));
+            properties,
+            keySource,
+            routes,
+            Clock.fixed(Instant.ofEpochMilli(NOW), ZoneOffset.UTC),
+            meterRegistry);
   }
 
   public CanonicalPlayableTarget target() {

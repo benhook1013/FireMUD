@@ -1498,6 +1498,7 @@ jobs:
         id: runtime-smoke
         if: ${{ needs.image-meta.outputs.runtime_smoke_required == 'true' }}
         env:
+          FIREMUD_SMOKE_ADMISSION_QUALIFICATION: held
           SMOKE_MINIO_SERVER_IMAGE_ID: >-
             ${{ steps.minio-source.outputs.server_image_id }}
           SMOKE_MINIO_CLIENT_IMAGE_ID: >-

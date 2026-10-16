@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.*;
 import java.time.Clock;
 import java.time.Instant;
@@ -42,6 +43,15 @@ class FirstPartyConnectContextServiceTest {
             .generateToken("77", java.util.Map.of());
     assertThat(fixture.service.parse(hmac)).isEmpty();
     assertThat(fixture.service.parse("incomplete.context")).isEmpty();
+    assertThat(
+            fixture
+                .meterRegistry
+                .get("gamesession.first_party_connect_context.parse.failures")
+                .tag("reason", "invalid_envelope")
+                .counter()
+                .count())
+        .isEqualTo(2.0);
+    assertOnlyFixedFailureMetricTags(fixture.meterRegistry);
     verifyNoInteractions(fixture.routes);
   }
 
@@ -51,13 +61,34 @@ class FirstPartyConnectContextServiceTest {
     var unavailable =
         new FirstPartyConnectContextService(
             fixture.properties,
-            kid -> null,
+            kid -> {
+              throw new net.firedevops.firemud.common.security
+                  .GatewayFirstPartyConnectContextEnvelope.KeySourceUnavailableException();
+            },
             fixture.routes,
-            Clock.fixed(Instant.ofEpochMilli(FirstPartyReceivingFixture.NOW), ZoneOffset.UTC));
+            Clock.fixed(Instant.ofEpochMilli(FirstPartyReceivingFixture.NOW), ZoneOffset.UTC),
+            fixture.meterRegistry);
     assertThat(unavailable.parse(fixture.token())).isEmpty();
+    assertThat(
+            fixture
+                .meterRegistry
+                .get("gamesession.first_party_connect_context.parse.failures")
+                .tag("reason", "key_unavailable")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
     when(fixture.routes.readCurrentTarget(FirstPartyReceivingFixture.TENANT))
         .thenThrow(new CanonicalPlayerRouteReadService.ReadUnavailableException("missing owner"));
     assertThat(fixture.service.parse(fixture.token())).isEmpty();
+    assertThat(
+            fixture
+                .meterRegistry
+                .get("gamesession.first_party_connect_context.parse.failures")
+                .tag("reason", "owner_unavailable")
+                .counter()
+                .count())
+        .isEqualTo(1.0);
+    assertOnlyFixedFailureMetricTags(fixture.meterRegistry);
   }
 
   @Test
@@ -81,7 +112,8 @@ class FirstPartyConnectContextServiceTest {
             fixture.keySource,
             fixture.routes,
             Clock.fixed(
-                Instant.ofEpochMilli(FirstPartyReceivingFixture.NOW + 31_000L), ZoneOffset.UTC));
+                Instant.ofEpochMilli(FirstPartyReceivingFixture.NOW + 31_000L), ZoneOffset.UTC),
+            fixture.meterRegistry);
     assertThatThrownBy(() -> expired.requireRetained(retained))
         .isInstanceOf(IllegalStateException.class);
     when(fixture.routes.readCurrentTarget(FirstPartyReceivingFixture.TENANT)).thenReturn(null);
@@ -110,5 +142,39 @@ class FirstPartyConnectContextServiceTest {
       when(fixture.routes.readCurrentTarget(FirstPartyReceivingFixture.TENANT)).thenReturn(changed);
       assertThat(fixture.service.parse(fixture.token())).as("scope index %d", index).isEmpty();
     }
+    assertThat(
+            fixture
+                .meterRegistry
+                .get("gamesession.first_party_connect_context.parse.failures")
+                .tag("reason", "target_mismatch")
+                .counter()
+                .count())
+        .isEqualTo(9.0);
+    assertOnlyFixedFailureMetricTags(fixture.meterRegistry);
+  }
+
+  @Test
+  void successfulParseDoesNotIncrementFailureCounter() {
+    var fixture = new FirstPartyReceivingFixture();
+
+    assertThat(fixture.service.parse(fixture.token())).isPresent();
+
+    assertThat(fixture.meterRegistry.getMeters()).isEmpty();
+  }
+
+  private static void assertOnlyFixedFailureMetricTags(SimpleMeterRegistry registry) {
+    assertThat(registry.getMeters())
+        .allSatisfy(
+            meter -> {
+              assertThat(meter.getId().getName())
+                  .isEqualTo("gamesession.first_party_connect_context.parse.failures");
+              assertThat(meter.getId().getTags()).hasSize(1);
+              assertThat(meter.getId().getTag("reason"))
+                  .isIn(
+                      "key_unavailable",
+                      "invalid_envelope",
+                      "owner_unavailable",
+                      "target_mismatch");
+            });
   }
 }

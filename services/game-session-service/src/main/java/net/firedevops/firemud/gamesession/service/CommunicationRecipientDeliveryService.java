@@ -72,7 +72,19 @@ public final class CommunicationRecipientDeliveryService {
       SendCommunicationResponse response,
       CommunicationRecipientView view) {
     try (GameplayLoggingContext actorLoggingContext = GameplayLoggingContext.from(actorContext)) {
-      Optional<SessionContext> maybeRecipient = resolveRecipient(actorContext, view);
+      Optional<SessionContext> maybeRecipient;
+      try {
+        maybeRecipient = resolveRecipient(actorContext, view);
+      } catch (SessionContextUnavailableException unavailable) {
+        LOG.warn(
+            "Unable to read retained recipient session context for role {}",
+            roleTag(view),
+            unavailable);
+        meterRegistry
+            .counter("gamesession.communication.delivery.failed", "role", roleTag(view))
+            .increment();
+        return;
+      }
       if (maybeRecipient.isEmpty()) {
         meterRegistry
             .counter("gamesession.communication.delivery.missed", "role", roleTag(view))
