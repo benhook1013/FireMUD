@@ -3,6 +3,7 @@ package net.firedevops.firemud.common.gamelogic;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.google.protobuf.ByteString;
 import io.grpc.Context;
 import io.grpc.Metadata;
 import io.grpc.Server;
@@ -210,6 +211,35 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
                 .authorization()
                 .orElseThrow()
                 .canonicalBytes());
+  }
+
+  @Test
+  void rejectsMalformedCreatorCredentialsBeforeRpcAndSanitizesMalformedEvidence() throws Exception {
+    start(pki.gameLogicServer());
+    client = newClient(pki.accountClient());
+    client.init();
+    var request = request(selected(1));
+    for (String malformed : List.of(" ", "x".repeat(16385))) {
+      assertThatThrownBy(() -> client.authorize(request, malformed))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("Invalid Game Logic intake credential metadata");
+    }
+    assertThat(calls).hasValue(0);
+
+    String sensitive = "sensitive-malformed-account-evidence";
+    authorizeResponseOverride =
+        response(request, "AuthorizeIntake").toBuilder()
+            .setFinalizedIntakeAuthorization(ByteString.copyFromUtf8(sensitive))
+            .build();
+    assertThatThrownBy(() -> client.authorize(request, CREDENTIAL))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account returned invalid Game Logic intake authorization evidence")
+        .satisfies(
+            failure -> {
+              assertThat(failure.getCause()).isNull();
+              assertThat(failure.getMessage()).doesNotContain(sensitive);
+            });
+    assertThat(calls).hasValue(1);
   }
 
   private void start(GameLogicIntakeSourceReadTransportTest.TestIdentity identity)

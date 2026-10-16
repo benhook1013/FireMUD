@@ -96,6 +96,7 @@ public final class GameLogicIntakeAuthorizationReadClient
       buildStub(ManagedChannel channel) {
     String expectedPeerUri = "spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service";
     return AccountGameLogicIntakeAuthorizationReadServiceGrpc.newBlockingStub(channel)
+        .withMaxInboundMessageSize(GameLogicIntakeAuthorizationGrpcCodec.MAX_WIRE_BYTES)
         .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedPeerUri))
         .withCompression("gzip");
