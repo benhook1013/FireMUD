@@ -135,3 +135,8 @@ Entry format:
   - Context: An initial ControlUI token expiry check became stale across later owner locks in both current-actor paths. Registry cleanup retention and authorization-reference expiry did not replace the original token's validity boundary.
   - Observation: The focused native fixture advances the existing actor clock at the real locking read: the old code entered both callbacks after expiry; the correction rejects them without changing the original row while preserving exact held-order recovery.
   - Expected pattern: Keep current authorization and historical recovery distinct when reconciling displaced guards.
+
+- `2026-10-16`: Compare the complete original validity interval at one owner boundary
+  - Context: original creator callbacks can wait for Account owner locks after initial token verification.
+  - Observation: an expiry-only final check misses a clock observation before the original not-before bound; registry cleanup retention and authorization-reference expiry do not define the original token's full interval.
+  - Expected pattern: use one existing-clock observation for the canonical original `issuedAt <= now < expiresAt` interval, test both denial bounds and exact lower-bound equality, preserve immutable evidence, and keep historical exact-order recovery separate from fresh authorization.

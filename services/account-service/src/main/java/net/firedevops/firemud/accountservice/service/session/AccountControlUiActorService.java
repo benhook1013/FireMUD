@@ -168,7 +168,7 @@ public final class AccountControlUiActorService {
           if (!committed.tokenHash().equals(tokenHash)) {
             throw denied();
           }
-          requireUnexpiredOriginalToken(stored);
+          requireCurrentOriginalToken(stored);
           return action.apply(new Current(stored, current));
         });
   }
@@ -224,13 +224,17 @@ public final class AccountControlUiActorService {
               || !Arrays.equals(committed.activeRegistry, exactRegistry)) {
             throw denied();
           }
-          requireUnexpiredOriginalToken(committed);
+          requireCurrentOriginalToken(committed);
           return action.apply(new Current(committed, current));
         });
   }
 
-  private void requireUnexpiredOriginalToken(AccountControlUiIssuanceRepository.Stored original) {
-    if (original.expiresAt == null || !clock.instant().isBefore(original.expiresAt)) {
+  private void requireCurrentOriginalToken(AccountControlUiIssuanceRepository.Stored original) {
+    var now = clock.instant();
+    if (original.issuedAt == null
+        || original.expiresAt == null
+        || now.isBefore(original.issuedAt)
+        || !now.isBefore(original.expiresAt)) {
       throw denied();
     }
   }

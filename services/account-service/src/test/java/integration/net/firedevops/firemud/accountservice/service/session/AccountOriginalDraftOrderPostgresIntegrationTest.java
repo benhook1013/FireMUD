@@ -89,6 +89,28 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
   @ValueSource(booleans = {true, false})
   void originalCreatorExpiryAtFinalOwnerLockDeniesCurrentCallback(
       boolean signedCredential, @TempDir Path proofDirectory) throws Exception {
+    assertOriginalCreatorTimeAtFinalOwnerLockDeniesCurrentCallback(
+        signedCredential, proofDirectory, Duration.ofMinutes(10));
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void originalCreatorNotBeforeAtFinalOwnerLockDeniesCurrentCallback(
+      boolean signedCredential, @TempDir Path proofDirectory) throws Exception {
+    assertOriginalCreatorTimeAtFinalOwnerLockDeniesCurrentCallback(
+        signedCredential, proofDirectory, Duration.ofMinutes(-10));
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void originalCreatorIssuedAtEqualityAtFinalOwnerLockAllowsCurrentCallback(
+      boolean signedCredential, @TempDir Path proofDirectory) throws Exception {
+    assertOriginalCreatorTimeAtFinalOwnerLockDeniesCurrentCallback(
+        signedCredential, proofDirectory, Duration.ZERO);
+  }
+
+  private void assertOriginalCreatorTimeAtFinalOwnerLockDeniesCurrentCallback(
+      boolean signedCredential, Path proofDirectory, Duration clockChange) throws Exception {
     var clock = new ActorClock();
     try (var fixture =
         new AccountControlUiOriginalOrderFixture(
@@ -114,6 +136,16 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
                               + "WHERE token_hash=? AND status='COMMITTED'",
                           tokenHash)
                       .get("token_jti", UUID.class));
+      long issuedAt =
+          java.util.Objects.requireNonNull(
+              f.tx(
+                  () ->
+                      f.dsl
+                          .fetchSingle(
+                              "SELECT issued_at_epoch_second FROM account_control_ui_issuance_operations "
+                                  + "WHERE token_jti=?",
+                              jti)
+                          .get("issued_at_epoch_second", Long.class)));
       var before =
           f.tx(
               () ->
@@ -122,9 +154,9 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
                           + "FROM account_control_ui_issuance_operations a WHERE token_jti=?",
                       jti));
       var callback = new AtomicBoolean();
-      var clockAdvanced = new AtomicBoolean();
+      var clockChanged = new AtomicBoolean();
       var originalListeners = f.dsl.configuration().executeListenerProviders();
-      var expiryAtOwnerLock =
+      var timeChangeAtOwnerLock =
           new DefaultExecuteListenerProvider(
               new DefaultExecuteListener() {
                 @Override
@@ -133,17 +165,21 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
                   if (sql != null
                       && sql.contains("account_control_ui_issuance_operations")
                       && sql.contains("FOR UPDATE")
-                      && clockAdvanced.compareAndSet(false, true)) {
+                      && clockChanged.compareAndSet(false, true)) {
                     // The real locking read has completed; simulate elapsed time at this precise
                     // boundary.
                     // This is deterministic temporal-boundary proof, not physical lock-contention
                     // proof.
-                    clock.advance(Duration.ofMinutes(10));
+                    if (clockChange.isZero()) {
+                      clock.freezeAt(Instant.ofEpochSecond(issuedAt));
+                    } else {
+                      clock.advance(clockChange);
+                    }
                   }
                 }
               });
       var listeners = java.util.Arrays.copyOf(originalListeners, originalListeners.length + 1);
-      listeners[originalListeners.length] = expiryAtOwnerLock;
+      listeners[originalListeners.length] = timeChangeAtOwnerLock;
       f.dsl.configuration().set(listeners);
       try {
         Throwable failure =
@@ -158,7 +194,7 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
                             issued.environment(),
                             current -> {
                               callback.set(true);
-                              return "must not authorize";
+                              return "callback invoked";
                             });
                   } else {
                     issued
@@ -170,13 +206,20 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
                             issued.environment(),
                             current -> {
                               callback.set(true);
-                              return "must not authorize";
+                              return "callback invoked";
                             });
                   }
                 });
-        assertThat(clockAdvanced).isTrue();
-        assertThat(callback).isFalse();
-        assertThat(failure).isInstanceOf(IllegalStateException.class);
+        assertThat(clockChanged).isTrue();
+        assertThat(clock.instant().isBefore(Instant.ofEpochSecond(issuedAt)))
+            .isEqualTo(clockChange.isNegative());
+        assertThat(callback.get()).isEqualTo(clockChange.isZero());
+        if (clockChange.isZero()) {
+          assertThat(clock.instant()).isEqualTo(Instant.ofEpochSecond(issuedAt));
+          assertThat(failure).isNull();
+        } else {
+          assertThat(failure).isInstanceOf(IllegalStateException.class);
+        }
         assertThat(
                 f.tx(
                     () ->
@@ -468,6 +511,11 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
 
   private static final class ActorClock extends Clock {
     private Duration offset = Duration.ZERO;
+    private Instant frozen;
+
+    void freezeAt(Instant value) {
+      frozen = value;
+    }
 
     void advance(Duration amount) {
       offset = offset.plus(amount);
@@ -478,11 +526,11 @@ class AccountOriginalDraftOrderPostgresIntegrationTest {
     }
 
     public Clock withZone(ZoneId zone) {
-      return Clock.offset(Clock.system(zone), offset);
+      return frozen == null ? Clock.offset(Clock.system(zone), offset) : Clock.fixed(frozen, zone);
     }
 
     public Instant instant() {
-      return Instant.now().plus(offset);
+      return frozen == null ? Instant.now().plus(offset) : frozen;
     }
   }
 }
