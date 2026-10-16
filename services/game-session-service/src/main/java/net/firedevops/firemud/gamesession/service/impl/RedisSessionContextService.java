@@ -10,6 +10,7 @@ import java.util.Optional;
 import java.util.Set;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SessionCallback;
@@ -218,7 +219,7 @@ public final class RedisSessionContextService implements SessionContextService {
     try {
       return Optional.ofNullable((SessionContext) redisTemplate.opsForValue().get(key));
     } catch (SerializationException | ClassCastException ex) {
-      throw new IllegalStateException("Retained session context is unreadable", ex);
+      throw new SessionContextUnavailableException("Retained session context is unreadable", ex);
     }
   }
 

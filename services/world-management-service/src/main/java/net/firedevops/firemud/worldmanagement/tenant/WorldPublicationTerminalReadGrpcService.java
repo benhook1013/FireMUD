@@ -8,6 +8,7 @@ import net.firedevops.firemud.common.gamedesign.GameDesignPublicationTerminalEvi
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadEvidence;
 import net.firedevops.firemud.common.publication.WorldPublicationTerminalReadGrpcCodec;
+import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.worldmanagement.v1.ReadPublicationTerminalRequest;
 import net.firedevops.firemud.worldmanagement.v1.ReadPublicationTerminalResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldPublicationTerminalReadServiceGrpc;
@@ -91,9 +92,11 @@ public final class WorldPublicationTerminalReadGrpcService
     }
     if (!("spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service").equals(peer.uri())
         || !peer.isService("account-service")
-        || !peer.isInNamespace(workloadNamespace)) {
+        || !peer.isInNamespace(workloadNamespace)
+        || SessionContext.hasAuthenticatedCallerContext()) {
       throw Status.PERMISSION_DENIED
-          .withDescription("Exact same-namespace Account workload required")
+          .withDescription(
+              "Exact same-namespace Account workload without end-user context required")
           .asRuntimeException();
     }
   }

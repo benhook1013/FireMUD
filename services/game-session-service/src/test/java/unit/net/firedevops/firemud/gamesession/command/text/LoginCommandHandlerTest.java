@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleServi
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +41,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 @SuppressWarnings("unchecked")
 class LoginCommandHandlerTest {
@@ -360,18 +362,48 @@ class LoginCommandHandlerTest {
   }
 
   @Test
-  void bareLoginWithUnavailableFirstPartyContextDoesNotAuthenticateOrChangeOwnership() {
-    when(firstPartyConnectContextRegistry.find(1L))
+  void bareLoginWithTypedUnavailableSessionContextReturnsRetryableFailure() {
+    when(sessionContextService.findBySessionId(1L))
+        .thenThrow(new SessionContextUnavailableException("session context unavailable", null));
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    assertEquals(
+        "error.login.unavailable", ((ErrorOutput) result.outputs().get(0).payload()).messageKey());
+    verify(accountClient, never()).authenticate(anyString(), anyString());
+    verify(firstPartyConnectContextRegistry, never()).unregister(1L);
+    verify(gameInstanceRepository, never()).findById(anyLong());
+    verify(sessionContextService, never()).save(any());
+  }
+
+  @Test
+  void bareLoginWithGenericUnavailableSessionStoreReturnsRetryableFailure() {
+    when(sessionContextService.findBySessionId(1L))
         .thenThrow(new IllegalStateException("retained context store unavailable"));
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
     assertFalse(result.commandResult().accepted());
-    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
     verify(accountClient, never()).authenticate(anyString(), anyString());
-    verify(firstPartyConnectContextRegistry, never()).unregister(1L);
-    verify(gameInstanceRepository, never()).findById(anyLong());
+    verify(sessionContextService, never()).save(any());
+  }
+
+  @Test
+  void bareLoginWithUnavailableSessionStoreReturnsRetryableFailure() {
+    when(sessionContextService.findBySessionId(1L))
+        .thenThrow(new DataAccessResourceFailureException("session store unavailable"));
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("UNAVAILABLE", result.commandResult().errorCode());
+    verify(accountClient, never()).authenticate(anyString(), anyString());
     verify(sessionContextService, never()).save(any());
   }
 
@@ -1449,16 +1481,15 @@ class LoginCommandHandlerTest {
   void retainedUuidLoginDeniesBeforeLegacyAccountLookupOrSessionWrites() {
     var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
     FirstPartyConnectContext context = fixture.context();
-    when(firstPartyConnectContextRegistry.find(1L)).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.requireRetained(context))
-        .thenAnswer(invocation -> fixture.service.requireRetained(invocation.getArgument(0)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenAnswer(invocation -> Optional.of(fixture.service.requireRetained(context)));
     LoginCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN"), false);
     assertFalse(result.commandResult().accepted());
     assertEquals("FIRST_PARTY_AUTHORITY_UNAVAILABLE", result.commandResult().errorCode());
-    assertEquals(
-        net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture.ACCOUNT.toString(),
-        context.accountId());
+    assertNull(((ErrorOutput) result.outputs().get(0).payload()).messageKey());
+    verify(firstPartyConnectContextRegistry).find(1L);
+    verify(firstPartyConnectContextRegistry, never()).requireRetained(any());
     Mockito.verifyNoInteractions(
         accountClient, gameInstanceRepository, gameplayPresenceLifecycleService);
     verify(sessionContextService, never()).save(any());

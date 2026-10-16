@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +41,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 class PlayCommandHandlerTest {
   private static final String PLAY_COMMAND_NAME = "PLAY";
@@ -1510,6 +1512,41 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playWithUnavailableSessionContextReturnsRetryableAuthorityFailure() {
+    when(sessionContextService.findBySessionId(1L))
+        .thenThrow(new SessionContextUnavailableException("session context unavailable", null));
+
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.authority-unavailable");
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        sessionAuthenticationService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+  }
+
+  @Test
+  void playWithUnavailableSessionStoreReturnsRetryableAuthorityFailure() {
+    when(sessionContextService.findBySessionId(1L))
+        .thenThrow(new DataAccessResourceFailureException("session store unavailable"));
+
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.authority-unavailable");
+    Mockito.verifyNoInteractions(sessionAuthenticationService, gameplayPresenceLifecycleService);
+  }
+
+  @Test
   void playBlockedByEntitlementsReturnsBillingBlocked() {
     SessionContext context =
         new SessionContext(
@@ -1837,13 +1874,15 @@ class PlayCommandHandlerTest {
   void firstPartyPlayRereadsCanonicalOwnerThenDeniesBeforeLegacyAdmissionEffects() {
     var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
     FirstPartyConnectContext context = fixture.context();
-    when(firstPartyConnectContextRegistry.find(1L)).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.requireRetained(context))
-        .thenAnswer(invocation -> fixture.service.requireRetained(invocation.getArgument(0)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenAnswer(invocation -> Optional.of(fixture.service.requireRetained(context)));
     PlayCommandHandlingResult result =
         handler.handle(
             "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "hero"), "PLAY demo hero"));
     assertThat(result.commandResult().errorCode()).isEqualTo("FIRST_PARTY_AUTHORITY_UNAVAILABLE");
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey()).isNull();
+    Mockito.verify(firstPartyConnectContextRegistry).find(1L);
+    Mockito.verify(firstPartyConnectContextRegistry, never()).requireRetained(Mockito.any());
     Mockito.verify(fixture.routes, Mockito.atLeast(2))
         .readCurrentTarget(
             net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture.TENANT);
@@ -1857,12 +1896,39 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playDefensivelyDeniesFirstPartyContextAddedAfterTopLevelCheck() {
+    var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
+    FirstPartyConnectContext context = fixture.context();
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(Optional.empty())
+        .thenAnswer(invocation -> Optional.of(fixture.service.requireRetained(context)));
+    SessionContext legacyContext =
+        new SessionContext(
+            1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1"))
+        .thenReturn(Optional.of(legacyContext));
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "hero"), "PLAY demo hero"));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("FIRST_PARTY_AUTHORITY_UNAVAILABLE");
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey()).isNull();
+    Mockito.verify(firstPartyConnectContextRegistry, Mockito.times(2)).find(1L);
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+    Mockito.verify(sessionContextService, Mockito.never()).save(Mockito.any());
+  }
+
+  @Test
   void changedFirstPartyOwnerDeniesPlayBeforeLegacyAdmissionEffects() {
     var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
     FirstPartyConnectContext context = fixture.context();
-    when(firstPartyConnectContextRegistry.find(1L)).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.requireRetained(context))
-        .thenAnswer(invocation -> fixture.service.requireRetained(invocation.getArgument(0)));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenAnswer(invocation -> Optional.of(fixture.service.requireRetained(context)));
     when(fixture.routes.readCurrentTarget(
             net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture.TENANT))
         .thenReturn(null);

@@ -121,6 +121,74 @@ class WorldOriginalDraftGraphApplyGrpcServiceTest {
   }
 
   @Test
+  void classifiesTransactionCreationAndTimeoutFailuresAsUnavailable() {
+    var request = request("test");
+    var wire = WorldOriginalDraftGraphApplyGrpcCodec.toRequest(request);
+    for (RuntimeException storageFailure :
+        List.of(
+            new org.springframework.transaction.CannotCreateTransactionException(
+                "sensitive transaction setup detail"),
+            new org.springframework.transaction.TransactionTimedOutException(
+                "sensitive transaction timeout detail"))) {
+      var owner = mock(WorldOriginalDraftGraphApplicationService.class);
+      when(owner.apply(eq("test"), any(byte[].class))).thenThrow(storageFailure);
+      var grpc = new WorldOriginalDraftGraphApplyGrpcService(owner, "test");
+
+      var response = call(grpc, wire, peer("game-design-service", "test"));
+
+      assertThat(response.code()).isEqualTo(Status.Code.UNAVAILABLE);
+      assertThat(response.errorDescription)
+          .isEqualTo("World original apply storage unavailable")
+          .doesNotContain("sensitive");
+      assertThat(response.value).isNull();
+      assertThat(response.completed).isFalse();
+    }
+  }
+
+  @Test
+  void mapsUpstreamTransportStatusToRetryableOrSafePreconditionStatus() {
+    var owner = mock(WorldOriginalDraftGraphApplicationService.class);
+    var request = request("test");
+    when(owner.apply(eq("test"), any(byte[].class)))
+        .thenThrow(
+            Status.UNAVAILABLE.withDescription("account-upstream-sensitive").asRuntimeException())
+        .thenThrow(
+            Status.DEADLINE_EXCEEDED
+                .withDescription("account-deadline-sensitive")
+                .asRuntimeException())
+        .thenThrow(
+            Status.PERMISSION_DENIED
+                .withDescription("account-permission-sensitive")
+                .asRuntimeException());
+    var grpc = new WorldOriginalDraftGraphApplyGrpcService(owner, "test");
+    var wire = WorldOriginalDraftGraphApplyGrpcCodec.toRequest(request);
+
+    Collector unavailable = call(grpc, wire, peer("game-design-service", "test"));
+    assertThat(unavailable.code()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(unavailable.errorDescription)
+        .isEqualTo("World original apply owner is temporarily unavailable")
+        .doesNotContain("account-upstream-sensitive");
+
+    Collector deadline = call(grpc, wire, peer("game-design-service", "test"));
+    assertThat(deadline.code()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(deadline.errorDescription)
+        .isEqualTo("World original apply owner is temporarily unavailable")
+        .doesNotContain("account-deadline-sensitive");
+
+    Collector denied = call(grpc, wire, peer("game-design-service", "test"));
+    assertThat(denied.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(denied.errorDescription)
+        .isEqualTo("World original apply owner did not accept the request")
+        .doesNotContain("account-permission-sensitive");
+    assertThat(List.of(unavailable, deadline, denied))
+        .allSatisfy(
+            response -> {
+              assertThat(response.value).isNull();
+              assertThat(response.completed).isFalse();
+            });
+  }
+
+  @Test
   void deniesOwnerConflictAndMalformedReadbackRatherThanEmittingSuccess() {
     var owner = mock(WorldOriginalDraftGraphApplicationService.class);
     var request = request("test");
@@ -304,6 +372,7 @@ class WorldOriginalDraftGraphApplyGrpcServiceTest {
   private static final class Collector implements StreamObserver<ApplyOriginalDraftGraphResponse> {
     private ApplyOriginalDraftGraphResponse value;
     private Status.Code errorCode = Status.Code.OK;
+    private String errorDescription;
     private boolean completed;
 
     Status.Code code() {
@@ -317,7 +386,9 @@ class WorldOriginalDraftGraphApplyGrpcServiceTest {
 
     @Override
     public void onError(Throwable failure) {
-      errorCode = Status.fromThrowable(failure).getCode();
+      Status status = Status.fromThrowable(failure);
+      errorCode = status.getCode();
+      errorDescription = status.getDescription();
     }
 
     @Override

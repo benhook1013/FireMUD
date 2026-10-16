@@ -248,7 +248,8 @@ class FirstPartyConnectContextRedisIntegrationTest {
         properties,
         verificationKeys,
         routes,
-        Clock.fixed(Instant.ofEpochMilli(now), ZoneOffset.UTC));
+        Clock.fixed(Instant.ofEpochMilli(now), ZoneOffset.UTC),
+        new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
   }
 
   private byte[] rawValue(String key) {

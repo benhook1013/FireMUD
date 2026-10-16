@@ -477,8 +477,14 @@ public final class GatewayFirstPartyConnectContextEnvelope {
       return false;
     }
     if (value.indexOf(':') >= 0) {
+      if (!value.matches("[0-9a-f:]+")) {
+        return false;
+      }
       try {
         byte[] address = InetAddress.getByName(value).getAddress();
+        // InetAddress#getHostAddress emits the JDK's uncompressed IPv6 spelling. That spelling
+        // is the canonical address representation for this envelope, including the full eight
+        // groups; compressed IPv6 text is intentionally rejected.
         return address.length == 16
             && !isIpv4MappedIpv6(address)
             && InetAddress.getByAddress(address).getHostAddress().equals(value);
