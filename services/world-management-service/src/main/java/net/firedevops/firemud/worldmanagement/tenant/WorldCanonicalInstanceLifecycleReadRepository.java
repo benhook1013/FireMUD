@@ -686,12 +686,12 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
         || !startLocation
             .roomTemplateId()
             .equals(required(selected, "room_template_id", UUID.class))
-        || required(selected, "runtime_room_instance_id", Long.class)
-            != required(selected, "mapped_room_instance_id", Long.class)
-        || required(selected, "runtime_room_instance_id", Long.class)
-            != required(selected, "mapped_room_row_id", Long.class)
-        || required(selected, "runtime_room_instance_id", Long.class)
-            != required(selected, "actual_room_instance_id", Long.class)
+        || !required(selected, "runtime_room_instance_id", Long.class)
+            .equals(required(selected, "mapped_room_instance_id", Long.class))
+        || !required(selected, "runtime_room_instance_id", Long.class)
+            .equals(required(selected, "mapped_room_row_id", Long.class))
+        || !required(selected, "runtime_room_instance_id", Long.class)
+            .equals(required(selected, "actual_room_instance_id", Long.class))
         || !startLocation
             .roomTemplateId()
             .equals(required(selected, "mapped_template_id", UUID.class))
