@@ -134,6 +134,119 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @MockitoSpyBean private VersionAssetArtifactService versionAssetArtifactService;
 
   @Test
+  void publishAttemptSaveUsesRevisionCasAndRejectsStaleAndTerminalUpdates() {
+    String tenantId = isolatedTenantId();
+    Game game = new Game();
+    game.setTenantId(tenantId);
+    game.setName("publish-attempt-revision-proof-game");
+    gameRepository.save(game);
+
+    Version version = new Version();
+    version.setTenantId(tenantId);
+    version.setVersionNumber(1);
+    version.setVersionState(VersionLifecycleState.DRAFT);
+    version.setVersionStateEpoch(1L);
+    Version savedVersion = versionRepository.save(version);
+
+    PublishAttempt attempt = new PublishAttempt();
+    attempt.setTenantId(tenantId);
+    attempt.setPublishWorkflowId("publish-attempt-revision-cas-integration-test");
+    attempt.setPublishType(PublishType.FULL_VERSION);
+    attempt.setVersionId(savedVersion.getId());
+    attempt.setVersionNumber(savedVersion.getVersionNumber());
+    PublishAttempt inserted = publishAttemptRepository.save(attempt);
+    assertThat(inserted).isNotNull();
+    assertThat(inserted.getId()).isNotNull();
+    assertThat(inserted.getRevision()).isEqualTo(1L);
+    assertThat(inserted.getTenantId()).isEqualTo(tenantId);
+    assertThat(inserted.getPublishWorkflowId()).isEqualTo(attempt.getPublishWorkflowId());
+    assertThat(inserted.getVersionId()).isEqualTo(savedVersion.getId());
+    assertThat(inserted.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+    PublishAttempt insertedReadback =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    assertThat(insertedReadback.getId()).isEqualTo(inserted.getId());
+    assertThat(insertedReadback.getRevision()).isEqualTo(1L);
+    assertThat(insertedReadback.getTenantId()).isEqualTo(tenantId);
+    assertThat(insertedReadback.getVersionId()).isEqualTo(savedVersion.getId());
+    assertThat(insertedReadback.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+
+    PublishAttempt firstWriter =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    PublishAttempt staleWriter =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    firstWriter.setFailureMessage("first revision writer");
+    firstWriter = publishAttemptRepository.save(firstWriter);
+    assertThat(firstWriter.getId()).isEqualTo(inserted.getId());
+    assertThat(firstWriter.getRevision()).isEqualTo(2L);
+    assertThat(firstWriter.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+    assertThat(firstWriter.getFailureMessage()).isEqualTo("first revision writer");
+
+    var beforeStaleWrite =
+        dsl.fetchSingle(
+                "SELECT *, xmin::text AS xmin FROM publish_attempt WHERE id = ?", inserted.getId())
+            .intoMap();
+    staleWriter.setFailureMessage("stale revision writer");
+    assertThatThrownBy(() -> publishAttemptRepository.save(staleWriter))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("PUBLISH_ATTEMPT_CAS_CONFLICT");
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT *, xmin::text AS xmin FROM publish_attempt WHERE id = ?",
+                    inserted.getId())
+                .intoMap())
+        .isEqualTo(beforeStaleWrite);
+    PublishAttempt afterStaleWrite =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    assertThat(afterStaleWrite.getId()).isEqualTo(inserted.getId());
+    assertThat(afterStaleWrite.getRevision()).isEqualTo(2L);
+    assertThat(afterStaleWrite.getStatus()).isEqualTo(PublishAttemptStatus.PENDING);
+    assertThat(afterStaleWrite.getFailureMessage()).isEqualTo("first revision writer");
+    assertThat(afterStaleWrite.getFailureCode()).isNull();
+    assertThat(afterStaleWrite.getCompletedAt()).isNull();
+
+    afterStaleWrite.setStatus(PublishAttemptStatus.FAILED);
+    afterStaleWrite.setFailureCode("terminal-revision-proof");
+    afterStaleWrite.setCompletedAt(LocalDateTime.now());
+    PublishAttempt terminal = publishAttemptRepository.save(afterStaleWrite);
+    assertThat(terminal.getId()).isEqualTo(inserted.getId());
+    assertThat(terminal.getRevision()).isEqualTo(3L);
+    assertThat(terminal.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(terminal.getFailureMessage()).isEqualTo("first revision writer");
+    assertThat(terminal.getFailureCode()).isEqualTo("terminal-revision-proof");
+    var beforeTerminalWrite =
+        dsl.fetchSingle(
+                "SELECT *, xmin::text AS xmin FROM publish_attempt WHERE id = ?", terminal.getId())
+            .intoMap();
+    terminal.setFailureMessage("terminal rows cannot be rewritten");
+    assertThatThrownBy(() -> publishAttemptRepository.save(terminal))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("PUBLISH_ATTEMPT_CAS_CONFLICT");
+    assertThat(
+            dsl.fetchSingle(
+                    "SELECT *, xmin::text AS xmin FROM publish_attempt WHERE id = ?",
+                    terminal.getId())
+                .intoMap())
+        .isEqualTo(beforeTerminalWrite);
+    PublishAttempt afterTerminalWrite =
+        publishAttemptRepository
+            .findByPublishWorkflowId(attempt.getPublishWorkflowId())
+            .orElseThrow();
+    assertThat(afterTerminalWrite.getId()).isEqualTo(inserted.getId());
+    assertThat(afterTerminalWrite.getRevision()).isEqualTo(3L);
+    assertThat(afterTerminalWrite.getStatus()).isEqualTo(PublishAttemptStatus.FAILED);
+    assertThat(afterTerminalWrite.getFailureMessage()).isEqualTo("first revision writer");
+    assertThat(afterTerminalWrite.getFailureCode()).isEqualTo("terminal-revision-proof");
+  }
+
+  @Test
   void fullVersionSealTransactionUsesExplicitReadCommittedIsolation() {
     AtomicReference<Integer> isolation = new AtomicReference<>();
 

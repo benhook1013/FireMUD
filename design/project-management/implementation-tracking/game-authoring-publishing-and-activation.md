@@ -6,6 +6,12 @@ This is a non-normative implementation tracker for game authoring, publishing, a
 
 ## Current Status
 
+### Publish-attempt revision and terminal retention proof
+
+The restored publish-attempt native regression reads two independent copies of a pending attempt, advances the winning revision from one to two and refuses the stale writer with the current CAS conflict code. A legal failure transition advances the revision to three; a later terminal rewrite is refused. Both refusals preserve the complete persisted attempt row and PostgreSQL row version. The existing transaction-boundary case separately confirms an actual writable Read Committed owner transaction.
+
+Both focused native cases freshly pass with zero failures, errors or skips. Canonical formatting, style, Integration Checkstyle and SpotBugs pass; passive capture identifies the one run-owned PostgreSQL container and independently confirms its absence after completion. This proves local repository revision and terminal guards. It does not execute the held publication finalizer or enable legacy digest backfill, public publication, creator or issuer authority, currentness, activation or a genuine Gameplay handoff. Other publication transaction cases retain their preceding attribution; no production, installed migration or registration changes are included.
+
 ### Canonical Version identity storage proof
 
 The restored Version identity native owner test preserves the original retained Version fields and row version through the V35.1 identity migration and later default migrations, leaves its canonical identity unmapped and refuses a later identity backfill. Fresh Version creation and update retain the exact persisted Game provenance, including a Game retained through V29. Wrong-tenant, missing, null and nil canonical lookups preserve Version and Game row versions; database guards reject identity replacement, mismatched source, nil identity and canonical truncation, while the explicitly unmapped retained Version remains deletable.
