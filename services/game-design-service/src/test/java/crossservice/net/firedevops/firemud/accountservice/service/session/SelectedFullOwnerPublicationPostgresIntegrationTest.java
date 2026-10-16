@@ -291,11 +291,7 @@ class SelectedFullOwnerPublicationPostgresIntegrationTest {
             .orElseThrow();
     assertThat(synchronizedSources.command().definitions()).isEmpty();
     var gameplaySnapshot = synchronizedSources.gameplayEvidence().orElseThrow();
-    assertThat(
-            gameplaySnapshot
-                .manifest()
-                .families()
-                .get(GameplayRuleManifest.Family.COMMANDS))
+    assertThat(gameplaySnapshot.manifest().families().get(GameplayRuleManifest.Family.COMMANDS))
         .extracting(GameplayRuleManifest.Definition::key)
         .containsExactly("LOOK");
     var gameplaySource = new GameplayRuleSelectedSource(gameplaySnapshot.canonicalJson());
