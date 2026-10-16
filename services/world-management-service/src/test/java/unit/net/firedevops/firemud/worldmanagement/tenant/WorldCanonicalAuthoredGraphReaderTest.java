@@ -44,14 +44,19 @@ class WorldCanonicalAuthoredGraphReaderTest {
   @Test
   void rejectsUnknownMissingDuplicateTrailingAndWrongRepresentations() throws Exception {
     String good = graphJson();
+    for (String bad : List.of(
+        good.replace(
+            "\"schemaVersion\":\"2\"", "\"schemaVersion\":\"2\",\"schemaVersion\":\"2\""),
+        good + " {}")) {
+      assertThat(bad).isNotEqualTo(good);
+      assertThatThrownBy(() -> new WorldCanonicalAuthoredGraphReader().read(plan(), bytes(bad)))
+          .isInstanceOf(tools.jackson.core.JacksonException.class);
+    }
     for (String bad :
         List.of(
             good.replace("\"schemaVersion\":\"2\"", "\"schemaVersion\":\"1\""),
             good.replace("\"schemaVersion\":\"2\"", "\"schemaVersion\":2"),
             good.replace("\"schemaVersion\":\"2\"", "\"schemaVersion\":\"2\",\"extra\":true"),
-            good.replace(
-                "\"schemaVersion\":\"2\"", "\"schemaVersion\":\"2\",\"schemaVersion\":\"2\""),
-            good + " {}",
             good.replace("\"family\":\"REGION\"", "\"family\":\"ROOM\""),
             good.replace("\"private_row_key\":11", "\"private_row_key\":\"11\""),
             good.replace("\"private_row_key\":11", "\"private_row_key\":0"),
@@ -61,8 +66,9 @@ class WorldCanonicalAuthoredGraphReaderTest {
             good.replace(
                 "\"canonicalVersionId\":\"" + VERSION, "\"canonicalVersionId\":\"" + REGION),
             good.replace("\"name\":\"region\"", "\"name\":\"region\",\"extra\":null"))) {
+      assertThat(bad).isNotEqualTo(good);
       assertThatThrownBy(() -> new WorldCanonicalAuthoredGraphReader().read(plan(), bytes(bad)))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class);
     }
   }
 
@@ -111,17 +117,18 @@ class WorldCanonicalAuthoredGraphReaderTest {
     var wrongSchema = original.deepCopy();
     ((tools.jackson.databind.node.ObjectNode) wrongSchema).put("schemaVersion", "2");
     for (var malformed : List.of(missing, changed, unsupported, extra, wrongSchema)) {
+      assertThat(malformed).isNotEqualTo(original);
       assertThatThrownBy(
               () ->
                   new WorldCanonicalAuthoredGraphReader()
                       .read(selected, json.writeValueAsBytes(malformed)))
-          .isInstanceOf(RuntimeException.class);
+          .isExactlyInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class);
     }
     assertThatThrownBy(
             () ->
                 new WorldCanonicalAuthoredGraphReader()
                     .read(plan(), json.writeValueAsBytes(original)))
-        .isInstanceOf(RuntimeException.class);
+        .isExactlyInstanceOf(WorldDesignPublicationFenceRepository.ConflictException.class);
     assertThat(
             new WorldCanonicalAuthoredGraphReader()
                 .read(plan(), bytes(graphJson()))
