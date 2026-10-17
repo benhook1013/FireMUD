@@ -182,8 +182,9 @@ Entry format:
   - Expected pattern: Preserve completed review evidence and surface the exact capture incompatibility without silently replacing counts or requiring a quota reset. Overseer received the retained diagnostic; Gameplay made no database or installed-runtime bypass.
   - Reconsideration trigger: when the trailing-content cause after the final `cr-comment:v1` marker is identified, or a repeated capture of the affected finalized predecessor completes without the warning, verify the outcome and revisit this retained capture limitation.
 
-- 2026-10-17 — A validation allowance of NONE includes whitespace checks.
-  - Observation: A historical-test receiving helper ran `git diff --check` despite an explicit validation allowance of NONE. It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
+- `2026-10-17`: A validation allowance of NONE includes whitespace checks.
+  - Context: A historical-test receiving helper ran `git diff --check` despite an explicit validation allowance of NONE.
+  - Observation: It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
 
 - `2026-10-18`: Retain admission context for independent review refusals
