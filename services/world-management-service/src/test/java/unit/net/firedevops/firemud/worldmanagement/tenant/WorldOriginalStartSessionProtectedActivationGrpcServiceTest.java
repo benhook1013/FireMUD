@@ -28,7 +28,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  */
 class WorldOriginalStartSessionProtectedActivationGrpcServiceTest {
   private static final String OWNER_DESCRIPTION =
-      "World protected activation owner request is unavailable";
+      "World protected activation owner request could not complete";
   private static final Metadata.Key<String> PRIVATE_TRAILER =
       Metadata.Key.of("private-owner-detail", Metadata.ASCII_STRING_MARSHALLER);
 
@@ -119,7 +119,7 @@ class WorldOriginalStartSessionProtectedActivationGrpcServiceTest {
 
       var failure = invoke(service, caller, request);
       Status.Code expectedCode =
-          preserved.contains(sourceCode) ? sourceCode : Status.Code.UNAVAILABLE;
+          preserved.contains(sourceCode) ? sourceCode : Status.Code.FAILED_PRECONDITION;
 
       assertThat(failure.failureCode()).as("source status %s", sourceCode).isEqualTo(expectedCode);
       assertThat(failure.failureDescription()).isEqualTo(OWNER_DESCRIPTION);
