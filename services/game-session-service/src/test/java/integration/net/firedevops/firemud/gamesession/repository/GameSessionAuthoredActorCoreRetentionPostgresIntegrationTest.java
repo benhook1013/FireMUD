@@ -545,7 +545,7 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
     }
 
     try (Fixture fixture = newFixture()) {
-      LaunchInputs launch = fixture.createLaunch(Duration.ofSeconds(2));
+      LaunchInputs launch = fixture.createLaunch(Duration.ofSeconds(15));
       String operationId = launch.tuple().controlPlaneRequestId();
       LaunchPinBytes pinBytes = retainedLaunchPinBytes(fixture, launch);
       RowSnapshot selectionBefore =
@@ -562,7 +562,58 @@ class GameSessionAuthoredActorCoreRetentionPostgresIntegrationTest {
               "target_namespace = ? AND control_plane_request_id = ?",
               NAMESPACE,
               operationId);
-      Thread.sleep(Duration.ofMillis(2200).toMillis());
+      var leaseExpiry =
+          fixture
+              .dsl()
+              .fetchOne(
+                  "SELECT lease_expires_at <= clock_timestamp() AS expired "
+                      + "FROM game_session_start_session_operator_attempt "
+                      + "WHERE target_namespace = ? AND control_plane_request_id = ? "
+                      + "AND owner_attempt_id = ? AND owner_mutation_id = ? AND owner_fence = ?",
+                  NAMESPACE,
+                  operationId,
+                  launch.attempt().ownerAttemptId(),
+                  launch.attempt().ownerMutationId(),
+                  launch.attempt().ownerFence());
+      assertThat(leaseExpiry)
+          .as("exact original owner attempt remains present before the expiry wait")
+          .isNotNull();
+      Boolean expired =
+          Objects.requireNonNull(
+              leaseExpiry.get("expired", Boolean.class),
+              "exact original owner attempt expiry state is required");
+      assertThat(expired)
+          .as("original owner claim must remain live before waiting for its immutable deadline")
+          .isFalse();
+
+      long expiryWaitDeadline = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+      while (!expired && System.nanoTime() < expiryWaitDeadline) {
+        Thread.sleep(Duration.ofMillis(100).toMillis());
+        leaseExpiry =
+            fixture
+                .dsl()
+                .fetchOne(
+                    "SELECT lease_expires_at <= clock_timestamp() AS expired "
+                        + "FROM game_session_start_session_operator_attempt "
+                        + "WHERE target_namespace = ? AND control_plane_request_id = ? "
+                        + "AND owner_attempt_id = ? AND owner_mutation_id = ? AND owner_fence = ?",
+                    NAMESPACE,
+                    operationId,
+                    launch.attempt().ownerAttemptId(),
+                    launch.attempt().ownerMutationId(),
+                    launch.attempt().ownerFence());
+        assertThat(leaseExpiry)
+            .as("exact original owner attempt remains present while polling its expiry")
+            .isNotNull();
+        expired =
+            Objects.requireNonNull(
+                leaseExpiry.get("expired", Boolean.class),
+                "exact original owner attempt expiry state is required");
+      }
+      assertThat(expired)
+          .as("original owner claim reaches its immutable database-clock deadline")
+          .isTrue();
+
       var associationReadRepository =
           new CanonicalGameInstanceLaunchAssociationRepository(fixture.dsl(), NAMESPACE);
       assertThat(
