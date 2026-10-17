@@ -212,9 +212,9 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
   private static void assertSanitizedFailure(
       RecordingObserver<?> observer, Status.Code expectedCode, String secret) {
     assertThat(observer.error).isEqualTo(expectedCode);
-    assertThat(observer.failure).isInstanceOf(StatusRuntimeException.class).hasNoCause();
-    assertThat(observer.failure.toString()).doesNotContain(secret);
-    assertThat(Status.fromThrowable(observer.failure).getDescription()).isNull();
+    assertThat(observer.failureHasCause).isFalse();
+    assertThat(observer.failureText).doesNotContain(secret);
+    assertThat(observer.failureDescription).isNull();
     assertThat(observer.value).isNull();
     assertThat(observer.completed).isFalse();
   }
@@ -240,7 +240,9 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
   private static final class RecordingObserver<T> implements StreamObserver<T> {
     private T value;
     private Status.Code error;
-    private Throwable failure;
+    private String failureText;
+    private String failureDescription;
+    private boolean failureHasCause;
     private boolean completed;
 
     @Override
@@ -249,14 +251,12 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
     }
 
     @Override
-    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
-        value = "EI_EXPOSE_REP2",
-        justification =
-            "The test intentionally retains the RPC failure to assert diagnostic and cause sanitization.")
     public void onError(Throwable failure) {
       assertThat(failure).isInstanceOf(StatusRuntimeException.class);
       error = Status.fromThrowable(failure).getCode();
-      this.failure = failure;
+      failureText = failure.toString();
+      failureDescription = Status.fromThrowable(failure).getDescription();
+      failureHasCause = failure.getCause() != null;
     }
 
     @Override
