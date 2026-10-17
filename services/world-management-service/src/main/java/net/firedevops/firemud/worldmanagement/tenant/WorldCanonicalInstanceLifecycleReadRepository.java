@@ -64,6 +64,21 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
           .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
           .build();
 
+  // Shared with the physical owner-composition proof so EXPLAIN uses this exact production query.
+  static final String OPERATIONAL_REGION_ASSIGNMENTS_SQL =
+      "SELECT m.id AS mapping_id,m.world_instance_id AS mapping_world_instance_id,"
+          + "m.canonical_game_instance_id AS mapping_game_instance_id,m.family AS mapping_family,"
+          + "m.template_id AS mapping_template_id,m.runtime_row_id AS mapping_runtime_row_id,"
+          + "m.runtime_identity AS mapping_runtime_identity,ri.id AS region_row_id,"
+          + "ri.world_instance_id AS region_world_instance_id,ri.tenant_id AS region_tenant_key,"
+          + "ri.game_instance_id AS region_game_instance_key,"
+          + "ri.canonical_region_instance_id,ri.operational_region_id "
+          + "FROM (SELECT * FROM world_canonical_instance_topology_identity "
+          + "WHERE world_instance_id=? AND family='REGION') m "
+          + "FULL OUTER JOIN (SELECT * FROM region_instance "
+          + "WHERE world_instance_id=? OR (tenant_id=? AND game_instance_id=?)) ri "
+          + "ON m.runtime_row_id=ri.id";
+
   private final DSLContext dsl;
   private final TransactionTemplate transaction;
   private final WorldCanonicalInstanceAssociationRepository associationRepository;
@@ -557,17 +572,7 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
     }
     var rows =
         dsl.fetch(
-            "SELECT m.id AS mapping_id,m.world_instance_id AS mapping_world_instance_id,"
-                + "m.canonical_game_instance_id AS mapping_game_instance_id,m.family AS mapping_family,"
-                + "m.template_id AS mapping_template_id,m.runtime_row_id AS mapping_runtime_row_id,"
-                + "m.runtime_identity AS mapping_runtime_identity,ri.id AS region_row_id,"
-                + "ri.world_instance_id AS region_world_instance_id,ri.tenant_id AS region_tenant_key,"
-                + "ri.game_instance_id AS region_game_instance_key,"
-                + "ri.canonical_region_instance_id,ri.operational_region_id "
-                + "FROM world_canonical_instance_topology_identity m FULL OUTER JOIN region_instance ri "
-                + "ON m.family='REGION' AND m.runtime_row_id=ri.id "
-                + "WHERE (m.world_instance_id=? AND m.family='REGION') OR ri.world_instance_id=? "
-                + "OR (ri.tenant_id=? AND ri.game_instance_id=?)",
+            OPERATIONAL_REGION_ASSIGNMENTS_SQL,
             worldInstanceId,
             worldInstanceId,
             tenantKey,
