@@ -6,7 +6,7 @@ This document defines the Game Logic Service REST and gRPC surfaces, exposure cl
 
 - The current Game Logic adapters still return `shared.v1.ErrorDetail` for many failures and record `grpc.app_error`; that is implementation drift and a migration/proof gap, not a second contract.
 - Causal-read status is target-only: the complete `CausalReadFence` and participant-proof enforcement described below are not current behavior. The live `ResolveLook` request/proto and World/Entity adapters remain floor-free, so protobuf propagation, adapter evidence, and focused causal-floor proof are implementation gaps.
-- The publish-gate digest handler enforces the distinct workload/method authorization and exact Game Design publication binding implemented by `PublicationReadGuard` and `PublicationDigestRequestBinding` (tenant, version scope, stable publish request, derived workflow identity, and request digest), with focused denial and response-scope checks. For a full-version request, the owner digest fails closed because Game Logic has no owner-local manifest and provenance sufficient to attest the version's rule inputs; it does not attest those inputs as an empty manifest. End-to-end full-version publication therefore remains blocked. The target workload, tenant/scope/request/workflow/digest context, exact response identity comparison, and denial proof are canonical in [Game Design Version Control](../game-design-service/version-control.md#owner-to-owner-digest-authorization-and-tenant-identity).
+- The prepared publish-gate adapter can read the exact retained owner terminal, selected source and manifest through `GameLogicPublicationSourceReadService`, preserving the original authorization and both manifest/ability digests. The default Spring composition and the no-receipt lookup remain denied; the standalone adapter and focused proof are unqualified and establish no genuine upstream authority or publication enablement. The canonical selected contract is owned by [Game Design Version Control](../game-design-service/version-control.md#selected-full-publication-profile), with source and composition limits in the [selected-full owner tracker](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#selected-full-owner-publication-preparation).
 
 ### Player execution context
 
@@ -52,6 +52,16 @@ Expected response:
 ```
 
 ## gRPC
+
+### Selected-source intake command
+
+The standalone [`RetainGameplayRuleIntake`](../../../../protos/game-logic/v1/gameplay_rule_intake_service.proto) method admits only the exact verified same-namespace Game Design workload, authenticated before decoding. Its versioned request carries independent transport correlation and the complete original Account intake authorization bytes/digest; the closed response echoes the exact binding and original immutable terminal. The intake owner rejects the canonical original Draft and Game Logic intake-authorization credential contexts; player or operator context supplies no intake mutation authority. A service identity alone does not authorize retention: the exact Account HELD operation and synchronized Game Design source remain mandatory under the [selected-input owner contract](runtime-and-data.md#draft-digest-contract). The adapter is unregistered and grants no publication, activation or runtime permission.
+
+### Selected-source terminal read
+
+The separate, unregistered [`ReadGameplayRuleIntakeTerminal`](../../../../protos/game-logic/v1/gameplay_rule_intake_terminal_service.proto) method accepts only verified same-namespace Account callers, authenticating before decoding source evidence. Its versioned request binds the namespace, fresh read correlation and exact original Account intake authorization bytes/digest. Its closed response echoes that tuple and returns either the original canonical terminal and digest or explicit absence; absence is not an abort. The read is allowlisted to Account and performs no source creation, retention, abort, settlement, or admission. The [Account owner contract](../account-service/api-contracts.md#grpc-apis) defines held-order fencing and exact settlement authority; the [runtime/data owner](runtime-and-data.md#draft-digest-contract) defines intake and definitive-abort semantics. The [selected intake tracker](../../../project-management/implementation-tracking/gameplay-rules-entities-and-effects.md#selected-gameplay-rule-retention-and-receipt-composition) and [authoring tracker](../../../project-management/implementation-tracking/game-authoring-publishing-and-activation.md#current-status) records unregistered transport, bounded-message and physical proof gates.
+
+### Gameplay methods
 
 - `Ping(PingRequest) returns (PingResponse)` is the basic connectivity check defined in [`game_logic_service.proto`](../../../../protos/game-logic/v1/game_logic_service.proto).
 - `ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse)` evaluates a parsed gameplay command and returns the outcome.

@@ -121,6 +121,8 @@ Entry format:
 
 - `2026-10-16`: A multiline conflict-marker resolver truncated three trailing file portions during an unpublished selected-owner carry. Native `git merge-file` reconstruction from the exact parents recovered the complete files. Bound marker lines explicitly, verify conflict counts and file tails, and inspect the final net diff against both original parents before committing; a clean whitespace check alone cannot detect lost content.
 
+- 2026-10-15: Selected-full digest fixture R41/R42 produced different fixed-golden values from otherwise unchanged source. The fixture serialized `Map.of` payloads into strings inside a canonical binding; outer canonicalization preserves string contents and therefore does not normalize the inner map order. Restored explicit RFC 8785 normalization of each fixture payload before binding creation. Updating a golden from one failing run alone did not establish a stable vector; retain equality/mutation checks and verify the normalized vector before claiming deterministic proof. No production digest or retained bytes were changed. R44 and the fresh R45 JVM agree on the normalized vector; all 686 GDS unit cases pass in R45.
+
 - `2026-10-15`: Preserve receiver status when relocating inherited tracker proof
   - Context: the local #3224 parent reconciliation relocated inherited LOGIN proof into a dedicated section. Selecting the complete incoming tracker plus one receiver proof paragraph also displaced the receiver's first-party denial and historical-proof qualifications. The candidate had not been published.
   - Observation: verifying nonoverlapping blobs and paragraphs unique against the merge base missed receiver status that also appeared in the base. Main later compared the complete receiver document, restored every original receiver paragraph byte-for-byte, and retained the incoming concise status and relocated proof. No production source changed.
@@ -149,6 +151,8 @@ Entry format:
   - Reconsideration trigger: a subsequent canonical attempt completes with terminal capture, or bounded process evidence identifies why the previous owner ended.
 
 - `2026-10-16`: Qualify tenant mutation predicates before relying on filtered readback or later owner guards. The template repository's global-ID update could rewrite a retained row's tenant before returning it under the supplied tenant; a tenant-filtered readback did not protect the original row. Test controlled pre-phase rows as well as later guarded owners: the native counterexample changed the complete row and `xmin`, while the restored exact tenant predicate preserves both owner rows and their versions. Keep the create-only ID refusal before mapper/repository access, and separate this owner-local SQL proof from authenticated creator or hosted-content readiness.
+
+- `2026-10-16`: Check existing successor repairs before reworking a failed fixture. While fixing the three #3251 publication transaction failures, two focused local gates failed before the worker noticed that the already-reconciled #2967 tree contained the complete selected-full schema-4 fixture repair. The first attempts corrected stale collector stubs but missed the dependent fixture profile. Compare the bounded failing test and its called helpers against known receiving successors before changing or rerunning it; reuse the complete canonical repair without removing assertions. The exact four-path backport at `4265a81f008d0dbd343cd9adf6413bd3ac5c8904` then passed66 unit and10 native cases. The failed attempts retain their original outcomes; this lesson does not establish a general infrastructure cause.
 
 - `2026-10-16`: Derive focused Gradle selectors from declared Java packages
   - Context: a Gameplay capture proof supplied `integration.net...` as the selector, and Gradle executed no tests before failing discovery.
@@ -200,3 +204,15 @@ Entry format:
   - Observation: It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
   - Recurrence (`2026-10-18`, #3249): a parent-carry helper again ran a scoped `git diff --cached --check` under an explicit validation allowance of NONE. The check exited zero and grants no proof credit. Main corrected the contradictory no-validation claim and retained ownership of the named integration gate.
+
+- `2026-10-18`: Follow up the PostgreSQL endpoint refusal with one scoped reproduction
+  - Context: the new Automation Flyway test-time refusal met the reconsideration trigger in the `2026-10-13` PostgreSQL endpoint-diagnosis observation.
+  - Observation: one focused five-store reproduction passed with zero failures, errors or skips and no endpoint refusal. All five exact containers were observed running with host-port bindings and absent after the Gradle child ended. Six inspect errors and 20 unparsed records arose only after the case completed during sequential teardown, so continuous ownership through cleanup is not established.
+  - Expected pattern: retain the original failed test evidence and capture only exact run-owned container states and ports before teardown when a new refusal justifies focused reproduction; keep a successful reproduction distinct from an explained cause.
+  - Outcome: the preceding Automation Flyway refusal remains failed evidence with unknown cause; the passing reproduction does not explain it. No speculative host or readiness change is selected.
+  - Reconsideration trigger: a later physical test-time endpoint refusal, or separately retained evidence that identifies the refused endpoint's failure mechanism.
+
+- `2026-10-18`: Verify LOC report identity after a PR fast-forward
+  - Context: `cloc-report.py pr 3248` ran immediately after the existing branch advanced from `6c3eed5d651b` to `eb40332cdb9f`.
+  - Observation: GitHub still returned the preceding PR head/base payload, so the canonical helper completed successfully with LOC metadata for the old candidate. The worker caught the mismatch before editing the body and regenerated after payload convergence; no stale report was published. The tool-level consistency guard remains an improvement reported to Overseer.
+  - Expected pattern: compare generated head/base metadata with verified current remote refs before publication; a mismatch must refresh or fail closed. A successful LOC command alone does not prove current candidate attribution.

@@ -195,36 +195,38 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
         new java.util.concurrent.atomic.AtomicReference<
             WorldSelectedDraftPublicationCheckpointRepository.CapturedCheckpoint>();
     var createdCheckpointInTransaction = new java.util.concurrent.atomic.AtomicBoolean();
+    var freezeTransaction = new TransactionTemplate(worldTransactions);
+    freezeTransaction.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
     var frozenAttempt =
         Objects.requireNonNull(
-            new TransactionTemplate(worldTransactions)
-                .execute(
-                    status -> {
-                      createdCheckpointInTransaction.set(false);
-                      var attempt =
-                          fence.claimFreeze(
-                              freeze,
-                              () -> {
-                                var captured = checkpointRepository.captureWithSource(freeze, plan);
-                                capturedCheckpoint.set(captured);
-                                createdCheckpointInTransaction.set(true);
-                                return captured.checkpoint();
-                              });
-                      var retainedAccount =
-                          authorizationRepository.retainOrRequireExact(
-                              attempt, accountBinding, createdCheckpointInTransaction.get());
-                      if (!java.util.Arrays.equals(
-                          retainedAccount.canonicalBytes(), accountBinding.canonicalBytes())) {
-                        throw new IllegalStateException(
-                            "World did not retain the exact original Account publication binding");
-                      }
-                      inventoryRepository.retainOrRequireExact(
-                          attempt,
-                          retainedAccount,
-                          createdCheckpointInTransaction.get(),
-                          capturedCheckpoint.get());
-                      return attempt;
-                    }));
+            freezeTransaction.execute(
+                status -> {
+                  createdCheckpointInTransaction.set(false);
+                  var attempt =
+                      fence.claimFreeze(
+                          freeze,
+                          () -> {
+                            var captured = checkpointRepository.captureWithSource(freeze, plan);
+                            capturedCheckpoint.set(captured);
+                            createdCheckpointInTransaction.set(true);
+                            return captured.checkpoint();
+                          });
+                  var retainedAccount =
+                      authorizationRepository.retainOrRequireExact(
+                          attempt, accountBinding, createdCheckpointInTransaction.get());
+                  if (!java.util.Arrays.equals(
+                      retainedAccount.canonicalBytes(), accountBinding.canonicalBytes())) {
+                    throw new IllegalStateException(
+                        "World did not retain the exact original Account publication binding");
+                  }
+                  inventoryRepository.retainOrRequireExact(
+                      attempt,
+                      retainedAccount,
+                      createdCheckpointInTransaction.get(),
+                      capturedCheckpoint.get());
+                  return attempt;
+                }));
 
     var retainedAccount = authorizationRepository.readCommitted(frozenAttempt).orElseThrow();
     if (!java.util.Arrays.equals(
@@ -340,6 +342,8 @@ public final class WorldSelectedFullPublicationEvidenceFixture {
     var intakeRepository = new WorldAuthoredSourceIntakeRepository(worldDsl);
     var versionRepository = new WorldAuthoredVersionIdentityRepository(worldDsl);
     var write = new TransactionTemplate(worldTransactions);
+    write.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
     var intake =
         Objects.requireNonNull(
             write.execute(

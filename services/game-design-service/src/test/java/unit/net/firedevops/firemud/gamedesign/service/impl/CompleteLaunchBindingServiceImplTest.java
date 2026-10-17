@@ -57,6 +57,38 @@ class CompleteLaunchBindingServiceImplTest {
   }
 
   @Test
+  void selectedFullV4ReadbackUsesExactEntityAndAutomationSchemas() throws Exception {
+    var selector = selectorEvidence(4);
+    var participants =
+        PublishedWorldSelectorFixtures.participants(
+            VERSION_ID,
+            selector,
+            AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION);
+    givenBundle(selectedFullBundle(selector, participants));
+
+    var result =
+        service.getCompleteLaunchBinding(
+            READ_REQUEST_ID,
+            CANONICAL_TENANT_ID,
+            WORLD_SLUG,
+            CONTROL_PLANE_REQUEST_ID,
+            descriptor.requestDigest(),
+            descriptor.resultDigest());
+
+    assertEquals(
+        AuthoredWorldReleaseAttestationEvidence.SELECTED_FULL_SCHEMA_VERSION,
+        result.releaseAttestation().schemaVersion());
+    assertEquals(
+        List.of(4, 3, 1, 6, 2),
+        result.releaseAttestation().participantDigests().stream()
+            .map(AuthoredWorldReleaseAttestationEvidence.Participant::digestSchemaVersion)
+            .toList());
+    assertEquals(selector, result.releaseAttestation().worldStartLocationEvidence());
+    result.releaseAttestation().requireValid(descriptor);
+    verifyReadOnlyCallsOnly();
+  }
+
+  @Test
   void completeLaunchBindingRejectsObsoleteOrUnselectedWorldSchemas() {
     for (int schema : List.of(2, 4)) {
       var participants = new java.util.ArrayList<>(bundle.participantDigests());
@@ -1003,6 +1035,32 @@ class CompleteLaunchBindingServiceImplTest {
             source.provenanceKind()));
   }
 
+  private WorldPublishedStartLocationEvidence selectorEvidence(int digestSchemaVersion)
+      throws Exception {
+    var base = selectorEvidence();
+    var original = base.request();
+    var request =
+        new WorldPublishedStartLocationEvidence.Request(
+            original.targetNamespace(),
+            original.canonicalTenantId(),
+            original.canonicalVersionId(),
+            original.intakeRequestId(),
+            original.publicationFence(),
+            original.publicationRequestId(),
+            original.requestDigest(),
+            original.versionStateEpoch(),
+            original.publishWorkflowId(),
+            original.appliedCommitId(),
+            original.contentDigest(),
+            digestSchemaVersion,
+            original.worldAffectedTuples());
+    return new WorldPublishedStartLocationEvidence(
+        request,
+        base.selectorReceiptBytes(),
+        base.originalAccountBindingBytes(),
+        base.appliedResultBytes());
+  }
+
   private PublishedReleaseBundleDto selectorBundle(
       WorldPublishedStartLocationEvidence selector,
       List<PublishParticipantDigestDto> participants) {
@@ -1012,6 +1070,32 @@ class CompleteLaunchBindingServiceImplTest {
         bundle.versionId(),
         bundle.versionNumber(),
         "v2",
+        selector.request().publishWorkflowId(),
+        bundle.manifestHash(),
+        bundle.requiredManifestAssetKeys(),
+        participants,
+        bundle.commandDefinitions(),
+        bundle.generationConfigRevision(),
+        bundle.scriptOnly(),
+        bundle.scriptPatchVersion(),
+        bundle.publishedAt(),
+        bundle.canonicalTenantId(),
+        bundle.canonicalVersionId(),
+        bundle.publishedReleaseBundleRef(),
+        bundle.manifestSchemaVersion(),
+        bundle.artifactDigests(),
+        selector);
+  }
+
+  private PublishedReleaseBundleDto selectedFullBundle(
+      WorldPublishedStartLocationEvidence selector,
+      List<PublishParticipantDigestDto> participants) {
+    return new PublishedReleaseBundleDto(
+        bundle.id(),
+        bundle.tenantId(),
+        bundle.versionId(),
+        bundle.versionNumber(),
+        PublishedReleaseBundleContract.SELECTED_FULL_ATTESTATION_SCHEMA_VERSION,
         selector.request().publishWorkflowId(),
         bundle.manifestHash(),
         bundle.requiredManifestAssetKeys(),

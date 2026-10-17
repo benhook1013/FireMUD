@@ -61,6 +61,15 @@ class StartSessionLaunchDescriptorProducerTest {
   private static final JsonMapper JSON = JsonMapper.builder().build();
 
   @Test
+  void selectedReleaseMatchingRetainsV2AndAcceptsOnlyFullV4() {
+    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v2")).isTrue();
+    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v4")).isTrue();
+    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v1")).isFalse();
+    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema("v3")).isFalse();
+    assertThat(StartSessionLaunchDescriptorProducer.isSelectedReleaseBundleSchema(null)).isFalse();
+  }
+
+  @Test
   void requiresExactReplayAndSameNamespacePeerBeforeOwnerWork() {
     var associationReader = mock(StartSessionTemplateAssociationReadService.class);
     var transactions = mock(PlatformTransactionManager.class);

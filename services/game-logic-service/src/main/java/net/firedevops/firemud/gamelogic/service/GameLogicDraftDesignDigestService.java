@@ -1,7 +1,11 @@
 package net.firedevops.firemud.gamelogic.service;
 
+import net.firedevops.firemud.common.gamelogic.GameLogicPublicationSourceReadBinding;
+import net.firedevops.firemud.gamelogic.sourceintake.GameLogicPublicationSourceReadService;
+
 public interface GameLogicDraftDesignDigestService {
-  GameLogicDraftDesignDigest getDraftDesignDigest(String tenantId, String versionId);
+  GameLogicPublicationSourceReadService.Result getDraftDesignDigest(
+      GameLogicPublicationSourceReadBinding binding);
 
   final class UnsupportedDigestScopeException extends RuntimeException {
     private static final long serialVersionUID = 1L;
@@ -10,11 +14,4 @@ public interface GameLogicDraftDesignDigestService {
       super(message);
     }
   }
-
-  record GameLogicDraftDesignDigest(
-      String tenantId,
-      String scopeValue,
-      String appliedCommitId,
-      String contentDigest,
-      int digestSchemaVersion) {}
 }
