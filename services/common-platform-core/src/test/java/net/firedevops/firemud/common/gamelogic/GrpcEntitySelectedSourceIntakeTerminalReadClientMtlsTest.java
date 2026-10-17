@@ -42,9 +42,7 @@ class GrpcEntitySelectedSourceIntakeTerminalReadClientMtlsTest {
 
   @TempDir static Path tempDirectory;
 
-  private static GameLogicIntakeSourceReadTransportTest.TestPki pki;
-  private static GameLogicIntakeSourceReadTransportTest.TestIdentity entityServer;
-  private static GameLogicIntakeSourceReadTransportTest.TestIdentity accountClient;
+  private static IntakeTestPki pki;
 
   private Server server;
   private GrpcEntitySelectedSourceIntakeTerminalReadClient client;
@@ -52,15 +50,15 @@ class GrpcEntitySelectedSourceIntakeTerminalReadClientMtlsTest {
 
   @BeforeAll
   static void certificates() throws Exception {
-    pki = GameLogicIntakeSourceReadTransportTest.TestPki.create(tempDirectory);
-    Path caStore = tempDirectory.resolve("terminal-test-ca.p12");
-    Path caFile = tempDirectory.resolve("terminal-test-ca.crt");
-    entityServer =
-        GameLogicIntakeSourceReadTransportTest.TestPki.issueIdentity(
-            tempDirectory, caStore, caFile, "entity-terminal-server", ENTITY_URI, true);
-    accountClient =
-        GameLogicIntakeSourceReadTransportTest.TestPki.issueIdentity(
-            tempDirectory, caStore, caFile, "account-terminal-client", ACCOUNT_URI, false);
+    pki =
+        IntakeTestPki.create(
+            tempDirectory,
+            "terminal",
+            "FireMUD terminal-read test CA",
+            IntakeTestPki.IdentitySpec.server("entity-terminal-server", ENTITY_URI),
+            IntakeTestPki.IdentitySpec.server(
+                "wrong-server", "spiffe://firemud/ns/test/sa/game-logic-service"),
+            IntakeTestPki.IdentitySpec.client("account-terminal-client", ACCOUNT_URI));
   }
 
   @AfterEach
@@ -78,9 +76,9 @@ class GrpcEntitySelectedSourceIntakeTerminalReadClientMtlsTest {
 
   @Test
   void authenticatesAccountClientAndPinsSameNamespaceEntityServer() throws Exception {
-    startServer(entityServer);
+    startServer(pki.server());
     final int serverPort = server.getPort();
-    client = newClient(accountClient);
+    client = newClient(pki.client());
     client.init();
 
     assertThatThrownBy(() -> client.read(request()))
@@ -153,14 +151,14 @@ class GrpcEntitySelectedSourceIntakeTerminalReadClientMtlsTest {
             .sslContext(
                 GrpcSslContexts.configure(
                         SslContextBuilder.forServer(
-                            entityServer.privateKey(), entityServer.certificate()))
+                            pki.server().privateKey(), pki.server().certificate()))
                     .trustManager(pki.caCertificate())
                     .clientAuth(ClientAuth.REQUIRE)
                     .build())
             .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
             .build()
             .start();
-    client = newClient(accountClient);
+    client = newClient(pki.client());
     client.init();
 
     var actual = client.read(request);
@@ -172,13 +170,11 @@ class GrpcEntitySelectedSourceIntakeTerminalReadClientMtlsTest {
     assertThat(calls).hasValue(1);
   }
 
-  private void startServer(GameLogicIntakeSourceReadTransportTest.TestIdentity identity)
-      throws Exception {
+  private void startServer(IntakeTestPki.Identity identity) throws Exception {
     startServer(identity, 0);
   }
 
-  private void startServer(GameLogicIntakeSourceReadTransportTest.TestIdentity identity, int port)
-      throws Exception {
+  private void startServer(IntakeTestPki.Identity identity, int port) throws Exception {
     var service =
         new EntitySelectedSourceIntakeTerminalReadServiceGrpc
             .EntitySelectedSourceIntakeTerminalReadServiceImplBase() {
@@ -208,7 +204,7 @@ class GrpcEntitySelectedSourceIntakeTerminalReadClientMtlsTest {
   }
 
   private GrpcEntitySelectedSourceIntakeTerminalReadClient newClient(
-      GameLogicIntakeSourceReadTransportTest.TestIdentity identity) throws Exception {
+      IntakeTestPki.Identity identity) throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     endpoints.setEntityManagementService("localhost:" + server.getPort());
     return new GrpcEntitySelectedSourceIntakeTerminalReadClient(
