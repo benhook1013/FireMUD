@@ -298,8 +298,14 @@ public final class WorldCanonicalInstancePreparationGrpcService
 
   private boolean requireAuthenticatedGameSessionPeer(StreamObserver<?> responseObserver) {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (peer != null
-        && peer.isService("game-session-service")
+    if (peer == null) {
+      fail(
+          responseObserver,
+          Status.UNAUTHENTICATED,
+          "An authenticated Game Session workload identity is required");
+      return false;
+    }
+    if (peer.isService("game-session-service")
         && peer.isInNamespace(trustedNamespace)
         && !SessionContext.hasAuthenticatedCallerContext()) {
       return true;
