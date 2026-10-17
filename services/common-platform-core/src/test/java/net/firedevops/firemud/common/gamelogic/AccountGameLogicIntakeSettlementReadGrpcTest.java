@@ -244,8 +244,7 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
             new GrpcChannelFactory(),
             NAMESPACE);
     var evidence = evidence("test", 1, Outcome.ABORTED);
-    assertThatThrownBy(() -> client.read(evidence.request()))
-        .isInstanceOf(IllegalStateException.class);
+    assertSanitizedUnavailable(() -> client.read(evidence.request()));
     assertThatThrownBy(
             () ->
                 client.read(
