@@ -22,15 +22,19 @@ import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeOperat
 import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeTerminal;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationBinding;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadClient;
+import net.firedevops.firemud.common.gamelogic.GameLogicIntakeAuthorizationReadEvidence;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeRetainEvidence;
 import net.firedevops.firemud.common.gamelogic.GameLogicIntakeRetainProtoCodec;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleManifest;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSelectedSource;
 import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadClient;
+import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceReadEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamelogic.v1.RetainGameplayRuleIntakeRequest;
 import net.firedevops.firemud.gamelogic.v1.RetainGameplayRuleIntakeResponse;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.PlatformTransactionManager;
 
 class GameLogicGameplayRuleIntakeGrpcServiceTest {
@@ -136,6 +140,85 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
     verify(fixture.gameDesignReader, never()).read(any());
   }
 
+  @Test
+  void mapsPermanentOwnerFailuresToSanitizedFailedPrecondition() {
+    String secret = "private owner detail and credential";
+    for (RuntimeException failure :
+        List.of(new IllegalArgumentException(secret), new IllegalStateException(secret))) {
+      var fixture = new Fixture();
+      when(fixture.repository.findTerminal(any(UUID.class))).thenThrow(failure);
+      var request = GameLogicIntakeRetainEvidence.Request.create(NAMESPACE, fixture.authorization);
+      var observer = new RecordingObserver<RetainGameplayRuleIntakeResponse>();
+
+      asGameDesign(
+          () ->
+              fixture.transport.retainGameplayRuleIntake(
+                  GameLogicIntakeRetainProtoCodec.toRequest(request), observer));
+
+      assertSanitizedFailure(observer, Status.Code.FAILED_PRECONDITION, secret);
+      verify(fixture.accountReader, never()).read(any());
+      verify(fixture.gameDesignReader, never()).read(any());
+    }
+  }
+
+  @Test
+  void keepsStorageAndTransactionCreationFailuresRetryableAndSanitized() {
+    String secret = "private storage detail and credential";
+    var storageFixture = new Fixture();
+    when(storageFixture.repository.findTerminal(any(UUID.class)))
+        .thenThrow(new DataAccessResourceFailureException(secret));
+    var storageObserver = new RecordingObserver<RetainGameplayRuleIntakeResponse>();
+    var storageRequest =
+        GameLogicIntakeRetainEvidence.Request.create(NAMESPACE, storageFixture.authorization);
+
+    asGameDesign(
+        () ->
+            storageFixture.transport.retainGameplayRuleIntake(
+                GameLogicIntakeRetainProtoCodec.toRequest(storageRequest), storageObserver));
+
+    assertSanitizedFailure(storageObserver, Status.Code.UNAVAILABLE, secret);
+
+    var transactionFixture = new Fixture();
+    when(transactionFixture.repository.findTerminal(any(UUID.class))).thenReturn(Optional.empty());
+    when(transactionFixture.accountReader.read(any()))
+        .thenAnswer(
+            invocation -> {
+              var request =
+                  invocation.getArgument(0, GameLogicIntakeAuthorizationReadEvidence.Request.class);
+              return new GameLogicIntakeAuthorizationReadEvidence(request);
+            });
+    when(transactionFixture.gameDesignReader.read(any()))
+        .thenAnswer(
+            invocation -> {
+              var request = invocation.getArgument(0, GameplayRuleSourceReadEvidence.Request.class);
+              return new GameplayRuleSourceReadEvidence(
+                  request, transactionFixture.authorization.source());
+            });
+    when(transactionFixture.transactions.getTransaction(any()))
+        .thenThrow(new CannotCreateTransactionException(secret));
+    var transactionObserver = new RecordingObserver<RetainGameplayRuleIntakeResponse>();
+    var transactionRequest =
+        GameLogicIntakeRetainEvidence.Request.create(NAMESPACE, transactionFixture.authorization);
+
+    asGameDesign(
+        () ->
+            transactionFixture.transport.retainGameplayRuleIntake(
+                GameLogicIntakeRetainProtoCodec.toRequest(transactionRequest),
+                transactionObserver));
+
+    assertSanitizedFailure(transactionObserver, Status.Code.UNAVAILABLE, secret);
+  }
+
+  private static void assertSanitizedFailure(
+      RecordingObserver<?> observer, Status.Code expectedCode, String secret) {
+    assertThat(observer.error).isEqualTo(expectedCode);
+    assertThat(observer.failure).isInstanceOf(StatusRuntimeException.class).hasNoCause();
+    assertThat(observer.failure.toString()).doesNotContain(secret);
+    assertThat(Status.fromThrowable(observer.failure).getDescription()).isNull();
+    assertThat(observer.value).isNull();
+    assertThat(observer.completed).isFalse();
+  }
+
   private static void assertCode(Status.Code error, Status.Code expected) {
     assertThat(error).isEqualTo(expected);
   }
@@ -157,6 +240,7 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
   private static final class RecordingObserver<T> implements StreamObserver<T> {
     private T value;
     private Status.Code error;
+    private Throwable failure;
     private boolean completed;
 
     @Override
@@ -168,6 +252,7 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
     public void onError(Throwable failure) {
       assertThat(failure).isInstanceOf(StatusRuntimeException.class);
       error = Status.fromThrowable(failure).getCode();
+      this.failure = failure;
     }
 
     @Override
@@ -183,6 +268,7 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
         mock(GameLogicIntakeAuthorizationReadClient.class);
     private final GameplayRuleSourceReadClient gameDesignReader =
         mock(GameplayRuleSourceReadClient.class);
+    private final PlatformTransactionManager transactions = mock(PlatformTransactionManager.class);
     private final GameLogicIntakeAuthorizationBinding authorization = authorization();
     private final GameLogicGameplayRuleIntakeTerminal terminal =
         GameLogicGameplayRuleIntakeTerminal.retained(
@@ -191,11 +277,7 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
             authorization.source().manifest().canonicalJson().getBytes(StandardCharsets.UTF_8));
     private final GameLogicGameplayRuleIntakeService owner =
         new GameLogicGameplayRuleIntakeService(
-            repository,
-            mock(PlatformTransactionManager.class),
-            accountReader,
-            gameDesignReader,
-            NAMESPACE);
+            repository, transactions, accountReader, gameDesignReader, NAMESPACE);
     private final GameLogicGameplayRuleIntakeGrpcService transport =
         new GameLogicGameplayRuleIntakeGrpcService(owner, NAMESPACE);
 
