@@ -716,6 +716,8 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
       net.firedevops.firemud.common.gamesession.CanonicalGameInstanceLaunchAssociationReadEvidence
               .Request
           selector) {
+    var operation = selector.originalOperation();
+    byte[] canonicalTuple = operation == null ? null : operation.originalPostAuthorizationTuple();
     return dsl.fetchOne(
         "SELECT association.*, current.status AS current_status, "
             + "current.row_version AS current_row_version, "
@@ -812,11 +814,18 @@ public final class CanonicalGameInstanceLaunchAssociationRepository {
             + "AND association.control_plane_request_id = ? "
             + "AND association.canonical_tenant_id = ? "
             + "AND association.game_instance_uuid = ? "
-            + "AND current.status = 'STARTING'",
+            + "AND current.status = 'STARTING' "
+            + "AND (CAST(? AS BYTEA) IS NULL OR (attempt.post_authorization_execution_tuple = ? "
+            + "AND attempt.owner_mutation_id = ? AND attempt.owner_attempt_id = ? AND attempt.owner_fence = ?))",
         workloadNamespace,
         selector.controlPlaneRequestId(),
         selector.canonicalTenantId(),
-        selector.gameInstanceUuid());
+        selector.gameInstanceUuid(),
+        canonicalTuple,
+        canonicalTuple,
+        operation == null ? null : operation.ownerMutationId(),
+        operation == null ? null : operation.ownerAttemptId(),
+        operation == null ? null : operation.ownerFence());
   }
 
   private OriginalStartSessionAssociation decodeOriginalStartSessionAssociation(Record row) {

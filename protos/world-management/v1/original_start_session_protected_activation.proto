@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package world_management.v1;
+
+import "account/v1/start_session_activation_protection_acquisition.proto";
+
+option java_multiple_files = true;
+option java_package = "net.firedevops.firemud.worldmanagement.v1";
+
+// Standalone same-namespace Game Session entrypoint. Intentionally not runtime-registered.
+service WorldOriginalStartSessionProtectedActivationService {
+  rpc ActivateOriginalStartSessionProtected(
+      ActivateOriginalStartSessionProtectedRequest)
+      returns (ActivateOriginalStartSessionProtectedResponse);
+}
+
+// The nested Account request is reused without narrowing its original execution bindings.
+message ActivateOriginalStartSessionProtectedRequest {
+  repeated int32 schema_version = 1;
+  repeated string target_namespace = 2;
+  repeated account.v1.AcquireOriginalStartSessionActivationProtectionRequest
+      acquisition_input = 3;
+}
+
+message ActivateOriginalStartSessionProtectedResponse {
+  repeated int32 schema_version = 1;
+  repeated bytes terminal_evidence = 2;
+}

@@ -44,7 +44,8 @@ service GameSessionControlPlaneService {
   // Read exact durable owner proof for a World-owned initial-admission hold.
   rpc GetInitialAdmissionBindProof(GetInitialAdmissionBindProofRequest)
       returns (GetInitialAdmissionBindProofResponse);
-  // Read the exact Game Session-owned STARTING launch association for World composition.
+  // Read the exact Game Session-owned STARTING launch association for World composition or an
+  // operation-bound same-namespace Account request. This default-off read grants no mutation authority.
   rpc GetCanonicalGameInstanceLaunchAssociation(
       GetCanonicalGameInstanceLaunchAssociationRequest)
       returns (GetCanonicalGameInstanceLaunchAssociationResponse);
@@ -623,6 +624,12 @@ message GetCanonicalGameInstanceLaunchAssociationRequest {
   string expected_descriptor_request_digest = 8;
   string expected_descriptor_result_digest = 9;
   string expected_release_attestation_evidence_digest = 10;
+  // Required only for the exact same-namespace Account original-operation read. All four fields
+  // must be present and match the live pending owner and retained pins; they grant no authority.
+  bytes original_post_authorization_tuple = 11;
+  string expected_owner_mutation_id = 12;
+  string expected_owner_attempt_id = 13;
+  int64 expected_owner_fence = 14;
 }
 
 message GetCanonicalGameInstanceLaunchAssociationResponse {
@@ -649,6 +656,11 @@ message GetCanonicalGameInstanceLaunchAssociationResponse {
   int64 owner_fence = 20;
   string canonical_realm_id = 21;
   int64 catalog_revision = 22;
+  // Exact operation-bound Account request echoes.
+  bytes original_post_authorization_tuple = 23;
+  string expected_owner_mutation_id = 24;
+  string expected_owner_attempt_id = 25;
+  int64 expected_owner_fence = 26;
 }
 
 message GetRunOwnedFixtureLaunchAssociationRequest {
