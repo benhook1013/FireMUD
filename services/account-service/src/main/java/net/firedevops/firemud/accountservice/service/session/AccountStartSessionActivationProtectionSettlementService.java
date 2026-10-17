@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service.session;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.UUID;
@@ -98,7 +99,12 @@ public final class AccountStartSessionActivationProtectionSettlementService {
                     .activationRequestId()),
             lookup.protection().evidence());
     requireNoAmbientTransaction();
-    WorldOriginalStartSessionActivationTerminalEvidence terminal = worldClient.read(readInput);
+    WorldOriginalStartSessionActivationTerminalEvidence terminal;
+    try {
+      terminal = worldClient.read(readInput);
+    } catch (StatusRuntimeException failure) {
+      throw dependencyFailure(failure, "Account World activation-terminal dependency failed");
+    }
     requireNoAmbientTransaction();
     if (terminal == null) {
       throw failedPrecondition(
@@ -207,6 +213,18 @@ public final class AccountStartSessionActivationProtectionSettlementService {
 
   private static RuntimeException failedPrecondition(String message) {
     return Status.FAILED_PRECONDITION.withDescription(message).asRuntimeException();
+  }
+
+  private static RuntimeException dependencyFailure(
+      StatusRuntimeException failure, String description) {
+    Status.Code code = failure.getStatus().getCode();
+    Status status =
+        switch (code) {
+          case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, RESOURCE_EXHAUSTED, INTERNAL, UNKNOWN ->
+              Status.fromCode(code);
+          default -> Status.UNAVAILABLE;
+        };
+    return status.withDescription(description).asRuntimeException();
   }
 
   private record Lookup(StoredProtection protection, StoredSettlement settlement) {}
