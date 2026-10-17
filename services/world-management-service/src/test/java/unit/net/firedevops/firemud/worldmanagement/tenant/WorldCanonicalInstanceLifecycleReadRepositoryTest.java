@@ -77,7 +77,7 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
     readInOwnerTransaction.setAccessible(true);
     assertThatThrownBy(() -> readInOwnerTransaction.invoke(repository, request, false))
         .isInstanceOf(InvocationTargetException.class)
-        .hasCauseSameAs(associationFailure);
+        .satisfies(failure -> assertThat(failure.getCause()).isSameAs(associationFailure));
 
     var materializedFailure = new DataAccessResourceFailureException("private storage detail");
     Record preparation = mock(Record.class);
@@ -99,7 +99,7 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
                     preparation,
                     false))
         .isInstanceOf(InvocationTargetException.class)
-        .hasCauseSameAs(materializedFailure);
+        .satisfies(failure -> assertThat(failure.getCause()).isSameAs(materializedFailure));
   }
 
   @Test
