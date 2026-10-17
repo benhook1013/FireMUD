@@ -12,6 +12,7 @@ import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifec
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInstanceLifecycleReadServiceGrpc;
 import org.jooq.exception.DataAccessException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -76,7 +77,9 @@ public final class WorldCanonicalInstanceLifecycleReadGrpcService
               .withDescription("Canonical World lifecycle source evidence is inconsistent")
               .asRuntimeException());
       return;
-    } catch (TransientDataAccessException | DataAccessException unavailable) {
+    } catch (DataAccessResourceFailureException
+        | TransientDataAccessException
+        | DataAccessException unavailable) {
       responseObserver.onError(
           Status.UNAVAILABLE
               .withDescription("Canonical World lifecycle storage is temporarily unavailable")

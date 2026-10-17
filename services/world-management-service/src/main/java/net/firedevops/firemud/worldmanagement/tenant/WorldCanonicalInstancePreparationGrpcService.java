@@ -17,6 +17,7 @@ import net.firedevops.firemud.worldmanagement.v1.PrepareCanonicalWorldInstanceRe
 import net.firedevops.firemud.worldmanagement.v1.PrepareCanonicalWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInstancePreparationServiceGrpc;
 import org.jooq.exception.DataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Standalone authenticated canonical preparation adapter; intentionally not runtime-registered. */
@@ -137,6 +138,11 @@ public final class WorldCanonicalInstancePreparationGrpcService
           responseObserver,
           Status.PERMISSION_DENIED,
           "Canonical World preparation authority was denied");
+    } catch (CannotCreateTransactionException transactionFailure) {
+      fail(
+          responseObserver,
+          Status.UNAVAILABLE,
+          "Canonical World preparation transaction could not start");
     } catch (DataAccessException | org.springframework.dao.DataAccessException storageFailure) {
       fail(
           responseObserver,

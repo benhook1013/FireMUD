@@ -58,6 +58,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.TransientDataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -270,6 +271,25 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
       assertThat(result.completed).isFalse();
       assertThat(result.description).doesNotContain("private SQL detail");
     }
+  }
+
+  @Test
+  void mapsTransactionCreationFailureToUnavailableWithoutLeakingDetails() {
+    Harness harness = new Harness("STARTING");
+    when(harness.preparation.prepare(
+            eq(harness.input),
+            any(CanonicalWorldInstancePreparationGrpcCodec.OriginalOperationInput.class)))
+        .thenThrow(new CannotCreateTransactionException("private transaction detail"));
+
+    Collector result =
+        call(harness.service, request(harness.selector), peer("game-session-service", NAMESPACE));
+
+    assertThat(result.error).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(result.description)
+        .isEqualTo("Canonical World preparation transaction could not start")
+        .doesNotContain("private transaction detail");
+    assertThat(result.value).isNull();
+    assertThat(result.completed).isFalse();
   }
 
   private static StorageFailureCase storageFailure(String sqlState, Status.Code expected) {
