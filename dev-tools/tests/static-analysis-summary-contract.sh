@@ -25,6 +25,8 @@ grep -Fq 'github.paginate(github.rest.checks.listForRef' "$workflow"
 grep -Fq 'github.paginate(github.rest.issues.listComments' "$workflow"
 grep -Fq 'per_page: 100' "$workflow"
 grep -Fq 'cancel-in-progress: false' "$workflow"
+# GitHub expressions are literal workflow text, not shell expansions.
+# shellcheck disable=SC2016
 grep -Fq 'group: static-analysis-summary-${{ github.event.workflow_run.head_branch || github.ref }}-${{ github.event.workflow_run.head_sha }}' "$workflow"
 grep -Fq 'currentPullRequest.head?.sha !== headSha' "$workflow"
 grep -Fq 'context.payload.workflow_run.display_title !== expectedSourceTitle' "$workflow"
