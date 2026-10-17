@@ -91,11 +91,11 @@ public final class WorldStartSessionExecutionTerminalReadGrpcService
           Status.FAILED_PRECONDITION,
           "The exact original World StartSession operation is not authenticated for recovery");
       return;
-    } catch (DataAccessException | org.springframework.dao.DataAccessException unavailable) {
+    } catch (DataAccessException | org.springframework.dao.DataAccessException storageFailure) {
       fail(
           responseObserver,
-          Status.UNAVAILABLE,
-          "World StartSession terminal storage is temporarily unavailable");
+          Status.fromCode(WorldPreparationStorageFailureStatus.from(storageFailure)),
+          "World StartSession terminal storage operation failed");
       return;
     } catch (StatusRuntimeException ownerFailure) {
       failForOwnerRpcFailure(responseObserver, ownerFailure);

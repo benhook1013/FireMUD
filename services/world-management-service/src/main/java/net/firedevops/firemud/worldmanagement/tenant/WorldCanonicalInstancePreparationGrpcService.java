@@ -17,7 +17,7 @@ import net.firedevops.firemud.worldmanagement.v1.PrepareCanonicalWorldInstanceRe
 import net.firedevops.firemud.worldmanagement.v1.PrepareCanonicalWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInstancePreparationServiceGrpc;
 import org.jooq.exception.DataAccessException;
-import org.springframework.dao.TransientDataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Standalone authenticated canonical preparation adapter; intentionally not runtime-registered. */
@@ -86,12 +86,12 @@ public final class WorldCanonicalInstancePreparationGrpcService
     }
 
     try {
-      WorldCompleteLaunchBindingReceipt bound = launchBindingService.bindCommittedLaunch(selector);
       WorldCanonicalInstancePreparationAssemblyService.Selector assemblySelector =
           new WorldCanonicalInstancePreparationAssemblyService.Selector(
               selector.canonicalTenantId(),
               selector.gameInstanceUuid(),
               selector.controlPlaneRequestId());
+      WorldCompleteLaunchBindingReceipt bound = launchBindingService.bindCommittedLaunch(selector);
       Input input = assemblyService.assemble(assemblySelector);
       requireAssembledInputMatches(selector, bound, input);
 
@@ -138,11 +138,16 @@ public final class WorldCanonicalInstancePreparationGrpcService
           responseObserver,
           Status.PERMISSION_DENIED,
           "Canonical World preparation authority was denied");
-    } catch (TransientDataAccessException | DataAccessException unavailable) {
+    } catch (CannotCreateTransactionException transactionFailure) {
       fail(
           responseObserver,
           Status.UNAVAILABLE,
-          "Canonical World preparation storage is temporarily unavailable");
+          "Canonical World preparation transaction could not start");
+    } catch (DataAccessException | org.springframework.dao.DataAccessException storageFailure) {
+      fail(
+          responseObserver,
+          Status.fromCode(WorldPreparationStorageFailureStatus.from(storageFailure)),
+          "Canonical World preparation storage operation failed");
     } catch (StatusRuntimeException ownerFailure) {
       failForOwnerRpcFailure(responseObserver, ownerFailure);
     } catch (IllegalArgumentException | IllegalStateException inconsistent) {

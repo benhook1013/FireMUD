@@ -132,6 +132,9 @@ public final class WorldCanonicalInstanceExecutionIdentity {
       this.originalAttemptEvidenceBytes = null;
       this.originalAttemptEvidenceDigest = null;
     } else {
+      if (gameSessionOwnerMutationId == null) {
+        throw new IllegalArgumentException("Account original-attempt observation is incomplete");
+      }
       var observationRequest = originalAttemptEvidence.request();
       if (!MessageDigest.isEqual(
               this.originalPostAuthorizationTuple,
