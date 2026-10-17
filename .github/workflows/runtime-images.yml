@@ -119,7 +119,7 @@ jobs:
           MERGE_SHA=""
           if [ "$EVENT_NAME" = "pull_request" ]; then
             PR_NUMBER="$EVENT_PR_NUMBER"
-            BASE_REF="${{ github.event.pull_request.base.ref }}"
+            BASE_REF="$EVENT_BASE_REF"
             BASE_SHA="$EVENT_BASE_SHA"
             HEAD_SHA="$EVENT_HEAD_SHA"
             HEAD_BRANCH=""
@@ -163,7 +163,7 @@ jobs:
               echo "Runtime PR refresh payload has an invalid pull request number." >&2
               exit 1
             }
-            [[ "$BASE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || {
+            git check-ref-format "refs/heads/${BASE_REF}" >/dev/null || {
               echo "Runtime PR refresh payload has an invalid base ref." >&2
               exit 1
             }
@@ -175,10 +175,12 @@ jobs:
               }
             done
 
-            current_base_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BASE_REF}")"
+            encoded_base_ref="$(python3 -c 'import sys; from urllib.parse import quote; print(quote(sys.argv[1], safe="/"))' "$BASE_REF")"
+            current_base_ref_json="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${encoded_base_ref}")"
             jq -e \
               --arg base_sha "$BASE_SHA" \
-              '.object.sha == $base_sha' \
+              --arg base_ref "refs/heads/${BASE_REF}" \
+              '.ref == $base_ref and .object.sha == $base_sha' \
               <<<"$current_base_ref_json" >/dev/null || {
                 echo "Runtime PR refresh base SHA is not the current ${BASE_REF} branch ref." >&2
                 exit 1

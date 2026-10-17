@@ -339,8 +339,14 @@ case "${2:-}" in
       cat "$FIXTURE_DIR/pull-request.json"
     fi
     ;;
-  repos/benhook1013/FireMUD/git/ref/heads/develop) cat "$FIXTURE_DIR/base-ref.json" ;;
-  repos/benhook1013/FireMUD/git/ref/heads/*) cat "$FIXTURE_DIR/base-ref.json" ;;
+  repos/benhook1013/FireMUD/git/ref/heads/*)
+    if [[ -n "${BASE_REF_CALLS:-}" ]]; then
+      printf '%s\n' "$2" >> "$BASE_REF_CALLS"
+      [[ "$2" == "$EXPECTED_BASE_REF_ENDPOINT" ]] || exit 2
+      [[ "${MOCK_BASE_REF_MISSING:-}" != true ]] || exit 1
+    fi
+    cat "$FIXTURE_DIR/base-ref.json"
+    ;;
   repos/benhook1013/FireMUD/commits/cccccccccccccccccccccccccccccccccccccccc) cat "$FIXTURE_DIR/merge-commit.json" ;;
   *) echo "unexpected endpoint: ${2:-}" >&2; exit 2 ;;
 esac
@@ -361,13 +367,14 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from urllib.parse import quote
 
 fixture = Path(os.environ["FIXTURE_DIR"])
 workflow = Path(sys.argv[1]).read_text()
 section = workflow.split("      - name: Derive image tags\n", 1)[1].split("      - name: Verify successful CI push for manual publication\n", 1)[0]
 script = section.split("        run: |\n", 1)[1]
 script = "\n".join(line[10:] if line.startswith("          ") else line for line in script.splitlines())
-script = script.replace("${{ github.event_name }}", "repository_dispatch")
+script_template = script
 paths = [fixture / name for name in ("pull-request.json", "merge-commit.json", "base-ref.json")]
 originals = [path.read_text() for path in paths]
 request, merge, branch = map(json.loads, originals)
@@ -388,14 +395,23 @@ env = {
     "EVENT_MERGE_SHA": merge["sha"],
     "GITHUB_RUN_ID": "4242",
     "GITHUB_RUN_ATTEMPT": "1",
+    "GITHUB_SHA": merge["sha"],
     "GITHUB_OUTPUT": str(fixture / "runtime-meta-output"),
 }
 
-def admit(current_request, current_merge, current_branch, overrides=None):
+def admit(current_request, current_merge, current_branch, overrides=None, event_name="repository_dispatch"):
     for path, payload in zip(paths, (current_request, current_merge, current_branch)):
         path.write_text(json.dumps(payload))
     Path(env["GITHUB_OUTPUT"]).write_text("")
-    return subprocess.run(["bash", "-c", script], env={**env, **(overrides or {})}, text=True, capture_output=True)
+    calls = fixture / "runtime-meta-ref-calls"
+    calls.write_text("")
+    current_env = {**env, **(overrides or {})}
+    current_env.update({
+        "BASE_REF_CALLS": str(calls),
+        "EXPECTED_BASE_REF_ENDPOINT": "repos/benhook1013/FireMUD/git/ref/heads/" + quote(current_env["EVENT_BASE_REF"], safe="/"),
+    })
+    script = script_template.replace("${{ github.event_name }}", event_name)
+    return subprocess.run(["bash", "-c", script], env=current_env, text=True, capture_output=True)
 
 try:
     accepted = admit(request, merge, branch)
@@ -406,6 +422,29 @@ try:
     assert f"image_tag=pr-merge-{merge['sha']}\n" in output
     assert f"base_image=ghcr.io/benhook1013/firemud-base:{merge['sha']}\n" in output
     assert branch["object"]["sha"] not in dict(line.split("=", 1) for line in output.splitlines())["base_image"]
+    literal_marker = fixture / "must-not-execute"
+    valid_refs = ("feature/topic+fix", "feature/@/parent", "feature/世界", "feature/#fragment", "feature/%encoded",
+                  f"feature/$(touch${{IFS}}{literal_marker})")
+    for base_ref in valid_refs:
+        ref_request, ref_branch = json.loads(json.dumps(request)), json.loads(json.dumps(branch))
+        ref_request["base"]["ref"] = base_ref
+        ref_branch["ref"] = "refs/heads/" + base_ref
+        accepted_ref = admit(ref_request, merge, ref_branch, {"EVENT_BASE_REF": base_ref})
+        assert accepted_ref.returncode == 0, (base_ref, accepted_ref.stderr)
+        assert f"base_ref={base_ref}\n" in Path(env["GITHUB_OUTPUT"]).read_text()
+        direct_pr = admit(ref_request, merge, ref_branch, {"EVENT_BASE_REF": base_ref}, event_name="pull_request")
+        assert direct_pr.returncode == 0, (base_ref, direct_pr.stderr)
+        assert f"base_ref={base_ref}\n" in Path(env["GITHUB_OUTPUT"]).read_text()
+        assert not literal_marker.exists(), "base ref shell metacharacters executed instead of remaining literal env data"
+        stale_ref = {**ref_branch, "object": {"sha": "d" * 40}}
+        assert admit(ref_request, merge, stale_ref, {"EVENT_BASE_REF": base_ref}).returncode != 0
+        assert admit(ref_request, merge, ref_branch,
+                     {"EVENT_BASE_REF": base_ref, "MOCK_BASE_REF_MISSING": "true"}).returncode != 0
+    for base_ref in ("", "feature/../bad", "feature/bad ref", "feature/ref.lock", "feature/@{bad", "feature/ref?query", "feature/line\nbreak"):
+        rejected_ref = admit(request, merge, branch, {"EVENT_BASE_REF": base_ref})
+        assert rejected_ref.returncode != 0, f"runtime metadata admitted invalid ref {base_ref!r}"
+        assert not (fixture / "runtime-meta-ref-calls").read_text(), "invalid ref reached GitHub lookup"
+    assert admit(request, merge, {**branch, "ref": "refs/heads/feature/other"}).returncode != 0
     for mutation in ("stale-base", "stale-head", "wrong-parents", "fork", "closed", "retarget", "missing-merge", "wrong-default-ref"):
         mutated_request, mutated_merge, mutated_branch = [json.loads(json.dumps(payload)) for payload in (request, merge, branch)]
         overrides = {}

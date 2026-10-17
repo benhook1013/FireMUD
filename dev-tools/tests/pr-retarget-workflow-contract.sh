@@ -1096,7 +1096,7 @@ async function runDispatcher({
         "protected push callback must not duplicate PR source reconciliation");
     }
   }
-  for (const baseRef of ["feature/topic+fix", "feature/@/parent", "feature/世界"]) {
+  for (const baseRef of ["feature/topic+fix", "feature/@/parent", "feature/世界", "feature/#fragment", "feature/%encoded", "feature/$(literal)"]) {
     const refSource = { ...source, baseRef, headRef: `${baseRef}/child` };
     const refChild = { ...child, baseRef: refSource.headRef };
     const refCallback = { ...prCallback, head_branch: refSource.headRef };
