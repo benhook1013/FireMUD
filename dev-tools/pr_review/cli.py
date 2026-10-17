@@ -2001,7 +2001,14 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                     and progress.get("status") == "COMPLETE"
                     and state in {"READY", allocation_status}
                 )
-                if state not in {"COMPLETE", "HUMAN_STOPPED"} and not audited_cap_complete:
+                exhausted_default_budget_complete = (
+                    state == "BUDGET_EXHAUSTED" and progress.get("status") == "BUDGET_EXHAUSTED"
+                )
+                if (
+                    state not in {"COMPLETE", "HUMAN_STOPPED"}
+                    and not audited_cap_complete
+                    and not exhausted_default_budget_complete
+                ):
                     review_reasons.append(f"{channel} review policy is {state}")
             for channel, obligations in stack_item.get("review_obligations", {}).items():
                 review_reasons.extend(f"{channel}: {reason}" for reason in obligations)
