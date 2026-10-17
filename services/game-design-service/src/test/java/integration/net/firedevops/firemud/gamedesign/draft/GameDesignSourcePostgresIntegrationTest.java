@@ -970,6 +970,21 @@ class GameDesignSourcePostgresIntegrationTest {
   @Test
   void terminalV2CaptureWithMissingAssetAndGameplayIsIncomplete() {
     Fixture fixture = fixture();
+    var authored =
+        binding(
+            fixture.target(),
+            "genesis:"
+                + fixture
+                    .sources()
+                    .readGenesis(fixture.target())
+                    .orElseThrow()
+                    .policy()
+                    .receiptId(),
+            "0",
+            null,
+            "main",
+            true);
+    synchronize(fixture, authored, apply(fixture, authored));
     var operation = retainSelectedOperation(fixture);
 
     fixture.tx(
