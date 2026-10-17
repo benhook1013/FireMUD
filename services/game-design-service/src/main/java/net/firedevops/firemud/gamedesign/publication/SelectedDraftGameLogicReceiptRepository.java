@@ -144,6 +144,8 @@ public class SelectedDraftGameLogicReceiptRepository {
         == null) {
       throw new IllegalStateException("Selected Version source proof unavailable");
     }
+    // V50.2's primary key permits one immutable selection per canonical tenant/version, so
+    // fetchOne intentionally reflects that owner cardinality.
     dsl.fetchOne(
         "SELECT canonical_tenant_id FROM game_design_authored_draft_publish_selection WHERE canonical_tenant_id = ? AND canonical_version_id = ? FOR UPDATE",
         selection.target().canonicalTenantId(),
