@@ -48,12 +48,18 @@ public final class AccountGameLogicIntakeAuthorizationReadService {
             return null;
           });
     } catch (StatusRuntimeException failure) {
-      throw failure;
-    } catch (IllegalArgumentException changed) {
-      throw Status.FAILED_PRECONDITION.asRuntimeException();
+      throw sanitized(Status.fromCode(failure.getStatus().getCode()));
+    } catch (IllegalArgumentException | IllegalStateException changed) {
+      throw sanitized(Status.FAILED_PRECONDITION);
     } catch (RuntimeException unavailable) {
-      throw Status.UNAVAILABLE.asRuntimeException();
+      throw sanitized(Status.UNAVAILABLE);
     }
+  }
+
+  private static StatusRuntimeException sanitized(Status status) {
+    return status
+        .withDescription("Account intake authorization read denied or unavailable")
+        .asRuntimeException();
   }
 
   static void requirePeer(String namespace) {
