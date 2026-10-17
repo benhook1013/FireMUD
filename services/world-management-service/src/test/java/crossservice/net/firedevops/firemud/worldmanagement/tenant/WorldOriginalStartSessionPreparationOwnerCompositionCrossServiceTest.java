@@ -268,8 +268,19 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void transientLifecycleFailureRetriesWhenItsTerminalReadbackAlsoFails() throws Exception {
+    compose(Refusal.NONE, ActivationFailure.TRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE);
+  }
+
+  @Test
   void uncertainLifecycleCasCommitReturnsExactTerminalWithoutRepeatingEffects() throws Exception {
     compose(Refusal.NONE, ActivationFailure.TRANSIENT_AFTER_COMMIT_ONCE);
+  }
+
+  @Test
+  void committedUncertainLifecycleFailureRetriesAfterUnavailableTerminalReadback()
+      throws Exception {
+    compose(Refusal.NONE, ActivationFailure.TRANSIENT_AFTER_COMMIT_ONCE_READBACK_FAILURE);
   }
 
   @Test
@@ -278,8 +289,19 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   }
 
   @Test
+  void exhaustedTransientLifecycleFailurePreservesOriginalWhenFinalReadbackFails()
+      throws Exception {
+    compose(Refusal.NONE, ActivationFailure.TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE);
+  }
+
+  @Test
   void nontransientLifecycleCasFailureLeavesPendingAndCannotBeRestarted() throws Exception {
     compose(Refusal.NONE, ActivationFailure.NONTRANSIENT_ROLLBACK_ONCE);
+  }
+
+  @Test
+  void nontransientLifecycleFailurePreservesOriginalWhenTerminalReadbackFails() throws Exception {
+    compose(Refusal.NONE, ActivationFailure.NONTRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE);
   }
 
   private enum Refusal {
@@ -292,9 +314,13 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
   private enum ActivationFailure {
     NONE,
     TRANSIENT_ROLLBACK_ONCE,
+    TRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE,
     TRANSIENT_AFTER_COMMIT_ONCE,
+    TRANSIENT_AFTER_COMMIT_ONCE_READBACK_FAILURE,
     TRANSIENT_ROLLBACK_ALWAYS,
-    NONTRANSIENT_ROLLBACK_ONCE
+    TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE,
+    NONTRANSIENT_ROLLBACK_ONCE,
+    NONTRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE
   }
 
   private void compose(Refusal refusal) throws Exception {
@@ -676,10 +702,12 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           var lifecycleRepository =
               new WorldCanonicalInstanceLifecycleReadRepository(
                   world.dsl(), world.manager(), association);
+          var terminalReadbackFault = new ActivationTerminalReadbackFault();
           var activationTransactionFault =
               activationFailure == ActivationFailure.NONE
                   ? null
-                  : new ActivationTransactionFault(world.manager(), world.dsl(), activationFailure);
+                  : new ActivationTransactionFault(
+                      world.manager(), world.dsl(), activationFailure, terminalReadbackFault);
           var activationRepository =
               new WorldCanonicalInstanceActivationRepository(
                   world.dsl(),
@@ -980,6 +1008,64 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               return;
             }
 
+            if (activationFailure
+                    == ActivationFailure.TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE
+                || activationFailure
+                    == ActivationFailure.NONTRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE) {
+              var protection = worldProtectionAcquisition.acquire(activationInput);
+              var held =
+                  new WorldCanonicalInstanceActivationService.HeldActivationAuthority() {
+                    @Override
+                    public void requireHeld() {}
+
+                    @Override
+                    public void close() {}
+                  };
+              if (activationFailure
+                  == ActivationFailure.TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE) {
+                assertThatThrownBy(() -> activationRepository.activateProtected(protection, held))
+                    .isInstanceOfSatisfying(
+                        TransientDataAccessResourceException.class,
+                        failure -> assertSuppressedTerminalReadbackFailure(failure));
+              } else {
+                assertThatThrownBy(() -> activationRepository.activateProtected(protection, held))
+                    .isInstanceOfSatisfying(
+                        IllegalStateException.class,
+                        failure -> {
+                          assertThat(failure)
+                              .hasMessage("TEST_ONLY nontransient World activation failure");
+                          assertSuppressedTerminalReadbackFailure(failure);
+                        });
+              }
+              assertThat(terminalReadbackFault.failedReadbacks()).isEqualTo(1);
+              assertPendingActivationState(world.dsl());
+              int expectedAttempts =
+                  activationFailure
+                          == ActivationFailure.TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE
+                      ? 3
+                      : 1;
+              assertThat(activationTransactionFault.lifecycleCasCommitAttempts())
+                  .isEqualTo(expectedAttempts);
+              assertThat(activationTransactionFault.writeTransactionsStarted())
+                  .isEqualTo(expectedAttempts + 1);
+              assertThat(activationTransactionFault.verifiedPendingRollbacks())
+                  .isEqualTo(expectedAttempts);
+              assertThat(activationProtectionAcquisitionCalls.get()).isEqualTo(1);
+              var pendingAccountRows =
+                  rows(
+                      issuer.sourceDsl(),
+                      "account_start_session_activation_protections",
+                      "account_start_session_activation_protection_sources",
+                      "account_start_session_activation_protection_settlements");
+              assertThat(pendingAccountRows.get("account_start_session_activation_protections"))
+                  .hasSize(1);
+              assertThat(
+                      pendingAccountRows.get(
+                          "account_start_session_activation_protection_settlements"))
+                  .isEmpty();
+              return;
+            }
+
             if (activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ALWAYS
                 || activationFailure == ActivationFailure.NONTRANSIENT_ROLLBACK_ONCE) {
               assertThatThrownBy(() -> worldProtectedActivation.activate(activationInput))
@@ -1034,15 +1120,31 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 worldProtectedActivation.activate(activationInput);
             if (activationFailure != ActivationFailure.NONE) {
               assertThat(activationProtectionAcquisitionCalls.get()).isEqualTo(1);
+              boolean lifecycleRetryOccurred =
+                  activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ONCE
+                      || activationFailure
+                          == ActivationFailure.TRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE
+                      || activationFailure
+                          == ActivationFailure.TRANSIENT_AFTER_COMMIT_ONCE_READBACK_FAILURE;
               assertThat(activationTransactionFault.lifecycleCasCommitAttempts())
-                  .isEqualTo(
-                      activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ONCE ? 2 : 1);
+                  .isEqualTo(lifecycleRetryOccurred ? 2 : 1);
               assertThat(activationTransactionFault.writeTransactionsStarted())
-                  .isEqualTo(
-                      activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ONCE ? 3 : 2);
-              if (activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ONCE) {
+                  .isEqualTo(lifecycleRetryOccurred ? 3 : 2);
+              boolean lifecycleRollbackOccurred =
+                  activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ONCE
+                      || activationFailure
+                          == ActivationFailure.TRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE;
+              if (lifecycleRollbackOccurred) {
                 assertThat(activationTransactionFault.verifiedPendingRollbacks()).isEqualTo(1);
               }
+              int expectedReadbackFailures =
+                  activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE
+                          || activationFailure
+                              == ActivationFailure.TRANSIENT_AFTER_COMMIT_ONCE_READBACK_FAILURE
+                      ? 1
+                      : 0;
+              assertThat(terminalReadbackFault.failedReadbacks())
+                  .isEqualTo(expectedReadbackFailures);
             }
             assertThat(activationTerminal.outcome())
                 .isEqualTo(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
@@ -1772,11 +1874,47 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     }
   }
 
+  private static void assertSuppressedTerminalReadbackFailure(RuntimeException failure) {
+    Throwable[] suppressed = failure.getSuppressed();
+    assertThat(suppressed).hasSize(1);
+    assertThat(suppressed[0])
+        .isInstanceOfSatisfying(
+            TransientDataAccessResourceException.class,
+            readbackFailure ->
+                assertThat(readbackFailure)
+                    .hasMessage("TEST_ONLY transient World terminal readback failure"));
+  }
+
+  /** One-shot failure injection when the repository starts its real read-only fence read. */
+  private static final class ActivationTerminalReadbackFault {
+    private final AtomicBoolean failNextReadback = new AtomicBoolean();
+    private final AtomicInteger failedReadbacks = new AtomicInteger();
+
+    private void failNextReadback() {
+      if (!failNextReadback.compareAndSet(false, true)) {
+        throw new AssertionError("A World terminal readback failure is already armed");
+      }
+    }
+
+    private void failIfArmed() {
+      if (failNextReadback.compareAndSet(true, false)) {
+        failedReadbacks.incrementAndGet();
+        throw new TransientDataAccessResourceException(
+            "TEST_ONLY transient World terminal readback failure");
+      }
+    }
+
+    private int failedReadbacks() {
+      return failedReadbacks.get();
+    }
+  }
+
   /** Test-local commit-boundary fault injection over the existing World transaction manager. */
   private static final class ActivationTransactionFault implements PlatformTransactionManager {
     private final PlatformTransactionManager delegate;
     private final DSLContext world;
     private final ActivationFailure failure;
+    private final ActivationTerminalReadbackFault terminalReadbackFault;
     private final Map<TransactionStatus, Boolean> readOnlyTransactions = new IdentityHashMap<>();
     private int writeTransactionsStarted;
     private int writeCommits;
@@ -1784,10 +1922,14 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     private int verifiedPendingRollbacks;
 
     private ActivationTransactionFault(
-        PlatformTransactionManager delegate, DSLContext world, ActivationFailure failure) {
+        PlatformTransactionManager delegate,
+        DSLContext world,
+        ActivationFailure failure,
+        ActivationTerminalReadbackFault terminalReadbackFault) {
       this.delegate = Objects.requireNonNull(delegate, "delegate");
       this.world = Objects.requireNonNull(world, "world");
       this.failure = Objects.requireNonNull(failure, "failure");
+      this.terminalReadbackFault = Objects.requireNonNull(terminalReadbackFault);
     }
 
     @Override
@@ -1795,6 +1937,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         throws TransactionException {
       TransactionDefinition effectiveDefinition =
           definition == null ? new DefaultTransactionDefinition() : definition;
+      if (effectiveDefinition.isReadOnly()) terminalReadbackFault.failIfArmed();
       TransactionStatus status = delegate.getTransaction(effectiveDefinition);
       readOnlyTransactions.put(status, effectiveDefinition.isReadOnly());
       if (!effectiveDefinition.isReadOnly()) writeTransactionsStarted++;
@@ -1809,14 +1952,18 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
         if (writeCommits > 1) {
           int attempt = ++lifecycleCasCommitAttempts;
           if (shouldInject(attempt)) {
-            if (failure == ActivationFailure.TRANSIENT_AFTER_COMMIT_ONCE) {
+            if (failure == ActivationFailure.TRANSIENT_AFTER_COMMIT_ONCE
+                || failure == ActivationFailure.TRANSIENT_AFTER_COMMIT_ONCE_READBACK_FAILURE) {
               delegate.commit(status);
+              if (shouldFailReadback(attempt)) terminalReadbackFault.failNextReadback();
               throw transientFailure();
             }
             delegate.rollback(status);
             verifiedPendingRollbacks++;
             assertPendingActivationState(world);
-            if (failure == ActivationFailure.NONTRANSIENT_ROLLBACK_ONCE) {
+            if (shouldFailReadback(attempt)) terminalReadbackFault.failNextReadback();
+            if (failure == ActivationFailure.NONTRANSIENT_ROLLBACK_ONCE
+                || failure == ActivationFailure.NONTRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE) {
               throw new IllegalStateException("TEST_ONLY nontransient World activation failure");
             }
             throw transientFailure();
@@ -1834,10 +1981,32 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
 
     private boolean shouldInject(int attempt) {
       return switch (failure) {
-        case TRANSIENT_ROLLBACK_ONCE, TRANSIENT_AFTER_COMMIT_ONCE, NONTRANSIENT_ROLLBACK_ONCE ->
+        case TRANSIENT_ROLLBACK_ONCE,
+            TRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE,
+            TRANSIENT_AFTER_COMMIT_ONCE,
+            TRANSIENT_AFTER_COMMIT_ONCE_READBACK_FAILURE,
+            NONTRANSIENT_ROLLBACK_ONCE,
+            NONTRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE ->
             attempt == 1;
-        case TRANSIENT_ROLLBACK_ALWAYS -> attempt <= 3;
+        case TRANSIENT_ROLLBACK_ALWAYS, TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE ->
+            attempt <= 3;
         case NONE -> false;
+      };
+    }
+
+    private boolean shouldFailReadback(int attempt) {
+      return switch (failure) {
+        case TRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE,
+            TRANSIENT_AFTER_COMMIT_ONCE_READBACK_FAILURE,
+            NONTRANSIENT_ROLLBACK_ONCE_READBACK_FAILURE ->
+            attempt == 1;
+        case TRANSIENT_ROLLBACK_ALWAYS_FINAL_READBACK_FAILURE -> attempt == 3;
+        case NONE,
+            TRANSIENT_ROLLBACK_ONCE,
+            TRANSIENT_AFTER_COMMIT_ONCE,
+            TRANSIENT_ROLLBACK_ALWAYS,
+            NONTRANSIENT_ROLLBACK_ONCE ->
+            false;
       };
     }
 
