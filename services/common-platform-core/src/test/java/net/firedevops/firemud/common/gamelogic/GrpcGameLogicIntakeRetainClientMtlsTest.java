@@ -25,6 +25,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.gamelogic.v1.GameLogicGameplayRuleIntakeServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.RetainGameplayRuleIntakeRequest;
 import net.firedevops.firemud.gamelogic.v1.RetainGameplayRuleIntakeResponse;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -105,6 +106,30 @@ class GrpcGameLogicIntakeRetainClientMtlsTest {
     assertThat(clientPeer.get()).isNull();
   }
 
+  @Test
+  void uninitializedAndClosedLifecycleFailuresAreSanitizedUnavailableWithoutRpc() throws Exception {
+    var authorization = GameLogicIntakeRetainProtoCodecTest.largeAuthorization(1);
+    var request = GameLogicIntakeRetainEvidence.Request.create(NAMESPACE, authorization);
+    var source = authorization.source();
+    var terminal =
+        GameLogicGameplayRuleIntakeTerminal.retained(
+            new GameLogicGameplayRuleIntakeOperation(NAMESPACE, authorization),
+            source.canonicalBytes(),
+            source.manifest().canonicalJson().getBytes(StandardCharsets.UTF_8));
+    startServer(pki.server(), request, terminal);
+    client = newClient(server.getPort());
+
+    assertSanitizedUnavailable(() -> client.retain(request));
+    assertThat(calls).hasValue(0);
+
+    client.init();
+    var closedClient = client;
+    client.close();
+    client = null;
+    assertSanitizedUnavailable(() -> closedClient.retain(request));
+    assertThat(calls).hasValue(0);
+  }
+
   private void startServer(
       IntakeTestPki.Identity identity,
       GameLogicIntakeRetainEvidence.Request expectedRequest,
@@ -151,5 +176,17 @@ class GrpcGameLogicIntakeRetainClientMtlsTest {
         pki.clientProperties(tempDirectory, pki.client()),
         new GrpcChannelFactory(),
         NAMESPACE);
+  }
+
+  private static void assertSanitizedUnavailable(ThrowingCallable operation) {
+    assertThatThrownBy(operation)
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> {
+              var status = Status.fromThrowable(failure);
+              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+              assertThat(status.getDescription()).isNull();
+              assertThat(failure.getCause()).isNull();
+            });
   }
 }
