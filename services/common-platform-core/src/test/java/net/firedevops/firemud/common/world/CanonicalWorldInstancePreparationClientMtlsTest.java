@@ -28,6 +28,7 @@ import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -716,21 +717,70 @@ class CanonicalWorldInstancePreparationClientMtlsTest {
           Path.of(
               System.getProperty("java.home"),
               "bin",
-              System.getProperty("os.name").toLowerCase().contains("windows")
+              System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("windows")
                   ? "keytool.exe"
                   : "keytool");
       var command = new ArrayList<String>();
       command.add(keytool.toString());
       command.addAll(List.of(arguments));
-      Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-      String output;
-      try (var stream = process.getInputStream()) {
-        output = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+      Path outputFile = Files.createTempFile(tempDirectory, "keytool-", ".log");
+      Process process = null;
+      boolean cleanupWaitAttempted = false;
+      try {
+        process =
+            new ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .redirectOutput(outputFile.toFile())
+                .start();
+        if (!process.waitFor(30, TimeUnit.SECONDS)) {
+          process.destroyForcibly();
+          cleanupWaitAttempted = true;
+          boolean terminated = process.waitFor(5, TimeUnit.SECONDS);
+          throw new IllegalStateException(
+              "keytool timed out after 30 seconds; terminated after forced stop="
+                  + terminated
+                  + ": "
+                  + readKeytoolOutput(outputFile));
+        }
+        String output = readKeytoolOutput(outputFile);
+        if (process.exitValue() != 0) {
+          throw new IllegalStateException("keytool failed: " + output);
+        }
+      } catch (InterruptedException interrupted) {
+        if (process != null) {
+          process.destroyForcibly();
+          cleanupWaitAttempted = true;
+          try {
+            process.waitFor(5, TimeUnit.SECONDS);
+          } catch (InterruptedException cleanupInterrupted) {
+            interrupted.addSuppressed(cleanupInterrupted);
+          }
+        }
+        Thread.currentThread().interrupt();
+        throw interrupted;
+      } finally {
+        if (process != null && process.isAlive() && !cleanupWaitAttempted) {
+          process.destroyForcibly();
+          try {
+            process.waitFor(5, TimeUnit.SECONDS);
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+          }
+        }
+        Files.deleteIfExists(outputFile);
       }
-      if (!process.waitFor(30, TimeUnit.SECONDS) || process.exitValue() != 0) {
-        process.destroyForcibly();
-        throw new IllegalStateException("keytool failed: " + output);
+    }
+
+    private static String readKeytoolOutput(Path outputFile) throws IOException {
+      int maxOutputBytes = 64 * 1024;
+      byte[] output;
+      boolean truncated;
+      try (var stream = Files.newInputStream(outputFile)) {
+        output = stream.readNBytes(maxOutputBytes);
+        truncated = stream.read() != -1;
       }
+      String text = new String(output, StandardCharsets.UTF_8);
+      return truncated ? text + "\n[keytool output truncated]" : text;
     }
 
     private static X509Certificate readCertificate(Path path) throws Exception {

@@ -224,6 +224,25 @@ class WorldCanonicalInstancePreparationTest {
   }
 
   @Test
+  void translatesRawJooqCanonicalConflictAndPreservesCause() {
+    var databaseFailure =
+        new org.jooq.exception.DataAccessException(
+            "Database rejected canonical preparation",
+            new SQLException(
+                "ERROR: Canonical game instance or request identity is already reserved\n  Where: owner function",
+                "23505"));
+
+    RuntimeException translated =
+        WorldCanonicalInstancePreparationRepository.translateCanonicalPreparationConflict(
+            databaseFailure);
+
+    assertThat(translated)
+        .isInstanceOf(
+            WorldCanonicalInstancePreparationRepository.ConflictingPreparationException.class);
+    assertThat(translated.getCause()).isSameAs(databaseFailure);
+  }
+
+  @Test
   void preservesUnrelatedDuplicateKeyFailures() {
     DuplicateKeyException wrongSqlState =
         duplicateKeyFailure(
@@ -234,6 +253,13 @@ class WorldCanonicalInstancePreparationTest {
         duplicateKeyFailure(
             "23505",
             "ERROR: duplicate key violates a different constraint\nDetail: Canonical game instance or request identity is already reserved");
+    RuntimeException unrelatedJooqUniqueViolation =
+        new org.jooq.exception.DataAccessException(
+            "Database rejected unrelated write",
+            new SQLException("Unexpected unique constraint violation", "23505"));
+    RuntimeException unrelatedJooqSqlFailure =
+        new org.jooq.exception.DataAccessException(
+            "Database rejected unrelated write", new SQLException("Invalid SQL", "42601"));
 
     assertThat(
             WorldCanonicalInstancePreparationRepository.translateCanonicalPreparationConflict(
@@ -247,6 +273,14 @@ class WorldCanonicalInstancePreparationTest {
             WorldCanonicalInstancePreparationRepository.translateCanonicalPreparationConflict(
                 unrelatedViolationWithMatchingDetail))
         .isSameAs(unrelatedViolationWithMatchingDetail);
+    assertThat(
+            WorldCanonicalInstancePreparationRepository.translateCanonicalPreparationConflict(
+                unrelatedJooqUniqueViolation))
+        .isSameAs(unrelatedJooqUniqueViolation);
+    assertThat(
+            WorldCanonicalInstancePreparationRepository.translateCanonicalPreparationConflict(
+                unrelatedJooqSqlFailure))
+        .isSameAs(unrelatedJooqSqlFailure);
   }
 
   @Test
