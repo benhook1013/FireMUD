@@ -103,6 +103,75 @@ class GrpcEntitySelectedSourceIntakeTerminalReadClientMtlsTest {
     assertThat(calls).hasValue(1);
   }
 
+  @Test
+  void loopbackMtlsAcceptsCompleteLargeCanonicalReceipt() throws Exception {
+    // Codec/transport values only: this fixture supplies no genuine Account/World/Entity authority.
+    var fixture =
+        net.firedevops.firemud.testsupport.entity.EntitySelectedSourceIntakeTerminalReadFixtures
+            .create();
+    var request =
+        EntitySelectedSourceIntakeTerminalReadEvidence.Request.create(
+            NAMESPACE, fixture.authorization());
+    byte[] expectedReceipt = fixture.receipt().canonicalBytes();
+    var wire =
+        net.firedevops.firemud.common.entity.sourceintake
+            .EntitySelectedSourceIntakeTerminalReadGrpcCodec.toResponse(
+            new EntitySelectedSourceIntakeTerminalReadEvidence(request, fixture.receipt()));
+    assertThat(wire.getSerializedSize()).isGreaterThan(4 * 1024 * 1024);
+    assertThat(wire.getSerializedSize())
+        .isLessThanOrEqualTo(
+            net.firedevops.firemud.common.entity.sourceintake
+                .EntitySelectedSourceIntakeTerminalReadGrpcCodec.MAX_WIRE_BYTES);
+    var service =
+        new EntitySelectedSourceIntakeTerminalReadServiceGrpc
+            .EntitySelectedSourceIntakeTerminalReadServiceImplBase() {
+          @Override
+          public void readSelectedSourceIntakeTerminal(
+              ReadSelectedSourceIntakeTerminalRequest original,
+              StreamObserver<ReadSelectedSourceIntakeTerminalResponse> observer) {
+            calls.incrementAndGet();
+            assertThat(GrpcPeerIdentity.current().uri()).isEqualTo(ACCOUNT_URI);
+            var decoded =
+                net.firedevops.firemud.common.entity.sourceintake
+                    .EntitySelectedSourceIntakeTerminalReadGrpcCodec.fromRequest(original);
+            assertThat(decoded).isEqualTo(request);
+            assertThat(decoded.binding().canonicalBytes())
+                .isEqualTo(fixture.authorization().canonicalBytes());
+            observer.onNext(
+                net.firedevops.firemud.common.entity.sourceintake
+                    .EntitySelectedSourceIntakeTerminalReadGrpcCodec.toResponse(
+                    new EntitySelectedSourceIntakeTerminalReadEvidence(
+                        decoded, fixture.receipt())));
+            observer.onCompleted();
+          }
+        };
+    server =
+        NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+            .maxInboundMessageSize(
+                net.firedevops.firemud.common.entity.sourceintake
+                    .EntitySelectedSourceIntakeTerminalReadGrpcCodec.MAX_REQUEST_WIRE_BYTES)
+            .sslContext(
+                GrpcSslContexts.configure(
+                        SslContextBuilder.forServer(
+                            entityServer.privateKey(), entityServer.certificate()))
+                    .trustManager(pki.caCertificate())
+                    .clientAuth(ClientAuth.REQUIRE)
+                    .build())
+            .addService(ServerInterceptors.intercept(service, new GrpcPeerIdentityInterceptor()))
+            .build()
+            .start();
+    client = newClient(accountClient);
+    client.init();
+
+    var actual = client.read(request);
+
+    assertThat(actual.request()).isEqualTo(request);
+    assertThat(actual.receipt().canonicalBytes()).isEqualTo(expectedReceipt);
+    assertThat(actual.receipt().authorizationBindingBytes())
+        .isEqualTo(fixture.authorization().canonicalBytes());
+    assertThat(calls).hasValue(1);
+  }
+
   private void startServer(GameLogicIntakeSourceReadTransportTest.TestIdentity identity)
       throws Exception {
     startServer(identity, 0);
