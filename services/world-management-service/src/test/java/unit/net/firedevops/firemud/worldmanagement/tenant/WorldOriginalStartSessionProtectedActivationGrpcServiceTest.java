@@ -12,15 +12,20 @@ import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
+import java.util.List;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.WorldOriginalStartSessionProtectedActivationGrpcCodec;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationRepository;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionProtectedActivationGrpcService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionProtectedActivationService;
 import net.firedevops.firemud.worldmanagement.v1.ActivateOriginalStartSessionProtectedRequest;
 import net.firedevops.firemud.worldmanagement.v1.ActivateOriginalStartSessionProtectedResponse;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
@@ -70,6 +75,31 @@ class WorldOriginalStartSessionProtectedActivationGrpcServiceTest {
 
     TransactionSynchronizationManager.setActualTransactionActive(true);
     assertCode(Status.Code.FAILED_PRECONDITION, invoke(service, caller, malformed));
+    verifyNoInteractions(owner);
+  }
+
+  @Test
+  void rejectsSynchronizationOnlyScopeWhileNoActualTransactionIsActive() {
+    var owner = mock(WorldOriginalStartSessionProtectedActivationService.class);
+    var service =
+        new WorldOriginalStartSessionProtectedActivationGrpcService(owner, "world-runtime");
+    var caller = peer("spiffe://firemud/ns/world-runtime/sa/game-session-service");
+    TransactionSynchronizationManager.initSynchronization();
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isTrue();
+
+    var failure =
+        invoke(service, caller, ActivateOriginalStartSessionProtectedRequest.getDefaultInstance());
+
+    assertThat(failure.failureCode()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(failure.failureDescription())
+        .isEqualTo("World protected activation requires independent owner operations");
+    assertThat(failure.failureCause()).isNull();
+    assertThat(failure.failureTrailers()).isNull();
+    assertThat(failure.responseCount()).isZero();
+    assertThat(failure.completionCount()).isZero();
+    assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    assertThat(TransactionSynchronizationManager.isSynchronizationActive()).isTrue();
     verifyNoInteractions(owner);
   }
 
@@ -127,6 +157,60 @@ class WorldOriginalStartSessionProtectedActivationGrpcServiceTest {
       assertThat(failure.failureTrailers()).isNull();
       assertThat(failure.responseCount()).isZero();
       assertThat(failure.completionCount()).isZero();
+      verify(owner).activate(any());
+    }
+  }
+
+  @Test
+  void classifiesDomainStorageAndUnexpectedFailuresWithoutLeakingOwnerDetails() throws Exception {
+    var fixture = WorldOriginalStartSessionActivationTransportTestSupport.fixture();
+    var request =
+        WorldOriginalStartSessionProtectedActivationGrpcCodec.toRequest(fixture.input(), "test");
+    var caller = peer("spiffe://firemud/ns/test/sa/game-session-service");
+    var failures =
+        List.of(
+            new FailureCase(
+                new WorldOriginalStartSessionProtectedActivationService.PendingActivationException(
+                    "private pending detail"),
+                Status.Code.FAILED_PRECONDITION,
+                "World protected activation is not admissible"),
+            new FailureCase(
+                new WorldCanonicalInstanceActivationRepository.ActivationConflictException(
+                    "private conflict detail"),
+                Status.Code.FAILED_PRECONDITION,
+                "World protected activation is not admissible"),
+            new FailureCase(
+                new WorldCanonicalInstanceActivationService.ActivationDeniedException(
+                    "private denial detail"),
+                Status.Code.FAILED_PRECONDITION,
+                "World protected activation is not admissible"),
+            new FailureCase(
+                new TransientDataAccessResourceException("private transient storage detail"),
+                Status.Code.UNAVAILABLE,
+                "World protected activation storage is unavailable"),
+            new FailureCase(
+                new DataAccessException("private jOOQ storage detail"),
+                Status.Code.INTERNAL,
+                "World protected activation storage failed"),
+            new FailureCase(
+                new IllegalStateException("private unexpected detail"),
+                Status.Code.INTERNAL,
+                "World protected activation failed"));
+
+    for (FailureCase testCase : failures) {
+      var owner = mock(WorldOriginalStartSessionProtectedActivationService.class);
+      when(owner.activate(any())).thenThrow(testCase.ownerFailure());
+      var service = new WorldOriginalStartSessionProtectedActivationGrpcService(owner, "test");
+
+      var observed = invoke(service, caller, request);
+
+      assertThat(observed.failureWasStatusRuntimeException()).isTrue();
+      assertThat(observed.failureCode()).isEqualTo(testCase.expectedCode());
+      assertThat(observed.failureDescription()).isEqualTo(testCase.expectedDescription());
+      assertThat(observed.failureCause()).isNull();
+      assertThat(observed.failureTrailers()).isNull();
+      assertThat(observed.responseCount()).isZero();
+      assertThat(observed.completionCount()).isZero();
       verify(owner).activate(any());
     }
   }
@@ -193,6 +277,9 @@ class WorldOriginalStartSessionProtectedActivationGrpcServiceTest {
       Metadata failureTrailers,
       int responseCount,
       int completionCount) {}
+
+  private record FailureCase(
+      RuntimeException ownerFailure, Status.Code expectedCode, String expectedDescription) {}
 
   private static final class Collector
       implements StreamObserver<ActivateOriginalStartSessionProtectedResponse> {

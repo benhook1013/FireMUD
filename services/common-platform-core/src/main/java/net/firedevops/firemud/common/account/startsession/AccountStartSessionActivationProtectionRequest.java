@@ -55,10 +55,10 @@ public final class AccountStartSessionActivationProtectionRequest {
   public static final int MAX_WORLD_PREPARING_EVIDENCE_BYTES = 64 * 1024 * 1024;
 
   /**
-   * Aggregate closed-envelope bound: Base64 expansion of the existing 41 MiB launch-result and 256
-   * KiB tuple caps, this carrier's 64 MiB PREPARING child cap, and the existing Account projection
-   * cap is about 140.6 MiB; the remaining space covers the fixed JSON envelope. This bounds this
-   * new Account value only and does not change any owner transport limit.
+   * Aggregate closed-envelope bound: Base64 expansion of the existing 41 MiB launch-result, the 256
+   * KiB tuple and projection caps, and this carrier's 64 MiB PREPARING child cap is about 140.7
+   * MiB; the remaining space covers the fixed JSON envelope. This bounds this new Account value
+   * only and does not change any owner transport limit.
    */
   public static final int MAX_CANONICAL_BYTES = 144 * 1024 * 1024;
 
@@ -502,11 +502,13 @@ public final class AccountStartSessionActivationProtectionRequest {
       throw invalid("Original StartSession tuple differs from the exact launch scope");
     }
     var operation = selector.originalOperation();
-    if (operation != null
-        && (!Arrays.equals(tupleBytes, operation.originalPostAuthorizationTuple())
-            || !ownerAttemptId.equals(operation.ownerAttemptId())
-            || ownerFence != operation.ownerFence()
-            || !ownerMutationId.equals(operation.ownerMutationId()))) {
+    if (operation == null) {
+      throw invalid("Account activation protection requires the complete original operation");
+    }
+    if (!Arrays.equals(tupleBytes, operation.originalPostAuthorizationTuple())
+        || !ownerAttemptId.equals(operation.ownerAttemptId())
+        || ownerFence != operation.ownerFence()
+        || !ownerMutationId.equals(operation.ownerMutationId())) {
       throw invalid("Launch read original operation differs from the complete protection tuple");
     }
     if (originalCurrentAttempt != null

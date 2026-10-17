@@ -222,7 +222,7 @@ public final class AccountStartSessionActivationProtectionSettlementService {
         switch (code) {
           case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, RESOURCE_EXHAUSTED, INTERNAL, UNKNOWN ->
               Status.fromCode(code);
-          default -> Status.UNAVAILABLE;
+          default -> Status.FAILED_PRECONDITION;
         };
     return status.withDescription(description).asRuntimeException();
   }
