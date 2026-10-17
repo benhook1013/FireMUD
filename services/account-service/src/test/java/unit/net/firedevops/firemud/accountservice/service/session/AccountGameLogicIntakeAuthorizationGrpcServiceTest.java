@@ -211,6 +211,29 @@ class AccountGameLogicIntakeAuthorizationGrpcServiceTest {
     assertThat(denied.error().getCause()).isNull();
   }
 
+  @Test
+  void distinguishesPermanentOwnerRefusalsFromStorageOutages() {
+    var failures =
+        List.of(
+            Map.entry(new IllegalStateException(CREDENTIAL), Status.Code.FAILED_PRECONDITION),
+            Map.entry(new IllegalArgumentException(CREDENTIAL), Status.Code.FAILED_PRECONDITION),
+            Map.entry(
+                new org.springframework.dao.DataAccessResourceFailureException(CREDENTIAL),
+                Status.Code.UNAVAILABLE),
+            Map.entry(
+                new org.springframework.transaction.CannotCreateTransactionException(CREDENTIAL),
+                Status.Code.UNAVAILABLE));
+    for (var failure : failures) {
+      org.mockito.Mockito.doThrow(failure.getKey())
+          .when(owner)
+          .authorizeWithEnvironmentCapture(eq(CREDENTIAL), any(), any(), any());
+      var result = authorized(() -> invokeAuthorize(request()));
+      assertThat(result.code()).isEqualTo(failure.getValue());
+      assertThat(result.error().toString()).doesNotContain(CREDENTIAL);
+      assertThat(result.error().getCause()).isNull();
+    }
+  }
+
   private record Result(GameLogicIntakeAuthorizationResponse response, Throwable error) {
     Status.Code code() {
       return Status.fromThrowable(error).getCode();

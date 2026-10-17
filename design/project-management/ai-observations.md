@@ -162,12 +162,26 @@ Entry format:
   - Context: Current-front readiness readback followed publication and successful direct head/base verification.
   - Observation: `firemud-controller --worker-identity Gameplay reviews status --pr 3224 --json` failed at its 120-second deadline during `target_history_pr_2846_cli`, after eighty prior phases consumed 119.6 seconds. It returned no JSON, delaying current-front readiness readback.
   - Expected pattern: Keep current-target status bounded while retaining historical review evidence. Overseer received the exact diagnostic; no state deletion, quota reset or installed-runtime bypass was used. The subsequent exact-checkpoint ancestry reconciliations succeeded; the failed status invocation itself remains unavailable evidence.
+  - Reconsideration trigger: when targeted `reviews status --pr` completes within its deadline for a PR with long queue history, or the Controller bounds historical phases separately, qualify that behavior and revisit the retained status-readback limitation.
 
 - `2026-10-17`: Repeated Hosted capture can reject a previously finalized provider comment
   - Context: #3231’s second Hosted review was admitted after the first review had been finalized.
   - Observation: Admission reported a nonblocking `predecessor_terminal_capture` warning for the finalized first review: `Hosted finding comment contains unmarked content after its final cr-comment:v1 marker`. The original seven findings, accepted-fix records and checkpoint 6214527024 had already been recorded; the next request posted successfully as trigger 6214841384. The exact trailing-content cause remains unverified.
   - Expected pattern: Preserve completed review evidence and surface the exact capture incompatibility without silently replacing counts or requiring a quota reset. Overseer received the retained diagnostic; Gameplay made no database or installed-runtime bypass.
+  - Reconsideration trigger: when the trailing-content cause after the final `cr-comment:v1` marker is identified, or a repeated capture of the affected finalized predecessor completes without the warning, verify the outcome and revisit this retained capture limitation.
 
 - 2026-10-17 — A validation allowance of NONE includes whitespace checks.
   - Observation: A historical-test receiving helper ran `git diff --check` despite an explicit validation allowance of NONE. It reported the extra check; no runtime tests or source edits resulted from it. The handoff also said no validation ran, which obscured the distinction.
   - Expected pattern: Treat standalone whitespace checks as validation under the closed allowance. Report the actual check and its outcome, and wait for the orchestrator’s named gate. Main gave that bounded correction and selected receiving proof separately; the extra check earns no test credit.
+
+- `2026-10-18`: Retain admission context for independent review refusals
+  - Context: a CLI request returned `review-threads:1:0` while peer Hosted findings were recorded as accepted and fix preparation was underway; no provider call occurred.
+  - Observation: the short error does not establish why the documented peer-channel exception was not applied. Preserve the command result and any existing admission-audit pointer; no Controller defect or cause was established here.
+  - Outcome: ordinary qualified publication and thread resolution cleared admission, and the next request reached the provider. Overseer confirmed that independent-channel guidance remains valid and requested no new investigation or Controller change from this error alone.
+  - Reconsideration trigger: if this recurs, retain the existing admission context for adjudication rather than infer a cause from the short refusal.
+
+- `2026-10-18`: Expose review-allocation decision provenance beside its remaining budget
+  - Context: #3233 had three lifetime Hosted results while the current native selector correctly showed a separate additional allowance with zero of two used. A retained handover incorrectly inferred exhaustion from the lifetime total.
+  - Observation: the current allocation status and review-record history exposed the budget, null checkpoint and taper explanation, but no allocation decision timestamp or original grant rationale. Verifying the controlling allowance required a complete queue readback; no head-change counter reset was established.
+  - Expected pattern: expose the controlling grant decision, timestamp, actor, original reason and baseline beside its additional-result count through an existing read-only controller command, so a worker can distinguish lifetime history from the current allowance without guessing. This is a tooling suggestion; existing counting and authorization rules stay unchanged.
+  - Reconsideration trigger: when an existing read-only controller command exposes the controlling grant decision, timestamp, rationale and baseline beside the remaining allowance, verify it against separate lifetime and current allowances and revisit the manual queue readback.
