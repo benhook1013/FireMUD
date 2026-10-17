@@ -89,7 +89,7 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
         .isGreaterThan(4 * 1024 * 1024)
         .isLessThanOrEqualTo(GameLogicIntakeAuthorizationGrpcCodec.MAX_WIRE_BYTES);
 
-    start(pki.gameLogicServer());
+    start(pki.accountServer());
     client = newClient(gameLogicClient());
     client.init();
     var actual = client.read(expectedRequest);
@@ -109,7 +109,7 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
     assertThat(calls).hasValue(0);
     close();
 
-    start(pki.gameLogicServer());
+    start(pki.accountServer());
     client = newClient(otherCaller());
     client.init();
     assertThatThrownBy(() -> client.read(request))

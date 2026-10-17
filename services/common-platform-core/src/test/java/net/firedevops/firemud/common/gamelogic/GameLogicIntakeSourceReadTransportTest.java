@@ -135,14 +135,14 @@ class GameLogicIntakeSourceReadTransportTest {
 
   @Test
   void pinsAccountServerAndAuthenticatedGdClientForBothMethods() throws Exception {
-    start(pki.gameLogicServer());
-    client = newClient(pki.accountClient());
+    start(pki.accountServer());
+    client = newClient(pki.gameDesignClient());
     client.init();
     for (var request : requests()) assertThat(client.read(request).request()).isEqualTo(request);
     assertThat(calls).hasValue(2);
     close();
     start(pki.wrongServer());
-    client = newClient(pki.accountClient());
+    client = newClient(pki.gameDesignClient());
     client.init();
     assertThatThrownBy(() -> client.read(requests().getFirst()))
         .isInstanceOf(StatusRuntimeException.class);
@@ -167,8 +167,8 @@ class GameLogicIntakeSourceReadTransportTest {
                     new GrpcChannelFactory(),
                     NAMESPACE))
         .isInstanceOf(IllegalArgumentException.class);
-    start(pki.gameLogicServer());
-    client = newClient(pki.accountClient());
+    start(pki.accountServer());
+    client = newClient(pki.gameDesignClient());
     client.init();
     var original = requests().getFirst();
     var otherNamespace =
@@ -197,8 +197,8 @@ class GameLogicIntakeSourceReadTransportTest {
   @Test
   void boundsUnavailableReadByDeadline() throws Exception {
     stall = true;
-    start(pki.gameLogicServer());
-    client = newClient(pki.accountClient());
+    start(pki.accountServer());
+    client = newClient(pki.gameDesignClient());
     client.init();
     assertThatThrownBy(() -> client.read(requests().getFirst()))
         .isInstanceOf(StatusRuntimeException.class)
@@ -210,7 +210,7 @@ class GameLogicIntakeSourceReadTransportTest {
 
   @Test
   void rejectsOtherAuthenticatedClientWorkload() throws Exception {
-    start(pki.gameLogicServer());
+    start(pki.accountServer());
     var wrongClient =
         TestPki.issueIdentity(
             tempDirectory,
@@ -262,8 +262,8 @@ class GameLogicIntakeSourceReadTransportTest {
     assertThat(GameLogicIntakeSourceReadProtoCodec.toResponse(permission).getSerializedSize())
         .isGreaterThan(4 * 1024 * 1024)
         .isLessThanOrEqualTo(GameLogicIntakeSourceReadProtoCodec.MAX_WIRE_BYTES);
-    start(pki.gameLogicServer());
-    client = newClient(pki.accountClient());
+    start(pki.accountServer());
+    client = newClient(pki.gameDesignClient());
     client.init();
     assertThat(client.read(permission).request().proof().canonicalBytes())
         .containsExactly(large.canonicalBytes());
@@ -534,9 +534,9 @@ class GameLogicIntakeSourceReadTransportTest {
 
   record TestPki(
       X509Certificate caCertificate,
-      TestIdentity gameLogicServer,
+      TestIdentity accountServer,
       TestIdentity wrongServer,
-      TestIdentity accountClient) {
+      TestIdentity gameDesignClient) {
     static TestPki create(Path directory) throws Exception {
       Path caStore = directory.resolve("terminal-test-ca.p12");
       runKeytool(
@@ -580,21 +580,21 @@ class GameLogicIntakeSourceReadTransportTest {
       var caCertificate = readCertificate(caFile);
       return new TestPki(
           caCertificate,
-          issueIdentity(directory, caStore, caFile, "game-logic-server", ACCOUNT_URI, true),
+          issueIdentity(directory, caStore, caFile, "account-server", ACCOUNT_URI, true),
           issueIdentity(directory, caStore, caFile, "wrong-server", WRONG_SERVER_URI, true),
-          issueIdentity(directory, caStore, caFile, "account-client", GD_URI, false));
+          issueIdentity(directory, caStore, caFile, "game-design-client", GD_URI, false));
     }
 
     CommonGrpcClientProperties clientProperties(Path directory, TestIdentity identity)
         throws Exception {
       Path certificate =
           writePem(
-              directory.resolve("account-client.crt"),
+              directory.resolve("workload-client.crt"),
               "CERTIFICATE",
               identity.certificate().getEncoded());
       Path privateKey =
           writePem(
-              directory.resolve("account-client.key"),
+              directory.resolve("workload-client.key"),
               "PRIVATE KEY",
               identity.privateKey().getEncoded());
       Path caFile =
