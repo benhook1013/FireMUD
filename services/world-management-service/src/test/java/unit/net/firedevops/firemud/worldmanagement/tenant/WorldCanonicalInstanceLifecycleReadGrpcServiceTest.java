@@ -10,6 +10,7 @@ import com.google.protobuf.ByteString;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -163,6 +164,52 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
   }
 
   @Test
+  void classifiesJooqAndSpringStorageFailuresAtTheLifecycleRpcBoundary() {
+    List<StorageFailureCase> failures =
+        List.of(
+            new StorageFailureCase(jooqFailure("22P02"), Status.Code.INTERNAL),
+            new StorageFailureCase(jooqFailure("40001"), Status.Code.ABORTED),
+            new StorageFailureCase(springFailure("22P02"), Status.Code.INTERNAL),
+            new StorageFailureCase(springFailure("40001"), Status.Code.ABORTED));
+
+    for (StorageFailureCase failure : failures) {
+      var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
+      var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
+      var read = request("test");
+      when(repository.read(read)).thenThrow(failure.failure);
+
+      Collector result =
+          call(
+              service,
+              WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(read),
+              peer("game-session-service", "test"));
+
+      assertThat(result.error).isEqualTo(failure.expectedCode);
+      assertThat(result.description).doesNotContain("private SQL detail");
+      verify(repository).read(read);
+    }
+  }
+
+  @Test
+  void mapsNonSqlTooManyRowsToFailedPreconditionWithoutLeakingDetails() {
+    var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
+    var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
+    var read = request("test");
+    when(repository.read(read))
+        .thenThrow(new org.jooq.exception.TooManyRowsException("private duplicate evidence"));
+
+    Collector result =
+        call(
+            service,
+            WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(read),
+            peer("game-session-service", "test"));
+
+    assertThat(result.error).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertThat(result.description).doesNotContain("private duplicate evidence");
+    verify(repository).read(read);
+  }
+
+  @Test
   void authenticatedPeerWithMalformedRequestFailsBeforeStorageAccess() {
     var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
     var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
@@ -217,6 +264,18 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
     return new GrpcPeerIdentity(
         "spiffe://firemud/ns/" + namespace + "/sa/" + service, namespace, service);
   }
+
+  private static org.jooq.exception.DataAccessException jooqFailure(String sqlState) {
+    return new org.jooq.exception.DataAccessException(
+        "private SQL detail", new SQLException("private SQL detail", sqlState));
+  }
+
+  private static org.springframework.dao.DataAccessException springFailure(String sqlState) {
+    return new org.springframework.dao.DataAccessException(
+        "private SQL detail", new SQLException("private SQL detail", sqlState)) {};
+  }
+
+  private record StorageFailureCase(Throwable failure, Status.Code expectedCode) {}
 
   private static final class Collector
       implements StreamObserver<ReadWorldCanonicalInstanceLifecycleResponse> {

@@ -11,9 +11,8 @@ import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifec
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldCanonicalInstanceLifecycleReadServiceGrpc;
 import org.jooq.exception.DataAccessException;
+import org.jooq.exception.TooManyRowsException;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DataAccessResourceFailureException;
-import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -78,13 +77,22 @@ public final class WorldCanonicalInstanceLifecycleReadGrpcService
               .withDescription("Canonical World lifecycle source evidence is inconsistent")
               .asRuntimeException());
       return;
-    } catch (DataAccessResourceFailureException
-        | TransientDataAccessException
-        | DataAccessException
-        | CannotCreateTransactionException unavailable) {
+    } catch (CannotCreateTransactionException unavailable) {
       responseObserver.onError(
           Status.UNAVAILABLE
               .withDescription("Canonical World lifecycle storage is temporarily unavailable")
+              .asRuntimeException());
+      return;
+    } catch (TooManyRowsException inconsistent) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Canonical World lifecycle source evidence is inconsistent")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessException | org.springframework.dao.DataAccessException storageFailure) {
+      responseObserver.onError(
+          Status.fromCode(WorldPreparationStorageFailureStatus.from(storageFailure))
+              .withDescription("Canonical World lifecycle storage operation failed")
               .asRuntimeException());
       return;
     } catch (RuntimeException failure) {
