@@ -71,7 +71,10 @@ public final class InitialGameplayLoginContextState {
     this.evidence = evidence;
   }
 
-  /** Controlled fixture seed only; the codec provides no Redis creation/reservation operation. */
+  /**
+   * Encodes the exact desired initial value; Redis create-only authority remains in its owner
+   * script.
+   */
   public static InitialGameplayLoginContextState pending(
       InitialGameplayLoginAttemptCoordinates coordinates) {
     return new InitialGameplayLoginContextState(State.PENDING, coordinates, null);

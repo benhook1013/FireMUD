@@ -1163,179 +1163,8 @@ public class AccountServiceImpl implements AccountService {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
     ConnectScopeContext scopeContext = requireConnectScopeContext(request.connectScopeId());
     validateConnectScopeAgainstBootstrap(bootstrapContext, scopeContext);
-    Optional<
-            net.firedevops.firemud.accountservice.service.session.SessionService.ConnectTokenReplay>
-        cachedReplay =
-            sessionService.getConnectTokenReplay(
-                scopeContext.tenantId(),
-                bootstrapContext.accountId(),
-                request.connectScopeId(),
-                request.requestId());
-    if (cachedReplay.isPresent()) {
-      var replay = cachedReplay.orElseThrow();
-      if (replay.success()) {
-        logger.info(
-            "Replayed connect-token attempt for account {} tenant {} world {} realm {} requestId {}",
-            bootstrapContext.accountId(),
-            scopeContext.tenantId(),
-            scopeContext.worldSlug(),
-            scopeContext.realmSlug(),
-            request.requestId());
-        return replayedConnectTokenResult(replay.result());
-      }
-      logger.info(
-          "Replayed failed connect-token attempt for account {} tenant {} world {} realm {} requestId {} code {}",
-          bootstrapContext.accountId(),
-          scopeContext.tenantId(),
-          scopeContext.worldSlug(),
-          scopeContext.realmSlug(),
-          request.requestId(),
-          replay.errorCode());
-      throw new AuthenticationException(replay.errorCode(), replay.errorMessage());
-    }
-    try {
-      return issueConnectTokenFresh(bootstrapContext, scopeContext, request);
-    } catch (AuthenticationException ex) {
-      if (!"AUTH_UNAVAILABLE".equals(ex.getCode())
-          && !"ENTITLEMENT_UNAVAILABLE".equals(ex.getCode())) {
-        sessionService.storeConnectTokenReplay(
-            scopeContext.tenantId(),
-            bootstrapContext.accountId(),
-            request.connectScopeId(),
-            request.requestId(),
-            new net.firedevops.firemud.accountservice.service.session.SessionService
-                .ConnectTokenReplay(false, null, ex.getCode(), ex.getMessage()),
-            remainingConnectScopeReplayTtl(scopeContext));
-      }
-      throw ex;
-    }
-  }
-
-  private ConnectTokenResult issueConnectTokenFresh(
-      BootstrapContext bootstrapContext,
-      ConnectScopeContext scopeContext,
-      ConnectTokenRequest request) {
-    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(scopeContext);
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
-    if (!entitlements.gameplayAvailable()) {
-      throw new AuthenticationException(
-          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
-    }
-    RuntimeMembershipDto membership =
-        getTenantMembershipForRuntime(
-            bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
-
-    if (membership.membershipExists()
-        && !"ACTIVE".equals(membership.membershipLifecycleState())
-        && !"INACTIVE".equals(membership.membershipLifecycleState())) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Membership authority requires reconciliation");
-    }
-    if (membership.membershipExists()
-        && "INACTIVE".equals(membership.membershipLifecycleState())
-        && isPublicProductionRealm(realm)) {
-      if (!entitlements.allowPublicJoin()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            "Public joining is not allowed for the selected game");
-      }
-      throw new AuthenticationException(
-          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
-    }
-    if (membership.membershipExists() && !membership.gameplayAdmissionAllowed()) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
-    }
-
-    if (!membership.membershipExists()) {
-      if (!isPublicProductionRealm(realm)) {
-        throw new AuthenticationException(
-            "NON_PUBLIC_ENROLLMENT_REQUIRED",
-            "Existing game membership is required for this non-public realm");
-      }
-      if (!entitlements.allowPublicJoin()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            "Public joining is not allowed for the selected game");
-      }
-      throw new AuthenticationException(
-          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
-    }
-
-    String jti =
-        stableId(
-            "gameplay-connect",
-            bootstrapContext.accountId(),
-            scopeContext.tenantId(),
-            scopeContext.gameInstanceId(),
-            scopeContext.realmSlug(),
-            request.requestId());
-    long issuedAt = System.currentTimeMillis();
-    long expiresAt = issuedAt + tokenProperties.getConnectTokenExpirationMs();
-    String connectToken =
-        mintToken(
-            String.valueOf(bootstrapContext.accountId()),
-            tokenProperties.getConnectTokenExpirationMs(),
-            Map.of(
-                "aud",
-                "gameplay-connect",
-                "accountId",
-                bootstrapContext.accountId(),
-                "tenantId",
-                scopeContext.tenantId(),
-                "gameInstanceId",
-                scopeContext.gameInstanceId(),
-                "pointerVersion",
-                scopeContext.pointerVersion(),
-                "realmSlug",
-                scopeContext.realmSlug(),
-                "worldSlug",
-                scopeContext.worldSlug(),
-                "connectScopeId",
-                request.connectScopeId(),
-                "requestId",
-                request.requestId(),
-                "jti",
-                jti));
-    sessionService.storeSession(
-        scopeContext.tenantId(),
-        bootstrapContext.accountId(),
-        connectToken,
-        tokenProperties.getConnectTokenExpirationMs());
-    ConnectTokenResult result =
-        new ConnectTokenResult(
-            bootstrapContext.accountId(),
-            scopeContext.tenantId(),
-            scopeContext.gameInstanceId(),
-            scopeContext.realmSlug(),
-            request.connectScopeId(),
-            connectToken,
-            jti,
-            request.requestId(),
-            Instant.ofEpochMilli(issuedAt).toString(),
-            Instant.ofEpochMilli(expiresAt).toString(),
-            false);
-    sessionService.storeConnectTokenReplay(
-        scopeContext.tenantId(),
-        bootstrapContext.accountId(),
-        request.connectScopeId(),
-        request.requestId(),
-        new net.firedevops.firemud.accountservice.service.session.SessionService.ConnectTokenReplay(
-            true, result, "", ""),
-        Math.min(
-            tokenProperties.getConnectTokenExpirationMs(),
-            remainingConnectScopeReplayTtl(scopeContext)));
-    logger.info(
-        "Issued connect token for account {} tenant {} world {} realm {} gameInstance {} requestId {} jti {}",
-        bootstrapContext.accountId(),
-        scopeContext.tenantId(),
-        scopeContext.worldSlug(),
-        scopeContext.realmSlug(),
-        scopeContext.gameInstanceId(),
-        request.requestId(),
-        jti);
-    return result;
+    throw new AuthenticationException(
+        "AUTH_UNAVAILABLE", "Canonical gameplay connect-token authority is unavailable");
   }
 
   @Override
@@ -1473,27 +1302,6 @@ public class AccountServiceImpl implements AccountService {
     } catch (IllegalArgumentException ex) {
       throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
     }
-  }
-
-  private RuntimeRealmTarget requireAdmissibleRealm(
-      BootstrapContext bootstrapContext,
-      Long expectedTenantId,
-      String worldSlug,
-      String realmSlug) {
-    RuntimeRealmTarget realm = requireRealmTarget(expectedTenantId, worldSlug, realmSlug);
-    if (!hasRealmAdmissionAccess(bootstrapContext, realm)) {
-      throw new AuthenticationException(
-          "ADMISSION_POINTER_UNAVAILABLE",
-          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
-    }
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(realm.tenantId(), "bootstrap-selected-target");
-    if (!entitlements.gameplayAvailable()) {
-      throw new AuthenticationException(
-          "ADMISSION_POINTER_UNAVAILABLE",
-          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
-    }
-    return realm;
   }
 
   private RuntimeRealmTarget requireRealmTarget(
@@ -1946,12 +1754,6 @@ public class AccountServiceImpl implements AccountService {
           "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
     }
     return currentRealm;
-  }
-
-  private long remainingConnectScopeReplayTtl(ConnectScopeContext scopeContext) {
-    long remainingMs =
-        scopeContext.connectScopeExpiresAt().toEpochMilli() - System.currentTimeMillis();
-    return Math.max(1L, remainingMs);
   }
 
   private Optional<Account> findAccountForAuthentication(String usernameOrEmail) {
@@ -3360,21 +3162,6 @@ public class AccountServiceImpl implements AccountService {
       String realmSlug,
       long membershipVersion,
       String requestId) {}
-
-  private ConnectTokenResult replayedConnectTokenResult(ConnectTokenResult result) {
-    return new ConnectTokenResult(
-        result.accountId(),
-        result.tenantId(),
-        result.gameInstanceId(),
-        result.realmSlug(),
-        result.connectScopeId(),
-        result.connectToken(),
-        result.jti(),
-        result.requestId(),
-        result.issuedAt(),
-        result.expiresAt(),
-        true);
-  }
 
   private RuntimeRealmTarget readRuntimeRealmTarget(
       net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {

@@ -67,7 +67,8 @@ public final class SessionRoutingNormalizationService {
         0L,
         null,
         context.connectScopeId(),
-        context.connectRequestId());
+        context.connectRequestId(),
+        context.firstPartyConnectContext());
   }
 
   private boolean hasCanonicalGameplayRoomBinding(SessionContext context) {

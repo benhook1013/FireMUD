@@ -20,7 +20,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.InitialGameplayLoginTokenWitness;
 import net.firedevops.firemud.account.v1.RetireInitialGameplayLoginRequest;
 import net.firedevops.firemud.gamesession.client.CanonicalGameplayLoginAccountClient;
@@ -106,7 +108,8 @@ class InitialGameplayLoginCleanupOwnerTest {
     assertThat(fixture.snapshot.frozenRetirementRequest().orElseThrow().hasTokenWitness())
         .isFalse();
     assertThat(fixture.snapshot.retainedReceipt()).contains(fixture.response);
-    verify(fixture.account, never()).authenticate(any());
+    verify(fixture.account, never())
+        .authenticate(any(AuthenticateRequest.class), any(BooleanSupplier.class));
   }
 
   @ParameterizedTest
@@ -213,7 +216,8 @@ class InitialGameplayLoginCleanupOwnerTest {
     assertThat(fixture.snapshot.verifiedWitness()).isEmpty();
     verify(fixture.account, times(2))
         .retireInitialGameplayLogin(InitialGameplayLoginJournalSnapshot.request(ORIGINAL, null));
-    verify(fixture.account, never()).authenticate(any());
+    verify(fixture.account, never())
+        .authenticate(any(AuthenticateRequest.class), any(BooleanSupplier.class));
   }
 
   @Test

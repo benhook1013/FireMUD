@@ -4,17 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
-import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.springcloudgateway.websocket.GameplayWebSocketObservability;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
-import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 
 class GameplayHandshakeFilterLoggingContextTest {
-  private static final String SECRET = "testsecretkeytestsecretkeytest1234";
-
   @AfterEach
   void clearMdc() {
     MDC.clear();
@@ -24,11 +21,9 @@ class GameplayHandshakeFilterLoggingContextTest {
   void openLoggingContextUsesTransportSessionHeaderAsCorrelationId() {
     GameplayHandshakeFilter filter =
         new GameplayHandshakeFilter(
-            new JwtUtil(SECRET, 30_000L),
             new RuntimeIdentity(
                 "spring-cloud-gateway", "gateway-test", null, Instant.EPOCH, null, null, null),
-            null,
-            new MockEnvironment());
+            GameplayWebSocketObservability.disabled());
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/ws/game/test")

@@ -124,7 +124,8 @@ public final class RedisMovementEffectIdempotencyService
         current.pointerVersion(),
         current.playableStateScope(),
         current.connectScopeId(),
-        current.connectRequestId());
+        current.connectRequestId(),
+        current.firstPartyConnectContext());
   }
 
   private boolean roomMatches(String currentRoomId, String expectedRoomId) {

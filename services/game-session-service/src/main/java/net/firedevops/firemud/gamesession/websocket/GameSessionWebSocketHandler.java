@@ -38,6 +38,7 @@ import net.firedevops.firemud.gamesession.service.ReplayableScreenBufferEntries;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import net.firedevops.firemud.gamesession.service.SessionIdParsing;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +49,7 @@ import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+import org.springframework.web.socket.handler.WebSocketSessionDecorator;
 
 /** Handles WebSocket text commands from clients that span both Telnet and browser connections. */
 @Component
@@ -158,9 +160,15 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
           session.getId(),
           resolveTransportSessionId(session),
           resolveTenantIdText(session));
-      bootstrapSessionContext(session);
+      if (!bootstrapSessionContext(session)) {
+        return;
+      }
       parseNumericSessionId(resolveTransportSessionId(session))
           .ifPresent(sessionId -> activeTransportSessionRegistry.register(sessionId, session));
+    } catch (SessionContextUnavailableException unavailable) {
+      logger.warn(
+          "Unable to read retained session context during WebSocket establishment", unavailable);
+      closeBackendUnavailable(session);
     }
   }
 
@@ -169,7 +177,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     parseNumericSessionId(resolveTransportSessionId(session))
         .ifPresent(
             sessionId -> {
-              activeTransportSessionRegistry.unregister(sessionId, session);
+              if (!activeTransportSessionRegistry.unregister(sessionId, session)) {
+                return;
+              }
               firstPartyConnectContextRegistry.unregister(sessionId);
               promptBurstCoordinator.evict(Long.toString(sessionId));
               gameplayPresenceLifecycleService.recordDisconnected(
@@ -180,6 +190,12 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
   @Override
   protected void handleTextMessage(WebSocketSession session, TextMessage message)
       throws IOException {
+    // Check ownership before logging-context projection can read or normalize incumbent state.
+    if ("first_party_web".equals(resolveConnectionMode(session))
+        && !ownsActiveTransport(resolveTransportSessionId(session), session)) {
+      closeInvalidFirstPartyContext(session);
+      return;
+    }
     try (CombinedLoggingContext ignored = openLoggingContext(session)) {
       String sessionId = resolveTransportSessionId(session);
       if (!StringUtils.hasText(sessionId)) {
@@ -192,7 +208,9 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       if (command.type() == TextCommandType.NOOP) {
         return;
       }
-      ensureBootstrapSessionContextIfMissing(session, sessionId);
+      if (!ensureBootstrapSessionContextIfMissing(session, sessionId)) {
+        return;
+      }
       TextCommandInterpretationResult interpretation =
           interpreter.interpret(sessionId, command, requiresSoloTick);
       TextCommand resolvedCommand =
@@ -232,6 +250,10 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       maybeReplayScreenBufferAndRefreshLook(
           session, sessionId, command, interpretation, maybeContext);
       maybeCloseAfterSuccessfulLogout(session, command, interpretation);
+    } catch (SessionContextUnavailableException unavailable) {
+      logger.warn(
+          "Unable to read retained session context while handling WebSocket message", unavailable);
+      closeBackendUnavailable(session);
     }
   }
 
@@ -240,6 +262,21 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
         session.getAttributes().get(GameSessionWebSocketHandshakeInterceptor.SOLO_TICK_ATTR);
     String value = cached instanceof String text ? text : null;
     return value != null && value.equalsIgnoreCase("true");
+  }
+
+  private boolean ownsActiveTransport(String sessionId, WebSocketSession session) {
+    try {
+      return parseNumericSessionId(sessionId)
+          .flatMap(activeTransportSessionRegistry::find)
+          .map(
+              registered ->
+                  registered == session
+                      || registered instanceof WebSocketSessionDecorator decorator
+                          && decorator.getDelegate() == session)
+          .orElse(false);
+    } catch (RuntimeException unavailable) {
+      return false;
+    }
   }
 
   private String resolveTransportSessionId(WebSocketSession session) {
@@ -571,38 +608,37 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     return true;
   }
 
-  private void bootstrapSessionContext(WebSocketSession session) {
+  private boolean bootstrapSessionContext(WebSocketSession session) {
     String transportSessionId = resolveTransportSessionId(session);
     if (!StringUtils.hasText(transportSessionId)) {
-      return;
+      return false;
     }
-    parseNumericSessionId(transportSessionId)
-        .ifPresent(
-            sessionId -> {
-              if ("first_party_web".equals(resolveConnectionMode(session))) {
-                bootstrapFirstPartySessionContext(session, sessionId);
-                return;
-              }
-              bootstrapGenericSessionContext(session, sessionId);
-            });
+    Optional<Long> sessionId = parseNumericSessionId(transportSessionId);
+    if (sessionId.isEmpty()) {
+      return false;
+    }
+    if ("first_party_web".equals(resolveConnectionMode(session))) {
+      return bootstrapFirstPartySessionContext(session, sessionId.orElseThrow());
+    }
+    return bootstrapGenericSessionContext(session, sessionId.orElseThrow());
   }
 
-  private void ensureBootstrapSessionContextIfMissing(
+  private boolean ensureBootstrapSessionContextIfMissing(
       WebSocketSession session, String transportSessionId) {
     if (!StringUtils.hasText(transportSessionId)) {
-      return;
+      return true;
     }
     Optional<SessionContext> tenantScopedContext =
         resolveNormalizedSessionContext(session, transportSessionId);
     if (tenantScopedContext.isPresent()
         && resolveNormalizedSessionContext(transportSessionId).isPresent()) {
-      return;
+      return true;
     }
     if (tenantScopedContext.isPresent()) {
       sessionContextService.save(tenantScopedContext.orElseThrow());
-      return;
+      return true;
     }
-    bootstrapSessionContext(session);
+    return bootstrapSessionContext(session);
   }
 
   private CombinedLoggingContext openLoggingContext(WebSocketSession session) {
@@ -612,11 +648,16 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     }
     RuntimeLoggingContext runtimeContext =
         RuntimeLoggingContext.open(runtimeIdentity, correlationId);
-    GameplayLoggingContext gameplayContext =
-        resolveNormalizedSessionContext(session, correlationId)
-            .map(GameplayLoggingContext::from)
-            .orElseGet(GameplayLoggingContext::empty);
-    return new CombinedLoggingContext(runtimeContext, gameplayContext);
+    try {
+      GameplayLoggingContext gameplayContext =
+          resolveNormalizedSessionContext(session, correlationId)
+              .map(GameplayLoggingContext::from)
+              .orElseGet(GameplayLoggingContext::empty);
+      return new CombinedLoggingContext(runtimeContext, gameplayContext);
+    } catch (RuntimeException failure) {
+      runtimeContext.close();
+      throw failure;
+    }
   }
 
   private record CombinedLoggingContext(
@@ -659,7 +700,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                         context.pointerVersion(),
                         context.playableStateScope(),
                         context.connectScopeId(),
-                        context.connectRequestId())));
+                        context.connectRequestId(),
+                        context.firstPartyConnectContext())));
   }
 
   private PlayerOutput renderReconnectLook(String sessionId) {
@@ -670,11 +712,11 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             .RECONNECT_REFRESH);
   }
 
-  private void bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {
+  private boolean bootstrapGenericSessionContext(WebSocketSession session, long sessionId) {
     Optional<Long> tenantId = resolveTenantId(session);
     Optional<Long> bootstrapGameInstanceId = resolveBootstrapGameInstanceId(session);
     if (tenantId.isEmpty() || bootstrapGameInstanceId.isEmpty()) {
-      return;
+      return true;
     }
     List<GameplayAdmissionPointerSnapshot> currentPointers;
     try {
@@ -684,7 +726,7 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
     } catch (RuntimeException ex) {
       logger.warn("Unable to resolve runtime pointer for generic bootstrap", ex);
       closeAdmissionPointerAuthorityUnavailable(session);
-      return;
+      return false;
     }
     Optional<SessionContext> existing =
         sessionAuthenticationService.resolveUnverifiedSessionContext(tenantId.get(), sessionId);
@@ -708,86 +750,61 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             currentPointers);
     if (existing.isPresent()) {
       maybeRefreshBootstrapShell(existing.orElseThrow(), incomingShell);
-      return;
+      return true;
     }
     sessionContextService.save(incomingShell);
+    return true;
   }
 
-  private void bootstrapFirstPartySessionContext(WebSocketSession session, long sessionId) {
+  private boolean bootstrapFirstPartySessionContext(WebSocketSession session, long sessionId) {
     Optional<net.firedevops.firemud.gamesession.service.FirstPartyConnectContext> maybeContext =
         firstPartyConnectContextService.parse(resolveConnectContext(session));
     if (maybeContext.isEmpty()) {
       closeInvalidFirstPartyContext(session);
-      return;
+      return false;
     }
     var connectContext = maybeContext.orElseThrow();
-    List<GameplayAdmissionPointerSnapshot> currentPointers;
+    // parse has already composed the unique catalog, OPEN proof and RUNNING launch association.
+    // The private handles below come from that owner result, never from headers or UUID parsing.
     try {
-      currentPointers =
-          gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
-              connectContext.tenantId(), connectContext.gameInstanceId());
-    } catch (RuntimeException ex) {
-      logger.warn("Unable to resolve runtime pointer for first-party bootstrap", ex);
-      closeAdmissionPointerAuthorityUnavailable(session);
-      return;
-    }
-    Optional<GameplayAdmissionPointerSnapshot> currentPointer =
-        GameplayAdmissionPointerSnapshots.singularCompletePointer(currentPointers);
-    if (currentPointer.isEmpty()) {
-      closeAdmissionPointerAuthorityUnavailable(session);
-      return;
-    }
-    if (!GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
-        currentPointers,
-        connectContext.tenantId(),
-        connectContext.gameInstanceId(),
-        connectContext.worldSlug(),
-        connectContext.realmSlug(),
-        connectContext.pointerVersion(),
-        currentPointer.orElseThrow().stateScope())) {
-      closeInvalidFirstPartyContext(session);
-      return;
-    }
-    String playableStateScope = currentPointer.orElseThrow().stateScope();
-    try {
-      firstPartyConnectContextRegistry.register(sessionId, connectContext);
-    } catch (IllegalStateException ex) {
-      logger.warn(
-          "Unable to register first-party connect context because retained state is invalid");
-      closeInvalidFirstPartyContext(session);
-      return;
-    }
-    Optional<SessionContext> existing =
-        sessionAuthenticationService.resolveUnverifiedSessionContext(
-            connectContext.tenantId(), sessionId);
-    if (existing.isPresent()) {
-      maybeRefreshBootstrapShell(
-          existing.orElseThrow(),
+      SessionContext shell =
           bootstrapShell(
-              sessionId,
-              connectContext.tenantId(),
-              connectContext.gameInstanceId(),
-              connectContext.worldSlug(),
-              connectContext.realmSlug(),
-              connectContext.pointerVersion(),
-              playableStateScope,
-              connectContext.connectScopeId(),
-              connectContext.connectRequestId(),
-              resolveLocaleTag(session)));
-      return;
+                  sessionId,
+                  connectContext.gameSessionTenantId(),
+                  connectContext.runtimeGameInstanceId(),
+                  connectContext.worldSlug(),
+                  connectContext.realmSlug(),
+                  connectContext.pointerVersion(),
+                  connectContext.resolvedTarget().playableStateScope(),
+                  connectContext.connectScopeId(),
+                  connectContext.connectRequestId(),
+                  resolveLocaleTag(session))
+              .withFirstPartyConnectContext(connectContext);
+      Optional<SessionContext> existing = sessionContextService.findBySessionId(sessionId);
+      if (existing.isPresent() && !shell.equals(existing.orElseThrow())) {
+        closeInvalidFirstPartyContext(session);
+        return false;
+      }
+      firstPartyConnectContextRegistry.register(sessionId, connectContext);
+      try {
+        sessionContextService.save(shell);
+      } catch (RuntimeException saveFailure) {
+        try {
+          firstPartyConnectContextRegistry.unregister(sessionId);
+        } catch (RuntimeException cleanupFailure) {
+          if (cleanupFailure != saveFailure) {
+            saveFailure.addSuppressed(cleanupFailure);
+          }
+        }
+        throw saveFailure;
+      }
+      return true;
+    } catch (SessionContextUnavailableException unavailable) {
+      throw unavailable;
+    } catch (RuntimeException invalidOrUnavailable) {
+      closeInvalidFirstPartyContext(session);
+      return false;
     }
-    sessionContextService.save(
-        bootstrapShell(
-            sessionId,
-            connectContext.tenantId(),
-            connectContext.gameInstanceId(),
-            connectContext.worldSlug(),
-            connectContext.realmSlug(),
-            connectContext.pointerVersion(),
-            playableStateScope,
-            connectContext.connectScopeId(),
-            connectContext.connectRequestId(),
-            resolveLocaleTag(session)));
   }
 
   private void maybeRefreshBootstrapShell(SessionContext existing, SessionContext incomingShell) {
@@ -822,7 +839,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 existing.pointerVersion(),
                 incomingShell.playableStateScope(),
                 incomingShell.connectScopeId(),
-                incomingShell.connectRequestId()));
+                incomingShell.connectRequestId(),
+                existing.firstPartyConnectContext()));
         return;
       }
       if (localeChanged || selectorChanged) {
@@ -844,7 +862,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
                 existing.pointerVersion(),
                 existing.playableStateScope(),
                 incomingShell.connectScopeId(),
-                incomingShell.connectRequestId()));
+                incomingShell.connectRequestId(),
+                existing.firstPartyConnectContext()));
       }
       return;
     }
@@ -867,7 +886,8 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
             incomingShell.pointerVersion(),
             incomingShell.playableStateScope(),
             incomingShell.connectScopeId(),
-            incomingShell.connectRequestId()));
+            incomingShell.connectRequestId(),
+            existing.firstPartyConnectContext()));
   }
 
   private boolean hasAuthenticatedOrGameplayBinding(SessionContext context) {
@@ -923,6 +943,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       session.close(new CloseStatus(1013, "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE"));
     } catch (IOException ex) {
       logger.warn("Failed to close session while admission pointer authority was unavailable", ex);
+    }
+  }
+
+  private void closeBackendUnavailable(WebSocketSession session) {
+    try {
+      session.close(new CloseStatus(1013, "backend_unavailable"));
+    } catch (IOException ex) {
+      logger.warn("Failed to close session while retained context was unavailable", ex);
     }
   }
 

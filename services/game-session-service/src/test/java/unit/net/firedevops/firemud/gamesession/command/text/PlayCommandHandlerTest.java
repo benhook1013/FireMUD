@@ -33,6 +33,7 @@ import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.service.SessionContextUnavailableException;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +41,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 class PlayCommandHandlerTest {
   private static final String PLAY_COMMAND_NAME = "PLAY";
@@ -888,149 +890,6 @@ class PlayCommandHandlerTest {
   }
 
   @Test
-  void firstPartyPlayRejectsMismatchedConnectScope() {
-    SessionContext context =
-        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 41L);
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.find(1L))
-        .thenReturn(
-            Optional.of(
-                new FirstPartyConnectContext(
-                    "123",
-                    22L,
-                    "demo",
-                    "production",
-                    41L,
-                    1L,
-                    "scope-1",
-                    "jti-1",
-                    "req-1",
-                    "gw-1")));
-
-    PlayCommandHandlingResult result =
-        handler.handle(
-            "1",
-            new TextCommand(
-                TextCommandType.PLAY,
-                List.of("sandbox", "preview", "Sora"),
-                "PLAY sandbox preview Sora"));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
-  }
-
-  @Test
-  void firstPartyPlayRejectsMismatchedWorldSlug() {
-    SessionContext context =
-        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 1L);
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.find(1L))
-        .thenReturn(
-            Optional.of(
-                new FirstPartyConnectContext(
-                    "123",
-                    22L,
-                    "sandbox",
-                    "production",
-                    1L,
-                    1L,
-                    "scope-1",
-                    "jti-1",
-                    "req-1",
-                    "gw-1")));
-
-    PlayCommandHandlingResult result =
-        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
-  }
-
-  @Test
-  void firstPartyPlayRejectsStalePointerVersion() {
-    gameplayCatalogProperties.getWorlds().get(0).getRealms().get(0).setPointerVersion(9L);
-    SessionContext context =
-        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 1L);
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.find(1L))
-        .thenReturn(
-            Optional.of(
-                new FirstPartyConnectContext(
-                    "123",
-                    22L,
-                    "demo",
-                    "production",
-                    1L,
-                    8L,
-                    "scope-1",
-                    "jti-1",
-                    "req-1",
-                    "gw-1")));
-
-    PlayCommandHandlingResult result =
-        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
-  }
-
-  @Test
-  void firstPartyPlayRejectsConnectContextMissingRealmSlug() {
-    SessionContext context =
-        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 1L);
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.find(1L))
-        .thenReturn(
-            Optional.of(
-                new FirstPartyConnectContext(
-                    "123", 22L, "demo", null, 1L, 1L, "scope-1", "jti-1", "req-1", "gw-1")));
-
-    PlayCommandHandlingResult result =
-        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_CONTEXT_INVALID");
-    assertThat(joinedOutputText(result.outputs()))
-        .isEqualTo("ERROR CONNECT_CONTEXT_INVALID Connect context invalid");
-  }
-
-  @Test
-  void firstPartyPlayRejectsConnectContextMissingConnectScope() {
-    SessionContext context =
-        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 1L);
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.find(1L))
-        .thenReturn(
-            Optional.of(
-                new FirstPartyConnectContext(
-                    "123", 22L, "demo", "production", 1L, 1L, "", "jti-1", "req-1", "gw-1")));
-
-    PlayCommandHandlingResult result =
-        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_CONTEXT_INVALID");
-  }
-
-  @Test
-  void firstPartyPlayRejectsConnectContextMissingConnectRequest() {
-    SessionContext context =
-        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 1L);
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.find(1L))
-        .thenReturn(
-            Optional.of(
-                new FirstPartyConnectContext(
-                    "123", 22L, "demo", "production", 1L, 1L, "scope-1", "jti-1", "", "gw-1")));
-
-    PlayCommandHandlingResult result =
-        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_CONTEXT_INVALID");
-  }
-
-  @Test
   void playWithoutSessionReturnsLoginRequired() {
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.empty());
 
@@ -1115,11 +974,12 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
+    Mockito.verify(sessionContextService).findBySessionId(1L);
+    Mockito.verifyNoMoreInteractions(sessionContextService);
     Mockito.verifyNoInteractions(
         accountClient,
         entityManagementClient,
         moderationPolicyClient,
-        sessionContextService,
         gameplayPresenceLifecycleService,
         scriptEventPublisher);
   }
@@ -1238,86 +1098,6 @@ class PlayCommandHandlerTest {
                 TextCommandType.PLAY,
                 List.of("sandbox", "preview", "Emberline"),
                 "PLAY sandbox preview Emberline"));
-
-    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
-  }
-
-  @Test
-  void firstPartyPlayAcceptsNonProductionRealmWhenScopeMatches() {
-    gameplayCatalogProperties
-        .getWorlds()
-        .get(1)
-        .getRealms()
-        .get(1)
-        .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
-    SessionContext context =
-        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 41L);
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(firstPartyConnectContextRegistry.find(1L))
-        .thenReturn(
-            Optional.of(
-                new FirstPartyConnectContext(
-                    "123", 22L, "sandbox", "preview", 41L, 1L, "scope-1", "jti-1", "req-1",
-                    "gw-1")));
-    when(entityManagementClient.listCharactersByAccount(
-            "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
-        .thenReturn(
-            characterRoster(
-                "7002", "Sora", "22", "123", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED));
-    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 41L, 7002L))
-        .thenReturn(Optional.empty());
-
-    PlayCommandHandlingResult result =
-        handler.handle(
-            "1",
-            new TextCommand(
-                TextCommandType.PLAY,
-                List.of("sandbox", "preview", "Sora"),
-                "PLAY sandbox preview Sora"));
-
-    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
-  }
-
-  @Test
-  void firstPartyPlayFallsBackToPersistedSelectorWhenRegistryEntryIsMissing() {
-    gameplayCatalogProperties
-        .getWorlds()
-        .get(1)
-        .getRealms()
-        .get(1)
-        .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
-    SessionContext context =
-        new SessionContext(
-            1L,
-            22L,
-            "123",
-            "first-party:123",
-            0L,
-            null,
-            0L,
-            null,
-            null,
-            null,
-            41L,
-            "sandbox",
-            "preview",
-            1L,
-            null,
-            "scope-persisted",
-            "req-persisted");
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(entityManagementClient.listCharactersByAccount(
-            "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
-        .thenReturn(
-            characterRoster(
-                "7002", "Sora", "22", "123", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED));
-    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 41L, 7002L))
-        .thenReturn(Optional.empty());
-
-    PlayCommandHandlingResult result =
-        handler.handle(
-            "1",
-            new TextCommand(TextCommandType.PLAY, List.of("sandbox", "Sora"), "PLAY sandbox Sora"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
   }
@@ -1732,6 +1512,41 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playWithUnavailableSessionContextReturnsRetryableAuthorityFailure() {
+    when(sessionContextService.findBySessionId(1L))
+        .thenThrow(new SessionContextUnavailableException("session context unavailable", null));
+
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.authority-unavailable");
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        sessionAuthenticationService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+  }
+
+  @Test
+  void playWithUnavailableSessionStoreReturnsRetryableAuthorityFailure() {
+    when(sessionContextService.findBySessionId(1L))
+        .thenThrow(new DataAccessResourceFailureException("session store unavailable"));
+
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.authority-unavailable");
+    Mockito.verifyNoInteractions(sessionAuthenticationService, gameplayPresenceLifecycleService);
+  }
+
+  @Test
   void playBlockedByEntitlementsReturnsBillingBlocked() {
     SessionContext context =
         new SessionContext(
@@ -2053,5 +1868,80 @@ class PlayCommandHandlerTest {
     gameplayCommand.setCommandName(commandName);
     gameplayCommand.setCommandText(commandText);
     return gameplayCommand;
+  }
+
+  @Test
+  void firstPartyPlayRereadsCanonicalOwnerThenDeniesBeforeLegacyAdmissionEffects() {
+    var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
+    FirstPartyConnectContext context = fixture.context();
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenAnswer(invocation -> Optional.of(fixture.service.requireRetained(context)));
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "hero"), "PLAY demo hero"));
+    assertThat(result.commandResult().errorCode()).isEqualTo("FIRST_PARTY_AUTHORITY_UNAVAILABLE");
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey()).isNull();
+    Mockito.verify(firstPartyConnectContextRegistry).find(1L);
+    Mockito.verify(firstPartyConnectContextRegistry, never()).requireRetained(Mockito.any());
+    Mockito.verify(fixture.routes, Mockito.atLeast(2))
+        .readCurrentTarget(
+            net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture.TENANT);
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        sessionAuthenticationService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+  }
+
+  @Test
+  void playDefensivelyDeniesFirstPartyContextAddedAfterTopLevelCheck() {
+    var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
+    FirstPartyConnectContext context = fixture.context();
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(Optional.empty())
+        .thenAnswer(invocation -> Optional.of(fixture.service.requireRetained(context)));
+    SessionContext legacyContext =
+        new SessionContext(
+            1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1"))
+        .thenReturn(Optional.of(legacyContext));
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "hero"), "PLAY demo hero"));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("FIRST_PARTY_AUTHORITY_UNAVAILABLE");
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey()).isNull();
+    Mockito.verify(firstPartyConnectContextRegistry, Mockito.times(2)).find(1L);
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+    Mockito.verify(sessionContextService, Mockito.never()).save(Mockito.any());
+  }
+
+  @Test
+  void changedFirstPartyOwnerDeniesPlayBeforeLegacyAdmissionEffects() {
+    var fixture = new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
+    FirstPartyConnectContext context = fixture.context();
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenAnswer(invocation -> Optional.of(fixture.service.requireRetained(context)));
+    when(fixture.routes.readCurrentTarget(
+            net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture.TENANT))
+        .thenReturn(null);
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "hero"), "PLAY demo hero"));
+    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_CONTEXT_INVALID");
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        sessionAuthenticationService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
   }
 }

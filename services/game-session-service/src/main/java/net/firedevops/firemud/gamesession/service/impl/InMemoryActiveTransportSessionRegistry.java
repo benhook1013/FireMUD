@@ -28,11 +28,14 @@ public final class InMemoryActiveTransportSessionRegistry
   }
 
   @Override
-  public void unregister(long sessionId, WebSocketSession session) {
-    sessions.computeIfPresent(
-        sessionId,
-        (ignored, registered) ->
-            registered.websocketSessionId().equals(session.getId()) ? null : registered);
+  public boolean unregister(long sessionId, WebSocketSession session) {
+    RegisteredSession registered = sessions.get(sessionId);
+    if (registered == null
+        || registered.session() != session && registered.session().getDelegate() != session) {
+      return false;
+    }
+    // Conditional removal binds the result to this exact snapshot; a concurrent replacement wins.
+    return sessions.remove(sessionId, registered);
   }
 
   @Override

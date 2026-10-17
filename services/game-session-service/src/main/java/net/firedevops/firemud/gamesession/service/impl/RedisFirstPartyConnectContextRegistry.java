@@ -6,6 +6,7 @@ import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.FirstPartyConnectContextProperties;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextService;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.serializer.SerializationException;
@@ -18,21 +19,32 @@ public final class RedisFirstPartyConnectContextRegistry
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final Duration ttl;
+  private final FirstPartyConnectContextService contextService;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
       justification = "RedisTemplate is injected and used internally only")
   public RedisFirstPartyConnectContextRegistry(
-      RedisTemplate<String, Object> redisTemplate, FirstPartyConnectContextProperties properties) {
+      RedisTemplate<String, Object> redisTemplate,
+      FirstPartyConnectContextProperties properties,
+      FirstPartyConnectContextService contextService) {
     this.redisTemplate = redisTemplate;
+    this.contextService = contextService;
     this.ttl = Duration.ofMillis(Math.max(properties.getTtlMs(), 1L));
   }
 
   @Override
   public void register(long sessionId, FirstPartyConnectContext connectContext) {
+    connectContext = contextService.requireRetained(connectContext);
     String key = key(sessionId);
     try {
       Object retained = valueOperations().get(key);
+      if (retained instanceof FirstPartyConnectContext previous) {
+        FirstPartyConnectContext validated = contextService.requireRetained(previous);
+        if (!validated.equals(connectContext)) {
+          throw new IllegalStateException("Retained first-party context cannot be replaced");
+        }
+      }
       if (retained != null && !(retained instanceof FirstPartyConnectContext)) {
         throw new IllegalStateException(
             "Retained first-party connect context is incompatible and cannot be replaced");
@@ -47,10 +59,22 @@ public final class RedisFirstPartyConnectContextRegistry
   @Override
   public Optional<FirstPartyConnectContext> find(long sessionId) {
     try {
-      return Optional.ofNullable((FirstPartyConnectContext) valueOperations().get(key(sessionId)));
+      Object retained = valueOperations().get(key(sessionId));
+      if (retained == null) {
+        return Optional.empty();
+      }
+      if (!(retained instanceof FirstPartyConnectContext context)) {
+        throw new IllegalStateException("Retained first-party context is incompatible");
+      }
+      return Optional.of(contextService.requireRetained(context));
     } catch (SerializationException | ClassCastException ex) {
-      return Optional.empty();
+      throw new IllegalStateException("Retained first-party context is unreadable", ex);
     }
+  }
+
+  @Override
+  public FirstPartyConnectContext requireRetained(FirstPartyConnectContext context) {
+    return contextService.requireRetained(context);
   }
 
   @Override

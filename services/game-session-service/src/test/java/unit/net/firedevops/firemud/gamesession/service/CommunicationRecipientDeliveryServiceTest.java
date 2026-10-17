@@ -23,6 +23,8 @@ import net.firedevops.firemud.gamesession.websocket.WebSocketOutputProjector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
@@ -91,6 +93,58 @@ class CommunicationRecipientDeliveryServiceTest {
     verify(screenBufferService, never())
         .append(any(Long.class), any(Long.class), any(Long.class), any());
     verify(activeTransportSessionRegistry, never()).find(any(Long.class));
+  }
+
+  @Test
+  void unreadableRecipientDoesNotAbortDeliveryToLaterRecipients() {
+    SessionContext actor =
+        new SessionContext(
+            41L, 22L, "123", "demo@example.com", 123L, "Emberline", 1L, "R-1", "jwt");
+    SessionContext healthyRecipient =
+        new SessionContext(
+            43L, 22L, "789", "friend@example.com", 789L, "Sora", 1L, "R-1", "jwt", "en-NZ", 1L);
+    CommunicationRecipientView unreadableView =
+        CommunicationRecipientView.newBuilder()
+            .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
+            .setRecipientId("456")
+            .build();
+    CommunicationRecipientView healthyView =
+        CommunicationRecipientView.newBuilder()
+            .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
+            .setRecipientId("789")
+            .build();
+    SendCommunicationResponse response =
+        SendCommunicationResponse.newBuilder()
+            .setType(CommunicationType.TELL)
+            .setMessage("hello")
+            .addRecipientViews(unreadableView)
+            .addRecipientViews(healthyView)
+            .build();
+    PlayerOutput output = PlayerOutput.notice("hello");
+    PresentationProperties presentation = new PresentationProperties();
+
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 456L))
+        .thenThrow(new SessionContextUnavailableException("retained context unreadable", null));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 789L))
+        .thenReturn(Optional.of(healthyRecipient));
+    when(communicationOutputMapper.recipientOutput(CommunicationType.TELL, healthyView, "hello"))
+        .thenReturn(output);
+    when(settingsResolver.presentation(healthyRecipient)).thenReturn(presentation);
+    when(outputRenderer.render(output, "en-NZ", presentation)).thenReturn("hello");
+    when(activeTransportSessionRegistry.find(43L)).thenReturn(Optional.empty());
+
+    service.deliver(actor, response);
+
+    verify(sessionAuthenticationService).resolveByGameplayIdentity(22L, 1L, 789L);
+    verify(settingsResolver).presentation(healthyRecipient);
+    assertThat(
+            meterRegistry
+                .counter(
+                    "gamesession.communication.delivery.failed",
+                    "role",
+                    "communication_recipient_role_target")
+                .count())
+        .isEqualTo(1.0);
   }
 
   @Test
@@ -289,5 +343,57 @@ class CommunicationRecipientDeliveryServiceTest {
 
     verify(screenBufferService, never())
         .append(any(Long.class), any(Long.class), any(Long.class), any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void sendFailureRequestsOwnedCloseAndRetainsRegistrationUntilCallback(boolean closeFails)
+      throws Exception {
+    SessionContext actor = new SessionContext(41L, 22L, "123", 123L, 1L, "R-1", "jwt");
+    SessionContext recipient =
+        new SessionContext(
+            42L, 22L, "456", "friend@example.com", 456L, "Sora", 1L, "R-2", "jwt", "en-NZ", 1L);
+    var view =
+        CommunicationRecipientView.newBuilder()
+            .setRole(CommunicationRecipientRole.COMMUNICATION_RECIPIENT_ROLE_TARGET)
+            .setRecipientId("456")
+            .build();
+    var response =
+        SendCommunicationResponse.newBuilder()
+            .setType(CommunicationType.TELL)
+            .setMessage("hello")
+            .addRecipientViews(view)
+            .build();
+    var output = PlayerOutput.notice("hello");
+    var presentation = new PresentationProperties();
+    var session = Mockito.mock(org.springframework.web.socket.WebSocketSession.class);
+    when(session.isOpen()).thenReturn(true);
+    when(session.getAttributes()).thenReturn(java.util.Map.of());
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 456L))
+        .thenReturn(Optional.of(recipient));
+    when(communicationOutputMapper.recipientOutput(CommunicationType.TELL, view, "hello"))
+        .thenReturn(output);
+    when(settingsResolver.presentation(recipient)).thenReturn(presentation);
+    when(outputRenderer.render(output, "en-NZ", presentation)).thenReturn("hello");
+    when(activeTransportSessionRegistry.find(42L)).thenReturn(Optional.of(session));
+    Mockito.doThrow(new java.io.IOException("send failed")).when(session).sendMessage(any());
+    if (closeFails) {
+      Mockito.doThrow(new java.io.IOException("close failed"))
+          .when(session)
+          .close(any(org.springframework.web.socket.CloseStatus.class));
+    }
+    service.deliver(actor, response);
+    verify(session)
+        .close(
+            org.springframework.web.socket.CloseStatus.SERVER_ERROR.withReason("internal_error"));
+    verify(activeTransportSessionRegistry, never()).unregister(anyLong(), any());
+    assertThat(
+            meterRegistry
+                .counter(
+                    "gamesession.communication.delivery.failed",
+                    "role",
+                    "communication_recipient_role_target")
+                .count())
+        .isEqualTo(1.0);
   }
 }

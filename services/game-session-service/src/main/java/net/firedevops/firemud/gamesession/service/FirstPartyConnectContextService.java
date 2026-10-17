@@ -1,69 +1,137 @@
 package net.firedevops.firemud.gamesession.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.JwtException;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Clock;
+import java.util.Objects;
 import java.util.Optional;
-import net.firedevops.firemud.common.security.JwtClaims;
-import net.firedevops.firemud.common.security.JwtUtil;
+import net.firedevops.firemud.common.security.GatewayFirstPartyConnectContextEnvelope;
+import net.firedevops.firemud.common.security.GatewayFirstPartyConnectContextEnvelope.ContextClaims;
+import net.firedevops.firemud.common.security.GatewayFirstPartyConnectContextEnvelope.FailureReason;
+import net.firedevops.firemud.common.security.GatewayFirstPartyConnectContextEnvelope.GatewayVerificationKeySource;
+import net.firedevops.firemud.common.security.GatewayFirstPartyConnectContextEnvelope.VerificationException;
 import net.firedevops.firemud.gamesession.config.FirstPartyConnectContextProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
+import net.firedevops.firemud.gamesession.dto.CanonicalPlayableTarget;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 
 @Component
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
-    justification = "Injected configuration properties are framework-managed singletons")
-public class FirstPartyConnectContextService {
-  private static final Logger logger =
-      LoggerFactory.getLogger(FirstPartyConnectContextService.class);
+    justification = "Configuration and authority/key sources are framework-managed dependencies")
+public final class FirstPartyConnectContextService {
+  private static final String PARSE_FAILURES_METRIC =
+      "gamesession.first_party_connect_context.parse.failures";
+  private static final String FAILURE_REASON_TAG = "reason";
+  private static final String KEY_UNAVAILABLE = "key_unavailable";
+  private static final String INVALID_ENVELOPE = "invalid_envelope";
+  private static final String OWNER_UNAVAILABLE = "owner_unavailable";
+  private static final String TARGET_MISMATCH = "target_mismatch";
 
   private final FirstPartyConnectContextProperties properties;
-  private final JwtUtil jwtUtil;
+  private final GatewayVerificationKeySource keySource;
+  private final CanonicalPlayerRouteReadService routes;
+  private final Clock clock;
+  private final MeterRegistry meterRegistry;
+
+  @Autowired
+  public FirstPartyConnectContextService(
+      FirstPartyConnectContextProperties properties,
+      GatewayVerificationKeySource keySource,
+      ObjectProvider<CanonicalPlayerRouteReadService> routes,
+      MeterRegistry meterRegistry) {
+    this(
+        properties,
+        keySource,
+        routes.getIfAvailable(CanonicalPlayerRouteReadService::unavailable),
+        Clock.systemUTC(),
+        meterRegistry);
+  }
 
   public FirstPartyConnectContextService(
       FirstPartyConnectContextProperties properties,
-      @Qualifier("firstPartyConnectContextJwtUtil") JwtUtil jwtUtil) {
+      GatewayVerificationKeySource keySource,
+      CanonicalPlayerRouteReadService routes,
+      Clock clock,
+      MeterRegistry meterRegistry) {
     this.properties = properties;
-    this.jwtUtil = jwtUtil;
+    this.keySource = keySource;
+    this.routes = routes;
+    this.clock = clock;
+    this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry");
   }
 
   public Optional<FirstPartyConnectContext> parse(String token) {
-    if (!StringUtils.hasText(token) || !StringUtils.hasText(properties.getJwtSecret())) {
+    if (token == null || token.isBlank()) {
+      recordParseFailure(INVALID_ENVELOPE);
       return Optional.empty();
     }
+    GatewayFirstPartyConnectContextEnvelope.VerifiedContext verified;
     try {
-      Claims claims = jwtUtil.parseToken(token).getPayload();
-      JwtClaims.SignedGameplayRoutingClaims routingClaims =
-          JwtClaims.requireSignedGameplayRoutingClaims(
-              claims, "first-party connect context account subject mismatch");
-      return Optional.of(
-          new FirstPartyConnectContext(
-              Long.toString(routingClaims.accountId()),
-              routingClaims.tenantId(),
-              routingClaims.worldSlug(),
-              routingClaims.realmSlug(),
-              routingClaims.gameInstanceId(),
-              routingClaims.pointerVersion(),
-              requiredTextClaim(claims, "connectScopeId"),
-              stringClaim(claims, "connectTokenJti"),
-              requiredTextClaim(claims, "connectRequestId"),
-              stringClaim(claims, "gatewayRequestId")));
-    } catch (IllegalArgumentException | JwtException ex) {
-      logger.warn("Rejecting invalid first-party connect context", ex);
+      verified =
+          GatewayFirstPartyConnectContextEnvelope.verify(
+              token, keySource, clock.millis(), properties.getAllowedClockSkewMs());
+    } catch (VerificationException invalidEnvelope) {
+      recordParseFailure(
+          invalidEnvelope.reason() == FailureReason.KEY_SOURCE_UNAVAILABLE
+              ? KEY_UNAVAILABLE
+              : INVALID_ENVELOPE);
+      return Optional.empty();
+    } catch (RuntimeException invalidOrUnavailable) {
+      // Neither signed payload nor key/owner details belong in ordinary logs.
+      recordParseFailure(INVALID_ENVELOPE);
       return Optional.empty();
     }
+    CanonicalPlayableTarget target;
+    try {
+      target = routes.readCurrentTarget(verified.claims().tenantId());
+    } catch (CanonicalPlayerRouteReadService.ReadUnavailableException ownerUnavailable) {
+      recordParseFailure(OWNER_UNAVAILABLE);
+      return Optional.empty();
+    } catch (RuntimeException invalidOrUnavailable) {
+      recordParseFailure(INVALID_ENVELOPE);
+      return Optional.empty();
+    }
+    if (!matches(verified.claims(), target)) {
+      recordParseFailure(TARGET_MISMATCH);
+      return Optional.empty();
+    }
+    return Optional.of(new FirstPartyConnectContext(token, verified, target));
   }
 
-  private static String stringClaim(Claims claims, String key) {
-    Object value = claims.get(key);
-    return value == null ? null : value.toString();
+  private void recordParseFailure(String reason) {
+    meterRegistry.counter(PARSE_FAILURES_METRIC, FAILURE_REASON_TAG, reason).increment();
   }
 
-  private static String requiredTextClaim(Claims claims, String key) {
-    return JwtClaims.requireText(claims.get(key), key);
+  public FirstPartyConnectContext requireRetained(FirstPartyConnectContext retained) {
+    if (retained == null) {
+      throw new IllegalStateException("First-party context is absent");
+    }
+    FirstPartyConnectContext current =
+        parse(retained.compactJws())
+            .orElseThrow(
+                () -> new IllegalStateException("First-party context is invalid or unavailable"));
+    if (!current.resolvedTarget().equals(retained.resolvedTarget())) {
+      throw new IllegalStateException("First-party target changed");
+    }
+    return current;
+  }
+
+  private static boolean matches(ContextClaims claims, CanonicalPlayableTarget target) {
+    // The current canonical resolver supports only public-production SHARED targets.
+    return target != null
+        && claims.tenantId().equals(target.canonicalTenantId())
+        && claims.realmId().equals(target.realmId())
+        && claims.worldSlug().equals(target.worldSlug())
+        && claims.realmSlug().equals(target.realmSlug())
+        && claims.playableStateNamespaceId().equals(target.playableStateNamespaceId())
+        && "SHARED".equals(claims.playableStateScope())
+        && claims.playableStateScope().equals(target.playableStateScope())
+        && claims.gameInstanceId().equals(target.canonicalGameInstanceId())
+        && claims.catalogRevision().equals(Long.toString(target.catalogRevision()))
+        && claims.pointerVersion().equals(Long.toString(target.pointerVersion()))
+        && claims.playtestLifecycleId() == null
+        && claims.playtestStateGeneration() == null;
   }
 }

@@ -29,6 +29,8 @@ class RedisFirstPartyConnectContextRegistryTest {
   private final RedisTemplate<String, Object> redisTemplate = mock(RedisTemplate.class);
   private final ValueOperations<String, Object> valueOperations = mock(ValueOperations.class);
   private RedisFirstPartyConnectContextRegistry registry;
+  private final net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture fixture =
+      new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture();
 
   @BeforeEach
   void setUp() {
@@ -52,14 +54,13 @@ class RedisFirstPartyConnectContextRegistryTest {
 
     FirstPartyConnectContextProperties properties = new FirstPartyConnectContextProperties();
     properties.setTtlMs(1500L);
-    registry = new RedisFirstPartyConnectContextRegistry(redisTemplate, properties);
+    registry =
+        new RedisFirstPartyConnectContextRegistry(redisTemplate, properties, fixture.service);
   }
 
   @Test
   void registerStoresContextWithShortTtl() {
-    FirstPartyConnectContext context =
-        new FirstPartyConnectContext(
-            "77", 22L, "demo", "production", 41L, 17L, "scope-1", "jti-1", "req-1", "gateway-1");
+    FirstPartyConnectContext context = fixture.context();
 
     registry.register(91L, context);
 
@@ -74,9 +75,7 @@ class RedisFirstPartyConnectContextRegistryTest {
 
   @Test
   void unregisterRemovesStoredContext() {
-    FirstPartyConnectContext context =
-        new FirstPartyConnectContext(
-            "77", 22L, "demo", "production", 41L, 17L, "scope-1", "jti-1", "req-1", "gateway-1");
+    FirstPartyConnectContext context = fixture.context();
     registry.register(91L, context);
 
     registry.unregister(91L);
@@ -90,24 +89,9 @@ class RedisFirstPartyConnectContextRegistryTest {
     String key = "sessionctx:first-party:91:connect-context";
     when(valueOperations.get(key)).thenThrow(new SerializationException("old record shape"));
 
-    assertEquals(Optional.empty(), registry.find(91L));
+    assertThrows(IllegalStateException.class, () -> registry.find(91L));
 
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            registry.register(
-                91L,
-                new FirstPartyConnectContext(
-                    "77",
-                    22L,
-                    "demo",
-                    "production",
-                    41L,
-                    17L,
-                    "scope-1",
-                    "jti-2",
-                    "req-2",
-                    "gateway-1")));
+    assertThrows(IllegalStateException.class, () -> registry.register(91L, fixture.context()));
     registry.unregister(91L);
 
     verify(redisTemplate, never()).delete(key);
@@ -120,24 +104,9 @@ class RedisFirstPartyConnectContextRegistryTest {
     Object retainedEvidence = "serialized record from an incompatible shape";
     store.put(key, retainedEvidence);
 
-    assertEquals(Optional.empty(), registry.find(91L));
+    assertThrows(IllegalStateException.class, () -> registry.find(91L));
 
-    assertThrows(
-        IllegalStateException.class,
-        () ->
-            registry.register(
-                91L,
-                new FirstPartyConnectContext(
-                    "77",
-                    22L,
-                    "demo",
-                    "production",
-                    41L,
-                    17L,
-                    "scope-1",
-                    "jti-2",
-                    "req-2",
-                    "gateway-1")));
+    assertThrows(IllegalStateException.class, () -> registry.register(91L, fixture.context()));
     registry.unregister(91L);
 
     assertEquals(retainedEvidence, store.get(key));

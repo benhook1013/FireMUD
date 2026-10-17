@@ -63,6 +63,9 @@ class MoveCommandHandlerTest {
 
   @Test
   void moveSuccessResolvesDestinationLookWithDestinationContext() {
+    var retainedContext =
+        new net.firedevops.firemud.gamesession.support.FirstPartyReceivingFixture().context();
+    context = context.withFirstPartyConnectContext(retainedContext);
     LookResult destinationLook =
         LookResult.newBuilder()
             .setRoomInstance(
@@ -111,6 +114,7 @@ class MoveCommandHandlerTest {
     assertThat(result.responseOutput()).isEqualTo(destinationOutput);
     assertThat(result.updatedContext()).isNotNull();
     assertThat(result.updatedContext().roomInstanceId()).isEqualTo("R-2045");
+    assertThat(result.updatedContext().firstPartyConnectContext()).isSameAs(retainedContext);
     assertThat(result.updatedContext().loginName()).isEqualTo("emberline@example.com");
     assertThat(result.updatedContext().characterName()).isEqualTo("Emberline");
     verify(lookCommandHandler).resolveLook(result.updatedContext());
