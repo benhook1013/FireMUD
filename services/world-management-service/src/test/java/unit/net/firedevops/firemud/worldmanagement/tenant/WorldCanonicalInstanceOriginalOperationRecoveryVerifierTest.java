@@ -83,6 +83,48 @@ class WorldCanonicalInstanceOriginalOperationRecoveryVerifierTest {
   }
 
   @Test
+  void rejectsNonSharedRetainedScopeAgainstSharedGameSessionAssociation() throws Exception {
+    Fixture fixture = fixture(false);
+    var retained =
+        (tools.jackson.databind.node.ObjectNode) JSON.readTree(fixture.preparationInputJson());
+    ((tools.jackson.databind.node.ObjectNode) retained.get("identity"))
+        .put("playableStateScope", "ISOLATED");
+    ((tools.jackson.databind.node.ObjectNode) retained.get("gameSessionReadEvidence"))
+        .put("playableStateScope", "ISOLATED");
+    String changedInput = json(retained);
+    when(fixture.identity().preparationInputJson()).thenReturn(changedInput);
+    when(fixture.identity().preparationInputDigest())
+        .thenReturn(sha256(changedInput.getBytes(StandardCharsets.UTF_8)));
+
+    var account = mock(AccountStartSessionWorldParticipationHistoricalReadClient.class);
+    when(account.read(any(AccountStartSessionWorldParticipationHistoricalReadRequest.class)))
+        .thenAnswer(
+            invocation ->
+                accountEvidence(
+                    invocation.getArgument(0),
+                    ORIGINAL_TUPLE,
+                    ATTEMPT_ID,
+                    GAME_SESSION_FENCE,
+                    changedInput));
+    var gameSession = mock(HistoricalOriginalStartSessionOwnerEvidenceReadClient.class);
+    when(gameSession.read(any(HistoricalOriginalStartSessionOwnerEvidence.Request.class)))
+        .thenAnswer(
+            invocation ->
+                gameSessionEvidence(
+                    invocation.getArgument(0),
+                    fixture,
+                    ORIGINAL_TUPLE,
+                    ATTEMPT_ID,
+                    GAME_SESSION_FENCE,
+                    fixture.launchAssociation()));
+
+    assertThatThrownBy(
+            () -> verifier(account, gameSession).verifyOriginalOperation(fixture.identity()))
+        .isInstanceOf(PreparationDeniedException.class)
+        .hasMessageContaining("Game Session launch association differs");
+  }
+
+  @Test
   void acceptsSerializerShapedSchemaTwoHistoricalEvidence() {
     acceptsExactHistoricalOwnerEvidenceAndUsesFreshReadCorrelations(fixture(false, true));
   }
