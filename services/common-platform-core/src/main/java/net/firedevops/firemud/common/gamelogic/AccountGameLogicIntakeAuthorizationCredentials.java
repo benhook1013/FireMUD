@@ -12,6 +12,10 @@ import net.firedevops.firemud.account.v1.AccountGameLogicIntakeAuthorizationServ
 /** Method-scoped protected metadata for the unchanged original creator credential. */
 public final class AccountGameLogicIntakeAuthorizationCredentials {
   public static final int MAX_CREDENTIAL_BYTES = 16384;
+
+  /** Base64 binary metadata plus bounded gRPC metadata overhead for the maximum credential. */
+  public static final int MAX_METADATA_BYTES = ((MAX_CREDENTIAL_BYTES + 2) / 3) * 4 + 1024;
+
   public static final Context.Key<Credential> CONTEXT_KEY =
       Context.key("account-game-logic-intake-original-creator");
   public static final Metadata.Key<Credential> HEADER =
