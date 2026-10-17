@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.gamelogic;
 
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import java.io.IOException;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -57,10 +58,16 @@ public final class GrpcGameLogicIntakeSourceReadClient
       throw new IllegalArgumentException(
           "Account GL intake source permission must use the configured workload namespace");
     }
-    var stub =
-        requireInitializedStub(
-                "Account GL intake source permission client is not initialized and available")
-            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+    AccountGameLogicIntakeSourceReadServiceGrpc.AccountGameLogicIntakeSourceReadServiceBlockingStub
+        initializedStub;
+    try {
+      initializedStub =
+          requireInitializedStub(
+              "Account GL intake source permission client is not initialized and available");
+    } catch (IllegalStateException unavailable) {
+      throw Status.UNAVAILABLE.asRuntimeException();
+    }
+    var stub = initializedStub.withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
     var wire = GameLogicIntakeSourceReadProtoCodec.toRequest(request);
     var response =
         request.proof() instanceof GameplayRuleSourceReadEvidence.Preliminary
