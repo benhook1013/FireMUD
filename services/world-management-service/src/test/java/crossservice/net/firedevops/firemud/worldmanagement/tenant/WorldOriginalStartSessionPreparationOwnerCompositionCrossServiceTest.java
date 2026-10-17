@@ -774,6 +774,30 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
             assertThat(read.launchBinding()).isEqualTo(input.completeLaunchBinding().evidence());
             assertThat(read.runtimeRoomInstanceId()).isEqualTo(prepared.runtimeRoomInstanceId());
             assertThat(read.preparationInputDigest()).isEqualTo(prepared.inputDigest());
+            var resolvedAssociation =
+                association.readOwnerAssociation(input.canonicalGameInstanceId()).orElseThrow();
+            var prepareFields = resolvedAssociation.worldPrepareFields();
+            var operationalRegionPlan =
+                world
+                    .dsl()
+                    .fetch(
+                        "EXPLAIN (FORMAT TEXT) "
+                            + WorldCanonicalInstanceLifecycleReadRepository
+                                .OPERATIONAL_REGION_ASSIGNMENTS_SQL,
+                        resolvedAssociation.worldInstanceId(),
+                        resolvedAssociation.worldInstanceId(),
+                        prepareFields.privateTenantKey(),
+                        prepareFields.privateGameInstanceKey())
+                    .getValues("QUERY PLAN", String.class);
+            var operationalRegionPlanText =
+                String.join("\n", operationalRegionPlan).toLowerCase(java.util.Locale.ROOT);
+            assertThat(operationalRegionPlan)
+                .as("physical EXPLAIN output for the production REGION readback query")
+                .isNotEmpty();
+            assertThat(operationalRegionPlanText)
+                .as("physical EXPLAIN output: %s", operationalRegionPlanText)
+                .contains(
+                    "full join", "world_instance_id", "family", "tenant_id", "game_instance_id");
             recovering.set(true);
             ownerRefusal.set(null);
             try {
