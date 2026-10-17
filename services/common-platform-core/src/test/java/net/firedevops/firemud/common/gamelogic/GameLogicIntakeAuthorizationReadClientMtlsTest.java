@@ -56,7 +56,8 @@ class GameLogicIntakeAuthorizationReadClientMtlsTest {
             tempDirectory,
             "terminal",
             "FireMUD terminal-read test CA",
-            IntakeTestPki.IdentitySpec.server("account-server", ACCOUNT_URI),
+            IntakeTestPki.IdentitySpec.server(
+                "account-server", "spiffe://firemud/ns/test/sa/account-service"),
             IntakeTestPki.IdentitySpec.server(
                 "wrong-server", "spiffe://firemud/ns/test/sa/game-logic-service"),
             IntakeTestPki.IdentitySpec.client(
