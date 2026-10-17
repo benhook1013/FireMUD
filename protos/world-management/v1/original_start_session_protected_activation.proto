@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package worldmanagement.v1;
+package world_management.v1;
 
 import "account/v1/start_session_activation_protection_acquisition.proto";
 
