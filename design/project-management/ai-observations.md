@@ -73,6 +73,12 @@ Entry format:
   - Observation: Integration inspection found the same mechanism already corrected in the canonical launch client.
   - Expected pattern: Keep only the local closed/initialized update under the client monitor and drain outside it; qualify the actual override with a queued-callback shutdown test. The queued-callback shutdown case passes in the fresh 546-case Common gate, including monitor release, exact peer binding, closed-client refusal and one shutdown per constructed channel. This source finding does not establish that an earlier runtime failed for that reason.
 
+- `2026-10-15`: Verify executed physical cases after a successful categorized gate
+  - Context: Moving the unchanged GDS producer proof into its categorized cross-service suite produced a successful Gradle result with all 20 selected cases skipped after Ryuk host-port refusals. A mixed filter also omitted the held-order suite because its package lacked the integration prefix. A separate combined four-owner compilation gate stopped on daemon garbage-collector thrashing before tests.
+  - Observation: A successful categorized task can contain zero executed physical cases, and a plain retry can reuse the all-skipped task as up-to-date. A successful mixed selector does not prove every required suite ran. The runner-networking cause remains unknown.
+  - Expected pattern: Verify fresh executed XML for every required selector before claiming counts; explicitly rerun an up-to-date all-skipped test task when retrying recovered infrastructure. Preserve cleanup guards and the original attribution of skipped, unavailable and failed runs. If a combined gate exhausts memory before tests, qualify owners sequentially under the standard resource policy.
+  - Reconsideration trigger: Revisit when the canonical gate rejects all-skipped required physical selectors and detects missing required suites.
+
 - `2026-10-15`: Scope the Social cross-service test limitation
   - Context: `SocialGroupsCrossServiceIntegrationTest` conditionally starts a cached Logging Admin image but does not call it; the test calls only the Social Groups `/ping` endpoint.
   - Observation: this test does not prove a Social-to-Logging interaction, despite its cross-service location. It is a coverage limitation, not evidence of a service defect or a new active project.
@@ -121,3 +127,9 @@ Entry format:
   - Expected pattern: keep the foreground command and its native session supervised through terminal completion, preserve the raw capture and report missing terminal evidence explicitly. An interrupted attempt and successful cleanup cannot count as runtime qualification. Supply command arguments as an explicit array when delegating; a sentence-ending period was separately mistaken for an argument and caused an avoidable pre-execution failure.
   - Recovery: the next foreground canonical attempt on `3c71c8c24379af623ca66550a4f4acaadd0ffd81` completed at 05:27:42 UTC with exit zero, full terminal capture, held-edge and backend proof, authenticated teardown and independently absent project resources. This does not establish why the earlier owner ended.
   - Reconsideration trigger: a subsequent canonical attempt completes with terminal capture, or bounded process evidence identifies why the previous owner ended.
+
+- `2026-10-16`: Derive focused Gradle selectors from declared Java packages
+  - Context: a Gameplay capture proof supplied `integration.net...` as the selector, and Gradle executed no tests before failing discovery.
+  - Observation: `integration` came from the categorized source root, while the class declared `net...`; a categorized source root is not necessarily part of the Java package, and a zero-test discovery failure establishes no test proof.
+  - Expected pattern: read the source package and class declaration before constructing `--tests`, and verify fresh testcase counts before crediting proof. A categorized source root is not necessarily part of the Java package. Archive completed full-suite reports before a filtered rerun replaces the task output.
+  - Recovery: the declared-package selector then passed all sixteen owning native cases; the zero-test attempt retains no proof credit.

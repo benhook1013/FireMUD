@@ -1240,7 +1240,8 @@ public class DraftCommitCoordinatorRepository {
         row.get("base_version_id", Long.class));
   }
 
-  private LockedVersion lockVersionTarget(TargetProof expected) {
+  // Internal caller coordination shares this exact owner lock before inspecting terminal state.
+  LockedVersion lockVersionTarget(TargetProof expected) {
     Objects.requireNonNull(expected, "expected");
     LockedVersion locked =
         lockVersionTarget(expected.canonicalTenantId(), expected.canonicalVersionId());

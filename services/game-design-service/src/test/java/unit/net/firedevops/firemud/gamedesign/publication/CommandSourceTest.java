@@ -258,6 +258,30 @@ class CommandSourceTest {
         .isInstanceOf(IllegalArgumentException.class);
   }
 
+  @Test
+  void gameplayRulePayloadRemainsASeparateTypedSibling() {
+    var payload =
+        net.firedevops.firemud.common.gamedesign.GameplayRuleSource.deletePayload(
+            net.firedevops.firemud.common.gamelogic.GameplayRuleManifest.Family.STATS, "strength");
+    var input =
+        binding(
+            UUID.randomUUID(),
+            List.of(revision("0", UUID.randomUUID(), payload)),
+            List.of(
+                new DraftCommitBinding.AffectedUnit(
+                    Owner.GAME_DESIGN_CONTROL_PLANE,
+                    "GAMEPLAY_RULE_SET",
+                    TARGET.canonicalVersionId().toString(),
+                    "GAMEPLAY_RULE_SET",
+                    "effective",
+                    "0")));
+    assertThat(CommandSource.mutations(input)).isEmpty();
+    assertThat(CommandSource.hasRealmPolicyRevision(input)).isFalse();
+    assertThat(net.firedevops.firemud.common.gamedesign.GameplayRuleSource.mutations(input))
+        .hasSize(1);
+    assertThat(RealmPolicySource.isPolicyRevision(input.revisions().getFirst())).isFalse();
+  }
+
   private static CommandSource.Definition definition(
       String commandId, String alias, UUID commitId, UUID revisionId, String revisionOrder) {
     return new CommandSource.Definition(
