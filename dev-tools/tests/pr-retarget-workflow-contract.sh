@@ -651,6 +651,7 @@ PYTHON
 # to require current-base provenance.
 python3 - "$smoke_path" "$runtime_images_path" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 import yaml
@@ -694,6 +695,52 @@ if "format('repository-dispatch-run-{0}', github.run_id)" not in concurrency_gro
     raise SystemExit("incomplete typed refresh identity must receive a unique run namespace")
 if "github.sha" in concurrency_group.split("github.event_name == 'repository_dispatch'", 1)[-1].split("github.event_name == 'workflow_run'", 1)[0]:
     raise SystemExit("repository_dispatch concurrency must not use the default-branch github.sha")
+# Execute the workflow-level selector before its dispatcher can classify a CI
+# callback. A title/body CI completion must not evict substantive reconciliation.
+assert runtime["concurrency"]["cancel-in-progress"] == "true"
+
+def callback_group(branch, source_id, source_attempt, source_event="pull_request", head="a" * 40):
+    values = {
+        "github.workflow": "Build Runtime Images",
+        "github.event_name": "workflow_run",
+        "github.event.workflow_run.event": source_event,
+        "github.event.workflow_run.id": source_id,
+        "github.event.workflow_run.run_attempt": source_attempt,
+        "github.event.workflow_run.head_branch": branch,
+        "github.event.workflow_run.head_sha": head,
+        "github.ref": "refs/heads/develop",
+        "github.run_id": 9000 + source_id,
+    }
+
+    def evaluate(match):
+        expression = re.sub(r"github(?:\.[A-Za-z_][A-Za-z_0-9]*)+",
+                            lambda variable: repr(values.get(variable.group(), "")), match.group(1))
+        expression = expression.replace("&&", " and ").replace("||", " or ").replace("null", "None")
+        return str(eval(expression, {"__builtins__": {}, "format": lambda pattern, *args: pattern.format(*args)}))
+
+    return re.sub(r"\$\{\{(.*?)\}\}", evaluate, concurrency_group)
+
+for branch in ("main", "develop", "feature/parent"):
+    substantive = callback_group(branch, 7001, 1)
+    metadata = callback_group(branch, 7002, 1)
+    subsequent_attempt = callback_group(branch, 7001, 2)
+    active = {}
+    # With cancel-in-progress enabled, assigning the same group evicts its
+    # earlier run. Interleave both callback orders to retain substantive work.
+    for callbacks in (((substantive, "substantive"), (metadata, "metadata")),
+                      ((metadata, "metadata"), (substantive, "substantive"))):
+        active.clear()
+        for group, kind in callbacks:
+            active[group] = kind
+        assert sorted(active.values()) == ["metadata", "substantive"], "metadata CI callback cancelled substantive runtime reconciliation"
+    assert subsequent_attempt not in (substantive, metadata), "CI callback concurrency must bind the source attempt"
+    assert callback_group(branch, 7001, 1) == substantive, "duplicate completion callbacks retain their exact source-attempt group"
+    assert callback_group(branch, 7003, 1, "push") not in (substantive, metadata), "PR callback must not cancel branch publication"
+
+for branch in ("main", "develop"):
+    assert callback_group(branch, 7101, 1, "push") == callback_group(branch, 7102, 2, "push", "b" * 40), "protected push publication must retain branch serialization"
+assert callback_group("main", 7101, 1, "push") != callback_group("develop", 7102, 1, "push"), "protected publication branches must remain separate"
+
 PY
 
 run_image_meta_exact_parent_fixture() {
