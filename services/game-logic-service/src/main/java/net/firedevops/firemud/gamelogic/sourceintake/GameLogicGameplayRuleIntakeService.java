@@ -1,10 +1,12 @@
 package net.firedevops.firemud.gamelogic.sourceintake;
 
 import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 import net.firedevops.firemud.common.authoring.AccountOriginalDraftOrderCredentials;
 import net.firedevops.firemud.common.gamelogic.AccountGameLogicIntakeAuthorizationCredentials;
 import net.firedevops.firemud.common.gamelogic.GameLogicGameplayRuleIntakeOperation;
@@ -64,7 +66,7 @@ public final class GameLogicGameplayRuleIntakeService {
 
     var authorizationRequest =
         GameLogicIntakeAuthorizationReadEvidence.Request.create(workloadNamespace, authorization);
-    var held = accountAuthorizationReader.read(authorizationRequest);
+    var held = readDependency(() -> accountAuthorizationReader.read(authorizationRequest));
     if (held == null || !authorizationRequest.equals(held.request())) {
       throw Status.FAILED_PRECONDITION
           .withDescription("Exact HELD Account intake authorization required")
@@ -73,7 +75,7 @@ public final class GameLogicGameplayRuleIntakeService {
 
     var sourceRequest =
         GameplayRuleSourceReadEvidence.Request.forFinalizedIntake(workloadNamespace, authorization);
-    var sourceEvidence = gameDesignSourceReader.read(sourceRequest);
+    var sourceEvidence = readDependency(() -> gameDesignSourceReader.read(sourceRequest));
     if (sourceEvidence == null
         || !sourceRequest.equals(sourceEvidence.request())
         || !Arrays.equals(
@@ -126,7 +128,7 @@ public final class GameLogicGameplayRuleIntakeService {
 
     var authorizationRequest =
         GameLogicIntakeAuthorizationReadEvidence.Request.create(workloadNamespace, authorization);
-    var held = accountAuthorizationReader.read(authorizationRequest);
+    var held = readDependency(() -> accountAuthorizationReader.read(authorizationRequest));
     if (held == null || !authorizationRequest.equals(held.request())) {
       throw Status.FAILED_PRECONDITION
           .withDescription("Exact HELD Account intake authorization required for explicit abort")
@@ -196,5 +198,22 @@ public final class GameLogicGameplayRuleIntakeService {
           .withDescription("GL intake owner reads must run outside SQL")
           .asRuntimeException();
     }
+  }
+
+  private static <T> T readDependency(Supplier<T> read) {
+    try {
+      return read.get();
+    } catch (StatusRuntimeException failure) {
+      throw sanitize(failure);
+    }
+  }
+
+  private static StatusRuntimeException sanitize(StatusRuntimeException failure) {
+    var code = Status.fromThrowable(failure).getCode();
+    return switch (code) {
+      case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, RESOURCE_EXHAUSTED, INTERNAL, UNKNOWN ->
+          Status.fromCode(code).asRuntimeException();
+      default -> Status.UNAVAILABLE.asRuntimeException();
+    };
   }
 }
