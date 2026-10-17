@@ -429,7 +429,8 @@ class AccountStartSessionActivationProtectionEvidenceTest {
                     7L,
                     CurrentGameInstanceStatus.RUNNING))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("STARTING");
+        .hasMessageContaining(
+            "Original Account operation differs from its current owner or launch target");
     assertThatThrownBy(
             () ->
                 AccountStartSessionActivationProtectionRequest.create(
@@ -646,6 +647,41 @@ class AccountStartSessionActivationProtectionEvidenceTest {
     var decoded = AccountStartSessionActivationProtectionRequest.decode(valid.canonicalBytes());
     assertThat(decoded.launchAssociation().request().originalOperation())
         .isEqualTo(valid.launchAssociation().request().originalOperation());
+    var omittedOperationSelector =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+            selector.readRequestId(),
+            selector.targetNamespace(),
+            selector.canonicalTenantId(),
+            selector.worldSlug(),
+            selector.gameInstanceUuid(),
+            selector.controlPlaneRequestId(),
+            selector.launchDescriptorId(),
+            selector.expectedDescriptorRequestDigest(),
+            selector.expectedDescriptorResultDigest(),
+            selector.expectedReleaseAttestationEvidenceDigest());
+    var omittedOperation =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
+            omittedOperationSelector,
+            old.playableStateNamespaceId(),
+            old.playableStateScope(),
+            old.publicProduction(),
+            old.currentGameInstanceStatus(),
+            old.currentRowVersion(),
+            old.ownerAttemptId(),
+            old.ownerFence(),
+            old.canonicalRealmId(),
+            old.catalogRevision(),
+            old.launchBindingEvidence());
+    assertThatThrownBy(
+            () ->
+                AccountStartSessionActivationProtectionRequest.create(
+                    ACCOUNT_PARTICIPATION,
+                    Long.MAX_VALUE,
+                    omittedOperation,
+                    first.originalCurrentAttempt(),
+                    first.worldActivationRequest()))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("complete original operation");
     var wire =
         net.firedevops.firemud.common.gamesession
             .CanonicalGameInstanceLaunchAssociationReadGrpcCodec.toResponse(
@@ -706,7 +742,12 @@ class AccountStartSessionActivationProtectionEvidenceTest {
             fixture.selector.launchDescriptorId(),
             fixture.selector.expectedDescriptorRequestDigest(),
             fixture.selector.expectedDescriptorResultDigest(),
-            fixture.selector.expectedReleaseAttestationEvidenceDigest());
+            fixture.selector.expectedReleaseAttestationEvidenceDigest(),
+            new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(
+                tuple.canonicalBytes(),
+                GAME_SESSION_MUTATION,
+                GAME_SESSION_ATTEMPT,
+                Long.MAX_VALUE));
     var gsResult =
         new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
             gsRequest,
