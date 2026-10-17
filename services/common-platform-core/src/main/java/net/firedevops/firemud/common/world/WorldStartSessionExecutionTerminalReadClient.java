@@ -24,6 +24,13 @@ public final class WorldStartSessionExecutionTerminalReadClient
             .WorldStartSessionExecutionTerminalReadServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
 
+  /** The owner replied, but its terminal evidence failed the exact response contract. */
+  public static final class InvalidTerminalEvidenceException extends IllegalStateException {
+    public InvalidTerminalEvidenceException(String message, Throwable cause) {
+      super(message, cause);
+    }
+  }
+
   private final String workloadNamespace;
   private volatile boolean initialized;
   private volatile boolean closed;
@@ -80,7 +87,7 @@ public final class WorldStartSessionExecutionTerminalReadClient
     try {
       return WorldStartSessionExecutionTerminalReadGrpcCodec.fromResponse(request, response);
     } catch (IllegalArgumentException invalid) {
-      throw new IllegalStateException(
+      throw new InvalidTerminalEvidenceException(
           "World returned invalid original StartSession terminal evidence", invalid);
     }
   }

@@ -1,5 +1,10 @@
 package net.firedevops.firemud.common.account.startsession;
 
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.awaitBlockedReloadCallback;
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.awaitCondition;
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.awaitLatch;
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.setWatcher;
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.watcher;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -24,7 +29,6 @@ import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import io.grpc.netty.shaded.io.netty.handler.ssl.SslContextBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
-import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -41,13 +45,11 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BooleanSupplier;
 import java.util.function.UnaryOperator;
 import net.firedevops.firemud.account.v1.AccountStartSessionWorldParticipationAcquisitionServiceGrpc;
 import net.firedevops.firemud.account.v1.AcquireStartSessionWorldParticipationRequest;
@@ -56,7 +58,6 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Request;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidence.Result;
 import net.firedevops.firemud.common.gamesession.OriginalStartSessionCurrentAttemptEvidenceGrpcCodec;
-import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -283,7 +284,6 @@ class AccountStartSessionWorldParticipationAcquisitionClientMtlsTest {
       AccountStartSessionWorldParticipationAcquisitionClient clientUnderTest = client;
 
       originalWatcher = watcher(client);
-      Set<Thread> activeCallbacks = activeCallbacks(originalWatcher);
       TlsCertificateWatcher closeBoundary = mock(TlsCertificateWatcher.class);
       TlsCertificateWatcher delegatedWatcher = originalWatcher;
       org.mockito.Mockito.doAnswer(
@@ -329,7 +329,7 @@ class AccountStartSessionWorldParticipationAcquisitionClientMtlsTest {
       awaitCondition(() -> closeWorker.getState() == Thread.State.BLOCKED);
 
       Files.writeString(Path.of(tls.getCertChain()), "certificate-rotated");
-      assertThat(awaitBlockedReloadCallback(activeCallbacks)).isNotNull();
+      assertThat(awaitBlockedReloadCallback(originalWatcher)).isNotNull();
 
       releaseClientMonitor.countDown();
       closeWorker.join(TimeUnit.SECONDS.toMillis(4));
@@ -376,70 +376,6 @@ class AccountStartSessionWorldParticipationAcquisitionClientMtlsTest {
         }
       }
     }
-  }
-
-  private static Thread awaitBlockedReloadCallback(Set<Thread> activeCallbacks)
-      throws InterruptedException {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-    while (System.nanoTime() < deadline) {
-      for (Thread callback : activeCallbacks) {
-        if (callback.getState() == Thread.State.BLOCKED
-            && hasFrame(callback, "AbstractReloadingBlockingGrpcClient", "reloadChannel")) {
-          return callback;
-        }
-      }
-      Thread.sleep(10);
-    }
-    return null;
-  }
-
-  private static boolean hasFrame(Thread thread, String className, String methodName) {
-    for (StackTraceElement frame : thread.getStackTrace()) {
-      if (frame.getClassName().endsWith(className) && frame.getMethodName().equals(methodName)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  private static void awaitCondition(BooleanSupplier condition) throws InterruptedException {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-    while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
-      Thread.sleep(10);
-    }
-    assertThat(condition.getAsBoolean()).isTrue();
-  }
-
-  private static void awaitLatch(CountDownLatch latch) {
-    try {
-      latch.await();
-    } catch (InterruptedException interrupted) {
-      Thread.currentThread().interrupt();
-    }
-  }
-
-  private static TlsCertificateWatcher watcher(
-      AccountStartSessionWorldParticipationAcquisitionClient client)
-      throws ReflectiveOperationException {
-    Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("watcher");
-    field.setAccessible(true);
-    return (TlsCertificateWatcher) field.get(client);
-  }
-
-  private static void setWatcher(
-      AccountStartSessionWorldParticipationAcquisitionClient client, TlsCertificateWatcher watcher)
-      throws ReflectiveOperationException {
-    Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("watcher");
-    field.setAccessible(true);
-    field.set(client, watcher);
-  }
-
-  @SuppressWarnings("unchecked")
-  private static Set<Thread> activeCallbacks(TlsCertificateWatcher watcher)
-      throws ReflectiveOperationException {
-    Field field = TlsCertificateWatcher.class.getDeclaredField("activeCallbacks");
-    field.setAccessible(true);
-    return (Set<Thread>) field.get(watcher);
   }
 
   private AtomicInteger startServer(
