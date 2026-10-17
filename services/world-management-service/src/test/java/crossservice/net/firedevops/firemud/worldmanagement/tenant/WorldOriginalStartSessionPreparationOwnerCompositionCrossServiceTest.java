@@ -1683,10 +1683,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 .fetch("SELECT operation_state FROM world_canonical_instance_activation_fence")
                 .getValues("operation_state", String.class))
         .containsExactly("PENDING");
-    assertThat(
-            world.fetchValue(
-                "SELECT count(*) " + "FROM world_canonical_instance_activation_operation",
-                Integer.class))
+    assertThat(world.fetchCount(DSL.table("world_canonical_instance_activation_operation")))
         .isZero();
   }
 
