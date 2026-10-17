@@ -37,6 +37,7 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -298,6 +299,25 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
     assertThat(bodies).hasValue(0);
   }
 
+  @Test
+  void uninitializedAndClosedLifecycleFailuresAreSanitizedUnavailableWithoutRpc() throws Exception {
+    var evidence = evidence(NAMESPACE, 1, Outcome.RETAINED);
+    startServer(pki.server(), evidence);
+    client = newClient(server, pki.client());
+
+    assertSanitizedUnavailable(() -> client.read(evidence.request()));
+    assertThat(headers).hasValue(0);
+    assertThat(bodies).hasValue(0);
+
+    client.init();
+    var closedClient = client;
+    client.close();
+    client = null;
+    assertSanitizedUnavailable(() -> closedClient.read(evidence.request()));
+    assertThat(headers).hasValue(0);
+    assertThat(bodies).hasValue(0);
+  }
+
   private enum Outcome {
     RETAINED,
     ABORTED
@@ -358,6 +378,18 @@ class AccountGameLogicIntakeSettlementReadGrpcTest {
     endpoints.setAccountService("localhost:" + target.getPort());
     return new GrpcAccountGameLogicIntakeSettlementReadClient(
         endpoints, pki.clientProperties(tempDirectory, local), new GrpcChannelFactory(), NAMESPACE);
+  }
+
+  private static void assertSanitizedUnavailable(ThrowingCallable operation) {
+    assertThatThrownBy(operation)
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> {
+              var status = Status.fromThrowable(failure);
+              assertThat(status.getCode()).isEqualTo(Status.Code.UNAVAILABLE);
+              assertThat(status.getDescription()).isNull();
+              assertThat(failure.getCause()).isNull();
+            });
   }
 
   /** These canonical bytes are deliberately synthetic transport evidence, not owner provenance. */

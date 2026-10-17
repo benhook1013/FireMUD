@@ -178,6 +178,20 @@ class GameLogicIntakeSourceReadTransportTest {
   }
 
   @Test
+  void reportsSanitizedUnavailableBeforeInitializationAndAfterCloseForBothReadBranches()
+      throws Exception {
+    start(pki.server());
+    client = newClient(pki.client());
+    var requests = requests();
+
+    for (var request : requests) assertUnavailable(() -> client.read(request));
+    client.init();
+    client.close();
+    for (var request : requests) assertUnavailable(() -> client.read(request));
+    assertThat(calls).hasValue(0);
+  }
+
+  @Test
   void rejectsNamespaceAmbientSqlMissingTlsAndSubstitutedResponse() throws Exception {
     var endpoints = new ServiceEndpointsProperties();
     var plaintext = new CommonGrpcClientProperties();
