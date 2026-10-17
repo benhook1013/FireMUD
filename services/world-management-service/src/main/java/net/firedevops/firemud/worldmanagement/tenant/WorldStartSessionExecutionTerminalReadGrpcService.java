@@ -13,6 +13,7 @@ import net.firedevops.firemud.worldmanagement.v1.ReadWorldStartSessionExecutionT
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldStartSessionExecutionTerminalResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldStartSessionExecutionTerminalReadServiceGrpc;
 import org.jooq.exception.DataAccessException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Standalone Account-authenticated World terminal read; deliberately not registered at runtime. */
@@ -90,6 +91,12 @@ public final class WorldStartSessionExecutionTerminalReadGrpcService
           responseObserver,
           Status.FAILED_PRECONDITION,
           "The exact original World StartSession operation is not authenticated for recovery");
+      return;
+    } catch (CannotCreateTransactionException unavailable) {
+      fail(
+          responseObserver,
+          Status.UNAVAILABLE,
+          "World StartSession terminal storage is unavailable");
       return;
     } catch (DataAccessException | org.springframework.dao.DataAccessException storageFailure) {
       fail(

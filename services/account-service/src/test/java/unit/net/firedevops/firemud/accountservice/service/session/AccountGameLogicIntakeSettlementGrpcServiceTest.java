@@ -31,6 +31,8 @@ import net.firedevops.firemud.common.gamelogic.GameplayRuleSourceRevision;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Context-level transport proofs; durable settlement belongs to the owner service. */
@@ -126,11 +128,23 @@ class AccountGameLogicIntakeSettlementGrpcServiceTest {
     doThrow(new IllegalArgumentException("private-stale-precondition")).when(owner).settle(any());
     var stalePrecondition = authorized(() -> invoke(request));
     assertThat(stalePrecondition.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-    assertThat(stalePrecondition.error().toString()).doesNotContain("private-stale-precondition");
-    doThrow(new IllegalStateException("private-storage-failure")).when(owner).settle(any());
-    var storageFailure = authorized(() -> invoke(request));
-    assertThat(storageFailure.code()).isEqualTo(Status.Code.UNAVAILABLE);
-    assertThat(storageFailure.error().toString()).doesNotContain("private-storage-failure");
+    assertSanitized(stalePrecondition.error(), "private-stale-precondition");
+    doThrow(new IllegalStateException("private-stale-owner-state")).when(owner).settle(any());
+    var staleOwnerState = authorized(() -> invoke(request));
+    assertThat(staleOwnerState.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
+    assertSanitized(staleOwnerState.error(), "private-stale-owner-state");
+    doThrow(new DataAccessResourceFailureException("private-database-outage"))
+        .when(owner)
+        .settle(any());
+    var databaseFailure = authorized(() -> invoke(request));
+    assertThat(databaseFailure.code()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertSanitized(databaseFailure.error(), "private-database-outage");
+    doThrow(new CannotCreateTransactionException("private-transaction-outage"))
+        .when(owner)
+        .settle(any());
+    var transactionFailure = authorized(() -> invoke(request));
+    assertThat(transactionFailure.code()).isEqualTo(Status.Code.UNAVAILABLE);
+    assertSanitized(transactionFailure.error(), "private-transaction-outage");
     doThrow(
             Status.FAILED_PRECONDITION
                 .withDescription("private-owner-evidence")
@@ -139,7 +153,14 @@ class AccountGameLogicIntakeSettlementGrpcServiceTest {
         .settle(any());
     var failed = authorized(() -> invoke(request));
     assertThat(failed.code()).isEqualTo(Status.Code.FAILED_PRECONDITION);
-    assertThat(failed.error().toString()).doesNotContain("private-owner-evidence");
+    assertSanitized(failed.error(), "private-owner-evidence");
+  }
+
+  private static void assertSanitized(Throwable error, String secret) {
+    assertThat(error.toString()).doesNotContain(secret);
+    assertThat(error.getCause()).isNull();
+    assertThat(Status.fromThrowable(error).getDescription())
+        .isEqualTo("Account intake settlement denied or unavailable");
   }
 
   private record Result(SettleGameLogicIntakeResponse response, Throwable error) {
