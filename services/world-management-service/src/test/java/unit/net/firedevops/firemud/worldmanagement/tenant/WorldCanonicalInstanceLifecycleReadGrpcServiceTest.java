@@ -24,6 +24,7 @@ import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifec
 import net.firedevops.firemud.worldmanagement.v1.ReadWorldCanonicalInstanceLifecycleResponse;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
@@ -137,6 +138,27 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
 
     assertThat(result.error).isEqualTo(Status.Code.UNAVAILABLE);
     assertThat(result.description).doesNotContain("private storage detail");
+    verify(repository).read(read);
+  }
+
+  @Test
+  void mapsTransactionCreationFailureToUnavailableWithoutLeakingStorageDetails() {
+    var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
+    var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
+    var read = request("test");
+    when(repository.read(read))
+        .thenThrow(new CannotCreateTransactionException("private transaction detail"));
+
+    Collector result =
+        call(
+            service,
+            WorldCanonicalInstanceLifecycleGrpcCodec.toRequest(read),
+            peer("game-session-service", "test"));
+
+    assertThat(result.error).isEqualTo(Status.Code.UNAVAILABLE);
+    assertThat(result.description)
+        .isEqualTo("Canonical World lifecycle storage is temporarily unavailable")
+        .doesNotContain("private transaction detail");
     verify(repository).read(read);
   }
 
