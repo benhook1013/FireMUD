@@ -74,6 +74,18 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
   }
 
   @Test
+  void rejectsMissingPeerIdentityAsUnauthenticatedBeforeStorageAccess() {
+    var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
+    var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
+
+    Collector result =
+        call(service, ReadWorldCanonicalInstanceLifecycleRequest.getDefaultInstance(), null);
+
+    assertThat(result.error).isEqualTo(Status.Code.UNAUTHENTICATED);
+    verifyNoInteractions(repository);
+  }
+
+  @Test
   void rejectsAuthenticatedEndUserContextBeforeDecodingOrStorageAccess() {
     var repository = mock(WorldCanonicalInstanceLifecycleReadRepository.class);
     var service = new WorldCanonicalInstanceLifecycleReadGrpcService(repository, "test");
@@ -148,7 +160,10 @@ class WorldCanonicalInstanceLifecycleReadGrpcServiceTest {
       ReadWorldCanonicalInstanceLifecycleRequest request,
       GrpcPeerIdentity peer) {
     Collector response = new Collector();
-    Context context = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
+    Context context =
+        peer == null
+            ? Context.ROOT
+            : Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
     Context previous = context.attach();
     try {
       service.readWorldCanonicalInstanceLifecycle(request, response);

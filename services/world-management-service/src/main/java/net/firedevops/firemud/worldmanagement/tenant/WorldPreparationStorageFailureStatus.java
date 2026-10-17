@@ -42,6 +42,9 @@ final class WorldPreparationStorageFailureStatus {
     if (sqlState.startsWith("08") || sqlState.startsWith("57") || "55P03".equals(sqlState)) {
       return Status.Code.UNAVAILABLE;
     }
+    if (sqlState.startsWith("22") || sqlState.startsWith("42") || sqlState.startsWith("XX")) {
+      return Status.Code.INTERNAL;
+    }
     return null;
   }
 }

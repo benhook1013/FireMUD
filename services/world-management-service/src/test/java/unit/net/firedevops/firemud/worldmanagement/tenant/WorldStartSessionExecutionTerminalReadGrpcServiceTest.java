@@ -249,6 +249,9 @@ class WorldStartSessionExecutionTerminalReadGrpcServiceTest {
             storageFailure("08006", Status.Code.UNAVAILABLE),
             storageFailure("57014", Status.Code.UNAVAILABLE),
             storageFailure("55P03", Status.Code.UNAVAILABLE),
+            storageFailure("22P02", Status.Code.INTERNAL),
+            storageFailure("42883", Status.Code.INTERNAL),
+            storageFailure("XX001", Status.Code.INTERNAL),
             new StorageFailureCase(
                 new DataIntegrityViolationException(
                     "private SQL detail", new SQLException("private SQL detail", "23514")),

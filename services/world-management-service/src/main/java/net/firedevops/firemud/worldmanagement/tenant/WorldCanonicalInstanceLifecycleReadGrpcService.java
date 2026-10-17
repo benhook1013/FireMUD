@@ -116,8 +116,14 @@ public final class WorldCanonicalInstanceLifecycleReadGrpcService
 
   private boolean requireAuthenticatedGameSessionPeer(StreamObserver<?> responseObserver) {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
-    if (peer != null
-        && peer.isService("game-session-service")
+    if (peer == null) {
+      responseObserver.onError(
+          Status.UNAUTHENTICATED
+              .withDescription("An authenticated workload identity is required")
+              .asRuntimeException());
+      return false;
+    }
+    if (peer.isService("game-session-service")
         && peer.isInNamespace(trustedNamespace)
         && !SessionContext.hasAuthenticatedCallerContext()) {
       return true;
