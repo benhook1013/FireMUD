@@ -50,7 +50,13 @@ public final class CanonicalWorldInstancePreparationClient
         "Canonical World preparation client has no gRPC stub");
   }
 
-  /** Sends the exact owner operation outside SQL and validates the full request/readback echo. */
+  /**
+   * Sends the exact owner operation outside SQL under one five-second outer RPC deadline and
+   * validates the full request/readback echo. The synchronous World handler does not fork gRPC
+   * {@code Context}, so nested owner calls share the propagated deadline rather than receiving
+   * independent five-second budgets. {@code DEADLINE_EXCEEDED} leaves the commit outcome ambiguous;
+   * this client propagates that status and does not orchestrate or automatically recover.
+   */
   public WorldCanonicalInstanceLifecycleEvidence prepare(
       Request request,
       OriginalOperationInput operationInput,

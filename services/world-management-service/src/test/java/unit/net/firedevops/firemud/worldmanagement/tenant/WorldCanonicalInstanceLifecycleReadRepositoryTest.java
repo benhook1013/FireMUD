@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.common.gamedesign.AuthoredWorldReleaseAttestationEvidence;
@@ -24,6 +25,8 @@ import org.jooq.Record;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.JsonNode;
@@ -100,6 +103,48 @@ class WorldCanonicalInstanceLifecycleReadRepositoryTest {
                     false))
         .isInstanceOf(InvocationTargetException.class)
         .satisfies(failure -> assertThat(failure.getCause()).isSameAs(materializedFailure));
+  }
+
+  @Test
+  void preservesNontransientSpringAndJooqStorageFailuresAtMaterializedReadBoundary()
+      throws Exception {
+    var request = request();
+    var repository =
+        new WorldCanonicalInstanceLifecycleReadRepository(
+            mock(DSLContext.class),
+            mock(PlatformTransactionManager.class),
+            mock(WorldCanonicalInstanceAssociationRepository.class));
+    Method readMaterialized =
+        WorldCanonicalInstanceLifecycleReadRepository.class.getDeclaredMethod(
+            "readMaterialized",
+            WorldCanonicalInstanceLifecycleEvidence.Request.class,
+            WorldCanonicalInstanceAssociation.class,
+            Record.class,
+            boolean.class);
+    readMaterialized.setAccessible(true);
+    var storageFailures =
+        List.<RuntimeException>of(
+            new BadSqlGrammarException(
+                "read canonical lifecycle", "select invalid", new SQLException("invalid SQL")),
+            new DataIntegrityViolationException("stored row violates a database constraint"),
+            new org.jooq.exception.DataAccessException(
+                "stored row read failed", new SQLException("database failure", "XX000")));
+
+    for (RuntimeException storageFailure : storageFailures) {
+      var preparation = mock(Record.class);
+      when(preparation.get("capture_id", UUID.class)).thenThrow(storageFailure);
+
+      assertThatThrownBy(
+              () ->
+                  readMaterialized.invoke(
+                      repository,
+                      request,
+                      mock(WorldCanonicalInstanceAssociation.class),
+                      preparation,
+                      false))
+          .isInstanceOf(InvocationTargetException.class)
+          .satisfies(failure -> assertThat(failure.getCause()).isSameAs(storageFailure));
+    }
   }
 
   @Test

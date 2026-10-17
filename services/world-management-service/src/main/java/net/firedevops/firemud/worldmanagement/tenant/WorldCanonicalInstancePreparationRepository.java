@@ -575,12 +575,12 @@ public final class WorldCanonicalInstancePreparationRepository {
     try {
       return dsl.fetchOne(
           "SELECT * FROM world_prepare_canonical_instance(?, ?)", inputJson, inputDigest);
-    } catch (DuplicateKeyException exception) {
+    } catch (DuplicateKeyException | org.jooq.exception.DataAccessException exception) {
       throw translateCanonicalPreparationConflict(exception);
     }
   }
 
-  static RuntimeException translateCanonicalPreparationConflict(DuplicateKeyException exception) {
+  static RuntimeException translateCanonicalPreparationConflict(RuntimeException exception) {
     for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
       if (cause instanceof SQLException sqlException
           && "23505".equals(sqlException.getSQLState())
