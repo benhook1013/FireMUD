@@ -67,6 +67,12 @@ public final class WorldOriginalStartSessionActivationTerminalReadGrpcService
     } catch (DataAccessException failure) {
       fail(observer, Status.INTERNAL, "World activation terminal storage failed");
       return;
+    } catch (WorldCanonicalInstanceActivationRepository.ActivationConflictException conflict) {
+      fail(
+          observer,
+          Status.FAILED_PRECONDITION,
+          "World activation terminal evidence conflicts with the exact Account protection read");
+      return;
     } catch (RuntimeException failure) {
       fail(observer, Status.INTERNAL, "World activation terminal read failed");
       return;
