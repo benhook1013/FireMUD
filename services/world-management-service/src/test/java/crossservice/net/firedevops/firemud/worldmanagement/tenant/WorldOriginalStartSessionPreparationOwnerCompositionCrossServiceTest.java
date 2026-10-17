@@ -159,6 +159,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
@@ -1768,9 +1769,11 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     @Override
     public TransactionStatus getTransaction(TransactionDefinition definition)
         throws TransactionException {
-      TransactionStatus status = delegate.getTransaction(definition);
-      readOnlyTransactions.put(status, definition.isReadOnly());
-      if (!definition.isReadOnly()) writeTransactionsStarted++;
+      TransactionDefinition effectiveDefinition =
+          definition == null ? new DefaultTransactionDefinition() : definition;
+      TransactionStatus status = delegate.getTransaction(effectiveDefinition);
+      readOnlyTransactions.put(status, effectiveDefinition.isReadOnly());
+      if (!effectiveDefinition.isReadOnly()) writeTransactionsStarted++;
       return status;
     }
 
