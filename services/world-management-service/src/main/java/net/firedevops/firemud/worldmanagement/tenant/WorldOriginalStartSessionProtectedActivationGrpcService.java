@@ -76,9 +76,9 @@ public final class WorldOriginalStartSessionProtectedActivationGrpcService
           switch (code) {
             case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, RESOURCE_EXHAUSTED, INTERNAL, UNKNOWN ->
                 Status.fromCode(code);
-            default -> Status.UNAVAILABLE;
+            default -> Status.FAILED_PRECONDITION;
           };
-      fail(observer, forwarded, "World protected activation owner request is unavailable");
+      fail(observer, forwarded, "World protected activation owner request could not complete");
       return;
     } catch (IllegalArgumentException invalid) {
       fail(observer, Status.INTERNAL, "World protected activation owner evidence is invalid");

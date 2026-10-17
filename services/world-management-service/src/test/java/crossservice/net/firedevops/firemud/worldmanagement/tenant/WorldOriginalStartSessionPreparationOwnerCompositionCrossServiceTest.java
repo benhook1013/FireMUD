@@ -961,14 +961,13 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 rows(issuer.sourceDsl(), accountBefore.keySet().toArray(String[]::new));
             var activationGsBefore = rows(gs.dsl(), gsBefore.keySet().toArray(String[]::new));
             if (refusal == Refusal.CHANGED_ACTIVATION_ATTEMPT) {
-              // The foreign Account precondition is reported as this World's unavailable
-              // dependency.
+              // The foreign Account precondition is a nonretryable World precondition failure.
               assertThatThrownBy(() -> worldProtectedActivation.activate(activationInput))
                   .isInstanceOfSatisfying(
                       StatusRuntimeException.class,
                       failure ->
                           assertThat(Status.fromThrowable(failure).getCode())
-                              .isEqualTo(Status.Code.UNAVAILABLE));
+                              .isEqualTo(Status.Code.FAILED_PRECONDITION));
               assertThat(rows(world.dsl(), activationWorldBefore.keySet().toArray(String[]::new)))
                   .isEqualTo(activationWorldBefore);
               assertThat(
