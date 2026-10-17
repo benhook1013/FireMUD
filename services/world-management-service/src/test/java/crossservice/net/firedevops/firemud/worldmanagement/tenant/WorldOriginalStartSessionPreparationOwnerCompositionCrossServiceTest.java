@@ -37,6 +37,7 @@ import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -44,6 +45,7 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionActivationProtectionRepository;
 import net.firedevops.firemud.accountservice.repository.AccountStartSessionWorldParticipationRepository;
@@ -149,10 +151,15 @@ import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.Network;
@@ -251,6 +258,26 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     compose(Refusal.CHANGED_ACTIVATION_ATTEMPT);
   }
 
+  @Test
+  void transientLifecycleCasRollbackRetriesWithinOriginalActivationInvocation() throws Exception {
+    compose(Refusal.NONE, ActivationFailure.TRANSIENT_ROLLBACK_ONCE);
+  }
+
+  @Test
+  void uncertainLifecycleCasCommitReturnsExactTerminalWithoutRepeatingEffects() throws Exception {
+    compose(Refusal.NONE, ActivationFailure.TRANSIENT_AFTER_COMMIT_ONCE);
+  }
+
+  @Test
+  void exhaustedTransientLifecycleCasLeavesPendingAndCannotBeRestarted() throws Exception {
+    compose(Refusal.NONE, ActivationFailure.TRANSIENT_ROLLBACK_ALWAYS);
+  }
+
+  @Test
+  void nontransientLifecycleCasFailureLeavesPendingAndCannotBeRestarted() throws Exception {
+    compose(Refusal.NONE, ActivationFailure.NONTRANSIENT_ROLLBACK_ONCE);
+  }
+
   private enum Refusal {
     NONE,
     MISMATCHED_ATTEMPT,
@@ -258,7 +285,19 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     CHANGED_ACTIVATION_ATTEMPT
   }
 
+  private enum ActivationFailure {
+    NONE,
+    TRANSIENT_ROLLBACK_ONCE,
+    TRANSIENT_AFTER_COMMIT_ONCE,
+    TRANSIENT_ROLLBACK_ALWAYS,
+    NONTRANSIENT_ROLLBACK_ONCE
+  }
+
   private void compose(Refusal refusal) throws Exception {
+    compose(refusal, ActivationFailure.NONE);
+  }
+
+  private void compose(Refusal refusal, ActivationFailure activationFailure) throws Exception {
     UUID tenant = UUID.randomUUID();
     try (var account =
             new AccountControlUiOriginalOrderFixture(
@@ -456,6 +495,29 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                         NAMESPACE),
                     NAMESPACE),
                 captureServerStatusCause(accountActivationSettlementFailure));
+        var activationProtectionAcquisitionCalls = new AtomicInteger();
+        BindableService activationProtectionAcquisitionReceiver =
+            new AccountStartSessionActivationProtectionAcquisitionGrpcService(
+                issuer.activationProtectionAcquisitionService(launchAssociation, currentAttempt),
+                NAMESPACE);
+        BindableService countedActivationProtectionAcquisitionReceiver =
+            () ->
+                ServerInterceptors.intercept(
+                    activationProtectionAcquisitionReceiver,
+                    new ServerInterceptor() {
+                      @Override
+                      public <RequestT, ResponseT> ServerCall.Listener<RequestT> interceptCall(
+                          ServerCall<RequestT, ResponseT> call,
+                          Metadata headers,
+                          ServerCallHandler<RequestT, ResponseT> next) {
+                        if (call.getMethodDescriptor()
+                            .getFullMethodName()
+                            .endsWith("/AcquireOriginalStartSessionActivationProtection")) {
+                          activationProtectionAcquisitionCalls.incrementAndGet();
+                        }
+                        return next.startCall(call, headers);
+                      }
+                    });
         Server accountServer =
             buildServer(
                 "account-service",
@@ -464,10 +526,7 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                 () -> accountActivationSettlementReceiver,
                 new AccountStartSessionWorldParticipationAcquisitionGrpcService(
                     issuer.worldParticipationAcquisitionService(currentAttempt), NAMESPACE),
-                new AccountStartSessionActivationProtectionAcquisitionGrpcService(
-                    issuer.activationProtectionAcquisitionService(
-                        launchAssociation, currentAttempt),
-                    NAMESPACE),
+                countedActivationProtectionAcquisitionReceiver,
                 new AccountStartSessionWorldParticipationSettlementGrpcService(
                     new AccountStartSessionWorldParticipationSettlementService(
                         new AccountStartSessionWorldParticipationRepository(issuer.sourceDsl()),
@@ -594,9 +653,15 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
           var lifecycleRepository =
               new WorldCanonicalInstanceLifecycleReadRepository(
                   world.dsl(), world.manager(), association);
+          var activationTransactionFault =
+              activationFailure == ActivationFailure.NONE
+                  ? null
+                  : new ActivationTransactionFault(world.manager(), world.dsl(), activationFailure);
           var activationRepository =
               new WorldCanonicalInstanceActivationRepository(
-                  world.dsl(), world.manager(), lifecycleRepository);
+                  world.dsl(),
+                  activationTransactionFault == null ? world.manager() : activationTransactionFault,
+                  lifecycleRepository);
           var activationService = new WorldCanonicalInstanceActivationService(activationRepository);
           var protectedActivationService =
               new WorldOriginalStartSessionProtectedActivationService(
@@ -891,8 +956,70 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
               return;
             }
 
+            if (activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ALWAYS
+                || activationFailure == ActivationFailure.NONTRANSIENT_ROLLBACK_ONCE) {
+              assertThatThrownBy(() -> worldProtectedActivation.activate(activationInput))
+                  .isInstanceOf(StatusRuntimeException.class);
+              assertPendingActivationState(world.dsl());
+              assertThat(activationTransactionFault.lifecycleCasCommitAttempts())
+                  .isEqualTo(
+                      activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ALWAYS ? 3 : 1);
+              assertThat(activationTransactionFault.writeTransactionsStarted())
+                  .isEqualTo(
+                      activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ALWAYS ? 4 : 2);
+              assertThat(activationTransactionFault.verifiedPendingRollbacks())
+                  .isEqualTo(
+                      activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ALWAYS ? 3 : 1);
+              assertThat(activationProtectionAcquisitionCalls.get()).isEqualTo(1);
+              var pendingAccountRows =
+                  rows(
+                      issuer.sourceDsl(),
+                      "account_start_session_activation_protections",
+                      "account_start_session_activation_protection_sources",
+                      "account_start_session_activation_protection_settlements");
+              assertThat(pendingAccountRows.get("account_start_session_activation_protections"))
+                  .hasSize(1);
+              assertThat(
+                      issuer
+                          .sourceDsl()
+                          .fetch(
+                              "SELECT original_lease_expires_at "
+                                  + "FROM account_start_session_activation_protections")
+                          .getValues("original_lease_expires_at", OffsetDateTime.class))
+                  .hasSize(1);
+
+              assertThatThrownBy(() -> worldProtectedActivation.activate(activationInput))
+                  .isInstanceOfSatisfying(
+                      StatusRuntimeException.class,
+                      failure ->
+                          assertThat(Status.fromThrowable(failure).getCode())
+                              .isEqualTo(Status.Code.FAILED_PRECONDITION));
+              assertPendingActivationState(world.dsl());
+              assertThat(
+                      rows(
+                          issuer.sourceDsl(),
+                          "account_start_session_activation_protections",
+                          "account_start_session_activation_protection_sources",
+                          "account_start_session_activation_protection_settlements"))
+                  .isEqualTo(pendingAccountRows);
+              assertThat(activationProtectionAcquisitionCalls.get()).isEqualTo(1);
+              return;
+            }
+
             WorldOriginalStartSessionActivationTerminalEvidence activationTerminal =
                 worldProtectedActivation.activate(activationInput);
+            if (activationFailure != ActivationFailure.NONE) {
+              assertThat(activationProtectionAcquisitionCalls.get()).isEqualTo(1);
+              assertThat(activationTransactionFault.lifecycleCasCommitAttempts())
+                  .isEqualTo(
+                      activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ONCE ? 2 : 1);
+              assertThat(activationTransactionFault.writeTransactionsStarted())
+                  .isEqualTo(
+                      activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ONCE ? 3 : 2);
+              if (activationFailure == ActivationFailure.TRANSIENT_ROLLBACK_ONCE) {
+                assertThat(activationTransactionFault.verifiedPendingRollbacks()).isEqualTo(1);
+              }
+            }
             assertThat(activationTerminal.outcome())
                 .isEqualTo(WorldCanonicalInstanceActivation.Outcome.COMMITTED);
             assertThat(activationTerminal.activationResult().lifecycleEvidence().lifecycleStatus())
@@ -945,6 +1072,21 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
                         activationTerminal.activationRequestId())
                     .get("terminal_evidence_bytes", byte[].class);
             assertThat(worldTerminalBytes).containsExactly(activationTerminal.canonicalBytes());
+            assertThat(activationProtectionAcquisitionCalls.get()).isEqualTo(1);
+            assertThat(
+                    world
+                        .dsl()
+                        .fetch(
+                            "SELECT activation_request_id "
+                                + "FROM world_canonical_instance_activation_fence"))
+                .hasSize(1);
+            assertThat(
+                    world
+                        .dsl()
+                        .fetch(
+                            "SELECT activation_request_id "
+                                + "FROM world_canonical_instance_activation_operation"))
+                .hasSize(1);
 
             AccountStartSessionActivationProtectionSettlementEvidence activationSettlement;
             try {
@@ -1534,6 +1676,18 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     assertThat(server.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
   }
 
+  private static void assertPendingActivationState(DSLContext world) {
+    assertThat(world.fetch("SELECT status FROM world_instance").getValues("status", String.class))
+        .containsExactly("PREPARING");
+    assertThat(
+            world
+                .fetch("SELECT operation_state FROM world_canonical_instance_activation_fence")
+                .getValues("operation_state", String.class))
+        .containsExactly("PENDING");
+    assertThat(world.fetchCount(DSL.table("world_canonical_instance_activation_operation")))
+        .isZero();
+  }
+
   private static Map<String, List<String>> rows(DSLContext dsl, String... tables) {
     var result = new TreeMap<String, List<String>>();
     for (String table : tables)
@@ -1591,6 +1745,93 @@ class WorldOriginalStartSessionPreparationOwnerCompositionCrossServiceTest {
     @Override
     public void close() {
       dsl.execute("DROP SCHEMA IF EXISTS \"" + schema + "\" CASCADE");
+    }
+  }
+
+  /** Test-local commit-boundary fault injection over the existing World transaction manager. */
+  private static final class ActivationTransactionFault implements PlatformTransactionManager {
+    private final PlatformTransactionManager delegate;
+    private final DSLContext world;
+    private final ActivationFailure failure;
+    private final Map<TransactionStatus, Boolean> readOnlyTransactions = new IdentityHashMap<>();
+    private int writeTransactionsStarted;
+    private int writeCommits;
+    private int lifecycleCasCommitAttempts;
+    private int verifiedPendingRollbacks;
+
+    private ActivationTransactionFault(
+        PlatformTransactionManager delegate, DSLContext world, ActivationFailure failure) {
+      this.delegate = Objects.requireNonNull(delegate, "delegate");
+      this.world = Objects.requireNonNull(world, "world");
+      this.failure = Objects.requireNonNull(failure, "failure");
+    }
+
+    @Override
+    public TransactionStatus getTransaction(TransactionDefinition definition)
+        throws TransactionException {
+      TransactionDefinition effectiveDefinition =
+          definition == null ? new DefaultTransactionDefinition() : definition;
+      TransactionStatus status = delegate.getTransaction(effectiveDefinition);
+      readOnlyTransactions.put(status, effectiveDefinition.isReadOnly());
+      if (!effectiveDefinition.isReadOnly()) writeTransactionsStarted++;
+      return status;
+    }
+
+    @Override
+    public void commit(TransactionStatus status) throws TransactionException {
+      Boolean readOnly = readOnlyTransactions.remove(status);
+      if (!Boolean.TRUE.equals(readOnly)) {
+        writeCommits++;
+        if (writeCommits > 1) {
+          int attempt = ++lifecycleCasCommitAttempts;
+          if (shouldInject(attempt)) {
+            if (failure == ActivationFailure.TRANSIENT_AFTER_COMMIT_ONCE) {
+              delegate.commit(status);
+              throw transientFailure();
+            }
+            delegate.rollback(status);
+            verifiedPendingRollbacks++;
+            assertPendingActivationState(world);
+            if (failure == ActivationFailure.NONTRANSIENT_ROLLBACK_ONCE) {
+              throw new IllegalStateException("TEST_ONLY nontransient World activation failure");
+            }
+            throw transientFailure();
+          }
+        }
+      }
+      delegate.commit(status);
+    }
+
+    @Override
+    public void rollback(TransactionStatus status) throws TransactionException {
+      readOnlyTransactions.remove(status);
+      delegate.rollback(status);
+    }
+
+    private boolean shouldInject(int attempt) {
+      return switch (failure) {
+        case TRANSIENT_ROLLBACK_ONCE, TRANSIENT_AFTER_COMMIT_ONCE, NONTRANSIENT_ROLLBACK_ONCE ->
+            attempt == 1;
+        case TRANSIENT_ROLLBACK_ALWAYS -> attempt <= 3;
+        case NONE -> false;
+      };
+    }
+
+    private static TransientDataAccessResourceException transientFailure() {
+      return new TransientDataAccessResourceException(
+          "TEST_ONLY transient World activation transaction outcome");
+    }
+
+    private int writeTransactionsStarted() {
+      return writeTransactionsStarted;
+    }
+
+    private int lifecycleCasCommitAttempts() {
+      return lifecycleCasCommitAttempts;
+    }
+
+    private int verifiedPendingRollbacks() {
+      return verifiedPendingRollbacks;
     }
   }
 

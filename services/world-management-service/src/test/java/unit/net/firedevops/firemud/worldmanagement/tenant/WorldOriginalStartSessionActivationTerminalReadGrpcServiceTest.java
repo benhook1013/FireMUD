@@ -1,8 +1,11 @@
 package unit.net.firedevops.firemud.worldmanagement.tenant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import io.grpc.Context;
 import io.grpc.Status;
@@ -10,6 +13,9 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalReadGrpcCodec;
+import net.firedevops.firemud.common.world.WorldOriginalStartSessionActivationTerminalReadInput;
+import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationRepository;
 import net.firedevops.firemud.worldmanagement.tenant.WorldCanonicalInstanceActivationService;
 import net.firedevops.firemud.worldmanagement.tenant.WorldOriginalStartSessionActivationTerminalReadGrpcService;
 import net.firedevops.firemud.worldmanagement.v1.ReadOriginalStartSessionActivationTerminalEvidenceRequest;
@@ -70,6 +76,29 @@ class WorldOriginalStartSessionActivationTerminalReadGrpcServiceTest {
     verifyNoInteractions(owner);
   }
 
+  @Test
+  void mapsActivationIdentityConflictToFailedPreconditionWithoutReturningTerminalEvidence()
+      throws Exception {
+    var fixture = WorldOriginalStartSessionActivationTransportTestSupport.fixture();
+    var input =
+        new WorldOriginalStartSessionActivationTerminalReadInput(
+            java.util.UUID.fromString("a3a3a3a3-a3a3-43a3-83a3-a3a3a3a3a3a3"),
+            fixture.protection());
+    var request = WorldOriginalStartSessionActivationTerminalReadGrpcCodec.toRequest(input, "test");
+    var owner = mock(WorldCanonicalInstanceActivationService.class);
+    when(owner.readTerminalEvidence(any()))
+        .thenThrow(
+            new WorldCanonicalInstanceActivationRepository.ActivationConflictException(
+                "private repository conflict detail"));
+    var service = new WorldOriginalStartSessionActivationTerminalReadGrpcService(owner, "test");
+
+    var failure = invoke(service, peer("spiffe://firemud/ns/test/sa/account-service"), request);
+
+    assertCode(Status.Code.FAILED_PRECONDITION, failure);
+    assertThat(failure.responseCount()).isZero();
+    verify(owner).readTerminalEvidence(any());
+  }
+
   private static FailureObservation invoke(
       WorldOriginalStartSessionActivationTerminalReadGrpcService service,
       GrpcPeerIdentity peer,
@@ -83,7 +112,8 @@ class WorldOriginalStartSessionActivationTerminalReadGrpcServiceTest {
     } finally {
       context.detach(previous);
     }
-    return new FailureObservation(observer.failureCode, observer.failureWasStatusRuntimeException);
+    return new FailureObservation(
+        observer.failureCode, observer.failureWasStatusRuntimeException, observer.responseCount);
   }
 
   private static GrpcPeerIdentity peer(String uri) {
@@ -96,15 +126,18 @@ class WorldOriginalStartSessionActivationTerminalReadGrpcServiceTest {
   }
 
   private record FailureObservation(
-      Status.Code failureCode, boolean failureWasStatusRuntimeException) {}
+      Status.Code failureCode, boolean failureWasStatusRuntimeException, int responseCount) {}
 
   private static final class Collector
       implements StreamObserver<ReadOriginalStartSessionActivationTerminalEvidenceResponse> {
     private Status.Code failureCode;
     private boolean failureWasStatusRuntimeException;
+    private int responseCount;
 
     @Override
-    public void onNext(ReadOriginalStartSessionActivationTerminalEvidenceResponse value) {}
+    public void onNext(ReadOriginalStartSessionActivationTerminalEvidenceResponse value) {
+      responseCount++;
+    }
 
     @Override
     public void onError(Throwable failure) {
