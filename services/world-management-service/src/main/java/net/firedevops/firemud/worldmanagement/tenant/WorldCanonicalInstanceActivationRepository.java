@@ -141,12 +141,17 @@ public final class WorldCanonicalInstanceActivationRepository {
               var activation = input.worldActivationRequest();
               UUID activationId = activation.activationRequestId();
               UUID gameInstanceId = activation.canonicalGameInstanceId();
-              Record row =
-                  dsl.fetchOne(
+              var matchingRows =
+                  dsl.fetch(
                       "SELECT * FROM world_canonical_instance_activation_fence "
                           + "WHERE activation_request_id=? OR canonical_game_instance_id=?",
                       activationId,
                       gameInstanceId);
+              if (matchingRows.size() > 1) {
+                throw new ActivationConflictException(
+                    "Multiple World activation fences match the original request or canonical instance");
+              }
+              Record row = matchingRows.isEmpty() ? null : matchingRows.get(0);
               if (row != null) {
                 byte[] firstEvidenceBytes =
                     required(row, "account_protection_evidence_bytes", byte[].class);
@@ -197,13 +202,13 @@ public final class WorldCanonicalInstanceActivationRepository {
 
               // V43-only results are retained history, not upgradeable protected receipts. Fail
               // locally before asking Account to create a new protection operation.
-              if (dsl.fetchOne(
+              if (!dsl.fetch(
                       "SELECT 1 FROM world_canonical_instance_activation_operation "
                           + "WHERE activation_request_id=? "
                           + "OR (canonical_game_instance_id=? AND outcome='COMMITTED')",
                       activationId,
                       gameInstanceId)
-                  != null) {
+                  .isEmpty()) {
                 throw new ActivationConflictException(
                     "A retained legacy World activation result cannot be upgraded to protected activation");
               }
@@ -676,12 +681,12 @@ public final class WorldCanonicalInstanceActivationRepository {
       AccountStartSessionActivationProtectionEvidence protection) {
     UUID activationId = protection.request().worldActivationRequest().activationRequestId();
     UUID gameInstanceId = protection.request().worldActivationRequest().canonicalGameInstanceId();
-    if (dsl.fetchOne(
+    if (!dsl.fetch(
             "SELECT 1 FROM world_canonical_instance_activation_operation "
                 + "WHERE activation_request_id=? OR (canonical_game_instance_id=? AND outcome='COMMITTED')",
             activationId,
             gameInstanceId)
-        != null) {
+        .isEmpty()) {
       throw new ActivationConflictException(
           "A retained legacy or independently committed World activation cannot be upgraded to Account-protected activation");
     }
