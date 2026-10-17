@@ -24,7 +24,7 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
       UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
 
   @Test
-  void controlPlaneRequestIdUsesCanonicalUtf8ByteBoundAndUnicode() {
+  void controlPlaneRequestIdUsesCanonicalUtf8ByteBoundAndUnicode() throws Exception {
     String ascii128Bytes = "a".repeat(128);
     String multibyte128Bytes = "é".repeat(64);
 
@@ -146,7 +146,8 @@ class CanonicalGameInstanceLaunchAssociationReadGrpcCodecTest {
         .build();
   }
 
-  private static Request requestWithControlPlaneRequestId(String controlPlaneRequestId) {
+  private static Request requestWithControlPlaneRequestId(String controlPlaneRequestId)
+      throws Exception {
     var launchBinding = AuthoringFixtures.lifecycleEvidence("ACTIVE", 3L).launchBinding();
     var descriptor = launchBinding.descriptor();
     return new Request(
