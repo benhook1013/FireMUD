@@ -206,5 +206,6 @@ Entry format:
 - `2026-10-18`: Follow up the PostgreSQL endpoint refusal with one scoped reproduction
   - Context: the new Automation Flyway test-time refusal met the reconsideration trigger in the `2026-10-13` PostgreSQL endpoint-diagnosis observation.
   - Observation: one focused five-store reproduction passed with zero failures, errors or skips and no endpoint refusal. All five exact containers were observed running with host-port bindings and absent after the Gradle child ended. Six inspect errors and 20 unparsed records arose only after the case completed during sequential teardown, so continuous ownership through cleanup is not established.
+  - Expected pattern: retain the original failed test evidence and capture only exact run-owned container states and ports before teardown when a new refusal justifies focused reproduction; keep a successful reproduction distinct from an explained cause.
   - Outcome: the preceding Automation Flyway refusal remains failed evidence with unknown cause; the passing reproduction does not explain it. No speculative host or readiness change is selected.
   - Reconsideration trigger: a later physical test-time endpoint refusal, or separately retained evidence that identifies the refused endpoint's failure mechanism.
