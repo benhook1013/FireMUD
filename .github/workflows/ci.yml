@@ -479,7 +479,7 @@ jobs:
           time bash ./dev-tools/tests/account-jwt-bootstrap-fixture-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/game-session-factory-qualification-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/game-session-factory-qualification-contract.sh
-          TIMEFORMAT='bash ./dev-tools/tests/preview-cleanup-proof-contract.sh: real=%3R user=%3U sys=%3S'
+          TIMEFORMAT='preview-cleanup-proof-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/preview-cleanup-proof-contract.sh
           TIMEFORMAT='bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh: real=%3R user=%3U sys=%3S'
           time bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
