@@ -938,6 +938,7 @@ async function runDispatcher({
   };
   let ciRunReads = 0;
   const ciJobRequests = [];
+  const pullListRequests = [];
   const core = {
     info: (message) => infos.push(message),
     warning: (message) => warnings.push(message),
@@ -956,9 +957,12 @@ async function runDispatcher({
         },
       },
       pulls: {
-        list: async (request) => ({ data: (request.head ? sourceTuples : tuples)
-          .filter((tuple) => request.head || tuple.baseRef === request.base)
-          .map(pullRequestFor) }),
+        list: async (request) => {
+          pullListRequests.push(request);
+          return { data: (request.head ? sourceTuples : tuples)
+            .filter((tuple) => request.head || tuple.baseRef === request.base)
+            .map(pullRequestFor) };
+        },
         get: async ({ pull_number }) => ({ data: {
           ...pullRequestFor(tupleByNumber.get(String(pull_number))),
           ...(pullOverrides[String(pull_number)] ?? {}),
@@ -1040,7 +1044,7 @@ async function runDispatcher({
     Date.now = originalDateNow;
     global.setTimeout = originalSetTimeout;
   }
-  return { dispatches, errors, infos, warnings, inventoryCalls, ciJobRequests };
+  return { dispatches, errors, infos, warnings, inventoryCalls, ciJobRequests, pullListRequests };
 }
 
 (async () => {
@@ -1063,6 +1067,33 @@ async function runDispatcher({
   }
   assert.deepEqual(reconcile.ciJobRequests, [{ owner: "owner", repo: "repo", run_id: 7001, attempt_number: 1, per_page: 100 }],
     "PR callbacks require exact current native CI attempt jobs");
+  for (const branch of ["main", "develop", "feature/parent"]) {
+    const branchSource = { ...source, headRef: branch, baseRef: branch === "develop" ? "main" : "develop" };
+    const dependent = { ...child, baseRef: branch };
+    const branchPr = await runDispatcher({
+      tuples: [dependent], sourceTuples: [branchSource],
+      callback: { ...prCallback, head_branch: branch },
+    });
+    const protectedHead = ["main", "develop"].includes(branch);
+    assert.deepEqual(runtimeDispatches(branchPr).map((item) => item.client_payload.pr_number).sort(),
+      (protectedHead ? [branchSource.prNumber] : [branchSource.prNumber, dependent.prNumber]).sort(),
+      `${branch} PR callback must preserve source reconciliation and delegate protected dependent fan-out to push`);
+    assert.equal(branchPr.pullListRequests.filter((request) => request.base === branch).length, protectedHead ? 0 : 1,
+      `${branch} PR callback must skip dependent enumeration only for protected heads`);
+    assert.equal(branchPr.pullListRequests.filter((request) => request.head === `owner:${branch}`).length, 1,
+      `${branch} PR callback must retain exact source discovery`);
+    if (protectedHead) {
+      const branchPush = await runDispatcher({
+        tuples: [dependent], sourceTuples: [branchSource],
+        callback: { event: "push", head_branch: branch, head_sha: branchSource.headSha },
+      });
+      assert.deepEqual(runtimeDispatches(branchPush).map((item) => item.client_payload.pr_number), [dependent.prNumber],
+        `${branch} push callback exclusively owns dependent fan-out`);
+      assert.equal(branchPush.pullListRequests.filter((request) => request.base === branch).length, 1);
+      assert.equal(branchPush.pullListRequests.filter((request) => request.head).length, 0,
+        "protected push callback must not duplicate PR source reconciliation");
+    }
+  }
   const preservationStep = { name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped" };
   const enforcementStep = { name: "Enforce validation success", status: "completed", conclusion: "success" };
   for (const [label, ciEvidence] of [

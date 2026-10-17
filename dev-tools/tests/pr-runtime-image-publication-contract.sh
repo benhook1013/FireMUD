@@ -403,6 +403,9 @@ try:
     output = Path(env["GITHUB_OUTPUT"]).read_text()
     assert f"merge_sha={merge['sha']}\n" in output
     assert f"base_ref={request['base']['ref']}\n" in output
+    assert f"image_tag=pr-merge-{merge['sha']}\n" in output
+    assert f"base_image=ghcr.io/benhook1013/firemud-base:{merge['sha']}\n" in output
+    assert branch["object"]["sha"] not in dict(line.split("=", 1) for line in output.splitlines())["base_image"]
     for mutation in ("stale-base", "stale-head", "wrong-parents", "fork", "closed", "retarget", "missing-merge", "wrong-default-ref"):
         mutated_request, mutated_merge, mutated_branch = [json.loads(json.dumps(payload)) for payload in (request, merge, branch)]
         overrides = {}
@@ -427,6 +430,135 @@ try:
 finally:
     for path, original in zip(paths, originals):
         path.write_text(original)
+PY
+
+# A stacked grandchild has no published feature-base image, JARs, or cache.
+# Execute both real source-build scripts; only their Gradle and Docker sinks
+# are simulated. No actual Gradle process, Docker command, or registry is used.
+python3 - "$ROOT_DIR" "$fixture_dir" "$merge_sha" "$base_sha" <<'PY'
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+import yaml
+
+root, fixture = map(Path, sys.argv[1:3])
+merge_sha, feature_base_sha = sys.argv[3:5]
+workflow = yaml.load((root / ".github/workflows/runtime-images.yml").read_text(), Loader=yaml.BaseLoader)
+job = workflow["jobs"]["pr-local-smoke"]
+assert job["permissions"] == {"contents": "read"}
+assert job["env"]["SMOKE_IMAGE_LOCAL_ONLY"] == "true"
+assert job["env"]["SMOKE_MINIO_LOCAL_ONLY"] == "true"
+gradle_setup = [step for step in job["steps"] if step.get("uses", "").startswith("gradle/actions/setup-gradle@")]
+assert len(gradle_setup) == 1 and gradle_setup[0]["with"]["cache-read-only"] == "true"
+build_step = next(step for step in job["steps"] if step.get("name") == "Build local PR runtime images")
+assert build_step["env"]["MERGE_SHA"] == "${{ needs.image-meta.outputs.merge_sha }}"
+assert 'bash ./dev-tools/build-local-smoke-images.sh "$MERGE_SHA"' in build_step["run"]
+
+source_tree = fixture / "stacked-source"
+(source_tree / "dev-tools/validation").mkdir(parents=True)
+(source_tree / "fake-bin").mkdir()
+for name in ("build-local-smoke-images.sh", "build-compose-service-jars.sh"):
+    shutil.copyfile(root / "dev-tools" / name, source_tree / "dev-tools" / name)
+services = [
+    "account-service", "automation-scripting-service", "entity-management-service",
+    "game-design-service", "game-logic-service", "game-session-service",
+    "logging-admin-service", "social-groups-service", "spring-cloud-gateway",
+    "tcp-proxy-service", "world-management-service",
+]
+# Begin with neither generated artifacts nor any local image/dependency cache.
+assert not (source_tree / "services").exists()
+assert not (source_tree / "images.json").exists()
+(source_tree / "empty-gradle-home").mkdir()
+assert not list((source_tree / "empty-gradle-home").iterdir())
+(source_tree / "services.json").write_text(json.dumps(services))
+(source_tree / "command-sink.py").write_text(r'''
+import json
+import os
+from pathlib import Path
+import sys
+
+root = Path(os.environ["STACKED_SOURCE_TREE"])
+services = json.loads((root / "services.json").read_text())
+kind, *args = sys.argv[1:]
+merge = os.environ["STACKED_MERGE_SHA"]
+base_image = f"ghcr.io/benhook1013/firemud-base:{merge}"
+assert os.environ["STACKED_FEATURE_BASE_SHA"] not in " ".join(args), "feature-base publication must not be assumed"
+assert not any("cache-from" in arg for arg in args), "source build must work without a published cache"
+log = root / "commands.jsonl"
+if kind == "gradle":
+    assert not log.exists(), "current bootJar tasks must precede every image build"
+    assert args == [
+        "--no-configuration-cache", "--max-workers=1", "--no-parallel",
+        "-Dorg.gradle.jvmargs=-Xmx2560m -Dfile.encoding=UTF-8", "-PincludeLoadTesting=false",
+        *[f":{service}:bootJar" for service in services],
+    ], args
+    for service in services:
+        libs = root / "services" / service / "build/libs"
+        libs.mkdir(parents=True)
+        (libs / "current-boot.jar").write_text("fresh bootJar fixture")
+elif kind == "docker":
+    assert args[0] == "build", "no registry pull, login, push, or image discovery is allowed"
+    events = [json.loads(line) for line in log.read_text().splitlines()]
+    assert events[0]["kind"] == "gradle"
+    assert all((root / "services" / service / "build/libs/current-boot.jar").is_file() for service in services)
+    images_path = root / "images.json"
+    images = json.loads(images_path.read_text()) if images_path.exists() else []
+    if not images:
+        assert args == ["build", "--file", str(root / "docker/base.Dockerfile"), "--tag", base_image, str(root)]
+        image = base_image
+    else:
+        assert images[0] == base_image, "merge-local base must be built before service images"
+        service = services[len(images) - 1]
+        image = f"ghcr.io/benhook1013/{service}:{merge}"
+        assert args == [
+            "build", "--build-context", f"repo_root={root}", "--build-arg", f"BASE_IMAGE={base_image}",
+            "--file", str(root / "services" / service / "Dockerfile"), "--tag", image,
+            str(root / "services" / service / "build/libs"),
+        ], args
+    images.append(image)
+    images_path.write_text(json.dumps(images))
+else:
+    raise AssertionError(f"unexpected command sink {kind}")
+with log.open("a") as output:
+    output.write(json.dumps({"kind": kind, "args": args}) + "\n")
+''')
+(source_tree / "dev-tools/validation/run-gradle-with-dependency-recovery.sh").write_text('''#!/usr/bin/env bash
+set -euo pipefail
+[[ $# -ge 4 && "$1" == --runner && "$2" == "$STACKED_SOURCE_TREE/dev-tools/validation/run-locked-gradle.sh" && "$3" == -- ]]
+runner="$2"
+shift 3
+exec bash "$runner" "$@"
+''')
+(source_tree / "dev-tools/validation/run-locked-gradle.sh").write_text('''#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "$STACKED_SOURCE_TREE/command-sink.py" gradle "$@"
+''')
+docker = source_tree / "fake-bin/docker"
+docker.write_text('''#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "$STACKED_SOURCE_TREE/command-sink.py" docker "$@"
+''')
+docker.chmod(0o755)
+env = {
+    **os.environ,
+    "PATH": str(source_tree / "fake-bin") + os.pathsep + os.environ["PATH"],
+    "STACKED_SOURCE_TREE": str(source_tree), "STACKED_MERGE_SHA": merge_sha,
+    "STACKED_FEATURE_BASE_SHA": feature_base_sha,
+    "GRADLE_USER_HOME": str(source_tree / "empty-gradle-home"),
+}
+completed = subprocess.run(["bash", str(source_tree / "dev-tools/build-local-smoke-images.sh"), merge_sha],
+                           env=env, text=True, capture_output=True)
+assert completed.returncode == 0, completed.stdout + completed.stderr
+images = json.loads((source_tree / "images.json").read_text())
+assert images == [f"ghcr.io/benhook1013/firemud-base:{merge_sha}",
+                  *[f"ghcr.io/benhook1013/{service}:{merge_sha}" for service in services]]
+commands = [json.loads(line) for line in (source_tree / "commands.jsonl").read_text().splitlines()]
+assert [command["kind"] for command in commands] == ["gradle", *(["docker"] * 12)]
+assert not list((source_tree / "empty-gradle-home").iterdir()), "simulation must not populate a real Gradle cache"
 PY
 
 run_validation() {

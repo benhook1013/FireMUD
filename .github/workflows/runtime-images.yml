@@ -871,7 +871,11 @@ jobs:
               return;
             }
 
-            const pullRequests = await github.paginate(
+            // Protected push callbacks own dependent fan-out; PR callbacks for
+            // those heads still reconcile their own exact source PR below.
+            const protectedPrHead = workflowRun.event === "pull_request" &&
+              ["main", "develop"].includes(refreshBranch);
+            const pullRequests = protectedPrHead ? [] : await github.paginate(
               github.rest.pulls.list,
               {
                 ...context.repo,

@@ -599,7 +599,7 @@ jobs:
             }
 
             // One canonical producer definition; the contract test reports fingerprint upkeep.
-            const canonicalRuntimeWorkflowSha256 = "522557b23b2ec482f67a7ce8e8eb3aae546400c848a8e0b708a57175c4e7d0da";
+            const canonicalRuntimeWorkflowSha256 = "c8ebc03d4999c7904af04d9c8f8a947860bc2d815fd33ff2b227a0fbfeac2381";
             const canonicalSmokeJobName = "PR Full-Stack Smoke (runtime-required=true)";
             const workflowPath = ".github/workflows/runtime-images.yml";
             const repositoryName = `${owner}/${repo}`;
