@@ -14,6 +14,7 @@ import net.firedevops.firemud.common.account.startsession.AccountStartSessionWor
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminal;
+import net.firedevops.firemud.common.world.WorldStartSessionExecutionTerminalReadClient.InvalidTerminalEvidenceException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Standalone unregistered receiver for exact historical World participation settlement. */
@@ -102,6 +103,8 @@ public final class AccountStartSessionWorldParticipationSettlementGrpcService
     } catch (IllegalArgumentException invalidEvidence) {
       observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
     } catch (RetainedEvidenceException invalidRetainedEvidence) {
+      observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
+    } catch (InvalidTerminalEvidenceException invalidWorldEvidence) {
       observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
     } catch (RuntimeException unavailable) {
       observer.onError(Status.UNAVAILABLE.asRuntimeException());

@@ -1,5 +1,10 @@
 package net.firedevops.firemud.common.authoring;
 
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.awaitBlockedReloadCallback;
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.awaitCondition;
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.awaitLatch;
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.setWatcher;
+import static net.firedevops.firemud.common.testing.ReloadingGrpcClientWatcherTestFixture.watcher;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -17,12 +22,10 @@ import io.grpc.stub.AbstractStub;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BooleanSupplier;
 import net.firedevops.firemud.account.v1.AccountDraftCommitOrderReadServiceGrpc;
 import net.firedevops.firemud.account.v1.ReadHeldOriginalCommitOrderResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -161,7 +164,6 @@ class DraftCommitOrderReadClientTest {
       DraftCommitOrderReadClient clientUnderTest = client;
 
       originalWatcher = watcher(client);
-      Set<Thread> activeCallbacks = activeCallbacks(originalWatcher);
       TlsCertificateWatcher closeBoundary = mock(TlsCertificateWatcher.class);
       TlsCertificateWatcher delegatedWatcher = originalWatcher;
       org.mockito.Mockito.doAnswer(
@@ -207,7 +209,7 @@ class DraftCommitOrderReadClientTest {
       awaitCondition(() -> closeWorker.getState() == Thread.State.BLOCKED);
 
       Files.writeString(Path.of(tls.getCertChain()), "certificate-rotated");
-      assertThat(awaitBlockedReloadCallback(activeCallbacks)).isNotNull();
+      assertThat(awaitBlockedReloadCallback(originalWatcher)).isNotNull();
       releaseClientMonitor.countDown();
       closeWorker.join(TimeUnit.SECONDS.toMillis(4));
       assertThat(closeWorker.isAlive())
@@ -330,60 +332,5 @@ class DraftCommitOrderReadClientTest {
     Field field = target.getClass().getDeclaredField(name);
     field.setAccessible(true);
     return field.get(target);
-  }
-
-  private static TlsCertificateWatcher watcher(DraftCommitOrderReadClient client)
-      throws ReflectiveOperationException {
-    Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("watcher");
-    field.setAccessible(true);
-    return (TlsCertificateWatcher) field.get(client);
-  }
-
-  private static void setWatcher(DraftCommitOrderReadClient client, TlsCertificateWatcher watcher)
-      throws ReflectiveOperationException {
-    Field field = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("watcher");
-    field.setAccessible(true);
-    field.set(client, watcher);
-  }
-
-  @SuppressWarnings("unchecked")
-  private static Set<Thread> activeCallbacks(TlsCertificateWatcher watcher)
-      throws ReflectiveOperationException {
-    Field field = TlsCertificateWatcher.class.getDeclaredField("activeCallbacks");
-    field.setAccessible(true);
-    return (Set<Thread>) field.get(watcher);
-  }
-
-  private static Thread awaitBlockedReloadCallback(Set<Thread> activeCallbacks)
-      throws InterruptedException {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-    while (System.nanoTime() < deadline) {
-      for (Thread callback : activeCallbacks) {
-        if (callback.getState() == Thread.State.BLOCKED) {
-          for (StackTraceElement frame : callback.getStackTrace()) {
-            if (frame.getClassName().endsWith("AbstractReloadingBlockingGrpcClient")
-                && frame.getMethodName().equals("reloadChannel")) {
-              return callback;
-            }
-          }
-        }
-      }
-      Thread.sleep(10);
-    }
-    return null;
-  }
-
-  private static void awaitCondition(BooleanSupplier condition) throws InterruptedException {
-    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-    while (!condition.getAsBoolean() && System.nanoTime() < deadline) Thread.sleep(10);
-    assertThat(condition.getAsBoolean()).isTrue();
-  }
-
-  private static void awaitLatch(CountDownLatch latch) {
-    try {
-      latch.await();
-    } catch (InterruptedException interrupted) {
-      Thread.currentThread().interrupt();
-    }
   }
 }
