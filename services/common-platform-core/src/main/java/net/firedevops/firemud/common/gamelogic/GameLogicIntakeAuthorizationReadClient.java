@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.gamelogic;
 
 import io.grpc.ManagedChannel;
+import io.grpc.Status;
 import java.io.IOException;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
@@ -57,9 +58,18 @@ public final class GameLogicIntakeAuthorizationReadClient
       throw new IllegalArgumentException(
           "Account GL intake authorization read must use the configured workload namespace");
     }
+    AccountGameLogicIntakeAuthorizationReadServiceGrpc
+            .AccountGameLogicIntakeAuthorizationReadServiceBlockingStub
+        initializedStub;
+    try {
+      initializedStub =
+          requireInitializedStub(
+              "Account GL intake authorization read client is not initialized and available");
+    } catch (IllegalStateException unavailable) {
+      throw Status.UNAVAILABLE.asRuntimeException();
+    }
     var response =
-        requireInitializedStub(
-                "Account GL intake authorization read client is not initialized and available")
+        initializedStub
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .readHeldGameLogicIntakeAuthorization(
                 GameLogicIntakeAuthorizationReadGrpcCodec.toRequest(request));
