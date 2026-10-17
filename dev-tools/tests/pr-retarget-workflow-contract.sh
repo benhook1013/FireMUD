@@ -939,6 +939,7 @@ async function runDispatcher({
   let ciRunReads = 0;
   const ciJobRequests = [];
   const pullListRequests = [];
+  const refRequests = [];
   const core = {
     info: (message) => infos.push(message),
     warning: (message) => warnings.push(message),
@@ -949,6 +950,7 @@ async function runDispatcher({
     rest: {
       git: {
         getRef: async ({ ref }) => {
+          refRequests.push(ref);
           if (branchErrors[ref]) throw Object.assign(new Error("fixture branch lookup failed"), { status: branchErrors[ref] });
           return { data: { object: {
             sha: branchHeads[ref] ?? allTuples.find((tuple) => `heads/${tuple.baseRef}` === ref)?.baseSha ??
@@ -1044,7 +1046,7 @@ async function runDispatcher({
     Date.now = originalDateNow;
     global.setTimeout = originalSetTimeout;
   }
-  return { dispatches, errors, infos, warnings, inventoryCalls, ciJobRequests, pullListRequests };
+  return { dispatches, errors, infos, warnings, inventoryCalls, ciJobRequests, pullListRequests, refRequests };
 }
 
 (async () => {
@@ -1094,6 +1096,31 @@ async function runDispatcher({
         "protected push callback must not duplicate PR source reconciliation");
     }
   }
+  for (const baseRef of ["feature/topic+fix", "feature/@/parent", "feature/世界"]) {
+    const refSource = { ...source, baseRef, headRef: `${baseRef}/child` };
+    const refChild = { ...child, baseRef: refSource.headRef };
+    const refCallback = { ...prCallback, head_branch: refSource.headRef };
+    const args = { tuples: [refChild], sourceTuples: [refSource], callback: refCallback };
+    const accepted = await runDispatcher(args);
+    assert.deepEqual(runtimeDispatches(accepted).map((item) => item.client_payload.pr_number).sort(),
+      [refSource.prNumber, refChild.prNumber].sort(), `${baseRef} must support source and child refresh`);
+    assert(accepted.refRequests.includes(`heads/${refSource.headRef}`));
+    assert(accepted.refRequests.includes(`heads/${baseRef}`), "source base must use authenticated exact ref proof");
+    assert.equal(runtimeDispatches(accepted).find((item) => item.client_payload.pr_number === refSource.prNumber)
+      .client_payload.base_ref, baseRef, "valid source base ref must reach typed dispatch unchanged");
+    const stale = await runDispatcher({ ...args, branchHeads: { [`heads/${refSource.headRef}`]: sha("f") } });
+    assert.equal(stale.dispatches.length, 0, "valid ref syntax cannot bypass current callback branch SHA");
+    const missing = await runDispatcher({ ...args, branchErrors: { [`heads/${refSource.headRef}`]: 404 } });
+    assert.equal(missing.dispatches.length, 0, "missing callback branch cannot supply refresh proof");
+    const staleBase = await runDispatcher({ ...args, branchHeads: { [`heads/${baseRef}`]: sha("f") } });
+    assert.deepEqual(runtimeDispatches(staleBase).map((item) => item.client_payload.pr_number), [refChild.prNumber],
+      "valid source base ref still requires immutable merge parents matching its current SHA");
+    await assert.rejects(runDispatcher({ ...args, branchErrors: { [`heads/${baseRef}`]: 404 } }),
+      /fixture branch lookup failed/, "missing source base must fail closed before dispatch");
+  }
+  const emptyBranch = await runDispatcher({ tuples: [child], callback: { ...prCallback, head_branch: "" } });
+  assert.equal(emptyBranch.dispatches.length, 0);
+  assert.equal(emptyBranch.refRequests.length, 0, "empty callback branch must be rejected before ref lookup");
   const preservationStep = { name: "Preserve successful required gate on metadata-only edit", status: "completed", conclusion: "skipped" };
   const enforcementStep = { name: "Enforce validation success", status: "completed", conclusion: "success" };
   for (const [label, ciEvidence] of [

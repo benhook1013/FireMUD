@@ -785,8 +785,8 @@ jobs:
             };
 
             if (!shaPattern.test(refreshSha) || typeof refreshBranch !== "string" ||
-              !/^[A-Za-z0-9._/-]+$/.test(refreshBranch)) {
-              core.setFailed("Completed CI callback did not identify a supported lowercase branch SHA.");
+              refreshBranch.length === 0) {
+              core.setFailed("Completed CI callback did not identify a branch and lowercase SHA.");
               return;
             }
             let sourcePrNumber = null;
@@ -918,7 +918,7 @@ jobs:
                   source.head?.repo?.full_name !== context.payload.repository.full_name ||
                   source.base?.repo?.full_name !== context.payload.repository.full_name ||
                   typeof source.base?.ref !== "string" ||
-                  !/^[A-Za-z0-9._/-]+$/.test(source.base.ref)) {
+                  source.base.ref.length === 0) {
                   continue;
                 }
                 const sourceBase = await github.rest.git.getRef({
