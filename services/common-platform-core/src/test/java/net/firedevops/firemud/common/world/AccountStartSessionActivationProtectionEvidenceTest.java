@@ -442,53 +442,41 @@ class AccountStartSessionActivationProtectionEvidenceTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("non-nil UUID");
 
-    var wrongAttemptAssociation =
-        new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
-            valid.launchAssociation().request(),
-            valid.launchAssociation().playableStateNamespaceId(),
-            valid.launchAssociation().playableStateScope(),
-            valid.launchAssociation().publicProduction(),
-            valid.launchAssociation().currentGameInstanceStatus(),
-            valid.launchAssociation().currentRowVersion(),
-            uuid("e5e5e5e5-e5e5-45e5-85e5-e5e5e5e5e5e5"),
-            valid.launchAssociation().ownerFence(),
-            valid.launchAssociation().canonicalRealmId(),
-            valid.launchAssociation().catalogRevision(),
-            valid.launchAssociation().launchBindingEvidence());
     assertThatThrownBy(
             () ->
-                AccountStartSessionActivationProtectionRequest.create(
-                    ACCOUNT_PARTICIPATION,
-                    Long.MAX_VALUE,
-                    wrongAttemptAssociation,
-                    valid.originalCurrentAttempt(),
-                    valid.worldActivationRequest()))
+                new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
+                    valid.launchAssociation().request(),
+                    valid.launchAssociation().playableStateNamespaceId(),
+                    valid.launchAssociation().playableStateScope(),
+                    valid.launchAssociation().publicProduction(),
+                    valid.launchAssociation().currentGameInstanceStatus(),
+                    valid.launchAssociation().currentRowVersion(),
+                    uuid("e5e5e5e5-e5e5-45e5-85e5-e5e5e5e5e5e5"),
+                    valid.launchAssociation().ownerFence(),
+                    valid.launchAssociation().canonicalRealmId(),
+                    valid.launchAssociation().catalogRevision(),
+                    valid.launchAssociation().launchBindingEvidence()))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("tuple differs");
+        .hasMessageContaining(
+            "Original Account operation differs from its current owner or launch target");
 
-    var wrongOwnerFenceAssociation =
-        new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
-            valid.launchAssociation().request(),
-            valid.launchAssociation().playableStateNamespaceId(),
-            valid.launchAssociation().playableStateScope(),
-            valid.launchAssociation().publicProduction(),
-            valid.launchAssociation().currentGameInstanceStatus(),
-            valid.launchAssociation().currentRowVersion(),
-            valid.launchAssociation().ownerAttemptId(),
-            valid.launchAssociation().ownerFence() - 1L,
-            valid.launchAssociation().canonicalRealmId(),
-            valid.launchAssociation().catalogRevision(),
-            valid.launchAssociation().launchBindingEvidence());
     assertThatThrownBy(
             () ->
-                AccountStartSessionActivationProtectionRequest.create(
-                    ACCOUNT_PARTICIPATION,
-                    Long.MAX_VALUE,
-                    wrongOwnerFenceAssociation,
-                    valid.originalCurrentAttempt(),
-                    valid.worldActivationRequest()))
+                new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(
+                    valid.launchAssociation().request(),
+                    valid.launchAssociation().playableStateNamespaceId(),
+                    valid.launchAssociation().playableStateScope(),
+                    valid.launchAssociation().publicProduction(),
+                    valid.launchAssociation().currentGameInstanceStatus(),
+                    valid.launchAssociation().currentRowVersion(),
+                    valid.launchAssociation().ownerAttemptId(),
+                    valid.launchAssociation().ownerFence() - 1L,
+                    valid.launchAssociation().canonicalRealmId(),
+                    valid.launchAssociation().catalogRevision(),
+                    valid.launchAssociation().launchBindingEvidence()))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("tuple differs");
+        .hasMessageContaining(
+            "Original Account operation differs from its current owner or launch target");
 
     Map<String, Object> extra = readObject(valid.canonicalBytes());
     extra.put("unsupportedAuthority", "must not be retained");
