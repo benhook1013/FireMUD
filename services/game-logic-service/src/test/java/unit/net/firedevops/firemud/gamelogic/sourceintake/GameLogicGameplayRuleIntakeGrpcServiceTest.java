@@ -249,6 +249,10 @@ class GameLogicGameplayRuleIntakeGrpcServiceTest {
     }
 
     @Override
+    @edu.umd.cs.findbugs.annotations.SuppressFBWarnings(
+        value = "EI_EXPOSE_REP2",
+        justification =
+            "The test intentionally retains the RPC failure to assert diagnostic and cause sanitization.")
     public void onError(Throwable failure) {
       assertThat(failure).isInstanceOf(StatusRuntimeException.class);
       error = Status.fromThrowable(failure).getCode();
