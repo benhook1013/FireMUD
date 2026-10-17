@@ -209,6 +209,20 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
   }
 
   /**
+   * Real Account-owned selected Game Logic source reads over this fixture's SQL and Coordination
+   * Redis owners; callers choose the clock and target namespace for their composition.
+   */
+  public AccountGameLogicIntakeSourceReadService gameLogicIntakeSourceReadService(
+      Clock clock, String namespace) {
+    return new AccountGameLogicIntakeSourceReadService(
+        new AccountGameLogicIntakeAuthorizationRepository(f.dsl),
+        coordination,
+        f.manager,
+        clock,
+        namespace);
+  }
+
+  /**
    * Real Account control-UI creator retained for composition with the original StartSession proof.
    */
   IssuedCreator preparedOriginalCreator() {

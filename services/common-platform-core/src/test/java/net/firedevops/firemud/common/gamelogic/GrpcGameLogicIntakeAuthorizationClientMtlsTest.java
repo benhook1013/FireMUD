@@ -112,6 +112,20 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
   }
 
   @Test
+  void reportsSanitizedUnavailableBeforeInitializationAndAfterCloseForEveryOperation()
+      throws Exception {
+    start(pki.server());
+    client = newClient(pki.client());
+    var request = request(selected(1));
+
+    assertOperationsUnavailable(request);
+    client.init();
+    client.close();
+    assertOperationsUnavailable(request);
+    assertThat(calls).hasValue(0);
+  }
+
+  @Test
   void pinsAccountServerAndRejectsWrongServerAndWrongAuthenticatedCaller() throws Exception {
     start(pki.wrongServer());
     client = newClient(pki.client());
@@ -355,6 +369,25 @@ class GrpcGameLogicIntakeAuthorizationClientMtlsTest {
         pki.clientProperties(tempDirectory, identity),
         new GrpcChannelFactory(),
         NAMESPACE);
+  }
+
+  private void assertOperationsUnavailable(GameLogicIntakeAuthorizationEvidence.Request request) {
+    assertUnavailable(() -> client.authorize(request, CREDENTIAL));
+    assertUnavailable(() -> client.recover(request, CREDENTIAL));
+    assertUnavailable(() -> client.abort(request, CREDENTIAL));
+  }
+
+  private static void assertUnavailable(
+      org.assertj.core.api.ThrowableAssert.ThrowingCallable call) {
+    assertThatThrownBy(call)
+        .isInstanceOf(StatusRuntimeException.class)
+        .satisfies(
+            failure -> {
+              assertThat(Status.fromThrowable(failure).getCode())
+                  .isEqualTo(Status.Code.UNAVAILABLE);
+              assertThat(Status.fromThrowable(failure).getDescription()).isNull();
+              assertThat(failure.getCause()).isNull();
+            });
   }
 
   private static GameLogicIntakeAuthorizationEvidence.Request request(DraftCommitBinding selected) {
