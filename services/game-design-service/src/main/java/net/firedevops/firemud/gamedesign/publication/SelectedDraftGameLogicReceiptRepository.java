@@ -182,7 +182,7 @@ public class SelectedDraftGameLogicReceiptRepository {
   private boolean hasVersionSourceProof(
       AuthoredDraftPublishSelection selection,
       long versionRowId,
-      long versionTenantKey,
+      String versionTenantKey,
       UUID canonicalTenantId,
       UUID canonicalVersionId,
       boolean lockVersion) {
