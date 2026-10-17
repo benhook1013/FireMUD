@@ -968,6 +968,36 @@ class GameDesignSourcePostgresIntegrationTest {
   }
 
   @Test
+  void terminalV2CaptureWithMissingAssetAndGameplayIsIncomplete() {
+    Fixture fixture = fixture();
+    var operation = retainSelectedOperation(fixture);
+
+    fixture.tx(
+        () -> {
+          new CommandSourceRepository(fixture.dsl()).freeze(operation);
+          new RealmPolicySourceRepository(fixture.dsl()).freeze(operation);
+          var attempts = new PublishAttemptRepository(fixture.dsl());
+          var attempt =
+              attempts.findByPublishWorkflowIdForUpdate(operation.workflowId()).orElseThrow();
+          attempt.setStatus(PublishAttemptStatus.FAILED);
+          attempt.setFailureCode("ISOLATED_PARTIAL_CAPTURE_DENIAL");
+          attempts.save(attempt);
+          new GameDesignPublicationOperationRepository(fixture.dsl())
+              .seal(
+                  operation.tenantKey(),
+                  operation.workflowId(),
+                  operation.versionId(),
+                  operation.selectionDigest(),
+                  false);
+          return null;
+        });
+
+    assertThatThrownBy(() -> fixture.sources().readCapture(operation))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("GAME_DESIGN_SOURCE_CAPTURE_INCOMPLETE");
+  }
+
+  @Test
   void preGameplayTerminalCaptureStaysUnknownAndCannotBeExtendedAfterV1032() throws Exception {
     Fixture fixture = fixture(false, "1031");
     var authored =
