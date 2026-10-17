@@ -57,6 +57,8 @@ public final class GameLogicGameplayRuleIntakeGrpcService
       observer.onCompleted();
     } catch (StatusRuntimeException failure) {
       observer.onError(failure);
+    } catch (IllegalArgumentException | IllegalStateException permanent) {
+      observer.onError(Status.FAILED_PRECONDITION.asRuntimeException());
     } catch (RuntimeException unavailable) {
       observer.onError(Status.UNAVAILABLE.asRuntimeException());
     }
