@@ -15,6 +15,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.gamedesign.v1.GameDesignPublicationTerminalReadServiceGrpc;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Explicit mTLS client for the exact Game Design publication terminal read. */
 public final class GameDesignPublicationTerminalClient
@@ -64,6 +65,11 @@ public final class GameDesignPublicationTerminalClient
    */
   public GameDesignPublicationTerminalReadEvidence.ReadResult read(
       GameDesignPublicationTerminalReadEvidence.ReadRequest request) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(
+          "Game Design publication terminal read requires no owner transaction");
+    }
     Objects.requireNonNull(request, "request");
     if (!workloadNamespace.equals(request.targetNamespace())) {
       throw new IllegalArgumentException(
@@ -104,9 +110,11 @@ public final class GameDesignPublicationTerminalClient
   }
 
   @Override
-  public synchronized void close() throws IOException {
-    closed = true;
-    initialized = false;
+  public void close() throws IOException {
+    synchronized (this) {
+      closed = true;
+      initialized = false;
+    }
     super.close();
   }
 

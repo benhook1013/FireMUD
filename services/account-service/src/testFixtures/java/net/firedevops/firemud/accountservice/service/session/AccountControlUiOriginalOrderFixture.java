@@ -35,6 +35,8 @@ import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
 public final class AccountControlUiOriginalOrderFixture implements AutoCloseable {
   private final AccountControlUiOwnerSourcesFixture f;
   private final AccountControlUiActorService actors;
+  final AccountJwtJwksTrustedSource publicSource;
+  final AccountControlUiSignerFixture signerFixture;
   private final AccountControlUiIssuanceService issuance;
   private final AccountControlUiCoordination coordination;
   private final RedisClient accountClient;
@@ -113,7 +115,8 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
     f =
         new AccountControlUiOwnerSourcesFixture(
             jdbcUrl, username, password, temporary, false, gameDesignTenant, migrationTarget);
-    var lifecycle = new AccountControlUiSignerFixture(f, temporary);
+    signerFixture = new AccountControlUiSignerFixture(f, temporary);
+    var lifecycle = signerFixture;
     lifecycle.commit();
     var originalSigner = f.tx(lifecycle.signer::captureCurrent);
     assertThat(f.tx(() -> lifecycle.signer.requireOriginal(originalSigner.receipt())).receipt())
@@ -174,9 +177,14 @@ public final class AccountControlUiOriginalOrderFixture implements AutoCloseable
             new AcknowledgementRequirements(1, 1, 5000),
             testCatalog());
     var operations = new AccountControlUiIssuanceRepository(f.dsl);
-    var publicSource =
-        new AccountJwtJwksTrustedSource(
-            lifecycle.client, lifecycle.trust, lifecycle.desired, lifecycle.publication, f.manager);
+    publicSource =
+        org.mockito.Mockito.spy(
+            new AccountJwtJwksTrustedSource(
+                lifecycle.client,
+                lifecycle.trust,
+                lifecycle.desired,
+                lifecycle.publication,
+                f.manager));
     actors =
         new AccountControlUiActorService(
             operations,

@@ -123,6 +123,31 @@ class CanonicalGameplayRosterClientTest {
   }
 
   @Test
+  void acceptsOneHundredCodePointDisplayNameAndRejectsOneHundredOne() throws Exception {
+    String acceptedDisplayName = "\uD83D\uDE00".repeat(100);
+    var acceptedStub = mockStub();
+    when(acceptedStub.listPreseededRoster(any()))
+        .thenAnswer(invocation -> rosterResponse(invocation.getArgument(0), acceptedDisplayName));
+
+    var acceptedRoster =
+        newClient(acceptedStub).listPreseededRoster(publishedRoute(), listContext());
+
+    assertThat(acceptedRoster.actors())
+        .containsExactly(
+            new CanonicalGameplayRosterClient.RosterActor(ACTOR_UUID, acceptedDisplayName));
+
+    String rejectedDisplayName = "\uD83D\uDE00".repeat(101);
+    var rejectedStub = mockStub();
+    when(rejectedStub.listPreseededRoster(any()))
+        .thenAnswer(invocation -> rosterResponse(invocation.getArgument(0), rejectedDisplayName));
+
+    assertThatThrownBy(
+            () -> newClient(rejectedStub).listPreseededRoster(publishedRoute(), listContext()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("display name is malformed");
+  }
+
+  @Test
   void rejectsMissingMalformedAndSubstitutedInitialExecutionContextBeforeRpc() throws Exception {
     var stub = mockStub();
     var client = newClient(stub);
@@ -870,6 +895,21 @@ class CanonicalGameplayRosterClientTest {
         .setCharacterUuid(characterUuid.toString())
         .setDisplayName(displayName)
         .setActorKind(CanonicalGameplayRosterActorKind.CANONICAL_ROSTER_ACTOR_KIND_PLAYER)
+        .build();
+  }
+
+  private static CanonicalGameplayRosterResponse rosterResponse(
+      CanonicalGameplayRosterRequest request, String displayName) throws Exception {
+    return CanonicalGameplayRosterResponse.newBuilder()
+        .setCanonicalAccountUuid(ACCOUNT_UUID.toString())
+        .setTarget(request.getExpectedTarget())
+        .setSnapshotUuid(SNAPSHOT_UUID.toString())
+        .setSnapshotDigest(
+            snapshotDigest(
+                ACCOUNT_UUID,
+                request.getExpectedTarget(),
+                List.of(ACTOR_UUID.toString(), displayName)))
+        .addActors(actor(ACTOR_UUID, displayName))
         .build();
   }
 
