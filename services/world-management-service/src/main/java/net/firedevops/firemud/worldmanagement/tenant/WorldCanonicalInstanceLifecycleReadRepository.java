@@ -25,8 +25,6 @@ import net.firedevops.firemud.worldmanagement.v1.WorldInboundSourceFamily;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.exception.DataAccessException;
-import org.springframework.dao.DataAccessResourceFailureException;
-import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -140,9 +138,7 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
               request.canonicalGameInstanceId());
       if (preparation == null) return null;
       return readMaterialized(request, association, preparation, lockLifecycleRow);
-    } catch (DataAccessResourceFailureException
-        | TransientDataAccessException
-        | DataAccessException unavailable) {
+    } catch (org.springframework.dao.DataAccessException | DataAccessException unavailable) {
       throw unavailable;
     } catch (
         WorldCanonicalInstanceAssociationRepository.InvalidAssociationEvidenceException
@@ -233,9 +229,7 @@ public final class WorldCanonicalInstanceLifecycleReadRepository {
           operationalRegionAssignments);
     } catch (InvalidLifecycleEvidenceException invalid) {
       throw invalid;
-    } catch (DataAccessResourceFailureException
-        | TransientDataAccessException
-        | DataAccessException unavailable) {
+    } catch (org.springframework.dao.DataAccessException | DataAccessException unavailable) {
       throw unavailable;
     } catch (RuntimeException invalid) {
       throw new InvalidLifecycleEvidenceException(
