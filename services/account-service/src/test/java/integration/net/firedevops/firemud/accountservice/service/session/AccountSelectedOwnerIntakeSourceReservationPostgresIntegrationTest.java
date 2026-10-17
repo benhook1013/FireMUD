@@ -17,13 +17,15 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 /** PostgreSQL installation proof for V1007's additive selected-owner source reservations. */
 class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
   @Test
-  void installsV1007OverCombinedV1006ParentGuardsAndRejectsMalformedReservationWithoutSourceRows() {
+  void installsV1007OverCombinedV1006ParentGuardsAndRejectsMalformedReservationWithoutSourceRows()
+      throws Exception {
     var fixture = new AccountPostgresIntegrationFixture();
-    try {
+    try (AutoCloseable fixtureCleanup = fixture::stop) {
       fixture.start();
       String schema = "selected_owner_source_" + UUID.randomUUID().toString().replace("-", "");
       JdbcTemplate admin = new JdbcTemplate(fixture.dataSource());
-      try {
+      try (AutoCloseable schemaCleanup =
+          () -> admin.execute("DROP SCHEMA IF EXISTS " + quotedSchema(schema) + " CASCADE")) {
         admin.execute("CREATE SCHEMA " + quotedSchema(schema));
         DriverManagerDataSource source = fixture.dataSource(schema);
         JdbcTemplate jdbc = new JdbcTemplate(source);
@@ -124,11 +126,7 @@ class AccountSelectedOwnerIntakeSourceReservationPostgresIntegrationTest {
 
         assertMalformedReservationCreatesNoSourceRows(jdbc);
         assertThat(retainedParentRows(jdbc)).isEqualTo(retainedParent);
-      } finally {
-        admin.execute("DROP SCHEMA IF EXISTS " + quotedSchema(schema) + " CASCADE");
       }
-    } finally {
-      fixture.stop();
     }
   }
 

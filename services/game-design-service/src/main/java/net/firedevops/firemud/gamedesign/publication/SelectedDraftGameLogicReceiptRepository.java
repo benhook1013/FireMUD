@@ -20,6 +20,22 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 /** Unregistered immutable derived-receipt storage, separate from publication-operation bytes. */
 public class SelectedDraftGameLogicReceiptRepository {
+  private static final String VERSION_SOURCE_PROOF_QUERY =
+      "SELECT v.id FROM version v JOIN game g "
+          + "ON g.id = v.identity_source_game_row_id "
+          + "AND g.tenant_id = v.identity_source_game_tenant_key "
+          + "AND g.canonical_tenant_id = v.canonical_tenant_id "
+          + "AND g.tenant_identity_provenance_kind = v.identity_source_provenance_kind "
+          + "AND g.tenant_identity_source_game_id = g.id "
+          + "AND g.tenant_identity_source_legacy_tenant_id = g.tenant_id "
+          + "WHERE v.id = ? AND v.tenant_id = ? AND v.canonical_tenant_id = ? "
+          + "AND v.canonical_version_id = ? AND v.identity_source_game_row_id = ? "
+          + "AND v.identity_source_game_tenant_key = ? AND v.identity_source_provenance_kind = ? "
+          + "AND v.identity_source_game_row_id > 0 "
+          + "AND v.identity_source_game_tenant_key = v.tenant_id "
+          + "AND v.identity_source_provenance_kind IN ('NEW_GAME_ROW', 'RETAINED_GAME_V29') "
+          + "AND v.version_state_epoch > 0";
+
   private final DSLContext dsl;
 
   @SuppressFBWarnings(
@@ -86,29 +102,13 @@ public class SelectedDraftGameLogicReceiptRepository {
     // Version row, selected commit and source correlation without creating read authority.
     new GameLogicPublicationSourceReadBinding(publicationRequest, retained.authorization());
 
-    if (dsl.fetchOne(
-            "SELECT v.id FROM version v JOIN game g "
-                + "ON g.id = v.identity_source_game_row_id "
-                + "AND g.tenant_id = v.identity_source_game_tenant_key "
-                + "AND g.canonical_tenant_id = v.canonical_tenant_id "
-                + "AND g.tenant_identity_provenance_kind = v.identity_source_provenance_kind "
-                + "AND g.tenant_identity_source_game_id = g.id "
-                + "AND g.tenant_identity_source_legacy_tenant_id = g.tenant_id "
-                + "WHERE v.id = ? AND v.tenant_id = ? AND v.canonical_tenant_id = ? "
-                + "AND v.canonical_version_id = ? AND v.identity_source_game_row_id = ? "
-                + "AND v.identity_source_game_tenant_key = ? AND v.identity_source_provenance_kind = ? "
-                + "AND v.identity_source_game_row_id > 0 "
-                + "AND v.identity_source_game_tenant_key = v.tenant_id "
-                + "AND v.identity_source_provenance_kind IN ('NEW_GAME_ROW', 'RETAINED_GAME_V29') "
-                + "AND v.version_state_epoch > 0",
-            Long.parseLong(publicationRequest.versionId()),
-            target.gameDesignVersionTenantKey(),
-            canonicalTenantId,
-            selection.intent().canonicalVersionId(),
-            target.sourceGameRowId(),
-            target.sourceGameTenantKey(),
-            target.sourceProvenanceKind())
-        == null) {
+    if (!hasVersionSourceProof(
+        selection,
+        Long.parseLong(publicationRequest.versionId()),
+        target.gameDesignVersionTenantKey(),
+        canonicalTenantId,
+        selection.intent().canonicalVersionId(),
+        false)) {
       throw new IllegalStateException("Selected Game Design Version row proof unavailable");
     }
     return Optional.of(retained);
@@ -119,29 +119,13 @@ public class SelectedDraftGameLogicReceiptRepository {
     var selection = candidate.selection();
     // Keep the existing owner lock order: Version before immutable selection.
     var target = selection.target();
-    if (dsl.fetchOne(
-            "SELECT v.id FROM version v JOIN game g "
-                + "ON g.id = v.identity_source_game_row_id "
-                + "AND g.tenant_id = v.identity_source_game_tenant_key "
-                + "AND g.canonical_tenant_id = v.canonical_tenant_id "
-                + "AND g.tenant_identity_provenance_kind = v.identity_source_provenance_kind "
-                + "AND g.tenant_identity_source_game_id = g.id "
-                + "AND g.tenant_identity_source_legacy_tenant_id = g.tenant_id "
-                + "WHERE v.id = ? AND v.tenant_id = ? AND v.canonical_tenant_id = ? "
-                + "AND v.canonical_version_id = ? AND v.identity_source_game_row_id = ? "
-                + "AND v.identity_source_game_tenant_key = ? AND v.identity_source_provenance_kind = ? "
-                + "AND v.identity_source_game_row_id > 0 "
-                + "AND v.identity_source_game_tenant_key = v.tenant_id "
-                + "AND v.identity_source_provenance_kind IN ('NEW_GAME_ROW', 'RETAINED_GAME_V29') "
-                + "AND v.version_state_epoch > 0 FOR UPDATE OF v",
-            target.gameDesignVersionRowId(),
-            target.gameDesignVersionTenantKey(),
-            target.canonicalTenantId(),
-            target.canonicalVersionId(),
-            target.sourceGameRowId(),
-            target.sourceGameTenantKey(),
-            target.sourceProvenanceKind())
-        == null) {
+    if (!hasVersionSourceProof(
+        selection,
+        target.gameDesignVersionRowId(),
+        target.gameDesignVersionTenantKey(),
+        target.canonicalTenantId(),
+        target.canonicalVersionId(),
+        true)) {
       throw new IllegalStateException("Selected Version source proof unavailable");
     }
     // V50.2's primary key permits one immutable selection per canonical tenant/version, so
@@ -151,14 +135,9 @@ public class SelectedDraftGameLogicReceiptRepository {
         selection.target().canonicalTenantId(),
         selection.target().canonicalVersionId());
     var retainedSelection =
-        new AuthoredDraftPublishSelectionRepository(dsl, new DraftCommitCoordinatorRepository(dsl))
-            .read(
-                selection.intent().canonicalTenantId(),
-                selection.intent().canonicalVersionId(),
-                selection.intent().publishRequestId())
+        readRetainedSelection(dsl, selection)
             .orElseThrow(
-                () -> new IllegalStateException("SELECTED_PUBLICATION_SELECTION_UNAVAILABLE"))
-            .selection();
+                () -> new IllegalStateException("SELECTED_PUBLICATION_SELECTION_UNAVAILABLE"));
     if (!Arrays.equals(selection.canonicalBytes(), retainedSelection.canonicalBytes())) {
       throw new IllegalStateException("Selected publication changed before receipt retention");
     }
@@ -185,6 +164,40 @@ public class SelectedDraftGameLogicReceiptRepository {
       throw new IllegalStateException("Immutable selected Game Logic receipt conflict");
     }
     return retained;
+  }
+
+  static Optional<AuthoredDraftPublishSelection> readRetainedSelection(
+      DSLContext dsl, AuthoredDraftPublishSelection selection) {
+    Objects.requireNonNull(dsl, "dsl");
+    Objects.requireNonNull(selection, "selection");
+    return new AuthoredDraftPublishSelectionRepository(
+            dsl, new DraftCommitCoordinatorRepository(dsl))
+        .read(
+            selection.intent().canonicalTenantId(),
+            selection.intent().canonicalVersionId(),
+            selection.intent().publishRequestId())
+        .map(AuthoredDraftPublishSelectionRepository.SelectionSnapshot::selection);
+  }
+
+  private boolean hasVersionSourceProof(
+      AuthoredDraftPublishSelection selection,
+      long versionRowId,
+      String versionTenantKey,
+      UUID canonicalTenantId,
+      UUID canonicalVersionId,
+      boolean lockVersion) {
+    var target = selection.target();
+    String query = VERSION_SOURCE_PROOF_QUERY + (lockVersion ? " FOR UPDATE OF v" : "");
+    return dsl.fetchOne(
+            query,
+            versionRowId,
+            versionTenantKey,
+            canonicalTenantId,
+            canonicalVersionId,
+            target.sourceGameRowId(),
+            target.sourceGameTenantKey(),
+            target.sourceProvenanceKind())
+        != null;
   }
 
   private static SelectedDraftGameLogicReceipt decode(Record row) {
