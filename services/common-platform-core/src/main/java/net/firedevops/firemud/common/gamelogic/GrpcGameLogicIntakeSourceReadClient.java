@@ -46,11 +46,11 @@ public final class GrpcGameLogicIntakeSourceReadClient
 
   public synchronized void init() throws SSLException, IOException {
     if (closed)
-      throw new IllegalStateException("Account GL intake authorization read client is closed");
+      throw new IllegalStateException("Account GL intake source permission client is closed");
     if (initialized) return;
     initReloadingClient();
     if (stub() == null)
-      throw new IllegalStateException("Account GL intake authorization read stub unavailable");
+      throw new IllegalStateException("Account GL intake source permission stub unavailable");
     initialized = true;
   }
 
@@ -66,7 +66,7 @@ public final class GrpcGameLogicIntakeSourceReadClient
     Objects.requireNonNull(request, "request");
     if (!workloadNamespace.equals(request.targetNamespace())) {
       throw new IllegalArgumentException(
-          "Account GL intake authorization read must use the configured workload namespace");
+          "Account GL intake source permission must use the configured workload namespace");
     }
     var stub = requireStub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
     var wire = GameLogicIntakeSourceReadProtoCodec.toRequest(request);
@@ -119,7 +119,7 @@ public final class GrpcGameLogicIntakeSourceReadClient
     var currentStub = stub();
     if (closed || !initialized || currentStub == null) {
       throw new IllegalStateException(
-          "Account GL intake authorization read client is not initialized and available");
+          "Account GL intake source permission client is not initialized and available");
     }
     return currentStub;
   }
@@ -128,7 +128,7 @@ public final class GrpcGameLogicIntakeSourceReadClient
       CommonGrpcClientProperties tlsProperties) {
     if (tlsProperties == null || tlsProperties.isPlaintext()) {
       throw new IllegalArgumentException(
-          "Account GL intake authorization read requires workload mTLS");
+          "Account GL intake source permission requires workload mTLS");
     }
     requireReadableFile(tlsProperties.getCertChain(), "certificate chain");
     requireReadableFile(tlsProperties.getPrivateKey(), "private key");
@@ -139,23 +139,23 @@ public final class GrpcGameLogicIntakeSourceReadClient
   private static void requireReadableFile(String configuredPath, String label) {
     if (configuredPath == null || configuredPath.isBlank()) {
       throw new IllegalArgumentException(
-          "Account GL intake authorization read requires file-backed certificate, key, and CA material");
+          "Account GL intake source permission requires file-backed certificate, key, and CA material");
     }
     String pathText = configuredPath.trim();
     if (pathText.startsWith("classpath:")) {
       throw new IllegalArgumentException(
-          "Account GL intake authorization read requires file-backed certificate, key, and CA material");
+          "Account GL intake source permission requires file-backed certificate, key, and CA material");
     }
     Path path;
     try {
       path = Path.of(pathText);
     } catch (RuntimeException invalid) {
       throw new IllegalArgumentException(
-          "Account GL intake authorization read " + label + " must be a file-backed path", invalid);
+          "Account GL intake source permission " + label + " must be a file-backed path", invalid);
     }
     if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
       throw new IllegalArgumentException(
-          "Account GL intake authorization read " + label + " must be an existing readable file");
+          "Account GL intake source permission " + label + " must be an existing readable file");
     }
   }
 }
