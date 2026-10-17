@@ -69,7 +69,13 @@ final class WorldOriginalStartSessionActivationTransportTestSupport {
             descriptor.launchDescriptorId(),
             descriptor.requestDigest(),
             descriptor.resultDigest(),
-            release.evidenceDigest());
+            release.evidenceDigest(),
+            new net.firedevops.firemud.common.gamesession
+                .CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(
+                tuple.canonicalBytes(),
+                java.util.UUID.fromString("11111111-1111-4111-8111-111111111111"),
+                java.util.UUID.fromString("22222222-2222-4222-8222-222222222222"),
+                21L));
     var launchResult =
         new net.firedevops.firemud.common.gamesession
             .CanonicalGameInstanceLaunchAssociationReadEvidence.Result(

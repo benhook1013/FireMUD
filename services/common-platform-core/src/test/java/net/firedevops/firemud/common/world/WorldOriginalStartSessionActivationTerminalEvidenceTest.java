@@ -174,7 +174,24 @@ class WorldOriginalStartSessionActivationTerminalEvidenceTest {
   private static AccountStartSessionActivationProtectionRequest accountRequest(Fixture fixture) {
     var tuple = originalTuple(fixture);
     var original = fixture.preparing().request();
-    var gsRequest = fixture.launchRequest();
+    var launchSelector = fixture.launchRequest();
+    var gsRequest =
+        new CanonicalGameInstanceLaunchAssociationReadEvidence.Request(
+            launchSelector.readRequestId(),
+            launchSelector.targetNamespace(),
+            launchSelector.canonicalTenantId(),
+            launchSelector.worldSlug(),
+            launchSelector.gameInstanceUuid(),
+            launchSelector.controlPlaneRequestId(),
+            launchSelector.launchDescriptorId(),
+            launchSelector.expectedDescriptorRequestDigest(),
+            launchSelector.expectedDescriptorResultDigest(),
+            launchSelector.expectedReleaseAttestationEvidenceDigest(),
+            new CanonicalGameInstanceLaunchAssociationReadEvidence.OriginalOperation(
+                tuple.canonicalBytes(),
+                uuid("45454545-4545-4454-8454-454545454545"),
+                uuid("56565656-5656-4565-8565-565656565656"),
+                11L));
     // Explicit fixture-owned realm/catalog values, not authenticated GS owner output.
     var gsResult =
         new CanonicalGameInstanceLaunchAssociationReadEvidence.Result(

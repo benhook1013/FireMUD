@@ -410,8 +410,15 @@ public final class WorldCanonicalInstanceActivationRepository {
             });
         break;
       } catch (RuntimeException outcomeUncertain) {
-        Optional<WorldOriginalStartSessionActivationTerminalEvidence> terminal =
-            readTerminalEvidence(firstProtection);
+        Optional<WorldOriginalStartSessionActivationTerminalEvidence> terminal;
+        try {
+          terminal = readTerminalEvidence(firstProtection);
+        } catch (RuntimeException readbackFailure) {
+          if (readbackFailure != outcomeUncertain) {
+            outcomeUncertain.addSuppressed(readbackFailure);
+          }
+          terminal = Optional.empty();
+        }
         if (terminal.isPresent()) return terminal.orElseThrow();
         if (!(outcomeUncertain instanceof TransientDataAccessException)
             || attempts >= MAX_PROTECTED_ACTIVATION_ATTEMPTS) {

@@ -38,7 +38,8 @@ import tools.jackson.databind.json.JsonMapper;
 public final class AccountStartSessionAdmissionProtectionRequest {
   public static final String SCHEMA = "account-start-session-admission-protection-request/v1";
   public static final int MAX_CANONICAL_BYTES = 768 * 1024;
-  public static final int MAX_PROJECTION_BYTES = 132 * 1024;
+  public static final int MAX_PROJECTION_BYTES =
+      StartSessionPostAuthorizationExecutionTuple.MAX_CANONICAL_TUPLE_BYTES;
   public static final int MAX_HOLD_IDENTITY_BYTES = 64 * 1024;
 
   private static final UUID NIL_UUID = new UUID(0L, 0L);
