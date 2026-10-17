@@ -71,13 +71,17 @@ public final class WorldOriginalStartSessionProtectedActivationGrpcService
       fail(observer, Status.FAILED_PRECONDITION, "World protected activation is not admissible");
       return;
     } catch (StatusRuntimeException denied) {
-      fail(
-          observer,
-          denied.getStatus(),
-          "World protected activation owner request denied or unavailable");
+      Status.Code code = denied.getStatus().getCode();
+      Status forwarded =
+          switch (code) {
+            case UNAVAILABLE, DEADLINE_EXCEEDED, CANCELLED, RESOURCE_EXHAUSTED, INTERNAL, UNKNOWN ->
+                Status.fromCode(code);
+            default -> Status.UNAVAILABLE;
+          };
+      fail(observer, forwarded, "World protected activation owner request is unavailable");
       return;
     } catch (IllegalArgumentException invalid) {
-      fail(observer, Status.INVALID_ARGUMENT, "World protected activation input is invalid");
+      fail(observer, Status.INTERNAL, "World protected activation owner evidence is invalid");
       return;
     } catch (TransientDataAccessException unavailable) {
       fail(observer, Status.UNAVAILABLE, "World protected activation storage is unavailable");
