@@ -246,7 +246,8 @@ public final class AccountGameLogicIntakeAuthorizationGrpcService implements Bin
   private static Status statusOf(RuntimeException error) {
     if (error instanceof StatusRuntimeException status)
       return Status.fromCode(status.getStatus().getCode());
-    if (error instanceof IllegalArgumentException) return Status.FAILED_PRECONDITION;
+    if (error instanceof IllegalArgumentException || error instanceof IllegalStateException)
+      return Status.FAILED_PRECONDITION;
     return Status.UNAVAILABLE;
   }
 

@@ -499,18 +499,64 @@ class HistoricalOriginalStartSessionOwnerEvidenceReadGrpcMtlsTest {
       List<String> command = new ArrayList<>();
       command.add(keytool.toString());
       command.addAll(List.of(arguments));
-      Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-      if (!process.waitFor(30, TimeUnit.SECONDS)) {
-        process.destroyForcibly();
-        throw new IllegalStateException("keytool timed out");
+      Path outputFile = Files.createTempFile(tempDirectory, "keytool-", ".log");
+      Process process = null;
+      boolean cleanupWaitAttempted = false;
+      try {
+        process =
+            new ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .redirectOutput(outputFile.toFile())
+                .start();
+        if (!process.waitFor(30, TimeUnit.SECONDS)) {
+          process.destroyForcibly();
+          cleanupWaitAttempted = true;
+          boolean terminated = process.waitFor(5, TimeUnit.SECONDS);
+          throw new IllegalStateException(
+              "keytool timed out after 30 seconds; terminated after forced stop="
+                  + terminated
+                  + ": "
+                  + readKeytoolOutput(outputFile));
+        }
+        String output = readKeytoolOutput(outputFile);
+        if (process.exitValue() != 0) {
+          throw new IllegalStateException("keytool failed: " + output);
+        }
+      } catch (InterruptedException interrupted) {
+        if (process != null) {
+          process.destroyForcibly();
+          cleanupWaitAttempted = true;
+          try {
+            process.waitFor(5, TimeUnit.SECONDS);
+          } catch (InterruptedException cleanupInterrupted) {
+            interrupted.addSuppressed(cleanupInterrupted);
+          }
+        }
+        Thread.currentThread().interrupt();
+        throw interrupted;
+      } finally {
+        if (process != null && process.isAlive() && !cleanupWaitAttempted) {
+          process.destroyForcibly();
+          try {
+            process.waitFor(5, TimeUnit.SECONDS);
+          } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+          }
+        }
+        Files.deleteIfExists(outputFile);
       }
-      String output;
-      try (var stream = process.getInputStream()) {
-        output = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+    }
+
+    private static String readKeytoolOutput(Path outputFile) throws IOException {
+      int maxOutputBytes = 64 * 1024;
+      byte[] output;
+      boolean truncated;
+      try (var stream = Files.newInputStream(outputFile)) {
+        output = stream.readNBytes(maxOutputBytes);
+        truncated = stream.read() != -1;
       }
-      if (process.exitValue() != 0) {
-        throw new IllegalStateException("keytool failed: " + output);
-      }
+      String text = new String(output, StandardCharsets.UTF_8);
+      return truncated ? text + "\n[keytool output truncated]" : text;
     }
 
     private static X509Certificate readCertificate(Path path) throws Exception {

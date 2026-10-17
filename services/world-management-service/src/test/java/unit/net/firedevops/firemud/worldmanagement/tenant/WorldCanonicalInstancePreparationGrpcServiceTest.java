@@ -92,7 +92,7 @@ class WorldCanonicalInstancePreparationGrpcServiceTest {
         .isEqualTo(Status.Code.PERMISSION_DENIED);
     assertThat(call(harness.service, request, peer("game-session-service", "other")).error)
         .isEqualTo(Status.Code.PERMISSION_DENIED);
-    assertThat(call(harness.service, request, null).error).isEqualTo(Status.Code.PERMISSION_DENIED);
+    assertThat(call(harness.service, request, null).error).isEqualTo(Status.Code.UNAUTHENTICATED);
     verifyNoInteractions(
         harness.launchBinding,
         harness.assembly,

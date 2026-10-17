@@ -9,6 +9,7 @@ import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import org.slf4j.Logger;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 public abstract class AbstractReloadingBlockingGrpcClient<TStub extends AbstractStub<TStub>>
     implements AutoCloseable {
@@ -43,6 +44,13 @@ public abstract class AbstractReloadingBlockingGrpcClient<TStub extends Abstract
     this.channelFactory = channelFactory;
     this.stubCustomizer = stubCustomizer;
     this.logger = LoggingUtil.getLogger(loggerClass);
+  }
+
+  protected static final void requireNoAmbientSql(String message) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException(message);
+    }
   }
 
   protected final void initReloadingClient() throws SSLException, IOException {
